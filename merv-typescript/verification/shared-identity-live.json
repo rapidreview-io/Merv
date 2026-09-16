@@ -1,0 +1,274 @@
+{
+  "status": "passed",
+  "localRunDirectory": "/private/tmp/merv-shared-identity-live-20260915-01",
+  "identityMode": "synthetic signed human JWTs accepted by the configured Identity provider",
+  "freshAgents": 3,
+  "serverRestarts": 2,
+  "counts": {
+    "toolCalls": 42,
+    "successfulCalls": 39,
+    "expectedRoleDenials": 3,
+    "guidanceCalls": 11,
+    "assignmentCalls": 3,
+    "beginCalls": 4,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "sharedIdentityChecks": {
+    "signedJwtAuthentication": true,
+    "independentMemberActors": true,
+    "explicitMcpProjectSelection": true,
+    "sameUserHasDifferentRoleInSecondProject": true,
+    "crossProjectArtifactRefused": true,
+    "memberReviewerAuthenticatedAfterRestart": true
+  },
+  "assignmentChecks": {
+    "bothAgentsReadAssignments": true,
+    "bothAgentsRepeatedBegin": true,
+    "exactlyTwoStartEvents": true,
+    "startsSurvivedTwoRestarts": true,
+    "startAttributionMatchesActors": true
+  },
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "structuredReviewPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "phases": [
+    {
+      "phase": "producer",
+      "threadId": "01a0a34f-6e83-7421-aa57-551d20999f87",
+      "exitCode": 0,
+      "toolCalls": 13,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.create",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed"
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    },
+    {
+      "phase": "reviewer",
+      "threadId": "01a0a350-6b40-7e70-a995-12ff3905b381",
+      "exitCode": 0,
+      "toolCalls": 19,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "phase": "observer",
+      "threadId": "01a0a351-8ad6-7331-8223-4ef4e4ada1c6",
+      "exitCode": 0,
+      "toolCalls": 10,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.list",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    }
+  ],
+  "taskId": "wf_7527c4f0644f427580dfc73b284bd01f",
+  "taskState": "done",
+  "taskRevision": 2,
+  "workStarts": [
+    {
+      "instanceId": "wf_7527c4f0644f427580dfc73b284bd01f",
+      "projectId": "project_f6bd9262ea9244fc91eea2a434e8568d",
+      "workflow": "task",
+      "version": 2,
+      "state": "in_progress",
+      "revision": 0,
+      "actorId": "actor_3d7db18cc09c4b4da96e953cf3694f40",
+      "startedAt": "2026-09-15T04:25:07.456Z",
+      "eventId": 8
+    },
+    {
+      "instanceId": "wf_7527c4f0644f427580dfc73b284bd01f",
+      "projectId": "project_f6bd9262ea9244fc91eea2a434e8568d",
+      "workflow": "task",
+      "version": 2,
+      "state": "in_review",
+      "revision": 1,
+      "actorId": "actor_e5254cb3104543df84977ab8958cdcd1",
+      "startedAt": "2026-09-15T04:26:21.056Z",
+      "eventId": 18
+    }
+  ],
+  "negotiatedProtocols": ["2025-06-18"],
+  "rawReportSha256": "a16f9e9fdc5c1156510fc9ff2825c18083cdb8a603f24e1586a6791f214e026c",
+  "transcriptSha256": {
+    "producer": "3898897984ba7996cd66c6d9174957d6aaa04cb20ac293a751cf3b7b5393fbc9",
+    "reviewer": "2a9d2f9ef812e881b692b50224a03c69773f2548dd341a14c3144f0932f8306d",
+    "observer": "138304540273a0917f9999cf31174911c187fbd1f800afacf531d9808cad6730"
+  },
+  "credentialsIncluded": false,
+  "realSupabaseBrowserLogin": false,
+  "timing": "Live run preceded the final delayed-recovery claim guard; the complete 343-test suite covers the final implementation."
+}

@@ -1,6 +1,6 @@
 # Mounts
 
-Mounts owns upstream MCP discovery and connections. API owns the downstream HTTP/MCP transport and tool registry; Mounts consumes that registry through the public `@merv/api/types` contract. Access and Credentials independently supply caller grants and server-side credential selection.
+Mounts owns upstream MCP discovery and connections. API owns the downstream HTTP/MCP transport and tool registry; Mounts consumes that registry through the public `@merv/api/types` contract. Scope supplies caller tool policy through `scope.toolPolicy`. Mounts owns server-side credential selection in its internal `credentials.ts` module. Its only Cordis dependencies are Tools and Scope.
 
 The public `@merv/mounts/types` contract defines `Context.mounts`, `Mounts`, `MountConfig`, `MountsConfig`, and `MountStatus`. `status()` reports each mount's ID, endpoint origin, state, published tool count, and an optional error code. Status never includes endpoint paths, query strings, headers, or credentials. `reconnect(id)` waits for a new forced discovery attempt for a configured mount. It queues behind an active refresh and rejects if the mount stops before that attempt.
 
@@ -8,6 +8,15 @@ Configuration explicitly selects raw upstream tool names:
 
 ```json
 {
+  "bindings": [
+    {
+      "id": "research-example",
+      "actorId": "actor_example",
+      "projectId": "project_example",
+      "mountId": "research",
+      "secretRef": "env:MERV_RESEARCH_TOKEN"
+    }
+  ],
   "mounts": [
     {
       "id": "research",
@@ -24,7 +33,7 @@ Configuration explicitly selects raw upstream tool names:
 }
 ```
 
-The plugin configuration defaults to an empty `mounts` array; the application default list does not install this optional plugin. Tool selection does not grant access: individual callers still need exact Access grants and matching Credentials bindings. Discovery can use the optional local identity; invocation resolves the actual caller's credentials. Credentials remain references in the separate Credentials configuration.
+The plugin configuration defaults to empty `mounts` and `bindings` arrays; the application default list does not install this optional plugin. Tool selection does not grant access: individual callers still need exact Scope tool grants and matching upstream credential bindings. Discovery can use the optional local identity; invocation resolves the actual caller's credentials. Credential bindings live in this same configuration; secret values remain in the server environment.
 
 The following helper modules now belong to this package:
 
@@ -38,3 +47,15 @@ A configured mount refreshes its catalog when notified and by bounded polling. A
 Shutdown starts withdrawal for every namespace synchronously, including when another plugin is still draining a call to Mounts' status service. Admitted calls finish before invocation clients close. All client cleanups are attempted; failures produce fixed error codes. The upstream Cordis loader may log rather than propagate disposer failures, so use the direct manager result/status when diagnosing cleanup errors.
 
 Run `npm run test:mounts` for fixture regressions and `npm run test:mount-unload` for a whole-application removal report. The latter loads this package through application configuration, forwards an authenticated upstream call, removes the loader entry while that call is held, completes native task/review/feed work, and restores the same configured mount with a fresh connection. This is controlled integration evidence; authenticated real sandbox evidence is a separate gate.
+
+Mounted tools are published as `_<mountId>.<upstreamToolName>`; Nisa `qa.ask`
+becomes `_nisa.qa.ask`. Tool selection and grants still use raw upstream names.
+The mount ID comes from configuration; dots in an upstream name are preserved.
+
+## Credential ownership and migration
+
+Remove the old `@merv/credentials` plugin entry and move its `config.bindings` into the `@merv/mounts` entry’s `config.bindings`, alongside `config.mounts`. There is no `ctx.credentials` service. Reload the Mounts entry to apply binding changes; unload withdraws catalogs and drains admitted calls before closing connections. Scope grants stay in Scope.
+
+The internal resolver selects exact project/actor/mount bindings and checks current Scope authority. Agent sessions resolve against their authority actor. Secrets are read from `env:NAME` on every resolution; known local Merv credentials are rejected, including revoked or rotated credentials. Bindings accept only fixed nonsecret selector headers. Missing or invalid credentials produce sanitized errors.
+
+Secret snapshots hide headers from JSON and diagnostic inspection. Their opaque identity includes the binding and current secret, so rotation selects a different connection. The client rechecks authority and credential identity after connection setup, before dispatch. Upstream tokens never become agent-facing tool results. This move adds no OAuth flow or automatic token refresh.

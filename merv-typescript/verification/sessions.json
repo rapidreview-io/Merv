@@ -1,0 +1,188 @@
+{
+  "date": "2026-09-14",
+  "scope": "Actual assignment-scoped MCP credentials, durable leases, metadata activation, worker/review recovery and bounded context",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-sessions-full-suite-final.log",
+    "tests": 410,
+    "pass": 410,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "initialSuite": {
+    "log": "/private/tmp/merv-sessions-full-suite-initial.log",
+    "tests": 410,
+    "pass": 402,
+    "fail": 8,
+    "resolution": "Structured-review fixture default no longer artificially caps migrations at v4. Explicit pre-v4 migration case still checks unchanged historical columns, hashes and receipts, plus new provenance defaults. Production rules were not relaxed."
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "formatting": "passed",
+    "diffWhitespace": "passed"
+  },
+  "regressions": [
+    "Real source-key HTTP issuance and MCP session secrets with matching discovery and dispatch policy",
+    "Same exact source key can authorize distinct producer and reviewer worker actors",
+    "Credentialless workers cannot mint ordinary credentials or nested sessions",
+    "Source key revocation/rotation, human membership epoch, JWT lifetime distinction and expiry before activation",
+    "Unique live target, exact source-bound retry fingerprint and permanent closed receipts",
+    "Metadata-only first activation, offer rollback on context/packet failure and packet size limits",
+    "Same-transaction handoff hydration memo with repeated source/status checks",
+    "Safe parser defaults/stripping, hostile fixed-field transforms, cancellation and queued native write revocation",
+    "Delayed mounts reject argument change, grant loss, credential rotation and session closure",
+    "Pinned pre-offer checkpoint context, own-worker output growth and later foreign-attachment refusal",
+    "Exact claim succession, evidence/provenance retention and logical-owner review reissue",
+    "Durable restart plus stale runtime invocation generation fences and optional adapter removal",
+    "Custom non-Task workflow leases through generic hooks and smallest dependency-closure boot"
+  ],
+  "composition": {
+    "pluginEntrypoints": 31,
+    "serviceProviders": 18,
+    "directCordisDependencies": 66,
+    "defaultEntries": 29,
+    "domainApiEntries": 23,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugins": ["sessions", "sessions-api"],
+    "newAgentTools": 0
+  },
+  "pythonReference": {
+    "tests": 21,
+    "pass": 21,
+    "logs": [
+      "/private/tmp/merv-session-identity-parity-python.log",
+      "/private/tmp/merv-session-review-context-python.log"
+    ],
+    "probes": [
+      {
+        "log": "/private/tmp/merv-session-shared-owner-probe.log",
+        "result": "Same user and same source key with two distinct leases: review start200, submit200, verdict pass"
+      },
+      {
+        "log": "/private/tmp/merv-session-membership-activation-probe.log",
+        "result": "Reference bug: lost membership returned404 but session became active and recorded one start. TypeScript checks source membership before activation."
+      }
+    ]
+  },
+  "liveModel": {
+    "status": "passed",
+    "record": "verification/sessions-live.json",
+    "freshAgents": 2,
+    "serverRestarts": 2,
+    "toolCalls": 17,
+    "successfulCalls": 17,
+    "failedCalls": 0,
+    "workStartEvents": 2,
+    "sameSourceKey": true,
+    "distinctWorkerActors": true,
+    "timing": "Live run started before final pre-offer cleanup and invocation cancellation/parser refinements; final deterministic suite covers the completed source. It is a real credential test, not an exact final-source claim for those later refinements."
+  },
+  "review": {
+    "local": "Independent Scope/Sessions and API/Access/Mounts source reviews found no actionable final defects. Five independent held-connect/default/generation probes passed.",
+    "consumerProbe": {
+      "script": "/private/tmp/merv-consumer-independent-probe.mjs",
+      "log": "/private/tmp/merv-consumer-independent-probe.log",
+      "cases": 5
+    },
+    "fable": {
+      "status": "not_run_pending_specific_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "promptBytes": 4703,
+      "promptSha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review rejected external transfer of detailed internal session/authorization/workflow/lease architecture without approval of this specific payload. No retry or export occurred.",
+      "privateSourceSent": false,
+      "responseExists": false
+    }
+  },
+  "remaining": [
+    "Production runner processes and workspace/launch/halt/reconciliation controls",
+    "Project dispatch controls and operational session UI",
+    "Real experiment/reflection/consolidation programs",
+    "Asynchronous State and Postgres provider",
+    "Production shared login and real-service deployment verification"
+  ],
+  "sourceSha256": {
+    "config/default.json": "447ab7b11d0ce1cf760cbe4765e612695632f8e93ed76b78c9be9598dbc2c9e0",
+    "package-lock.json": "910e7bfea230f66a0f0118164518317c922f4062a0b63759181f4da6b6325843",
+    "package.json": "180bbea4e5032eb2556f7ad860e7f5e66e2a9ed5b942a5b751220448ff725b62",
+    "packages/access/src/index.ts": "6aad1475d82142ff49fce6c51d018cc44977fed3798189a1fc0f1dff9c2414f5",
+    "packages/access/src/types.ts": "750167463f8b94302f1b6e791222fc3cbf22926a88b47dd7a4ef4d25661a4b8b",
+    "packages/api/src/http.ts": "47f4921cb1745c9ea22e8e77ffec3691d6ff5e139d5f1dd36c21651a90d8ded5",
+    "packages/api/src/index.ts": "7a4c530e752360212038ff75c0f7cdfbb873d310e799229e4cd9e1e31328cb89",
+    "packages/api/src/protocol.ts": "c18efc075d47abe52a3c0edd4611235310747f8319be55fbf3bf1956ca5d9026",
+    "packages/api/src/registry.ts": "3edc3516b143346953eab3e9f79a345fd9fb08d5d70e8eb28b96919dd05fbf1f",
+    "packages/api/src/schema.ts": "84ef146cec831a222f09d550c943e95d6b26d63d69d683c3ac06c3d92aa30dc3",
+    "packages/api/src/tools-plugin.ts": "b4466ed1c9bc7744b1c56e27fd7d049f61ad4c303740fe1595d0ec5ef15e4be3",
+    "packages/api/src/types.ts": "f74178dc587e5cb34df28f1fa673f775310ba57ac700f055725dc8bf042d5e54",
+    "packages/artifacts/src/index.ts": "3d4f0446f0cd9644aca91aa9500bef0b9be26493e7e4677731d082be36b6394f",
+    "packages/artifacts/src/tools.ts": "6332744be9e1e05f2ef7884cf627075224247a56749b1d05499ec9bd9e177eb9",
+    "packages/artifacts/src/ui.ts": "d0c0ba22e27faf04f25166fa34e22c40a005473bb14dd25b76ad11faed91ac1e",
+    "packages/contracts/src/data.ts": "6d8ab453bf91a98749b33a8bc4d22f23f076cbb94447693775962d8d3dc99ddd",
+    "packages/contracts/src/index.ts": "f756db66091cb19561b1f1ad690b4d0bfd8a68125af3092ae0ef0fb3e6823559",
+    "packages/contracts/src/workflow-guidance.ts": "79b556a7ef3bf2d21a2c057fe2fb94bfeafb23acf8b6e7376711c540128454e9",
+    "packages/credentials/src/index.ts": "ea188b404d3899974ac64753c359fa4f917e21a1620dac7d7485ff37c57c35a8",
+    "packages/credentials/src/types.ts": "e6b4283b4dd554766c93964883a00a86425acddfc63ad56e70346f924a109a7f",
+    "packages/mounts/src/credential-client.ts": "3f2271634bab8e2354451277beec4fa17c3f6c94c3710a39a6890be50590b1dd",
+    "packages/mounts/src/index.ts": "d7f99157b0d5e2ccb889ae002e919a54bf6b3b82bbbf7dd792733ff453783bec",
+    "packages/mounts/src/remote-catalog.ts": "8faf28ef0f34db937b448ebf6166727c9b4aed0ef3e7b9820482b3ea0b9c2d82",
+    "packages/mounts/src/runtime.ts": "1b2165a7c0616bf690cf2860453a3b9bf1b8847002d57046645f8e6d4a9ba9d6",
+    "packages/mounts/src/types.ts": "dfbcff5b388b66c3b573f69823c8b0f4cf22111b8f1f63858d1d89169ceac6ac",
+    "packages/mounts/src/ui.ts": "380f1bc8146d93a732a2576a46f3596f5663284cc0347a4144025c4f4d7650b2",
+    "packages/reviews/src/findings.ts": "04e8ca3c894854cabd6347b7f4949facc6016af678589c116bd745e2c7ed76b1",
+    "packages/reviews/src/index.ts": "5a0b5b89244186b23f4962efffdba50fa6eea3546cb650f2afb27028ad5763ed",
+    "packages/reviews/src/tools.ts": "ab876d61b66c21b9e80aa28bd3532c44b99cce0fa4053f622f70bdf452395d4e",
+    "packages/reviews/src/types.ts": "7352229bb56218f37088271c8b3f69747fb807a0bfc02685c5d019fd162e32f0",
+    "packages/reviews/src/ui.ts": "f475ac486ed3321ff74b822342c351d108c3022282bac1bd60d8183b1e8056c9",
+    "packages/scope/src/index.ts": "8a95e24feebe0fe3c8fb114b7c9889c949f0a74711475b8721c585c3910bd0b7",
+    "packages/scope/src/memberships.ts": "9d6f893b086cece7ca9ce5736a563f512dd15472b29421f50a14c9fdefde1269",
+    "packages/scope/src/tools.ts": "9c6a12a891f63f97e60ac3b3cc09965cc4cf0cedbccdf44f4fde548b2760bb20",
+    "packages/scope/src/ui.ts": "ff96922fc4f49d4e08bb0fb3a5299f5d92fb545b72d127a8357bae624d5b5d72",
+    "packages/scope/src/user-keys.ts": "c6082b944eff6acbb6a0000816d0621c7d2cf4d5afa7c39dc395b122ae283952",
+    "packages/sessions/src/api.ts": "4b12a106cad201e8560a1693e4ba1e2712f69409ffb7fc7e86da3ecf65027afe",
+    "packages/sessions/src/index.ts": "4c96e19ace400e749b2beeca6a3f0639b833b721ea1eb52e3d92ceb913aa1fa3",
+    "packages/sessions/src/types.ts": "05136ce900055d685f468f7d0de2511d4fa7543c860ce810373d207a803a5e9e",
+    "packages/tasks/src/definitions.ts": "f4474e6eb25009d7a254135ea44f74c2df51dfec14f445007bab2e7063c2c567",
+    "packages/tasks/src/evidence.ts": "455be205140e2f920846735595f4cbeb44a0511191020c586caf8dd54ab46f79",
+    "packages/tasks/src/execution-policy.ts": "973491349af3ef13b672cf2c4068348f1aab54a312712311353562359ddb0b08",
+    "packages/tasks/src/index.ts": "f694f1f1fe48336a87d9aed6fc6e1bd51a4e04c94b2fadca6cb248bbbf6dec7e",
+    "packages/tasks/src/tools.ts": "13eb5c280a21b482c578b6b87973eb20a75340aff9a6c7d1781c1ee68130dbf7",
+    "packages/tasks/src/types.ts": "a6de163f73bad2206ce0fbe602720c3ec06ea95b67944b3091403fe6823e11eb",
+    "packages/tasks/src/ui.ts": "5de039c222e6026e10b5f81305c08df2077de34ae1a1defc4c75c771e3d9de14",
+    "packages/workflows/src/assignments.ts": "c55c0be6b05cef691d25dce5149c34015902c0d22b758150956029197b75ecfa",
+    "packages/workflows/src/definition.ts": "16d1fc7e02ac8258426f0e36cd4dd5c1e88963f9ac5c92a95201bd9f4228810b",
+    "packages/workflows/src/dependencies.ts": "f14bc404616e897a1db97691b19b98052a1c6215d8b7b04194165873aabd1a20",
+    "packages/workflows/src/evaluation.ts": "893eabb4f779d73af1aa46bb1ceb059da7f12d0abec09789fd54efff618c1dd5",
+    "packages/workflows/src/execution.ts": "2f1c30e884b897d08581e0d58f737f9b61745a18dbf732e836866f4beb115fd4",
+    "packages/workflows/src/index.ts": "1e0dda9ff6682db9ad35615e36d047f2af905024ec7ecb6a88ecf2e025ea715f",
+    "packages/workflows/src/tools.ts": "9e68ef7e44af927d6d180c0063b9b80260c608d856e1745aea654a6bd899e8ee",
+    "scripts/live-sessions.ts": "9d8af71aee66b31422e8e3e54b91db28d2ee4b1161ae1ec3d170d61174403762",
+    "src/app.ts": "f32bce465ddf163b676a72058e690286af0dac7bef85d249bb3434bad3ddff0b",
+    "src/config.ts": "296d9a656e8282390665edd55c871f15a8c43f2fba1b0cd831d9ca994821ca50",
+    "tests/boundaries.test.ts": "1af14ff87c3fdc344f8c75b5c854349ab84738bdab8b0370b192ceab593cf3a6",
+    "tests/config.test.ts": "0535a4598a36d1364fc7ba023625d5639e97f90367c2d458d46e08a4d9200c17",
+    "tests/sessions-api.test.ts": "8310072ed5352f077594e50b4c795e826b74e017a8af9b2c7641224f627758c2",
+    "tests/sessions-integration.test.ts": "e064cfcc558d98adf9cf6e28710df29e80377e6d43d4afebf69d2e3ba766b2ae",
+    "tests/sessions.test.ts": "22138ce6d847b17e378664ce406dd93f929fe8803b9f069852e79de4f70ab49b",
+    "tests/structured-reviews.test.ts": "085b17c409b1000249f51f3626e0f7a5caed906100d22d01c0e2287d12676cea",
+    "tests/workflow-leases.test.ts": "81fc20a6996e1f448c40adc31ba1e62f3f0cebdf0bab3c366b031a080e4baeb0"
+  },
+  "checkLogs": {
+    "backendTypecheck": "/private/tmp/merv-sessions-typecheck.log",
+    "backendBuild": "/private/tmp/merv-sessions-build.log",
+    "uiTypecheck": "/private/tmp/merv-sessions-ui-typecheck.log",
+    "uiBuild": "/private/tmp/merv-sessions-ui-build.log",
+    "formatting": "/private/tmp/merv-sessions-format.log",
+    "diffWhitespace": "/private/tmp/merv-sessions-diff.log"
+  },
+  "documentation": {
+    "localLinksChecked": 250,
+    "missingLocalLinks": 0,
+    "architecturePlugins": 31,
+    "architectureDependencies": 66
+  }
+}

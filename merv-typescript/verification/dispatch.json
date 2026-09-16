@@ -1,0 +1,163 @@
+{
+  "date": "2026-09-15",
+  "scope": "Metadata-only workflow dispatch candidates, fixed workspace intent, source-bound runner controls and automatic leases, optional Sessions UI",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-dispatch-full-suite-final.log",
+    "tests": 425,
+    "pass": 425,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-dispatch-typecheck.log"
+    },
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-dispatch-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-dispatch-ui-typecheck.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-dispatch-ui-build.log"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-dispatch-format.log"
+    },
+    "diffWhitespace": {
+      "status": "passed",
+      "log": "/private/tmp/merv-dispatch-diff.log"
+    }
+  },
+  "regressions": [
+    "Source/domain-authorized candidates enforce work dependencies and recipe availability without context rendering, reference resolution or durable work-start writes",
+    "Read-only-first stable selection; unsupported operator-worker candidates do not block the queue",
+    "Strict workspace modes/namespaces/reference identifiers and read-only central-publication refusal; absent workspace preserves old policy hashes",
+    "Automatic dispatch off by default, fresh source-bound runner presence, offered/active capacity and platform settings",
+    "Exact automatic request replay, conflict with changed input or manual receipts, closed leases never revive",
+    "Pause leaves existing MCP session authority; project halt disables dispatch and retires workers without source revocation",
+    "Desired settings remain authoritative despite a runner claiming acknowledgement; canonical process outcomes drive durable backoff",
+    "Runner control changes during metadata/acquisition callbacks fence commit and roll back provisional workers, reservations, receipts and events",
+    "Sanitized project status and operator halt work across human-vs-source-key ownership without exposing frozen context or key identity",
+    "Authoritative live totals and live-first bounded history; reader/foreign-project/worker permission boundaries; optional UI row withdrawal"
+  ],
+  "composition": {
+    "pluginEntrypoints": 32,
+    "serviceProviders": 18,
+    "directCordisDependencies": 68,
+    "defaultEntries": 30,
+    "domainApiEntries": 23,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugins": ["sessions-ui"],
+    "newProviders": 0,
+    "newAgentTools": 0
+  },
+  "live": {
+    "status": "passed",
+    "record": "verification/dispatch-live.json",
+    "freshAgents": 2,
+    "serverRestarts": 2,
+    "toolCalls": 17,
+    "successfulCalls": 17,
+    "failedCalls": 0,
+    "timing": "Live run began before final callback-control fencing and history-total refinements; final deterministic suite and independent probes verify later source."
+  },
+  "browser": {
+    "status": "passed",
+    "environment": "Disposable loopback server with synthetic project and credential; built Sessions view",
+    "checks": [
+      "Sign in and navigate to Sessions",
+      "Inspect paused dispatch, runner presence and offered lease",
+      "Enable then pause through actual UI; offered lease remains",
+      "Halt through actual UI; live count changes to zero and incomplete task returns to queue",
+      "Visual layout inspection"
+    ],
+    "cleanup": "Temporary tab closed; exact fixture process stopped; no user project or production identity used"
+  },
+  "review": {
+    "local": "Independent Workflows/Sessions and API/UI reviews found two actionable integration issues and verified their fixes. No remaining actionable finding in the bounded server-control slice.",
+    "fixes": [
+      "Filter operator-role candidates before automatic lease selection",
+      "Reread source/presence/platform/settings/capacity around assignment callbacks; exclude only the just-created reservation in the final capacity check"
+    ],
+    "probe": {
+      "script": "/private/tmp/merv-dispatch-reentrancy-probe.mjs",
+      "log": "/private/tmp/merv-dispatch-reentrancy-final.log",
+      "cases": 8,
+      "allMutationsRolledBack": true,
+      "ordinaryCapacityOneOffer": "offered"
+    },
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "priorRecord": "verification/sessions.json",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "reason": "Automatic approval review rejected sending the prepared internal architecture prompt without approval of that specific payload/destination. No retry or new payload export occurred."
+    }
+  },
+  "pythonReference": {
+    "runnerTests": 71,
+    "runnerLog": "/private/tmp/merv-runner-reference-python.log",
+    "workspaceTests": 3,
+    "workspaceResult": "3 passed in 1.156s, captured in agent tool transcript; no separate saved log",
+    "workspaceTestNames": [
+      "tests.state.test_agent_runner.AgentHostTest.test_git_workspace_follows_the_declared_policy",
+      "tests.state.test_agent_runner.AgentHostTest.test_central_advance_records_verified_source_ancestry",
+      "tests.state.test_agent_runner.AgentConfigurationTest.test_workspace_settings_require_persistent_git_worktrees"
+    ]
+  },
+  "architecture": {
+    "json": "docs/architecture/current-dependencies.json",
+    "image": "docs/architecture/current-dependencies.png",
+    "svg": "docs/architecture/current-dependencies.svg",
+    "drawnArrowEdges": 42,
+    "adapterRowEdges": 26,
+    "allEdgesMatchedToDeclarations": true,
+    "dimensions": [2800, 2990],
+    "visuallyChecked": true
+  },
+  "remaining": [
+    "Production machine runner: durable launch intent, birth-qualified process ownership, source/session credential separation, halt and offline deadlines, restart reconciliation",
+    "Actual Git base resolution/worktree preparation/capture and durable publication CAS receipts",
+    "Machine pairing, operational settings editor, bounded trace delivery and telemetry",
+    "Real experiment/reflection/consolidation programs",
+    "Asynchronous State and Postgres provider",
+    "Production shared login and real-service deployment verification"
+  ],
+  "sourceSha256": {
+    "config/default.json": "69201ce38a186cc545a32d213a58e1999390c28bdf03f422ef2dc79ff2fc6981",
+    "package.json": "3dd648182093879096f4468e3dabd52b2ed666b48b67139d0af4f31544621ac2",
+    "package-lock.json": "278a31613c2ae7ed508724c339097cbb1e9786c723acff68b2ca78dcb6ef4d58",
+    "packages/contracts/src/index.ts": "c0097b46462583d0e19d9a831ae52e4d6c35ebadb341ef59252b157b874f9273",
+    "packages/workflows/src/index.ts": "eedebd5cdc5d892fca4ad3f734a828fb1a5ab1692f9b8a29be7f8aa16af524ce",
+    "packages/workflows/src/execution.ts": "ad6540b3f208216784463b41ff976dec05ec71b727d2a36010a439cad947a325",
+    "packages/tasks/src/index.ts": "70d31c4b0b95b64f3e20167085c988b5b226caa3874bb98d54991cf6f77b8be5",
+    "packages/sessions/package.json": "07b9cc4335b0a63990e7ca51db8d9e02a775c3435c9042f30da49a6e212ef6fd",
+    "packages/sessions/src/index.ts": "636050adf30c6abb68da930c7c910c043d4558491c04a17e61dd220a6ac4625d",
+    "packages/sessions/src/types.ts": "8ff6d29e61f724d3161743bf3459404d8c05d8934c47a061a015acbc1cfba0fd",
+    "packages/sessions/src/dispatch.ts": "c88fb8dde26eb02e05c8c6332eb5097bdceee07a55c6b92338d751963dcf2a51",
+    "packages/sessions/src/api.ts": "4b12a106cad201e8560a1693e4ba1e2712f69409ffb7fc7e86da3ecf65027afe",
+    "packages/sessions/src/ui.ts": "0197ede92fc8a545c2da8e9c36bd5a456a06f03d1d1deaab5ce3b4a13f0bd6a5",
+    "packages/api/src/types.ts": "531cdae21d11ccb947fa8255fce0b0c9f834ce697257674be63522e2f7316b5c",
+    "packages/api/src/http.ts": "1b01c17c294c207df2b5a728550b661a62adf472b35b9fb275397e9ddb2dfed0",
+    "packages/ui/vite.config.ts": "62f93dd737f873fce420dc9ee037069477cd709805b204d94bd0d10ae43b557b",
+    "packages/ui/web/views/index.tsx": "fd9ae3cdc3a3ec99dead665928df31ef2f469c999b0da76fb0824f4b445f22c3",
+    "packages/ui/web/views/sessions.tsx": "7317bd958d83f09133b13eb33948da902f2f8320bfcec15b676d1f437aed904a",
+    "scripts/live-sessions.ts": "6154af77e764ebcd29e706621c892467eafd2ec85520ed38d73e93c6ab528d0a",
+    "scripts/dependency-map.ts": "899972b3d70749a29bdfa80a7374a45457f2a1e31b5df8963a640f370a7ca8f4",
+    "tests/sessions.test.ts": "a7dc8af950e88c185e4e4784b9eedbb96ed16c6a47cc42d17302ca573c8b3f55",
+    "tests/session-dispatch-api.test.ts": "fb5993ecca265566b3a03a1f04e5187897343c888fa0eb84be8b2902b6de34ff",
+    "tests/workflow-dispatch.test.ts": "e26a7f4c99142a0d0a1037705c5a56c5fd34e4382f536d118defed3dd832a5b5",
+    "tests/workflow-execution.test.ts": "d4e07cf8aa913279118371bcad66c8becddc44faab5bc3d2213b589002ffc1e3",
+    "tests/config.test.ts": "2316669210d2cfb7ad5454e32dda64bd3a8d1c68130c3e043e4f5b5f58e97edb",
+    "tests/boundaries.test.ts": "297b71e3c5a4386aef650f2dfd119d3b7e1ae9cf37fc835ba015f8128758360a",
+    "tests/ui.test.ts": "0fe433d0b35c94d525f99840b5f72182aebed2537ed90009ac956726e832f639"
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "checkedAt": "2026-09-15T00:46:37.032Z",
+  "method": "Booted the current Cordis providers and all five native tool adapters in a temporary SQLite directory. Invoked the real in-process registry; no HTTP listener, live account or external service.",
+  "toolNames": [
+    "actor.create",
+    "actor.list",
+    "actor.revoke",
+    "actor.whoami",
+    "artifact.create",
+    "artifact.get",
+    "artifact.list",
+    "artifact.read",
+    "feed.activity",
+    "feed.get",
+    "feed.list",
+    "feed.post",
+    "project.get",
+    "review.get",
+    "review.list",
+    "review.start",
+    "review.submit",
+    "task.checkpoint",
+    "task.context",
+    "task.create",
+    "task.get",
+    "task.list",
+    "task.reissue_review",
+    "task.submit_delivery"
+  ],
+  "workflowStatusAndNext": {
+    "available": false,
+    "errorCode": "unknown_tool"
+  },
+  "taskGet": {
+    "state": "in_progress",
+    "fields": [
+      "id",
+      "projectId",
+      "title",
+      "goal",
+      "checks",
+      "producerId",
+      "briefId",
+      "deliveryIds",
+      "reviewId",
+      "workflow",
+      "createdAt",
+      "type",
+      "typeVersion",
+      "contextInputs"
+    ],
+    "workflowFields": [
+      "id",
+      "projectId",
+      "workflow",
+      "version",
+      "state",
+      "revision",
+      "data",
+      "createdAt",
+      "updatedAt"
+    ],
+    "guidanceFields": []
+  },
+  "taskContext": {
+    "type": "task.work",
+    "fields": [
+      "projectId",
+      "actorId",
+      "type",
+      "typeVersion",
+      "recipeHash",
+      "subject",
+      "prompt",
+      "sources",
+      "omitted",
+      "id",
+      "hash",
+      "createdAt"
+    ],
+    "guidanceFields": []
+  },
+  "afterDelivery": {
+    "state": "in_review",
+    "reviewStatus": "requested",
+    "guidanceFields": []
+  },
+  "missingTaskInputs": {
+    "dependsOn": true
+  },
+  "limitations": [
+    "This audit does not claim feature parity from matching names.",
+    "Python guidance tests are recorded separately in BACKEND_PARITY_AUDIT.md.",
+    "Synthetic task data is removed after the check."
+  ]
+}

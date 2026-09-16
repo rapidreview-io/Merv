@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
@@ -5,9 +6,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from '../src/app.js';
 
-async function until(check: () => boolean, message: string) {
+async function until(check: () => boolean | Promise<boolean>, message: string) {
   const deadline = Date.now() + 5000;
-  while (!check()) {
+  while (!(await check())) {
     assert.ok(Date.now() < deadline, message);
     await delay(5);
   }
@@ -51,20 +52,26 @@ export async function runFeedUnloadScenario(
     onCheckpoint(item);
   };
   try {
-    const credentials = app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.bootstrap({
       projectName: 'Feed unload acceptance',
       actorName: 'Operator',
     });
     const operator = { actorId: credentials.actor.id, projectId: credentials.project.id };
-    const producer = app.ctx.scope.issueActor(operator, { name: 'Producer', role: 'producer' });
-    const reviewer = app.ctx.scope.issueActor(operator, { name: 'Reviewer', role: 'reviewer' });
+    const producer = await app.ctx.scope.issueActor(operator, {
+      name: 'Producer',
+      role: 'producer',
+    });
+    const reviewer = await app.ctx.scope.issueActor(operator, {
+      name: 'Reviewer',
+      role: 'reviewer',
+    });
     const url = app.ctx.api.url!;
     const p = await connect(url, producer.token);
     clients.push(p);
     const r = await connect(url, reviewer.token);
     clients.push(r);
     const beforeTools = (await p.listTools()).tools.map((tool) => tool.name);
-    assert.equal(beforeTools.length, 26);
+    assert.equal(beforeTools.length, 64);
     const post = await call(p, 'feed.post', {
       body: 'Starting a task before feed removal.',
       requestId: 'before-unload',
@@ -80,7 +87,7 @@ export async function runFeedUnloadScenario(
       briefId: brief.id,
       requestId: 'create-task',
     });
-    const cursor = app.ctx.state.events(operator.projectId).at(-1)!.id;
+    const cursor = (await app.ctx.state.events(operator.projectId)).at(-1)!.id;
     const originalServices = {
       state: app.ctx.state,
       scope: app.ctx.scope,
@@ -99,7 +106,7 @@ export async function runFeedUnloadScenario(
 
     // Pause one actual feed.post after admission but before its real handler.
     // This makes the otherwise synchronous operation overlap disposal reliably.
-    const definition = app.ctx.tools.list().find((tool) => tool.name === 'feed.post')!;
+    const definition = (await app.ctx.tools.list()).find((tool) => tool.name === 'feed.post')!;
     const originalHandler = definition.handler;
     definition.handler = async (caller, input) => {
       entered.resolve();
@@ -122,7 +129,7 @@ export async function runFeedUnloadScenario(
       disposed = true;
     });
     await until(
-      () => !app.ctx.tools.list().some((tool) => tool.name.startsWith('feed.')),
+      async () => !(await app.ctx.tools.list()).some((tool) => tool.name.startsWith('feed.')),
       'Cordis did not withdraw feed tools',
     );
     assert.equal(disposed, false, 'Provider disposal must wait for its admitted tool call');
@@ -167,15 +174,34 @@ export async function runFeedUnloadScenario(
     const submitted = await call(p, 'task.submit_delivery', {
       taskId: task.id,
       artifactIds: [delivery.id],
+      confirmations: [
+        {
+          checkNumber: 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'Native task and review tools remained available while the feed was absent.',
+        },
+      ],
       expectedRevision: 0,
       requestId: 'deliver-without-feed',
     });
     await call(r, 'artifact.read', { artifactId: brief.id });
-    await call(r, 'artifact.read', { artifactId: delivery.id });
-    await call(r, 'review.start', { reviewId: submitted.reviewId });
+    for (const artifactId of submitted.deliveryIds) await call(r, 'artifact.read', { artifactId });
+    const claim = await call(r, 'review.start', { reviewId: submitted.reviewId });
     const done = await call(r, 'review.submit', {
       reviewId: submitted.reviewId,
+      claimId: claim.claimId,
       verdict: 'pass',
+      synopsis:
+        'The task and independent review completed successfully while the feed plugin was absent.',
+      findings: [
+        {
+          criterionNumber: 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The retained delivery records the native task path continuing without feed.',
+        },
+      ],
       notes:
         'Verified retained evidence and successful task routing while the feed service is absent.',
       expectedRevision: 1,

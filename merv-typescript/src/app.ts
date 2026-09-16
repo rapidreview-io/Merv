@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import { Context, FiberState, type Fiber } from 'cordis';
 import Loader from '@cordisjs/plugin-loader';
 import { resolve } from 'node:path';
@@ -130,15 +131,15 @@ export async function createApp(options: AppOptions) {
       get components(): ReadonlyMap<string, Fiber> {
         return new Map(
           [...loader.entries()]
-            .filter((entry) => !entry.id.endsWith('-tools') && entry.fiber)
+            .filter((entry) => !/-(tools|ui|api)$/.test(entry.id) && entry.fiber)
             .map((entry) => [entry.id, entry.fiber!]),
         );
       },
       get adapters(): ReadonlyMap<string, Fiber> {
         return new Map(
           [...loader.entries()]
-            .filter((entry) => entry.id.endsWith('-tools') && entry.fiber)
-            .map((entry) => [entry.id.slice(0, -'-tools'.length), entry.fiber!]),
+            .filter((entry) => /-(tools|ui|api)$/.test(entry.id) && entry.fiber)
+            .map((entry) => [entry.id.replace(/-tools$/, ''), entry.fiber!]),
         );
       },
       stop: () =>

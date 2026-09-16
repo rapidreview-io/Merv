@@ -26,14 +26,15 @@ export const feedToolsPlugin = {
             requestId: z.string().min(1).max(200),
           })
           .strict(),
-        handler: (caller: Caller, input: FeedInput) => feed.post(caller, input),
+        handler: async (caller: Caller, input: FeedInput) => await feed.post(caller, input),
       },
       {
         name: 'feed.get',
         description: 'Read an immutable post in the current project.',
         inputSchema: z.object({ postId: z.string().min(1) }).strict(),
         readOnly: true,
-        handler: (caller: Caller, input: { postId: string }) => feed.get(caller, input.postId),
+        handler: async (caller: Caller, input: { postId: string }) =>
+          await feed.get(caller, input.postId),
       },
       {
         name: 'feed.list',
@@ -46,7 +47,7 @@ export const feedToolsPlugin = {
           })
           .strict(),
         readOnly: true,
-        handler: (caller: Caller, input: FeedListInput) => feed.list(caller, input),
+        handler: async (caller: Caller, input: FeedListInput) => await feed.list(caller, input),
       },
       {
         name: 'feed.activity',
@@ -54,7 +55,8 @@ export const feedToolsPlugin = {
           'Read durable activity events for the current project. after is an exclusive event ID cursor, independent of the feed post sequence.',
         inputSchema: z.object({ after: z.number().int().nonnegative().optional() }).strict(),
         readOnly: true,
-        handler: (caller: Caller, input: { after?: number }) => feed.activity(caller, input.after),
+        handler: async (caller: Caller, input: { after?: number }) =>
+          await feed.activity(caller, input.after),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));

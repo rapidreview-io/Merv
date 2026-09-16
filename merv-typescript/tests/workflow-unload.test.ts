@@ -33,9 +33,9 @@ function bounded<T>(promise: PromiseLike<T>, message: string): Promise<T> {
   });
 }
 
-async function until(check: () => boolean, message: string) {
+async function until(check: () => boolean | Promise<boolean>, message: string) {
   const deadline = Date.now() + 5000;
-  while (!check()) {
+  while (!(await check())) {
     assert.ok(Date.now() < deadline, message);
     await delay(5);
   }
@@ -47,7 +47,7 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
   return JSON.parse((result.content as { type: string; text: string }[])[0].text);
 }
 
-test('workflow withdrawal removes every tool before draining a held catalog call', async () => {
+test('workflow withdrawal drains task calls and restores domain and assignment tools', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-workflow-unload-'));
   const app = await createApp({ directory, api: true, port: 0 });
   const client = new Client({ name: 'workflow-unload-regression', version: '1' });
@@ -56,7 +56,7 @@ test('workflow withdrawal removes every tool before draining a held catalog call
   let pending: Promise<any> | undefined;
   let unloading: Promise<void> | undefined;
   try {
-    const credentials = app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.bootstrap({
       projectName: 'Workflow removal',
       actorName: 'Operator',
     });
@@ -75,8 +75,8 @@ test('workflow withdrawal removes every tool before draining a held catalog call
       terminal: ['done'],
       edges: [],
     };
-    app.ctx.workflows.register(definition);
-    const instance = app.ctx.workflows.start(caller, {
+    await app.ctx.workflows.register(definition);
+    const instance = await app.ctx.workflows.start(caller, {
       workflow: definition.name,
       requestId: 'before-unload',
     });
@@ -84,8 +84,19 @@ test('workflow withdrawal removes every tool before draining a held catalog call
       title: 'Independent evidence',
       content: 'Retained during workflow removal.',
     });
+    const brief = await call(client, 'artifact.create', {
+      title: 'Task brief',
+      content: 'Goal: Keep task durable.\nDone when: Survive workflow removal.',
+    });
+    const task = await call(client, 'task.create', {
+      title: 'Durable task',
+      goal: 'Keep task durable.',
+      checks: ['Survive workflow removal.'],
+      briefId: brief.id,
+      requestId: 'task-before-unload',
+    });
     const provider = app.getFiber('workflows')!;
-    const adapter = app.getFiber('workflows-tools')!;
+    const adapter = app.getFiber('tasks-tools')!;
     const original = {
       state: app.ctx.state,
       scope: app.ctx.scope,
@@ -95,47 +106,51 @@ test('workflow withdrawal removes every tool before draining a held catalog call
       tools: app.ctx.tools,
       api: app.ctx.api,
     };
-    const workflowNames = ['workflow.catalog', 'workflow.get', 'workflow.history', 'workflow.list'];
     const toolsBefore = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(
       toolsBefore.filter((name) => name.startsWith('workflow.')),
-      workflowNames,
+      ['workflow.assignment', 'workflow.begin', 'workflow.status_and_next'],
     );
+    const taskNames = toolsBefore.filter(
+      (name) => name.startsWith('task.') || name.startsWith('workflow.'),
+    );
+    assert.equal(taskNames.length, 11);
+    assert.ok(taskNames.includes('task.mark_failed'));
 
-    // Catalog is the last registration in the adapter. The old generator waited
-    // for this disposer before withdrawing its other three registrations.
-    const catalog = app.ctx.tools.list().find((tool) => tool.name === 'workflow.catalog')!;
-    const originalHandler = catalog.handler;
-    catalog.handler = async (actor, input) => {
+    // Hold an admitted task response while Cordis suspends the engine's consumers.
+    const taskGet = (await app.ctx.tools.list()).find((tool) => tool.name === 'task.get')!;
+    const originalHandler = taskGet.handler;
+    taskGet.handler = async (actor, input) => {
+      const result = await originalHandler(actor, input);
       entered.resolve();
       await release.promise;
-      return originalHandler(actor, input);
+      return result;
     };
-    pending = call(client, 'workflow.catalog');
+    pending = call(client, 'task.get', { taskId: task.id });
     void pending.catch(() => undefined);
-    await bounded(entered.promise, 'Catalog handler was not admitted');
+    await bounded(entered.promise, 'Task handler was not admitted');
     let disposed = false;
     unloading = app.setEnabled('workflows', false).then(() => {
       disposed = true;
     });
     void unloading.catch(() => undefined);
     await until(
-      () => !app.ctx.tools.list().some((tool) => tool.name === 'workflow.catalog'),
-      'Catalog registration was not withdrawn',
+      async () => !(await app.ctx.tools.list()).some((tool) => tool.name === 'task.get'),
+      'Task registration was not withdrawn',
     );
-    assert.equal(disposed, false, 'Provider must retain the admitted catalog call');
+    assert.equal(disposed, false, 'Provider must retain the admitted task call');
     assert.equal(adapter.state, FiberState.UNLOADING);
     assert.equal(app.ctx.get('workflows'), undefined);
 
     const toolsDuring = (await client.listTools()).tools.map((tool) => tool.name);
+    assert.ok(toolsDuring.includes('review.submit'), 'Generic review routing stays available');
     assert.deepEqual(
-      toolsDuring.filter((name) => name.startsWith('workflow.')),
+      toolsDuring.filter((name) => taskNames.includes(name)),
       [],
-      'Every workflow tool must withdraw before any admitted call finishes',
+      'Every task tool must withdraw before the admitted call finishes',
     );
-    for (const name of workflowNames) {
-      const args =
-        name === 'workflow.get' || name === 'workflow.history' ? { instanceId: instance.id } : {};
+    for (const name of taskNames) {
+      const args = {};
       await assert.rejects(app.ctx.tools.call(name, caller, args), { code: 'unknown_tool' });
       const result = await client.callTool({
         name,
@@ -161,11 +176,8 @@ test('workflow withdrawal removes every tool before draining a held catalog call
       assert.equal(app.ctx.get(name), service, `${name} was replaced`);
 
     release.resolve();
-    const result = await bounded(pending, 'Admitted catalog did not finish');
-    assert.ok(
-      result.some((graph: { name: string }) => graph.name === 'independent'),
-      'The held handler must finish against its original provider',
-    );
+    const result = await bounded(pending, 'Admitted task response did not finish');
+    assert.deepEqual(result, task);
     await bounded(unloading, 'Workflow provider did not finish disposal');
     assert.equal(provider.state, FiberState.DISPOSED);
     assert.equal(adapter.state, FiberState.PENDING);
@@ -174,16 +186,17 @@ test('workflow withdrawal removes every tool before draining a held catalog call
     assert.notEqual(app.getFiber('workflows'), provider);
     await until(
       () => adapter.state === FiberState.ACTIVE,
-      'Existing workflow adapter did not reactivate',
+      'Existing task adapter did not reactivate',
     );
     await until(
-      () => app.ctx.tools.list().some((tool) => tool.name === 'task.get'),
+      async () => (await app.ctx.tools.list()).some((tool) => tool.name === 'task.get'),
       'Task tools did not reactivate',
     );
     const restored = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(restored, toolsBefore);
     assert.equal(new Set(restored).size, restored.length);
-    assert.deepEqual(await call(client, 'workflow.get', { instanceId: instance.id }), instance);
+    assert.deepEqual(await call(client, 'task.get', { taskId: task.id }), task);
+    assert.deepEqual(await app.ctx.workflows.get(caller, instance.id), instance);
     assert.equal(app.ctx.api.url, url);
   } finally {
     release.resolve();

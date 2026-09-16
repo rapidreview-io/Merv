@@ -1,0 +1,82 @@
+{
+  "date": "2026-09-14",
+  "scope": "Persistent work-item prerequisites integrated into Workflows, Tasks, context, guidance and UI",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-dependencies-suite.log",
+    "tests": 221,
+    "pass": 221,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "pythonComparison": {
+    "tests": 29,
+    "status": "passed",
+    "modules": [
+      "tests.research_core.test_tasks",
+      "tests.workflow.test_experiment_graph",
+      "tests.research_core.test_experiment_runtime"
+    ]
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiBuild": "passed",
+    "uiTypecheck": "passed",
+    "format": "passed",
+    "diffWhitespace": "passed"
+  },
+  "newTests": {
+    "genericGroups": 6,
+    "taskIntegrationGroups": 7,
+    "httpMcp": "passed"
+  },
+  "regressionsFixed": [
+    "Eligible operators receive dependency-failure recovery guidance even when delivery permission fails first.",
+    "Adding downstream work does not change the upstream assignment context retry: reverse links remain live task views, while forward prerequisites stay in context."
+  ],
+  "localReview": {
+    "status": "no_material_findings",
+    "external": false,
+    "scope": "Source and test inspection of cycle/scope safety, dangling targets, pinned semantics, rollback/replay, guidance permissions, lifecycle and context stability"
+  },
+  "composition": {
+    "pluginEntrypoints": 28,
+    "directCordisDependencies": 58,
+    "domainTools": 26,
+    "withUiTools": 28
+  },
+  "fable": {
+    "status": "earlier_exact_packet_approval_pending",
+    "newSubmission": false,
+    "report": "docs/reviews/workflow-guidance-fable.md"
+  },
+  "browser": {
+    "status": "earlier_sign_in_approval_pending",
+    "newAttempt": false,
+    "visualVerificationClaimed": false
+  },
+  "liveModel": {
+    "newRun": false,
+    "previousEvidence": "verification/workflow-guidance-live.json"
+  },
+  "limits": [
+    "Real experiment/reflection programs are not implemented; generic cross-program completion semantics are tested.",
+    "Sessions, begin/dispatch and runner are not implemented; their programs must use the shared checker at the appropriate execution gate.",
+    "Public task dependencies are creation-only; private program composition has no public edit/removal tool.",
+    "Prerequisite records and references enter context; upstream artifact contents are not automatically copied."
+  ],
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "53578f78247eb37b3c918f3f316bfed5ac7959ba3f960145399ab17ebca66915",
+    "packages/contracts/src/workflow-guidance.ts": "5466192256dd36dc46731551eb4ab89208f6aabebea42b539c07af9f62a3e959",
+    "packages/workflows/src/dependencies.ts": "f14bc404616e897a1db97691b19b98052a1c6215d8b7b04194165873aabd1a20",
+    "packages/workflows/src/index.ts": "ed31d64aab136ad54233164749705372dd09fccb031515a607e43764f8cca7ac",
+    "packages/workflows/src/evaluation.ts": "af560bb688e98d12a35aa3d645c692726978b61a7571fcdd6c07ee32616418fd",
+    "packages/tasks/src/index.ts": "33a3be68186fd8befb85f2cc03925c4f5c74a81a71043f0a73953ba83bf5071b",
+    "packages/tasks/src/tools.ts": "6bc08ca8fa720a665f1e938c284d8d8175df7be0ee4c4a409badcfafcdffced7",
+    "packages/ui/web/views/tasks.tsx": "108700391efc5e1e6616380ef50b230a06c87a64ad81f0d320a504220fe135b8",
+    "tests/workflow-dependencies.test.ts": "41cb6c9cee9bb8c75f5569548bfbce0fa52640626097ace410088648a56d0cf6",
+    "tests/task-dependencies.test.ts": "35267ab86da21e793f66e48af314d3f4586e656a591c8a8dc9ac825ba8ea56e6"
+  }
+}

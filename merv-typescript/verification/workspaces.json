@@ -1,0 +1,174 @@
+{
+  "date": "2026-09-15",
+  "scope": "Existing Runner Git lifecycle and Sessions immutable workspace metadata, with exact native handoff, restart recovery and integrated UI projection",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-workspaces-final-suite.log",
+    "tests": 490,
+    "pass": 490,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-workspaces-final-build.log"
+    },
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-workspaces-final-typecheck.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-workspaces-final-ui-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-workspaces-final-ui-typecheck.log"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-workspaces-final-format.log"
+    },
+    "diffWhitespace": {
+      "status": "passed",
+      "command": "git diff --check"
+    },
+    "recordHashesAndLinks": {
+      "status": "passed",
+      "sourceFiles": 30,
+      "liveScriptHashes": 1,
+      "localDocumentationLinks": 230,
+      "missingLinks": 0
+    }
+  },
+  "regressions": [
+    "Private Git source isolation; strict full commit pins; persistent history and per-base lineage with disjoint checkout roots and collision-free Git-safe namespaces",
+    "Monotonic checkout ownership is durable before prepare; unproven/foreign paths and uncertain worker ownership are preserved and cannot be reused",
+    "Capture requires confirmed terminal process, limits changed files, disables unsafe Git hooks/filter/config behavior, rejects read-only dirtiness or HEAD drift",
+    "Immutable attachments/results survive lease closure, restart and exact replay; source/runner/host/assignment identity and read-only policy are enforced",
+    "Lost final result replies replay once; unacknowledged captures retain capacity across controller restart; lost attach and lease-closure replies are fenced before cleanup",
+    "Final workspace events carry immutable policy/revision/workflow identity, enabling domain programs to wait for capture without a Sessions runtime dependency",
+    "Actual native prompt probe exposed repository skill discovery; bounded collector and explicit per-path disable prevent automatic repository skill instructions",
+    "HTTP summary retains frozen declared workspace mode before attach or after prepare failure, and actual UI component renders five workspace states correctly"
+  ],
+  "composition": {
+    "pluginEntrypoints": 33,
+    "serviceProviders": 19,
+    "serverProviders": 18,
+    "machineProviders": 1,
+    "directCordisDependencies": 68,
+    "defaultServerEntries": 30,
+    "domainApiEntries": 23,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugins": 0,
+    "newDependencies": 0,
+    "newAgentTools": 0
+  },
+  "live": {
+    "status": "passed",
+    "record": "verification/workspaces-live.json",
+    "freshAgents": 2,
+    "shellCalls": 3,
+    "successfulToolCalls": 2,
+    "failedToolCalls": 0,
+    "finalWorkflowState": "done",
+    "exactCapturedCommitVerified": true,
+    "sourceAndPrivateCentralUnchanged": true,
+    "allLocalLaunchesConfirmedStopped": true,
+    "ephemeralCheckoutDeleted": true,
+    "timing": "Live run preceded the final declared-workspace-mode summary/UI correction; final suite and separate component check cover it."
+  },
+  "ui": {
+    "status": "component_render_verified",
+    "browserStatus": "unavailable_empty_browser_inventory",
+    "httpEndpoints": 2,
+    "sessionRows": 5,
+    "states": [
+      "persistent captured",
+      "ephemeral attached",
+      "persistent not attached",
+      "ephemeral preparation failed",
+      "scratch"
+    ],
+    "log": "/private/tmp/merv-workspace-ui-ssr.log",
+    "artifact": "/private/tmp/merv-workspace-ui-review.html",
+    "focusedTests": 13,
+    "testLog": "/private/tmp/merv-workspace-ui-summary-tests.log",
+    "syntheticServerStopped": true
+  },
+  "review": {
+    "local": "Independent Python/Git, server/HTTP, controller recovery, native-profile, UI and live-evidence reviews completed. Concrete findings were corrected and verified.",
+    "recoveryTests": {
+      "tests": 2,
+      "status": "passed",
+      "log": "/private/tmp/merv-workspace-recovery-review-final.log"
+    },
+    "profileAudit": {
+      "document": "docs/RUNNER_PROFILE_ISOLATION.md",
+      "cli": "codex-cli 0.155.0-alpha.2",
+      "actualRequestProbe": "/private/tmp/merv-codex-exec-skill-audit.json",
+      "gitSandboxProbe": "/private/tmp/merv-codex-git-sandbox-audit.json",
+      "scope": "Local request inspection intentionally stopped before model generation; native Git sandbox probe ran outside temporary-directory grants."
+    },
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "sha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review previously rejected sending that internal architecture payload without specific payload/destination approval. No new payload export or retry occurred."
+    }
+  },
+  "pythonReference": {
+    "tests": 24,
+    "status": "passed",
+    "log": "/private/tmp/merv-workspace-reference-tests.log",
+    "scope": "Workspace preparation, late capture and durable reviewed publication contracts",
+    "intentionalDifference": "Missing reference bases never implicitly fall back to central. Initial consolidation must declare an explicit initial base or versioned policy."
+  },
+  "trustBoundary": "Server workspace records are source-authenticated observations, not server verification of Git objects. Private central is machine-local; capture alone does not publish.",
+  "remaining": [
+    "Independently reviewed immutable code proposals, durable publication intent/bound receipt and expected-head compare-and-swap",
+    "Supported native agent Git operations and cross-machine Git object transport",
+    "Machine pairing, source rotation, operational settings editor, trace delivery and telemetry",
+    "Actual experiment/reflection/consolidation programs",
+    "Asynchronous State and Postgres provider",
+    "Production shared login and real-service deployment verification"
+  ],
+  "runtime": {
+    "node": "v22.13.1"
+  },
+  "sourceSha256": {
+    "src/cli.ts": "54890d585273a78f094be77a5c91a96fe965457a78d0e085616cd7a6328a860b",
+    "config/runner.git.example.json": "c678e6a009028d4c806046fc2c43aca5f25a5a959306bb0e1168b6aa76b48171",
+    "packages/contracts/src/index.ts": "ac0003034ae78354b7f2a93453596a865166ec06267cf9d4079e32ed13df70d3",
+    "packages/contracts/src/workspace.ts": "0cfcd6584106a4159577a9fa0e8972f133b8fa523bd65d2335b2bb847b2505f9",
+    "packages/sessions/src/index.ts": "682d76b70162b510a9068ac692023173e81188959c5979fc87fa2a895d22d44b",
+    "packages/sessions/src/types.ts": "bef6afc433ddef03a13b7e273202aba66684d960bf1a8cee41dd125960c7a4c5",
+    "packages/sessions/src/dispatch.ts": "67476ff7e6ff56ba128029d0381ef03e36004013fdb07e075d8af9d29b64953b",
+    "packages/api/src/types.ts": "59e64b2924c8e488fbb88c0857d1333bb2f92321961a86e13173043e266c74db",
+    "packages/api/src/http.ts": "fa14241396814ac60f28b1cb8b07b1bbd3ce5264c587c2a943f3bf13e5a97de4",
+    "packages/ui/web/views/sessions.tsx": "3351304b629fdbc65d354bef825711fed913612f860bc6ea8f71a3800ab31a6a",
+    "tests/session-workspaces.test.ts": "348a1bd6818870ab7eb9ebf661796ba7cc7cedbf97b63766c104d7b148714cea",
+    "tests/runner-workspaces.test.ts": "d2ccd05aee1a29f8dfc4c8c3b83f80519e94774649bb1dcd582395fc1e23c429",
+    "tests/runner-workspace-integration.test.ts": "71b8a6033bcc1f2279588287e83628dff150039ee645fa83ba366b42f27b9af0",
+    "tests/runner-workspace-recovery.test.ts": "9e0b9cba12ca7be9416e5ad07baff6449f606f2f7ba93c0ae66157d32e802bdf",
+    "tests/runner-profiles.test.ts": "5e0896fa63ed87fd6e4a7bdee5bd06896b2bd6a3dfca3450d007211e72776fa9",
+    "tests/runner-cli.test.ts": "fc2b75e2a86e35d6225bab64cc0ab6eaed3c3ebbc445a40f6f724bd1f748250b",
+    "tests/runner-client.test.ts": "5fdee857e114562f18204dcad4e1ea886538c9a0ebb65dbaa3d0bb8829bdceb6",
+    "tests/fixtures/runner-git-worker.mjs": "96c34e65b268f02b865c5327861c197ddfbe21ca37225341b18c14492569852e",
+    "scripts/live-runner-workspace.ts": "3177c659fc16382783690b0b94982444b90db79310b8f1a7e0d19f3c0fd3998b",
+    "docs/WORKSPACES.md": "a194048774ec01ad1cb534fda808c93b05cf6c4bb279d487744053b4d03651f9",
+    "docs/RUNNER_PROFILE_ISOLATION.md": "f9f0972461c52ae5393a5e17dc56f936fa97646035c643014c3554e0fbe16a4f",
+    "config/default.json": "69201ce38a186cc545a32d213a58e1999390c28bdf03f422ef2dc79ff2fc6981",
+    "packages/runner/src/client.ts": "1bf24d4c8dad86e94c4cdc7329625f65f2f144368654c3a93da397369772c243",
+    "packages/runner/src/index.ts": "4e220e281d72e98b3ac41765bb44890bdd1f98fe902316ab2f014c28d6edb8d6",
+    "packages/runner/src/ledger.ts": "ab9dc02370300308f5ef5737808bc8c3b1051537f287be64c9f45e33dce7559e",
+    "packages/runner/src/process-host.ts": "110f97e504c38674af337aed1adfffc86fa39aa1b15900913444488647591be4",
+    "packages/runner/src/profiles.ts": "557d6fa42a212503eb3e82b158a46a7c70f455b7831865a25d6a059322322e8f",
+    "packages/runner/src/supervisor.mjs": "f1f09d97161bbda5d21014706a30d68bf20f3b5a2098091f7910af6783c5ccd3",
+    "packages/runner/src/types.ts": "128e059eae6ce09c5c61974f92364564047c19e271b0bfa6583f2531be32dafd",
+    "packages/runner/src/workspaces.ts": "6fdd79ca70b502a2856dd1282f380591bfafb344423fc2f04211aafe56ac7c15"
+  }
+}

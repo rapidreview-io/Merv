@@ -51,6 +51,15 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
   if (!Array.isArray(input.edges)) throw new TypeError('Workflow edges must be an array');
   if (input.managed !== undefined && typeof input.managed !== 'boolean')
     throw new TypeError('Workflow managed must be boolean');
+  if (
+    input.blocksStarts !== undefined &&
+    (!Array.isArray(input.blocksStarts) ||
+      input.blocksStarts.some(
+        (name) => typeof name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/.test(name),
+      ) ||
+      new Set(input.blocksStarts).size !== input.blocksStarts.length)
+  )
+    throw new TypeError('Blocked workflow types must be unique identifiers');
   const edges = new Set<string>();
   for (const edge of input.edges) {
     if (!edge || !states.has(edge.from) || !states.has(edge.to))
@@ -89,5 +98,8 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
         .sort((a, b) => `${a.from}:${a.action}`.localeCompare(`${b.from}:${b.action}`)),
     ) as unknown as WorkflowDefinition['edges'],
     managed: input.managed ?? false,
+    ...(input.blocksStarts === undefined
+      ? {}
+      : { blocksStarts: Object.freeze([...input.blocksStarts].sort()) as unknown as string[] }),
   });
 }

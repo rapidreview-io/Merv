@@ -1,0 +1,72 @@
+{
+  "verifiedAt": "2026-09-15T00:32:40.215700+00:00",
+  "status": "passed",
+  "scope": "Durable domain events, revoked-review claim recovery, task-type context recipes and saved checkpoints. Existing work and concurrent browser implementation were preserved.",
+  "checks": {
+    "typecheck": "passed",
+    "build": "passed",
+    "format": "passed",
+    "gitDiffWhitespace": "passed",
+    "suite": {
+      "tests": 185,
+      "pass": 185,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  },
+  "newProviders": {
+    "domainEvents": ["state"],
+    "contextBuilder": ["state", "scope", "artifacts"]
+  },
+  "newTools": ["task.context", "task.checkpoint"],
+  "claimContract": "review.start returns claimId; review.submit, review context and review checkpoints require the current claimId.",
+  "recipes": ["task.work@1", "experiment.plan@1", "project.reflection@1", "task.review@1"],
+  "verifiedBehaviors": [
+    "Handler effects and cursor roll back together; retry commits once.",
+    "A failed consumer does not block independent consumers.",
+    "Unloaded consumers resume durable progress after reload/restart.",
+    "Revocation remains effective while Domain Events and Reviews are unloaded.",
+    "Revoked initiators do not prevent trusted review cleanup.",
+    "Review recovery preserves evidence and task revision; stale claims fail.",
+    "Completed verdicts survive revocation.",
+    "Existing review databases migrate open claims without rewriting verdicts.",
+    "Required context, budgets, scope, source hashes, recipe versions and immutable packages are enforced.",
+    "Custom task types register recipes without adapter plugins.",
+    "Replacement context includes recovery cause, saved checkpoints, pinned background and evidence.",
+    "Context/checkpoint tools work through real local HTTP/MCP and context packages survive two restarts."
+  ],
+  "nativeDomainTools": 24,
+  "explicitConfigurationToolsWithUi": 26,
+  "architecture": {
+    "plugins": 27,
+    "providers": 16,
+    "toolAdapters": 5,
+    "uiAdapters": 6,
+    "dependencies": 56,
+    "defaultEntries": 25
+  },
+  "testLog": "/private/tmp/merv-recovery-context-suite.log",
+  "sourceSha256": {
+    "packages/domain-events/src/index.ts": "68258ea87218de0595644d25684917b130966afea1ff896c00ea934ed27a1a8d",
+    "packages/context-builder/src/index.ts": "33a149137b48434dba831add0d44cf0956cb9cf5c613a52d59b4048cbe8cc567",
+    "packages/contracts/src/index.ts": "74d57a40cc6c68f54dbf7ae2479ff78e61cb3c44e21c13ebb9fcfe1cf87296a8",
+    "packages/state/src/index.ts": "e04d2a715fb9825240bc240d7d0b5c1a92d9da6614c9e7040f6fc93f71ec3d32",
+    "packages/scope/src/index.ts": "85cf1dc8b5d41777613a11cf43702153cb134ddbc1c39c73c45695c53932bd32",
+    "packages/reviews/src/index.ts": "2dc52bed9ddfd4aae1f7d1be6b6681d856eef08af4371f09899be4d985422d4b",
+    "packages/tasks/src/index.ts": "cc6ee958e618ca3cd497316a04ddef1d7acc8a5d1fbd04ab0ef3af78feae3824",
+    "packages/tasks/src/definitions.ts": "f4474e6eb25009d7a254135ea44f74c2df51dfec14f445007bab2e7063c2c567",
+    "packages/tasks/src/tools.ts": "abf2c92fa42b9dacc30a308320d14dcc88acce30fe97f02d48a72aeb92ad75b1",
+    "tests/domain-events.test.ts": "eec29f5511a09ee17e4ec409a3ec24ee1dcecbe2324641f6060183fa7cdeb3e3",
+    "tests/context-builder.test.ts": "f15c77d160d422f6b518539ccf807f8ce9aa776076a1086707374437c7711e8c",
+    "tests/app.test.ts": "113b0661329cc241e71af27e00fc8a97f54669ddec32a84cc4f9ec2623ed3ed0"
+  },
+  "limits": [
+    "Single application runtime per database; synchronous local event handlers.",
+    "Event history retained in full; no pruning or automatic failed-event skipping.",
+    "UTF-8 context inputs and explicit character budgets.",
+    "No automatic agent launcher, work leases, remote cancellation or production Nisa rollout."
+  ],
+  "fableFeedbackUsed": false,
+  "nodeVersion": "v22.13.1"
+}

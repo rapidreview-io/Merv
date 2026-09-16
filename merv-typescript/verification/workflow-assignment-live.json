@@ -1,0 +1,262 @@
+{
+  "status": "passed",
+  "localRunDirectory": "/private/tmp/merv-assignment-live-20260915-01",
+  "freshAgents": 3,
+  "serverRestarts": 2,
+  "counts": {
+    "toolCalls": 42,
+    "successfulCalls": 39,
+    "expectedRoleDenials": 3,
+    "guidanceCalls": 10,
+    "assignmentCalls": 3,
+    "beginCalls": 4,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "assignmentChecks": {
+    "bothAgentsReadAssignments": true,
+    "bothAgentsRepeatedBegin": true,
+    "exactlyTwoStartEvents": true,
+    "startsSurvivedTwoRestarts": true,
+    "startAttributionMatchesActors": true
+  },
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "structuredReviewPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "phases": [
+    {
+      "phase": "producer",
+      "threadId": "01a0a31a-c203-7323-85b3-3fe2ce978e8c",
+      "exitCode": 0,
+      "toolCalls": 13,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.create",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed"
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    },
+    {
+      "phase": "reviewer",
+      "threadId": "01a0a31b-ca60-7582-9467-c4b6b53f61cc",
+      "exitCode": 0,
+      "toolCalls": 19,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "phase": "observer",
+      "threadId": "01a0a31d-36f1-73a0-bf83-2366a1993a17",
+      "exitCode": 0,
+      "toolCalls": 10,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.list",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    }
+  ],
+  "taskId": "wf_54c5583569f94866a637fbf0aaa88e3d",
+  "taskState": "done",
+  "taskRevision": 2,
+  "workStarts": [
+    {
+      "instanceId": "wf_54c5583569f94866a637fbf0aaa88e3d",
+      "projectId": "project_981e37ecd1f849f681421fac9ba7f19b",
+      "workflow": "task",
+      "version": 2,
+      "state": "in_progress",
+      "revision": 0,
+      "actorId": "actor_15f2612438d34f6bb9176767fb7cfc65",
+      "startedAt": "2026-09-15T03:27:39.351Z",
+      "eventId": 8
+    },
+    {
+      "instanceId": "wf_54c5583569f94866a637fbf0aaa88e3d",
+      "projectId": "project_981e37ecd1f849f681421fac9ba7f19b",
+      "workflow": "task",
+      "version": 2,
+      "state": "in_review",
+      "revision": 1,
+      "actorId": "actor_7b626735db6a49699d0a7de140b67ee3",
+      "startedAt": "2026-09-15T03:28:56.041Z",
+      "eventId": 16
+    }
+  ],
+  "rawReportSha256": "d985adba18986fd709c95a053e8f13b551c0bb5145339abc05bd0a684b0b289c",
+  "transcriptSha256": {
+    "producer": "7c2cbadc4dcfcf4a3daba40ca07e12f9bfcfa1a20d13eed2ed046b714586ebad",
+    "reviewer": "54fd64a515096a45752869217121622354d5d46d37e34c8094d4d1ee6727dace",
+    "observer": "a83b63b14520cd7834f9799eb20bfcaff8a8cd59fc5c045ef2dcbe6608d128ba"
+  },
+  "credentialsIncluded": false
+}

@@ -1,0 +1,461 @@
+{
+  "capturedUtc": "2026-09-16T07:22:22.236863+00:00",
+  "packetBytes": 299109,
+  "packetSha256": "f14f1a09aec0be1de28826b57cd2a98da13e4f9c1b14fb093b85acfd29edbb50",
+  "files": [
+    {
+      "path": "package.json",
+      "sha256": "e9c220ab59026064f2b66d5ce3cdc4523403ae8a1378e4ce1ca614234d389d01",
+      "ranges": [
+        [
+          1,
+          54
+        ]
+      ],
+      "lines": 54
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "43c9c201f67263fd8378ac164785aa342b64416b96dcc15f1226a3d304919cb0",
+      "ranges": [
+        [
+          1,
+          16
+        ]
+      ],
+      "lines": 16
+    },
+    {
+      "path": "config/production.example.json",
+      "sha256": "ac19b2bfe3f9e88bd2f4579c570fb003b2382b94a4c6ffcceb58d10191b17057",
+      "ranges": [
+        [
+          1,
+          259
+        ]
+      ],
+      "lines": 259
+    },
+    {
+      "path": "src/config.ts",
+      "sha256": "b4ea9dc31f4d6c636aa29ecd4d322e94087fa6ee0a27e433131da73cd02f449a",
+      "ranges": [
+        [
+          1,
+          180
+        ]
+      ],
+      "lines": 233
+    },
+    {
+      "path": "src/app.ts",
+      "sha256": "1a4c4beb038a6063650297ebd14f756a2a74ca3702ef4878590c623002ccc302",
+      "ranges": [
+        [
+          1,
+          169
+        ]
+      ],
+      "lines": 169
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "sha256": "52f8c42c4557b63e11b8562781d8ae9d51ea4bec5c369eeef95787f512aeb32a",
+      "ranges": [
+        [
+          60,
+          180
+        ],
+        [
+          265,
+          350
+        ],
+        [
+          630,
+          747
+        ]
+      ],
+      "lines": 1002
+    },
+    {
+      "path": "packages/state/src/base.ts",
+      "sha256": "a455c45423e5aa8751448f5afbdfebde00eea536ed81055fa22298b144c349c2",
+      "ranges": [
+        [
+          1,
+          371
+        ]
+      ],
+      "lines": 371
+    },
+    {
+      "path": "packages/state/src/postgres.ts",
+      "sha256": "2c8816d2a464ae2e9758c78a39d21885c9492c129653f335812a123af95aed35",
+      "ranges": [
+        [
+          1,
+          212
+        ]
+      ],
+      "lines": 212
+    },
+    {
+      "path": "packages/state/src/index.ts",
+      "sha256": "5c6e3eee93f2aa11e8666164f131d8b465b7d888a9657b4aa0935c71593c1b94",
+      "ranges": [
+        [
+          1,
+          69
+        ]
+      ],
+      "lines": 69
+    },
+    {
+      "path": "packages/blobs/src/index.ts",
+      "sha256": "9ae2732ed468b09efb4628d51e153a4838e6cadf537ab5488098d47274e093ce",
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "lines": 65
+    },
+    {
+      "path": "packages/blobs/src/s3.ts",
+      "sha256": "870db3c352d791bb840c2abbdfb0a940a70469df029d6aceea56d62941f9f50b",
+      "ranges": [
+        [
+          1,
+          222
+        ]
+      ],
+      "lines": 222
+    },
+    {
+      "path": "packages/identity/src/index.ts",
+      "sha256": "b975d6ac126ae7f7c5a4cbc9e084b64d6a944ce3b4dd49f68488b17b79604f12",
+      "ranges": [
+        [
+          1,
+          273
+        ]
+      ],
+      "lines": 273
+    },
+    {
+      "path": "packages/api/src/http.ts",
+      "sha256": "2556dc311e5fb92fe40f7826054e4d910d88c17462d9a4dc489cc92cd98b9bd9",
+      "ranges": [
+        [
+          285,
+          586
+        ],
+        [
+          777,
+          925
+        ]
+      ],
+      "lines": 923
+    },
+    {
+      "path": "packages/api/src/index.ts",
+      "sha256": "63a131aa8a960b7fc571027373efd52c5c84b55e44f1a70c009b7dba25b1c968",
+      "ranges": [
+        [
+          1,
+          67
+        ]
+      ],
+      "lines": 67
+    },
+    {
+      "path": "packages/api/src/registry.ts",
+      "sha256": "4c74103b861da288142360a8190b43a3fdadd09f2bacbcee892f83e9d14aebdc",
+      "ranges": [
+        [
+          190,
+          401
+        ]
+      ],
+      "lines": 401
+    },
+    {
+      "path": "packages/scope/src/index.ts",
+      "sha256": "0df6966cfd6ce8baa9732ed8fddd512a0ec04f4cfd46be323c40a52ea735b73a",
+      "ranges": [
+        [
+          260,
+          385
+        ],
+        [
+          560,
+          755
+        ],
+        [
+          1050,
+          1090
+        ]
+      ],
+      "lines": 1090
+    },
+    {
+      "path": "packages/scope/src/tool-policy.ts",
+      "sha256": "b09cd85b581a5eefa12aa542e320e150dd50439be0e21a7330cf48025a7f7bf6",
+      "ranges": [
+        [
+          1,
+          131
+        ]
+      ],
+      "lines": 131
+    },
+    {
+      "path": "packages/mounts/src/credentials.ts",
+      "sha256": "02ae1421b2b60610243654ed74f1a8ecbff56866f420b5e92d5aea251632fc9a",
+      "ranges": [
+        [
+          1,
+          187
+        ]
+      ],
+      "lines": 187
+    },
+    {
+      "path": "packages/mounts/src/credential-client.ts",
+      "sha256": "737b288f3174d9b90ed03906b9c4f6d2374d554fa0359be44032e02803879adb",
+      "ranges": [
+        [
+          1,
+          273
+        ]
+      ],
+      "lines": 273
+    },
+    {
+      "path": "packages/mounts/src/runtime.ts",
+      "sha256": "e7083efad87cdd64b3fbaf6e425a63e3107ece9ed7e9050a270cad858a0a33f1",
+      "ranges": [
+        [
+          140,
+          329
+        ]
+      ],
+      "lines": 328
+    },
+    {
+      "path": "packages/sessions/src/index.ts",
+      "sha256": "f744adec099e78b5d366fa9e42af6e56c401cba6e9e0b75557421f99bab0b053",
+      "ranges": [
+        [
+          180,
+          285
+        ],
+        [
+          325,
+          395
+        ],
+        [
+          1180,
+          1467
+        ]
+      ],
+      "lines": 1467
+    },
+    {
+      "path": "packages/sessions/src/observations.ts",
+      "sha256": "b33fa8fecba206dba904348ec39a10fc4470ab55e746db9c96dea5222be24580",
+      "ranges": [
+        [
+          1,
+          181
+        ]
+      ],
+      "lines": 181
+    },
+    {
+      "path": "packages/workflows/src/index.ts",
+      "sha256": "503279245885c39017165e9b5957ede562ca0cc0f03d065bc91d9936d439ad54",
+      "ranges": [
+        [
+          223,
+          325
+        ],
+        [
+          867,
+          940
+        ],
+        [
+          1340,
+          1450
+        ]
+      ],
+      "lines": 1875
+    },
+    {
+      "path": "packages/domain-events/src/index.ts",
+      "sha256": "e0c1072035ec8b9b449b7670ae7f40826b870fafaabbbfe7b4c1c4c73feacdcc",
+      "ranges": [
+        [
+          140,
+          253
+        ]
+      ],
+      "lines": 267
+    },
+    {
+      "path": "packages/ui/src/index.ts",
+      "sha256": "36c8b7e2212d709c34ce2c8f35943ac298b5cc4f0e0c912db63e0eee8583e867",
+      "ranges": [
+        [
+          1,
+          148
+        ]
+      ],
+      "lines": 148
+    },
+    {
+      "path": "packages/ui/src/static.ts",
+      "sha256": "3a7576bba786b52ae69ac22e47e876c1e139743fbfc4bec6ef476cc46876dda2",
+      "ranges": [
+        [
+          1,
+          64
+        ]
+      ],
+      "lines": 64
+    },
+    {
+      "path": "packages/ui/web/auth.ts",
+      "sha256": "e11bc80b12c4efadd8401250eeaab2467444db66a41170d7ef078c7859d26f07",
+      "ranges": [
+        [
+          1,
+          209
+        ]
+      ],
+      "lines": 209
+    },
+    {
+      "path": "packages/ui/web/api.ts",
+      "sha256": "0c97d2d5ca55c52089271fef15e0da7830e96fafc757aa677ac6552df510bcb9",
+      "ranges": [
+        [
+          1,
+          327
+        ]
+      ],
+      "lines": 327
+    },
+    {
+      "path": "packages/ui/web/session.tsx",
+      "sha256": "26cc8425ddace0896f093f2a55fb00ce95bec986a3450320a008140ed0e50a23",
+      "ranges": [
+        [
+          1,
+          455
+        ]
+      ],
+      "lines": 455
+    },
+    {
+      "path": "packages/ui/web/views/agent-sessions-panel.tsx",
+      "sha256": "8deed931db05ce36f1bec036f3da6b19e8dce926366c3be85c1d5cb2073dfdbf",
+      "ranges": [
+        [
+          1,
+          130
+        ]
+      ],
+      "lines": 423
+    },
+    {
+      "path": "packages/ui/package.json",
+      "sha256": "a0f30cdb21ee7d89f768f0bce037ce886e222c970cc4a19c4ee6fe796a23c963",
+      "ranges": [
+        [
+          1,
+          31
+        ]
+      ],
+      "lines": 31
+    },
+    {
+      "path": "packages/ui/vite.config.ts",
+      "sha256": "62f93dd737f873fce420dc9ee037069477cd709805b204d94bd0d10ae43b557b",
+      "ranges": [
+        [
+          1,
+          21
+        ]
+      ],
+      "lines": 21
+    },
+    {
+      "path": "scripts/copy-runtime-assets.ts",
+      "sha256": "642935174b6c9fb3af006736c7a64d16df8a966537e02a2c36dfe18ddf9044d5",
+      "ranges": [
+        [
+          1,
+          9
+        ]
+      ],
+      "lines": 9
+    },
+    {
+      "path": "docs/PRODUCTION_STORAGE.md",
+      "sha256": "516930e0cc189512a343a9967a13f9078f5cd6ccd7eb1af6aa10410236d1ea45",
+      "ranges": [
+        [
+          1,
+          78
+        ]
+      ],
+      "lines": 78
+    },
+    {
+      "path": "docs/PRODUCTION_BLOBS.md",
+      "sha256": "a0cb8406405c59a5390b009e796f2bab288b9ddd3aeecd397a4c1965c861ef7f",
+      "ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "lines": 38
+    },
+    {
+      "path": "docs/REMAINING_PARITY.md",
+      "sha256": "cfb5a4fe16e8db7b7959c712e81ef1294145151ae99439da14ed8a6f06923f8d",
+      "ranges": [
+        [
+          1,
+          40
+        ]
+      ],
+      "lines": 40
+    },
+    {
+      "path": "../merv/deploy/README.md",
+      "sha256": "84f95962f91504c1a6b52286f73febfe50561f58cbea9a88c82824a77862e305",
+      "ranges": [
+        [
+          1,
+          104
+        ]
+      ],
+      "lines": 92
+    },
+    {
+      "path": "../merv/deploy/Dockerfile",
+      "sha256": "750781700bddf2172cc5ebd077f77830a15dd9f2c63cfea9a6bf526ee4be1ad6",
+      "ranges": [
+        [
+          1,
+          46
+        ]
+      ],
+      "lines": 46
+    }
+  ]
+}

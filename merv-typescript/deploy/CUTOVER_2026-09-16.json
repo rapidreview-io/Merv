@@ -1,0 +1,540 @@
+{
+  "final-stage-acceptance.json": {
+    "time": "2026-09-16T19:47:46.547934+00:00",
+    "image": "merv-typescript:20260916T190552Z-be69497b-3a026ebca252",
+    "imageId": "sha256:3235cf85425ff0311e58b51d856d76fb66ff80ce136e1fc75d74259e7ca07042",
+    "sourceId": "python81final-20260916T193431Z",
+    "schema": "merv_ts_prod_20260916a",
+    "prefix": "merv-ts/merv_ts_prod_20260916a",
+    "activePlugins": 54,
+    "checks": {
+      "health": {
+        "status": 200,
+        "expected": 200
+      },
+      "ui": {
+        "status": 200,
+        "expected": 200
+      },
+      "projects_anonymous": {
+        "status": 401,
+        "expected": 401
+      },
+      "mcp_anonymous": {
+        "status": 401,
+        "expected": 401
+      },
+      "https_origin": {
+        "status": 200,
+        "expected": 200
+      },
+      "unapproved_origin": {
+        "status": 403,
+        "expected": 403
+      },
+      "auth_config": {
+        "status": 200,
+        "expected": 200
+      }
+    },
+    "compiledUiAssets": [
+      {
+        "path": "/ui/assets/index-ehyZzkjU.js",
+        "sha256": "43eed7b65643818f78c85a488a223ddb27dbf8302d9c274be03a49449f03ea17",
+        "bytes": 553695,
+        "status": 200
+      },
+      {
+        "path": "/ui/assets/index-LoFAxWkj.css",
+        "sha256": "c9f1980f292ebd62b68dad4b2ddbf5a3f98c40c972a3ba249ef1cb8674a7cb44",
+        "bytes": 24802,
+        "status": 200
+      }
+    ],
+    "backupDirectory": "/var/backups/merv/typescript-cutover/20260916T193431Z",
+    "publicCutover": false,
+    "legacyStopped": true,
+    "counts": {
+      "projects": 30,
+      "memberships": 43,
+      "artifacts": 3222,
+      "claims": 200,
+      "historyRows": 46889,
+      "nativeWorkflows": 0,
+      "nativeSessions": 0,
+      "matchingMemberships": true
+    },
+    "import": {
+      "sourceId": "python81final-20260916T193431Z",
+      "schema": "merv_ts_prod_20260916a",
+      "image": "merv-typescript:20260916T190552Z-be69497b-3a026ebca252",
+      "snapshotSha256": "7cdcdb3d2e7da55e6f0b6d1b353558fbc87669e34d02ca2c96512b394d2a019c",
+      "reportHashes": {
+        "plan": "90614e55f5b51fc3730e0ee9b5ca206bf1ba3e8dc032e86ee202b28902e756db",
+        "import": "bcb0605323e4d4bd099b92b61a54eca34d056bd136d0362eafba6546d3972246",
+        "reconcile": "1b4bf2f68f945e20764b6c3c4ee5741a82004a728b47ad92182c538d37a7d27e"
+      },
+      "sourceNativeCounts": {
+        "artifacts": 4489,
+        "claims": 200,
+        "memberships": 43,
+        "projects": 30
+      },
+      "preparedNativeCounts": {
+        "artifacts": 3222,
+        "claims": 200,
+        "memberships": 43,
+        "projects": 30
+      },
+      "historyRows": 46889,
+      "mediaReferences": {
+        "artifacts": 2938,
+        "figures": 180,
+        "linkPreviewImages": 10,
+        "postEmbeds": 0,
+        "postImages": 94
+      },
+      "verifiedMediaObjects": 2960,
+      "derivedMediaArtifacts": 284,
+      "metadataOnlyArtifacts": 1551,
+      "reconciliation": {
+        "artifactAvailabilityAndReceipt": "matched",
+        "historyRowsAndHashes": "matched",
+        "nativeRowsAndHashes": "matched"
+      },
+      "nonResumableWorkCount": 0,
+      "legacyServiceAndCaddyUnchanged": true,
+      "publicCutover": false
+    }
+  },
+  "public-acceptance.json": {
+    "time": "2026-09-16T19:48:14.723025+00:00",
+    "url": "https://experiments.rapidreview.io/ui/",
+    "image": "merv-typescript:20260916T190552Z-be69497b-3a026ebca252",
+    "imageId": "sha256:3235cf85425ff0311e58b51d856d76fb66ff80ce136e1fc75d74259e7ca07042",
+    "schema": "merv_ts_prod_20260916a",
+    "sourceId": "python81final-20260916T193431Z",
+    "activePlugins": 54,
+    "checks": {
+      "root": {
+        "status": 302
+      },
+      "health": {
+        "status": 200
+      },
+      "ui": {
+        "status": 200
+      },
+      "auth": {
+        "status": 200
+      },
+      "projects_anonymous": {
+        "status": 401
+      },
+      "mcp_anonymous": {
+        "status": 401
+      },
+      "approved_origin": {
+        "status": 200
+      },
+      "rejected_origin": {
+        "status": 403
+      }
+    },
+    "assetsVerified": 2,
+    "caddySha256": "18681d07a41ce9c9d5726e74a324f2176ae6bb1daf0397291d9d300c0eeb1d34",
+    "legacyStopped": true,
+    "sandboxRoutingPreserved": true,
+    "httpsSharedLoginConfigured": true,
+    "realAccountHttpsBrowserVerification": "pending user",
+    "publicCutover": true
+  },
+  "provider-acceptance": {
+    "schema": "merv_ts_prod_20260916a",
+    "serviceProviderAcceptance": true,
+    "realUserAuthenticationTested": false,
+    "samples": [
+      {
+        "kind": "ordinary",
+        "status": 200,
+        "disposition": "attachment",
+        "cacheControl": "private, no-store",
+        "contentType": "application/octet-stream",
+        "bytes": 3369,
+        "retainedObjectBytes": 3369,
+        "hashVerified": true,
+        "fullObjectHashPreviouslyVerifiedDuringImport": true
+      },
+      {
+        "kind": "empty",
+        "status": "absent-among-verified-imported-files",
+        "tested": false
+      },
+      {
+        "kind": "large-range",
+        "status": 206,
+        "disposition": "attachment",
+        "cacheControl": "private, no-store",
+        "contentType": "application/octet-stream",
+        "bytes": 65536,
+        "retainedObjectBytes": 4877283,
+        "hashVerified": null,
+        "fullObjectHashPreviouslyVerifiedDuringImport": true
+      }
+    ]
+  },
+  "cutover-summary": {
+    "sourceId": "python81final-20260916T193431Z",
+    "schema": "merv_ts_prod_20260916a",
+    "release": "20260916T190552Z-be69497b-3a026ebca252",
+    "backupDirectory": "/var/backups/merv/typescript-cutover/20260916T193431Z",
+    "maintenanceStartedAt": "20260916T193431Z",
+    "counts": {
+      "agent_workspaces": {
+        "original": 50,
+        "removed": 7,
+        "retained": 43
+      },
+      "artifact_figures": {
+        "original": 180,
+        "removed": 0,
+        "retained": 180
+      },
+      "artifacts": {
+        "original": 4489,
+        "removed": 0,
+        "retained": 4489
+      },
+      "claims": {
+        "original": 200,
+        "removed": 0,
+        "retained": 200
+      },
+      "consolidation_decisions": {
+        "original": 278,
+        "removed": 0,
+        "retained": 278
+      },
+      "consolidation_proposals": {
+        "original": 22,
+        "removed": 0,
+        "retained": 22
+      },
+      "events": {
+        "original": 30116,
+        "removed": 3621,
+        "retained": 26495
+      },
+      "experiment_claims": {
+        "original": 244,
+        "removed": 28,
+        "retained": 216
+      },
+      "experiments": {
+        "original": 257,
+        "removed": 34,
+        "retained": 223
+      },
+      "feed_authors": {
+        "original": 641,
+        "removed": 0,
+        "retained": 641
+      },
+      "litreview_sections": {
+        "original": 36,
+        "removed": 0,
+        "retained": 36
+      },
+      "node_dependencies": {
+        "original": 15,
+        "removed": 2,
+        "retained": 13
+      },
+      "paper_links": {
+        "original": 195,
+        "removed": 0,
+        "retained": 195
+      },
+      "papers": {
+        "original": 142,
+        "removed": 0,
+        "retained": 142
+      },
+      "post_reactions": {
+        "original": 0,
+        "removed": 0,
+        "retained": 0
+      },
+      "posts": {
+        "original": 791,
+        "removed": 45,
+        "retained": 746
+      },
+      "project_candidates": {
+        "original": 1,
+        "removed": 0,
+        "retained": 1
+      },
+      "projects": {
+        "original": 30,
+        "removed": 0,
+        "retained": 30
+      },
+      "reflection_claim_changes": {
+        "original": 198,
+        "removed": 0,
+        "retained": 198
+      },
+      "reflection_experiments": {
+        "original": 134,
+        "removed": 10,
+        "retained": 124
+      },
+      "reflection_reserved_names": {
+        "original": 2,
+        "removed": 2,
+        "retained": 0
+      },
+      "reflection_tasks": {
+        "original": 16,
+        "removed": 0,
+        "retained": 16
+      },
+      "reflections": {
+        "original": 76,
+        "removed": 4,
+        "retained": 72
+      },
+      "research_artifact_links": {
+        "original": 4487,
+        "removed": 694,
+        "retained": 3793
+      },
+      "research_objects": {
+        "original": 43,
+        "removed": 10,
+        "retained": 33
+      },
+      "research_submission_artifacts": {
+        "original": 3330,
+        "removed": 144,
+        "retained": 3186
+      },
+      "review_requests": {
+        "original": 1758,
+        "removed": 808,
+        "retained": 950
+      },
+      "review_sessions": {
+        "original": 1368,
+        "removed": 68,
+        "retained": 1300
+      },
+      "reviews": {
+        "original": 978,
+        "removed": 62,
+        "retained": 916
+      },
+      "storage_objects": {
+        "original": 872,
+        "removed": 16,
+        "retained": 856
+      },
+      "submissions": {
+        "original": 806,
+        "removed": 64,
+        "retained": 742
+      },
+      "tasks": {
+        "original": 23,
+        "removed": 0,
+        "retained": 23
+      },
+      "workflow_actions": {
+        "original": 19,
+        "removed": 7,
+        "retained": 12
+      },
+      "workflow_history": {
+        "original": 1826,
+        "removed": 1455,
+        "retained": 371
+      },
+      "workflow_instances": {
+        "original": 1059,
+        "removed": 729,
+        "retained": 330
+      },
+      "workspace_advances": {
+        "original": 17,
+        "removed": 0,
+        "retained": 17
+      }
+    },
+    "detachedRecords": 7,
+    "originalSnapshotSha256": "5d53e228e6603b4c5998e194c07e784743b73f77c7f697e319b72490f7227af3",
+    "derivedSnapshotSha256": "7cdcdb3d2e7da55e6f0b6d1b353558fbc87669e34d02ca2c96512b394d2a019c"
+  },
+  "routing": [
+    {
+      "project": "research-suite",
+      "host": "research-suite-chi.vercel.app",
+      "previousDeployment": "dpl_HXBM7C2DWX6Qbi56JJTDsJy96J9m",
+      "deployment": "dpl_H8hFbXSkJ9XSBQeyaJjsVRoYg9Jq",
+      "url": "https://research-suite-nzclqt4px-guraltoos-projects.vercel.app",
+      "checks": [
+        {
+          "path": "/merv",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/projects",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/projects/new",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/p/example/experiments",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/runner/install.sh",
+          "status": 200,
+          "location": null,
+          "contentType": "application/x-sh",
+          "verifiedLegacyBytes": true
+        },
+        {
+          "path": "/merv/.well-known/skills/index.json",
+          "status": 200,
+          "location": null,
+          "contentType": "application/json; charset=utf-8",
+          "verifiedLegacyBytes": true
+        },
+        {
+          "path": "/",
+          "status": 307,
+          "location": "/merv",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/p/example",
+          "status": 307,
+          "location": "/merv/p/example",
+          "contentType": "text/plain"
+        }
+      ],
+      "promotedAt": "2026-09-16T19:48:42.796245+00:00"
+    },
+    {
+      "project": "rr-site",
+      "host": "rapidreview.io",
+      "previousDeployment": "dpl_3a7H7GTTvweXJdtydrT5W5s2wcbn",
+      "deployment": "dpl_xhUHGiWA1atW7Pfowf4koiMxtguV",
+      "url": "https://rr-site-qpa5lxc8b-guraltoos-projects.vercel.app",
+      "checks": [
+        {
+          "path": "/merv",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/",
+          "status": 308,
+          "location": "/merv",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/projects",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/projects/new",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/p/example/experiments",
+          "status": 307,
+          "location": "https://experiments.rapidreview.io/ui/",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/merv/runner/install.sh",
+          "status": 200,
+          "location": null,
+          "contentType": "application/x-sh",
+          "verifiedLegacyBytes": true
+        },
+        {
+          "path": "/merv/.well-known/skills/index.json",
+          "status": 200,
+          "location": null,
+          "contentType": "application/json; charset=utf-8",
+          "verifiedLegacyBytes": true
+        },
+        {
+          "path": "/",
+          "status": 200,
+          "location": null,
+          "contentType": "text/html; charset=utf-8"
+        },
+        {
+          "path": "/nisa",
+          "status": 200,
+          "location": null,
+          "contentType": "text/html; charset=utf-8"
+        },
+        {
+          "path": "/docs",
+          "status": 200,
+          "location": null,
+          "contentType": "text/html; charset=utf-8"
+        },
+        {
+          "path": "/map",
+          "status": 308,
+          "location": "/nisa",
+          "contentType": "text/plain"
+        },
+        {
+          "path": "/sitemap.xml",
+          "status": 200,
+          "location": null,
+          "contentType": "application/xml"
+        }
+      ],
+      "promotedAt": "2026-09-16T19:48:47.763555+00:00"
+    }
+  ],
+  "finalHealth": {
+    "capturedAt": "2026-09-16T19:50:00.165488+00:00",
+    "typescript": "healthy",
+    "database": "healthy",
+    "typescriptRestartCount": 0,
+    "legacyRunning": false,
+    "recentStructuredLogs": {
+      "ready": 1
+    }
+  }
+}

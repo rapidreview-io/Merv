@@ -1,0 +1,42 @@
+# A separate Compose project: never run this against the legacy "deploy" project.
+name: merv-typescript
+services:
+  control:
+    image: ${MERV_TS_IMAGE:?Set the immutable TypeScript release image}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - /etc/merv/typescript.env
+    ports:
+      - 127.0.0.1:3081:3081
+    volumes:
+      - /var/lib/merv-ts:/var/lib/merv-ts
+    networks:
+      - legacy_database
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3081/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 4
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+networks:
+  legacy_database:
+    external: true
+    name: deploy_default

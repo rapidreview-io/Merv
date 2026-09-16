@@ -1,0 +1,98 @@
+{
+  "date": "2026-09-14",
+  "scope": "Workflow-owned assignment, full context preview and durable first activation",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-assignment-suite.log",
+    "tests": 274,
+    "pass": 274,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "diffWhitespace": "passed"
+  },
+  "newTestGroups": {
+    "contextPreview": 5,
+    "genericAssignment": 10,
+    "taskIntegration": 5,
+    "httpMcp": 3
+  },
+  "pythonParityAudit": {
+    "tests": 45,
+    "pass": 45,
+    "log": "/private/tmp/merv-assignment-python-parity.log"
+  },
+  "concurrency": "Two actual Node workers overlap SQLite transactions; the second enters admission only after the first commits, returning one shared start/event.",
+  "liveModel": {
+    "status": "passed",
+    "report": "verification/workflow-assignment-live.json",
+    "freshAgents": 3,
+    "serverRestarts": 2,
+    "toolCalls": 42,
+    "successfulCalls": 39,
+    "expectedRoleDenials": 3,
+    "guidanceCalls": 10,
+    "assignmentCalls": 3,
+    "beginCalls": 4,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "composition": {
+    "pluginEntrypoints": 28,
+    "directCordisDependencies": 58,
+    "domainTools": 28,
+    "withUiTools": 30,
+    "newPlugins": 0,
+    "newTools": ["workflow.assignment", "workflow.begin"]
+  },
+  "review": {
+    "local": "Separate implementation review and API review; fixed missing handoff bindings and recipe-unavailable read regression.",
+    "fable": {
+      "type": "generic_design_consultation_without_source",
+      "model": "claude-fable-5",
+      "status": "completed",
+      "report": "docs/reviews/workflow-assignment-fable-design.md",
+      "promptBytes": 1895,
+      "promptSha256": "bae77bc2e95e01b8a60f888f9fe1ff976ba40515d8126c65a94dc56f38ce6358",
+      "responseSha256": "cfbcf15479a19ab32f1e0f4a0860ef22f24a29ddeb65dc5cee511f42b2af563c",
+      "privateSourceSent": false,
+      "earlierSourcePacket": "specific_approval_still_pending_no_retry"
+    }
+  },
+  "browser": {
+    "visualSignInAttempted": false,
+    "earlierSignInApproval": "pending",
+    "uiBuild": "passed"
+  },
+  "limits": [
+    "First activation is historical accounting, not a lease, current owner or time sheet.",
+    "Existing submit-without-begin remains compatible; missing start records are not backfilled.",
+    "Tool bindings and execution.readOnly are advisory; every actual tool retains authoritative permission checks.",
+    "Assignment rendering uses bounded local artifact reads inside the SQLite writer transaction; async storage and large concurrent workloads need later design.",
+    "Full living project-document context, sessions/capabilities/heartbeat, runner/start outbox and research workflow programs remain parity gaps."
+  ],
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "a7dd5cba31a12869a1789c014cc10b5aca4fe59be7e3d98cddd42bd0594ddbd7",
+    "packages/contracts/src/workflow-guidance.ts": "79b556a7ef3bf2d21a2c057fe2fb94bfeafb23acf8b6e7376711c540128454e9",
+    "packages/workflows/src/index.ts": "b6cfb6e0aa54901deefc36155beec737d1f4c5591174f7219b457b5dc90c679a",
+    "packages/workflows/src/evaluation.ts": "6fa8a3f1a6de0c061550f980014ca9a77eb4da820b4f6c21b11e6ed7f4d84207",
+    "packages/workflows/src/assignments.ts": "c55c0be6b05cef691d25dce5149c34015902c0d22b758150956029197b75ecfa",
+    "packages/workflows/src/tools.ts": "9e68ef7e44af927d6d180c0063b9b80260c608d856e1745aea654a6bd899e8ee",
+    "packages/tasks/src/index.ts": "942c63454a36c10b3445432c27e1709a7561641ffda73c2e176f5b1b3081d023",
+    "packages/context-builder/src/index.ts": "ca1bcc62de008858ea38d6ca30f2dd5eab5b0c395435c3e0f501ef6ef970bea4",
+    "packages/ui/web/views/tasks.tsx": "134a08a412038a92f3786646671397e7ba5063b3b6ea49a20c29596d29e36d42",
+    "scripts/live-codex.ts": "41bbe72629f76a403a5aafa137a1a9531dab0c8e7cb943a5e8d3a98b82bb3f2b",
+    "tests/workflow-assignment.test.ts": "8608f27c3d73784592617b82363f4626cb91e69f3273347d96d98598302647b4",
+    "tests/fixtures/workflow-begin-worker.mjs": "065a044806a228a08bff789164c7074af57dbf197c7cb81fad9dc20f08d50ce8",
+    "tests/task-assignment.test.ts": "56cff98c9452bb7e164a04f6f7d07b44bdadc7503a377f96e3b51f4a0e8d60f5",
+    "tests/workflow-assignment-api.test.ts": "b3a2c1dc52de6801f93bdce17a025be9ebdaec06c91a5b1e558b35fa03d97370",
+    "tests/context-preview.test.ts": "29d4d77072ae8d8cc578b30018237f64b430ece947acedf0e7b2cccfb7d6585d"
+  },
+  "format": "passed"
+}

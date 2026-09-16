@@ -5,10 +5,18 @@ import { z } from 'zod';
 import { Context } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { MervError, type Actor, type Caller, type Scope } from '@merv/contracts';
+import {
+  MervError,
+  type Actor,
+  type AuthenticatedActor,
+  type Caller,
+  type Principal,
+  type Scope,
+} from '@merv/contracts';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { toolsPlugin } from '../packages/api/src/index.js';
+import type { ToolDefinition, ToolDescription } from '../packages/api/src/types.js';
 
 const alice: Actor = {
   id: 'alice',
@@ -24,19 +32,46 @@ const bob: Actor = {
   role: 'reviewer',
   active: true,
 };
-const caller: Caller = { actorId: alice.id, projectId: alice.projectId };
+const caller: Caller = {
+  actorId: alice.id,
+  projectId: alice.projectId,
+  credentialId: 'credential-alice',
+};
 
 function fixture() {
   const actors = [alice, bob].map((actor) => ({ ...actor }));
   const scope = {
-    authenticate(token: string) {
+    authenticate(token: string): AuthenticatedActor {
       const actor = actors.find(
         (candidate) => `${candidate.id}-token` === token && candidate.active,
       );
       if (!actor) throw new MervError('unauthorized', 'Invalid token', 401);
-      return actor;
+      return {
+        ...actor,
+        credential: {
+          id: `credential-${actor.id}`,
+          actorId: actor.id,
+          projectId: actor.projectId,
+          kind: 'actor',
+          createdAt: '2026-09-14T00:00:00.000Z',
+          expiresAt: null,
+          revokedAt: null,
+          previousId: null,
+        },
+      };
     },
-    require(caller: Caller) {
+    async caller(principal: Principal, projectId?: string): Promise<Caller> {
+      assert.equal(principal.kind, 'actor');
+      if (principal.kind !== 'actor') throw new Error('Fixture expects an actor credential');
+      const resolved = {
+        actorId: principal.actor.id,
+        projectId: projectId ?? principal.actor.projectId,
+        credentialId: principal.actor.credential.id,
+      };
+      await scope.require(resolved, 'read');
+      return resolved;
+    },
+    async require(caller: Caller) {
       const actor = actors.find((candidate) => candidate.id === caller.actorId && candidate.active);
       if (!actor || caller.projectId !== actor.projectId)
         throw new MervError('forbidden', 'Project access denied', 403);
@@ -56,7 +91,7 @@ function fixture() {
 
 test('registry enforces unique registration, input validation, scope and awaited disposal', async () => {
   const { tools } = fixture();
-  assert.throws(() => tools.register(tools.list()[0]!), /already registered/);
+  await assert.rejects(async () => tools.register((await tools.list())[0]!), /already registered/);
   await assert.rejects(
     tools.call('echo', caller, { message: 7 }),
     (error: unknown) => error instanceof MervError && error.code === 'invalid_input',
@@ -104,6 +139,21 @@ test('registry enforces unique registration, input validation, scope and awaited
   await assert.rejects(tools.call('echo', caller, { message: 'hi' }), /stopping/);
 });
 
+test('native registration keeps validation paired with its description when the definition schema is replaced', async () => {
+  const { tools } = fixture();
+  const definition = (await tools.list())[0]! as ToolDefinition;
+  const description = await tools.describe(caller);
+  definition.inputSchema = z.object({ message: z.number() }).strict();
+  definition.handler = (_caller, input) => ({ message: input.message, handler: 'replacement' });
+  assert.deepEqual(await tools.describe(caller), description);
+  assert.deepEqual(await tools.call('echo', caller, { message: 'registered string' }), {
+    message: 'registered string',
+    handler: 'replacement',
+  });
+  await assert.rejects(tools.call('echo', caller, { message: 7 }), /failed validation/);
+  await tools.close();
+});
+
 test('Cordis dependency disposal drains a feature tool before closing its scope provider', async () => {
   const { scope } = fixture();
   const ctx = new Context();
@@ -119,7 +169,6 @@ test('Cordis dependency disposal drains a feature tool before closing its scope 
       });
     },
   });
-  ctx.provide('access', fixtureAccess);
   await ctx.plugin(toolsPlugin);
   let release!: () => void;
   let entered!: () => void;
@@ -243,6 +292,106 @@ test('official MCP client initializes, lists tools and calls with isolated authe
   assert.equal(spoof.isError, true);
   actors[0]!.active = false;
   await assert.rejects(client.listTools());
+});
+
+test('HTTP and MCP consume the registry public description projection without rebuilding definitions', async (t) => {
+  const { scope, tools: native } = fixture();
+  const tools = new ToolRegistry(scope, fixtureAccess);
+  tools.register((await native.list())[0]!);
+  await native.close();
+  tools.register({
+    name: 'unlisted',
+    description: 'A definition excluded from this test projection',
+    inputSchema: z.object({}).strict(),
+    handler: () => null,
+  });
+  tools.createCatalog('remote').replace([
+    {
+      kind: 'mcp',
+      name: 'echo',
+      description: 'Preserve the upstream project argument',
+      title: 'Upstream echo',
+      inputSchema: {
+        type: 'object',
+        properties: { projectId: { type: 'integer', minimum: 1 } },
+        required: ['projectId'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: { upstream: { extension: ['retained'] } },
+      handler: async (_caller, input) => ({
+        content: [{ type: 'text', text: JSON.stringify(input) }],
+      }),
+    },
+  ]);
+  const canonical = tools.describe.bind(tools);
+  const original = await canonical(caller);
+  const projectSchema = original.find((tool) => tool.name === 'echo')!.inputSchema.properties!
+    .projectId;
+  assert.deepEqual(projectSchema, {
+    type: 'string',
+    minLength: 1,
+    description:
+      'Project scope. Human sessions and account machine keys must select a project; actor tokens and project machine keys default to their fixed project. Access is checked by the server.',
+  });
+  // Returned metadata is detached from both handler schemas and future descriptions.
+  original.find((tool) => tool.name === 'echo')!.inputSchema.properties!.projectId = {
+    type: 'boolean',
+  };
+  assert.deepEqual(
+    (await canonical(caller)).find((tool) => tool.name === 'echo')!.inputSchema.properties!
+      .projectId,
+    projectSchema,
+  );
+  const project = (descriptions: ToolDescription[]) =>
+    descriptions
+      .filter((tool) => tool.name !== 'unlisted')
+      .map((tool) => ({ ...tool, description: `Projected: ${tool.description}` }));
+  const expected = project(await canonical(caller));
+  const seen: Caller[] = [];
+  tools.describe = async (authenticated) => {
+    assert.ok(authenticated, 'Transport must pass authenticated caller authority');
+    seen.push(authenticated);
+    return project(await canonical(authenticated));
+  };
+  tools.list = async () => {
+    throw new Error('Transport must not rebuild descriptions from raw definitions');
+  };
+  const server = new ApiServer(scope, tools);
+  const url = await server.start();
+  const client = new Client({ name: 'description-projection-test', version: '1' });
+  t.after(async () => {
+    await client.close();
+    await server.stop();
+    await tools.close();
+  });
+  const headers = { authorization: 'Bearer alice-token', 'content-type': 'application/json' };
+  const response = await fetch(`${url}/tools`, { headers });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { tools: expected });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${url}/mcp`), { requestInit: { headers } }),
+  );
+  assert.deepEqual((await client.listTools()).tools, expected);
+  assert.deepEqual(seen, [caller, caller]);
+  const nativeCall = await fetch(`${url}/tools/echo`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ message: 'unchanged', projectId: alice.projectId }),
+  });
+  assert.deepEqual(await nativeCall.json(), { result: { message: 'unchanged', caller } });
+  const remoteCall = await client.callTool({ name: '_remote.echo', arguments: { projectId: 7 } });
+  assert.deepEqual(remoteCall.content, [{ type: 'text', text: '{"projectId":7}' }]);
+  const invalidRemote = await client.callTool({
+    name: '_remote.echo',
+    arguments: { projectId: '7' },
+  });
+  assert.equal(invalidRemote.isError, true, 'Remote schema validation still forbids coercion');
+  await assert.rejects(
+    tools.call('echo', caller, { message: 'unchanged', projectId: alice.projectId }),
+    /failed validation/,
+    'The public project envelope must not widen the native handler schema',
+  );
 });
 
 test('HTTP shutdown drains admitted operations before resolving', async () => {

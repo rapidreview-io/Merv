@@ -1,0 +1,197 @@
+{
+  "date": "2026-09-15",
+  "passed": true,
+  "scope": "Four actual production Experiment nodes through Workflows, Reviews, Context Builder, Sessions and MachineRunner on a deliberately small synthetic calculation.",
+  "report": "/private/tmp/merv-native-experiments-live-20260915-01/report.json",
+  "reportSha256": "7568710736439a82ff87c4b8a15697538cef59c0f35da1251856af0e42243c65",
+  "freshAgents": 4,
+  "successfulMcpCalls": 24,
+  "failedMcpCalls": 0,
+  "shellCalls": 5,
+  "final": {
+    "state": "complete",
+    "revision": 4,
+    "attempts": 1,
+    "immutableSubmissionRounds": 2,
+    "firstExecutionStart": "2026-09-15T11:31:50.589Z"
+  },
+  "claimUnchanged": true,
+  "otherProjectUnchanged": true,
+  "calculation": {
+    "slope": 2.0,
+    "intercept": 1.0,
+    "baselineMAE": 8,
+    "candidateMAE": 0,
+    "heldOutCount": 5,
+    "retainedCodeMatchesExecutedFile": true,
+    "retainedStdoutMatchesObservedExecution": true,
+    "reviewerReadAllFiveArtifactsAndIndependentlyRecomputed": true
+  },
+  "phases": [
+    {
+      "revision": 0,
+      "state": "planned",
+      "launchId": "launch_d7bdce93fc1755fcc9ae2da5da5aaacd",
+      "sessionId": "session_7c632f60ad0f402f81cd5acdcf6200b2",
+      "actorId": "actor_f8b55386895d417196f11264e5e34baf",
+      "threadId": "01a0a4d4-a8bd-7ea1-8bbb-1f8efe55adf1",
+      "calls": 4,
+      "commands": 0,
+      "readOnly": false,
+      "artifactReads": [],
+      "logSha256": "2733774a9d2dfda5e840d2a3291c24cd5003e1181dfa6076f5afe669d4bb07e5"
+    },
+    {
+      "revision": 1,
+      "state": "design_review",
+      "launchId": "launch_634fb6ea291868774ce00e059f8b2039",
+      "sessionId": "session_67e36eb8836f4b32a9ed41cc7cc6a10e",
+      "actorId": "actor_e2fb380bbbbe4dcdbc4f987fab91e60c",
+      "threadId": "01a0a4d5-ce59-7870-84f3-70d8d7360101",
+      "calls": 3,
+      "commands": 0,
+      "readOnly": true,
+      "artifactReads": [
+        {
+          "artifactId": "art_1a41132837c14ce69eba6fa44fc002b5",
+          "sha256": "4ab2c6641a40b13d643d7ac20e0eccb0c94cc693dcb4e207f6fc95313bcecb51",
+          "bytes": 8166,
+          "beforeVerdict": true
+        }
+      ],
+      "logSha256": "b9424f2cb4f80655e54e286f5e79bb074a9fb7694a8ff5754a2e2f4c8c046a44"
+    },
+    {
+      "revision": 2,
+      "state": "running",
+      "launchId": "launch_97e2c97e752e4fa359bcb927c8596298",
+      "sessionId": "session_e6b879cdab67431086bc4ac864bfd405",
+      "actorId": "actor_9153c1f48a6c40178c9a53f2dabf18d9",
+      "threadId": "01a0a4d6-6a77-7cb3-8664-dec084b9de8c",
+      "calls": 10,
+      "commands": 4,
+      "readOnly": false,
+      "artifactReads": [],
+      "logSha256": "b22f29aa39545606d82b426a2d21d0c5a09b0e76749f893160f4fdf8316e75cb"
+    },
+    {
+      "revision": 3,
+      "state": "experiment_review",
+      "launchId": "launch_9f0d87890a7802ca5eda327142383b57",
+      "sessionId": "session_e3de1656bb38418c8096b988c66d24ac",
+      "actorId": "actor_9a22ca984e3e410d8cd06154ec307788",
+      "threadId": "01a0a4d8-a0bb-7670-aed2-112f5387c5e2",
+      "calls": 7,
+      "commands": 1,
+      "readOnly": true,
+      "artifactReads": [
+        {
+          "artifactId": "art_1a41132837c14ce69eba6fa44fc002b5",
+          "sha256": "4ab2c6641a40b13d643d7ac20e0eccb0c94cc693dcb4e207f6fc95313bcecb51",
+          "bytes": 8166,
+          "beforeVerdict": true
+        },
+        {
+          "artifactId": "art_e4cf8ebfbea943a9990ea331910d2b79",
+          "sha256": "02a6b657fcb221659f16b3f536f1217d27b35260ca8138dd50a5ced78a7692d6",
+          "bytes": 4116,
+          "beforeVerdict": true
+        },
+        {
+          "artifactId": "art_34e8ce10aeba424bb7785434f7ce1c1b",
+          "sha256": "9c41f34865d3d8e1f0bcda619318b23a44e8ab30e3b5de55201aa64f66c2a22e",
+          "bytes": 1117,
+          "beforeVerdict": true
+        },
+        {
+          "artifactId": "art_7e0bad96457a4c5faf2b25f3967149a6",
+          "sha256": "fe7fc685aa80d998b6fb5e77e3c6a04e57ab0c3bcf62c2c58818f4d156a17094",
+          "bytes": 3913,
+          "beforeVerdict": true
+        },
+        {
+          "artifactId": "art_5ccb879fb3864e728be99bab07c0d275",
+          "sha256": "eeebe2fb77954359bced4821b9ce418bdec05dc0530e693a5ad1ef87636cb0ce",
+          "bytes": 5309,
+          "beforeVerdict": true
+        }
+      ],
+      "logSha256": "cc52ffd5af6cc418751427cd8b230d7231f33f3385b7848fbf5c689a999d61a0"
+    }
+  ],
+  "workStarts": [
+    {
+      "instanceId": "wf_49756ae776be461ca97187ab841e6975",
+      "projectId": "project_45d4569ade134d4caa838cb3815bfb01",
+      "workflow": "experiment",
+      "version": 1,
+      "state": "planned",
+      "revision": 0,
+      "actorId": "actor_f8b55386895d417196f11264e5e34baf",
+      "startedAt": "2026-09-15T11:29:55.459Z",
+      "eventId": 11
+    },
+    {
+      "instanceId": "wf_49756ae776be461ca97187ab841e6975",
+      "projectId": "project_45d4569ade134d4caa838cb3815bfb01",
+      "workflow": "experiment",
+      "version": 1,
+      "state": "design_review",
+      "revision": 1,
+      "actorId": "actor_e2fb380bbbbe4dcdbc4f987fab91e60c",
+      "startedAt": "2026-09-15T11:31:10.671Z",
+      "eventId": 23
+    },
+    {
+      "instanceId": "wf_49756ae776be461ca97187ab841e6975",
+      "projectId": "project_45d4569ade134d4caa838cb3815bfb01",
+      "workflow": "experiment",
+      "version": 1,
+      "state": "running",
+      "revision": 2,
+      "actorId": "actor_9153c1f48a6c40178c9a53f2dabf18d9",
+      "startedAt": "2026-09-15T11:31:50.589Z",
+      "eventId": 32
+    },
+    {
+      "instanceId": "wf_49756ae776be461ca97187ab841e6975",
+      "projectId": "project_45d4569ade134d4caa838cb3815bfb01",
+      "workflow": "experiment",
+      "version": 1,
+      "state": "experiment_review",
+      "revision": 3,
+      "actorId": "actor_9a22ca984e3e410d8cd06154ec307788",
+      "startedAt": "2026-09-15T11:34:15.554Z",
+      "eventId": 49
+    }
+  ],
+  "cleanup": {
+    "allLaunchesClosed": true,
+    "noPendingRequests": true,
+    "noOwnedWorkspaceSlots": true,
+    "originalRunProcessScanClear": true,
+    "supervisorSocketFilesAbsent": true,
+    "socketDirectory": "/tmp/merv-runner-501-9b90b5b2c30c0a90",
+    "dispatchDisabled": true,
+    "allSessionsClosed": true,
+    "originalApiPort": 60964,
+    "originalApiConnectionRefused": true
+  },
+  "reportAssembly": "The original native run completed its four production nodes but its first verifier used raw launchId instead of the hashed log directory. This corrected verifier ran against a disposable server copy and the original read-only launch ledger/transcripts; no additional agents or changes to retained acceptance state.",
+  "launchedScriptSha256": "71afb7b29d7d3ae31d8d894f56d658979dd7564b34432fd04ce62db66d222949",
+  "correctedScriptSha256": "3a6405a8ad739828ec585c47bf2a25486e543e9cb7d9c8739a0cf4eb422b156a",
+  "verifierSha256": "e67424d6f87385e3ac297f5fd97b77f7a90d183d3dfaf1c280c8c56324fb8765",
+  "independentAudit": {
+    "path": "/private/tmp/merv-native-experiments-independent-audit.json",
+    "sha256": "6da66abd7ec88541dcf3de4a76308ba46596f104daf84481d0851c6ade07718e",
+    "originalDatabaseSha256": "63f9d96d08db01c32ed566e74d52ec8c3658cdc8b20b93f41db44c4ddcd4cfee"
+  },
+  "limits": [
+    "The original live script report assembler had a launch-directory hash mapping bug; corrected verification ran after model execution against retained evidence.",
+    "These are four distinct operational workers sharing one source owner, not four independent human accounts.",
+    "Positive single-attempt synthetic calculation only; negative/recovery paths and broad scientific validity are not demonstrated by this live run.",
+    "Sandboxed Python emitted macOS temporary-cache diagnostics while calculations exited 0; diagnostics are retained.",
+    "Processes were stopped after successful workflow handoff; full model turn.completed events are not required or claimed.",
+    "No browser/layout proof, cloud execution, Git publication, or reflection/consolidation is established by this audit."
+  ]
+}

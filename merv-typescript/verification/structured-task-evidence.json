@@ -1,0 +1,92 @@
+{
+  "date": "2026-09-14",
+  "scope": "Structured task evidence, server-rendered briefs, immutable assessment snapshots and stable assignment-context replay",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-structured-suite.log",
+    "tests": 236,
+    "pass": 236,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "format": "passed",
+    "diffWhitespace": "passed"
+  },
+  "newTests": {
+    "structuredEvidenceGroups": 7,
+    "contextReplayGroups": 4,
+    "workflowInputFieldGroups": 4,
+    "httpMcp": "passed"
+  },
+  "localReview": {
+    "external": false,
+    "status": "two_findings_fixed_no_further_material_findings",
+    "regressions": [
+      "Valid binary delivery previously made reviewer context fail UTF-8 validation; explicit auto mode now retains binary references and manifests.",
+      "Pre-migration context retry changed its inputs after new DTO fields were deployed; owner-scoped assignment replay now preserves its immutable package after current authorization checks."
+    ]
+  },
+  "liveModel": {
+    "status": "passed",
+    "report": "verification/structured-task-evidence-live.json",
+    "freshSessions": 3,
+    "serverRestarts": 2,
+    "toolCalls": 35,
+    "successfulCalls": 32,
+    "expectedRoleDenials": 3,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "composition": {
+    "pluginEntrypoints": 28,
+    "directCordisDependencies": 58,
+    "domainTools": 26,
+    "withUiTools": 28,
+    "newPlugins": 0,
+    "newTools": 0
+  },
+  "compatibility": {
+    "oldTaskEvidenceVersion": 1,
+    "newTaskEvidenceVersion": 2,
+    "workflowGraphChanged": false,
+    "publicCreateSuppliedBriefStillSupported": true,
+    "genericExplicitContextInputConflictsPreserved": true
+  },
+  "fable": {
+    "status": "earlier_exact_packet_approval_pending",
+    "newSubmission": false,
+    "report": "docs/reviews/workflow-guidance-fable.md"
+  },
+  "browser": {
+    "status": "earlier_sign_in_approval_pending",
+    "newAttempt": false,
+    "visualVerificationClaimed": false
+  },
+  "limits": [
+    "Review verdicts still use freeform verification notes; structured reviewer findings remain open.",
+    "Old saved tasks retain text coverage; new structured producer claims are not automatic proof.",
+    "Python and TypeScript size/name limits differ; supplied briefs remain a supported compatibility input.",
+    "Binary evidence uses retained references, not automatic interpretation.",
+    "Assignments/begin, sessions/leases, runner, research programs, shared auth and async/Postgres storage remain open."
+  ],
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "1c8b6fd5f218fe028686b35a773a2f9b90e26f7746ad5445cbd65021fafca006",
+    "packages/tasks/src/index.ts": "49d9daa8f6b194c4540f69bcec8f40a3ae625934eae4b0e1c26ff86f91aedd42",
+    "packages/tasks/src/evidence.ts": "455be205140e2f920846735595f4cbeb44a0511191020c586caf8dd54ab46f79",
+    "packages/tasks/src/tools.ts": "88f5462f2d04d154878c04631a131e14c4f181715715d7029bced1b2cde225d6",
+    "packages/context-builder/src/index.ts": "807a068283fc95ce44f11a4b123aadc83e34742a8d998adabcb998ed8854eaa7",
+    "packages/workflows/src/evaluation.ts": "c90d757e3f2c865dba1d02d6d56439a43a633c45ce3c58a59eb89f4e4a1b2128",
+    "packages/ui/web/views/tasks.tsx": "ae75c73e47387c102c2494f84d1def6261ffeefb791eef5ff917d4df9dbf6a08",
+    "scripts/live-codex.ts": "b1a891094ed79be8bacea9807d18a43f509b3dca6f0785a23d64a833c2914341",
+    "scripts/live-evidence.ts": "7219e06ac97b942a2f661b9141fcb9b5226c2c790d3edfb56667663c3802a057",
+    "tests/structured-task-evidence.test.ts": "724df1624b236fc0507f659d1cacd240b3a4e43a96e3da28a73e69b180a867db",
+    "tests/context-replay.test.ts": "c7d676c2176c74136857d0a8045d1b7ffcfa4e48d83b65effb38869ed192fd9a",
+    "tests/workflow-input-fields.test.ts": "6f40d362545b92c70c64f100c8c9e5d820a612af8150f0ce0f493484f902ccd5"
+  }
+}

@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -10,9 +11,9 @@ import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { CredentialServer } from '../tests/fixtures/credential-server.js';
 
-async function until(predicate: () => boolean, message: string) {
+async function until(predicate: () => boolean | Promise<boolean>, message: string) {
   const deadline = Date.now() + 5000;
-  while (!predicate()) {
+  while (!(await predicate())) {
     assert.ok(Date.now() < deadline, message);
     await delay(5);
   }
@@ -42,7 +43,7 @@ export async function runMountUnloadScenario(
   ]);
   let app: Awaited<ReturnType<typeof createApp>> | undefined;
   const clients: Client[] = [];
-  let held: ReturnType<CredentialServer['holdNextCall']> | undefined;
+  let held: Awaited<ReturnType<CredentialServer['holdNextCall']>> | undefined;
   let pending: ReturnType<typeof remoteCall> | undefined;
   let unloading: Promise<void> | undefined;
   try {
@@ -50,16 +51,16 @@ export async function runMountUnloadScenario(
     const seed = await createApp({ directory, components: ['state', 'scope'] });
     const identity = await (async () => {
       try {
-        const admin = seed.ctx.scope.bootstrap({
+        const admin = await seed.ctx.scope.bootstrap({
           projectName: 'Mount unload',
           actorName: 'Operator',
         });
         const operator = { actorId: admin.actor.id, projectId: admin.project.id };
-        const producer = seed.ctx.scope.issueActor(operator, {
+        const producer = await seed.ctx.scope.issueActor(operator, {
           name: 'Producer',
           role: 'producer',
         });
-        const reviewer = seed.ctx.scope.issueActor(operator, {
+        const reviewer = await seed.ctx.scope.issueActor(operator, {
           name: 'Reviewer',
           role: 'reviewer',
         });
@@ -73,14 +74,14 @@ export async function runMountUnloadScenario(
     const config = JSON.parse(
       readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
     ) as ApplicationConfig;
-    config.plugins.find((entry) => entry.id === 'access')!.config = {
+    config.plugins.find((entry) => entry.id === 'scope')!.config = {
       grants: [identity.operator, caller].map((who) => ({
         ...who,
         mountId: 'sandbox',
         tools: ['inspect'],
       })),
     };
-    config.plugins.find((entry) => entry.id === 'credentials')!.config = {
+    const credentialConfig = {
       bindings: [identity.operator, caller].map((who, index) => ({
         ...who,
         id: `fixture-${index}`,
@@ -94,6 +95,7 @@ export async function runMountUnloadScenario(
       name: '@merv/mounts',
       required: false,
       config: {
+        ...credentialConfig,
         mounts: [
           {
             id: 'sandbox',
@@ -128,9 +130,9 @@ export async function runMountUnloadScenario(
       checkpoints.push(item);
       onCheckpoint(item);
     };
-    const mountedName = 'mount__sandbox__inspect';
+    const mountedName = '_sandbox.inspect';
     const before = (await producer.listTools()).tools.map(({ name }) => name);
-    assert.equal(before.length, 27);
+    assert.equal(before.length, 67);
     assert.ok(before.includes(mountedName));
     assert.equal(running.ctx.mounts.status()[0].state, 'ready');
     const denied = await reviewer.callTool({ name: mountedName, arguments: {} });
@@ -152,14 +154,12 @@ export async function runMountUnloadScenario(
       body: 'Remote mount ready.',
       requestId: 'mount-before',
     });
-    const cursor = running.ctx.state.events(caller.projectId).at(-1)!.id;
+    const cursor = (await running.ctx.state.events(caller.projectId)).at(-1)!.id;
     const originals = Object.fromEntries(
       [
         'state',
         'scope',
         'blobs',
-        'access',
-        'credentials',
         'artifacts',
         'workflows',
         'reviews',
@@ -186,7 +186,7 @@ export async function runMountUnloadScenario(
     });
     void unloading.catch(() => undefined);
     await until(
-      () => !running.ctx.tools.list().some(({ name }) => name.startsWith('mount__')),
+      async () => !(await running.ctx.tools.list()).some(({ name }) => name.startsWith('_')),
       'Mount tools were not withdrawn',
     );
     assert.equal(disposed, false);
@@ -237,15 +237,36 @@ export async function runMountUnloadScenario(
     const submitted = await native(producer, 'task.submit_delivery', {
       taskId: task.id,
       artifactIds: [delivery.id],
+      confirmations: [
+        {
+          checkNumber: 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes:
+            'Native task, review, and feed operations remained available while the mount was absent.',
+        },
+      ],
       expectedRevision: 0,
       requestId: 'mount-delivery',
     });
     await native(reviewer, 'artifact.read', { artifactId: brief.id });
-    await native(reviewer, 'artifact.read', { artifactId: delivery.id });
-    await native(reviewer, 'review.start', { reviewId: submitted.reviewId });
+    for (const artifactId of submitted.deliveryIds)
+      await native(reviewer, 'artifact.read', { artifactId });
+    const claim = await native(reviewer, 'review.start', { reviewId: submitted.reviewId });
     const done = await native(reviewer, 'review.submit', {
       reviewId: submitted.reviewId,
+      claimId: claim.claimId,
       verdict: 'pass',
+      synopsis:
+        'Native task, independent review, and feed operations completed while the mount was absent.',
+      findings: [
+        {
+          criterionNumber: 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The pinned delivery records native task operations continuing without the mount.',
+        },
+      ],
       notes: 'Verified pinned evidence and native work with the mount absent.',
       expectedRevision: 1,
       requestId: 'mount-review',

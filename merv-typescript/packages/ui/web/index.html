@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Merv</title>
+    <meta name="theme-color" content="#F2F2F0" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121213" media="(prefers-color-scheme: dark)" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('merv:theme');
+          if (t !== 'light' && t !== 'dark')
+            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

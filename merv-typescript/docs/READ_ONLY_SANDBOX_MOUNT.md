@@ -199,7 +199,7 @@ The command performs the following bounded sequence:
    binding uses its `env:` reference and pins `X-Sandbox-Namespace` to the verified
    selected namespace. Catalog discovery remains public and unauthenticated.
 4. Start one fresh, ephemeral Codex process with only
-   `mount__sandbox__usage_report` enabled. Its environment allowlist includes the
+   `_sandbox.usage_report` enabled. Its environment allowlist includes the
    temporary local Merv bearer and Codex account/executable discovery variables;
    it excludes the upstream token and unrelated shell credentials. Shell and app
    tools are disabled. The agent is instructed to invoke the mounted tool once

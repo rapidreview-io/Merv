@@ -1,0 +1,132 @@
+{
+  "date": "2026-09-14",
+  "verifiedAtUtc": "2026-09-15T04:37:08Z",
+  "scope": "Independent shared identity verifier, Scope-owned users/project memberships, browser account/project flows and immediate claim fencing after permission loss",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-shared-final-suite.log",
+    "tests": 343,
+    "pass": 343,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "formatting": "passed",
+    "diffWhitespace": "passed"
+  },
+  "coverage": [
+    "Actual HMAC, EC and RSA signatures; issuer/audience/expiry/anonymous rejection; exclusive algorithms; JWKS rotation and bounded failure/body behavior.",
+    "Verified user identity, invitations before login, per-project roles and immutable membership epochs; atomic project receipt replay.",
+    "Overlapping SQLite workers leave one verified operator; unverified invitations do not satisfy last-operator protection.",
+    "HTTP/MCP catalogs and calls require explicit human project scope; actor keys stay fixed; no transport-controlled Caller identity.",
+    "Local adoption/repair verifies a human token supplied by environment, retains legacy credentials and keeps repair reasons operator-only.",
+    "Paused recovery plus remove/rejoin and role restoration cannot revive old claims; verdict, context, checkpoint and workflow preflights reject without writes; later claims remain valid.",
+    "Eleven synthetic browser-client tests exercise refresh ownership, project/account switch races, membership loss, StrictMode initialization and no-project onboarding."
+  ],
+  "liveModel": {
+    "status": "passed",
+    "report": "verification/shared-identity-live.json",
+    "freshAgents": 3,
+    "serverRestarts": 2,
+    "toolCalls": 42,
+    "successfulCalls": 39,
+    "expectedRoleDenials": 3,
+    "guidanceCalls": 11,
+    "assignmentCalls": 3,
+    "beginCalls": 4,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "composition": {
+    "pluginEntrypoints": 29,
+    "serviceProviders": 17,
+    "directCordisDependencies": 59,
+    "defaultEntries": 27,
+    "programmaticApiEntries": 21,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugins": ["identity"],
+    "newTools": []
+  },
+  "architecture": {
+    "metadata": "docs/architecture/current-dependencies.json",
+    "image": "docs/architecture/current-dependencies.png",
+    "diagramCheckedAgainstMetadata": true,
+    "visualInspection": "passed",
+    "repeatRenderByteIdentical": true
+  },
+  "review": {
+    "local": "Final independent read-only review found no actionable issues in claim restoration/recovery ordering, Tasks integration or the human project membership boundary.",
+    "fable": {
+      "type": "generic_design_consultation_without_source",
+      "model": "claude-fable-5",
+      "status": "completed",
+      "report": "docs/reviews/shared-identity-fable-design.md",
+      "promptBytes": 2525,
+      "promptSha256": "bf4e8533b793bf1e4706ac3ea1069c2a693de49c3776379237a7452e945b3eb6",
+      "responseSha256": "f191515d145326fa9386d0824a968055483453f0e31afe364562666977f6cf66",
+      "durationMs": 88043,
+      "costUsd": 0.337729,
+      "privateSourceSent": false,
+      "earlierSourcePacket": "specific_approval_still_pending_no_retry"
+    }
+  },
+  "browser": {
+    "syntheticClientTests": 11,
+    "visualSignInAttempted": false,
+    "realSupabaseOrNisaAccountUsed": false,
+    "earlierSignInApproval": "pending",
+    "uiBuild": "passed"
+  },
+  "limits": [
+    "Identity is disabled by default; deployed shared Supabase/Nisa login still requires the intended configuration and real browser verification.",
+    "Offline JWT verification follows issuer-signed expiry, not immediate upstream logout/deletion; no implicit maximum issued lifetime beyond required exp.",
+    "Invitations use exact issuer/subject rather than email matching. Legacy adoption/repair is trusted host administration, not an HTTP/MCP action.",
+    "Existing actor credentials remain separate project-bound machine authority. User-owned project/account keys and descendant revocation are not implemented in this wave.",
+    "Membership loss blocks new authenticated operations and invalidates prior review claims; already-dispatched upstream work may finish.",
+    "Shared identity creates no automatic remote-tool grants, credential bindings or JWT forwarding authority.",
+    "Sessions, fixed node tool authority, runner, experiment/reflection/consolidation programs and async/Postgres storage remain parity gaps."
+  ],
+  "sourceSha256": {
+    "package.json": "2f7f6f98f69ea3a9baa913c9641147fbcc773e7aab9142ac78b603643f1fc157",
+    "package-lock.json": "9471743757ce75f95682d4436cf64c16bbc8e4f6a19f3a0cecdac9c3a9d267d0",
+    "config/default.json": "5ea2cc33a8be8c607254318329db5866d926196c50af8a10f0a237595c375ee6",
+    "src/app.ts": "31c888cd53507b822f40b94017193c1d01dba7c02acc96b6fabdd67bc38e7cac",
+    "src/config.ts": "429affa26b0c6ab612481dea214f8ee0609d6c230e3526e4f1cab65141a998be",
+    "src/cli.ts": "efb12e7ef52f4225dae43131bda5e9fde243d481ea273dc5953cc9fb478887cd",
+    "packages/contracts/src/index.ts": "072a84b953d63e568617078c5278ce573d55ace9a3fa0c472154929ed33354c7",
+    "packages/identity/package.json": "545dd7c57013525a3f0332129001db87d5dd7dd932d1019a05e3a8acfe84272f",
+    "packages/identity/src/index.ts": "b975d6ac126ae7f7c5a4cbc9e084b64d6a944ce3b4dd49f68488b17b79604f12",
+    "packages/identity/src/types.ts": "b8e17c9ad82746642872471267c43533b2b143b947741a9ce3f12420dc1de1d7",
+    "packages/scope/src/index.ts": "765147a162d8fbdb56e0171a47eaaaeac907a0f248c8923190b47911b87db9b3",
+    "packages/scope/src/memberships.ts": "f3f9c35e025b9e0b6057e208cb92500d121099ebb307634961e9fc829d4a6683",
+    "packages/scope/src/ui.ts": "ff96922fc4f49d4e08bb0fb3a5299f5d92fb545b72d127a8357bae624d5b5d72",
+    "packages/api/package.json": "f7c06f7b55ab97b3f4ec627429c9a8abcbecd37f98a7f65eacdd0be37631950d",
+    "packages/api/src/index.ts": "b271e57367e869da378de61ef5c82f655963ba67978c6b95bb6c235bb7ba2ec2",
+    "packages/api/src/http.ts": "4d88211708676cf877dd93e8a91e7a0e1801e768f534d9471ac83c148960dd4d",
+    "packages/reviews/src/index.ts": "9604985910ffda9925f1d05364f653cef6a800c1902f8c4fcb4a50c99dfd533b",
+    "packages/tasks/src/index.ts": "21201c65a7e5d3b5778891d48c948254cf922dee8458ca11c358274d269ea4d2",
+    "packages/feed/src/index.ts": "7aceca89e8f2f1dd570366f5c593db8c1868c5ce99849af5abe91cf4834eee45",
+    "packages/ui/package.json": "a0f30cdb21ee7d89f768f0bce037ce886e222c970cc4a19c4ee6fe796a23c963",
+    "packages/ui/vite.config.ts": "2fb19b18f663dae4dfe2be2e7c2cf5eb4dd1135e94b799e5f8c32302395424cf",
+    "packages/ui/web/api.ts": "aec34b026a06f136bbe2e004fa257d2754a4fe643f54b2bd1bdda6a160c4495c",
+    "packages/ui/web/auth.ts": "e11bc80b12c4efadd8401250eeaab2467444db66a41170d7ef078c7859d26f07",
+    "packages/ui/web/session.tsx": "761bfe5d23061b82dea51ba201dd85730c6b575f387e74072fc4d20a4290c44d",
+    "packages/ui/web/views/people.tsx": "3fa39598d33b56fa12ca0ef996ca0d63c6abe7c916bcae7f3f3a593c15d66754",
+    "scripts/live-codex.ts": "26a8a13fc1dbb0d248be5a878a52c230693c6c44376f93aa1397fef7611a0f05",
+    "tests/identity.test.ts": "1b1b36c86ac837e4c17772633a8d143cf7b6897e16e5adb91d6bd8370d34f466",
+    "tests/shared-membership.test.ts": "911f54427e098cd07bfea08b39f35d2e59655c5edb012fbc3251c0e3324c12a7",
+    "tests/shared-identity-api.test.ts": "f2b8a22174e3d4fb00e1c28d3c59d5548c3d820a411f6b479296fb804c128fed",
+    "tests/shared-identity-cli.test.ts": "2ca1515865c04c5a6e31184a34519d288beabdd88088ca8543b529eb6a227519",
+    "tests/review-permission-recovery.test.ts": "b14ead5347ff5f7d940cded897942c06f45a95e52dd06cb9af4d107a0a4dda12",
+    "tests/ui-identity-client.test.ts": "1996253e5ab2408ea857eb3cb1ef75a351769385f9b20f6d4ab9db85c96d4bee",
+    "tests/ui.test.ts": "e6e146158103f2e56d96e346bc7c5ac2291bb75de764d84c2d1187c729397090",
+    "tests/feed.test.ts": "5a65da2bcb73c04237dd6bd053c816458f98f48709989b6ff875f3abdefdd88f",
+    "tests/plugin-config.test.ts": "02fe3f130ee424a5ddfdb9a06b03d5a393fe22e72f7dc15aec66b0c1e04ce113"
+  }
+}

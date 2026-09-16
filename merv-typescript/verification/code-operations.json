@@ -1,0 +1,176 @@
+{
+  "date": "2026-09-15",
+  "scope": "Live session-owned Git checkpoints through new Code provider and existing Runner, with durable commands/receipts, HTTP/MCP/UI integration, unload/reload and real independent native review",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-code-suite-final.log",
+    "tests": 526,
+    "pass": 526,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-code-final-build.log"
+    },
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-code-final-typecheck.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-code-final-ui-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-code-final-ui-typecheck.log"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-code-final-format.log"
+    },
+    "diffWhitespace": {
+      "status": "passed",
+      "command": "git diff --check"
+    },
+    "recordHashesAndLinks": {
+      "status": "passed",
+      "sourceFiles": 36,
+      "liveScriptFiles": 1,
+      "localDocumentationLinks": 362,
+      "missingLinks": 0,
+      "log": "/private/tmp/merv-code-final-records-links.json"
+    }
+  },
+  "regressions": [
+    "Active writable attached session and fixed code.commit grant; exact current source, runner and host; project reader versus current worker-own-session visibility",
+    "Descriptor/proxy-safe bounded plain JSON inputs, strict schemas and same Git object format; immutable SQLite command/result identity; ambient transaction rollback",
+    "Stable request conflict/dedup; one outstanding command per session; queued cancellation and dispatched descriptor recovery after worker closure without revival",
+    "Private operation indexes, deterministic frozen commit/tree, expected-HEAD compare-and-swap and atomic receipt marker guarded by checkout epoch ownership",
+    "Actual controller SIGKILL between commit object creation and target journaling; delayed old Git transactions cannot mutate successor HEAD/index or re-arm closed ownership",
+    "Fresh host inspection for all unproven pending work; late completion after stop; lost dispatch response and completion outage across restart retain checkout until acknowledgement",
+    "Real Cordis unload/restore withdraws two tools, controls and UI, retains worker lease and queued/completed immutable history without duplicate registrations or events",
+    "Actual MCP worker can receive named commit while alive, author receipt evidence and request actual Reviews; later final capture remains independent",
+    "Actual CodeView SSR uses real authenticated HTTP data and checks four statuses, full OID tooltip, accurate terminal text and HTML escaping"
+  ],
+  "composition": {
+    "pluginEntrypoints": 37,
+    "serviceProviders": 20,
+    "serverProviders": 19,
+    "machineProviders": 1,
+    "directCordisDependencies": 77,
+    "defaultServerEntries": 34,
+    "domainApiEntries": 26,
+    "domainTools": 34,
+    "withUiTools": 36,
+    "newProviders": 1,
+    "newAdapterPlugins": 3,
+    "newDependencies": 9,
+    "newAgentTools": ["code.commit", "code.operation"]
+  },
+  "live": {
+    "status": "passed",
+    "record": "verification/code-operations-live.json",
+    "freshAgents": 2,
+    "shellCalls": 6,
+    "successfulToolCalls": 6,
+    "failedToolCalls": 0,
+    "finalWorkflowState": "done",
+    "actualReviews": true,
+    "exactNamedCommitVerified": true,
+    "originalWorkerAttribution": true,
+    "sourceAndPrivateCentralUnchanged": true,
+    "allLocalLaunchesConfirmedStopped": true,
+    "ephemeralCheckoutDeleted": true,
+    "ownedSlots": 0
+  },
+  "ui": {
+    "status": "component_render_verified",
+    "method": "SSR data-hook substitution; no browser interaction or visual screenshot verification",
+    "states": ["queued", "succeeded", "failed", "cancelled"],
+    "log": "/private/tmp/merv-code-ui-ssr.log",
+    "report": "/private/tmp/merv-code-ui-review.json",
+    "artifact": "/private/tmp/merv-code-ui-review.html",
+    "syntheticServerStopped": true
+  },
+  "architecture": {
+    "status": "source_sets_and_visual_checked",
+    "plugins": 37,
+    "dependencies": 77,
+    "httpConnections": 1,
+    "drawnArrowEdges": 47,
+    "adapterRowEdges": 30,
+    "log": "/private/tmp/merv-code-dependency-render.log"
+  },
+  "review": {
+    "local": "Independent Code authority, API/client validation, Runner Git/fencing, controller recovery and UI/unload reviews completed. Concrete recovery findings corrected and verified.",
+    "failedBeforeFix": "/private/tmp/merv-code-recovery-before.log",
+    "recoveryAfterFix": "/private/tmp/merv-code-recovery-after.log",
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "sha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review previously rejected sending the specific internal architecture payload without payload/destination approval. No new export or retry occurred."
+    }
+  },
+  "pythonReference": {
+    "tests": 26,
+    "status": "passed",
+    "log": "/private/tmp/merv-publication-reference-tests.log",
+    "scope": "Immutable proposals, source decisions and reviewed publication",
+    "staleAttemptProbe": "/private/tmp/merv-stale-publication-probe.log",
+    "finding": "Reproduced delayed receipt rebinding a stale old Python publication attempt; planned TypeScript publication must keep stale/cancelled attempts terminal."
+  },
+  "trustBoundary": "Receipts are source-authenticated Runner observations, not independent server Git verification. Private central remains machine-local. Neither checkpoint nor fixture review publishes code.",
+  "remaining": [
+    "Production immutable proposals and exact independent review binding",
+    "Repository authority, durable publication intents, expected-head central advance and bound receipts before domain materialization",
+    "General merge/cherry-pick operations and cross-machine Git object transport",
+    "Machine pairing, source rotation, operational settings, trace delivery and telemetry",
+    "Actual experiment/reflection/consolidation programs",
+    "Asynchronous State/Postgres and production shared-login/deployment parity"
+  ],
+  "runtime": {
+    "node": "v22.13.1"
+  },
+  "sourceSha256": {
+    "config/default.json": "bd6a3cc51f950e143e01f3a3686c2a5148649490ac042cf595909ff13b4a67d1",
+    "docs/CODE_OPERATIONS.md": "1b3f0d5fca05457eaec8d33f9a8a8baaec87e76dd164260392f3f50e83105da5",
+    "docs/CODE_PUBLICATION_PLAN.md": "92a887990a946491394eb397dd7df1b71a8bc49be6adf9755a7a96731c4fca84",
+    "package-lock.json": "391788c39802d60ba97d5faf594ad4fe22aa935fd86a6d1163a1e9c48db3bb64",
+    "packages/api/src/http.ts": "1e056a06d3b501fb5a1925e41adcf1ad2061e40967a54adfecef59e177bdfc23",
+    "packages/api/src/types.ts": "77abd3f853bad98c007903c6c8fa12efa5c3afc34e58a1af5b37370532747675",
+    "packages/code/README.md": "3055b7df5aba4d89180393bcdffbba62b8ab80aed8c08dcd50f00bc0a3ba6f10",
+    "packages/code/package.json": "aeba5e9ca2f9255f3bd563c7944fbcb81e087210f6a2de8490a4d6d57b55a16f",
+    "packages/code/src/api.ts": "dbf82cc53b5abaa34f58aa0ce3165f15daba04fe9114ac93f9d86c12767bdbbf",
+    "packages/code/src/commands.ts": "f32acbe8473215923a53f86b05cbe34eca76d5425663c5a8239dec52fc0c3d71",
+    "packages/code/src/index.ts": "b376cb9a14b6603bb6dcecf6ba8743c2849824194baaed2f08a5c44638e76587",
+    "packages/code/src/tools.ts": "f95999513ac0ba88be164679f92401a4a95f54054bd6c44f8b94e68e1ca8815d",
+    "packages/code/src/types.ts": "9fd65df47d9d3ee4df865d1dcb8085220c6245d6cdfc56d8d05e27fe86b90609",
+    "packages/code/src/ui.ts": "9d77f9833258149de8d4ebf65a4dec67326f5a217ff4e300ab70f62ca3047d9c",
+    "packages/contracts/src/code.ts": "d49f3a444bb120d40074145deb8da7230d02f7cffe392090ca99708123684ae7",
+    "packages/contracts/src/index.ts": "d05501be4e4e029cacfc9eb9c91feb5060e7eb5a6adaa31d744730672a14eafe",
+    "packages/runner/src/client.ts": "d05c8d029e55af93bae4d940eafb754482786800716643666cf7731a2a223c44",
+    "packages/runner/src/index.ts": "f398a68d1c6e5af3a01385c9f854d8f49c324a283067a640cbc1468e7ada939a",
+    "packages/runner/src/workspaces.ts": "b4b0254271fba00f14bb5679a244a183cdfd85474860841d33972c6ec225865c",
+    "packages/ui/web/views/code.tsx": "1d70703479afb58ad86b68096e0629f41767ea66c70e9835c2bedb9203909148",
+    "packages/ui/web/views/index.tsx": "8f2a098de21c7d0c0da5fec83d816152bdee872ce0841495f1cbb997f6ca19c8",
+    "scripts/dependency-map.ts": "dcee6386c6f4539b81b96b54987aabe3b2e472d9b0f63775e198e0c2bf0ba046",
+    "scripts/live-code.ts": "3d5994118cd486c1dec87d2a4bbbed4dc5750b5f7a7f7dde86c8e3ad6feeaa75",
+    "scripts/render-dependencies.mjs": "31259c94db6d3f1371314926e7aace30ce42e9769311b7bb8795d3ea4bdcd312",
+    "tests/boundaries.test.ts": "85bd2235ee56451b65f6a7a33d8ed71d3fec8ad67005753d8bd767315a5fbb36",
+    "tests/code-api.test.ts": "d4976677c357f41028d14641d8b6bafb0ca8411ceb7aef511c0f465d554f06b7",
+    "tests/code-commands.test.ts": "34d302bc485c15755cff787dcd0da1f4bde75b5327fdefa916e39b72494f3956",
+    "tests/code-unload.test.ts": "9e04b3fe2fae56da5e9a8ae318ed7f0ee0252e6f76940f35aa1cc94c0703b3e1",
+    "tests/config.test.ts": "cb4a63941d482f3bc648380e7cd3207573e461fbf62ec2fcdf0433be4c0649bd",
+    "tests/fixtures/runner-code-worker.mjs": "48b94f9d90dd767adb5ecbdb2ff2faef9fb56d0ad9f6dcab5934665bd45f1de5",
+    "tests/fixtures/runner-commit-crash.mjs": "7b1c469452f04f3d72cf435ac1474cab1029740e4c32e5ccee31daf7df31844d",
+    "tests/runner-code-client.test.ts": "2182e464f611a4c20d974ebd16ec81fc4591f9a6dff90b42487e051a0478e060",
+    "tests/runner-code-commit.test.ts": "ad48253e272fd7f7321f19124f2622917d4b7058fb40ca481a301d4f1d21770a",
+    "tests/runner-code-integration.test.ts": "8690b8950cabd4d46b7448db7a679dfb83c7f867ed331f47e57036aad98bcad7",
+    "tests/runner-code-recovery.test.ts": "c5b606b10474189c4904453d839790eb07f85ac88a82e43ed6b70ff5ebaad1ae",
+    "tests/ui.test.ts": "27e32840abaa1b56dd2e6f13069fcf51b7764ecc4f52cf1e03549b491d8766cc"
+  }
+}

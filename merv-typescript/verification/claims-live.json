@@ -1,0 +1,108 @@
+{
+  "date": "2026-09-15",
+  "command": "node --import tsx scripts/live-claims.ts /private/tmp/merv-native-claims-live-20260915-01",
+  "log": "/private/tmp/merv-native-claims-live-20260915-01.log",
+  "privateReport": "/private/tmp/merv-native-claims-live-20260915-01/report.json",
+  "privateReportSha256": "19266a29006228b1eb72a0932f4ac2aa05d06ac38e55566db87e5572a53c8290",
+  "passed": true,
+  "source": "Disposable synthetic Claims projects using a source actor credential. Native model access uses the installed Codex account. No research conclusion or internal repository export.",
+  "nativeRunner": true,
+  "protocolProxy": false,
+  "machines": 1,
+  "freshAgents": 2,
+  "shellCalls": 0,
+  "successfulCalls": 9,
+  "failedCalls": 0,
+  "phases": [
+    {
+      "role": "producer",
+      "threadId": "01a0a484-6afc-7810-8be6-7c4c7d9cc3b6",
+      "tools": [
+        "claim.list",
+        "claim.create",
+        "claim.create",
+        "claim.update",
+        "claim.update",
+        "claim.list",
+        "step.record"
+      ]
+    },
+    {
+      "role": "independent reader",
+      "threadId": "01a0a485-09fc-70f2-a89e-4ea3bb959262",
+      "tools": ["claim.list", "step.verify"]
+    }
+  ],
+  "finalWorkflowState": "done",
+  "finalRevision": 2,
+  "claim": {
+    "id": "claim_4c90328365f546f5bf2e4e79efc58c26",
+    "status": "weakened",
+    "confidence": "low",
+    "revision": 1,
+    "createdBy": "actor_4918d44e699c437794c3883495f7d77e",
+    "updatedBy": "actor_4918d44e699c437794c3883495f7d77e"
+  },
+  "createReplay": {
+    "identicalArguments": true,
+    "identicalOriginalReceipt": true,
+    "status": "active",
+    "confidence": "high",
+    "revision": 0
+  },
+  "updateReplay": {
+    "identicalArguments": true,
+    "identicalReceipt": true,
+    "expectedRevision": 0,
+    "savedRevision": 1,
+    "status": "weakened",
+    "confidence": "low"
+  },
+  "authoritativeClaimCount": 1,
+  "claimEventCount": 2,
+  "commandReceiptCount": 2,
+  "originalWorkerAttribution": true,
+  "eventSourceSessionMatches": true,
+  "distinctWorkerActors": 2,
+  "independentWorkerReadSameProject": true,
+  "readerClaimsTools": ["claim.list"],
+  "otherProject": {
+    "claimCount": 1,
+    "revision": 0,
+    "unchangedFromCreationReceipt": true,
+    "notExposedInTranscripts": true
+  },
+  "reviewsAssessments": 0,
+  "independentInspection": {
+    "report": "/private/tmp/merv-native-claims-live-20260915-01-audit.json",
+    "sha256": "230f85acbb55404dcfa06681a211fe66eb19af9ceb2550ea0e9cb8ea9a2f6126",
+    "actualTranscriptArgumentsAndResultsInspected": true,
+    "authoritativeStateAndReceiptsCompared": true,
+    "rawIssuedBearersAbsent": true
+  },
+  "cleanup": {
+    "report": "/private/tmp/merv-native-claims-live-20260915-01/cleanup.json",
+    "sha256": "75efde5bd000cf44452dd4e30e21b3f54617e4419cf4904da799d54f336ffa33",
+    "allLaunchesStopped": true,
+    "allWorkspaceLifecyclesClosed": true,
+    "workspaceMode": "none",
+    "scratchDirectoriesRetained": true,
+    "pendingRequests": 0,
+    "ownedSlots": 0,
+    "guardianSocketsAbsent": true,
+    "noMatchingNativeOrGuardianProcess": true,
+    "serverListenerClosed": true,
+    "processProof": "Both launch records reached terminal stopped after authenticated guardian group kill and observed direct owner exit; no matching native/guardian processes or live control sockets remain. Group IDs are intentionally not persisted and no process was signaled by this audit."
+  },
+  "warnings": [
+    "Both agents emitted the installed Codex under-development-feature warning. No MCP call failed."
+  ],
+  "limits": [
+    "Synthetic managed program validates Claims; Claims itself has no workflow.",
+    "No experiment, scientific review or reflection publication is implemented by this fixture.",
+    "The final read-only worker inspects records without submitting a Reviews assessment."
+  ],
+  "sourceSha256": {
+    "scripts/live-claims.ts": "a65cc2705951e45ee3f9ae84f35bc011ce09e9e236d710605aec1bba7c0c6a41"
+  }
+}

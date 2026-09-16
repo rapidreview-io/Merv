@@ -105,8 +105,8 @@ test('check mode reads no saved session, uses no network, and creates no output 
   const path = `/private/tmp/merv-sandbox-check-${randomUUID()}`;
   const result = checkPreparation(path);
   assert.equal(result.status, 'prepared');
-  assert.ok(result.pluginCount >= 19);
-  assert.equal(result.tool, 'mount__sandbox__usage_report');
+  assert.ok(result.pluginCount >= 18);
+  assert.equal(result.tool, '_sandbox.usage_report');
   assert.equal(credentialReads, 0);
   assert.equal(networkRequests, 0);
   assert.equal(fs.existsSync(path), false);

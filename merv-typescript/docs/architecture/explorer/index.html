@@ -1,0 +1,2002 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Merv — the living plugin map</title>
+  <style>* {
+  box-sizing: border-box;
+}
+:root {
+  color-scheme: light;
+  --paper: #faf7ed;
+  --ink: #343530;
+  --muted: #6f7066;
+  --line: #a8a79b;
+  --out: #8a4f30;
+  --in: #4e6d70;
+  --hand: 'Noteworthy', 'Chalkboard SE', 'Comic Sans MS', cursive;
+}
+body {
+  margin: 0;
+  color: var(--ink);
+  background: #e9e6dd;
+  font:
+    14px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+button,
+summary {
+  cursor: pointer;
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--out);
+  outline-offset: 4px;
+}
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+[hidden] {
+  display: none !important;
+}
+#merv-explorer {
+  max-width: 1880px;
+  margin: auto;
+  padding: 30px 34px 20px;
+}
+.masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 8px 24px;
+}
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.17em;
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--muted);
+}
+h1 {
+  margin: 3px 0 0;
+  font-family: var(--hand);
+  font-weight: 500;
+  font-size: 35px;
+  letter-spacing: -0.7px;
+  line-height: 1.35;
+}
+.pencil-dot {
+  color: var(--out);
+}
+.edition {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+.edition span:first-child {
+  color: var(--ink);
+  font-family: var(--hand);
+  font-size: 15px;
+}
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 22px;
+}
+.paper {
+  position: relative;
+  min-width: 0;
+  background: var(--paper);
+  background-image:
+    radial-gradient(#7367490c 0.6px, transparent 0.7px),
+    radial-gradient(#71674908 0.6px, transparent 0.7px);
+  background-position:
+    0 0,
+    2px 3px;
+  background-size:
+    5px 5px,
+    7px 7px;
+  border-radius: 3px 9px 4px 3px;
+  box-shadow:
+    1px 3px 9px #3b382515,
+    0 0 0 1px #51472914;
+  padding: 20px 10px 18px 29px;
+  overflow: hidden;
+}
+.binding {
+  position: absolute;
+  left: 6px;
+  top: 12px;
+  bottom: 12px;
+  width: 14px;
+  background: radial-gradient(
+    ellipse at center,
+    #57574c 0 3px,
+    #c9c4b5 3.5px 5px,
+    transparent 5.5px
+  );
+  background-size: 14px 35px;
+  opacity: 0.7;
+}
+.page-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 14px;
+  font-family: var(--hand);
+  color: var(--muted);
+  font-size: 13px;
+}
+#overview {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed #98988a;
+  font-family: var(--hand);
+  padding: 4px 0;
+  white-space: nowrap;
+}
+.map {
+  position: relative;
+  isolation: isolate;
+}
+#wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+.groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 0.8fr;
+  gap: 70px 32px;
+  padding: 45px 20px 38px;
+  position: relative;
+  z-index: 1;
+}
+.group {
+  min-width: 0;
+  position: relative;
+  padding: 14px 12px 13px;
+  transition: opacity 0.16s;
+  background: var(--paper);
+  border-radius: 3px 2px 5px 2px;
+}
+.group-outline {
+  position: absolute;
+  width: calc(100% + 4px);
+  height: calc(100% + 4px);
+  inset: -2px;
+  pointer-events: none;
+  overflow: visible;
+}
+.group-outline rect {
+  fill: none;
+  stroke: #68685a;
+  stroke-width: 1.3;
+  vector-effect: non-scaling-stroke;
+}
+.group-outline rect:last-child {
+  stroke: #868271;
+  stroke-width: 0.6;
+  opacity: 0.45;
+}
+.group[data-group='front'] {
+  grid-column: 1/3;
+  grid-row: 1;
+}
+.group[data-group='auth'] {
+  grid-column: 3;
+  grid-row: 1;
+}
+.group[data-group='mounts'] {
+  grid-column: 4;
+  grid-row: 1;
+}
+.group[data-group='research'] {
+  grid-column: 1;
+  grid-row: 2;
+}
+.group[data-group='coordination'] {
+  grid-column: 2;
+  grid-row: 2;
+}
+.group[data-group='evidence'] {
+  grid-column: 3;
+  grid-row: 2;
+}
+.group[data-group='external'] {
+  grid-column: 4;
+  grid-row: 2;
+}
+.group[data-group='foundation'] {
+  grid-column: 1/4;
+  grid-row: 3;
+}
+.group[data-group='runner'] {
+  grid-column: 4;
+  grid-row: 3;
+}
+.group[data-group='other'] {
+  grid-column: 1/-1;
+}
+.group-heading {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  font: 500 20px/1.3 var(--hand);
+  margin-bottom: 4px;
+}
+.group-caption {
+  display: block;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.group[data-group='front'] .plugin-list,
+.group[data-group='foundation'] .plugin-list {
+  flex-flow: row wrap;
+  column-gap: 16px;
+}
+.plugin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 5px 1px;
+  border-radius: 3px;
+  text-align: left;
+  font: 15px/1.4 var(--hand);
+  transition:
+    opacity 0.16s,
+    background 0.16s;
+}
+.plugin::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  flex: none;
+  opacity: 0.7;
+}
+.plugin[data-relation='self'] {
+  background: #e8ddc7;
+  box-shadow:
+    -4px 0 0 #e8ddc7,
+    4px 0 0 #e8ddc7;
+}
+.plugin[data-relation='out'] {
+  color: var(--out);
+  background: #a8623010;
+}
+.plugin[data-relation='in'] {
+  color: var(--in);
+  background: #5e7a7b12;
+}
+.plugin[data-relation='network'] {
+  text-decoration: underline dashed;
+  text-underline-offset: 5px;
+}
+.plugin[aria-pressed='true'] {
+  font-weight: 700;
+}
+.map.tracing .plugin:not([data-relation]) {
+  opacity: 0.33;
+}
+.map.tracing .group:not(.connected) {
+  opacity: 0.42;
+}
+.map.tracing .group.connected .group-outline rect:first-child {
+  stroke: #5e5c4d;
+}
+.adapter-badge {
+  margin-top: 13px;
+  padding: 5px 9px;
+  border: 1px dashed #989485;
+  background: transparent;
+  border-radius: 2px 6px 3px 3px;
+  font-family: var(--hand);
+  font-size: 12px;
+}
+.group[data-group='external'],
+.group[data-group='runner'] {
+  background: #f4f0e3;
+}
+.group[data-group='external'] .group-outline rect:first-child,
+.group[data-group='runner'] .group-outline rect:first-child {
+  stroke-dasharray: 5 3;
+}
+.wire {
+  fill: none;
+  stroke: #aaa99c;
+  stroke-width: 1.2;
+}
+.wire.focus {
+  stroke: var(--out);
+  stroke-width: 1.8;
+}
+.wire.used {
+  stroke: var(--in);
+  stroke-width: 1.7;
+}
+.wire.net {
+  stroke: #757668;
+  stroke-dasharray: 5 5;
+}
+.map-status {
+  min-height: 24px;
+  margin: 0 18px 12px;
+  font-family: var(--hand);
+  font-size: 14px;
+  color: var(--ink);
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  border-top: 1px solid #bbb7a54d;
+  margin: 0 14px;
+  padding-top: 12px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.line {
+  width: 22px;
+  border-top: 1.5px solid var(--out);
+  display: inline-block;
+}
+.line.incoming {
+  border-color: var(--in);
+}
+.line.dashed {
+  border-color: #77766a;
+  border-top-style: dashed;
+}
+.inspector {
+  background: #f9f6ec;
+  border-top: 3px solid #8d5c39;
+  box-shadow: 0 2px 5px #3b382510;
+  min-width: 0;
+  padding: 23px 21px;
+  max-height: calc(100vh - 125px);
+  overflow: auto;
+  position: sticky;
+  top: 20px;
+  border-radius: 2px 5px 2px 2px;
+}
+.inspector h2 {
+  font: 500 26px/1.3 var(--hand);
+  margin: 6px 0 12px;
+  overflow-wrap: anywhere;
+}
+.inspector h3 {
+  margin: 23px 0 9px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.inspector p {
+  color: #66665c;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 10px 0;
+}
+.inspector .kicker {
+  color: #8b6345;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 9px;
+  font-weight: 650;
+}
+.inspector .source {
+  display: block;
+  font:
+    10px/1.6 ui-monospace,
+    SFMono-Regular,
+    monospace;
+  overflow-wrap: anywhere;
+  color: #76756a;
+  padding-top: 13px;
+  margin-top: 17px;
+  border-top: 1px solid #d8d3c5;
+}
+.detail-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.detail-link {
+  padding: 5px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid #c9c4b5;
+  border-radius: 2px 5px 2px 3px;
+  text-align: left;
+}
+.detail-link:hover {
+  background: #ece6d7;
+}
+.detail-list.requires .detail-link {
+  border-color: #b48f75;
+  color: #764829;
+}
+.detail-list.consumers .detail-link {
+  border-color: #97aca8;
+  color: #456062;
+}
+.inspector .empty {
+  font: 13px/1.6 var(--hand);
+  color: #858477;
+}
+.tool {
+  border-top: 1px solid #d9d4c77a;
+  padding: 7px 0;
+}
+.tool summary {
+  overflow-wrap: anywhere;
+  font:
+    11px/1.7 ui-monospace,
+    SFMono-Regular,
+    monospace;
+}
+.tool p {
+  font-size: 11px;
+  margin: 6px 0 2px;
+}
+.mode-tag {
+  display: inline-block;
+  font-size: 9px;
+  color: #7a7668;
+  padding: 3px 0;
+}
+.detail-edge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: 5px 0;
+}
+.note-rule {
+  height: 7px;
+  margin: 19px 0;
+  background: linear-gradient(
+    176deg,
+    transparent 45%,
+    #8f806e60 46%,
+    #8f806e60 50%,
+    transparent 52%
+  );
+}
+.page-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: #78796e;
+  padding: 17px 8px 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (min-width: 1600px) {
+  .groups {
+    gap: 90px 42px;
+  }
+  .group {
+    padding: 19px 18px;
+  }
+  .plugin {
+    font-size: 17px;
+  }
+  .group-heading {
+    font-size: 23px;
+  }
+  .group-caption {
+    font-size: 11px;
+  }
+}
+@media (max-width: 1250px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+  .inspector {
+    position: static;
+    max-height: none;
+  }
+  .inspector .detail-list {
+    max-width: 900px;
+  }
+}
+@media (max-width: 850px) {
+  #merv-explorer {
+    padding: 20px 14px;
+  }
+  h1 {
+    font-size: 29px;
+  }
+  .edition {
+    font-size: 10px;
+  }
+  .groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 42px 30px;
+    padding: 30px 18px;
+  }
+  .group[data-group] {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .group[data-group='front'],
+  .group[data-group='foundation'] {
+    grid-column: 1/-1;
+  }
+  .group-caption {
+    font-size: 11px;
+  }
+  .plugin {
+    font-size: 16px;
+  }
+}
+@media (max-width: 500px) {
+  .masthead {
+    display: block;
+  }
+  .edition {
+    text-align: left;
+    margin-top: 10px;
+  }
+  .groups {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    padding: 30px 22px;
+  }
+  .group[data-group] {
+    grid-column: 1;
+  }
+  .paper {
+    padding-left: 21px;
+    padding-right: 0;
+  }
+  .page-top {
+    align-items: flex-start;
+    font-size: 12px;
+  }
+  .plugin {
+    min-height: 40px;
+    font-size: 17px;
+  }
+  .group-heading {
+    font-size: 23px;
+  }
+  .group-caption {
+    margin-bottom: 6px;
+  }
+  .legend {
+    gap: 8px 13px;
+    font-size: 11px;
+  }
+  .group[data-group='front'] .plugin-list,
+  .group[data-group='foundation'] .plugin-list {
+    gap: 0 14px;
+  }
+  .detail-link {
+    min-height: 40px;
+    font-size: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+.detail-jump {
+  display: none;
+}
+@media (max-width: 1250px) {
+  #merv-explorer {
+    padding-bottom: 82px;
+  }
+  .detail-jump {
+    display: block;
+    position: fixed;
+    right: 22px;
+    bottom: 20px;
+    z-index: 5;
+    background: var(--paper);
+    border: 1px solid #8d5c39;
+    border-radius: 3px 7px 3px 4px;
+    box-shadow: 0 3px 12px #3b382528;
+    padding: 10px 18px;
+    min-height: 44px;
+    font-family: var(--hand);
+  }
+}
+@media (max-width: 500px) {
+  .plugin,
+  .detail-link {
+    min-height: 44px;
+  }
+}
+/* Second notebook page: explicit dependency branches. */
+.view-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 8px 14px;
+}
+.view-tabs button {
+  border: 1px solid #b9b3a3;
+  border-radius: 7px 4px 0 0;
+  background: #e1ddd1;
+  padding: 9px 17px;
+  font: 17px var(--hand);
+}
+.view-tabs button[aria-pressed='true'] {
+  background: var(--paper);
+  border-bottom: 2px solid var(--out);
+}
+.tree-paper {
+  padding-right: 22px;
+}
+.tree-intro,
+.tree-controls,
+.tree-actions,
+.tree-help,
+.tree-count,
+.tree-status {
+  margin-left: 17px;
+  margin-right: 12px;
+}
+.tree-intro h2 {
+  font: 28px/1.4 var(--hand);
+  margin: 5px 0 8px;
+}
+.tree-intro p,
+.tree-help {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.tree-intro strong {
+  color: var(--ink);
+  font-weight: 550;
+}
+.tree-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+.tree-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.tree-controls label:first-child {
+  flex: 1 1 160px;
+}
+.tree-controls input,
+.tree-controls select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #b9b3a3;
+  border-radius: 2px 5px 3px 2px;
+  background: #fffaf0;
+  color: var(--ink);
+  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+  min-height: 40px;
+}
+.tree-controls input:focus-visible,
+.tree-controls select:focus-visible,
+.dag-viewport:focus-visible {
+  outline: 2px solid var(--out);
+  outline-offset: 3px;
+}
+.tree-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.tree-actions button {
+  font: 13px var(--hand);
+  border: 1px dashed #b9b3a3;
+  background: transparent;
+  border-radius: 3px;
+  padding: 7px 9px;
+}
+.tree-count {
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid #d8d3c5;
+  padding-top: 12px;
+}
+.tree-zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 12px 12px 17px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+.tree-zoom button {
+  border: 1px solid #b9b3a3;
+  background: var(--paper);
+  border-radius: 3px;
+  padding: 6px 12px;
+  min-height: 34px;
+}
+.tree-zoom output {
+  min-width: 38px;
+  text-align: center;
+}
+.tree-status {
+  font: 13px/1.6 var(--hand);
+  min-height: 42px;
+}
+@media (max-width: 600px) {
+  .tree-paper {
+    padding-right: 4px;
+  }
+  .view-tabs {
+    margin-left: 0;
+    gap: 4px;
+  }
+  .view-tabs button {
+    font-size: 15px;
+    padding: 10px;
+  }
+  .tree-controls label {
+    flex: 1 1 110px;
+  }
+
+  .tree-scroll {
+    max-height: 60vh;
+  }
+}
+
+.dag-viewport {
+  position: relative;
+  height: 70vh;
+  min-height: 420px;
+  max-height: 900px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  cursor: grab;
+  user-select: none;
+  border: 1px solid #c5bdac;
+  border-radius: 3px;
+  margin: 0 10px 0 17px;
+  background-image: radial-gradient(#91877530 1px, transparent 1px);
+  background-size: 22px 22px;
+  scrollbar-color: #b8ac94 transparent;
+}
+.dag-viewport.dragging {
+  cursor: grabbing;
+}
+#dag-space {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+#dag-canvas {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  transform-origin: top left;
+}
+#dag-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.dag-edge {
+  fill: none;
+  stroke: #9d927e;
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+.dag-node {
+  position: absolute;
+  width: 176px;
+  height: 100px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px;
+  border: 1.4px solid #887b65;
+  border-radius: 3px 7px 3px 5px;
+  background: var(--paper);
+  box-shadow: 2px 2px 0 #bfb4a340;
+  cursor: pointer;
+}
+.dag-node::after {
+  content: '';
+  position: absolute;
+  inset: 2px -3px -2px 2px;
+  border: 1px solid #91877535;
+  border-radius: 5px 3px 5px 2px;
+  pointer-events: none;
+}
+.dag-node.adapter {
+  border-style: dashed;
+}
+.dag-name {
+  font: 18px/1.25 var(--hand);
+}
+.dag-kind {
+  font-size: 10px;
+  color: var(--muted);
+}
+.dag-meta {
+  font-size: 10px;
+  color: var(--muted);
+}
+.dag-node[data-relation='self'] {
+  background: #e8ddc7;
+  border: 2px solid #715538;
+}
+.dag-node[data-relation='out'] {
+  border-color: var(--out);
+  color: var(--out);
+}
+.dag-node[data-relation='in'] {
+  border-color: var(--in);
+  color: var(--in);
+}
+#dag-canvas.tracing .dag-node:not([data-relation]) {
+  opacity: 0.45;
+}
+#dag-canvas.tracing .dag-edge:not([data-relation]) {
+  opacity: 0.12;
+}
+.dag-edge[data-relation='out'] {
+  stroke: var(--out);
+  stroke-width: 3;
+  opacity: 1;
+}
+.dag-edge[data-relation='in'] {
+  stroke: var(--in);
+  stroke-width: 3;
+  opacity: 1;
+}
+.dag-node.search-match {
+  outline: 4px solid #b18d3d;
+  outline-offset: 5px;
+  opacity: 1 !important;
+}
+@media (max-width: 600px) {
+  .dag-viewport {
+    margin-left: 8px;
+    height: 62vh;
+    min-height: 350px;
+  }
+}
+
+#dag-adapters[aria-pressed='true'] {
+  background: #e8ddc7;
+  border: 1px solid #8a4f30;
+  color: var(--out);
+}
+</style>
+</head>
+<body>
+  <main id="merv-explorer">
+    <header class="masthead">
+      <div><span class="eyebrow">Merv / architecture sketchbook</span><h1>The living plugin map<span class="pencil-dot">.</span></h1></div>
+      <div class="edition"><span id="snapshot"></span><span>Source snapshot, not live server status</span></div>
+    </header>
+    <nav class="view-tabs" aria-label="Architecture views">
+      <button id="map-view" type="button" aria-pressed="true" aria-controls="map-page">01 · Sketch map</button>
+      <button id="tree-view" type="button" aria-pressed="false" aria-controls="tree-page">02 · Dependency DAG</button>
+    </nav>
+    <div class="workbench">
+      <section class="paper" id="map-page" aria-label="Interactive plugin dependency map">
+        <div class="binding" aria-hidden="true"></div>
+        <div class="page-top"><span id="inventory"></span><button id="overview" type="button">↶ Whole map</button></div>
+        <div class="map" id="map"><svg id="wires" aria-hidden="true"></svg><div class="groups" id="groups"></div></div>
+        <div class="map-status" id="map-status">Hover a name to trace it. Click to keep it open.</div>
+        <footer class="legend"><span><i class="line"></i>requires →</span><span><i class="line incoming"></i>← used by</span><span><i class="line dashed"></i>network connection</span><span>Boxes group independent plugins</span></footer>
+      </section>
+      <section class="paper tree-paper" id="tree-page" aria-label="Plugin dependency DAG" hidden>
+        <div class="binding" aria-hidden="true"></div>
+        <header class="tree-intro">
+          <span class="eyebrow">One node per plugin · every dependency visible</span>
+          <h2>The complete dependency DAG.</h2>
+          <p>Arrows run from a plugin down to the services it requires. Shared services appear once, with multiple incoming arrows. Hide adapters to focus on the service plugins.</p>
+        </header>
+        <div class="tree-controls">
+          <label>Find a plugin<input id="dag-search" type="search" placeholder="Name or package…" autocomplete="off"></label>
+          <label>Jump to plugin<select id="dag-jump"></select></label>
+        </div>
+        <div class="tree-actions">
+          <button type="button" id="dag-knowledge">Find Knowledge</button><button type="button" id="dag-ui">Find UI</button><button type="button" id="dag-selected">Center selected</button><button type="button" id="dag-clear">Clear highlight</button><button type="button" id="dag-adapters" aria-pressed="false">Hide adapters</button>
+        </div>
+        <p class="tree-count" id="dag-count" aria-live="polite"></p>
+        <div class="tree-zoom"><button type="button" id="dag-minus" aria-label="Zoom out">−</button><output id="dag-scale">100%</output><button type="button" id="dag-plus" aria-label="Zoom in">+</button><button type="button" id="dag-fit">Fit DAG</button><button type="button" id="dag-actual">100%</button><span>Drag the background or scroll to pan · pinch / Ctrl-scroll to zoom</span></div>
+        <div class="dag-viewport" id="dag-viewport" tabindex="0" aria-label="Pannable dependency DAG"><div id="dag-space"><div id="dag-canvas"><svg id="dag-edges" aria-hidden="true"></svg><div id="dag-nodes"></div></div></div></div>
+        <p class="tree-status" id="dag-status" aria-live="polite">Hover or focus a plugin to trace its direct relationships. Click for details.</p>
+        <footer class="legend"><span><i class="line"></i>requires →</span><span><i class="line incoming"></i>← used by</span><span>Dashed cards are adapters. HTTP / MCP links stay in details, outside this Cordis DAG.</span></footer>
+      </section>
+      <aside class="inspector" id="inspector" aria-label="Plugin details"></aside>
+    </div>
+    <footer class="page-footer"><span>Built from Cordis declarations. Internal edges appear when you select a plugin.</span><span>Next chapter: Reflection, consolidation & publication.</span></footer>
+    <div class="sr-only" id="announcement" aria-live="polite"></div>
+    <button class="detail-jump" id="detail-jump" type="button" hidden>View details ↓</button>
+  </main>
+  <script id="architecture-data" type="application/json">{"snapshot":"2026-09-16","groups":[{"id":"front","label":"Front door","caption":"HTTP, MCP & the browser","members":["api","tools","ui"],"description":"API accepts requests, Tools controls the callable catalog, and UI hosts the browser. Small adapters connect these registries to the domain plugins."},{"id":"auth","label":"Identity","caption":"Shared user login","members":["identity"],"description":"Identity verifies shared users. Scope owns project membership, permissions and tool policy. External Mounts owns upstream credential selection."},{"id":"mounts","label":"External Mounts","caption":"Optional remote tools","members":["mounts"],"description":"External Mounts connects independent MCP servers to the local tool registry and selects their upstream credentials. An available mount is not proof that an upstream service is healthy."},{"id":"research","label":"Research","caption":"The work & what we learn","members":["claims","tasks","experiments","knowledge","paper","reflections","consolidation","research"],"description":"Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds Paper, Reflections, Knowledge and Consolidation optionally. Only stages that use a missing provider wait. Selected code changes use Consolidation, which requires Code."},{"id":"coordination","label":"Coordination","caption":"Gates, agents & code","members":["workflows","sessions","code"],"description":"Workflows evaluates gates and assignments. Agent Sessions controls worker authority and recovery. Code retains requests and exact code-capture references. The separate Runner performs machine work."},{"id":"evidence","label":"Evidence","caption":"Files, reviews & context","members":["artifacts","reviews","contextBuilder","feed"],"description":"Artifacts owns file metadata. Reviews retains independent assessments. Context Builder assembles the domain's context recipe. Feed records project activity."},{"id":"external","label":"External services","caption":"Connected over MCP","members":[],"description":"Nisa and Sandboxes are independent remote systems, not local Cordis plugins. Their tools are mounted only when configured and permitted."},{"id":"foundation","label":"Foundation","caption":"Shared durable capabilities","members":["state","scope","blobs","domainEvents"],"description":"State and Scope are the most shared dependencies. Blobs stores bytes without depending on State; Artifacts connects file metadata to those bytes. Domain Events reads durable events from State."},{"id":"runner","label":"Separate machine","caption":"Agents & Git checkouts","members":["runner"],"description":"Runner has its own Cordis context. It talks to the server over authenticated HTTP and launches scoped agents in scratch or Git workspaces. It has no injected server-plugin dependencies."}],"nodes":[{"plugin":"merv-api","source":"packages/api/src/index.ts","provides":["api"],"requires":["scope","tools","identity"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"api","group":"front","owner":"api","label":"API","purpose":"Accepts authenticated HTTP and MCP requests and routes them through the tool registry.","exposedTools":[]},{"plugin":"merv-artifact-tools","source":"packages/artifacts/src/tools.ts","provides":[],"requires":["artifacts","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-artifact-tools","group":"front","owner":"artifacts","label":"Artifacts · tools adapter","purpose":"Connects Artifacts to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"artifact.create","description":"Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.","readOnly":false},{"name":"artifact.get","description":"Read immutable artifact metadata.","readOnly":true},{"name":"artifact.list","description":"List immutable artifacts in this project.","readOnly":true},{"name":"artifact.read","description":"Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.","readOnly":true}]},{"plugin":"merv-artifact-ui","source":"packages/artifacts/src/ui.ts","provides":[],"requires":["artifacts","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-artifact-ui","group":"front","owner":"artifacts","label":"Artifacts · ui adapter","purpose":"Connects Artifacts to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-artifacts","source":"packages/artifacts/src/index.ts","provides":["artifacts"],"requires":["state","scope","blobs"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"artifacts","group":"evidence","owner":"artifacts","label":"Artifacts","purpose":"Owns immutable file metadata, content hashes and permission-checked reads. It stores records in State and bytes through Blobs.","exposedTools":[{"name":"artifact.create","description":"Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.","readOnly":false},{"name":"artifact.get","description":"Read immutable artifact metadata.","readOnly":true},{"name":"artifact.list","description":"List immutable artifacts in this project.","readOnly":true},{"name":"artifact.read","description":"Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.","readOnly":true}]},{"plugin":"merv-blobs","source":"packages/blobs/src/index.ts","provides":["blobs"],"requires":[],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"blobs","group":"foundation","owner":"blobs","label":"Blobs","purpose":"Stores and reads file bytes by content hash. It has no State dependency; Artifacts owns the associated file metadata.","exposedTools":[]},{"plugin":"merv-claims","source":"packages/claims/src/index.ts","provides":["claims"],"requires":["state","scope"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"claims","group":"research","owner":"claims","label":"Claims","purpose":"Stores research statements, their scope, status and confidence with revision checks and replayable edits.","exposedTools":[{"name":"claim.create","description":"Create a project research claim with a statement and optional prose scope. Status starts active; confidence defaults to medium. Producers and operators may write. The same normalized requestId retry returns its original receipt.","readOnly":false},{"name":"claim.list","description":"Read all claims in the current project, including every status, in creation-time/ID order. Each record carries its current revision for updates. This does not select or start an experiment.","readOnly":true},{"name":"claim.update","description":"Update a claim status and/or confidence using its current expectedRevision. Statement and scope stay unchanged. A conflicting edit requires a fresh read and decision; retrying the same requestId and input returns the original committed receipt. A completed experiment does not automatically support its claim.","readOnly":false}]},{"plugin":"merv-claims-tools","source":"packages/claims/src/tools.ts","provides":[],"requires":["claims","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-claims-tools","group":"front","owner":"claims","label":"Claims · tools adapter","purpose":"Connects Claims to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"claim.create","description":"Create a project research claim with a statement and optional prose scope. Status starts active; confidence defaults to medium. Producers and operators may write. The same normalized requestId retry returns its original receipt.","readOnly":false},{"name":"claim.list","description":"Read all claims in the current project, including every status, in creation-time/ID order. Each record carries its current revision for updates. This does not select or start an experiment.","readOnly":true},{"name":"claim.update","description":"Update a claim status and/or confidence using its current expectedRevision. Statement and scope stay unchanged. A conflicting edit requires a fresh read and decision; retrying the same requestId and input returns the original committed receipt. A completed experiment does not automatically support its claim.","readOnly":false}]},{"plugin":"merv-claims-ui","source":"packages/claims/src/ui.ts","provides":[],"requires":["claims","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-claims-ui","group":"front","owner":"claims","label":"Claims · ui adapter","purpose":"Connects Claims to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-code","source":"packages/code/src/index.ts","provides":["code"],"requires":["state","scope","sessions","artifacts"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"code","group":"coordination","owner":"code","label":"Code","purpose":"Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. It does not execute Git itself.","exposedTools":[{"name":"code.commit","description":"Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.","readOnly":false},{"name":"code.operation","description":"Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.","readOnly":true}]},{"plugin":"merv-code-api","source":"packages/code/src/api.ts","provides":[],"requires":["api","code"],"optional":[],"kind":"api","runtime":"server","defaultConfiguration":true,"id":"merv-code-api","group":"front","owner":"code","label":"Code · api adapter","purpose":"Connects Code to the API registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-code-tools","source":"packages/code/src/tools.ts","provides":[],"requires":["code","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-code-tools","group":"front","owner":"code","label":"Code · tools adapter","purpose":"Connects Code to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"code.commit","description":"Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.","readOnly":false},{"name":"code.operation","description":"Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.","readOnly":true}]},{"plugin":"merv-code-ui","source":"packages/code/src/ui.ts","provides":[],"requires":["code","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-code-ui","group":"front","owner":"code","label":"Code · ui adapter","purpose":"Connects Code to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-consolidation","source":"packages/consolidation/src/index.ts","provides":["consolidation"],"requires":["state","scope","artifacts","workflows","reviews","contextBuilder","code"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"consolidation","group":"research","owner":"consolidation","label":"Consolidation","purpose":"Implements and reviews code changes from pinned source artifacts and a selected experiment scope. Requires Code and does not depend on Reflections. Historical report-only cycles remain supported.","exposedTools":[{"name":"consolidation.create","description":"Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.","readOnly":false},{"name":"consolidation.get","description":"Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.","readOnly":true},{"name":"consolidation.list","description":"List project consolidations and their exact reviewed outputs. Workflow guidance uses workflow.status_and_next.","readOnly":true},{"name":"consolidation.submit","description":"Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.","readOnly":false}]},{"plugin":"merv-consolidation-tools","source":"packages/consolidation/src/tools.ts","provides":[],"requires":["consolidation","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-consolidation-tools","group":"front","owner":"consolidation","label":"Consolidation · tools adapter","purpose":"Connects Consolidation to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"consolidation.create","description":"Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.","readOnly":false},{"name":"consolidation.get","description":"Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.","readOnly":true},{"name":"consolidation.list","description":"List project consolidations and their exact reviewed outputs. Workflow guidance uses workflow.status_and_next.","readOnly":true},{"name":"consolidation.submit","description":"Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.","readOnly":false}]},{"plugin":"merv-consolidation-ui","source":"packages/consolidation/src/ui.ts","provides":[],"requires":["consolidation","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-consolidation-ui","group":"front","owner":"consolidation","label":"Consolidation · ui adapter","purpose":"Connects Consolidation to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-context-builder","source":"packages/context-builder/src/index.ts","provides":["contextBuilder"],"requires":["state","scope","artifacts"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"contextBuilder","group":"evidence","owner":"contextBuilder","label":"Context Builder","purpose":"Assembles and persists starting context from the domain's versioned recipe and exact input references. It does not own task or experiment rules.","exposedTools":[]},{"plugin":"merv-domain-events","source":"packages/domain-events/src/index.ts","provides":["domainEvents"],"requires":["state"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"domainEvents","group":"foundation","owner":"domainEvents","label":"Domain Events","purpose":"Delivers durable events from State so consumers can react and recover without losing their place.","exposedTools":[]},{"plugin":"merv-experiments","source":"packages/experiments/src/index.ts","provides":["experiments"],"requires":["state","scope","artifacts","workflows","reviews","contextBuilder","claims","paper"],"optional":["code"],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"experiments","group":"research","owner":"experiments","label":"Experiments","purpose":"Owns plans, attempts, approved evidence, results, exhibits and both independent review stages. Git experiments bind review to the exact producer capture.","exposedTools":[{"name":"experiment.attach","description":"Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.","readOnly":false},{"name":"experiment.create","description":"Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.","readOnly":false},{"name":"experiment.exhibit","description":"Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round.","readOnly":true},{"name":"experiment.get_state","description":"Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.","readOnly":true},{"name":"experiment.graph","description":"Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.","readOnly":true},{"name":"experiment.list","description":"Read the selected project's experiment records, including terminal work, attempt history and sealed submission metadata. Artifact bytes use artifact.read. Current gate and next-action guidance come from workflow.status_and_next.","readOnly":true},{"name":"experiment.transition","description":"Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. Retry preserves the approved plan and attempt. Terminal closure requires a specific reason in evidence.reason. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.","readOnly":false}]},{"plugin":"merv-experiments-tools","source":"packages/experiments/src/tools.ts","provides":[],"requires":["experiments","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-experiments-tools","group":"front","owner":"experiments","label":"Experiments · tools adapter","purpose":"Connects Experiments to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"experiment.attach","description":"Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.","readOnly":false},{"name":"experiment.create","description":"Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.","readOnly":false},{"name":"experiment.exhibit","description":"Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round.","readOnly":true},{"name":"experiment.get_state","description":"Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.","readOnly":true},{"name":"experiment.graph","description":"Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.","readOnly":true},{"name":"experiment.list","description":"Read the selected project's experiment records, including terminal work, attempt history and sealed submission metadata. Artifact bytes use artifact.read. Current gate and next-action guidance come from workflow.status_and_next.","readOnly":true},{"name":"experiment.transition","description":"Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. Retry preserves the approved plan and attempt. Terminal closure requires a specific reason in evidence.reason. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.","readOnly":false}]},{"plugin":"merv-experiments-ui","source":"packages/experiments/src/ui.ts","provides":[],"requires":["experiments","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-experiments-ui","group":"front","owner":"experiments","label":"Experiments · ui adapter","purpose":"Connects Experiments to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-feed","source":"packages/feed/src/index.ts","provides":["feed"],"requires":["state","scope","artifacts"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"feed","group":"evidence","owner":"feed","label":"Feed","purpose":"Records project posts, replies and activity with optional artifact references.","exposedTools":[{"name":"feed.activity","description":"Read durable activity events for the current project. after is an exclusive event ID cursor, independent of the feed post sequence.","readOnly":true},{"name":"feed.get","description":"Read an immutable post in the current project.","readOnly":true},{"name":"feed.list","description":"Read project posts in ascending sequence order. after is an exclusive post sequence cursor; limit defaults to 50 and is capped at 100.","readOnly":true},{"name":"feed.post","description":"Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.","readOnly":false}]},{"plugin":"merv-feed-tools","source":"packages/feed/src/tools.ts","provides":[],"requires":["feed","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-feed-tools","group":"front","owner":"feed","label":"Feed · tools adapter","purpose":"Connects Feed to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"feed.activity","description":"Read durable activity events for the current project. after is an exclusive event ID cursor, independent of the feed post sequence.","readOnly":true},{"name":"feed.get","description":"Read an immutable post in the current project.","readOnly":true},{"name":"feed.list","description":"Read project posts in ascending sequence order. after is an exclusive post sequence cursor; limit defaults to 50 and is capped at 100.","readOnly":true},{"name":"feed.post","description":"Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.","readOnly":false}]},{"plugin":"merv-feed-ui","source":"packages/feed/src/ui.ts","provides":[],"requires":["feed","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-feed-ui","group":"front","owner":"feed","label":"Feed · ui adapter","purpose":"Connects Feed to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-identity","source":"packages/identity/src/index.ts","provides":["identity"],"requires":[],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"identity","group":"auth","owner":"identity","label":"Identity","purpose":"Verifies the shared user's identity. Project membership and roles remain in Scope.","exposedTools":[]},{"plugin":"merv-knowledge","source":"packages/knowledge/src/index.ts","provides":["knowledge"],"requires":["state","scope","claims","tasks","experiments","artifacts","reviews"],"optional":["code"],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"knowledge","group":"research","owner":"knowledge","label":"Knowledge","purpose":"Reads live project research records and resolves research-linked evidence for reflection agents. Historical corpus capture remains available to existing callers.","exposedTools":[{"name":"project.records","description":"Read all project claims, tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.","readOnly":true},{"name":"project.references","description":"Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or claim:, task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.","readOnly":true}]},{"plugin":"merv-knowledge-tools","source":"packages/knowledge/src/tools.ts","provides":[],"requires":["knowledge","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-knowledge-tools","group":"front","owner":"knowledge","label":"Knowledge · tools adapter","purpose":"Connects Knowledge to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"project.records","description":"Read all project claims, tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.","readOnly":true},{"name":"project.references","description":"Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or claim:, task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.","readOnly":true}]},{"plugin":"merv-knowledge-ui","source":"packages/knowledge/src/ui.ts","provides":[],"requires":["knowledge","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-knowledge-ui","group":"front","owner":"knowledge","label":"Knowledge · ui adapter","purpose":"Connects Knowledge to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-mounts","source":"packages/mounts/src/index.ts","provides":["mounts"],"requires":["tools","scope"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":false,"id":"mounts","group":"mounts","owner":"mounts","label":"External Mounts","purpose":"Connects remote MCP tools to Tools with names such as _nisa.search. Owns upstream credential bindings and secret resolution; Scope supplies caller tool policy.","exposedTools":[]},{"plugin":"merv-mounts-ui","source":"packages/mounts/src/ui.ts","provides":[],"requires":["mounts","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":false,"id":"merv-mounts-ui","group":"front","owner":"mounts","label":"External Mounts · ui adapter","purpose":"Connects External Mounts to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-paper","source":"packages/paper/src/index.ts","provides":["paper"],"requires":["state","scope","artifacts"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"paper","group":"research","owner":"paper","label":"Paper","purpose":"Stores project documents, citations and immutable edit proposals. Experiment and reflection reviews accept paper edits; Paper creates no assignments or context recipes.","exposedTools":[{"name":"paper.cite","description":"Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:\u003cid> evidence refs. expectedRevision is zero for a new entry.","readOnly":false},{"name":"paper.patch","description":"Patch only changed sections of a living-paper document with expectedRevision. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Methods/Results edits are submitted as JSON change artifacts with experiment or reflection submissions and applied by their existing review.","readOnly":false},{"name":"paper.read","description":"Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.","readOnly":true}]},{"plugin":"merv-paper-tools","source":"packages/paper/src/tools.ts","provides":[],"requires":["paper","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-paper-tools","group":"front","owner":"paper","label":"Paper · tools adapter","purpose":"Connects Paper to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"paper.cite","description":"Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:\u003cid> evidence refs. expectedRevision is zero for a new entry.","readOnly":false},{"name":"paper.patch","description":"Patch only changed sections of a living-paper document with expectedRevision. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Methods/Results edits are submitted as JSON change artifacts with experiment or reflection submissions and applied by their existing review.","readOnly":false},{"name":"paper.read","description":"Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.","readOnly":true}]},{"plugin":"merv-paper-ui","source":"packages/paper/src/ui.ts","provides":[],"requires":["paper","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-paper-ui","group":"front","owner":"paper","label":"Paper · ui adapter","purpose":"Connects Paper to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-reflection-tools","source":"packages/reflections/src/tools.ts","provides":[],"requires":["reflections","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-reflection-tools","group":"front","owner":"reflections","label":"Reflections · tools adapter","purpose":"Connects Reflections to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"reflection.get","description":"Read a reflection wave, current lens submissions and exact synthesis review. New waves use live research through project.records; only legacy waves contain a frozen corpus.","readOnly":true},{"name":"reflection.lens","description":"Read one lens assignment and its own pinned output. This does not disclose other lens outputs.","readOnly":true},{"name":"reflection.list","description":"List project reflection waves and their current stages.","readOnly":true},{"name":"reflection.submit","description":"Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.","readOnly":false},{"name":"reflection.submit_lens","description":"Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.","readOnly":false}]},{"plugin":"merv-reflection-ui","source":"packages/reflections/src/ui.ts","provides":[],"requires":["reflections","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-reflection-ui","group":"front","owner":"reflections","label":"Reflections · ui adapter","purpose":"Connects Reflections to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-reflections","source":"packages/reflections/src/index.ts","provides":["reflections"],"requires":["state","scope","artifacts","paper","workflows","reviews","contextBuilder"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"reflections","group":"research","owner":"reflections","label":"Reflections","purpose":"Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required.","exposedTools":[{"name":"reflection.get","description":"Read a reflection wave, current lens submissions and exact synthesis review. New waves use live research through project.records; only legacy waves contain a frozen corpus.","readOnly":true},{"name":"reflection.lens","description":"Read one lens assignment and its own pinned output. This does not disclose other lens outputs.","readOnly":true},{"name":"reflection.list","description":"List project reflection waves and their current stages.","readOnly":true},{"name":"reflection.submit","description":"Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.","readOnly":false},{"name":"reflection.submit_lens","description":"Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.","readOnly":false}]},{"plugin":"merv-research","source":"packages/research/src/index.ts","provides":["research"],"requires":["state","scope","workflows"],"optional":["paper","reflections","knowledge","consolidation"],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"research","group":"research","owner":"research","label":"Research","purpose":"Coordinates the outer cycle with only State, Scope and Workflows required. Optional Paper supplies the problem definition; Reflections starts waves and verifies approval; Knowledge supplies live-evidence permissions and unsnapshotted consolidation inputs; Consolidation handles selected code changes. Research stays active when any optional provider is removed, and only operations that use it wait with a named blocker. Stored records and completed command receipts remain readable; absence never means empty or approved evidence. New cycles can finish after approved reflection without consolidation. Paper changes belong to scientific workflows.","exposedTools":[{"name":"reflection.create","description":"Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.","readOnly":false},{"name":"research.advance","description":"Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. Never launches agents or publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.","readOnly":false},{"name":"research.create","description":"Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Paper edits are reviewed within scientific workflows.","readOnly":false},{"name":"research.get","description":"Read a research cycle, its accepted project definition, current outer gate and child workflow IDs. Use workflow.status_and_next for blockers.","readOnly":true},{"name":"research.list","description":"List research cycles and their exact child workflow references.","readOnly":true}]},{"plugin":"merv-research-tools","source":"packages/research/src/tools.ts","provides":[],"requires":["research","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-research-tools","group":"front","owner":"research","label":"Research · tools adapter","purpose":"Connects Research to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"reflection.create","description":"Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.","readOnly":false},{"name":"research.advance","description":"Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. Never launches agents or publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.","readOnly":false},{"name":"research.create","description":"Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Paper edits are reviewed within scientific workflows.","readOnly":false},{"name":"research.get","description":"Read a research cycle, its accepted project definition, current outer gate and child workflow IDs. Use workflow.status_and_next for blockers.","readOnly":true},{"name":"research.list","description":"List research cycles and their exact child workflow references.","readOnly":true}]},{"plugin":"merv-research-ui","source":"packages/research/src/ui.ts","provides":[],"requires":["research","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-research-ui","group":"front","owner":"research","label":"Research · ui adapter","purpose":"Connects Research to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-review-tools","source":"packages/reviews/src/tools.ts","provides":[],"requires":["tools","reviews"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-review-tools","group":"front","owner":"reviews","label":"Reviews · tools adapter","purpose":"Connects Reviews to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"review.get","description":"Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.","readOnly":true},{"name":"review.list","description":"List immutable review requests and their claim/verdict status in the current project.","readOnly":true},{"name":"review.start","description":"Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.","readOnly":false},{"name":"review.submit","description":"Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision.","readOnly":false}]},{"plugin":"merv-review-ui","source":"packages/reviews/src/ui.ts","provides":[],"requires":["reviews","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-review-ui","group":"front","owner":"reviews","label":"Reviews · ui adapter","purpose":"Connects Reviews to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-reviews","source":"packages/reviews/src/index.ts","provides":["reviews"],"requires":["state","scope","artifacts","domainEvents"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"reviews","group":"evidence","owner":"reviews","label":"Reviews","purpose":"Pins evidence, enforces independent review, retains findings and verdicts, and invokes the owning domain's transition in the same transaction.","exposedTools":[{"name":"review.get","description":"Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.","readOnly":true},{"name":"review.list","description":"List immutable review requests and their claim/verdict status in the current project.","readOnly":true},{"name":"review.start","description":"Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.","readOnly":false},{"name":"review.submit","description":"Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision.","readOnly":false}]},{"plugin":"merv-runner","source":"packages/runner/src/index.ts","provides":["runner"],"requires":[],"optional":[],"kind":"service","runtime":"machine","defaultConfiguration":false,"id":"runner","group":"runner","owner":"runner","label":"Runner","purpose":"Runs on a separate machine, launches agents, maintains their leases and captures Git workspaces. It calls server controls over HTTP.","exposedTools":[]},{"plugin":"merv-scope","source":"packages/scope/src/index.ts","provides":["scope"],"requires":["state"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"scope","group":"foundation","owner":"scope","label":"Scope","purpose":"Owns projects, security actors, memberships, credentials and permissions, plus the project Introduction. Agent Sessions owns agent identity and lifetime; Scope enforces its security actor and delegated authority. Scope also owns exact remote-tool grants and the registered session policy.","exposedTools":[{"name":"actor.create","description":"Operator: create an actor and its first project-bound token. Return this token only to that actor.","readOnly":false},{"name":"actor.credentials","description":"Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.","readOnly":true},{"name":"actor.issue_token","description":"Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.","readOnly":false},{"name":"actor.list","description":"Operator: list actors in this project.","readOnly":true},{"name":"actor.revoke","description":"Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.","readOnly":false},{"name":"actor.revoke_token","description":"Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.","readOnly":false},{"name":"actor.rotate_token","description":"Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.","readOnly":false},{"name":"actor.whoami","description":"Read your authenticated actor identity and role.","readOnly":true},{"name":"project.context.update","description":"Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.","readOnly":false},{"name":"project.get","description":"Read the current project.","readOnly":true}]},{"plugin":"merv-scope-tools","source":"packages/scope/src/tools.ts","provides":[],"requires":["scope","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-scope-tools","group":"front","owner":"scope","label":"Scope · tools adapter","purpose":"Connects Scope to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"actor.create","description":"Operator: create an actor and its first project-bound token. Return this token only to that actor.","readOnly":false},{"name":"actor.credentials","description":"Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.","readOnly":true},{"name":"actor.issue_token","description":"Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.","readOnly":false},{"name":"actor.list","description":"Operator: list actors in this project.","readOnly":true},{"name":"actor.revoke","description":"Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.","readOnly":false},{"name":"actor.revoke_token","description":"Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.","readOnly":false},{"name":"actor.rotate_token","description":"Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.","readOnly":false},{"name":"actor.whoami","description":"Read your authenticated actor identity and role.","readOnly":true},{"name":"project.context.update","description":"Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.","readOnly":false},{"name":"project.get","description":"Read the current project.","readOnly":true}]},{"plugin":"merv-scope-ui","source":"packages/scope/src/ui.ts","provides":[],"requires":["scope","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-scope-ui","group":"front","owner":"scope","label":"Scope · ui adapter","purpose":"Connects Scope to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-sessions","source":"packages/sessions/src/index.ts","provides":["sessions"],"requires":["state","scope","workflows","domainEvents"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"sessions","group":"coordination","owner":"sessions","label":"Agent Sessions","purpose":"Owns continuing agent identity, context-reset history and authenticated sessions. Attaches one workflow assignment at a time, freezes its context and tool permissions, and fences each execution independently. Runner launches fresh agents; external agents can explicitly change assignments.","exposedTools":[]},{"plugin":"merv-sessions-api","source":"packages/sessions/src/api.ts","provides":[],"requires":["sessions","api"],"optional":[],"kind":"api","runtime":"server","defaultConfiguration":true,"id":"merv-sessions-api","group":"front","owner":"sessions","label":"Agent Sessions · api adapter","purpose":"Connects Agent Sessions to the API registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-sessions-ui","source":"packages/sessions/src/ui.ts","provides":[],"requires":["sessions","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-sessions-ui","group":"front","owner":"sessions","label":"Agent Sessions · ui adapter","purpose":"Connects Agent Sessions to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-state","source":"packages/state/src/index.ts","provides":["state"],"requires":[],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"state","group":"foundation","owner":"state","label":"State","purpose":"Provides async transactions, migrations, durable records and the event ledger. Configuration selects SQLite or PostgreSQL behind the same contract.","exposedTools":[]},{"plugin":"merv-task-tools","source":"packages/tasks/src/tools.ts","provides":[],"requires":["tools","tasks"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-task-tools","group":"front","owner":"tasks","label":"Tasks · tools adapter","purpose":"Connects Tasks to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"task.checkpoint","description":"Save attributed progress for this task assignment. Checkpoints are unverified notes for continuity, not a delivery or verdict. Review checkpoints require the current claimId.","readOnly":false},{"name":"task.context","description":"Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.","readOnly":false},{"name":"task.create","description":"Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs; project.reflection requires experiments and projectKnowledge.","readOnly":false},{"name":"task.get","description":"Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance.","readOnly":true},{"name":"task.list","description":"List tasks in the current project.","readOnly":true},{"name":"task.mark_failed","description":"Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.","readOnly":false},{"name":"task.reissue_review","description":"Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.","readOnly":false},{"name":"task.submit_delivery","description":"Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. expectedRevision is the task workflow revision.","readOnly":false}]},{"plugin":"merv-task-ui","source":"packages/tasks/src/ui.ts","provides":[],"requires":["tasks","ui"],"optional":[],"kind":"ui","runtime":"server","defaultConfiguration":true,"id":"merv-task-ui","group":"front","owner":"tasks","label":"Tasks · ui adapter","purpose":"Connects Tasks to the UI registry. This adapter owns no domain state.","exposedTools":[]},{"plugin":"merv-tasks","source":"packages/tasks/src/index.ts","provides":["tasks"],"requires":["state","scope","artifacts","workflows","reviews","contextBuilder"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"tasks","group":"research","owner":"tasks","label":"Tasks","purpose":"Owns task briefs, acceptance checks, evidence submissions, closure rules and task-specific context formulas.","exposedTools":[{"name":"task.checkpoint","description":"Save attributed progress for this task assignment. Checkpoints are unverified notes for continuity, not a delivery or verdict. Review checkpoints require the current claimId.","readOnly":false},{"name":"task.context","description":"Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.","readOnly":false},{"name":"task.create","description":"Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs; project.reflection requires experiments and projectKnowledge.","readOnly":false},{"name":"task.get","description":"Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance.","readOnly":true},{"name":"task.list","description":"List tasks in the current project.","readOnly":true},{"name":"task.mark_failed","description":"Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.","readOnly":false},{"name":"task.reissue_review","description":"Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.","readOnly":false},{"name":"task.submit_delivery","description":"Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. expectedRevision is the task workflow revision.","readOnly":false}]},{"plugin":"merv-tools","source":"packages/api/src/index.ts","provides":["tools"],"requires":["scope"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"tools","group":"front","owner":"tools","label":"Tools","purpose":"Registers native and mounted tools, applies grants and worker constraints, and drains admitted calls during unload.","exposedTools":[]},{"plugin":"merv-ui","source":"packages/ui/src/index.ts","provides":["ui"],"requires":["api","tools"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"ui","group":"front","owner":"ui","label":"UI","purpose":"Serves the browser and the registry of plugin-owned views. Removing a UI adapter removes that view.","exposedTools":[{"name":"ui.read","description":"Read the data a sidebar row owns when it has no dedicated domain tool.","readOnly":true},{"name":"ui.shell","description":"Read the sidebar rows currently registered by active plugins, with live row status, and the plugin lifecycle table.","readOnly":true}]},{"plugin":"merv-workflow-tools","source":"packages/workflows/src/tools.ts","provides":[],"requires":["workflows","tools"],"optional":[],"kind":"tools","runtime":"server","defaultConfiguration":true,"id":"merv-workflow-tools","group":"front","owner":"workflows","label":"Workflows · tools adapter","purpose":"Connects Workflows to the Tools registry. This adapter owns no domain state.","exposedTools":[{"name":"workflow.assignment","description":"Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.","readOnly":true},{"name":"workflow.begin","description":"Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.","readOnly":false},{"name":"workflow.status_and_next","description":"Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. Omit instanceId for a project overview of all workflow instances. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.","readOnly":true}]},{"plugin":"merv-workflows","source":"packages/workflows/src/index.ts","provides":["workflows"],"requires":["state","scope"],"optional":[],"kind":"service","runtime":"server","defaultConfiguration":true,"id":"workflows","group":"coordination","owner":"workflows","label":"Workflows","purpose":"Owns the common state graph, revisions, prerequisites, current gate, blockers, next actions, assignments and lease hooks. Domains provide their own rules.","exposedTools":[{"name":"workflow.assignment","description":"Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.","readOnly":true},{"name":"workflow.begin","description":"Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.","readOnly":false},{"name":"workflow.status_and_next","description":"Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. Omit instanceId for a project overview of all workflow instances. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.","readOnly":true}]}],"edges":[{"from":"api","to":"scope","optional":false},{"from":"api","to":"tools","optional":false},{"from":"api","to":"identity","optional":false},{"from":"merv-artifact-tools","to":"artifacts","optional":false},{"from":"merv-artifact-tools","to":"tools","optional":false},{"from":"merv-artifact-ui","to":"artifacts","optional":false},{"from":"merv-artifact-ui","to":"ui","optional":false},{"from":"artifacts","to":"state","optional":false},{"from":"artifacts","to":"scope","optional":false},{"from":"artifacts","to":"blobs","optional":false},{"from":"claims","to":"state","optional":false},{"from":"claims","to":"scope","optional":false},{"from":"merv-claims-tools","to":"claims","optional":false},{"from":"merv-claims-tools","to":"tools","optional":false},{"from":"merv-claims-ui","to":"claims","optional":false},{"from":"merv-claims-ui","to":"ui","optional":false},{"from":"code","to":"state","optional":false},{"from":"code","to":"scope","optional":false},{"from":"code","to":"sessions","optional":false},{"from":"code","to":"artifacts","optional":false},{"from":"merv-code-api","to":"api","optional":false},{"from":"merv-code-api","to":"code","optional":false},{"from":"merv-code-tools","to":"code","optional":false},{"from":"merv-code-tools","to":"tools","optional":false},{"from":"merv-code-ui","to":"code","optional":false},{"from":"merv-code-ui","to":"ui","optional":false},{"from":"consolidation","to":"state","optional":false},{"from":"consolidation","to":"scope","optional":false},{"from":"consolidation","to":"artifacts","optional":false},{"from":"consolidation","to":"workflows","optional":false},{"from":"consolidation","to":"reviews","optional":false},{"from":"consolidation","to":"contextBuilder","optional":false},{"from":"consolidation","to":"code","optional":false},{"from":"merv-consolidation-tools","to":"consolidation","optional":false},{"from":"merv-consolidation-tools","to":"tools","optional":false},{"from":"merv-consolidation-ui","to":"consolidation","optional":false},{"from":"merv-consolidation-ui","to":"ui","optional":false},{"from":"contextBuilder","to":"state","optional":false},{"from":"contextBuilder","to":"scope","optional":false},{"from":"contextBuilder","to":"artifacts","optional":false},{"from":"domainEvents","to":"state","optional":false},{"from":"experiments","to":"state","optional":false},{"from":"experiments","to":"scope","optional":false},{"from":"experiments","to":"artifacts","optional":false},{"from":"experiments","to":"workflows","optional":false},{"from":"experiments","to":"reviews","optional":false},{"from":"experiments","to":"contextBuilder","optional":false},{"from":"experiments","to":"claims","optional":false},{"from":"experiments","to":"paper","optional":false},{"from":"experiments","to":"code","optional":true},{"from":"merv-experiments-tools","to":"experiments","optional":false},{"from":"merv-experiments-tools","to":"tools","optional":false},{"from":"merv-experiments-ui","to":"experiments","optional":false},{"from":"merv-experiments-ui","to":"ui","optional":false},{"from":"feed","to":"state","optional":false},{"from":"feed","to":"scope","optional":false},{"from":"feed","to":"artifacts","optional":false},{"from":"merv-feed-tools","to":"feed","optional":false},{"from":"merv-feed-tools","to":"tools","optional":false},{"from":"merv-feed-ui","to":"feed","optional":false},{"from":"merv-feed-ui","to":"ui","optional":false},{"from":"knowledge","to":"state","optional":false},{"from":"knowledge","to":"scope","optional":false},{"from":"knowledge","to":"claims","optional":false},{"from":"knowledge","to":"tasks","optional":false},{"from":"knowledge","to":"experiments","optional":false},{"from":"knowledge","to":"artifacts","optional":false},{"from":"knowledge","to":"reviews","optional":false},{"from":"knowledge","to":"code","optional":true},{"from":"merv-knowledge-tools","to":"knowledge","optional":false},{"from":"merv-knowledge-tools","to":"tools","optional":false},{"from":"merv-knowledge-ui","to":"knowledge","optional":false},{"from":"merv-knowledge-ui","to":"ui","optional":false},{"from":"mounts","to":"tools","optional":false},{"from":"mounts","to":"scope","optional":false},{"from":"merv-mounts-ui","to":"mounts","optional":false},{"from":"merv-mounts-ui","to":"ui","optional":false},{"from":"paper","to":"state","optional":false},{"from":"paper","to":"scope","optional":false},{"from":"paper","to":"artifacts","optional":false},{"from":"merv-paper-tools","to":"paper","optional":false},{"from":"merv-paper-tools","to":"tools","optional":false},{"from":"merv-paper-ui","to":"paper","optional":false},{"from":"merv-paper-ui","to":"ui","optional":false},{"from":"merv-reflection-tools","to":"reflections","optional":false},{"from":"merv-reflection-tools","to":"tools","optional":false},{"from":"merv-reflection-ui","to":"reflections","optional":false},{"from":"merv-reflection-ui","to":"ui","optional":false},{"from":"reflections","to":"state","optional":false},{"from":"reflections","to":"scope","optional":false},{"from":"reflections","to":"artifacts","optional":false},{"from":"reflections","to":"paper","optional":false},{"from":"reflections","to":"workflows","optional":false},{"from":"reflections","to":"reviews","optional":false},{"from":"reflections","to":"contextBuilder","optional":false},{"from":"research","to":"state","optional":false},{"from":"research","to":"scope","optional":false},{"from":"research","to":"workflows","optional":false},{"from":"research","to":"paper","optional":true},{"from":"research","to":"reflections","optional":true},{"from":"research","to":"knowledge","optional":true},{"from":"research","to":"consolidation","optional":true},{"from":"merv-research-tools","to":"research","optional":false},{"from":"merv-research-tools","to":"tools","optional":false},{"from":"merv-research-ui","to":"research","optional":false},{"from":"merv-research-ui","to":"ui","optional":false},{"from":"merv-review-tools","to":"tools","optional":false},{"from":"merv-review-tools","to":"reviews","optional":false},{"from":"merv-review-ui","to":"reviews","optional":false},{"from":"merv-review-ui","to":"ui","optional":false},{"from":"reviews","to":"state","optional":false},{"from":"reviews","to":"scope","optional":false},{"from":"reviews","to":"artifacts","optional":false},{"from":"reviews","to":"domainEvents","optional":false},{"from":"scope","to":"state","optional":false},{"from":"merv-scope-tools","to":"scope","optional":false},{"from":"merv-scope-tools","to":"tools","optional":false},{"from":"merv-scope-ui","to":"scope","optional":false},{"from":"merv-scope-ui","to":"ui","optional":false},{"from":"sessions","to":"state","optional":false},{"from":"sessions","to":"scope","optional":false},{"from":"sessions","to":"workflows","optional":false},{"from":"sessions","to":"domainEvents","optional":false},{"from":"merv-sessions-api","to":"sessions","optional":false},{"from":"merv-sessions-api","to":"api","optional":false},{"from":"merv-sessions-ui","to":"sessions","optional":false},{"from":"merv-sessions-ui","to":"ui","optional":false},{"from":"merv-task-tools","to":"tools","optional":false},{"from":"merv-task-tools","to":"tasks","optional":false},{"from":"merv-task-ui","to":"tasks","optional":false},{"from":"merv-task-ui","to":"ui","optional":false},{"from":"tasks","to":"state","optional":false},{"from":"tasks","to":"scope","optional":false},{"from":"tasks","to":"artifacts","optional":false},{"from":"tasks","to":"workflows","optional":false},{"from":"tasks","to":"reviews","optional":false},{"from":"tasks","to":"contextBuilder","optional":false},{"from":"tools","to":"scope","optional":false},{"from":"ui","to":"api","optional":false},{"from":"ui","to":"tools","optional":false},{"from":"merv-workflow-tools","to":"workflows","optional":false},{"from":"merv-workflow-tools","to":"tools","optional":false},{"from":"workflows","to":"state","optional":false},{"from":"workflows","to":"scope","optional":false}],"counts":{"plugins":56,"providers":25,"adapters":31,"dependencies":144},"network":[{"from":"runner","to":"api","protocol":"HTTP","description":"Authenticated Sessions and Code controls. Not a Cordis inject dependency."},{"from":"mounts","to":"remote-nisa","protocol":"MCP","description":"Optional Nisa MCP connection; configured separately."},{"from":"mounts","to":"remote-sandboxes","protocol":"MCP","description":"Optional Sandboxes MCP connection; configured separately."}]}</script>
+  <script>/* Layered DAG layout. Intermediate routing points are not plugin nodes. */
+function createDependencyDAG({ data, select }) {
+  const viewport = document.getElementById('dag-viewport');
+  const space = document.getElementById('dag-space');
+  const canvas = document.getElementById('dag-canvas');
+  const host = document.getElementById('dag-nodes');
+  const wires = document.getElementById('dag-edges');
+  const search = document.getElementById('dag-search');
+  const picker = document.getElementById('dag-jump');
+  const status = document.getElementById('dag-status');
+  const adapterToggle = document.getElementById('dag-adapters');
+  const nodeHeight = 100;
+  let hideAdapters = false;
+  let visibleNodes, nodes, incoming, vertices, routes, graphWidth, graphHeight;
+  const make = (tag, className, text) => {
+    const el = document.createElement(tag);
+    el.className = className;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  };
+  const svg = (tag, attrs) => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+    return el;
+  };
+  function buildGraph() {
+    const active = data.nodes.filter((node) => !hideAdapters || node.kind === 'service');
+    const ids = new Set(active.map((node) => node.id));
+    visibleNodes = active.map((node) => ({
+      ...node,
+      requires: node.requires.filter((id) => ids.has(id)),
+      optional: (node.optional ?? []).filter((id) => ids.has(id)),
+    }));
+    const visibleEdges = data.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
+    host.replaceChildren();
+    wires.replaceChildren();
+    nodes = new Map(visibleNodes.map((node) => [node.id, node]));
+    incoming = new Map(visibleNodes.map((node) => [node.id, []]));
+    for (const edge of visibleEdges) incoming.get(edge.to).push(edge.from);
+    const ranks = new Map();
+    const visiting = new Set();
+    function rank(id) {
+      if (ranks.has(id)) return ranks.get(id);
+      if (visiting.has(id)) throw new Error('Plugin dependency graph contains a cycle');
+      visiting.add(id);
+      const node = nodes.get(id);
+      const depth = Math.max(-1, ...[...node.requires, ...node.optional].map(rank)) + 1;
+      visiting.delete(id);
+      ranks.set(id, depth);
+      return depth;
+    }
+    visibleNodes.forEach((node) => rank(node.id));
+    // Put shared foundations at the bottom and consumers above their deepest dependency.
+    const maximumDepth = Math.max(...ranks.values());
+    for (const [id, depth] of ranks) ranks.set(id, maximumDepth - depth);
+    const levels = Array.from({ length: Math.max(...ranks.values()) + 1 }, () => []);
+    vertices = new Map();
+    for (const node of visibleNodes) {
+      const vertex = {
+        id: node.id,
+        rank: ranks.get(node.id),
+        real: true,
+        parents: [],
+        children: [],
+        width: 176,
+      };
+      levels[vertex.rank].push(vertex);
+      vertices.set(vertex.id, vertex);
+    }
+    routes = visibleEdges.map((edge, index) => {
+      const points = [vertices.get(edge.from)];
+      for (let r = ranks.get(edge.from) + 1; r < ranks.get(edge.to); r++) {
+        const point = {
+          id: `route-${index}-${r}`,
+          rank: r,
+          real: false,
+          parents: [],
+          children: [],
+          width: 12,
+        };
+        levels[r].push(point);
+        points.push(point);
+      }
+      points.push(vertices.get(edge.to));
+      for (let i = 1; i < points.length; i++) {
+        points[i - 1].children.push(points[i]);
+        points[i].parents.push(points[i - 1]);
+      }
+      return { ...edge, points };
+    });
+    const assignOrder = () =>
+      levels.forEach((level) => level.forEach((point, i) => (point.order = i)));
+    assignOrder();
+    // Barycenter sweeps keep related nodes near each other and reduce crossings.
+    for (let pass = 0; pass < 12; pass++) {
+      const down = pass % 2 === 0;
+      for (const level of down ? levels.slice(1) : levels.slice(0, -1).reverse()) {
+        const score = (point) => {
+          const near = down ? point.parents : point.children;
+          return near.length
+            ? near.reduce((sum, p) => sum + p.order, 0) / near.length
+            : point.order;
+        };
+        level.sort((a, b) => score(a) - score(b) || a.order - b.order);
+        assignOrder();
+      }
+    }
+    const gap = 30,
+      rowGap = 204,
+      pad = 70;
+    const widths = levels.map((level) => level.reduce((sum, v) => sum + v.width + gap, 0) - gap);
+    graphWidth = Math.max(...widths) + pad * 2;
+    graphHeight = levels.length * rowGap + pad * 2;
+    levels.forEach((level, r) => {
+      let x = (graphWidth - widths[r]) / 2;
+      for (const point of level) {
+        point.x = x + point.width / 2;
+        point.y = pad + r * rowGap;
+        x += point.width + gap;
+      }
+    });
+    canvas.style.width = `${graphWidth}px`;
+    canvas.style.height = `${graphHeight}px`;
+    wires.setAttribute('viewBox', `0 0 ${graphWidth} ${graphHeight}`);
+    const defs = svg('defs', {});
+    for (const [id, color] of [
+      ['normal', '#9d927e'],
+      ['out', '#8a4f30'],
+      ['in', '#4e6d70'],
+    ]) {
+      const marker = svg('marker', {
+        id: `dag-arrow-${id}`,
+        viewBox: '0 0 10 10',
+        refX: 9,
+        refY: 5,
+        markerWidth: 8,
+        markerHeight: 8,
+        orient: 'auto',
+        markerUnits: 'userSpaceOnUse',
+      });
+      marker.append(
+        svg('path', { d: 'M 1 1 L 9 5 L 1 9', fill: 'none', stroke: color, 'stroke-width': 1.6 }),
+      );
+      defs.append(marker);
+    }
+    wires.append(defs);
+    for (const route of routes) {
+      const coords = route.points.map((point, i) => [
+        point.x,
+        point.y + (i === 0 ? nodeHeight : i === route.points.length - 1 ? 0 : nodeHeight / 2),
+      ]);
+      let d = `M ${coords[0].join(' ')}`;
+      for (let i = 1; i < coords.length; i++) {
+        const [x, y] = coords[i],
+          p = coords[i - 1],
+          mid = (p[1] + y) / 2;
+        d += ` C ${p[0]} ${mid} ${x} ${mid} ${x} ${y}`;
+      }
+      const path = svg('path', { d, class: 'dag-edge', 'marker-end': 'url(#dag-arrow-normal)' });
+      if (route.optional) path.setAttribute('stroke-dasharray', '6 5');
+      const title = svg('title', {});
+      title.textContent = `${route.from} ${route.optional ? 'optionally uses' : 'requires'} ${route.to}`;
+      path.append(title);
+      path.dataset.from = route.from;
+      path.dataset.to = route.to;
+      wires.append(path);
+    }
+    for (const node of visibleNodes) {
+      const point = vertices.get(node.id);
+      const card = make('button', `dag-node ${node.kind === 'service' ? 'service' : 'adapter'}`);
+      card.type = 'button';
+      card.dataset.node = node.id;
+      card.setAttribute('aria-pressed', 'false');
+      card.title = node.purpose;
+      card.style.left = `${point.x - 88}px`;
+      card.style.top = `${point.y}px`;
+      card.append(
+        make('span', 'dag-name', node.label),
+        make(
+          'span',
+          'dag-kind',
+          node.runtime === 'machine'
+            ? 'Separate machine'
+            : node.kind === 'service'
+              ? 'Service plugin'
+              : `${node.kind.toUpperCase()} adapter`,
+        ),
+        make(
+          'span',
+          'dag-meta',
+          `${node.requires.length} required${node.optional.length ? ` + ${node.optional.length} optional` : ''} · ${incoming.get(node.id).length} used by`,
+        ),
+      );
+      host.append(card);
+    }
+  }
+  buildGraph();
+  let selected = null,
+    zoom = 1,
+    fitting = true,
+    offsetX = 20;
+  function highlight(id) {
+    const node = nodes.get(id),
+      out = new Set([...(node?.requires ?? []), ...(node?.optional ?? [])]),
+      ins = new Set(incoming.get(id) ?? []);
+    canvas.classList.toggle('tracing', !!node);
+    for (const card of host.children) {
+      const n = card.dataset.node,
+        type = n === id ? 'self' : out.has(n) ? 'out' : ins.has(n) ? 'in' : '';
+      if (type) card.dataset.relation = type;
+      else delete card.dataset.relation;
+      card.setAttribute('aria-pressed', String(n === selected));
+    }
+    for (const path of wires.querySelectorAll('.dag-edge')) {
+      const type = path.dataset.from === id ? 'out' : path.dataset.to === id ? 'in' : '';
+      if (type) path.dataset.relation = type;
+      else delete path.dataset.relation;
+      path.setAttribute('marker-end', `url(#dag-arrow-${type || 'normal'})`);
+    }
+    status.textContent = node
+      ? `${node.label} · ${node.requires.length} required · ${node.optional.length} optional (dashed) · ${ins.size} used by. All ${nodes.size} nodes remain visible.`
+      : 'Hover or focus a plugin to trace its direct relationships. Click for details.';
+    document.getElementById('dag-selected').disabled = !nodes.has(selected);
+  }
+  function layout() {
+    if (!viewport.clientWidth) return;
+    if (fitting)
+      zoom = Math.min(
+        1,
+        Math.max(
+          0.05,
+          Math.min(
+            (viewport.clientWidth - 40) / graphWidth,
+            (viewport.clientHeight - 40) / graphHeight,
+          ),
+        ),
+      );
+    offsetX = Math.max(20, (viewport.clientWidth - graphWidth * zoom) / 2);
+    canvas.style.transform = `scale(${zoom})`;
+    canvas.style.left = `${offsetX}px`;
+    space.style.width = `${Math.max(viewport.clientWidth - 2, graphWidth * zoom + 40)}px`;
+    space.style.height = `${Math.max(viewport.clientHeight - 2, graphHeight * zoom + 40)}px`;
+    document.getElementById('dag-scale').textContent = `${Math.round(zoom * 100)}%`;
+  }
+  function changeZoom(next, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
+    const gx = (viewport.scrollLeft + x - offsetX) / zoom,
+      gy = (viewport.scrollTop + y - 20) / zoom;
+    fitting = false;
+    zoom = Math.min(2, Math.max(0.05, next));
+    layout();
+    viewport.scrollLeft = gx * zoom + offsetX - x;
+    viewport.scrollTop = gy * zoom + 20 - y;
+  }
+  function center(id, readable = true) {
+    const point = vertices.get(id);
+    if (!point) return;
+    if (readable && zoom < 0.75) {
+      fitting = false;
+      zoom = 0.85;
+      layout();
+    }
+    viewport.scrollLeft = point.x * zoom + offsetX - viewport.clientWidth / 2;
+    viewport.scrollTop = (point.y + nodeHeight / 2) * zoom + 20 - viewport.clientHeight / 2;
+  }
+  function jump(id) {
+    if (!nodes.has(id)) return;
+    select(id);
+    center(id);
+  }
+  function searchOptions() {
+    const query = search.value.trim().toLowerCase();
+    const found = visibleNodes
+      .filter((node) => `${node.label} ${node.id} ${node.source}`.toLowerCase().includes(query))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    picker.replaceChildren();
+    const prompt = make('option', '', found.length ? 'Choose a plugin…' : 'No matches');
+    prompt.value = '';
+    picker.append(prompt);
+    for (const node of found) {
+      const option = make('option', '', node.label);
+      option.value = node.id;
+      picker.append(option);
+    }
+    for (const card of host.children)
+      card.classList.toggle(
+        'search-match',
+        !!query && found.some((n) => n.id === card.dataset.node),
+      );
+    document.getElementById('dag-count').textContent =
+      `${nodes.size} unique plugins · ${routes.length} directed dependencies · ${hideAdapters ? 'adapters hidden · ' : ''}${query ? found.length + ' search matches · ' : ''}fully expanded`;
+  }
+  adapterToggle.addEventListener('click', () => {
+    hideAdapters = !hideAdapters;
+    adapterToggle.setAttribute('aria-pressed', String(hideAdapters));
+    buildGraph();
+    if (selected && !nodes.has(selected)) select(null);
+    searchOptions();
+    highlight(selected);
+    fitting = true;
+    layout();
+    viewport.scrollLeft = 0;
+    viewport.scrollTop = 0;
+  });
+  search.addEventListener('input', searchOptions);
+  search.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && picker.options.length > 1) jump(picker.options[1].value);
+  });
+  picker.addEventListener('change', () => jump(picker.value));
+  host.addEventListener('click', (event) => {
+    const card = event.target.closest('.dag-node');
+    if (card) select(card.dataset.node);
+  });
+  for (const name of ['pointerover', 'focusin'])
+    host.addEventListener(name, (event) => {
+      const card = event.target.closest('.dag-node');
+      if (card) highlight(card.dataset.node);
+    });
+  for (const name of ['pointerout', 'focusout'])
+    host.addEventListener(name, (event) => {
+      const card = event.target.closest('.dag-node');
+      if (card && !card.contains(event.relatedTarget)) highlight(selected);
+    });
+  for (const id of ['knowledge', 'ui'])
+    document.getElementById(`dag-${id}`).addEventListener('click', () => jump(id));
+  document.getElementById('dag-selected').addEventListener('click', () => center(selected));
+  document.getElementById('dag-clear').addEventListener('click', () => {
+    search.value = '';
+    searchOptions();
+    select(null);
+  });
+  document.getElementById('dag-minus').addEventListener('click', () => changeZoom(zoom / 1.3));
+  document.getElementById('dag-plus').addEventListener('click', () => changeZoom(zoom * 1.3));
+  document.getElementById('dag-actual').addEventListener('click', () => changeZoom(1));
+  document.getElementById('dag-fit').addEventListener('click', () => {
+    fitting = true;
+    layout();
+    viewport.scrollLeft = 0;
+    viewport.scrollTop = 0;
+  });
+  viewport.addEventListener(
+    'wheel',
+    (event) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const r = viewport.getBoundingClientRect();
+        changeZoom(
+          zoom * Math.exp(-event.deltaY * 0.01),
+          event.clientX - r.left,
+          event.clientY - r.top,
+        );
+      }
+    },
+    { passive: false },
+  );
+  let drag;
+  viewport.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || event.target.closest('button')) return;
+    drag = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      left: viewport.scrollLeft,
+      top: viewport.scrollTop,
+    };
+    viewport.setPointerCapture(event.pointerId);
+    viewport.classList.add('dragging');
+  });
+  viewport.addEventListener('pointermove', (event) => {
+    if (!drag || drag.id !== event.pointerId) return;
+    viewport.scrollLeft = drag.left - (event.clientX - drag.x);
+    viewport.scrollTop = drag.top - (event.clientY - drag.y);
+  });
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture'])
+    viewport.addEventListener(name, () => {
+      drag = null;
+      viewport.classList.remove('dragging');
+    });
+  new ResizeObserver(() => requestAnimationFrame(layout)).observe(viewport);
+  searchOptions();
+  highlight(null);
+  requestAnimationFrame(layout);
+  return {
+    setSelected(id) {
+      selected = id;
+      highlight(id);
+    },
+  };
+}
+
+(() => {
+  'use strict';
+  const data = JSON.parse(document.getElementById('architecture-data').textContent);
+  const map = document.getElementById('map');
+  const groupsHost = document.getElementById('groups');
+  const inspector = document.getElementById('inspector');
+  const wires = document.getElementById('wires');
+  const status = document.getElementById('map-status');
+  const announcement = document.getElementById('announcement');
+  const detailJump = document.getElementById('detail-jump');
+  const nodes = new Map(data.nodes.map((node) => [node.id, node]));
+  const groups = new Map(data.groups.map((group) => [group.id, group]));
+  const externals = [
+    {
+      id: 'remote-nisa',
+      label: 'Nisa MCP',
+      group: 'external',
+      purpose:
+        'Independent research retrieval and Q&A tools, connected through an optional MCP mount.',
+    },
+    {
+      id: 'remote-sandboxes',
+      label: 'Sandboxes MCP',
+      group: 'external',
+      purpose:
+        'Independent sandbox tools, connected through an optional MCP mount. Remote jobs have their own lifecycle.',
+    },
+  ];
+  const remote = new Map(externals.map((node) => [node.id, node]));
+  let selected = null;
+  let hovered = null;
+  let pendingFrame = 0;
+  let currentView = 'map';
+  const el = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  };
+  const info = (id) => nodes.get(id) ?? remote.get(id);
+  const label = (id) => info(id)?.label ?? id;
+  const groupOf = (id) => info(id)?.group;
+  const button = (text, target, className = 'detail-link') => {
+    const b = el('button', className, text);
+    b.type = 'button';
+    b.dataset.target = target;
+    return b;
+  };
+  const adapterCount = data.nodes.filter((node) => node.kind !== 'service').length;
+  document.getElementById('snapshot').textContent = `Working-tree snapshot · ${data.snapshot}`;
+  document.getElementById('inventory').textContent =
+    `${data.counts.providers} service plugins · ${adapterCount} small adapters`;
+
+  for (const group of data.groups) {
+    const card = el('section', 'group');
+    card.dataset.group = group.id;
+    const outline = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    outline.classList.add('group-outline');
+    outline.setAttribute('viewBox', '0 0 200 160');
+    outline.setAttribute('preserveAspectRatio', 'none');
+    outline.setAttribute('aria-hidden', 'true');
+    for (const [x, y, width, height] of [
+      [1.3, 1.1, 197, 157],
+      [2.4, 2, 194.8, 155.7],
+    ]) {
+      const rect = document.createElementNS(outline.namespaceURI, 'rect');
+      Object.entries({ x, y, width, height, rx: 2.1 }).forEach(([k, v]) =>
+        rect.setAttribute(k, String(v)),
+      );
+      outline.append(rect);
+    }
+    card.append(
+      outline,
+      button(group.label, `group:${group.id}`, 'group-heading'),
+      el('span', 'group-caption', group.caption),
+    );
+    const list = el('div', 'plugin-list');
+    const members =
+      group.id === 'external'
+        ? externals
+        : group.members.map((id) => nodes.get(id)).filter(Boolean);
+    for (const node of members) {
+      const b = button(node.label, node.id, 'plugin');
+      b.dataset.node = node.id;
+      b.setAttribute('aria-pressed', 'false');
+      list.append(b);
+    }
+    card.append(list);
+    if (group.id === 'front')
+      card.append(button(`${adapterCount} domain adapters ↗`, 'adapters', 'adapter-badge'));
+    groupsHost.append(card);
+  }
+
+  function heading(text) {
+    inspector.append(el('h3', '', text));
+  }
+  function links(ids, kind = '') {
+    const list = el('div', `detail-list ${kind}`);
+    [...new Set(ids)].forEach((id) => list.append(button(label(id), id)));
+    inspector.append(list);
+    if (!ids.length) inspector.append(el('p', 'empty', 'None.'));
+  }
+  function relationships(edges) {
+    for (const edge of edges) {
+      const row = el('div', 'detail-edge');
+      row.append(
+        button(label(edge.from), edge.from),
+        el('span', '', edge.optional ? '⇢ optional' : '→'),
+        button(label(edge.to), edge.to),
+      );
+      inspector.append(row);
+    }
+  }
+  function showDetails(target) {
+    inspector.replaceChildren();
+    if (!target) {
+      inspector.append(
+        el('span', 'kicker', 'Field notes'),
+        el('h2', '', 'Follow a thread.'),
+        el(
+          'p',
+          '',
+          'Hover a plugin to trace its direct relationships. Click it to keep its details open. The rest of the page stays quiet.',
+        ),
+        el('div', 'note-rule'),
+        el(
+          'p',
+          '',
+          '“Requires” points to a dependency. “Used by” shows the plugins that need it. Click any name in this panel to follow the connection.',
+        ),
+      );
+      heading('Start with the shared foundation');
+      links(['scope', 'state']);
+      heading('Or follow the research');
+      links(['experiments', 'knowledge']);
+      heading('About this page');
+      inspector.append(
+        el(
+          'p',
+          '',
+          `${data.counts.plugins} plugin entrypoints and ${data.counts.dependencies} declared dependencies, read from source. The outer map groups service dependencies; selecting a plugin also reveals its adapters.`,
+        ),
+        el(
+          'p',
+          '',
+          'This is an editable architecture view, not a running-server monitor. A declared dependency does not prove a remote service is available.',
+        ),
+      );
+      return;
+    }
+    if (target === 'adapters') {
+      inspector.append(
+        el('span', 'kicker', 'Transport & UI connections'),
+        el('h2', '', `${adapterCount} small adapters`),
+        el(
+          'p',
+          '',
+          'Each adapter requires its domain owner and one registry. They expose a domain through Tools, API or UI without owning its business logic.',
+        ),
+      );
+      for (const kind of ['tools', 'ui', 'api']) {
+        const items = data.nodes.filter((node) => node.kind === kind);
+        heading(`${kind === 'tools' ? 'Tool' : kind.toUpperCase()} adapters · ${items.length}`);
+        links(items.map((node) => node.id));
+      }
+      return;
+    }
+    if (target.startsWith('group:')) {
+      const group = groups.get(target.slice(6));
+      if (!group) return;
+      inspector.append(
+        el('span', 'kicker', 'Visual group, not a plugin'),
+        el('h2', '', group.label),
+        el('p', '', group.description),
+      );
+      heading(group.id === 'external' ? 'Remote systems' : 'Plugins in this group');
+      links(
+        group.id === 'external'
+          ? externals.map((node) => node.id)
+          : group.members.filter((id) => nodes.has(id)),
+      );
+      const edges = data.edges.filter(
+        (edge) =>
+          nodes.get(edge.from)?.kind === 'service' &&
+          groupOf(edge.from) === group.id &&
+          groupOf(edge.to) !== group.id,
+      );
+      if (edges.length) {
+        heading('Direct dependencies outside this group');
+        relationships(edges);
+      }
+      return;
+    }
+    const node = info(target);
+    if (!node) return;
+    inspector.append(
+      el(
+        'span',
+        'kicker',
+        remote.has(target)
+          ? 'Remote service'
+          : node.kind === 'service'
+            ? `${node.runtime === 'machine' ? 'Separate machine' : 'Cordis service'} plugin`
+            : `${node.kind.toUpperCase()} adapter`,
+      ),
+      el('h2', '', node.label),
+      el('p', '', node.purpose),
+    );
+    if (remote.has(target)) {
+      heading('Network connection');
+      links(['mounts']);
+      inspector.append(
+        el(
+          'p',
+          '',
+          'Connected over MCP only when configured. It is not an injected Cordis dependency and it is not bundled into this server.',
+        ),
+      );
+      return;
+    }
+    inspector.append(
+      el(
+        'span',
+        'mode-tag',
+        node.defaultConfiguration
+          ? 'Included in the default server configuration'
+          : node.runtime === 'machine'
+            ? 'Configured independently on the machine'
+            : 'Optional; not in the default server configuration',
+      ),
+    );
+    const incoming = data.edges.filter((edge) => edge.to === target).map((edge) => edge.from);
+    heading(`Requires · ${node.requires.length}`);
+    links(node.requires, 'requires');
+    if (node.optional?.length) {
+      heading(`Optional · ${node.optional.length}`);
+      links(node.optional, 'optional');
+    }
+    heading(`Used by · ${incoming.length}`);
+    links(incoming, 'consumers');
+    const network = data.network.filter((edge) => edge.from === target || edge.to === target);
+    if (network.length) {
+      heading('Network connections');
+      for (const edge of network) {
+        links([edge.from === target ? edge.to : edge.from]);
+        inspector.append(el('p', '', `${edge.protocol} · ${edge.description}`));
+      }
+    }
+    heading(`Exposed tools · ${node.exposedTools.length}`);
+    if (!node.exposedTools.length)
+      inspector.append(
+        el(
+          'p',
+          'empty',
+          target === 'mounts'
+            ? 'Tools are discovered from configured remote servers. Names use _pluginname.toolname.'
+            : 'No native tools. Other plugins use its service contract.',
+        ),
+      );
+    for (const tool of node.exposedTools) {
+      const details = el('details', 'tool');
+      details.append(el('summary', '', tool.name));
+      details.append(el('p', '', tool.description || 'Declared by this plugin’s tool adapter.'));
+      if (tool.readOnly) details.append(el('span', 'mode-tag', 'Read-only tool'));
+      inspector.append(details);
+    }
+    if (node.kind === 'service') {
+      const adapters = data.nodes.filter(
+        (other) => other.kind !== 'service' && other.owner === target,
+      );
+      if (adapters.length) {
+        heading('Its adapters');
+        links(adapters.map((a) => a.id));
+      }
+    }
+    inspector.append(el('code', 'source', node.source));
+  }
+
+  function members(target) {
+    if (!target) return new Set();
+    if (target === 'adapters')
+      return new Set(data.nodes.filter((n) => n.kind !== 'service').map((n) => n.id));
+    if (target.startsWith('group:'))
+      return new Set(
+        target === 'group:external'
+          ? externals.map((n) => n.id)
+          : (groups.get(target.slice(6))?.members ?? []),
+      );
+    return new Set([target]);
+  }
+  function trace() {
+    const target = hovered ?? selected,
+      focal = members(target),
+      relations = new Map([...focal].map((id) => [id, 'self']));
+    const visible = target
+      ? data.edges.filter((edge) => focal.has(edge.from) || focal.has(edge.to))
+      : data.edges.filter(
+          (edge) =>
+            nodes.get(edge.from)?.kind === 'service' && groupOf(edge.from) !== groupOf(edge.to),
+        );
+    for (const edge of visible) {
+      if (focal.has(edge.from) && !focal.has(edge.to)) relations.set(edge.to, 'out');
+      if (focal.has(edge.to) && !focal.has(edge.from)) relations.set(edge.from, 'in');
+    }
+    const network = target
+      ? data.network.filter((edge) => focal.has(edge.from) || focal.has(edge.to))
+      : data.network;
+    for (const edge of network)
+      for (const id of [edge.from, edge.to]) if (!relations.has(id)) relations.set(id, 'network');
+    map.classList.toggle('tracing', !!target);
+    for (const b of groupsHost.querySelectorAll('[data-node]')) {
+      const relation = relations.get(b.dataset.node);
+      if (relation) b.dataset.relation = relation;
+      else delete b.dataset.relation;
+      b.setAttribute('aria-pressed', String(selected === b.dataset.node));
+    }
+    for (const card of groupsHost.querySelectorAll('.group'))
+      card.classList.toggle(
+        'connected',
+        [...relations.keys()].some((id) => groupOf(id) === card.dataset.group),
+      );
+    const out = visible.filter((e) => focal.has(e.from) && !e.optional).length,
+      optional = visible.filter((e) => focal.has(e.from) && e.optional).length,
+      incoming = visible.filter((e) => focal.has(e.to)).length;
+    status.textContent = target
+      ? `${target === 'adapters' ? 'Adapters' : target.startsWith('group:') ? groups.get(target.slice(6))?.label : label(target)} · ${out} requires${optional ? ` · ${optional} optional` : ''} · ${incoming} used by${network.length ? ` · ${network.length} network link${network.length === 1 ? '' : 's'}` : ''}`
+      : 'Hover a name to trace it. Click to keep it open.';
+    draw(visible, network, focal, !!target);
+  }
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  function svg(tag, attrs) {
+    const e = document.createElementNS(svgNS, tag);
+    Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+    return e;
+  }
+  function draw(edges, network, focal, active) {
+    const base = map.getBoundingClientRect();
+    if (!base.width) return;
+    wires.setAttribute('viewBox', `0 0 ${base.width} ${base.height}`);
+    wires.replaceChildren();
+    const defs = svg('defs', {});
+    for (const [name, color] of [
+      ['normal', '#aaa99c'],
+      ['out', '#8a4f30'],
+      ['in', '#4e6d70'],
+      ['net', '#757668'],
+    ]) {
+      const marker = svg('marker', {
+        id: `arrow-${name}`,
+        viewBox: '0 0 10 10',
+        refX: 9,
+        refY: 5,
+        markerWidth: 7,
+        markerHeight: 7,
+        orient: 'auto-start-reverse',
+        markerUnits: 'userSpaceOnUse',
+      });
+      marker.append(
+        svg('path', { d: 'M 1 1 L 9 5 L 1 9', fill: 'none', stroke: color, 'stroke-width': 1.3 }),
+      );
+      defs.append(marker);
+    }
+    wires.append(defs);
+    const boxes = new Map(
+      [...groupsHost.querySelectorAll('.group')].map((card) => {
+        const r = card.getBoundingClientRect();
+        return [
+          card.dataset.group,
+          { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height },
+        ];
+      }),
+    );
+    const condensed = new Map();
+    for (const edge of edges) {
+      const from = groupOf(edge.from),
+        to = groupOf(edge.to);
+      if (!from || !to || (!active && from === to)) continue;
+      const type = active ? (focal.has(edge.from) ? 'out' : 'in') : 'normal';
+      const key = `${from}|${to}|${type}`;
+      if (!condensed.has(key)) condensed.set(key, { from, to, type, edges: [] });
+      condensed.get(key).edges.push(edge);
+    }
+    for (const edge of network) {
+      const from = groupOf(edge.from),
+        to = groupOf(edge.to),
+        key = `${from}|${to}|net`;
+      if (!condensed.has(key)) condensed.set(key, { from, to, type: 'net', edges: [] });
+      condensed.get(key).edges.push(edge);
+    }
+    for (const edge of condensed.values()) {
+      const a = boxes.get(edge.from),
+        b = boxes.get(edge.to);
+      if (!a || !b) continue;
+      let path;
+      if (edge.from === edge.to) {
+        const first = edge.edges[0];
+        const targetA = groupsHost.querySelector(`[data-node="${CSS.escape(first.from)}"]`),
+          targetB = groupsHost.querySelector(`[data-node="${CSS.escape(first.to)}"]`);
+        if (!targetA || !targetB) continue;
+        const ra = targetA.getBoundingClientRect(),
+          rb = targetB.getBoundingClientRect();
+        const start = [ra.left - base.left - 2, ra.top - base.top + ra.height / 2],
+          end = [rb.left - base.left - 2, rb.top - base.top + rb.height / 2];
+        path = `M ${start} C ${a.x - 15},${start[1]} ${a.x - 15},${end[1]} ${end}`;
+      } else {
+        const points = route(a, b, [...boxes.values()], base.width, base.height);
+        path = points
+          .map((p, i) => `${i ? 'L' : 'M'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`)
+          .join(' ');
+      }
+      const line = svg('path', {
+        d: path,
+        class: `wire ${edge.type === 'out' ? 'focus' : edge.type === 'in' ? 'used' : edge.type === 'net' ? 'net' : ''}`,
+        'marker-end': `url(#arrow-${edge.type})`,
+      });
+      if (edge.type === 'net') line.setAttribute('marker-start', 'url(#arrow-net)');
+      const title = svg('title', {});
+      title.textContent = edge.edges
+        .map(
+          (e) =>
+            `${label(e.from)} ${e.protocol ? '↔' : e.optional ? 'optionally uses' : 'requires'} ${label(e.to)}`,
+        )
+        .join('\n');
+      line.append(title);
+      wires.append(line);
+    }
+  }
+  function route(a, b, boxes, width, height) {
+    const ports = (r) => [
+      [
+        [r.x + r.w / 2, r.y - 3],
+        [r.x + r.w / 2, r.y - 17],
+      ],
+      [
+        [r.x + r.w + 3, r.y + r.h / 2],
+        [r.x + r.w + 17, r.y + r.h / 2],
+      ],
+      [
+        [r.x + r.w / 2, r.y + r.h + 3],
+        [r.x + r.w / 2, r.y + r.h + 17],
+      ],
+      [
+        [r.x - 3, r.y + r.h / 2],
+        [r.x - 17, r.y + r.h / 2],
+      ],
+    ];
+    const xs = [5, width - 5, ...boxes.flatMap((r) => [r.x - 17, r.x + r.w + 17])],
+      ys = [5, height - 5, ...boxes.flatMap((r) => [r.y - 17, r.y + r.h + 17])];
+    const blocked = (p, q) =>
+      boxes.some((r) =>
+        p[0] === q[0]
+          ? p[0] > r.x - 5 &&
+            p[0] < r.x + r.w + 5 &&
+            Math.max(p[1], q[1]) > r.y - 5 &&
+            Math.min(p[1], q[1]) < r.y + r.h + 5
+          : p[1] > r.y - 5 &&
+            p[1] < r.y + r.h + 5 &&
+            Math.max(p[0], q[0]) > r.x - 5 &&
+            Math.min(p[0], q[0]) < r.x + r.w + 5,
+      );
+    let best = null,
+      cost = Infinity;
+    for (const [anchorA, p] of ports(a))
+      for (const [anchorB, q] of ports(b)) {
+        const candidates = [
+          [p, [p[0], q[1]], q],
+          [p, [q[0], p[1]], q],
+          ...xs.filter((x) => x >= 0 && x <= width).map((x) => [p, [x, p[1]], [x, q[1]], q]),
+          ...ys.filter((y) => y >= 0 && y <= height).map((y) => [p, [p[0], y], [q[0], y], q]),
+        ];
+        for (const raw of candidates) {
+          const points = raw.filter(
+            (point, i) => i === 0 || point[0] !== raw[i - 1][0] || point[1] !== raw[i - 1][1],
+          );
+          if (points.some((point, i) => i > 0 && blocked(points[i - 1], point))) continue;
+          const length =
+            points.reduce(
+              (sum, point, i) =>
+                sum +
+                (i
+                  ? Math.abs(point[0] - points[i - 1][0]) + Math.abs(point[1] - points[i - 1][1])
+                  : 0),
+              0,
+            ) +
+            points.length * 11;
+          if (length < cost) {
+            cost = length;
+            best = [anchorA, ...points, anchorB];
+          }
+        }
+      }
+    return (
+      best ?? [
+        [a.x + a.w / 2, a.y + a.h],
+        [a.x + a.w / 2, b.y - 18],
+        [b.x + b.w / 2, b.y - 18],
+        [b.x + b.w / 2, b.y - 3],
+      ]
+    );
+  }
+
+  function select(target) {
+    selected = target;
+    hovered = null;
+    showDetails(target);
+    trace();
+    dependencyDAG.setSelected(target);
+    detailJump.hidden = !target;
+    detailJump.textContent = 'View details ↓';
+    announcement.textContent = target
+      ? `${target.startsWith('group:') ? groups.get(target.slice(6))?.label : target === 'adapters' ? 'Adapters' : label(target)} details selected.`
+      : 'Whole map.';
+    updateLocation();
+  }
+  function updateLocation() {
+    const hash =
+      currentView === 'tree'
+        ? `#dag${selected ? '/' + encodeURIComponent(selected) : ''}`
+        : selected
+          ? `#${encodeURIComponent(selected)}`
+          : location.pathname + location.search;
+    try {
+      history.replaceState(null, '', hash);
+    } catch {
+      /* file and embedded previews may restrict history */
+    }
+  }
+  const dependencyDAG = createDependencyDAG({ data, select });
+  function setView(view) {
+    currentView = view;
+    for (const id of ['map', 'tree']) {
+      document.getElementById(`${id}-page`).hidden = id !== view;
+      document.getElementById(`${id}-view`).setAttribute('aria-pressed', String(id === view));
+    }
+    hovered = null;
+    dependencyDAG.setSelected(selected);
+    if (view === 'map') requestAnimationFrame(trace);
+    updateLocation();
+  }
+  for (const id of ['map', 'tree'])
+    document.getElementById(`${id}-view`).addEventListener('click', () => setView(id));
+  document.getElementById('overview').addEventListener('click', () => select(null));
+  detailJump.addEventListener('click', () => {
+    const atDetails = inspector.getBoundingClientRect().top < window.innerHeight * 0.6;
+    (atDetails ? document.getElementById(`${currentView}-page`) : inspector).scrollIntoView({
+      block: 'start',
+    });
+  });
+  new IntersectionObserver(([entry]) => {
+    detailJump.textContent = entry.isIntersecting ? 'Back to map ↑' : 'View details ↓';
+  }).observe(inspector);
+  for (const host of [groupsHost, inspector])
+    host.addEventListener('click', (event) => {
+      const b = event.target.closest('button[data-target]');
+      if (b) select(b.dataset.target);
+    });
+  groupsHost.addEventListener('pointerover', (event) => {
+    const b = event.target.closest('button[data-target]');
+    if (b && hovered !== b.dataset.target) {
+      hovered = b.dataset.target;
+      trace();
+    }
+  });
+  groupsHost.addEventListener('pointerleave', () => {
+    hovered = null;
+    trace();
+  });
+  groupsHost.addEventListener('pointerout', (event) => {
+    const b = event.target.closest('button[data-target]');
+    if (b && !b.contains(event.relatedTarget)) {
+      hovered = null;
+      trace();
+    }
+  });
+  groupsHost.addEventListener('focusin', (event) => {
+    const b = event.target.closest('button[data-target]');
+    if (b) {
+      hovered = b.dataset.target;
+      trace();
+    }
+  });
+  groupsHost.addEventListener('focusout', (event) => {
+    if (!groupsHost.contains(event.relatedTarget)) {
+      hovered = null;
+      trace();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') select(null);
+  });
+  const resize = new ResizeObserver(() => {
+    cancelAnimationFrame(pendingFrame);
+    pendingFrame = requestAnimationFrame(trace);
+  });
+  resize.observe(groupsHost);
+  function restoreLocation() {
+    currentView = 'map';
+    selected = null;
+    let initial;
+    try {
+      initial = decodeURIComponent(location.hash.slice(1));
+    } catch {
+      initial = '';
+    }
+    if (
+      initial === 'dag' ||
+      initial.startsWith('dag/') ||
+      initial === 'tree' ||
+      initial.startsWith('tree/')
+    ) {
+      currentView = 'tree';
+      initial = initial.includes('/') ? initial.slice(initial.indexOf('/') + 1) : '';
+    }
+    if (
+      initial &&
+      (nodes.has(initial) ||
+        remote.has(initial) ||
+        initial === 'adapters' ||
+        (initial.startsWith('group:') && groups.has(initial.slice(6))))
+    )
+      selected = initial;
+    detailJump.hidden = !selected;
+    showDetails(selected);
+    setView(currentView);
+  }
+  window.addEventListener('hashchange', restoreLocation);
+  restoreLocation();
+  requestAnimationFrame(trace);
+})();
+</script>
+</body>
+</html>

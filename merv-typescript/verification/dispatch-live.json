@@ -1,0 +1,130 @@
+{
+  "date": "2026-09-15",
+  "status": "passed",
+  "command": "node --import tsx scripts/live-sessions.ts /private/tmp/merv-dispatch-live-20260915-01 --automatic",
+  "report": "/private/tmp/merv-dispatch-live-20260915-01/report.json",
+  "reportSha256": "489c47b253ca57d4bb54e62f3fa30261cf87a0a0ec480d09f62a6fd387d3f5ed",
+  "automatic": true,
+  "serverRestarts": 2,
+  "freshAgents": 2,
+  "toolCalls": 17,
+  "successfulCalls": 17,
+  "failedCalls": 0,
+  "sameSourceKey": true,
+  "independentWorkers": true,
+  "finalTaskState": "done",
+  "finalVerdict": "pass",
+  "workStartEvents": 2,
+  "controls": [
+    "Automatic dispatch starts disabled and creates no lease",
+    "producer: server selected the revision, retry retained one lease, pause preserved it",
+    "reviewer: server selected the revision, retry retained one lease, pause preserved it",
+    "Human operator can inspect machine-key jobs; done task is absent from the queue"
+  ],
+  "phases": [
+    {
+      "phase": "producer",
+      "threadId": "01a0a3dd-a3e9-7550-a0af-346c5e1428ab",
+      "exitCode": 0,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "task.get",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "task.context",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "phase": "reviewer",
+      "threadId": "01a0a3de-8b17-7fd2-be52-1d0bea7a0481",
+      "exitCode": 0,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "task.get",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "review.start",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "review.get",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "task.context",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "This acceptance harness launches fresh synthetic agents; it is not the production machine runner.",
+    "Live run began before final callback-control fencing and full-history counts; final deterministic tests and eight independent rollback probes cover those later changes.",
+    "No actual Git workspace provisioning, native process recovery, production shared-provider login or live Nisa/Sandboxes deployment is claimed."
+  ]
+}

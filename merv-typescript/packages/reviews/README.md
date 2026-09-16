@@ -1,11 +1,22 @@
 # Reviews
 
-A Cordis service for independent assessment of immutable evidence. Requires `state`, `scope`, and `artifacts`; provides `reviews`. It has no task or workflow dependency.
+A Cordis service for independent assessment of immutable evidence. Requires `state`, `scope`, `artifacts`, and `domainEvents`; provides `reviews`. It has no task or workflow dependency.
 
-A request captures an opaque subject ID/revision, assessment criteria, producer identity, and the exact artifact manifest. `snapshotHash` commits to that snapshot. Artifact IDs resolve to immutable content; the stored manifest preserves the metadata assessed at request time. A producer can request review only of their own artifacts. A project operator can request or supersede a review on the producer’s behalf, after an explicit admin permission check; evidence ownership stays with the producer.
+A request captures an opaque subject ID/revision, assessment criteria, producer identity, and the exact artifact manifest. `snapshotHash` commits to that snapshot. Artifact IDs resolve to immutable content; the stored manifest preserves the metadata assessed at request time. Output artifacts must belong to the producer; the integrating program explicitly identifies any pinned inputs authored by others. A request also preserves its administrative owner so the authenticated source can administer a worker's submission without replacing its actual author.
 
-`start` checks review permission and producer/reviewer separation, then binds the request to one actor. Repeating a claim by that actor is idempotent. `submit` accepts one verdict (`pass`, `needs_changes`, or `fail`) with nonempty notes. Request and verdict operations reject reuse of a request ID with different content. Submitted verdicts and pinned snapshot fields are protected by SQLite triggers.
+`start` checks review permission and producer/reviewer separation, then binds the request to one actor. Repeating a claim by that actor is idempotent. `submit` accepts one verdict (`pass`, `needs_changes`, or `fail`) with nonempty notes. A request pins its verdict `formatVersion`: new Task reviews use format 2, requiring a short synopsis and a numbered finding for each criterion. Met findings cite pinned evidence; waivers record explicit reasons. A pass requires met or waived criteria. Optional structured evidence retains observations and an outcome. Request and verdict operations reject reuse of a request ID with different content. Submitted verdicts and pinned snapshot fields are protected by SQLite triggers.
 
-All methods accept an existing synchronous transaction where relevant. An integrating program can submit a verdict and change its own state atomically. Review records never invoke a target program themselves.
+Methods accept an existing synchronous transaction where relevant. `submit` retains the assessment only. `apply` first authenticates the caller, then finds exactly one active domain owner through `registerSubmitOwner({ id, owns, submit })` and delegates verdict application in the same writer transaction. The domain callback owns its transition and command replay, and its response is returned unchanged. Missing or ambiguous owners are refused before submission; registration changes during selection or submission roll back the operation. Ownership predicates are trusted synchronous metadata callbacks, not a sandbox. No legacy request migration or caller-supplied owner selector is needed.
 
-The optional `reviewToolsPlugin` contributes `review.list`, `review.get`, and `review.start`. The integrating program owns any verdict tool that also changes a target; Merv's Task program owns `review.submit`.
+The optional `reviewToolsPlugin` contributes `review.list`, `review.get`, `review.start`, and the single `review.submit` tool, which calls `apply`. Tasks registers its owner callback from the service lifecycle. It withdraws that callback before its own consumers finish draining, so the generic tool cannot admit new Task work during unload. Restoring Tasks restores routing without changing stored reviews or successful replay responses. Future domain programs can register their own owner without adding dependencies from Reviews to those programs.
+
+An optional `returnTo` records an explicit return destination with the verdict.
+Reviews validates its identifier shape; the owning program validates which
+verdicts and destinations are permitted or required. The route participates in
+request replay and immutable verdict storage. Tasks rejects it because Task
+routes remain fixed. Reads omit the field when absent, preserving old responses.
+See [explicit review return paths](../../docs/REVIEW_RETURN_PATHS.md).
+
+The durable `reviews.actor-revoked.v1` consumer releases revoked actors’ unfinished claims. It preserves the review/evidence snapshot, retains claim history, and emits a causal `review.claim_released` event. Unloaded consumers catch up on reactivation. Submitted verdicts remain immutable. `start` returns a fresh `claimId` and generation; `submit` requires that claim ID. Existing started reviews migrate to stable legacy claim IDs. See [the full recovery contract](../../docs/RECOVERY_AND_CONTEXT.md).
+
+Existing format 1 requests and receipt snapshots remain supported. Reissue preserves the pinned format; recovery preserves the assessment inputs and fences previous claims. See [review assessments](../../docs/REVIEW_ASSESSMENTS.md) for storage, validation, UI/context integration and Python parity.

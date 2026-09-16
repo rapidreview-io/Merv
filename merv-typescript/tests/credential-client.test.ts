@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { EnvironmentCredentials } from '@merv/credentials';
-import { ExactAccessPolicy } from '@merv/access';
+import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { createApp } from '../src/app.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
@@ -24,11 +23,11 @@ function data(result: CallToolResult) {
 async function fixture(t: TestContext, timeoutMs = 1500, expectedCleanupFailure = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-credential-client-'));
   const app = await createApp({ directory, components: ['state', 'scope'] });
-  const first = app.ctx.scope.bootstrap({ projectName: 'Project A', actorName: 'Actor A' });
-  const second = app.ctx.scope.bootstrap({ projectName: 'Project B', actorName: 'Actor B' });
+  const first = await app.ctx.scope.bootstrap({ projectName: 'Project A', actorName: 'Actor A' });
+  const second = await app.ctx.scope.bootstrap({ projectName: 'Project B', actorName: 'Actor B' });
   const a = { actorId: first.actor.id, projectId: first.project.id };
   const b = { actorId: second.actor.id, projectId: second.project.id };
-  const another = app.ctx.scope.issueActor(a, { name: 'Another A actor', role: 'producer' });
+  const another = await app.ctx.scope.issueActor(a, { name: 'Another A actor', role: 'producer' });
   const a2 = { actorId: another.actor.id, projectId: first.project.id };
   const tokens = {
     a: 'synthetic-upstream-a',
@@ -62,7 +61,8 @@ async function fixture(t: TestContext, timeoutMs = 1500, expectedCleanupFailure 
     tools: ['inspect', 'mutate'],
   }));
   const credentials = new EnvironmentCredentials(app.ctx.scope, bindings);
-  const access = new ExactAccessPolicy(app.ctx.scope, grants);
+  const access = app.ctx.scope.toolPolicy;
+  access.replace(grants);
   const clients: { client: Client; closeCalls: number }[] = [];
   const pool = new ScopedRemoteClients(credentials, access, {
     mounts: { sandbox: { url: upstream.url } },
@@ -212,6 +212,39 @@ for (const change of ['grant', 'credential'] as const) {
   });
 }
 
+test('grant revocation during the final credential resolution prevents upstream dispatch', async (t) => {
+  const { pool, upstream, a, access, credentials, clients } = await fixture(t);
+  const resolve = credentials.resolve.bind(credentials);
+  let calls = 0,
+    enter!: () => void,
+    release!: () => void;
+  const entered = new Promise<void>((done) => {
+    enter = done;
+  });
+  const held = new Promise<void>((done) => {
+    release = done;
+  });
+  t.mock.method(credentials, 'resolve', async (...args: Parameters<typeof resolve>) => {
+    const result = await resolve(...args);
+    if (++calls === 2) {
+      enter();
+      await held;
+    }
+    return result;
+  });
+  const pending = pool.call(a, 'sandbox', 'inspect', {});
+  const rejected = assert.rejects(pending, { code: 'tool_forbidden' });
+  try {
+    await entered;
+    access.replace([]);
+  } finally {
+    release();
+  }
+  await rejected;
+  assert.equal(upstream.callAttempts, 0);
+  assert.equal(clients[0].closeCalls, 1);
+});
+
 test('pool shutdown closes admission immediately and waits for the held call before closing its client', async (t) => {
   const { pool, upstream, a, clients } = await fixture(t);
   const held = upstream.holdNextCall();
@@ -230,6 +263,60 @@ test('pool shutdown closes admission immediately and waits for the held call bef
   assert.equal(clients[0].closeCalls, 1);
   assert.equal(upstream.callAttempts, 1);
 });
+
+for (const phase of ['grant', 'credential'] as const) {
+  test(`pool shutdown also drains an invocation still resolving its ${phase}`, async (t) => {
+    const { pool, upstream, a, clients, access, credentials } = await fixture(t);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    const pause = async () => {
+      if (!first) return;
+      first = false;
+      enter();
+      await released;
+    };
+    if (phase === 'grant') {
+      const requireGrant = access.require.bind(access);
+      access.require = async (...args) => {
+        await pause();
+        await requireGrant(...args);
+      };
+    } else {
+      const resolve = credentials.resolve.bind(credentials);
+      credentials.resolve = async (...args) => {
+        await pause();
+        return await resolve(...args);
+      };
+    }
+    const pending = pool.call(a, 'sandbox', 'inspect', {});
+    try {
+      await entered;
+      let stopped = false;
+      const stopping = pool.close().then(() => {
+        stopped = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(stopped, false, 'Shutdown must retain asynchronous admission');
+      assert.equal(clients.length, 0);
+      await assert.rejects(pool.call(a, 'sandbox', 'inspect', {}), { code: 'remote_closed' });
+      release();
+      assert.equal(data(await pending).identity, 'upstream-a');
+      await stopping;
+      assert.equal(upstream.callAttempts, 1);
+      assert.equal(clients.length, 1);
+      assert.equal(clients[0].closeCalls, 1);
+    } finally {
+      release();
+      await pending.catch(() => undefined);
+    }
+  });
+}
 
 test('failed connections are closed, sanitized, and retried only on a new explicit call', async (t) => {
   const { pool, upstream, a, clients, tokens } = await fixture(t);

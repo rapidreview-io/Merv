@@ -1,0 +1,121 @@
+{
+  "status": "passed",
+  "scope": "Synthetic structured task delivery and assignment context through three fresh agents and two server restarts",
+  "createdAt": "2026-09-15T02:36:26.988Z",
+  "completedAt": "2026-09-15T02:38:10.381Z",
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "phases": [
+    {
+      "phase": "producer",
+      "exitCode": 0,
+      "total": 10,
+      "successful": 9,
+      "guidanceCalls": 3,
+      "contextCalls": 1,
+      "expectedDenials": ["review.start"],
+      "transportErrors": 0
+    },
+    {
+      "phase": "reviewer",
+      "exitCode": 0,
+      "total": 15,
+      "successful": 14,
+      "guidanceCalls": 4,
+      "contextCalls": 1,
+      "expectedDenials": ["artifact.create"],
+      "transportErrors": 0
+    },
+    {
+      "phase": "observer",
+      "exitCode": 0,
+      "total": 10,
+      "successful": 9,
+      "guidanceCalls": 2,
+      "contextCalls": 0,
+      "expectedDenials": ["actor.create"],
+      "transportErrors": 0
+    }
+  ],
+  "protocol": [
+    {
+      "phase": "producer",
+      "requests": 13
+    },
+    {
+      "phase": "reviewer",
+      "requests": 18
+    },
+    {
+      "phase": "observer",
+      "requests": 13
+    }
+  ],
+  "task": {
+    "id": "wf_ae1b24f5080b4c38af246c7c300c5bfc",
+    "title": "Verify arithmetic evidence",
+    "goal": "Verify the sum and mean of 2, 4, 6, 8.",
+    "checks": ["Sum equals 20", "Mean equals 5"],
+    "evidenceVersion": 2,
+    "acceptanceChecks": [
+      {
+        "number": 1,
+        "text": "Sum equals 20"
+      },
+      {
+        "number": 2,
+        "text": "Mean equals 5"
+      }
+    ],
+    "briefId": "art_6cf22409f409484cab5f3c2644c090d7",
+    "deliveryIds": ["art_cbd8e5be7ab54e9c930a90566914c148", "art_abf316756f0d4d488020992045ed4e92"],
+    "deliveryAssessmentId": "art_abf316756f0d4d488020992045ed4e92",
+    "deliveryConfirmations": [
+      {
+        "checkNumber": 1,
+        "evidenceIds": ["art_cbd8e5be7ab54e9c930a90566914c148"],
+        "notes": "Verified direct addition: 2 + 4 = 6, 6 + 6 = 12, 12 + 8 = 20. Pairwise cross-check (2 + 8) + (4 + 6) = 20 agrees.",
+        "status": "met"
+      },
+      {
+        "checkNumber": 2,
+        "evidenceIds": ["art_cbd8e5be7ab54e9c930a90566914c148"],
+        "notes": "Counted four values and divided the verified sum by that count: 20 / 4 = 5. Checked that 5 \u00d7 4 = 20.",
+        "status": "met"
+      }
+    ],
+    "reviewId": "review_34ca3ad91a49448183f896238caf7f9b"
+  },
+  "workflow": {
+    "version": 2,
+    "state": "done",
+    "revision": 2
+  },
+  "review": {
+    "id": "review_34ca3ad91a49448183f896238caf7f9b",
+    "subjectRevision": 1,
+    "producerId": "actor_491240bbab0e4767bb97bc7b15a5bc0b",
+    "reviewerId": "actor_01e5d32b732741f4a201e5abf716fcf7",
+    "artifactIds": [
+      "art_6cf22409f409484cab5f3c2644c090d7",
+      "art_cbd8e5be7ab54e9c930a90566914c148",
+      "art_abf316756f0d4d488020992045ed4e92"
+    ],
+    "criteria": ["Sum equals 20", "Mean equals 5"],
+    "status": "submitted",
+    "verdict": "pass",
+    "notes": "Used review context context_3e36562de2da4d84b8056f57754ae56a for this claim at task workflow revision 1. Explicitly read task.get and review.get and read all three pinned artifacts through artifact.read after the server restart: brief art_6cf22409f409484cab5f3c2644c090d7, delivery art_cbd8e5be7ab54e9c930a90566914c148, and generated structured assessment art_abf316756f0d4d488020992045ed4e92. Checked both numbered confirmations in the task and assessment against their cited delivery art_cbd8e5be7ab54e9c930a90566914c148. Check 1: independently added the four brief inputs, 2+4+6+8=20; pairing 2+8=10 and 4+6=10 also gives 20. The cited delivery supports the sum claim. Check 2: independently counted four inputs and computed arithmetic mean 20/4=5; deviations from 5 are -3,-1,1,3 and sum to zero. The cited delivery supports the mean claim. Both criteria are met; the structured assessment agrees with the evidence. Reviewer artifact.create permission test returned isError true, code forbidden, message Actor lacks write permission. No actor credentials were created.",
+    "snapshotHash": "9f541d35dc993f89519b4a36ff8d15a0942011e22b96a10f5b0a0cee8acb763e"
+  },
+  "rawTranscripts": "Kept outside repository in the isolated temporary run directory",
+  "model": "Default configured Codex model; no override",
+  "limits": [
+    "Synthetic arithmetic and text evidence; binary evidence and failed/revised submissions are covered by deterministic tests.",
+    "No production Nisa account, remote compute, shared authentication or browser sign-in is claimed."
+  ]
+}

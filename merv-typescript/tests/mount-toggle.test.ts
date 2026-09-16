@@ -1,3 +1,5 @@
+import { mapAsync } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -6,8 +8,6 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
-import { ExactAccessPolicy } from '@merv/access';
-import { EnvironmentCredentials } from '@merv/credentials';
 import { ToolRegistry } from '@merv/api';
 import { MountManager, mountsPlugin } from '@merv/mounts';
 import { CredentialServer } from './fixtures/credential-server.js';
@@ -28,30 +28,25 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
 
 async function setup(t: TestContext) {
   const state = new SqliteState(':memory:');
-  const scope = new ProjectScope(state);
-  const admin = scope.bootstrap({ projectName: 'Mount toggles', actorName: 'Operator' });
+  const scope = await createService(new ProjectScope(state));
+  const admin = await scope.bootstrap({ projectName: 'Mount toggles', actorName: 'Operator' });
   const caller = { actorId: admin.actor.id, projectId: admin.project.id };
   const ids = ['nisa', 'sandbox'];
-  const access = new ExactAccessPolicy(
-    scope,
-    ids.map((mountId) => ({ ...caller, mountId, tools: ['inspect'] })),
-  );
+  const access = scope.toolPolicy;
+  access.replace(ids.map((mountId) => ({ ...caller, mountId, tools: ['inspect'] })));
   const environments = ids.map(() => `MERV_TOGGLE_${randomUUID().replaceAll('-', '_')}`);
   const servers = ids.map((id, index) => {
     const token = `synthetic-toggle-${id}`;
     process.env[environments[index]] = token;
     return new CredentialServer([{ id, token, namespace: id, subject: 'fixture' }]);
   });
-  const credentials = new EnvironmentCredentials(
-    scope,
-    ids.map((mountId, index) => ({
-      id: `binding-${mountId}`,
-      ...caller,
-      mountId,
-      secretRef: `env:${environments[index]}`,
-      headers: { 'x-sandbox-namespace': mountId, 'x-sandbox-subject': 'fixture' },
-    })),
-  );
+  const bindings = ids.map((mountId, index) => ({
+    id: `binding-${mountId}`,
+    ...caller,
+    mountId,
+    secretRef: `env:${environments[index]}`,
+    headers: { 'x-sandbox-namespace': mountId, 'x-sandbox-subject': 'fixture' },
+  }));
   const registry = new ToolRegistry(scope, access);
   registry.register({
     name: 'native',
@@ -61,18 +56,18 @@ async function setup(t: TestContext) {
   });
   const ctx = new Context();
   ctx.provide('tools', registry);
-  ctx.provide('credentials', credentials);
-  ctx.provide('access', access);
+  ctx.provide('scope', scope);
   t.after(async () => {
     // Test failure cleanup releases fixture barriers before a potentially held drain.
     await Promise.allSettled(servers.map((server) => server.close()));
     await ctx.fiber.dispose().catch(() => undefined);
     await registry.close();
-    state.close();
+    await state.close();
     for (const environment of environments) delete process.env[environment];
   });
   await Promise.all(servers.map((server) => server.start()));
   const fiber = ctx.plugin(mountsPlugin, {
+    bindings,
     mounts: ids.map((id, index) => ({
       id,
       url: servers[index].url,
@@ -84,9 +79,9 @@ async function setup(t: TestContext) {
   });
   await fiber.await();
   const manager = ctx.mounts as MountManager;
-  const names = () => registry.describe().map((tool) => tool.name);
+  const names = async () => (await registry.describe()).map((tool) => tool.name);
   const inspect = (id: string) =>
-    registry.call(`mount__${id}__inspect`, caller, {}) as Promise<{
+    registry.call(`_${id}.inspect`, caller, {}) as Promise<{
       structuredContent: { connectionId: number };
     }>;
   return { manager, registry, caller, names, inspect, nisa: servers[0], sandbox: servers[1] };
@@ -106,7 +101,7 @@ test(
       drained = true;
     });
     try {
-      assert.deepEqual(names(), ['mount__sandbox__inspect', 'native'], 'Withdrawal is synchronous');
+      assert.deepEqual(await names(), ['_sandbox.inspect', 'native'], 'Withdrawal is synchronous');
       assert.equal(drained, false);
       assert.deepEqual(
         manager.status().find((mount) => mount.id === 'nisa'),
@@ -136,7 +131,7 @@ test(
     const firstNisa = await admitted;
     await disabling;
     await manager.setEnabled('nisa', true);
-    assert.deepEqual(names(), ['mount__nisa__inspect', 'mount__sandbox__inspect', 'native']);
+    assert.deepEqual(await names(), ['_nisa.inspect', '_sandbox.inspect', 'native']);
     const restored = await inspect('nisa');
     assert.notEqual(
       restored.structuredContent.connectionId,
@@ -168,7 +163,7 @@ test(
     const disabledAgain = manager.setEnabled('nisa', false);
     const before = nisa.initializeAttempts;
     try {
-      assert.deepEqual(names(), ['mount__sandbox__inspect', 'native']);
+      assert.deepEqual(await names(), ['_sandbox.inspect', 'native']);
       await Promise.resolve();
       assert.equal(nisa.initializeAttempts, before, 'Reactivation waits for the admitted call');
     } finally {
@@ -177,7 +172,7 @@ test(
     await admitted;
     await Promise.all([disabled, enabled, disabledAgain]);
     assert.equal(nisa.initializeAttempts, before + 1);
-    assert.deepEqual(names(), ['mount__sandbox__inspect', 'native']);
+    assert.deepEqual(await names(), ['_sandbox.inspect', 'native']);
     assert.equal(manager.status().find((mount) => mount.id === 'nisa')?.state, 'stopped');
   },
 );
@@ -200,7 +195,7 @@ test(
       closed = true;
     });
     try {
-      assert.deepEqual(names(), ['native']);
+      assert.deepEqual(await names(), ['native']);
       assert.equal(closed, false);
       await assert.rejects(manager.setEnabled('sandbox', true), { code: 'mounts_stopped' });
       nisaHeld.release();
@@ -231,10 +226,10 @@ test(
     try {
       await bounded(held.entered);
       const closing = manager.close();
-      assert.deepEqual(names(), ['native']);
+      assert.deepEqual(await names(), ['native']);
       await bounded(closing);
       await rejected;
-      assert.deepEqual(names(), ['native']);
+      assert.deepEqual(await names(), ['native']);
       await assert.rejects(manager.setEnabled('nisa', true), { code: 'mounts_stopped' });
     } finally {
       held.release();
@@ -260,7 +255,7 @@ test(
       throw new Error('synthetic-cleanup-detail');
     });
     await assert.rejects(manager.setEnabled('nisa', false), { code: 'mount_cleanup_failed' });
-    assert.deepEqual(names(), ['mount__sandbox__inspect', 'native']);
+    assert.deepEqual(await names(), ['_sandbox.inspect', 'native']);
     await assert.rejects(manager.setEnabled('nisa', false), { code: 'mount_cleanup_failed' });
     await assert.rejects(manager.setEnabled('nisa', true), { code: 'mount_cleanup_failed' });
     assert.equal(nisa.initializeAttempts, before);

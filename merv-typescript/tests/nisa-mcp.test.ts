@@ -19,7 +19,7 @@ test(
     try {
       const report = await runNisaMcpScenario(directory, checkout!);
       assert.equal(report.status, 'passed');
-      assert.deepEqual(report.toolCounts, [33, 27, 33]);
+      assert.deepEqual(report.toolCounts, [56, 50, 56]);
       assert.equal(report.runnerDispatches, 2);
       assert.equal(report.nativeTaskState, 'done');
       assert.equal(report.retainedFeedPosts, 2);

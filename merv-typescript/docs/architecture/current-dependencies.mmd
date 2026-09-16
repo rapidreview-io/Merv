@@ -1,0 +1,206 @@
+flowchart BT
+  subgraph server["Merv server"]
+    api["api"]
+    merv_artifact_tools["merv-artifact-tools"]
+    merv_artifact_ui["merv-artifact-ui"]
+    artifacts["artifacts"]
+    blobs["blobs"]
+    claims["claims"]
+    merv_claims_tools["merv-claims-tools"]
+    merv_claims_ui["merv-claims-ui"]
+    code["code"]
+    merv_code_api["merv-code-api"]
+    merv_code_tools["merv-code-tools"]
+    merv_code_ui["merv-code-ui"]
+    consolidation["consolidation"]
+    merv_consolidation_tools["merv-consolidation-tools"]
+    merv_consolidation_ui["merv-consolidation-ui"]
+    contextBuilder["contextBuilder"]
+    domainEvents["domainEvents"]
+    experiments["experiments"]
+    merv_experiments_tools["merv-experiments-tools"]
+    merv_experiments_ui["merv-experiments-ui"]
+    feed["feed"]
+    merv_feed_tools["merv-feed-tools"]
+    merv_feed_ui["merv-feed-ui"]
+    identity["identity"]
+    knowledge["knowledge"]
+    merv_knowledge_tools["merv-knowledge-tools"]
+    merv_knowledge_ui["merv-knowledge-ui"]
+    mounts["mounts"]
+    merv_mounts_ui["merv-mounts-ui"]
+    paper["paper"]
+    merv_paper_tools["merv-paper-tools"]
+    merv_paper_ui["merv-paper-ui"]
+    merv_reflection_tools["merv-reflection-tools"]
+    merv_reflection_ui["merv-reflection-ui"]
+    reflections["reflections"]
+    research["research"]
+    merv_research_tools["merv-research-tools"]
+    merv_research_ui["merv-research-ui"]
+    merv_review_tools["merv-review-tools"]
+    merv_review_ui["merv-review-ui"]
+    reviews["reviews"]
+    scope["scope"]
+    merv_scope_tools["merv-scope-tools"]
+    merv_scope_ui["merv-scope-ui"]
+    sessions["sessions"]
+    merv_sessions_api["merv-sessions-api"]
+    merv_sessions_ui["merv-sessions-ui"]
+    state["state"]
+    merv_task_tools["merv-task-tools"]
+    merv_task_ui["merv-task-ui"]
+    tasks["tasks"]
+    tools["tools"]
+    ui["ui"]
+    merv_workflow_tools["merv-workflow-tools"]
+    workflows["workflows"]
+  end
+  subgraph machine["Independent machine runtime"]
+    runner["runner"]
+  end
+  api --> scope
+  api --> tools
+  api --> identity
+  merv_artifact_tools --> artifacts
+  merv_artifact_tools --> tools
+  merv_artifact_ui --> artifacts
+  merv_artifact_ui --> ui
+  artifacts --> state
+  artifacts --> scope
+  artifacts --> blobs
+  claims --> state
+  claims --> scope
+  merv_claims_tools --> claims
+  merv_claims_tools --> tools
+  merv_claims_ui --> claims
+  merv_claims_ui --> ui
+  code --> state
+  code --> scope
+  code --> sessions
+  code --> artifacts
+  merv_code_api --> api
+  merv_code_api --> code
+  merv_code_tools --> code
+  merv_code_tools --> tools
+  merv_code_ui --> code
+  merv_code_ui --> ui
+  consolidation --> state
+  consolidation --> scope
+  consolidation --> artifacts
+  consolidation --> workflows
+  consolidation --> reviews
+  consolidation --> contextBuilder
+  consolidation --> code
+  merv_consolidation_tools --> consolidation
+  merv_consolidation_tools --> tools
+  merv_consolidation_ui --> consolidation
+  merv_consolidation_ui --> ui
+  contextBuilder --> state
+  contextBuilder --> scope
+  contextBuilder --> artifacts
+  domainEvents --> state
+  experiments --> state
+  experiments --> scope
+  experiments --> artifacts
+  experiments --> workflows
+  experiments --> reviews
+  experiments --> contextBuilder
+  experiments --> claims
+  experiments --> paper
+  experiments -. optional .-> code
+  merv_experiments_tools --> experiments
+  merv_experiments_tools --> tools
+  merv_experiments_ui --> experiments
+  merv_experiments_ui --> ui
+  feed --> state
+  feed --> scope
+  feed --> artifacts
+  merv_feed_tools --> feed
+  merv_feed_tools --> tools
+  merv_feed_ui --> feed
+  merv_feed_ui --> ui
+  knowledge --> state
+  knowledge --> scope
+  knowledge --> claims
+  knowledge --> tasks
+  knowledge --> experiments
+  knowledge --> artifacts
+  knowledge --> reviews
+  knowledge -. optional .-> code
+  merv_knowledge_tools --> knowledge
+  merv_knowledge_tools --> tools
+  merv_knowledge_ui --> knowledge
+  merv_knowledge_ui --> ui
+  mounts --> tools
+  mounts --> scope
+  merv_mounts_ui --> mounts
+  merv_mounts_ui --> ui
+  paper --> state
+  paper --> scope
+  paper --> artifacts
+  merv_paper_tools --> paper
+  merv_paper_tools --> tools
+  merv_paper_ui --> paper
+  merv_paper_ui --> ui
+  merv_reflection_tools --> reflections
+  merv_reflection_tools --> tools
+  merv_reflection_ui --> reflections
+  merv_reflection_ui --> ui
+  reflections --> state
+  reflections --> scope
+  reflections --> artifacts
+  reflections --> paper
+  reflections --> workflows
+  reflections --> reviews
+  reflections --> contextBuilder
+  research --> state
+  research --> scope
+  research --> workflows
+  research -. optional .-> paper
+  research -. optional .-> reflections
+  research -. optional .-> knowledge
+  research -. optional .-> consolidation
+  merv_research_tools --> research
+  merv_research_tools --> tools
+  merv_research_ui --> research
+  merv_research_ui --> ui
+  merv_review_tools --> tools
+  merv_review_tools --> reviews
+  merv_review_ui --> reviews
+  merv_review_ui --> ui
+  reviews --> state
+  reviews --> scope
+  reviews --> artifacts
+  reviews --> domainEvents
+  scope --> state
+  merv_scope_tools --> scope
+  merv_scope_tools --> tools
+  merv_scope_ui --> scope
+  merv_scope_ui --> ui
+  sessions --> state
+  sessions --> scope
+  sessions --> workflows
+  sessions --> domainEvents
+  merv_sessions_api --> sessions
+  merv_sessions_api --> api
+  merv_sessions_ui --> sessions
+  merv_sessions_ui --> ui
+  merv_task_tools --> tools
+  merv_task_tools --> tasks
+  merv_task_ui --> tasks
+  merv_task_ui --> ui
+  tasks --> state
+  tasks --> scope
+  tasks --> artifacts
+  tasks --> workflows
+  tasks --> reviews
+  tasks --> contextBuilder
+  tools --> scope
+  ui --> api
+  ui --> tools
+  merv_workflow_tools --> workflows
+  merv_workflow_tools --> tools
+  workflows --> state
+  workflows --> scope
+  runner -. "HTTP session and Code controls; not a Cordis dependency" .-> api

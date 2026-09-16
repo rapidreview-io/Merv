@@ -12,45 +12,34 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { MervError, type Caller, type Scope } from '@merv/contracts';
-import type { Tools, AnyToolDefinition, ToolInvocation } from './types.js';
-import { ApiError, isRemoteTool, type ToolDescription } from './registry.js';
+import { z } from 'zod';
+import {
+  MervError,
+  codeCommandCompletionSchema,
+  codeCommandControlSchema,
+  sessionWorkspaceSchema,
+  type Caller,
+  type Principal,
+  type Scope,
+} from '@merv/contracts';
+import type { IdentityProvider } from '@merv/identity/types';
+import type {
+  Tools,
+  ToolInvocation,
+  MountHandler,
+  SessionApiProvider,
+  CodeApiProvider,
+} from './types.js';
+import { ApiError, isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
+
+export { describeTool } from './registry.js';
 
 export interface HttpOptions {
   host?: string;
   port?: number;
   maxBodyBytes?: number;
   allowedOrigins?: string[];
-}
-
-export function describeTool(tool: AnyToolDefinition): ToolDescription {
-  if (isRemoteTool(tool)) {
-    const { handler: _handler, kind: _kind, ...description } = tool;
-    return structuredClone(description);
-  }
-  const schema = zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
-  if (!('type' in schema) || schema.type !== 'object')
-    throw new ApiError('invalid_tool', 'Tool input must be an object');
-  return {
-    name: tool.name,
-    description: tool.description,
-    inputSchema: {
-      ...schema,
-      type: 'object',
-      properties: {
-        ...('properties' in schema ? schema.properties : {}),
-        projectId: {
-          type: 'string',
-          minLength: 1,
-          description:
-            "Optional project scope. Defaults to the authenticated actor's project; access is checked by the server.",
-        },
-      },
-    },
-    annotations: { readOnlyHint: tool.readOnly ?? false, openWorldHint: false },
-  };
 }
 
 function errorBody(error: unknown): {
@@ -116,13 +105,194 @@ function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
   });
 }
 
+const nonblank = z.string().trim().min(1).max(512);
+const role = z.enum(['operator', 'producer', 'reviewer', 'reader']);
+const createProjectInput = z.object({ name: nonblank, requestId: nonblank }).strict();
+const addMemberInput = z.object({ subject: nonblank, role }).strict();
+const changeMemberInput = z.object({ role }).strict();
+const keyExpiry = z.string().datetime({ precision: 3 }).nullable().optional();
+const keyProject = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => value.trim() === value && !value.includes('\0'));
+const createKeyInput = z
+  .object({
+    projectId: keyProject,
+    grantScope: z.enum(['project', 'account']).optional(),
+    label: z.string().max(120).nullable().optional(),
+    expiresAt: keyExpiry,
+  })
+  .strict();
+const rotateKeyInput = z.object({ expiresAt: keyExpiry }).strict();
+
+const sessionOfferInput = z
+  .object({
+    agentId: nonblank.optional(),
+    instanceId: nonblank,
+    expectedRevision: z.number().int().nonnegative(),
+    runnerId: nonblank,
+    requestId: nonblank,
+    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
+    hardDeadlineSeconds: z.number().int().positive().optional(),
+  })
+  .strict();
+const agentRegistrationInput = z
+  .object({
+    name: nonblank,
+    runnerId: nonblank,
+    requestId: nonblank,
+    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
+  })
+  .strict();
+const agentAssignmentInput = sessionOfferInput.omit({
+  agentId: true,
+  runnerId: true,
+  secret: true,
+});
+const agentReleaseInput = z.object({ executionId: nonblank }).strict();
+const agentResetInput = z.object({ reason: nonblank }).strict();
+const sessionAttachInput = z
+  .object({ runnerId: nonblank, hostRef: nonblank, workspace: sessionWorkspaceSchema.optional() })
+  .strict();
+const sessionWorkspaceResultInput = z
+  .object({ runnerId: nonblank, hostRef: nonblank, workspace: sessionWorkspaceSchema })
+  .strict();
+const sessionHeartbeatInput = z.object({ runnerId: nonblank }).strict();
+const sessionReleaseInput = z
+  .object({
+    runnerId: nonblank,
+    reason: nonblank.optional(),
+    outcome: z
+      .enum(['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'])
+      .optional(),
+  })
+  .strict();
+const runnerText = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => value.trim() === value && !value.includes('\0'));
+const runnerPlatform = z
+  .object({
+    name: runnerText,
+    harness: z.enum([
+      'codex',
+      'claude',
+      'gemini',
+      'cursor',
+      'opencode',
+      'copilot',
+      'qwen',
+      'hermes',
+      'command',
+    ]),
+    model: runnerText.optional(),
+    effort: runnerText.optional(),
+  })
+  .strict();
+const sessionLeaseInput = z
+  .object({
+    runnerId: runnerText,
+    requestId: nonblank,
+    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
+    platform: runnerPlatform,
+    hardDeadlineSeconds: z.number().int().positive().optional(),
+  })
+  .strict();
+const runnerHeartbeatInput = z
+  .object({
+    runnerId: runnerText,
+    machine: z
+      .object({ hostname: runnerText, system: runnerText, architecture: runnerText })
+      .strict(),
+    platforms: z
+      .array(
+        runnerPlatform
+          .extend({ parallelism: z.number().int().min(1).max(32), enabled: z.boolean() })
+          .strict(),
+      )
+      .max(32),
+    capacity: z.number().int().min(0).max(256),
+    appliedVersion: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+const runnerSettingsInput = z
+  .object({
+    settings: z
+      .object({
+        platforms: z
+          .array(
+            z
+              .object({
+                name: runnerText,
+                enabled: z.boolean(),
+                model: runnerText.optional(),
+                effort: runnerText.optional(),
+                parallelism: z.number().int().min(1).max(32),
+              })
+              .strict(),
+          )
+          .max(32),
+      })
+      .strict(),
+  })
+  .strict();
+const dispatchInput = z.object({ enabled: z.boolean() }).strict();
+const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
+
+type ApiPrincipal = Principal | { kind: 'session'; caller: Caller };
+// A legacy random actor token is exactly 43 characters even if it starts with ms_.
+const sessionNamespace = (token: string) =>
+  token.startsWith('ms_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
+
+function keyQuery(params: URLSearchParams, allowProject = false): string | undefined {
+  if (
+    [...params.keys()].some((key) => !allowProject || key !== 'projectId') ||
+    params.getAll('projectId').length > 1
+  )
+    throw new ApiError('invalid_input', 'Unsupported or repeated key query parameter');
+  const projectId = params.get('projectId');
+  if (projectId === null) return undefined;
+  return parseInput(keyProject, projectId);
+}
+
+function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) throw new ApiError('invalid_input', 'Request body failed validation');
+  return parsed.data;
+}
+
+function projectSelection(...selections: unknown[]): string | undefined {
+  const supplied = selections.filter((selection) => selection !== undefined);
+  for (const selection of supplied)
+    if (typeof selection !== 'string' || !selection.trim())
+      throw new ApiError('invalid_input', 'projectId must be a non-empty string');
+  if (supplied.some((selection) => selection !== supplied[0]))
+    throw new ApiError('invalid_input', 'Conflicting Merv project selections');
+  return supplied[0] as string | undefined;
+}
+
+function pathSegment(value: string): string {
+  try {
+    const decoded = decodeURIComponent(value);
+    if (!decoded.trim() || decoded.includes('/')) throw new Error();
+    return decoded;
+  } catch {
+    throw new ApiError('invalid_input', 'Malformed resource identifier');
+  }
+}
+
 /** One stateless MCP transport per HTTP request; authentication is checked afresh each time. */
 export class ApiServer {
   private server?: HttpServer;
+  private sessions?: SessionApiProvider;
+  private code?: CodeApiProvider;
   private stopping = false;
   private readonly requests = new Set<Promise<void>>();
   private readonly calls = new Set<Promise<unknown>>();
   private readonly mcpServers = new Set<McpServer>();
+  private readonly mounts = new Map<string, MountHandler>();
   private readonly maxBodyBytes: number;
   url?: string;
 
@@ -130,6 +300,7 @@ export class ApiServer {
     private readonly scope: Scope,
     private readonly tools: Tools,
     private readonly options: HttpOptions = {},
+    private readonly identity?: IdentityProvider,
   ) {
     // Covers a 2,000,000-byte artifact encoded as base64, plus the JSON/MCP envelope.
     this.maxBodyBytes = options.maxBodyBytes ?? 3 * 1024 * 1024;
@@ -146,7 +317,10 @@ export class ApiServer {
         json(res, body.status, { error: body.error });
       });
       this.requests.add(request);
-      void request.finally(() => this.requests.delete(request));
+      void request.then(
+        () => this.requests.delete(request),
+        () => this.requests.delete(request),
+      );
     });
     server.requestTimeout = 30_000;
     server.headersTimeout = 15_000;
@@ -195,11 +369,102 @@ export class ApiServer {
     this.server = undefined;
   }
 
-  private authenticate(req: IncomingMessage): ReturnType<Scope['authenticate']> {
+  /** Serve a plugin-owned path prefix without bearer authentication; the disposer withdraws it. */
+  mount(prefix: string, handler: MountHandler): () => void {
+    if (
+      !/^\/[a-z][a-z0-9-]*$/.test(prefix) ||
+      [
+        '/health',
+        '/tools',
+        '/mcp',
+        '/auth',
+        '/account',
+        '/projects',
+        '/sessions',
+        '/code',
+      ].includes(prefix)
+    )
+      throw new ApiError('invalid_mount', 'Mount prefix must be one unreserved lowercase segment');
+    if (this.mounts.has(prefix))
+      throw new ApiError('mount_conflict', `Path prefix is already mounted: ${prefix}`, 409);
+    if (typeof handler !== 'function')
+      throw new ApiError('invalid_mount', 'Mount handler is required');
+    this.mounts.set(prefix, handler);
+    return () => {
+      if (this.mounts.get(prefix) === handler) this.mounts.delete(prefix);
+    };
+  }
+
+  registerSessions(provider: SessionApiProvider): () => void {
+    if (this.sessions)
+      throw new ApiError(
+        'session_provider_conflict',
+        'Session HTTP provider is already registered',
+        409,
+      );
+    this.sessions = provider;
+    return () => {
+      if (this.sessions === provider) this.sessions = undefined;
+    };
+  }
+
+  private sessionProvider(): SessionApiProvider {
+    if (!this.sessions) throw new ApiError('session_unavailable', 'Sessions are unavailable', 503);
+    return this.sessions;
+  }
+
+  registerCode(provider: CodeApiProvider): () => void {
+    if (this.code)
+      throw new ApiError('code_provider_conflict', 'Code HTTP provider is already registered', 409);
+    this.code = provider;
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      if (this.code === provider) this.code = undefined;
+    };
+  }
+
+  private codeProvider(): CodeApiProvider {
+    if (!this.code) throw new ApiError('code_unavailable', 'Code controls are unavailable', 503);
+    return this.code;
+  }
+
+  private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
+    if (principal.kind !== 'session') return await this.scope.caller(principal, projectId);
+    projectSelection(principal.caller.projectId, projectId);
+    await this.sessionProvider().describe(principal.caller);
+    await this.scope.require(principal.caller, 'read');
+    return principal.caller;
+  }
+
+  private async authenticate(req: IncomingMessage): Promise<ApiPrincipal> {
     const authorization = req.headers.authorization;
     if (!authorization || !/^Bearer [^\s]+$/i.test(authorization))
       throw new ApiError('unauthorized', 'A bearer token is required', 401);
-    return this.scope.authenticate(authorization.slice(7));
+    const token = authorization.slice(7);
+    if (sessionNamespace(token)) {
+      const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+      if (path !== '/mcp' || req.method !== 'POST')
+        throw new ApiError(
+          'session_transport_forbidden',
+          'Session credentials may only use POST /mcp',
+          403,
+        );
+      const caller = await this.sessionProvider().authenticate(token);
+      projectSelection(caller.projectId, req.headers['x-merv-project-id']);
+      return { kind: 'session', caller };
+    }
+    // Local credentials are opaque. Never retry revoked or expired credentials upstream.
+    // Legacy actor tokens are 43 random base64url characters and may happen to
+    // start with mk_. User keys add that prefix to a full 43-character secret.
+    if (token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token))
+      return { kind: 'key', key: await this.scope.authenticateKey(token) };
+    if (!token.includes('.')) return { kind: 'actor', actor: await this.scope.authenticate(token) };
+    if (!this.identity)
+      throw new ApiError('unauthorized', 'Human authentication is unavailable', 401);
+    const verified = await this.identity.verify(token);
+    return await this.scope.acceptVerifiedIdentity(verified);
   }
 
   private async call(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
@@ -212,35 +477,22 @@ export class ApiServer {
     }
   }
 
-  private caller(
-    actor: ReturnType<Scope['authenticate']>,
+  private async caller(
+    principal: ApiPrincipal,
     input: unknown,
     name: string,
     selectedProject?: unknown,
-  ): { caller: Caller; input: Record<string, unknown> } {
+  ): Promise<{ caller: Caller; input: Record<string, unknown> }> {
     if (input === null || typeof input !== 'object' || Array.isArray(input))
       throw new ApiError('invalid_input', 'Tool arguments must be an object');
     const argumentsObject = input as Record<string, unknown>;
     // The reserved namespace determines routing even while a catalog is being withdrawn.
-    const remote = name.startsWith('mount__');
+    const remote = isMountedToolName(name);
     const { projectId: argumentProject, ...nativeArguments } = argumentsObject;
-    if (
-      !remote &&
-      selectedProject !== undefined &&
-      argumentProject !== undefined &&
-      selectedProject !== argumentProject
-    )
-      throw new ApiError('invalid_input', 'Conflicting Merv project selections');
-    const projectId =
-      selectedProject !== undefined ? selectedProject : remote ? undefined : argumentProject;
-    if (projectId !== undefined && (typeof projectId !== 'string' || !projectId))
-      throw new ApiError('invalid_input', 'projectId must be a non-empty string');
+    const projectId = projectSelection(selectedProject, remote ? undefined : argumentProject);
     // actorId and other caller-shaped fields are ordinary arguments: strict feature schemas reject them.
-    const caller = {
-      actorId: actor.id,
-      projectId: (projectId as string | undefined) ?? actor.projectId,
-    };
-    this.scope.require(caller, 'read');
+    const caller = await this.selectedCaller(principal, projectId);
+    await this.scope.require(caller, 'read');
     return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
@@ -250,18 +502,340 @@ export class ApiServer {
       return;
     }
     const origin = req.headers.origin;
-    if (origin && !this.options.allowedOrigins?.includes(origin))
+    // Browsers send Origin on same-origin POSTs; this server speaks plain HTTP, so self is http://<host>.
+    if (
+      origin &&
+      origin !== `http://${req.headers.host}` &&
+      !this.options.allowedOrigins?.includes(origin)
+    )
       throw new ApiError('forbidden_origin', 'Origin is not allowed', 403);
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const path = url.pathname;
     if (path === '/health' && req.method === 'GET') {
       json(res, 200, { status: 'ok' });
       return;
     }
-    const actor = this.authenticate(req);
+    if (path === '/auth/config' && req.method === 'GET') {
+      json(res, 200, this.identity?.configuration() ?? { enabled: false });
+      return;
+    }
+    for (const [prefix, handler] of this.mounts)
+      if (path === prefix || path.startsWith(`${prefix}/`)) {
+        await handler(req, res);
+        return;
+      }
+    // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
+    if (path === '/sessions/self' || path.startsWith('/sessions/self/')) {
+      if ([...url.searchParams].length)
+        throw new ApiError('invalid_input', 'Agent routes do not accept query parameters');
+      const authorization = req.headers.authorization;
+      if (!authorization || !/^Bearer [^\s]+$/i.test(authorization))
+        throw new ApiError('unauthorized', 'A bearer token is required', 401);
+      const token = authorization.slice(7),
+        provider = this.sessionProvider();
+      const self = await provider.agentSelf(token);
+      if (path === '/sessions/self' && req.method === 'GET') {
+        json(res, 200, self);
+        return;
+      }
+      if (req.method === 'POST') {
+        const body = await readJson(req, this.maxBodyBytes);
+        if (path === '/sessions/self/assignment') {
+          json(res, 200, {
+            execution: await provider.assignAgent(token, parseInput(agentAssignmentInput, body)),
+          });
+          return;
+        }
+        if (path === '/sessions/self/release') {
+          json(res, 200, {
+            execution: await provider.releaseAgentAssignment(
+              token,
+              parseInput(agentReleaseInput, body).executionId,
+            ),
+          });
+          return;
+        }
+        if (path === '/sessions/self/context-reset') {
+          json(res, 200, {
+            agent: await provider.resetAgentContext(
+              token,
+              parseInput(agentResetInput, body).reason,
+            ),
+          });
+          return;
+        }
+      }
+      throw new ApiError('not_found', 'Unknown agent control route', 404);
+    }
+    const principal = await this.authenticate(req);
+    if (principal.kind !== 'session') {
+      if (path === '/code/commands/next' || path === '/code/commands/complete') {
+        if ([...url.searchParams].length)
+          throw new ApiError('invalid_input', 'Code routes do not accept query parameters');
+        const sourceCaller = await this.scope.caller(
+          principal,
+          projectSelection(req.headers['x-merv-project-id']),
+        );
+        await this.scope.require(sourceCaller, 'read');
+        if (req.method !== 'POST') {
+          res.setHeader('allow', 'POST');
+          json(res, 405, {
+            error: { code: 'method_not_allowed', message: 'Use POST for Code controls' },
+          });
+          return;
+        }
+        const body = await readJson(req, this.maxBodyBytes);
+        const input = path.endsWith('/next')
+          ? parseInput(codeCommandControlSchema, body)
+          : parseInput(codeCommandCompletionSchema, body);
+        // Body streaming may outlive credential authority or the optional adapter.
+        // Lookup the current provider only after parsing; its methods are synchronous.
+        await this.scope.require(sourceCaller, 'read');
+        const provider = this.codeProvider();
+        if (path.endsWith('/next'))
+          json(res, 200, { command: await provider.nextCommand(sourceCaller, input) });
+        else
+          json(res, 200, {
+            operation: await provider.completeCommand(
+              sourceCaller,
+              input as z.infer<typeof codeCommandCompletionSchema>,
+            ),
+          });
+        return;
+      }
+      if (path === '/account' && req.method === 'GET') {
+        json(res, 200, {
+          ...(principal.kind === 'user'
+            ? { kind: 'user', user: principal.user }
+            : principal.kind === 'key'
+              ? { kind: 'key', key: principal.key }
+              : { kind: 'actor', actor: principal.actor }),
+          projects: await this.scope.projects(principal),
+        });
+        return;
+      }
+      if (path === '/account/keys') {
+        const projectId = keyQuery(url.searchParams, req.method === 'GET');
+        if (req.method === 'GET') {
+          json(res, 200, { keys: await this.scope.keys(principal, projectId) });
+          return;
+        }
+        if (req.method === 'POST') {
+          const input = parseInput(createKeyInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, await this.scope.createKey(principal, input));
+          return;
+        }
+      }
+      const keyRoute = /^\/account\/keys\/([^/]+)(\/rotate)?$/.exec(path);
+      if (keyRoute) {
+        keyQuery(url.searchParams);
+        const keyId = pathSegment(keyRoute[1]!);
+        if (keyRoute[2] && req.method === 'POST') {
+          const input = parseInput(rotateKeyInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, await this.scope.rotateKey(principal, { keyId, ...input }));
+          return;
+        }
+        if (!keyRoute[2] && req.method === 'DELETE') {
+          await this.scope.revokeKey(principal, keyId);
+          json(res, 200, { revoked: true });
+          return;
+        }
+      }
+      if (path === '/projects' && req.method === 'GET') {
+        json(res, 200, { projects: await this.scope.projects(principal) });
+        return;
+      }
+      if (path === '/projects' && req.method === 'POST') {
+        const input = parseInput(createProjectInput, await readJson(req, this.maxBodyBytes));
+        json(res, 200, { project: await this.scope.createProject(principal, input) });
+        return;
+      }
+      const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
+      if (memberRoute) {
+        const projectId = pathSegment(memberRoute[1]!);
+        const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
+        projectSelection(projectId, req.headers['x-merv-project-id']);
+        if (subject === undefined && req.method === 'GET') {
+          json(res, 200, { memberships: await this.scope.memberships(principal, projectId) });
+          return;
+        }
+        if (subject === undefined && req.method === 'POST') {
+          const input = parseInput(addMemberInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, { membership: await this.scope.addMember(principal, projectId, input) });
+          return;
+        }
+        if (subject !== undefined && req.method === 'PATCH') {
+          const input = parseInput(changeMemberInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, {
+            membership: await this.scope.changeMemberRole(principal, projectId, {
+              subject,
+              ...input,
+            }),
+          });
+          return;
+        }
+        if (subject !== undefined && req.method === 'DELETE') {
+          await this.scope.removeMember(principal, projectId, subject);
+          json(res, 200, { removed: true });
+          return;
+        }
+      }
+      if (path === '/sessions' || path.startsWith('/sessions/')) {
+        if ([...url.searchParams].length)
+          throw new ApiError('invalid_input', 'Session routes do not accept query parameters');
+        const sourceCaller = await this.scope.caller(
+          principal,
+          projectSelection(req.headers['x-merv-project-id']),
+        );
+        await this.scope.require(sourceCaller, 'read');
+        if (path === '/sessions/agents') {
+          if (req.method === 'GET') {
+            json(res, 200, { agents: await this.sessionProvider().agents(sourceCaller) });
+            return;
+          }
+          if (req.method === 'POST') {
+            const input = parseInput(
+              agentRegistrationInput,
+              await readJson(req, this.maxBodyBytes),
+            );
+            json(res, 200, {
+              agent: await this.sessionProvider().registerAgent(sourceCaller, input),
+            });
+            return;
+          }
+        }
+        const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
+        if (observationRoute && req.method === 'GET') {
+          json(
+            res,
+            200,
+            await this.sessionProvider().agentObservation(
+              sourceCaller,
+              pathSegment(observationRoute[1]!),
+            ),
+          );
+          return;
+        }
+        const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
+        if (agentRoute) {
+          const agentId = pathSegment(agentRoute[1]!);
+          if (req.method === 'GET') {
+            json(res, 200, await this.sessionProvider().agent(sourceCaller, agentId));
+            return;
+          }
+          if (req.method === 'DELETE') {
+            json(res, 200, {
+              agent: await this.sessionProvider().retireAgent(sourceCaller, agentId),
+            });
+            return;
+          }
+        }
+        if (path === '/sessions/status' && req.method === 'GET') {
+          json(res, 200, await this.sessionProvider().projectStatus(sourceCaller));
+          return;
+        }
+        if (path === '/sessions/dispatch' && req.method === 'PUT') {
+          await this.scope.require(sourceCaller, 'admin');
+          const input = parseInput(dispatchInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, {
+            dispatch: await this.sessionProvider().setDispatch(sourceCaller, input),
+          });
+          return;
+        }
+        if (path === '/sessions/halt' && req.method === 'POST') {
+          await this.scope.require(sourceCaller, 'admin');
+          const input = parseInput(haltInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, await this.sessionProvider().halt(sourceCaller, input));
+          return;
+        }
+        if (path === '/sessions/lease' && req.method === 'POST') {
+          const input = parseInput(sessionLeaseInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, await this.sessionProvider().lease(sourceCaller, input));
+          return;
+        }
+        if (path === '/sessions/runners/heartbeat' && req.method === 'POST') {
+          const input = parseInput(runnerHeartbeatInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, {
+            runner: await this.sessionProvider().heartbeatRunner(sourceCaller, input),
+          });
+          return;
+        }
+        const settingsRoute = /^\/sessions\/runners\/([^/]+)\/settings$/.exec(path);
+        if (settingsRoute && req.method === 'PUT') {
+          await this.scope.require(sourceCaller, 'admin');
+          const input = parseInput(runnerSettingsInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, {
+            runner: await this.sessionProvider().setRunnerSettings(sourceCaller, {
+              runnerId: pathSegment(settingsRoute[1]!),
+              ...input,
+            }),
+          });
+          return;
+        }
+        if (path === '/sessions' && req.method === 'GET') {
+          json(res, 200, { sessions: await this.sessionProvider().list(sourceCaller) });
+          return;
+        }
+        if (path === '/sessions/offer' && req.method === 'POST') {
+          const input = parseInput(sessionOfferInput, await readJson(req, this.maxBodyBytes));
+          json(res, 200, { session: await this.sessionProvider().offer(sourceCaller, input) });
+          return;
+        }
+        const route =
+          /^\/sessions\/([^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(path);
+        if (route) {
+          const sessionId = pathSegment(route[1]!);
+          if (!route[2] && req.method === 'GET') {
+            json(res, 200, { session: await this.sessionProvider().get(sourceCaller, sessionId) });
+            return;
+          }
+          if (req.method === 'POST' && route[2] === 'halt') {
+            await this.scope.require(sourceCaller, 'admin');
+            const input = parseInput(haltInput, await readJson(req, this.maxBodyBytes));
+            json(
+              res,
+              200,
+              await this.sessionProvider().halt(sourceCaller, { ...input, sessionId }),
+            );
+            return;
+          }
+          if (req.method === 'POST' && route[2]) {
+            const body = await readJson(req, this.maxBodyBytes);
+            const provider = this.sessionProvider();
+            const session =
+              route[2] === 'attach'
+                ? await provider.attach(sourceCaller, {
+                    sessionId,
+                    ...parseInput(sessionAttachInput, body),
+                  })
+                : route[2] === 'workspace-result'
+                  ? await provider.workspaceResult(sourceCaller, {
+                      sessionId,
+                      ...parseInput(sessionWorkspaceResultInput, body),
+                    })
+                  : route[2] === 'heartbeat'
+                    ? await provider.heartbeat(sourceCaller, {
+                        sessionId,
+                        ...parseInput(sessionHeartbeatInput, body),
+                      })
+                    : await provider.release(sourceCaller, {
+                        sessionId,
+                        ...parseInput(sessionReleaseInput, body),
+                      });
+            json(res, 200, { session });
+            return;
+          }
+        }
+      }
+    }
     if (path === '/tools' && req.method === 'GET') {
-      this.scope.require({ actorId: actor.id, projectId: actor.projectId }, 'read');
+      const caller = await this.selectedCaller(
+        principal,
+        projectSelection(req.headers['x-merv-project-id']),
+      );
+      await this.scope.require(caller, 'read');
       json(res, 200, {
-        tools: this.tools.list({ actorId: actor.id, projectId: actor.projectId }).map(describeTool),
+        tools: await this.tools.describe(caller),
       });
       return;
     }
@@ -272,8 +846,8 @@ export class ApiServer {
       } catch {
         throw new ApiError('invalid_tool', 'Malformed tool name');
       }
-      const request = this.caller(
-        actor,
+      const request = await this.caller(
+        principal,
         await readJson(req, this.maxBodyBytes),
         name,
         req.headers['x-merv-project-id'],
@@ -303,19 +877,32 @@ export class ApiServer {
         {
           capabilities: { tools: {} },
           instructions:
-            'Merv is a durable task and independent review system. Use actor.whoami and project.get to inspect your identity and project. Each tool is scoped to the bearer identity. Request IDs make supported mutations retryable; supply the current expectedRevision for transitions.',
+            principal.kind === 'session'
+              ? 'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.'
+              : 'Merv is a durable task and independent review system. Human sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project. Request IDs make supported mutations retryable; supply the current expectedRevision for transitions.',
         },
       );
-      instance.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: this.tools.list({ actorId: actor.id, projectId: actor.projectId }).map(describeTool),
-      }));
+      instance.setRequestHandler(ListToolsRequestSchema, async (request) => {
+        const caller = await this.selectedCaller(
+          principal,
+          projectSelection(
+            req.headers['x-merv-project-id'],
+            request.params?._meta?.['merv/projectId'],
+          ),
+        );
+        await this.scope.require(caller, 'read');
+        return { tools: await this.tools.describe(caller) };
+      });
       instance.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
-          const call = this.caller(
-            actor,
+          const call = await this.caller(
+            principal,
             request.params.arguments ?? {},
             request.params.name,
-            request.params._meta?.['merv/projectId'],
+            projectSelection(
+              req.headers['x-merv-project-id'],
+              request.params._meta?.['merv/projectId'],
+            ),
           );
           const result = await this.call(request.params.name, call.caller, call.input);
           return result.format === 'mcp'

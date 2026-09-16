@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import { fixtureAccess } from './fixtures/access.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +18,7 @@ import {
 
 const caller: Caller = { actorId: 'local-actor', projectId: 'local-project' };
 const scope: Pick<Scope, 'require'> = {
-  require(value) {
+  async require(value) {
     if (value.actorId !== caller.actorId || value.projectId !== caller.projectId)
       throw new MervError('forbidden', 'Wrong project', 403);
     return {
@@ -36,10 +37,10 @@ const simple = (name: string): Tool => ({
   inputSchema: { type: 'object', additionalProperties: false },
   annotations: { readOnlyHint: true },
 });
-const names = (registry: ToolRegistry) => registry.list().map((tool) => tool.name);
-async function until(predicate: () => boolean, message: string): Promise<void> {
+const names = async (registry: ToolRegistry) => (await registry.list()).map((tool) => tool.name);
+async function until(predicate: () => boolean | Promise<boolean>, message: string): Promise<void> {
   const deadline = Date.now() + 2000;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error(message);
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -52,7 +53,7 @@ async function setup(t: TestContext, options: RemoteFixtureOptions = {}) {
   t.after(async () => {
     await fixture.close();
     await client.close();
-    await Promise.allSettled(controllers.map((controller) => controller.close()));
+    await Promise.allSettled(controllers.map(async (controller) => controller.close()));
     await registry.close();
   });
   await fixture.start();
@@ -89,12 +90,12 @@ test(
       [undefined, '1', '2'],
     );
     await registry.createCatalog('fixture').replace(definitions);
-    assert.deepEqual(names(registry), [
-      'mount__fixture__failure',
-      'mount__fixture__inspect',
-      'mount__fixture__media',
+    assert.deepEqual(await names(registry), [
+      '_fixture.failure',
+      '_fixture.inspect',
+      '_fixture.media',
     ]);
-    const inspected = await registry.invoke('mount__fixture__inspect', caller, {
+    const inspected = await registry.invoke('_fixture.inspect', caller, {
       projectId: 'ordinary-remote-project',
       options: { label: 'nested', limit: 2 },
     });
@@ -112,7 +113,7 @@ test(
     });
     const before = fixture.requests.length;
     await assert.rejects(
-      registry.call('mount__fixture__inspect', caller, {
+      registry.call('_fixture.inspect', caller, {
         projectId: 'remote',
         options: { label: 'nested', limit: 99 },
       }),
@@ -132,15 +133,15 @@ test(
       })),
     } as CallToolResult;
     fixture.setResult('media', extended);
-    assert.deepEqual(await registry.call('mount__fixture__media', caller, {}), extended);
-    assert.deepEqual(await registry.call('mount__fixture__failure', caller, {}), {
+    assert.deepEqual(await registry.call('_fixture.media', caller, {}), extended);
+    assert.deepEqual(await registry.call('_fixture.failure', caller, {}), {
       content: [{ type: 'text', text: 'Remote operation declined.' }],
       isError: true,
       _meta: { 'fixture/error': 'retained' },
     });
     fixture.setResult('inspect', { content: [], structuredContent: { ok: 'wrong-type' } });
     await assert.rejects(
-      registry.call('mount__fixture__inspect', caller, {
+      registry.call('_fixture.inspect', caller, {
         projectId: 'remote',
         options: { label: 'nested' },
       }),
@@ -179,7 +180,7 @@ test(
     fixture.setTools([simple('fresh')]);
     await fixture.notifyToolsChanged();
     await until(() => secondRefreshes === 2, 'Repeated old close must not remove the new handler');
-    assert.deepEqual(names(registry), ['mount__second__fresh']);
+    assert.deepEqual(await names(registry), ['_second.fresh']);
   },
 );
 
@@ -242,7 +243,7 @@ test(
     });
     const remote = controller();
     await remote.refresh();
-    const original = names(registry);
+    const original = await names(registry);
     fixture.setTools([
       simple('fresh'),
       {
@@ -255,12 +256,9 @@ test(
     ]);
     await assert.rejects(remote.refresh(), /schema|reference|\$ref/i);
     assert.ok(remote.lastError);
-    assert.deepEqual(names(registry), original);
+    assert.deepEqual(await names(registry), original);
     assert.equal(await registry.call('native', caller, {}), 'native-alive');
-    assert.deepEqual(
-      await registry.call('mount__fixture__media', caller, {}),
-      representativeResult,
-    );
+    assert.deepEqual(await registry.call('_fixture.media', caller, {}), representativeResult);
   },
 );
 
@@ -272,7 +270,7 @@ test(
     const remote = controller();
     await remote.refresh();
     const held = fixture.holdNextCall('media');
-    const admitted = registry.call('mount__fixture__media', caller, {});
+    const admitted = registry.call('_fixture.media', caller, {});
     await held.entered;
     fixture.setTools([simple('fresh')]);
     fixture.setResult('fresh', { content: [{ type: 'text', text: 'New generation.' }] });
@@ -282,16 +280,13 @@ test(
     });
     try {
       await until(
-        () => names(registry).includes('mount__fixture__fresh'),
+        async () => (await names(registry)).includes('_fixture.fresh'),
         'Replacement catalog was not published',
       );
-      assert.deepEqual(names(registry), ['mount__fixture__fresh']);
+      assert.deepEqual(await names(registry), ['_fixture.fresh']);
       assert.equal(settled, false);
-      await assert.rejects(
-        registry.call('mount__fixture__media', caller, {}),
-        code('unknown_tool'),
-      );
-      assert.deepEqual(await registry.call('mount__fixture__fresh', caller, {}), {
+      await assert.rejects(registry.call('_fixture.media', caller, {}), code('unknown_tool'));
+      assert.deepEqual(await registry.call('_fixture.fresh', caller, {}), {
         content: [{ type: 'text', text: 'New generation.' }],
       });
     } finally {
@@ -349,7 +344,7 @@ test(
     await active;
     await remote.whenIdle();
     assert.equal(completed, 3);
-    assert.deepEqual(names(registry), ['mount__fixture__fresh']);
+    assert.deepEqual(await names(registry), ['_fixture.fresh']);
     fixture.setTools([
       {
         name: 'bad',
@@ -361,7 +356,7 @@ test(
     ]);
     await fixture.notifyToolsChanged();
     await until(() => failures.length > 0, 'Invalid notification refresh was not reported');
-    assert.deepEqual(names(registry), ['mount__fixture__fresh']);
+    assert.deepEqual(await names(registry), ['_fixture.fresh']);
     assert.equal(remote.lastError, failures[0]);
   },
 );
@@ -378,8 +373,8 @@ test(
     const rejected = assert.rejects(pending, code('remote_catalog_closed'));
     await held.entered;
     const closing = remote.close();
-    assert.deepEqual(names(registry), []);
-    await assert.rejects(registry.call('mount__fixture__media', caller, {}), code('unknown_tool'));
+    assert.deepEqual(await names(registry), []);
+    await assert.rejects(registry.call('_fixture.media', caller, {}), code('unknown_tool'));
     await rejected;
     await closing;
     held.release();

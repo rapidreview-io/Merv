@@ -1,0 +1,69 @@
+{
+  "date": "2026-09-15",
+  "command": "node --import tsx scripts/live-runner-workspace.ts /private/tmp/merv-native-git-live-20260915-02",
+  "log": "/private/tmp/merv-native-git-live-20260915-02.log",
+  "privateReport": "/private/tmp/merv-native-git-live-20260915-02/report.json",
+  "passed": true,
+  "source": "Disposable synthetic Git repository and project; controller holds an ordinary actor credential, installed Codex account supplies model access",
+  "nativeRunner": true,
+  "protocolProxy": false,
+  "machines": 1,
+  "freshAgents": 2,
+  "shellCalls": 3,
+  "successfulCalls": 2,
+  "failedCalls": 0,
+  "phases": [
+    {
+      "threadId": "01a0a427-a7c9-7350-ab1d-de992c1f0896",
+      "shellCalls": 2,
+      "calls": [
+        {
+          "tool": "step.finish",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "threadId": "01a0a427-e0f6-74e3-ab76-14e4b517d60b",
+      "shellCalls": 1,
+      "calls": [
+        {
+          "tool": "step.verify",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    }
+  ],
+  "finalWorkflowState": "done",
+  "initialOid": "2bb9118645d6efd5d1e1e767a9406d8d4b53e1b6",
+  "capturedOid": "98e49a2246ea0c1bcba44972da8d6abd5bc75008",
+  "producerCapturedNewCommit": true,
+  "verifierBaseEqualsCapturedCommit": true,
+  "verifierHeadUnchanged": true,
+  "distinctWorkerActors": 2,
+  "sourceRepositoryUnchanged": true,
+  "cleanup": {
+    "runnerState": "stopped",
+    "allLocalLaunchesConfirmedStopped": true,
+    "allWorkspaceLifecyclesClosed": true,
+    "pendingRequests": 0
+  },
+  "earlierAttempt": {
+    "passed": false,
+    "log": "/private/tmp/merv-native-git-live-20260915-01.log",
+    "finding": "Verifier inspected exact file and calculated 6*7, but the fixture omitted managed:true and therefore required generic producer write permission for its review action.",
+    "correction": "The fixture uses managed ownership with transactional write/review guards and a trusted-source admin capture guard. No production permission relaxation."
+  },
+  "timing": "Native acceptance ran before the final declared-workspace-mode projection/UI correction. That correction is covered by final deterministic checks and separate UI verification.",
+  "limits": [
+    "Synthetic managed workflow with fixture step.finish/step.verify tools; not the production Reviews plugin or an experiment/reflection/consolidation program",
+    "One private Git object store on one machine; no cross-machine object transfer",
+    "Native worker edits files and Runner commits stopped-worker WIP; agent git add/commit/merge are not implemented by this proof",
+    "Capture and a read-only verification handoff do not implement independently reviewed central publication"
+  ],
+  "sourceSha256": {
+    "scripts/live-runner-workspace.ts": "3177c659fc16382783690b0b94982444b90db79310b8f1a7e0d19f3c0fd3998b"
+  }
+}

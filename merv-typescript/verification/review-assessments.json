@@ -1,0 +1,99 @@
+{
+  "date": "2026-09-14",
+  "scope": "Structured review reporting, explicit waivers, pinned format compatibility, revision feedback and outcome parity",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-review-findings-suite.log",
+    "tests": 251,
+    "pass": 251,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "diffWhitespace": "passed"
+  },
+  "format": "passed",
+  "newTests": {
+    "genericReviewGroups": 8,
+    "taskIntegrationGroups": 5,
+    "liveVerifierNegativeCases": 2,
+    "httpMcp": "passed"
+  },
+  "localReview": {
+    "external": false,
+    "status": "waiver_parity_fixed_no_other_material_findings",
+    "findings": [
+      "Typed findings initially omitted Python reviewer waivers; waived with a required reason now preserves that behavior.",
+      "A suspected stale-preflight gap was disproven: the generic Workflows evaluator already rejects supplied stale revisions. A regression verifies preflight and command refusal without adding a duplicate guard.",
+      "Synopsis plain-prose restrictions now include both Python and current TypeScript entity-ID prefixes."
+    ]
+  },
+  "liveModel": {
+    "status": "passed",
+    "report": "verification/review-assessments-live.json",
+    "freshSessions": 3,
+    "serverRestarts": 2,
+    "toolCalls": 34,
+    "successfulCalls": 31,
+    "expectedRoleDenials": 3,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "composition": {
+    "pluginEntrypoints": 28,
+    "directCordisDependencies": 58,
+    "domainTools": 26,
+    "withUiTools": 28,
+    "newPlugins": 0,
+    "newTools": 0
+  },
+  "compatibility": {
+    "oldReviewFormatVersion": 1,
+    "newTaskReviewFormatVersion": 2,
+    "reissuePreservesFormat": true,
+    "legacySnapshotHashesRetained": true,
+    "waiverPreserved": true,
+    "outcomePriority": ["evidence.outcome", "synopsis", "notes"]
+  },
+  "fable": {
+    "genericDesignConsultation": "completed",
+    "model": "claude-fable-5",
+    "report": "docs/reviews/review-assessments-fable-design.md",
+    "sourceAudit": "earlier_exact_packet_approval_pending",
+    "sourcePacketSent": false,
+    "promptBytes": 1830,
+    "promptSha256": "bd4c8b9f2803e31e1adedc5cfd166282423d49321635f8a038590ad75537e35e",
+    "responseSha256": "ef81eb1575a2bdb93a9f70123c7853cc4357067689bd9d54f35d767eebdbf539"
+  },
+  "browser": {
+    "status": "earlier_sign_in_approval_pending",
+    "newAttempt": false,
+    "visualVerificationClaimed": false
+  },
+  "limits": [
+    "Structured findings check declared coverage and pinned references, not factual truth or reviewer diligence.",
+    "Full feedback is optional context content and may be omitted for budget; required task data retains revision notes/reviewId and guidance directs review.get.",
+    "Python findings were arbitrary issue objects; the new typed matrix is an intentional representation improvement, while explicit waiver authority is preserved.",
+    "Generic return_to routes, research review roles, session capabilities/expiry, assignment/begin, runner, research programs, shared auth and storage provider parity remain open."
+  ],
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "a62cbdb45d350a64b3f5b8f0f97dde2572c865f64a67fe9af152633e713400ee",
+    "packages/reviews/src/index.ts": "bc9f2e45b6b310326e4cb395e16a06e7c843b63ae1273b7af894a309b3308379",
+    "packages/reviews/src/findings.ts": "04e8ca3c894854cabd6347b7f4949facc6016af678589c116bd745e2c7ed76b1",
+    "packages/reviews/src/tools.ts": "ab876d61b66c21b9e80aa28bd3532c44b99cce0fa4053f622f70bdf452395d4e",
+    "packages/tasks/src/index.ts": "a54dd0d2713dce6f4f8789f4e7b90fc48b1b474f6fd1fe7bb7ea3170cf60e00b",
+    "packages/tasks/src/tools.ts": "13eb5c280a21b482c578b6b87973eb20a75340aff9a6c7d1781c1ee68130dbf7",
+    "packages/ui/web/views/reviews.tsx": "8693a9bb0961919f1359c091ae98b3f600c4b4c4b353b0bbee7e9649477c9bf9",
+    "tests/structured-reviews.test.ts": "7379826b87f54dff510a93d25b084a3f3459348bf40ba42d3df657a9d2fc8435",
+    "tests/task-review-findings.test.ts": "b2fea67891a13a89f7eb72cba8732557f7d1fa0609149098428365788c1000b8",
+    "tests/fixtures/task-evidence.ts": "274f646a8752488b6140c2b83453366d8ece65935c41ec13671867c15b4f4bc8",
+    "scripts/live-codex.ts": "83cf469b59d025ae28a7d597c4f98da5105de9ba549c217ab98f97b4edb14ee1",
+    "scripts/live-evidence.ts": "f7eec844f7961c6dd1c04e5deeb042bf913bfd47018485612d38ca2d6b9c875c",
+    "tests/live-evidence.test.ts": "d28d6400ba6e089eca7c382be33b1c5ed6c43a0da081c5620d174fb373d744b2"
+  }
+}

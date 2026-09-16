@@ -1,0 +1,24 @@
+# Allow only build inputs; exclude local runs, reports, caches and data by default.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!packages/
+!packages/**
+!src/
+!src/**
+!scripts/
+!scripts/**
+!tests/
+!tests/**
+!config/
+!config/default.json
+!deploy/
+!deploy/**
+**/node_modules
+**/dist
+**/.env*
+**/*.env
+**/credentials*.json
+**/*.sqlite*
+deploy/*-private.json

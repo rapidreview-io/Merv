@@ -1,309 +1,900 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2800" height="2200" viewBox="0 0 2800 2200"><rect width="100%" height="100%" fill="#F8FAFD"/><style>text{font-family:Arial,Helvetica,sans-serif;fill:#102438}.title{font-size:58px;font-weight:700}.section{font-size:34px;font-weight:700}.body{font-size:27px}.small{font-size:23px}</style><text x="80" y="92" class="title">Merv · Cordis plugin dependencies</text><text x="80" y="142" class="body" fill="#526377">Current code · 13 September 2026 · 20 plugins · 42 direct dependencies</text><rect x="80" y="174" width="2640" height="74" rx="14" fill="#E8EFFB"/><text x="110" y="222" class="body"><tspan font-weight="700">A → B means A requires B.</tspan> Arrows show declared Cordis dependencies, not request flow.</text><rect x="60" y="284" width="1320" height="1190" rx="24" fill="white" stroke="#C7D9E9" stroke-width="2"/><rect x="1410" y="284" width="1330" height="1190" rx="24" fill="white" stroke="#D9D0EF" stroke-width="2"/><text x="95" y="341" class="section">Domain plugins</text><text x="1445" y="341" class="section">Transport + connection plugins</text><svg x="80" y="375" width="1280" height="1060" viewBox="0.00 0.00 631.00 661.00" preserveAspectRatio="xMidYMid meet">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 647.76)">
+<svg xmlns="http://www.w3.org/2000/svg" width="2800" height="4905" viewBox="0 0 2800 4905"><rect width="100%" height="100%" fill="#F8FAFD"/><style>text{font-family:Arial,Helvetica,sans-serif;fill:#102438}.title{font-size:58px;font-weight:700}.section{font-size:34px;font-weight:700}.body{font-size:27px}.small{font-size:23px}</style><text x="80" y="92" class="title">Merv · Cordis plugin dependencies</text><text x="80" y="142" class="body">Current code · 2026-09-16 · 56 plugins · 138 required + 6 optional dependencies · 1 shown HTTP connection</text><rect x="80" y="174" width="2640" height="74" rx="14" fill="#E8EFFB"/><text x="110" y="222" class="body"><tspan font-weight="700">A → B points to a used service.</tspan> Solid: required. Dashed: optional. Dotted: HTTP requests.</text><rect x="60" y="284" width="1320" height="1190" rx="24" fill="white" stroke="#C7D9E9" stroke-width="2"/><rect x="1410" y="284" width="1330" height="1190" rx="24" fill="white" stroke="#D9D0EF" stroke-width="2"/><text x="95" y="341" class="section">Domain plugins</text><text x="1445" y="341" class="section">Transport + connection plugins</text><svg x="80" y="375" width="1280" height="1060" viewBox="0.00 0.00 1660.00 992.00" preserveAspectRatio="xMidYMid meet">
+<g id="domain-graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 979.44)">
 <title>G</title>
 <!-- scope&#45;&gt;state -->
-<g id="edge&#45;scope&#45;state" class="edge">
+<g id="domain-edge&#45;scope&#45;state" class="edge">
 <title>scope&#45;&gt;state</title>
-<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M331.31,-132.39C336.75,-118.38 342.94,-102.46 348.62,-87.86"/>
-<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="350.6,-89.04 350.84,-82.16 346.36,-87.4 350.6,-89.04"/>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M729.33,-133.45C714.78,-118.53 698.08,-101.43 683.02,-86"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="684.98,-84.75 678.81,-81.68 681.72,-87.92 684.98,-84.75"/>
+</g>
+<!-- claims&#45;&gt;state -->
+<g id="domain-edge&#45;claims&#45;state" class="edge">
+<title>claims&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M1229.06,-452.18C1187.36,-354.29 1081.69,-106.16 1081.69,-106.16 1081.69,-106.16 868.18,-74.55 737.61,-55.22"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="738.29,-53.03 731.53,-54.32 737.63,-57.53 738.29,-53.03"/>
+</g>
+<!-- claims&#45;&gt;scope -->
+<g id="domain-edge&#45;claims&#45;scope" class="edge">
+<title>claims&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M1185.78,-451.94C1164.49,-437.97 1145.69,-425.64 1145.69,-425.64 1145.69,-425.64 1028.69,-240.32 1028.69,-240.32 1028.69,-240.32 941.4,-218.39 867.78,-199.89"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="868.54,-197.74 861.69,-198.36 867.44,-202.15 868.54,-197.74"/>
 </g>
 <!-- artifacts&#45;&gt;state -->
-<g id="edge&#45;artifacts&#45;state" class="edge">
+<g id="domain-edge&#45;artifacts&#45;state" class="edge">
 <title>artifacts&#45;&gt;state</title>
-<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M117.28,-265.93C148.85,-215.26 200,-133.16 200,-133.16 200,-133.16 245.09,-108.17 288.41,-84.15"/>
-<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="289.48,-86.16 294.06,-81.02 287.28,-82.18 289.48,-86.16"/>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M414.21,-345.69C444.53,-268.81 508.69,-106.16 508.69,-106.16 508.69,-106.16 528.76,-96.03 553.13,-83.74"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="553.87,-85.91 558.65,-80.95 551.82,-81.85 553.87,-85.91"/>
 </g>
 <!-- artifacts&#45;&gt;blobs -->
-<g id="edge&#45;artifacts&#45;blobs" class="edge">
+<g id="domain-edge&#45;artifacts&#45;blobs" class="edge">
 <title>artifacts&#45;&gt;blobs</title>
-<path fill="none" stroke="#718096" stroke-width="1.6" d="M93,-265.61C93,-218.4 93,-139.22 93,-88.47"/>
-<polygon fill="#718096" stroke="#718096" stroke-width="1.6" points="95.28,-88.57 93,-82.07 90.73,-88.57 95.28,-88.57"/>
+<path fill="none" stroke="#718096" stroke-width="1.6" d="M398.69,-345.88C398.69,-282.42 398.69,-157.36 398.69,-88.63"/>
+<polygon fill="#718096" stroke="#718096" stroke-width="1.6" points="400.96,-88.65 398.69,-82.15 396.41,-88.65 400.96,-88.65"/>
 </g>
 <!-- artifacts&#45;&gt;scope -->
-<g id="edge&#45;artifacts&#45;scope" class="edge">
+<g id="domain-edge&#45;artifacts&#45;scope" class="edge">
 <title>artifacts&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M159.91,-265.55C185.71,-250.37 215.32,-232.96 241.77,-217.4"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="242.61,-219.55 247.06,-214.29 240.3,-215.63 242.61,-219.55"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M454.16,-345.7C514.57,-302.84 602.69,-240.32 602.69,-240.32 602.69,-240.32 633.24,-228.17 668.06,-214.34"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="668.57,-216.58 673.77,-212.07 666.89,-212.35 668.57,-216.58"/>
 </g>
 <!-- workflows&#45;&gt;state -->
-<g id="edge&#45;workflows&#45;state" class="edge">
+<g id="domain-edge&#45;workflows&#45;state" class="edge">
 <title>workflows&#45;&gt;state</title>
-<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M500.81,-265.93C474.55,-215.26 432,-133.16 432,-133.16 432,-133.16 415.81,-110.09 399.59,-86.99"/>
-<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="401.56,-85.84 395.96,-81.82 397.84,-88.45 401.56,-85.84"/>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M760.44,-451.99C730.67,-375.39 667.69,-213.32 667.69,-213.32 667.69,-213.32 655.3,-139.53 646.71,-88.4"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="648.99,-88.2 645.67,-82.17 644.5,-88.95 648.99,-88.2"/>
 </g>
 <!-- workflows&#45;&gt;scope -->
-<g id="edge&#45;workflows&#45;scope" class="edge">
+<g id="domain-edge&#45;workflows&#45;scope" class="edge">
 <title>workflows&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M459.5,-265.55C435.98,-250.5 409.02,-233.25 384.87,-217.8"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="386.21,-215.96 379.51,-214.37 383.76,-219.79 386.21,-215.96"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M774.7,-452.1C773.23,-394.09 770.48,-285.39 768.9,-222.68"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="771.17,-222.64 768.73,-216.2 766.62,-222.75 771.17,-222.64"/>
 </g>
 <!-- reviews&#45;&gt;state -->
-<g id="edge&#45;reviews&#45;state" class="edge">
+<g id="domain-edge&#45;reviews&#45;state" class="edge">
 <title>reviews&#45;&gt;state</title>
-<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M188.46,-404.25C202.19,-320.72 233,-133.16 233,-133.16 233,-133.16 268.44,-108.68 302.86,-84.9"/>
-<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="304.13,-86.79 308.18,-81.22 301.54,-83.04 304.13,-86.79"/>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M167.59,-558.18C210.62,-487.61 296.69,-346.48 296.69,-346.48 296.69,-346.48 464.69,-134.16 464.69,-134.16 464.69,-134.16 504.69,-106.16 504.69,-106.16 504.69,-106.16 525.38,-96.03 550.5,-83.74"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="551.4,-85.83 556.24,-80.93 549.4,-81.74 551.4,-85.83"/>
 </g>
 <!-- reviews&#45;&gt;scope -->
-<g id="edge&#45;reviews&#45;scope" class="edge">
+<g id="domain-edge&#45;reviews&#45;scope" class="edge">
 <title>reviews&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M201.49,-404.33C225.65,-355.67 266.81,-272.8 292.64,-220.78"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="294.57,-222.02 295.42,-215.19 290.49,-220 294.57,-222.02"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M239.53,-558.1C273.61,-544.13 303.69,-531.8 303.69,-531.8 303.69,-531.8 500.69,-425.64 500.69,-425.64 500.69,-425.64 639.69,-240.32 639.69,-240.32 639.69,-240.32 659.28,-230.28 683.13,-218.06"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="684.11,-220.12 688.86,-215.13 682.03,-216.07 684.11,-220.12"/>
 </g>
 <!-- reviews&#45;&gt;artifacts -->
-<g id="edge&#45;reviews&#45;artifacts" class="edge">
+<g id="domain-edge&#45;reviews&#45;artifacts" class="edge">
 <title>reviews&#45;&gt;artifacts</title>
-<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M156.5,-404.4C146.17,-388.53 134.15,-370.08 123.37,-353.52"/>
-<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="125.29,-352.3 119.83,-348.1 121.47,-354.78 125.29,-352.3"/>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M222.76,-558.1C250.87,-544.13 275.69,-531.8 275.69,-531.8 275.69,-531.8 303.69,-452.64 303.69,-452.64 303.69,-452.64 317.61,-443.03 334.79,-431.17"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="335.73,-433.28 339.79,-427.72 333.14,-429.54 335.73,-433.28"/>
+</g>
+<!-- reviews&#45;&gt;domainEvents -->
+<g id="domain-edge&#45;reviews&#45;domainEvents" class="edge">
+<title>reviews&#45;&gt;domainEvents</title>
+<path fill="none" stroke="#bb7347" stroke-width="1.6" d="M145.29,-558.26C147.68,-500.25 152.14,-391.55 154.72,-328.84"/>
+<polygon fill="#bb7347" stroke="#bb7347" stroke-width="1.6" points="156.99,-328.94 154.98,-322.35 152.44,-328.76 156.99,-328.94"/>
 </g>
 <!-- tasks&#45;&gt;state -->
-<g id="edge&#45;tasks&#45;state" class="edge">
+<g id="domain-edge&#45;tasks&#45;state" class="edge">
 <title>tasks&#45;&gt;state</title>
-<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M412.1,-548.12C481.59,-520.83 561,-489.64 561,-489.64 561,-489.64 605,-345.48 605,-345.48 605,-345.48 605,-266.32 605,-266.32 605,-266.32 466,-133.16 466,-133.16 466,-133.16 440.48,-109.29 415.35,-85.79"/>
-<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="417.06,-84.27 410.76,-81.5 413.95,-87.6 417.06,-84.27"/>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M617.59,-710.54C622.67,-677.33 628.69,-637.96 628.69,-637.96 628.69,-637.96 635.52,-229.94 637.89,-88.32"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="640.15,-88.73 637.99,-82.2 635.61,-88.66 640.15,-88.73"/>
 </g>
 <!-- tasks&#45;&gt;scope -->
-<g id="edge&#45;tasks&#45;scope" class="edge">
+<g id="domain-edge&#45;tasks&#45;scope" class="edge">
 <title>tasks&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M310.66,-543.07C311.8,-464.23 314.15,-302.15 315.31,-221.5"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="317.58,-221.97 315.4,-215.44 313.03,-221.9 317.58,-221.97"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M630.26,-710.54C644.64,-677.33 661.69,-637.96 661.69,-637.96 661.69,-637.96 699.69,-452.64 699.69,-452.64 699.69,-452.64 736.6,-301.77 756.04,-222.35"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="758.18,-223.17 757.51,-216.32 753.76,-222.09 758.18,-223.17"/>
 </g>
 <!-- tasks&#45;&gt;artifacts -->
-<g id="edge&#45;tasks&#45;artifacts" class="edge">
+<g id="domain-edge&#45;tasks&#45;artifacts" class="edge">
 <title>tasks&#45;&gt;artifacts</title>
-<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M208.12,-545.84C143.89,-519.12 73,-489.64 73,-489.64 73,-489.64 73,-399.48 73,-399.48 73,-399.48 77.78,-377.4 82.66,-354.8"/>
-<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="84.86,-355.36 84.01,-348.53 80.42,-354.4 84.86,-355.36"/>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M520.93,-710.37C455.3,-677.19 377.69,-637.96 377.69,-637.96 377.69,-637.96 377.69,-558.8 377.69,-558.8 377.69,-558.8 379.69,-452.64 379.69,-452.64 379.69,-452.64 381.91,-444.96 384.84,-434.86"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="387.01,-435.55 386.63,-428.67 382.64,-434.28 387.01,-435.55"/>
 </g>
 <!-- tasks&#45;&gt;workflows -->
-<g id="edge&#45;tasks&#45;workflows" class="edge">
+<g id="domain-edge&#45;tasks&#45;workflows" class="edge">
 <title>tasks&#45;&gt;workflows</title>
-<path fill="none" stroke="#326b90" stroke-width="1.6" d="M411.89,-545.84C476.12,-519.12 547,-489.64 547,-489.64 547,-489.64 547,-399.48 547,-399.48 547,-399.48 540.75,-377.2 534.37,-354.5"/>
-<polygon fill="#326b90" stroke="#326b90" stroke-width="1.6" points="536.63,-354.14 532.69,-348.49 532.25,-355.37 536.63,-354.14"/>
+<path fill="none" stroke="#326b90" stroke-width="1.6" d="M662.71,-710.39C682.19,-693.41 699.69,-678.16 699.69,-678.16 699.69,-678.16 747.69,-558.8 747.69,-558.8 747.69,-558.8 751.09,-550.82 755.53,-540.42"/>
+<polygon fill="#326b90" stroke="#326b90" stroke-width="1.6" points="757.5,-541.6 757.96,-534.73 753.32,-539.82 757.5,-541.6"/>
 </g>
 <!-- tasks&#45;&gt;reviews -->
-<g id="edge&#45;tasks&#45;reviews" class="edge">
+<g id="domain-edge&#45;tasks&#45;reviews" class="edge">
 <title>tasks&#45;&gt;reviews</title>
-<path fill="none" stroke="#4a7793" stroke-width="1.6" d="M269.5,-543.08C254.63,-526.51 237.8,-507.74 222.89,-491.13"/>
-<polygon fill="#4a7793" stroke="#4a7793" stroke-width="1.6" points="224.72,-489.76 218.68,-486.44 221.33,-492.8 224.72,-489.76"/>
+<path fill="none" stroke="#4a7793" stroke-width="1.6" d="M499.29,-723.85C424.54,-702.45 339.69,-678.16 339.69,-678.16 339.69,-678.16 295.73,-660.49 249.45,-641.89"/>
+<polygon fill="#4a7793" stroke="#4a7793" stroke-width="1.6" points="250.52,-639.87 243.65,-639.56 248.83,-644.09 250.52,-639.87"/>
+</g>
+<!-- tasks&#45;&gt;contextBuilder -->
+<g id="domain-edge&#45;tasks&#45;contextBuilder" class="edge">
+<title>tasks&#45;&gt;contextBuilder</title>
+<path fill="none" stroke="#208b78" stroke-width="1.6" d="M584.36,-710.51C572.64,-690.36 558.82,-666.63 546.98,-646.28"/>
+<polygon fill="#208b78" stroke="#208b78" stroke-width="1.6" points="549,-645.23 543.77,-640.76 545.07,-647.52 549,-645.23"/>
+</g>
+<!-- experiments&#45;&gt;state -->
+<g id="domain-edge&#45;experiments&#45;state" class="edge">
+<title>experiments&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M1221.55,-720.24C1296.86,-699.81 1376.69,-678.16 1376.69,-678.16 1376.69,-678.16 1500.69,-637.96 1500.69,-637.96 1500.69,-637.96 1557.69,-493.22 1557.69,-493.22 1557.69,-493.22 1557.69,-493.22 1557.69,-172.74 1557.69,-172.74 1095.69,-106.16 1095.69,-106.16 1095.69,-106.16 872.39,-74.12 737.97,-54.83"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="738.4,-52.59 731.64,-53.92 737.76,-57.09 738.4,-52.59"/>
+</g>
+<!-- experiments&#45;&gt;scope -->
+<g id="domain-edge&#45;experiments&#45;scope" class="edge">
+<title>experiments&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M1066.75,-704.51C1039.49,-646.16 998.69,-558.8 998.69,-558.8 998.69,-558.8 816.69,-240.32 816.69,-240.32 816.69,-240.32 810.37,-231.86 802.27,-221.03"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="804.2,-219.81 798.49,-215.96 800.56,-222.53 804.2,-219.81"/>
+</g>
+<!-- experiments&#45;&gt;claims -->
+<g id="domain-edge&#45;experiments&#45;claims" class="edge">
+<title>experiments&#45;&gt;claims</title>
+<path fill="none" stroke="#815e97" stroke-width="1.6" d="M1177.83,-704.42C1231.72,-672.68 1290.69,-637.96 1290.69,-637.96 1290.69,-637.96 1290.69,-558.8 1290.69,-558.8 1290.69,-558.8 1284.99,-550.5 1277.66,-539.81"/>
+<polygon fill="#815e97" stroke="#815e97" stroke-width="1.6" points="1279.57,-538.57 1274.01,-534.5 1275.81,-541.15 1279.57,-538.57"/>
+</g>
+<!-- experiments&#45;&gt;artifacts -->
+<g id="domain-edge&#45;experiments&#45;artifacts" class="edge">
+<title>experiments&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M959.59,-731.35C815.04,-704.46 602.69,-664.96 602.69,-664.96 602.69,-664.96 410.69,-637.96 410.69,-637.96 410.69,-637.96 404.45,-507.64 400.97,-434.84"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="403.26,-435.07 400.68,-428.68 398.71,-435.28 403.26,-435.07"/>
+</g>
+<!-- experiments&#45;&gt;workflows -->
+<g id="domain-edge&#45;experiments&#45;workflows" class="edge">
+<title>experiments&#45;&gt;workflows</title>
+<path fill="none" stroke="#326b90" stroke-width="1.6" d="M959.67,-705.96C875.06,-673.82 780.69,-637.96 780.69,-637.96 780.69,-637.96 778.8,-583.31 777.34,-541.17"/>
+<polygon fill="#326b90" stroke="#326b90" stroke-width="1.6" points="779.62,-541.23 777.12,-534.81 775.07,-541.38 779.62,-541.23"/>
+</g>
+<!-- experiments&#45;&gt;reviews -->
+<g id="domain-edge&#45;experiments&#45;reviews" class="edge">
+<title>experiments&#45;&gt;reviews</title>
+<path fill="none" stroke="#4a7793" stroke-width="1.6" d="M960,-734.16C786.56,-705.53 480.86,-655.05 296.8,-624.66"/>
+<polygon fill="#4a7793" stroke="#4a7793" stroke-width="1.6" points="297.3,-622.44 290.52,-623.62 296.56,-626.93 297.3,-622.44"/>
+</g>
+<!-- experiments&#45;&gt;code -->
+<g id="domain-edge&#45;experiments&#45;code" class="edge">
+<title>experiments&#45;&gt;code</title>
+<path fill="none" stroke="#287d71" stroke-width="1.6" stroke-dasharray="5,2" d="M1221.49,-712.19C1274.6,-694.5 1323.69,-678.16 1323.69,-678.16 1323.69,-678.16 1354.66,-651.35 1380.46,-629.01"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.6" points="1381.63,-631 1385.06,-625.03 1378.65,-627.56 1381.63,-631"/>
+<text xml:space="preserve" text-anchor="middle" x="1354.92" y="-668.26" font-family="Times,serif" font-size="11.00">optional</text>
+</g>
+<!-- experiments&#45;&gt;contextBuilder -->
+<g id="domain-edge&#45;experiments&#45;contextBuilder" class="edge">
+<title>experiments&#45;&gt;contextBuilder</title>
+<path fill="none" stroke="#208b78" stroke-width="1.6" d="M960.03,-726.19C863.1,-704.26 747.69,-678.16 747.69,-678.16 747.69,-678.16 687.03,-657.2 628.29,-636.91"/>
+<polygon fill="#208b78" stroke="#208b78" stroke-width="1.6" points="629.2,-634.81 622.31,-634.84 627.71,-639.11 629.2,-634.81"/>
+</g>
+<!-- experiments&#45;&gt;paper -->
+<g id="domain-edge&#45;experiments&#45;paper" class="edge">
+<title>experiments&#45;&gt;paper</title>
+<path fill="none" stroke="#327c87" stroke-width="1.6" d="M1114.59,-704.54C1126.92,-678.12 1141.44,-647.02 1151.48,-625.53"/>
+<polygon fill="#327c87" stroke="#327c87" stroke-width="1.6" points="1153.51,-626.55 1154.2,-619.7 1149.39,-624.63 1153.51,-626.55"/>
+</g>
+<!-- knowledge&#45;&gt;state -->
+<g id="domain-edge&#45;knowledge&#45;state" class="edge">
+<title>knowledge&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M1323.77,-870.82C1450.46,-824.59 1633.69,-757.74 1633.69,-757.74 1633.69,-757.74 1633.69,-757.74 1633.69,-172.74 1633.69,-172.74 1571.69,-134.16 1571.69,-134.16 1571.69,-134.16 977.91,-74.6 737.73,-50.51"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="738.1,-48.26 731.4,-49.88 737.64,-52.79 738.1,-48.26"/>
+</g>
+<!-- knowledge&#45;&gt;scope -->
+<g id="domain-edge&#45;knowledge&#45;scope" class="edge">
+<title>knowledge&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M1320.23,-862.66C1380.36,-835.76 1441.69,-808.32 1441.69,-808.32 1441.69,-808.32 1514.69,-637.96 1514.69,-637.96 1514.69,-637.96 1514.69,-558.8 1514.69,-558.8 1514.69,-558.8 1066.69,-240.32 1066.69,-240.32 1066.69,-240.32 954.89,-215.8 868.02,-196.75"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="868.63,-194.55 861.79,-195.38 867.65,-199 868.63,-194.55"/>
+</g>
+<!-- knowledge&#45;&gt;claims -->
+<g id="domain-edge&#45;knowledge&#45;claims" class="edge">
+<title>knowledge&#45;&gt;claims</title>
+<path fill="none" stroke="#815e97" stroke-width="1.6" d="M1298.39,-862.66C1347.05,-835.76 1396.69,-808.32 1396.69,-808.32 1396.69,-808.32 1500.69,-637.96 1500.69,-637.96 1500.69,-637.96 1500.69,-558.8 1500.69,-558.8 1500.69,-558.8 1427.98,-540.1 1360.22,-522.67"/>
+<polygon fill="#815e97" stroke="#815e97" stroke-width="1.6" points="1361.19,-520.58 1354.33,-521.16 1360.06,-524.98 1361.19,-520.58"/>
+</g>
+<!-- knowledge&#45;&gt;artifacts -->
+<g id="domain-edge&#45;knowledge&#45;artifacts" class="edge">
+<title>knowledge&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M1087.62,-896.47C884.54,-866.48 490.69,-808.32 490.69,-808.32 490.69,-808.32 373.69,-637.96 373.69,-637.96 373.69,-637.96 373.69,-558.8 373.69,-558.8 373.69,-558.8 374.69,-452.64 374.69,-452.64 374.69,-452.64 377.55,-444.81 381.3,-434.56"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="383.38,-435.5 383.48,-428.62 379.11,-433.94 383.38,-435.5"/>
+</g>
+<!-- knowledge&#45;&gt;reviews -->
+<g id="domain-edge&#45;knowledge&#45;reviews" class="edge">
+<title>knowledge&#45;&gt;reviews</title>
+<path fill="none" stroke="#4a7793" stroke-width="1.6" d="M1087.97,-903.8C843.15,-882.79 301.69,-836.32 301.69,-836.32 301.69,-836.32 220.66,-714.82 174.66,-645.83"/>
+<polygon fill="#4a7793" stroke="#4a7793" stroke-width="1.6" points="176.62,-644.67 171.12,-640.52 172.83,-647.19 176.62,-644.67"/>
+</g>
+<!-- knowledge&#45;&gt;tasks -->
+<g id="domain-edge&#45;knowledge&#45;tasks" class="edge">
+<title>knowledge&#45;&gt;tasks</title>
+<path fill="none" stroke="#246e78" stroke-width="1.6" d="M1087.78,-882.95C984.37,-855.81 834.69,-816.53 730.67,-789.23"/>
+<polygon fill="#246e78" stroke="#246e78" stroke-width="1.6" points="731.53,-787.1 724.66,-787.65 730.37,-791.5 731.53,-787.1"/>
+</g>
+<!-- knowledge&#45;&gt;experiments -->
+<g id="domain-edge&#45;knowledge&#45;experiments" class="edge">
+<title>knowledge&#45;&gt;experiments</title>
+<path fill="none" stroke="#815e97" stroke-width="1.6" d="M1168.03,-862.77C1157.01,-847.8 1144.88,-831.33 1133.56,-815.96"/>
+<polygon fill="#815e97" stroke="#815e97" stroke-width="1.6" points="1135.55,-814.82 1129.86,-810.94 1131.88,-817.52 1135.55,-814.82"/>
+</g>
+<!-- knowledge&#45;&gt;code -->
+<g id="domain-edge&#45;knowledge&#45;code" class="edge">
+<title>knowledge&#45;&gt;code</title>
+<path fill="none" stroke="#287d71" stroke-width="1.6" stroke-dasharray="5,2" d="M1242.79,-862.75C1293.08,-793.41 1376.69,-678.16 1376.69,-678.16 1376.69,-678.16 1388.76,-653.14 1399.29,-631.3"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.6" points="1401.25,-632.47 1402.03,-625.63 1397.15,-630.49 1401.25,-632.47"/>
+<text xml:space="preserve" text-anchor="middle" x="1375.07" y="-753.44" font-family="Times,serif" font-size="11.00">optional</text>
 </g>
 <!-- feed&#45;&gt;state -->
-<g id="edge&#45;feed&#45;state" class="edge">
+<g id="domain-edge&#45;feed&#45;state" class="edge">
 <title>feed&#45;&gt;state</title>
-<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M432.38,-398.76C421.58,-312.8 399,-133.16 399,-133.16 399,-133.16 391.3,-110.88 383.46,-88.18"/>
-<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="385.64,-87.53 381.37,-82.13 381.34,-89.02 385.64,-87.53"/>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M909.73,-558.15C948.87,-481.55 1031.69,-319.48 1031.69,-319.48 1031.69,-319.48 1031.69,-240.32 1031.69,-240.32 1031.69,-240.32 867.69,-134.16 867.69,-134.16 867.69,-134.16 799.19,-106.17 737.12,-80.8"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="738.31,-78.83 731.43,-78.48 736.59,-83.05 738.31,-78.83"/>
 </g>
 <!-- feed&#45;&gt;scope -->
-<g id="edge&#45;feed&#45;scope" class="edge">
+<g id="domain-edge&#45;feed&#45;scope" class="edge">
 <title>feed&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M417.72,-398.7C395.51,-349.59 360.06,-271.17 337.41,-221.09"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="339.5,-220.19 334.75,-215.2 335.36,-222.06 339.5,-220.19"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M881.57,-558.21C872.68,-515.35 859.69,-452.64 859.69,-452.64 859.69,-452.64 809.74,-301.77 783.45,-222.35"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="785.64,-221.72 781.43,-216.27 781.32,-223.15 785.64,-221.72"/>
 </g>
 <!-- feed&#45;&gt;artifacts -->
-<g id="edge&#45;feed&#45;artifacts" class="edge">
+<g id="domain-edge&#45;feed&#45;artifacts" class="edge">
 <title>feed&#45;&gt;artifacts</title>
-<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M337.75,-403.85C292.8,-386.04 239.87,-365.07 194.74,-347.2"/>
-<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="195.83,-345.19 188.95,-344.91 194.16,-349.42 195.83,-345.19"/>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M789.24,-564.11C740.22,-547.88 691.69,-531.8 691.69,-531.8 691.69,-531.8 572.67,-473.01 486.35,-430.36"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="487.37,-428.33 480.53,-427.49 485.35,-432.41 487.37,-428.33"/>
+</g>
+<!-- domainEvents&#45;&gt;state -->
+<g id="domain-edge&#45;domainEvents&#45;state" class="edge">
+<title>domainEvents&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M177.56,-239.7C204.71,-188.74 248.69,-106.16 248.69,-106.16 248.69,-106.16 476.69,-79.16 476.69,-79.16 476.69,-79.16 505.94,-72.19 539.58,-64.18"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="540.06,-66.41 545.86,-62.69 539.01,-61.98 540.06,-66.41"/>
+</g>
+<!-- contextBuilder&#45;&gt;state -->
+<g id="domain-edge&#45;contextBuilder&#45;state" class="edge">
+<title>contextBuilder&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M522.09,-558.01C529.21,-441.45 549.69,-106.16 549.69,-106.16 549.69,-106.16 562.5,-96.72 578.4,-85"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="579.54,-86.99 583.42,-81.3 576.84,-83.32 579.54,-86.99"/>
+</g>
+<!-- contextBuilder&#45;&gt;scope -->
+<g id="domain-edge&#45;contextBuilder&#45;scope" class="edge">
+<title>contextBuilder&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M537.05,-558.15C578.09,-465.39 677.69,-240.32 677.69,-240.32 677.69,-240.32 690.64,-230.88 706.72,-219.16"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="707.9,-221.12 711.82,-215.45 705.22,-217.44 707.9,-221.12"/>
+</g>
+<!-- contextBuilder&#45;&gt;artifacts -->
+<g id="domain-edge&#45;contextBuilder&#45;artifacts" class="edge">
+<title>contextBuilder&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M490.33,-558.1C479.9,-544.13 470.69,-531.8 470.69,-531.8 470.69,-531.8 443.16,-476.46 422.14,-434.21"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="424.18,-433.2 419.25,-428.4 420.11,-435.23 424.18,-433.2"/>
 </g>
 <!-- state -->
-<g id="node&#45;state" class="node">
+<g id="domain-node&#45;state" class="node">
 <title>state</title>
-<path fill="#f6faff" stroke="#2365b5" stroke-width="1.6" d="M444.84,-79.16C444.84,-79.16 289.17,-79.16 289.17,-79.16 283.17,-79.16 277.17,-73.16 277.17,-67.16 277.17,-67.16 277.17,-12 277.17,-12 277.17,-6 283.17,0 289.17,0 289.17,0 444.84,0 444.84,0 450.84,0 456.84,-6 456.84,-12 456.84,-12 456.84,-67.16 456.84,-67.16 456.84,-73.16 450.84,-79.16 444.84,-79.16"/>
-<text xml:space="preserve" text-anchor="start" x="341.33" y="-51.18" font-family="Arial" font-weight="bold" font-size="21.00">State</text>
-<text xml:space="preserve" text-anchor="start" x="290.13" y="-38.28" font-family="Arial" font-size="12.00">SQLite transactions + events</text>
-<text xml:space="preserve" text-anchor="start" x="326.31" y="-12.28" font-family="Arial" font-size="12.00">Requires: none</text>
+<path fill="#f6faff" stroke="#2365b5" stroke-width="1.6" d="M716.52,-79.16C716.52,-79.16 560.85,-79.16 560.85,-79.16 554.85,-79.16 548.85,-73.16 548.85,-67.16 548.85,-67.16 548.85,-12 548.85,-12 548.85,-6 554.85,0 560.85,0 560.85,0 716.52,0 716.52,0 722.52,0 728.52,-6 728.52,-12 728.52,-12 728.52,-67.16 728.52,-67.16 728.52,-73.16 722.52,-79.16 716.52,-79.16"/>
+<text xml:space="preserve" text-anchor="start" x="613.01" y="-51.18" font-family="Arial" font-weight="bold" font-size="21.00">State</text>
+<text xml:space="preserve" text-anchor="start" x="561.81" y="-38.28" font-family="Arial" font-size="12.00">SQLite transactions + events</text>
+<text xml:space="preserve" text-anchor="start" x="597.99" y="-12.28" font-family="Arial" font-size="12.00">Requires: none</text>
 </g>
 <!-- blobs -->
-<g id="node&#45;blobs" class="node">
+<g id="domain-node&#45;blobs" class="node">
 <title>blobs</title>
-<path fill="#f6faff" stroke="#718096" stroke-width="1.6" d="M150,-79.16C150,-79.16 36.01,-79.16 36.01,-79.16 30.01,-79.16 24.01,-73.16 24.01,-67.16 24.01,-67.16 24.01,-12 24.01,-12 24.01,-6 30.01,0 36.01,0 36.01,0 150,0 150,0 156,0 162,-6 162,-12 162,-12 162,-67.16 162,-67.16 162,-73.16 156,-79.16 150,-79.16"/>
-<text xml:space="preserve" text-anchor="start" x="63.84" y="-51.18" font-family="Arial" font-weight="bold" font-size="21.00">Blobs</text>
-<text xml:space="preserve" text-anchor="start" x="36.97" y="-38.28" font-family="Arial" font-size="12.00">Local evidence bytes</text>
-<text xml:space="preserve" text-anchor="start" x="52.31" y="-12.28" font-family="Arial" font-size="12.00">Requires: none</text>
+<path fill="#f6faff" stroke="#718096" stroke-width="1.6" d="M455.68,-79.16C455.68,-79.16 341.69,-79.16 341.69,-79.16 335.69,-79.16 329.69,-73.16 329.69,-67.16 329.69,-67.16 329.69,-12 329.69,-12 329.69,-6 335.69,0 341.69,0 341.69,0 455.68,0 455.68,0 461.68,0 467.68,-6 467.68,-12 467.68,-12 467.68,-67.16 467.68,-67.16 467.68,-73.16 461.68,-79.16 455.68,-79.16"/>
+<text xml:space="preserve" text-anchor="start" x="369.52" y="-51.18" font-family="Arial" font-weight="bold" font-size="21.00">Blobs</text>
+<text xml:space="preserve" text-anchor="start" x="342.65" y="-38.28" font-family="Arial" font-size="12.00">Local evidence bytes</text>
+<text xml:space="preserve" text-anchor="start" x="357.99" y="-12.28" font-family="Arial" font-size="12.00">Requires: none</text>
 </g>
 <!-- scope -->
-<g id="node&#45;scope" class="node">
+<g id="domain-node&#45;scope" class="node">
 <title>scope</title>
-<path fill="#fff9ed" stroke="#a76013" stroke-width="1.6" d="M378.15,-212.32C378.15,-212.32 253.86,-212.32 253.86,-212.32 247.86,-212.32 241.86,-206.32 241.86,-200.32 241.86,-200.32 241.86,-145.16 241.86,-145.16 241.86,-139.16 247.86,-133.16 253.86,-133.16 253.86,-133.16 378.15,-133.16 378.15,-133.16 384.15,-133.16 390.15,-139.16 390.15,-145.16 390.15,-145.16 390.15,-200.32 390.15,-200.32 390.15,-206.32 384.15,-212.32 378.15,-212.32"/>
-<text xml:space="preserve" text-anchor="start" x="284.49" y="-184.34" font-family="Arial" font-weight="bold" font-size="21.00">Scope</text>
-<text xml:space="preserve" text-anchor="start" x="254.82" y="-171.44" font-family="Arial" font-size="12.00">Projects, actors + roles</text>
-<text xml:space="preserve" text-anchor="start" x="274.65" y="-145.44" font-family="Arial" font-size="12.00">Requires: State</text>
+<path fill="#fff9ed" stroke="#a76013" stroke-width="1.6" d="M846.84,-213.32C846.84,-213.32 688.54,-213.32 688.54,-213.32 682.54,-213.32 676.54,-207.32 676.54,-201.32 676.54,-201.32 676.54,-146.16 676.54,-146.16 676.54,-140.16 682.54,-134.16 688.54,-134.16 688.54,-134.16 846.84,-134.16 846.84,-134.16 852.84,-134.16 858.84,-140.16 858.84,-146.16 858.84,-146.16 858.84,-201.32 858.84,-201.32 858.84,-207.32 852.84,-213.32 846.84,-213.32"/>
+<text xml:space="preserve" text-anchor="start" x="736.18" y="-185.34" font-family="Arial" font-weight="bold" font-size="21.00">Scope</text>
+<text xml:space="preserve" text-anchor="start" x="689.5" y="-172.44" font-family="Arial" font-size="12.00">Users, memberships + actors</text>
+<text xml:space="preserve" text-anchor="start" x="726.33" y="-146.44" font-family="Arial" font-size="12.00">Requires: State</text>
+</g>
+<!-- claims -->
+<g id="domain-node&#45;claims" class="node">
+<title>claims</title>
+<path fill="#fbf7ff" stroke="#815e97" stroke-width="1.6" d="M1339.2,-531.8C1339.2,-531.8 1152.17,-531.8 1152.17,-531.8 1146.17,-531.8 1140.17,-525.8 1140.17,-519.8 1140.17,-519.8 1140.17,-464.64 1140.17,-464.64 1140.17,-458.64 1146.17,-452.64 1152.17,-452.64 1152.17,-452.64 1339.2,-452.64 1339.2,-452.64 1345.2,-452.64 1351.2,-458.64 1351.2,-464.64 1351.2,-464.64 1351.2,-519.8 1351.2,-519.8 1351.2,-525.8 1345.2,-531.8 1339.2,-531.8"/>
+<text xml:space="preserve" text-anchor="start" x="1211.25" y="-503.82" font-family="Arial" font-weight="bold" font-size="21.00">Claims</text>
+<text xml:space="preserve" text-anchor="start" x="1153.13" y="-490.92" font-family="Arial" font-size="12.00">Research statements + confidence</text>
+<text xml:space="preserve" text-anchor="start" x="1183.98" y="-464.92" font-family="Arial" font-size="12.00">Requires: State, Scope</text>
 </g>
 <!-- artifacts -->
-<g id="node&#45;artifacts" class="node">
+<g id="domain-node&#45;artifacts" class="node">
 <title>artifacts</title>
-<path fill="#f6faff" stroke="#1c8480" stroke-width="1.6" d="M174.01,-345.48C174.01,-345.48 12,-345.48 12,-345.48 6,-345.48 0,-339.48 0,-333.48 0,-333.48 0,-278.32 0,-278.32 0,-272.32 6,-266.32 12,-266.32 12,-266.32 174.01,-266.32 174.01,-266.32 180.01,-266.32 186.01,-272.32 186.01,-278.32 186.01,-278.32 186.01,-333.48 186.01,-333.48 186.01,-339.48 180.01,-345.48 174.01,-345.48"/>
-<text xml:space="preserve" text-anchor="start" x="50.41" y="-317.5" font-family="Arial" font-weight="bold" font-size="21.00">Artifacts</text>
-<text xml:space="preserve" text-anchor="start" x="41.64" y="-304.6" font-family="Arial" font-size="12.00">Evidence metadata</text>
-<text xml:space="preserve" text-anchor="start" x="12.96" y="-278.6" font-family="Arial" font-size="12.00">Requires: State, Scope, Blobs</text>
+<path fill="#f6faff" stroke="#1c8480" stroke-width="1.6" d="M479.69,-425.64C479.69,-425.64 317.68,-425.64 317.68,-425.64 311.68,-425.64 305.68,-419.64 305.68,-413.64 305.68,-413.64 305.68,-358.48 305.68,-358.48 305.68,-352.48 311.68,-346.48 317.68,-346.48 317.68,-346.48 479.69,-346.48 479.69,-346.48 485.69,-346.48 491.69,-352.48 491.69,-358.48 491.69,-358.48 491.69,-413.64 491.69,-413.64 491.69,-419.64 485.69,-425.64 479.69,-425.64"/>
+<text xml:space="preserve" text-anchor="start" x="356.09" y="-397.66" font-family="Arial" font-weight="bold" font-size="21.00">Artifacts</text>
+<text xml:space="preserve" text-anchor="start" x="347.32" y="-384.76" font-family="Arial" font-size="12.00">Evidence metadata</text>
+<text xml:space="preserve" text-anchor="start" x="318.64" y="-358.76" font-family="Arial" font-size="12.00">Requires: State, Scope, Blobs</text>
 </g>
 <!-- workflows -->
-<g id="node&#45;workflows" class="node">
+<g id="domain-node&#45;workflows" class="node">
 <title>workflows</title>
-<path fill="#f6faff" stroke="#326b90" stroke-width="1.6" d="M583.67,-345.48C583.67,-345.48 458.34,-345.48 458.34,-345.48 452.34,-345.48 446.34,-339.48 446.34,-333.48 446.34,-333.48 446.34,-278.32 446.34,-278.32 446.34,-272.32 452.34,-266.32 458.34,-266.32 458.34,-266.32 583.67,-266.32 583.67,-266.32 589.67,-266.32 595.67,-272.32 595.67,-278.32 595.67,-278.32 595.67,-333.48 595.67,-333.48 595.67,-339.48 589.67,-345.48 583.67,-345.48"/>
-<text xml:space="preserve" text-anchor="start" x="467.92" y="-317.5" font-family="Arial" font-weight="bold" font-size="21.00">Workflows</text>
-<text xml:space="preserve" text-anchor="start" x="469.81" y="-304.6" font-family="Arial" font-size="12.00">States + transitions</text>
-<text xml:space="preserve" text-anchor="start" x="459.3" y="-278.6" font-family="Arial" font-size="12.00">Requires: State, Scope</text>
+<path fill="#f6faff" stroke="#326b90" stroke-width="1.6" d="M838.35,-531.8C838.35,-531.8 713.02,-531.8 713.02,-531.8 707.02,-531.8 701.02,-525.8 701.02,-519.8 701.02,-519.8 701.02,-464.64 701.02,-464.64 701.02,-458.64 707.02,-452.64 713.02,-452.64 713.02,-452.64 838.35,-452.64 838.35,-452.64 844.35,-452.64 850.35,-458.64 850.35,-464.64 850.35,-464.64 850.35,-519.8 850.35,-519.8 850.35,-525.8 844.35,-531.8 838.35,-531.8"/>
+<text xml:space="preserve" text-anchor="start" x="722.6" y="-503.82" font-family="Arial" font-weight="bold" font-size="21.00">Workflows</text>
+<text xml:space="preserve" text-anchor="start" x="724.49" y="-490.92" font-family="Arial" font-size="12.00">States + transitions</text>
+<text xml:space="preserve" text-anchor="start" x="713.98" y="-464.92" font-family="Arial" font-size="12.00">Requires: State, Scope</text>
 </g>
 <!-- reviews -->
-<g id="node&#45;reviews" class="node">
+<g id="domain-node&#45;reviews" class="node">
 <title>reviews</title>
-<path fill="#f6faff" stroke="#4a7793" stroke-width="1.6" d="M269.67,-484.14C269.67,-484.14 94.34,-484.14 94.34,-484.14 88.34,-484.14 82.34,-478.14 82.34,-472.14 82.34,-472.14 82.34,-416.98 82.34,-416.98 82.34,-410.98 88.34,-404.98 94.34,-404.98 94.34,-404.98 269.67,-404.98 269.67,-404.98 275.67,-404.98 281.67,-410.98 281.67,-416.98 281.67,-416.98 281.67,-472.14 281.67,-472.14 281.67,-478.14 275.67,-484.14 269.67,-484.14"/>
-<text xml:space="preserve" text-anchor="start" x="139.98" y="-456.16" font-family="Arial" font-weight="bold" font-size="21.00">Reviews</text>
-<text xml:space="preserve" text-anchor="start" x="126.3" y="-443.26" font-family="Arial" font-size="12.00">Independent verdicts</text>
-<text xml:space="preserve" text-anchor="start" x="95.3" y="-417.26" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts</text>
+<path fill="#f6faff" stroke="#4a7793" stroke-width="1.6" d="M275.37,-637.96C275.37,-637.96 12,-637.96 12,-637.96 6,-637.96 0,-631.96 0,-625.96 0,-625.96 0,-570.8 0,-570.8 0,-564.8 6,-558.8 12,-558.8 12,-558.8 275.37,-558.8 275.37,-558.8 281.37,-558.8 287.37,-564.8 287.37,-570.8 287.37,-570.8 287.37,-625.96 287.37,-625.96 287.37,-631.96 281.37,-637.96 275.37,-637.96"/>
+<text xml:space="preserve" text-anchor="start" x="101.66" y="-609.98" font-family="Arial" font-weight="bold" font-size="21.00">Reviews</text>
+<text xml:space="preserve" text-anchor="start" x="87.98" y="-597.08" font-family="Arial" font-size="12.00">Independent verdicts</text>
+<text xml:space="preserve" text-anchor="start" x="12.96" y="-571.08" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts, Domain Events</text>
 </g>
 <!-- tasks -->
-<g id="node&#45;tasks" class="node">
+<g id="domain-node&#45;tasks" class="node">
 <title>tasks</title>
-<path fill="#f6faff" stroke="#246e78" stroke-width="1.6" d="M399.34,-634.8C399.34,-634.8 220.67,-634.8 220.67,-634.8 214.67,-634.8 208.67,-628.8 208.67,-622.8 208.67,-622.8 208.67,-555.64 208.67,-555.64 208.67,-549.64 214.67,-543.64 220.67,-543.64 220.67,-543.64 399.34,-543.64 399.34,-543.64 405.34,-543.64 411.34,-549.64 411.34,-555.64 411.34,-555.64 411.34,-622.8 411.34,-622.8 411.34,-628.8 405.34,-634.8 399.34,-634.8"/>
-<text xml:space="preserve" text-anchor="start" x="280.23" y="-606.82" font-family="Arial" font-weight="bold" font-size="21.00">Tasks</text>
-<text xml:space="preserve" text-anchor="start" x="272.99" y="-593.92" font-family="Arial" font-size="12.00">Task program</text>
-<text xml:space="preserve" text-anchor="start" x="221.63" y="-567.92" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts,</text>
-<text xml:space="preserve" text-anchor="start" x="256.33" y="-555.92" font-family="Arial" font-size="12.00">Workflows, Reviews</text>
+<path fill="#f6faff" stroke="#246e78" stroke-width="1.6" d="M709.68,-802.32C709.68,-802.32 511.7,-802.32 511.7,-802.32 505.7,-802.32 499.7,-796.32 499.7,-790.32 499.7,-790.32 499.7,-723.16 499.7,-723.16 499.7,-717.16 505.7,-711.16 511.7,-711.16 511.7,-711.16 709.68,-711.16 709.68,-711.16 715.68,-711.16 721.68,-717.16 721.68,-723.16 721.68,-723.16 721.68,-790.32 721.68,-790.32 721.68,-796.32 715.68,-802.32 709.68,-802.32"/>
+<text xml:space="preserve" text-anchor="start" x="580.91" y="-774.34" font-family="Arial" font-weight="bold" font-size="21.00">Tasks</text>
+<text xml:space="preserve" text-anchor="start" x="573.67" y="-761.44" font-family="Arial" font-size="12.00">Task program</text>
+<text xml:space="preserve" text-anchor="start" x="522.31" y="-735.44" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts,</text>
+<text xml:space="preserve" text-anchor="start" x="512.66" y="-723.44" font-family="Arial" font-size="12.00">Workflows, Reviews, Context Builder</text>
+</g>
+<!-- experiments -->
+<g id="domain-node&#45;experiments" class="node">
+<title>experiments</title>
+<path fill="#fbf7ff" stroke="#815e97" stroke-width="1.6" d="M1209.02,-808.32C1209.02,-808.32 972.35,-808.32 972.35,-808.32 966.35,-808.32 960.35,-802.32 960.35,-796.32 960.35,-796.32 960.35,-717.16 960.35,-717.16 960.35,-711.16 966.35,-705.16 972.35,-705.16 972.35,-705.16 1209.02,-705.16 1209.02,-705.16 1215.02,-705.16 1221.02,-711.16 1221.02,-717.16 1221.02,-717.16 1221.02,-796.32 1221.02,-796.32 1221.02,-802.32 1215.02,-808.32 1209.02,-808.32"/>
+<text xml:space="preserve" text-anchor="start" x="1027.66" y="-780.34" font-family="Arial" font-weight="bold" font-size="21.00">Experiments</text>
+<text xml:space="preserve" text-anchor="start" x="1018.48" y="-767.44" font-family="Arial" font-size="12.00">Plans, attempts + evidence</text>
+<text xml:space="preserve" text-anchor="start" x="980.64" y="-741.44" font-family="Arial" font-size="12.00">Requires: State, Scope, Claims, Artifacts,</text>
+<text xml:space="preserve" text-anchor="start" x="973.31" y="-729.44" font-family="Arial" font-size="12.00">Workflows, Reviews, Context Builder, Paper</text>
+<text xml:space="preserve" text-anchor="start" x="1032.66" y="-717.44" font-family="Arial" font-size="12.00">Optional: Code for Git</text>
+</g>
+<!-- knowledge -->
+<g id="domain-node&#45;knowledge" class="node">
+<title>knowledge</title>
+<path fill="#fbf7ff" stroke="#7b529b" stroke-width="1.6" d="M1311.02,-966.48C1311.02,-966.48 1100.35,-966.48 1100.35,-966.48 1094.35,-966.48 1088.35,-960.48 1088.35,-954.48 1088.35,-954.48 1088.35,-875.32 1088.35,-875.32 1088.35,-869.32 1094.35,-863.32 1100.35,-863.32 1100.35,-863.32 1311.02,-863.32 1311.02,-863.32 1317.02,-863.32 1323.02,-869.32 1323.02,-875.32 1323.02,-875.32 1323.02,-954.48 1323.02,-954.48 1323.02,-960.48 1317.02,-966.48 1311.02,-966.48"/>
+<text xml:space="preserve" text-anchor="start" x="1149.68" y="-938.5" font-family="Arial" font-weight="bold" font-size="21.00">Knowledge</text>
+<text xml:space="preserve" text-anchor="start" x="1111.81" y="-925.6" font-family="Arial" font-size="12.00">Project records + reference queries</text>
+<text xml:space="preserve" text-anchor="start" x="1101.31" y="-899.6" font-family="Arial" font-size="12.00">Requires: State, Scope, Claims, Tasks,</text>
+<text xml:space="preserve" text-anchor="start" x="1121.33" y="-887.6" font-family="Arial" font-size="12.00">Experiments, Artifacts, Reviews</text>
+<text xml:space="preserve" text-anchor="start" x="1140.98" y="-875.6" font-family="Arial" font-size="12.00">Optional: Code captures</text>
+</g>
+<!-- code -->
+<g id="domain-node&#45;code" class="node">
+<title>code</title>
+<path fill="#edfaf6" stroke="#287d71" stroke-width="1.6" d="M1479.54,-622.96C1479.54,-622.96 1349.83,-622.96 1349.83,-622.96 1343.83,-622.96 1337.83,-616.96 1337.83,-610.96 1337.83,-610.96 1337.83,-585.8 1337.83,-585.8 1337.83,-579.8 1343.83,-573.8 1349.83,-573.8 1349.83,-573.8 1479.54,-573.8 1479.54,-573.8 1485.54,-573.8 1491.54,-579.8 1491.54,-585.8 1491.54,-585.8 1491.54,-610.96 1491.54,-610.96 1491.54,-616.96 1485.54,-622.96 1479.54,-622.96"/>
+<text xml:space="preserve" text-anchor="start" x="1392.19" y="-597.68" font-family="Arial" font-weight="bold" font-size="18.00">Code</text>
+<text xml:space="preserve" text-anchor="start" x="1350.79" y="-585.98" font-family="Arial" font-size="11.00">Shared provider reference</text>
 </g>
 <!-- feed -->
-<g id="node&#45;feed" class="node">
+<g id="domain-node&#45;feed" class="node">
 <title>feed</title>
-<path fill="#f6faff" stroke="#2d8f84" stroke-width="1.6" d="M525.67,-489.64C525.67,-489.64 350.34,-489.64 350.34,-489.64 344.34,-489.64 338.34,-483.64 338.34,-477.64 338.34,-477.64 338.34,-411.48 338.34,-411.48 338.34,-405.48 344.34,-399.48 350.34,-399.48 350.34,-399.48 525.67,-399.48 525.67,-399.48 531.67,-399.48 537.67,-405.48 537.67,-411.48 537.67,-411.48 537.67,-477.64 537.67,-477.64 537.67,-483.64 531.67,-489.64 525.67,-489.64"/>
-<text xml:space="preserve" text-anchor="start" x="413.5" y="-461.66" font-family="Arial" font-weight="bold" font-size="21.00">Feed</text>
-<text xml:space="preserve" text-anchor="start" x="378.15" y="-448.76" font-family="Arial" font-size="12.00">Project posts + activity</text>
-<text xml:space="preserve" text-anchor="start" x="351.3" y="-422.76" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts</text>
-<text xml:space="preserve" text-anchor="start" x="410.19" y="-411.66" font-family="Arial" font-size="11.00" fill="#65539b">OPTIONAL</text>
+<path fill="#f6faff" stroke="#2d8f84" stroke-width="1.6" d="M977.35,-637.96C977.35,-637.96 802.02,-637.96 802.02,-637.96 796.02,-637.96 790.02,-631.96 790.02,-625.96 790.02,-625.96 790.02,-570.8 790.02,-570.8 790.02,-564.8 796.02,-558.8 802.02,-558.8 802.02,-558.8 977.35,-558.8 977.35,-558.8 983.35,-558.8 989.35,-564.8 989.35,-570.8 989.35,-570.8 989.35,-625.96 989.35,-625.96 989.35,-631.96 983.35,-637.96 977.35,-637.96"/>
+<text xml:space="preserve" text-anchor="start" x="865.18" y="-609.98" font-family="Arial" font-weight="bold" font-size="21.00">Feed</text>
+<text xml:space="preserve" text-anchor="start" x="829.83" y="-597.08" font-family="Arial" font-size="12.00">Project posts + activity</text>
+<text xml:space="preserve" text-anchor="start" x="802.98" y="-571.08" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts</text>
+</g>
+<!-- domainEvents -->
+<g id="domain-node&#45;domainEvents" class="node">
+<title>domainEvents</title>
+<path fill="#f6faff" stroke="#bb7347" stroke-width="1.6" d="M233.5,-319.48C233.5,-319.48 79.87,-319.48 79.87,-319.48 73.87,-319.48 67.87,-313.48 67.87,-307.48 67.87,-307.48 67.87,-252.32 67.87,-252.32 67.87,-246.32 73.87,-240.32 79.87,-240.32 79.87,-240.32 233.5,-240.32 233.5,-240.32 239.5,-240.32 245.5,-246.32 245.5,-252.32 245.5,-252.32 245.5,-307.48 245.5,-307.48 245.5,-313.48 239.5,-319.48 233.5,-319.48"/>
+<text xml:space="preserve" text-anchor="start" x="80.83" y="-291.5" font-family="Arial" font-weight="bold" font-size="21.00">Domain Events</text>
+<text xml:space="preserve" text-anchor="start" x="89.82" y="-278.6" font-family="Arial" font-size="12.00">Durable delivery + retries</text>
+<text xml:space="preserve" text-anchor="start" x="115.33" y="-252.6" font-family="Arial" font-size="12.00">Requires: State</text>
+</g>
+<!-- contextBuilder -->
+<g id="domain-node&#45;contextBuilder" class="node">
+<title>contextBuilder</title>
+<path fill="#f6faff" stroke="#208b78" stroke-width="1.6" d="M607.35,-637.96C607.35,-637.96 432.02,-637.96 432.02,-637.96 426.02,-637.96 420.02,-631.96 420.02,-625.96 420.02,-625.96 420.02,-570.8 420.02,-570.8 420.02,-564.8 426.02,-558.8 432.02,-558.8 432.02,-558.8 607.35,-558.8 607.35,-558.8 613.35,-558.8 619.35,-564.8 619.35,-570.8 619.35,-570.8 619.35,-625.96 619.35,-625.96 619.35,-631.96 613.35,-637.96 607.35,-637.96"/>
+<text xml:space="preserve" text-anchor="start" x="441.51" y="-609.98" font-family="Arial" font-weight="bold" font-size="21.00">Context Builder</text>
+<text xml:space="preserve" text-anchor="start" x="450.65" y="-597.08" font-family="Arial" font-size="12.00">Versioned context recipes</text>
+<text xml:space="preserve" text-anchor="start" x="432.98" y="-571.08" font-family="Arial" font-size="12.00">Requires: State, Scope, Artifacts</text>
+</g>
+<!-- paper -->
+<g id="domain-node&#45;paper" class="node">
+<title>paper</title>
+<path fill="#f6f2fc" stroke="#327c87" stroke-width="1.6" d="M1270.09,-616.86C1270.09,-616.86 1057.28,-616.86 1057.28,-616.86 1051.28,-616.86 1045.28,-610.86 1045.28,-604.86 1045.28,-604.86 1045.28,-591.9 1045.28,-591.9 1045.28,-585.9 1051.28,-579.9 1057.28,-579.9 1057.28,-579.9 1270.09,-579.9 1270.09,-579.9 1276.09,-579.9 1282.09,-585.9 1282.09,-591.9 1282.09,-591.9 1282.09,-604.86 1282.09,-604.86 1282.09,-610.86 1276.09,-616.86 1270.09,-616.86"/>
+<text xml:space="preserve" text-anchor="middle" x="1163.69" y="-594.18" font-family="Arial" font-size="14.00">Paper (shared provider reference)</text>
 </g>
 </g>
-</svg>
-<svg x="1430" y="385" width="1290" height="960" viewBox="0.00 0.00 659.00 516.00" preserveAspectRatio="xMidYMid meet">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 502.6)">
+</svg><svg x="1430" y="385" width="1290" height="960" viewBox="0.00 0.00 470.00 516.00" preserveAspectRatio="xMidYMid meet">
+<g id="transport-graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 502.6)">
 <title>G</title>
-<!-- access&#45;&gt;scope -->
-<g id="edge&#45;access&#45;scope" class="edge">
-<title>access&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M268.34,-132.39C285.25,-117.6 304.59,-100.69 322.03,-85.44"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="323.14,-87.49 326.54,-81.5 320.15,-84.06 323.14,-87.49"/>
-</g>
-<!-- credentials&#45;&gt;scope -->
-<g id="edge&#45;credentials&#45;scope" class="edge">
-<title>credentials&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M415.33,-132.39C408.92,-118.38 401.64,-102.46 394.96,-87.86"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="397.1,-87.07 392.33,-82.11 392.96,-88.96 397.1,-87.07"/>
-</g>
-<!-- tools&#45;&gt;access -->
-<g id="edge&#45;tools&#45;access" class="edge">
-<title>tools&#45;&gt;access</title>
-<path fill="none" stroke="#9356a6" stroke-width="1.6" d="M294.73,-265.55C283.53,-251.15 270.77,-234.74 259.16,-219.81"/>
-<polygon fill="#9356a6" stroke="#9356a6" stroke-width="1.6" points="261.19,-218.71 255.4,-214.98 257.6,-221.5 261.19,-218.71"/>
-</g>
 <!-- tools&#45;&gt;scope -->
-<g id="edge&#45;tools&#45;scope" class="edge">
+<g id="transport-edge&#45;tools&#45;scope" class="edge">
 <title>tools&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M327.15,-265.93C329.51,-215.26 333.33,-133.16 333.33,-133.16 333.33,-133.16 343.04,-110.69 352.89,-87.88"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="354.92,-88.93 355.41,-82.07 350.74,-87.13 354.92,-88.93"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M257,-132.39C257,-118.64 257,-103.05 257,-88.67"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="259.28,-88.83 257,-82.33 254.73,-88.83 259.28,-88.83"/>
 </g>
 <!-- api&#45;&gt;tools -->
-<g id="edge&#45;api&#45;tools" class="edge">
+<g id="transport-edge&#45;api&#45;tools" class="edge">
 <title>api&#45;&gt;tools</title>
-<path fill="none" stroke="#5b40bd" stroke-width="1.6" d="M490.54,-404.22C462.03,-387.42 428.66,-367.77 399.4,-350.53"/>
-<polygon fill="#5b40bd" stroke="#5b40bd" stroke-width="1.6" points="400.9,-348.77 394.14,-347.43 398.59,-352.69 400.9,-348.77"/>
+<path fill="none" stroke="#5b40bd" stroke-width="1.6" d="M143.57,-271.24C162.69,-254.8 185.05,-235.59 204.83,-218.58"/>
+<polygon fill="#5b40bd" stroke="#5b40bd" stroke-width="1.6" points="206.15,-220.45 209.6,-214.49 203.18,-217 206.15,-220.45"/>
+</g>
+<!-- api&#45;&gt;identity -->
+<g id="transport-edge&#45;api&#45;identity" class="edge">
+<title>api&#45;&gt;identity</title>
+<path fill="none" stroke="#198778" stroke-width="1.6" d="M98.86,-271.24C99.2,-255.8 99.59,-237.91 99.95,-221.71"/>
+<polygon fill="#198778" stroke="#198778" stroke-width="1.6" points="102.22,-221.88 100.09,-215.33 97.67,-221.78 102.22,-221.88"/>
 </g>
 <!-- api&#45;&gt;scope -->
-<g id="edge&#45;api&#45;scope" class="edge">
+<g id="transport-edge&#45;api&#45;scope" class="edge">
 <title>api&#45;&gt;scope</title>
-<path fill="none" stroke="#a76013" stroke-width="1.6" d="M554.29,-404.25C547.84,-320.72 533.33,-133.16 533.33,-133.16 533.33,-133.16 490.32,-108.27 448.89,-84.3"/>
-<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="450.05,-82.34 443.28,-81.06 447.77,-86.28 450.05,-82.34"/>
-</g>
-<!-- mounts&#45;&gt;access -->
-<g id="edge&#45;mounts&#45;access" class="edge">
-<title>mounts&#45;&gt;access</title>
-<path fill="none" stroke="#9356a6" stroke-width="1.6" d="M123.95,-398.83C138.76,-346.33 161.33,-266.32 161.33,-266.32 161.33,-266.32 176.78,-243.25 192.25,-220.15"/>
-<polygon fill="#9356a6" stroke="#9356a6" stroke-width="1.6" points="193.97,-221.68 195.69,-215.01 190.18,-219.15 193.97,-221.68"/>
-</g>
-<!-- mounts&#45;&gt;credentials -->
-<g id="edge&#45;mounts&#45;credentials" class="edge">
-<title>mounts&#45;&gt;credentials</title>
-<path fill="none" stroke="#62738f" stroke-width="1.6" d="M142.88,-398.83C179.91,-346.33 236.33,-266.32 236.33,-266.32 236.33,-266.32 290.4,-240.91 341.89,-216.72"/>
-<polygon fill="#62738f" stroke="#62738f" stroke-width="1.6" points="342.68,-218.86 347.6,-214.03 340.75,-214.74 342.68,-218.86"/>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M63.12,-271.07C38.91,-243.79 11,-212.32 11,-212.32 11,-212.32 11,-133.16 11,-133.16 11,-133.16 80.86,-106.87 146.12,-82.31"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="146.91,-84.44 152.19,-80.02 145.31,-80.19 146.91,-84.44"/>
 </g>
 <!-- mounts&#45;&gt;tools -->
-<g id="edge&#45;mounts&#45;tools" class="edge">
+<g id="transport-edge&#45;mounts&#45;tools" class="edge">
 <title>mounts&#45;&gt;tools</title>
-<path fill="none" stroke="#5b40bd" stroke-width="1.6" d="M181.4,-398.81C205.49,-383.43 232.41,-366.24 256.4,-350.92"/>
-<polygon fill="#5b40bd" stroke="#5b40bd" stroke-width="1.6" points="257.45,-352.95 261.71,-347.53 255.01,-349.11 257.45,-352.95"/>
+<path fill="none" stroke="#5b40bd" stroke-width="1.6" d="M318.21,-265.65C308.5,-251.07 297.7,-234.85 287.91,-220.15"/>
+<polygon fill="#5b40bd" stroke="#5b40bd" stroke-width="1.6" points="290.03,-219.23 284.53,-215.08 286.24,-221.75 290.03,-219.23"/>
 </g>
-<!-- nisa&#45;&gt;access -->
-<g id="edge&#45;nisa&#45;access" class="edge">
-<title>nisa&#45;&gt;access</title>
-<path fill="none" stroke="#9356a6" stroke-width="1.6" d="M299.42,-398.83C268.83,-372.96 236.33,-345.48 236.33,-345.48 236.33,-345.48 230.8,-272.42 226.96,-221.6"/>
-<polygon fill="#9356a6" stroke="#9356a6" stroke-width="1.6" points="229.22,-221.43 226.47,-215.13 224.69,-221.78 229.22,-221.43"/>
+<!-- mounts&#45;&gt;scope -->
+<g id="transport-edge&#45;mounts&#45;scope" class="edge">
+<title>mounts&#45;&gt;scope</title>
+<path fill="none" stroke="#9356a6" stroke-width="1.6" d="M341.69,-265.67C334.29,-213.17 323,-133.16 323,-133.16 323,-133.16 306.56,-110.09 290.09,-86.99"/>
+<polygon fill="#9356a6" stroke="#9356a6" stroke-width="1.6" points="292.02,-85.79 286.4,-81.81 288.32,-88.43 292.02,-85.79"/>
 </g>
-<!-- nisa&#45;&gt;credentials -->
-<g id="edge&#45;nisa&#45;credentials" class="edge">
-<title>nisa&#45;&gt;credentials</title>
-<path fill="none" stroke="#62738f" stroke-width="1.6" d="M380.61,-398.83C396.96,-372.96 414.33,-345.48 414.33,-345.48 414.33,-345.48 422.45,-272.12 428.07,-221.29"/>
-<polygon fill="#62738f" stroke="#62738f" stroke-width="1.6" points="430.3,-221.83 428.76,-215.12 425.78,-221.33 430.3,-221.83"/>
+<!-- ui&#45;&gt;tools -->
+<g id="transport-edge&#45;ui&#45;tools" class="edge">
+<title>ui&#45;&gt;tools</title>
+<path fill="none" stroke="#5b40bd" stroke-width="1.6" d="M179.66,-409.8C191.66,-384.57 205,-356.48 205,-356.48 205,-356.48 228.04,-275.53 243.45,-221.39"/>
+<polygon fill="#5b40bd" stroke="#5b40bd" stroke-width="1.6" points="245.59,-222.15 245.18,-215.27 241.22,-220.9 245.59,-222.15"/>
 </g>
-<!-- nisa&#45;&gt;tools -->
-<g id="edge&#45;nisa&#45;tools" class="edge">
-<title>nisa&#45;&gt;tools</title>
-<path fill="none" stroke="#5b40bd" stroke-width="1.6" d="M343.49,-398.81C340.72,-384.76 337.64,-369.19 334.82,-354.92"/>
-<polygon fill="#5b40bd" stroke="#5b40bd" stroke-width="1.6" points="337.06,-354.54 333.57,-348.6 332.6,-355.42 337.06,-354.54"/>
-</g>
-<!-- access -->
-<g id="node&#45;access" class="node">
-<title>access</title>
-<path fill="#f6faff" stroke="#9356a6" stroke-width="1.6" d="M268.98,-212.32C268.98,-212.32 177.68,-212.32 177.68,-212.32 171.68,-212.32 165.68,-206.32 165.68,-200.32 165.68,-200.32 165.68,-145.16 165.68,-145.16 165.68,-139.16 171.68,-133.16 177.68,-133.16 177.68,-133.16 268.98,-133.16 268.98,-133.16 274.98,-133.16 280.98,-139.16 280.98,-145.16 280.98,-145.16 280.98,-200.32 280.98,-200.32 280.98,-206.32 274.98,-212.32 268.98,-212.32"/>
-<text xml:space="preserve" text-anchor="start" x="186.55" y="-184.34" font-family="Arial" font-weight="bold" font-size="21.00">Access</text>
-<text xml:space="preserve" text-anchor="start" x="178.64" y="-171.44" font-family="Arial" font-size="12.00">Exact tool grants</text>
-<text xml:space="preserve" text-anchor="start" x="178.97" y="-145.44" font-family="Arial" font-size="12.00">Requires: Scope</text>
-</g>
-<!-- credentials -->
-<g id="node&#45;credentials" class="node">
-<title>credentials</title>
-<path fill="#f6faff" stroke="#62738f" stroke-width="1.6" d="M512,-212.32C512,-212.32 354.66,-212.32 354.66,-212.32 348.66,-212.32 342.66,-206.32 342.66,-200.32 342.66,-200.32 342.66,-145.16 342.66,-145.16 342.66,-139.16 348.66,-133.16 354.66,-133.16 354.66,-133.16 512,-133.16 512,-133.16 518,-133.16 524,-139.16 524,-145.16 524,-145.16 524,-200.32 524,-200.32 524,-206.32 518,-212.32 512,-212.32"/>
-<text xml:space="preserve" text-anchor="start" x="376.15" y="-184.34" font-family="Arial" font-weight="bold" font-size="21.00">Credentials</text>
-<text xml:space="preserve" text-anchor="start" x="355.62" y="-171.44" font-family="Arial" font-size="12.00">Scoped upstream credentials</text>
-<text xml:space="preserve" text-anchor="start" x="388.97" y="-145.44" font-family="Arial" font-size="12.00">Requires: Scope</text>
+<!-- ui&#45;&gt;api -->
+<g id="transport-edge&#45;ui&#45;api" class="edge">
+<title>ui&#45;&gt;api</title>
+<path fill="none" stroke="#4a70bc" stroke-width="1.6" d="M142.95,-409.9C135.7,-394.17 127.28,-375.91 119.7,-359.47"/>
+<polygon fill="#4a70bc" stroke="#4a70bc" stroke-width="1.6" points="121.86,-358.72 117.07,-353.77 117.73,-360.62 121.86,-358.72"/>
 </g>
 <!-- tools -->
-<g id="node&#45;tools" class="node">
+<g id="transport-node&#45;tools" class="node">
 <title>tools</title>
-<path fill="#f6faff" stroke="#5b40bd" stroke-width="1.6" d="M393.32,-345.48C393.32,-345.48 257.34,-345.48 257.34,-345.48 251.34,-345.48 245.34,-339.48 245.34,-333.48 245.34,-333.48 245.34,-278.32 245.34,-278.32 245.34,-272.32 251.34,-266.32 257.34,-266.32 257.34,-266.32 393.32,-266.32 393.32,-266.32 399.32,-266.32 405.32,-272.32 405.32,-278.32 405.32,-278.32 405.32,-333.48 405.32,-333.48 405.32,-339.48 399.32,-345.48 393.32,-345.48"/>
-<text xml:space="preserve" text-anchor="start" x="297.33" y="-317.5" font-family="Arial" font-weight="bold" font-size="21.00">Tools</text>
-<text xml:space="preserve" text-anchor="start" x="292.32" y="-304.6" font-family="Arial" font-size="12.00">Tool registry</text>
-<text xml:space="preserve" text-anchor="start" x="258.3" y="-278.6" font-family="Arial" font-size="12.00">Requires: Scope, Access</text>
+<path fill="#f6faff" stroke="#5b40bd" stroke-width="1.6" d="M302.32,-212.32C302.32,-212.32 211.68,-212.32 211.68,-212.32 205.68,-212.32 199.68,-206.32 199.68,-200.32 199.68,-200.32 199.68,-145.16 199.68,-145.16 199.68,-139.16 205.68,-133.16 211.68,-133.16 211.68,-133.16 302.32,-133.16 302.32,-133.16 308.32,-133.16 314.32,-139.16 314.32,-145.16 314.32,-145.16 314.32,-200.32 314.32,-200.32 314.32,-206.32 308.32,-212.32 302.32,-212.32"/>
+<text xml:space="preserve" text-anchor="start" x="229" y="-184.34" font-family="Arial" font-weight="bold" font-size="21.00">Tools</text>
+<text xml:space="preserve" text-anchor="start" x="223.99" y="-171.44" font-family="Arial" font-size="12.00">Tool registry</text>
+<text xml:space="preserve" text-anchor="start" x="212.64" y="-145.44" font-family="Arial" font-size="12.00">Requires: Scope</text>
 </g>
 <!-- api -->
-<g id="node&#45;api" class="node">
+<g id="transport-node&#45;api" class="node">
 <title>api</title>
-<path fill="#f6faff" stroke="#4a70bc" stroke-width="1.6" d="M620.66,-484.14C620.66,-484.14 494.01,-484.14 494.01,-484.14 488.01,-484.14 482.01,-478.14 482.01,-472.14 482.01,-472.14 482.01,-416.98 482.01,-416.98 482.01,-410.98 488.01,-404.98 494.01,-404.98 494.01,-404.98 620.66,-404.98 620.66,-404.98 626.66,-404.98 632.66,-410.98 632.66,-416.98 632.66,-416.98 632.66,-472.14 632.66,-472.14 632.66,-478.14 626.66,-484.14 620.66,-484.14"/>
-<text xml:space="preserve" text-anchor="start" x="539.83" y="-456.16" font-family="Arial" font-weight="bold" font-size="21.00">API</text>
-<text xml:space="preserve" text-anchor="start" x="521.5" y="-443.26" font-family="Arial" font-size="12.00">HTTP + MCP</text>
-<text xml:space="preserve" text-anchor="start" x="494.97" y="-417.26" font-family="Arial" font-size="12.00">Requires: Scope, Tools</text>
+<path fill="#f6faff" stroke="#4a70bc" stroke-width="1.6" d="M184.01,-350.98C184.01,-350.98 12,-350.98 12,-350.98 6,-350.98 0,-344.98 0,-338.98 0,-338.98 0,-283.82 0,-283.82 0,-277.82 6,-271.82 12,-271.82 12,-271.82 184.01,-271.82 184.01,-271.82 190.01,-271.82 196.01,-277.82 196.01,-283.82 196.01,-283.82 196.01,-338.98 196.01,-338.98 196.01,-344.98 190.01,-350.98 184.01,-350.98"/>
+<text xml:space="preserve" text-anchor="start" x="80.5" y="-323" font-family="Arial" font-weight="bold" font-size="21.00">API</text>
+<text xml:space="preserve" text-anchor="start" x="62.17" y="-310.1" font-family="Arial" font-size="12.00">HTTP + MCP</text>
+<text xml:space="preserve" text-anchor="start" x="12.96" y="-284.1" font-family="Arial" font-size="12.00">Requires: Scope, Tools, Identity</text>
+</g>
+<!-- identity -->
+<g id="transport-node&#45;identity" class="node">
+<title>identity</title>
+<path fill="#edfaf6" stroke="#198778" stroke-width="1.6" d="M169.67,-212.32C169.67,-212.32 32.34,-212.32 32.34,-212.32 26.34,-212.32 20.34,-206.32 20.34,-200.32 20.34,-200.32 20.34,-145.16 20.34,-145.16 20.34,-139.16 26.34,-133.16 32.34,-133.16 32.34,-133.16 169.67,-133.16 169.67,-133.16 175.67,-133.16 181.67,-139.16 181.67,-145.16 181.67,-145.16 181.67,-200.32 181.67,-200.32 181.67,-206.32 175.67,-212.32 169.67,-212.32"/>
+<text xml:space="preserve" text-anchor="start" x="63.67" y="-184.34" font-family="Arial" font-weight="bold" font-size="21.00">Identity</text>
+<text xml:space="preserve" text-anchor="start" x="33.3" y="-171.44" font-family="Arial" font-size="12.00">Verifies shared user login</text>
+<text xml:space="preserve" text-anchor="start" x="60.31" y="-145.44" font-family="Arial" font-size="12.00">Requires: none</text>
 </g>
 <!-- mounts -->
-<g id="node&#45;mounts" class="node">
+<g id="transport-node&#45;mounts" class="node">
 <title>mounts</title>
-<path fill="#f6faff" stroke="#6650aa" stroke-width="1.6" d="M210.67,-489.64C210.67,-489.64 12,-489.64 12,-489.64 6,-489.64 0,-483.64 0,-477.64 0,-477.64 0,-411.48 0,-411.48 0,-405.48 6,-399.48 12,-399.48 12,-399.48 210.67,-399.48 210.67,-399.48 216.67,-399.48 222.67,-405.48 222.67,-411.48 222.67,-411.48 222.67,-477.64 222.67,-477.64 222.67,-483.64 216.67,-489.64 210.67,-489.64"/>
-<text xml:space="preserve" text-anchor="start" x="74.01" y="-461.66" font-family="Arial" font-weight="bold" font-size="21.00">Mounts</text>
-<text xml:space="preserve" text-anchor="start" x="41.64" y="-448.76" font-family="Arial" font-size="12.00">Remote MCP connections</text>
-<text xml:space="preserve" text-anchor="start" x="12.96" y="-422.76" font-family="Arial" font-size="12.00">Requires: Tools, Credentials, Access</text>
-<text xml:space="preserve" text-anchor="start" x="83.52" y="-411.66" font-family="Arial" font-size="11.00" fill="#65539b">OPTIONAL</text>
+<path fill="#f6faff" stroke="#6650aa" stroke-width="1.6" d="M431.84,-356.48C431.84,-356.48 264.17,-356.48 264.17,-356.48 258.17,-356.48 252.17,-350.48 252.17,-344.48 252.17,-344.48 252.17,-278.32 252.17,-278.32 252.17,-272.32 258.17,-266.32 264.17,-266.32 264.17,-266.32 431.84,-266.32 431.84,-266.32 437.84,-266.32 443.84,-272.32 443.84,-278.32 443.84,-278.32 443.84,-344.48 443.84,-344.48 443.84,-350.48 437.84,-356.48 431.84,-356.48"/>
+<text xml:space="preserve" text-anchor="start" x="266.33" y="-328.5" font-family="Arial" font-weight="bold" font-size="21.00">External Mounts</text>
+<text xml:space="preserve" text-anchor="start" x="265.13" y="-315.6" font-family="Arial" font-size="12.00">MCP connections + credentials</text>
+<text xml:space="preserve" text-anchor="start" x="285.64" y="-289.6" font-family="Arial" font-size="12.00">Requires: Tools, Scope</text>
+<text xml:space="preserve" text-anchor="start" x="320.19" y="-278.5" font-family="Arial" font-size="11.00" fill="#65539b">OPTIONAL</text>
 </g>
-<!-- nisa -->
-<g id="node&#45;nisa" class="node">
-<title>nisa</title>
-<path fill="#fff6eb" stroke="#c96e23" stroke-width="1.6" stroke-dasharray="5,2" d="M451.67,-489.64C451.67,-489.64 253,-489.64 253,-489.64 247,-489.64 241,-483.64 241,-477.64 241,-477.64 241,-411.48 241,-411.48 241,-405.48 247,-399.48 253,-399.48 253,-399.48 451.67,-399.48 451.67,-399.48 457.67,-399.48 463.67,-405.48 463.67,-411.48 463.67,-411.48 463.67,-477.64 463.67,-477.64 463.67,-483.64 457.67,-489.64 451.67,-489.64"/>
-<text xml:space="preserve" text-anchor="start" x="330.15" y="-461.66" font-family="Arial" font-weight="bold" font-size="21.00">Nisa</text>
-<text xml:space="preserve" text-anchor="start" x="284.13" y="-448.76" font-family="Arial" font-size="12.00">Search + paper via REST</text>
-<text xml:space="preserve" text-anchor="start" x="253.96" y="-422.76" font-family="Arial" font-size="12.00">Requires: Tools, Credentials, Access</text>
-<text xml:space="preserve" text-anchor="start" x="292.44" y="-411.66" font-family="Arial" font-weight="bold" font-size="11.00" fill="#b86016">UNDER VERIFICATION</text>
+<!-- ui -->
+<g id="transport-node&#45;ui" class="node">
+<title>ui</title>
+<path fill="#f6faff" stroke="#846ac4" stroke-width="1.6" d="M232.15,-489.64C232.15,-489.64 89.86,-489.64 89.86,-489.64 83.86,-489.64 77.86,-483.64 77.86,-477.64 77.86,-477.64 77.86,-422.48 77.86,-422.48 77.86,-416.48 83.86,-410.48 89.86,-410.48 89.86,-410.48 232.15,-410.48 232.15,-410.48 238.15,-410.48 244.15,-416.48 244.15,-422.48 244.15,-422.48 244.15,-477.64 244.15,-477.64 244.15,-483.64 238.15,-489.64 232.15,-489.64"/>
+<text xml:space="preserve" text-anchor="start" x="150.5" y="-461.66" font-family="Arial" font-weight="bold" font-size="21.00">UI</text>
+<text xml:space="preserve" text-anchor="start" x="90.82" y="-448.76" font-family="Arial" font-size="12.00">Browser shell + UI registry</text>
+<text xml:space="preserve" text-anchor="start" x="105.98" y="-422.76" font-family="Arial" font-size="12.00">Requires: API, Tools</text>
 </g>
 <!-- scope -->
-<g id="node&#45;scope" class="node">
+<g id="transport-node&#45;scope" class="node">
 <title>scope</title>
-<path fill="#fff9ed" stroke="#a76013" stroke-width="1.6" d="M463.34,-79.16C463.34,-79.16 283.33,-79.16 283.33,-79.16 277.33,-79.16 271.33,-73.16 271.33,-67.16 271.33,-67.16 271.33,-12 271.33,-12 271.33,-6 277.33,0 283.33,0 283.33,0 463.34,0 463.34,0 469.34,0 475.34,-6 475.34,-12 475.34,-12 475.34,-67.16 475.34,-67.16 475.34,-73.16 469.34,-79.16 463.34,-79.16"/>
-<text xml:space="preserve" text-anchor="start" x="341.82" y="-51.18" font-family="Arial" font-weight="bold" font-size="21.00">Scope</text>
-<text xml:space="preserve" text-anchor="start" x="312.64" y="-38.28" font-family="Arial" font-size="12.00">Shared identity service</text>
-<text xml:space="preserve" text-anchor="start" x="284.29" y="-12.28" font-family="Arial" font-size="12.00">Same Scope service as left panel</text>
+<path fill="#fff9ed" stroke="#a76013" stroke-width="1.6" d="M347.01,-79.16C347.01,-79.16 167,-79.16 167,-79.16 161,-79.16 155,-73.16 155,-67.16 155,-67.16 155,-12 155,-12 155,-6 161,0 167,0 167,0 347.01,0 347.01,0 353.01,0 359.01,-6 359.01,-12 359.01,-12 359.01,-67.16 359.01,-67.16 359.01,-73.16 353.01,-79.16 347.01,-79.16"/>
+<text xml:space="preserve" text-anchor="start" x="225.49" y="-51.18" font-family="Arial" font-weight="bold" font-size="21.00">Scope</text>
+<text xml:space="preserve" text-anchor="start" x="202.31" y="-38.28" font-family="Arial" font-size="12.00">Project authorization</text>
+<text xml:space="preserve" text-anchor="start" x="167.96" y="-12.28" font-family="Arial" font-size="12.00">Same Scope service as left panel</text>
 </g>
 </g>
-</svg>
-<text x="1455" y="1384" class="small">Mounts → sandbox MCP · Nisa → Nisa REST API</text><text x="1455" y="1424" class="small">Remote service health is handled by the integration.</text><rect x="60" y="1504" width="2680" height="540" rx="24" fill="white" stroke="#CDDCE7" stroke-width="2"/><text x="95" y="1562" class="section">Tool adapter plugins</text><text x="95" y="1605" class="small">Each adapter requires its domain service and the shared Tools registry. References below name the same services above.</text><rect x="95" y="1657" width="1180" height="88" rx="12" fill="#F3F6FC"/><text x="119" y="1693" class="body" font-weight="700">scope-tools</text><text x="425" y="1709" font-size="34" fill="#6957B3">→</text><text x="492" y="1708" class="body">Scope + Tools</text><rect x="95" y="1774" width="1180" height="88" rx="12" fill="#F3F6FC"/><text x="119" y="1810" class="body" font-weight="700">artifacts-tools</text><text x="425" y="1826" font-size="34" fill="#6957B3">→</text><text x="492" y="1825" class="body">Artifacts + Tools</text><rect x="95" y="1891" width="1180" height="88" rx="12" fill="#F3F6FC"/><text x="119" y="1927" class="body" font-weight="700">workflows-tools</text><text x="425" y="1943" font-size="34" fill="#6957B3">→</text><text x="492" y="1942" class="body">Workflows + Tools + Scope</text><rect x="1460" y="1657" width="1180" height="88" rx="12" fill="#F3F6FC"/><text x="1484" y="1693" class="body" font-weight="700">reviews-tools</text><text x="1790" y="1709" font-size="34" fill="#6957B3">→</text><text x="1857" y="1708" class="body">Tools + Reviews</text><rect x="1460" y="1774" width="1180" height="88" rx="12" fill="#F3F6FC"/><text x="1484" y="1810" class="body" font-weight="700">tasks-tools</text><text x="1790" y="1826" font-size="34" fill="#6957B3">→</text><text x="1857" y="1825" class="body">Tools + Tasks</text><rect x="1460" y="1891" width="1180" height="88" rx="12" fill="#F3F6FC"/><text x="1484" y="1927" class="body" font-weight="700">feed-tools</text><text x="1790" y="1943" font-size="34" fill="#6957B3">→</text><text x="1857" y="1942" class="body">Feed + Tools</text><text x="80" y="2100" class="small"><tspan font-weight="700">Runtime:</tspan> Cordis Loader activates providers and their declared dependents. Removing a provider suspends its dependents.</text><text x="80" y="2142" class="small"><tspan font-weight="700">Composition:</tspan> default config has 18 plugins; Mounts and Nisa are explicit additions. Nisa’s integration gate is still pending.</text><text x="80" y="2181" font-size="19" fill="#627387">Generated from actual inject declarations · 14 service providers + 6 tool adapters · no future UI, Postgres, runner or research-program nodes</text></svg>
+</svg><text x="1455" y="1384" class="small">External Mounts connects to external Nisa and Sandboxes MCP.</text><text x="1455" y="1424" class="small">Remote service health is handled by the integration.</text><rect x="60" y="1504" width="2680" height="870" rx="24" fill="white" stroke="#D9D0EF" stroke-width="2"/><text x="95" y="1562" class="section">Research programs + living paper</text><text x="95" y="1605" class="small">Separate workflow programs. Shared-provider references name the same services in the other panels.</text><svg x="100" y="1640" width="2600" height="710" viewBox="0.00 0.00 1472.00 419.00" preserveAspectRatio="xMidYMid meet">
+<g id="research-graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 406)">
+<title>G</title>
+<!-- research&#45;&gt;consolidation -->
+<g id="research-edge&#45;research&#45;consolidation" class="edge">
+<title>research&#45;&gt;consolidation</title>
+<path fill="none" stroke="#287d71" stroke-width="1.5" stroke-dasharray="5,2" d="M975.84,-349.74C866.32,-324.74 664.62,-278.68 664.62,-278.68 664.62,-278.68 650.54,-216.32 640.78,-173.13"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.5" points="643.05,-172.82 639.4,-166.98 638.61,-173.82 643.05,-172.82"/>
+<text xml:space="preserve" text-anchor="middle" x="682.64" y="-248.8" font-family="Times,serif" font-size="11.00">optional</text>
+</g>
+<!-- research&#45;&gt;reflections -->
+<g id="research-edge&#45;research&#45;reflections" class="edge">
+<title>research&#45;&gt;reflections</title>
+<path fill="none" stroke="#7b529b" stroke-width="1.5" stroke-dasharray="5,2" d="M988.16,-339.12C952.18,-322.34 905.48,-300.57 868.07,-283.13"/>
+<polygon fill="#7b529b" stroke="#7b529b" stroke-width="1.5" points="869.14,-281.12 862.29,-280.43 867.22,-285.24 869.14,-281.12"/>
+<text xml:space="preserve" text-anchor="middle" x="949.42" y="-305.98" font-family="Times,serif" font-size="11.00">optional</text>
+</g>
+<!-- research&#45;&gt;paper -->
+<g id="research-edge&#45;research&#45;paper" class="edge">
+<title>research&#45;&gt;paper</title>
+<path fill="none" stroke="#327c87" stroke-width="1.5" stroke-dasharray="5,2" d="M1035.76,-339.22C1021.41,-296.94 993.17,-213.77 977.27,-166.92"/>
+<polygon fill="#327c87" stroke="#327c87" stroke-width="1.5" points="979.52,-166.46 975.27,-161.04 975.21,-167.92 979.52,-166.46"/>
+<text xml:space="preserve" text-anchor="middle" x="1032.33" y="-248.8" font-family="Times,serif" font-size="11.00">optional</text>
+</g>
+<!-- research&#45;&gt;knowledge -->
+<g id="research-edge&#45;research&#45;knowledge" class="edge">
+<title>research&#45;&gt;knowledge</title>
+<path fill="none" stroke="#7b529b" stroke-width="1.5" stroke-dasharray="5,2" d="M1069.43,-339.11C1127.58,-277.25 1272.58,-122.99 1334.69,-56.91"/>
+<polygon fill="#7b529b" stroke="#7b529b" stroke-width="1.5" points="1336.08,-58.75 1338.88,-52.45 1332.77,-55.63 1336.08,-58.75"/>
+<text xml:space="preserve" text-anchor="middle" x="1225.87" y="-191.62" font-family="Times,serif" font-size="11.00">optional</text>
+</g>
+<!-- research&#45;&gt;scope -->
+<g id="research-edge&#45;research&#45;scope" class="edge">
+<title>research&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.5" d="M1058.96,-339.22C1065.43,-327.33 1071.67,-315.88 1071.67,-315.88 1071.67,-315.88 1162.67,-75.16 1162.67,-75.16 1162.67,-75.16 1165.32,-67.93 1168.58,-59.03"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.5" points="1170.68,-59.92 1170.78,-53.04 1166.4,-58.36 1170.68,-59.92"/>
+</g>
+<!-- research&#45;&gt;state -->
+<g id="research-edge&#45;research&#45;state" class="edge">
+<title>research&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.5" d="M1050.55,-339.16C1062.75,-284.64 1089.67,-164.32 1089.67,-164.32 1089.67,-164.32 1089.67,-99.16 1089.67,-99.16 1089.67,-99.16 1060.88,-76.29 1035.51,-56.14"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.5" points="1037.1,-54.5 1030.59,-52.23 1034.27,-58.06 1037.1,-54.5"/>
+</g>
+<!-- research&#45;&gt;workflows -->
+<g id="research-edge&#45;research&#45;workflows" class="edge">
+<title>research&#45;&gt;workflows</title>
+<path fill="none" stroke="#326b90" stroke-width="1.5" d="M975.88,-353.01C894.71,-338.33 770.67,-315.88 770.67,-315.88 770.67,-315.88 266.67,-164.32 266.67,-164.32 266.67,-164.32 176.38,-96.48 122.29,-55.85"/>
+<polygon fill="#326b90" stroke="#326b90" stroke-width="1.5" points="123.94,-54.24 117.38,-52.16 121.21,-57.88 123.94,-54.24"/>
+</g>
+<!-- consolidation&#45;&gt;artifacts -->
+<g id="research-edge&#45;consolidation&#45;artifacts" class="edge">
+<title>consolidation&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.5" d="M658.46,-98.48C669.02,-85.78 678.67,-74.16 678.67,-74.16 678.67,-74.16 706.21,-64.42 736.5,-53.71"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.5" points="737.16,-55.89 742.53,-51.58 735.65,-51.6 737.16,-55.89"/>
+</g>
+<!-- consolidation&#45;&gt;code -->
+<g id="research-edge&#45;consolidation&#45;code" class="edge">
+<title>consolidation&#45;&gt;code</title>
+<path fill="none" stroke="#287d71" stroke-width="1.5" d="M588.91,-98.48C572.07,-85.78 556.67,-74.16 556.67,-74.16 556.67,-74.16 535.53,-64.75 511.96,-54.26"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.5" points="513.19,-52.31 506.32,-51.75 511.33,-56.47 513.19,-52.31"/>
+</g>
+<!-- consolidation&#45;&gt;contextBuilder -->
+<g id="research-edge&#45;consolidation&#45;contextBuilder" class="edge">
+<title>consolidation&#45;&gt;contextBuilder</title>
+<path fill="none" stroke="#208b78" stroke-width="1.5" d="M574.66,-98.48C552.2,-85.78 531.67,-74.16 531.67,-74.16 531.67,-74.16 394.07,-55.29 357.49,-49.58"/>
+<polygon fill="#208b78" stroke="#208b78" stroke-width="1.5" points="357.94,-47.35 351.14,-48.49 357.16,-51.84 357.94,-47.35"/>
+</g>
+<!-- consolidation&#45;&gt;reviews -->
+<g id="research-edge&#45;consolidation&#45;reviews" class="edge">
+<title>consolidation&#45;&gt;reviews</title>
+<path fill="none" stroke="#4a7793" stroke-width="1.5" d="M631.67,-98.48C631.67,-86.11 631.67,-71.97 631.67,-59.5"/>
+<polygon fill="#4a7793" stroke="#4a7793" stroke-width="1.5" points="633.94,-59.52 631.67,-53.02 629.39,-59.52 633.94,-59.52"/>
+</g>
+<!-- consolidation&#45;&gt;scope -->
+<g id="research-edge&#45;consolidation&#45;scope" class="edge">
+<title>consolidation&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.5" d="M715.4,-116.01C834.92,-94.98 1044.33,-58.14 1089.06,-49.76"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.5" points="1089.26,-52.04 1095.2,-48.55 1088.38,-47.57 1089.26,-52.04"/>
+</g>
+<!-- consolidation&#45;&gt;state -->
+<g id="research-edge&#45;consolidation&#45;state" class="edge">
+<title>consolidation&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.5" d="M674.42,-98.48C691.27,-85.78 706.67,-74.16 706.67,-74.16 706.67,-74.16 866.7,-54.96 906.01,-49.44"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.5" points="906.12,-51.72 912.18,-48.46 905.41,-47.23 906.12,-51.72"/>
+</g>
+<!-- consolidation&#45;&gt;workflows -->
+<g id="research-edge&#45;consolidation&#45;workflows" class="edge">
+<title>consolidation&#45;&gt;workflows</title>
+<path fill="none" stroke="#326b90" stroke-width="1.5" d="M548.18,-110.55C480.98,-94.3 397.67,-74.16 397.67,-74.16 397.67,-74.16 216.86,-54.79 174.5,-49.36"/>
+<polygon fill="#326b90" stroke="#326b90" stroke-width="1.5" points="174.91,-47.12 168.15,-48.44 174.26,-51.63 174.91,-47.12"/>
+</g>
+<!-- reflections&#45;&gt;paper -->
+<g id="research-edge&#45;reflections&#45;paper" class="edge">
+<title>reflections&#45;&gt;paper</title>
+<path fill="none" stroke="#327c87" stroke-width="1.5" d="M839.62,-224.83C864.26,-206.83 897.06,-182.86 923.03,-163.89"/>
+<polygon fill="#327c87" stroke="#327c87" stroke-width="1.5" points="924.07,-165.95 927.98,-160.27 921.39,-162.27 924.07,-165.95"/>
+</g>
+<!-- reflections&#45;&gt;artifacts -->
+<g id="research-edge&#45;reflections&#45;artifacts" class="edge">
+<title>reflections&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.5" d="M804.53,-224.98C805.96,-181.54 808.67,-99.16 808.67,-99.16 808.67,-99.16 810.34,-78.75 811.92,-59.51"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.5" points="814.18,-59.75 812.45,-53.08 809.65,-59.38 814.18,-59.75"/>
+</g>
+<!-- reflections&#45;&gt;contextBuilder -->
+<g id="research-edge&#45;reflections&#45;contextBuilder" class="edge">
+<title>reflections&#45;&gt;contextBuilder</title>
+<path fill="none" stroke="#208b78" stroke-width="1.5" d="M723.74,-224.83C646.04,-199.29 539.67,-164.32 539.67,-164.32 539.67,-164.32 397.67,-74.16 397.67,-74.16 397.67,-74.16 370.93,-64.42 341.53,-53.71"/>
+<polygon fill="#208b78" stroke="#208b78" stroke-width="1.5" points="342.62,-51.69 335.73,-51.6 341.06,-55.96 342.62,-51.69"/>
+</g>
+<!-- reflections&#45;&gt;reviews -->
+<g id="research-edge&#45;reflections&#45;reviews" class="edge">
+<title>reflections&#45;&gt;reviews</title>
+<path fill="none" stroke="#4a7793" stroke-width="1.5" d="M789.91,-224.98C767.04,-181.54 723.67,-99.16 723.67,-99.16 723.67,-99.16 694.88,-76.29 669.51,-56.14"/>
+<polygon fill="#4a7793" stroke="#4a7793" stroke-width="1.5" points="671.1,-54.5 664.59,-52.23 668.27,-58.06 671.1,-54.5"/>
+</g>
+<!-- reflections&#45;&gt;scope -->
+<g id="research-edge&#45;reflections&#45;scope" class="edge">
+<title>reflections&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.5" d="M890.25,-224.83C974.43,-199.29 1089.67,-164.32 1089.67,-164.32 1089.67,-164.32 1132.7,-98.95 1159.58,-58.11"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.5" points="1161.48,-59.37 1163.15,-52.69 1157.67,-56.87 1161.48,-59.37"/>
+</g>
+<!-- reflections&#45;&gt;state -->
+<g id="research-edge&#45;reflections&#45;state" class="edge">
+<title>reflections&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.5" d="M810.2,-224.98C821.06,-181.54 841.67,-99.16 841.67,-99.16 841.67,-99.16 893.22,-75.01 937.05,-54.48"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.5" points="937.87,-56.6 942.8,-51.78 935.94,-52.48 937.87,-56.6"/>
+</g>
+<!-- reflections&#45;&gt;workflows -->
+<g id="research-edge&#45;reflections&#45;workflows" class="edge">
+<title>reflections&#45;&gt;workflows</title>
+<path fill="none" stroke="#326b90" stroke-width="1.5" d="M708.92,-226.62C706.21,-225.92 704.67,-225.52 704.67,-225.52 704.67,-225.52 434.67,-164.32 434.67,-164.32 434.67,-164.32 256.74,-94.44 153.88,-54.05"/>
+<polygon fill="#326b90" stroke="#326b90" stroke-width="1.5" points="155,-52.04 148.12,-51.78 153.33,-56.28 155,-52.04"/>
+</g>
+<!-- paper&#45;&gt;artifacts -->
+<g id="research-edge&#45;paper&#45;artifacts" class="edge">
+<title>paper&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.5" d="M927.95,-104.6C906.51,-89.74 879.59,-71.08 857.38,-55.68"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.5" points="858.85,-53.93 852.21,-52.1 856.26,-57.67 858.85,-53.93"/>
+</g>
+<!-- paper&#45;&gt;scope -->
+<g id="research-edge&#45;paper&#45;scope" class="edge">
+<title>paper&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.5" d="M1019.64,-104.46C1050.85,-89.27 1090.14,-70.15 1122.09,-54.59"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.5" points="1122.74,-56.81 1127.59,-51.92 1120.75,-52.72 1122.74,-56.81"/>
+</g>
+<!-- paper&#45;&gt;state -->
+<g id="research-edge&#45;paper&#45;state" class="edge">
+<title>paper&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.5" d="M973.66,-104.6C977.87,-90.83 983.07,-73.81 987.56,-59.13"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.5" points="989.72,-59.86 989.44,-52.98 985.37,-58.53 989.72,-59.86"/>
+</g>
+<!-- research -->
+<g id="research-node&#45;research" class="node">
+<title>research</title>
+<path fill="#f6f2fc" stroke="#5855a8" stroke-width="1.6" d="M1100.98,-393.04C1100.98,-393.04 988.35,-393.04 988.35,-393.04 982.35,-393.04 976.35,-387.04 976.35,-381.04 976.35,-381.04 976.35,-351.88 976.35,-351.88 976.35,-345.88 982.35,-339.88 988.35,-339.88 988.35,-339.88 1100.98,-339.88 1100.98,-339.88 1106.98,-339.88 1112.98,-345.88 1112.98,-351.88 1112.98,-351.88 1112.98,-381.04 1112.98,-381.04 1112.98,-387.04 1106.98,-393.04 1100.98,-393.04"/>
+<text xml:space="preserve" text-anchor="start" x="997.39" y="-365.06" font-family="Arial" font-weight="bold" font-size="21.00">Research</text>
+<text xml:space="preserve" text-anchor="start" x="989.31" y="-352.16" font-family="Arial" font-size="12.00">Outer research cycle</text>
+</g>
+<!-- consolidation -->
+<g id="research-node&#45;consolidation" class="node">
+<title>consolidation</title>
+<path fill="#f6f2fc" stroke="#287d71" stroke-width="1.6" d="M702.62,-164.32C702.62,-164.32 560.71,-164.32 560.71,-164.32 554.71,-164.32 548.71,-158.32 548.71,-152.32 548.71,-152.32 548.71,-111.16 548.71,-111.16 548.71,-105.16 554.71,-99.16 560.71,-99.16 560.71,-99.16 702.62,-99.16 702.62,-99.16 708.62,-99.16 714.62,-105.16 714.62,-111.16 714.62,-111.16 714.62,-152.32 714.62,-152.32 714.62,-158.32 708.62,-164.32 702.62,-164.32"/>
+<text xml:space="preserve" text-anchor="start" x="561.67" y="-136.34" font-family="Arial" font-weight="bold" font-size="21.00">Consolidation</text>
+<text xml:space="preserve" text-anchor="start" x="566.29" y="-123.44" font-family="Arial" font-size="12.00">Reviewed code changes</text>
+<text xml:space="preserve" text-anchor="start" x="591.64" y="-111.44" font-family="Arial" font-size="12.00">Requires Code</text>
+</g>
+<!-- reflections -->
+<g id="research-node&#45;reflections" class="node">
+<title>reflections</title>
+<path fill="#f6f2fc" stroke="#7b529b" stroke-width="1.6" d="M885.83,-278.68C885.83,-278.68 721.51,-278.68 721.51,-278.68 715.51,-278.68 709.51,-272.68 709.51,-266.68 709.51,-266.68 709.51,-237.52 709.51,-237.52 709.51,-231.52 715.51,-225.52 721.51,-225.52 721.51,-225.52 885.83,-225.52 885.83,-225.52 891.83,-225.52 897.83,-231.52 897.83,-237.52 897.83,-237.52 897.83,-266.68 897.83,-266.68 897.83,-272.68 891.83,-278.68 885.83,-278.68"/>
+<text xml:space="preserve" text-anchor="start" x="747.07" y="-250.7" font-family="Arial" font-weight="bold" font-size="21.00">Reflections</text>
+<text xml:space="preserve" text-anchor="start" x="722.47" y="-237.8" font-family="Arial" font-size="12.00">Five lenses + synthesis review</text>
+</g>
+<!-- paper -->
+<g id="research-node&#45;paper" class="node">
+<title>paper</title>
+<path fill="#f6f2fc" stroke="#327c87" stroke-width="1.6" d="M1068.84,-158.32C1068.84,-158.32 862.5,-158.32 862.5,-158.32 856.5,-158.32 850.5,-152.32 850.5,-146.32 850.5,-146.32 850.5,-117.16 850.5,-117.16 850.5,-111.16 856.5,-105.16 862.5,-105.16 862.5,-105.16 1068.84,-105.16 1068.84,-105.16 1074.84,-105.16 1080.84,-111.16 1080.84,-117.16 1080.84,-117.16 1080.84,-146.32 1080.84,-146.32 1080.84,-152.32 1074.84,-158.32 1068.84,-158.32"/>
+<text xml:space="preserve" text-anchor="start" x="936.48" y="-130.34" font-family="Arial" font-weight="bold" font-size="21.00">Paper</text>
+<text xml:space="preserve" text-anchor="start" x="863.46" y="-117.44" font-family="Arial" font-size="12.00">Problem, literature, Methods + Results</text>
+</g>
+<!-- artifacts -->
+<g id="research-node&#45;artifacts" class="node">
+<title>artifacts</title>
+<path fill="#f6faff" stroke="#1c8480" stroke-width="1.6" d="M885.33,-50.16C885.33,-50.16 744,-50.16 744,-50.16 738,-50.16 732,-44.16 732,-38.16 732,-38.16 732,-12 732,-12 732,-6 738,0 744,0 744,0 885.33,0 885.33,0 891.33,0 897.33,-6 897.33,-12 897.33,-12 897.33,-38.16 897.33,-38.16 897.33,-44.16 891.33,-50.16 885.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="778.16" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Artifacts</text>
+<text xml:space="preserve" text-anchor="start" x="744.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- code -->
+<g id="research-node&#45;code" class="node">
+<title>code</title>
+<path fill="#f6faff" stroke="#287d71" stroke-width="1.6" d="M519.33,-50.16C519.33,-50.16 378,-50.16 378,-50.16 372,-50.16 366,-44.16 366,-38.16 366,-38.16 366,-12 366,-12 366,-6 372,0 378,0 378,0 519.33,0 519.33,0 525.33,0 531.33,-6 531.33,-12 531.33,-12 531.33,-38.16 531.33,-38.16 531.33,-44.16 525.33,-50.16 519.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="426.17" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Code</text>
+<text xml:space="preserve" text-anchor="start" x="378.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- contextBuilder -->
+<g id="research-node&#45;contextBuilder" class="node">
+<title>contextBuilder</title>
+<path fill="#f6faff" stroke="#208b78" stroke-width="1.6" d="M336.33,-50.16C336.33,-50.16 195,-50.16 195,-50.16 189,-50.16 183,-44.16 183,-38.16 183,-38.16 183,-12 183,-12 183,-6 189,0 195,0 195,0 336.33,0 336.33,0 342.33,0 348.33,-6 348.33,-12 348.33,-12 348.33,-38.16 348.33,-38.16 348.33,-44.16 342.33,-50.16 336.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="198.66" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Context Builder</text>
+<text xml:space="preserve" text-anchor="start" x="195.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- knowledge -->
+<g id="research-node&#45;knowledge" class="node">
+<title>knowledge</title>
+<path fill="#f6faff" stroke="#7b529b" stroke-width="1.6" d="M1434.33,-50.16C1434.33,-50.16 1293,-50.16 1293,-50.16 1287,-50.16 1281,-44.16 1281,-38.16 1281,-38.16 1281,-12 1281,-12 1281,-6 1287,0 1293,0 1293,0 1434.33,0 1434.33,0 1440.33,0 1446.33,-6 1446.33,-12 1446.33,-12 1446.33,-38.16 1446.33,-38.16 1446.33,-44.16 1440.33,-50.16 1434.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="1315.66" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Knowledge</text>
+<text xml:space="preserve" text-anchor="start" x="1293.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- reviews -->
+<g id="research-node&#45;reviews" class="node">
+<title>reviews</title>
+<path fill="#f6faff" stroke="#4a7793" stroke-width="1.6" d="M702.33,-50.16C702.33,-50.16 561,-50.16 561,-50.16 555,-50.16 549,-44.16 549,-38.16 549,-38.16 549,-12 549,-12 549,-6 555,0 561,0 561,0 702.33,0 702.33,0 708.33,0 714.33,-6 714.33,-12 714.33,-12 714.33,-38.16 714.33,-38.16 714.33,-44.16 708.33,-50.16 702.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="595.64" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Reviews</text>
+<text xml:space="preserve" text-anchor="start" x="561.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- scope -->
+<g id="research-node&#45;scope" class="node">
+<title>scope</title>
+<path fill="#f6faff" stroke="#a76013" stroke-width="1.6" d="M1251.33,-50.16C1251.33,-50.16 1110,-50.16 1110,-50.16 1104,-50.16 1098,-44.16 1098,-38.16 1098,-38.16 1098,-12 1098,-12 1098,-6 1104,0 1110,0 1110,0 1251.33,0 1251.33,0 1257.33,0 1263.33,-6 1263.33,-12 1263.33,-12 1263.33,-38.16 1263.33,-38.16 1263.33,-44.16 1257.33,-50.16 1251.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="1153.66" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Scope</text>
+<text xml:space="preserve" text-anchor="start" x="1110.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- state -->
+<g id="research-node&#45;state" class="node">
+<title>state</title>
+<path fill="#f6faff" stroke="#2365b5" stroke-width="1.6" d="M1068.33,-50.16C1068.33,-50.16 927,-50.16 927,-50.16 921,-50.16 915,-44.16 915,-38.16 915,-38.16 915,-12 915,-12 915,-6 921,0 927,0 927,0 1068.33,0 1068.33,0 1074.33,0 1080.33,-6 1080.33,-12 1080.33,-12 1080.33,-38.16 1080.33,-38.16 1080.33,-44.16 1074.33,-50.16 1068.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="975.66" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">State</text>
+<text xml:space="preserve" text-anchor="start" x="927.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+<!-- workflows -->
+<g id="research-node&#45;workflows" class="node">
+<title>workflows</title>
+<path fill="#f6faff" stroke="#326b90" stroke-width="1.6" d="M153.33,-50.16C153.33,-50.16 12,-50.16 12,-50.16 6,-50.16 0,-44.16 0,-38.16 0,-38.16 0,-12 0,-12 0,-6 6,0 12,0 12,0 153.33,0 153.33,0 159.33,0 165.33,-6 165.33,-12 165.33,-12 165.33,-38.16 165.33,-38.16 165.33,-44.16 159.33,-50.16 153.33,-50.16"/>
+<text xml:space="preserve" text-anchor="start" x="37.17" y="-24.88" font-family="Arial" font-weight="bold" font-size="18.00">Workflows</text>
+<text xml:space="preserve" text-anchor="start" x="12.96" y="-12.28" font-family="Arial" font-size="12.00">Shared provider reference</text>
+</g>
+</g>
+</svg><g transform="translate(0, 900)"><rect x="60" y="1504" width="2680" height="480" rx="24" fill="white" stroke="#C1DFD8" stroke-width="2"/><text x="95" y="1562" class="section">Agent Sessions, Code + HTTP adapters</text><text x="95" y="1605" class="small">Reference blocks name the same providers above. Code requests commits through Runner; Agent Sessions uses domain program hooks.</text><svg x="100" y="1640" width="2600" height="325" viewBox="0.00 0.00 1042.00 197.00" preserveAspectRatio="xMidYMid meet">
+<g id="session-graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 184.4)">
+<title>G</title>
+<!-- sessionsApi&#45;&gt;sessions -->
+<g id="session-edge&#45;sessionsApi&#45;sessions" class="edge">
+<title>sessionsApi&#45;&gt;sessions</title>
+<path fill="none" stroke="#287d71" stroke-width="1.6" d="M159.71,-150.15C182.25,-161.5 202,-171.44 202,-171.44 202,-171.44 528,-171.44 528,-171.44 528,-171.44 538.47,-166.7 553.2,-160.03"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.6" points="554.21,-162.27 559.58,-157.15 552.19,-157.8 554.21,-162.27"/>
+</g>
+<!-- sessionsApi&#45;&gt;api -->
+<g id="session-edge&#45;sessionsApi&#45;api" class="edge">
+<title>sessionsApi&#45;&gt;api</title>
+<path fill="none" stroke="#4a70bc" stroke-width="1.6" d="M97.07,-85.02C97.65,-76.19 98.27,-66.57 98.86,-57.67"/>
+<polygon fill="#4a70bc" stroke="#4a70bc" stroke-width="1.6" points="101.29,-57.93 99.31,-50.79 96.41,-57.61 101.29,-57.93"/>
+</g>
+<!-- codeApi&#45;&gt;code -->
+<g id="session-edge&#45;codeApi&#45;code" class="edge">
+<title>codeApi&#45;&gt;code</title>
+<path fill="none" stroke="#287d71" stroke-width="1.6" d="M339.12,-117.58C339.52,-117.58 339.94,-117.58 340.35,-117.58"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.6" points="340.34,-120.03 347.34,-117.58 340.34,-115.13 340.34,-120.03"/>
+</g>
+<!-- codeApi&#45;&gt;api -->
+<g id="session-edge&#45;codeApi&#45;api" class="edge">
+<title>codeApi&#45;&gt;api</title>
+<path fill="none" stroke="#4a70bc" stroke-width="1.6" d="M211.84,-85.02C192.63,-74.59 171.4,-63.07 152.7,-52.92"/>
+<polygon fill="#4a70bc" stroke="#4a70bc" stroke-width="1.6" points="154.03,-50.85 146.71,-49.67 151.7,-55.16 154.03,-50.85"/>
+</g>
+<!-- code&#45;&gt;sessions -->
+<g id="session-edge&#45;code&#45;sessions" class="edge">
+<title>code&#45;&gt;sessions</title>
+<path fill="none" stroke="#287d71" stroke-width="1.6" d="M528.39,-117.58C528.81,-117.58 529.23,-117.58 529.66,-117.58"/>
+<polygon fill="#287d71" stroke="#287d71" stroke-width="1.6" points="529.56,-120.03 536.56,-117.58 529.56,-115.13 529.56,-120.03"/>
+</g>
+<!-- code&#45;&gt;state -->
+<g id="session-edge&#45;code&#45;state" class="edge">
+<title>code&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M439,-79.01C439,-71.87 439,-64.45 439,-57.47"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="441.45,-57.73 439,-50.73 436.55,-57.73 441.45,-57.73"/>
+</g>
+<!-- code&#45;&gt;scope -->
+<g id="session-edge&#45;code&#45;scope" class="edge">
+<title>code&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M507,-79.01C522.87,-70.24 539.49,-61.06 554.44,-52.8"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="555.5,-55.01 560.44,-49.48 553.13,-50.72 555.5,-55.01"/>
+</g>
+<!-- code&#45;&gt;artifacts -->
+<g id="session-edge&#45;code&#45;artifacts" class="edge">
+<title>code&#45;&gt;artifacts</title>
+<path fill="none" stroke="#1c8480" stroke-width="1.6" d="M371.01,-79.01C355.14,-70.24 338.52,-61.06 323.56,-52.8"/>
+<polygon fill="#1c8480" stroke="#1c8480" stroke-width="1.6" points="324.88,-50.72 317.56,-49.48 322.51,-55.01 324.88,-50.72"/>
+</g>
+<!-- sessions&#45;&gt;state -->
+<g id="session-edge&#45;sessions&#45;state" class="edge">
+<title>sessions&#45;&gt;state</title>
+<path fill="none" stroke="#2365b5" stroke-width="1.6" d="M561.8,-79.01C541.47,-70.04 520.14,-60.64 501.07,-52.23"/>
+<polygon fill="#2365b5" stroke="#2365b5" stroke-width="1.6" points="502.09,-50 494.7,-49.42 500.12,-54.49 502.09,-50"/>
+</g>
+<!-- sessions&#45;&gt;scope -->
+<g id="session-edge&#45;sessions&#45;scope" class="edge">
+<title>sessions&#45;&gt;scope</title>
+<path fill="none" stroke="#a76013" stroke-width="1.6" d="M629.8,-79.01C626.38,-71.54 622.82,-63.77 619.5,-56.53"/>
+<polygon fill="#a76013" stroke="#a76013" stroke-width="1.6" points="621.89,-55.86 616.75,-50.51 617.44,-57.9 621.89,-55.86"/>
+</g>
+<!-- sessions&#45;&gt;workflows -->
+<g id="session-edge&#45;sessions&#45;workflows" class="edge">
+<title>sessions&#45;&gt;workflows</title>
+<path fill="none" stroke="#326b90" stroke-width="1.6" d="M697.8,-79.01C709.21,-70.57 721.14,-61.74 731.99,-53.72"/>
+<polygon fill="#326b90" stroke="#326b90" stroke-width="1.6" points="733.18,-55.88 737.35,-49.75 730.27,-51.94 733.18,-55.88"/>
+</g>
+<!-- sessions&#45;&gt;domainEvents -->
+<g id="session-edge&#45;sessions&#45;domainEvents" class="edge">
+<title>sessions&#45;&gt;domainEvents</title>
+<path fill="none" stroke="#bb7347" stroke-width="1.6" d="M754.95,-82.56C787.92,-72.17 823.65,-60.9 854.72,-51.11"/>
+<polygon fill="#bb7347" stroke="#bb7347" stroke-width="1.6" points="855.1,-53.56 861.04,-49.12 853.63,-48.88 855.1,-53.56"/>
+</g>
+<!-- sessionsApi -->
+<g id="session-node&#45;sessionsApi" class="node">
+<title>sessionsApi</title>
+<path fill="#f4f3ff" stroke="#7277bd" stroke-width="1.6" d="M178.01,-149.44C178.01,-149.44 12,-149.44 12,-149.44 6,-149.44 0,-143.44 0,-137.44 0,-137.44 0,-97.72 0,-97.72 0,-91.72 6,-85.72 12,-85.72 12,-85.72 178.01,-85.72 178.01,-85.72 184.01,-85.72 190.01,-91.72 190.01,-97.72 190.01,-97.72 190.01,-137.44 190.01,-137.44 190.01,-143.44 184.01,-149.44 178.01,-149.44"/>
+<text xml:space="preserve" text-anchor="start" x="31.39" y="-122.18" font-family="Arial" font-weight="bold" font-size="21.00">sessions&#45;api</text>
+<text xml:space="preserve" text-anchor="start" x="39.64" y="-109.28" font-family="Arial" font-size="12.00">HTTP adapter plugin</text>
+<text xml:space="preserve" text-anchor="start" x="12.96" y="-97.28" font-family="Arial" font-size="12.00">Requires: Agent Sessions, API</text>
+</g>
+<!-- codeApi -->
+<g id="session-node&#45;codeApi" class="node">
+<title>codeApi</title>
+<path fill="#f4f3ff" stroke="#7277bd" stroke-width="1.6" d="M326.33,-149.44C326.33,-149.44 213.68,-149.44 213.68,-149.44 207.68,-149.44 201.68,-143.44 201.68,-137.44 201.68,-137.44 201.68,-97.72 201.68,-97.72 201.68,-91.72 207.68,-85.72 213.68,-85.72 213.68,-85.72 326.33,-85.72 326.33,-85.72 332.33,-85.72 338.33,-91.72 338.33,-97.72 338.33,-97.72 338.33,-137.44 338.33,-137.44 338.33,-143.44 332.33,-149.44 326.33,-149.44"/>
+<text xml:space="preserve" text-anchor="start" x="226.83" y="-122.18" font-family="Arial" font-weight="bold" font-size="21.00">code&#45;api</text>
+<text xml:space="preserve" text-anchor="start" x="214.64" y="-109.28" font-family="Arial" font-size="12.00">HTTP adapter plugin</text>
+<text xml:space="preserve" text-anchor="start" x="215.31" y="-97.28" font-family="Arial" font-size="12.00">Requires: Code, API</text>
+</g>
+<!-- code -->
+<g id="session-node&#45;code" class="node">
+<title>code</title>
+<path fill="#edfaf6" stroke="#287d71" stroke-width="1.6" d="M515.83,-155.44C515.83,-155.44 362.18,-155.44 362.18,-155.44 356.18,-155.44 350.18,-149.44 350.18,-143.44 350.18,-143.44 350.18,-91.72 350.18,-91.72 350.18,-85.72 356.18,-79.72 362.18,-79.72 362.18,-79.72 515.83,-79.72 515.83,-79.72 521.83,-79.72 527.83,-85.72 527.83,-91.72 527.83,-91.72 527.83,-143.44 527.83,-143.44 527.83,-149.44 521.83,-155.44 515.83,-155.44"/>
+<text xml:space="preserve" text-anchor="start" x="412.75" y="-128.18" font-family="Arial" font-weight="bold" font-size="21.00">Code</text>
+<text xml:space="preserve" text-anchor="start" x="363.14" y="-115.28" font-family="Arial" font-size="12.00">Commits + sealed proposals</text>
+<text xml:space="preserve" text-anchor="start" x="375.63" y="-103.28" font-family="Arial" font-size="12.00">Requires: State, Scope,</text>
+<text xml:space="preserve" text-anchor="start" x="372.31" y="-91.28" font-family="Arial" font-size="12.00">Agent Sessions, Artifacts</text>
+</g>
+<!-- sessions -->
+<g id="session-node&#45;sessions" class="node">
+<title>sessions</title>
+<path fill="#edfaf6" stroke="#287d71" stroke-width="1.6" d="M742.33,-155.44C742.33,-155.44 551.67,-155.44 551.67,-155.44 545.67,-155.44 539.67,-149.44 539.67,-143.44 539.67,-143.44 539.67,-91.72 539.67,-91.72 539.67,-85.72 545.67,-79.72 551.67,-79.72 551.67,-79.72 742.33,-79.72 742.33,-79.72 748.33,-79.72 754.33,-85.72 754.33,-91.72 754.33,-91.72 754.33,-143.44 754.33,-143.44 754.33,-149.44 748.33,-155.44 742.33,-155.44"/>
+<text xml:space="preserve" text-anchor="start" x="568.23" y="-128.18" font-family="Arial" font-weight="bold" font-size="21.00">Agent Sessions</text>
+<text xml:space="preserve" text-anchor="start" x="555.78" y="-115.28" font-family="Arial" font-size="12.00">Agent identity + active assignment</text>
+<text xml:space="preserve" text-anchor="start" x="552.63" y="-103.28" font-family="Arial" font-size="12.00">Requires: State, Scope, Workflows,</text>
+<text xml:space="preserve" text-anchor="start" x="606.32" y="-91.28" font-family="Arial" font-size="12.00">Domain Events</text>
+</g>
+<!-- api -->
+<g id="session-node&#45;api" class="node">
+<title>api</title>
+<path fill="#f6faff" stroke="#4a70bc" stroke-width="1.6" d="M165.86,-47.72C165.86,-47.72 36.15,-47.72 36.15,-47.72 30.15,-47.72 24.15,-41.72 24.15,-35.72 24.15,-35.72 24.15,-12 24.15,-12 24.15,-6 30.15,0 36.15,0 36.15,0 165.86,0 165.86,0 171.86,0 177.86,-6 177.86,-12 177.86,-12 177.86,-35.72 177.86,-35.72 177.86,-41.72 171.86,-47.72 165.86,-47.72"/>
+<text xml:space="preserve" text-anchor="start" x="86" y="-23.16" font-family="Arial" font-weight="bold" font-size="18.00">API</text>
+<text xml:space="preserve" text-anchor="start" x="37.11" y="-11.46" font-family="Arial" font-size="11.00">Shared provider reference</text>
+</g>
+<!-- state -->
+<g id="session-node&#45;state" class="node">
+<title>state</title>
+<path fill="#f6faff" stroke="#2365b5" stroke-width="1.6" d="M503.86,-47.72C503.86,-47.72 374.15,-47.72 374.15,-47.72 368.15,-47.72 362.15,-41.72 362.15,-35.72 362.15,-35.72 362.15,-12 362.15,-12 362.15,-6 368.15,0 374.15,0 374.15,0 503.86,0 503.86,0 509.86,0 515.86,-6 515.86,-12 515.86,-12 515.86,-35.72 515.86,-35.72 515.86,-41.72 509.86,-47.72 503.86,-47.72"/>
+<text xml:space="preserve" text-anchor="start" x="417" y="-23.16" font-family="Arial" font-weight="bold" font-size="18.00">State</text>
+<text xml:space="preserve" text-anchor="start" x="375.11" y="-11.46" font-family="Arial" font-size="11.00">Shared provider reference</text>
+</g>
+<!-- scope -->
+<g id="session-node&#45;scope" class="node">
+<title>scope</title>
+<path fill="#fff9ed" stroke="#a76013" stroke-width="1.6" d="M669.86,-47.72C669.86,-47.72 540.15,-47.72 540.15,-47.72 534.15,-47.72 528.15,-41.72 528.15,-35.72 528.15,-35.72 528.15,-12 528.15,-12 528.15,-6 534.15,0 540.15,0 540.15,0 669.86,0 669.86,0 675.86,0 681.86,-6 681.86,-12 681.86,-12 681.86,-35.72 681.86,-35.72 681.86,-41.72 675.86,-47.72 669.86,-47.72"/>
+<text xml:space="preserve" text-anchor="start" x="577.99" y="-23.16" font-family="Arial" font-weight="bold" font-size="18.00">Scope</text>
+<text xml:space="preserve" text-anchor="start" x="541.11" y="-11.46" font-family="Arial" font-size="11.00">Shared provider reference</text>
+</g>
+<!-- artifacts -->
+<g id="session-node&#45;artifacts" class="node">
+<title>artifacts</title>
+<path fill="#f6faff" stroke="#1c8480" stroke-width="1.6" d="M337.86,-47.72C337.86,-47.72 208.15,-47.72 208.15,-47.72 202.15,-47.72 196.15,-41.72 196.15,-35.72 196.15,-35.72 196.15,-12 196.15,-12 196.15,-6 202.15,0 208.15,0 208.15,0 337.86,0 337.86,0 343.86,0 349.86,-6 349.86,-12 349.86,-12 349.86,-35.72 349.86,-35.72 349.86,-41.72 343.86,-47.72 337.86,-47.72"/>
+<text xml:space="preserve" text-anchor="start" x="236.49" y="-23.16" font-family="Arial" font-weight="bold" font-size="18.00">Artifacts</text>
+<text xml:space="preserve" text-anchor="start" x="209.11" y="-11.46" font-family="Arial" font-size="11.00">Shared provider reference</text>
+</g>
+<!-- workflows -->
+<g id="session-node&#45;workflows" class="node">
+<title>workflows</title>
+<path fill="#f6faff" stroke="#326b90" stroke-width="1.6" d="M835.86,-47.72C835.86,-47.72 706.15,-47.72 706.15,-47.72 700.15,-47.72 694.15,-41.72 694.15,-35.72 694.15,-35.72 694.15,-12 694.15,-12 694.15,-6 700.15,0 706.15,0 706.15,0 835.86,0 835.86,0 841.86,0 847.86,-6 847.86,-12 847.86,-12 847.86,-35.72 847.86,-35.72 847.86,-41.72 841.86,-47.72 835.86,-47.72"/>
+<text xml:space="preserve" text-anchor="start" x="725.5" y="-23.16" font-family="Arial" font-weight="bold" font-size="18.00">Workflows</text>
+<text xml:space="preserve" text-anchor="start" x="707.11" y="-11.46" font-family="Arial" font-size="11.00">Shared provider reference</text>
+</g>
+<!-- domainEvents -->
+<g id="session-node&#45;domainEvents" class="node">
+<title>domainEvents</title>
+<path fill="#f6faff" stroke="#bb7347" stroke-width="1.6" d="M1003.98,-47.72C1003.98,-47.72 872.03,-47.72 872.03,-47.72 866.03,-47.72 860.03,-41.72 860.03,-35.72 860.03,-35.72 860.03,-12 860.03,-12 860.03,-6 866.03,0 872.03,0 872.03,0 1003.98,0 1003.98,0 1009.98,0 1015.98,-6 1015.98,-12 1015.98,-12 1015.98,-35.72 1015.98,-35.72 1015.98,-41.72 1009.98,-47.72 1003.98,-47.72"/>
+<text xml:space="preserve" text-anchor="start" x="872.99" y="-23.16" font-family="Arial" font-weight="bold" font-size="18.00">Domain Events</text>
+<text xml:space="preserve" text-anchor="start" x="874.11" y="-11.46" font-family="Arial" font-size="11.00">Shared provider reference</text>
+</g>
+</g>
+</svg><rect x="60" y="2014" width="2680" height="360" rx="24" fill="#FFFCF7" stroke="#D8BD9B" stroke-width="2"/><text x="95" y="2072" class="section">Independent machine plugin</text><text x="95" y="2115" class="small">Runner has its own Cordis context and local ledger. It does not inject any server provider.</text><svg x="120" y="2145" width="2560" height="215" viewBox="0.00 0.00 884.00 135.00" preserveAspectRatio="xMidYMid meet">
+<g id="machine-graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 121.88)">
+<title>G</title>
+<!-- runner&#45;&gt;api -->
+<g id="machine-http&#45;runner&#45;api" class="edge">
+<title>runner&#45;&gt;api</title>
+<path fill="none" stroke="#ad7041" stroke-width="2" stroke-dasharray="1,5" d="M298.15,-54.46C372.99,-54.46 463.91,-54.46 540.68,-54.46"/>
+<polygon fill="#ad7041" stroke="#ad7041" stroke-width="2" points="540.4,-57.09 547.9,-54.46 540.4,-51.84 540.4,-57.09"/>
+<text xml:space="preserve" text-anchor="middle" x="424.42" y="-76.96" font-family="Times,serif" font-size="15.00" fill="#72502f">HTTP requests</text>
+<text xml:space="preserve" text-anchor="middle" x="424.42" y="-58.96" font-family="Times,serif" font-size="15.00" fill="#72502f">Not a Cordis dependency</text>
+</g>
+<!-- runner -->
+<g id="machine-node&#45;runner" class="node">
+<title>runner</title>
+<path fill="#fff7eb" stroke="#ad7041" stroke-width="1.6" d="M285.4,-108.92C285.4,-108.92 12,-108.92 12,-108.92 6,-108.92 0,-102.92 0,-96.92 0,-96.92 0,-12 0,-12 0,-6 6,0 12,0 12,0 285.4,0 285.4,0 291.4,0 297.4,-6 297.4,-12 297.4,-12 297.4,-96.92 297.4,-96.92 297.4,-102.92 291.4,-108.92 285.4,-108.92"/>
+<text xml:space="preserve" text-anchor="start" x="106.7" y="-75.36" font-family="Arial" font-weight="bold" font-size="24.00">Runner</text>
+<text xml:space="preserve" text-anchor="start" x="18" y="-59.46" font-family="Arial" font-size="15.00">Local scheduling + process supervision</text>
+<text xml:space="preserve" text-anchor="start" x="59.91" y="-44.46" font-family="Arial" font-size="15.00">Private local SQLite ledger</text>
+<text xml:space="preserve" text-anchor="start" x="77" y="-15.46" font-family="Arial" font-size="15.00">Cordis requires: none</text>
+</g>
+<!-- api -->
+<g id="machine-node&#45;api" class="node">
+<title>api</title>
+<path fill="#f6faff" stroke="#4a70bc" stroke-width="1.6" d="M845.85,-92.42C845.85,-92.42 563.44,-92.42 563.44,-92.42 557.44,-92.42 551.44,-86.42 551.44,-80.42 551.44,-80.42 551.44,-28.5 551.44,-28.5 551.44,-22.5 557.44,-16.5 563.44,-16.5 563.44,-16.5 845.85,-16.5 845.85,-16.5 851.85,-16.5 857.85,-22.5 857.85,-28.5 857.85,-28.5 857.85,-80.42 857.85,-80.42 857.85,-86.42 851.85,-92.42 845.85,-92.42"/>
+<text xml:space="preserve" text-anchor="start" x="649" y="-60.66" font-family="Arial" font-weight="bold" font-size="22.00">Server API</text>
+<text xml:space="preserve" text-anchor="start" x="623.33" y="-45.86" font-family="Arial" font-size="14.00">Shared provider reference</text>
+<text xml:space="preserve" text-anchor="start" x="569.44" y="-31.86" font-family="Arial" font-size="14.00">Session controls + Code command controls</text>
+</g>
+</g>
+</svg><rect x="60" y="2404" width="2680" height="1415" rx="24" fill="white" stroke="#CDDCE7" stroke-width="2"/><text x="95" y="2462" class="section">Tool and UI adapter plugins</text><text x="95" y="2505" class="small">Each row is one plugin; Requires lists every direct dependency. Both HTTP adapters are drawn in the panel above.</text><rect x="95" y="2540" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="2577" class="body" font-weight="700">artifact-tools</text><text x="117" y="2617" class="small">Requires: Artifacts + Tools</text><rect x="985" y="2540" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="2577" class="body" font-weight="700">claims-tools</text><text x="1007" y="2617" class="small">Requires: Claims + Tools</text><rect x="1875" y="2540" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="2577" class="body" font-weight="700">code-tools</text><text x="1897" y="2617" class="small">Requires: Code + Tools</text><rect x="95" y="2665" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="2702" class="body" font-weight="700">consolidation-tools</text><text x="117" y="2742" class="small">Requires: Consolidation + Tools</text><rect x="985" y="2665" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="2702" class="body" font-weight="700">experiments-tools</text><text x="1007" y="2742" class="small">Requires: Experiments + Tools</text><rect x="1875" y="2665" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="2702" class="body" font-weight="700">feed-tools</text><text x="1897" y="2742" class="small">Requires: Feed + Tools</text><rect x="95" y="2790" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="2827" class="body" font-weight="700">knowledge-tools</text><text x="117" y="2867" class="small">Requires: Knowledge + Tools</text><rect x="985" y="2790" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="2827" class="body" font-weight="700">paper-tools</text><text x="1007" y="2867" class="small">Requires: Paper + Tools</text><rect x="1875" y="2790" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="2827" class="body" font-weight="700">reflection-tools</text><text x="1897" y="2867" class="small">Requires: Reflections + Tools</text><rect x="95" y="2915" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="2952" class="body" font-weight="700">research-tools</text><text x="117" y="2992" class="small">Requires: Research + Tools</text><rect x="985" y="2915" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="2952" class="body" font-weight="700">review-tools</text><text x="1007" y="2992" class="small">Requires: Tools + Reviews</text><rect x="1875" y="2915" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="2952" class="body" font-weight="700">scope-tools</text><text x="1897" y="2992" class="small">Requires: Scope + Tools</text><rect x="95" y="3040" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="3077" class="body" font-weight="700">task-tools</text><text x="117" y="3117" class="small">Requires: Tools + Tasks</text><rect x="985" y="3040" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="3077" class="body" font-weight="700">workflow-tools</text><text x="1007" y="3117" class="small">Requires: Workflows + Tools</text><rect x="1875" y="3040" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="3077" class="body" font-weight="700">artifact-ui</text><text x="1897" y="3117" class="small">Requires: Artifacts + UI</text><rect x="95" y="3165" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="3202" class="body" font-weight="700">claims-ui</text><text x="117" y="3242" class="small">Requires: Claims + UI</text><rect x="985" y="3165" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="3202" class="body" font-weight="700">code-ui</text><text x="1007" y="3242" class="small">Requires: Code + UI</text><rect x="1875" y="3165" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="3202" class="body" font-weight="700">consolidation-ui</text><text x="1897" y="3242" class="small">Requires: Consolidation + UI</text><rect x="95" y="3290" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="3327" class="body" font-weight="700">experiments-ui</text><text x="117" y="3367" class="small">Requires: Experiments + UI</text><rect x="985" y="3290" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="3327" class="body" font-weight="700">feed-ui</text><text x="1007" y="3367" class="small">Requires: Feed + UI</text><rect x="1875" y="3290" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="3327" class="body" font-weight="700">knowledge-ui</text><text x="1897" y="3367" class="small">Requires: Knowledge + UI</text><rect x="95" y="3415" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="3452" class="body" font-weight="700">mounts-ui · optional</text><text x="117" y="3492" class="small">Requires: External Mounts + UI</text><rect x="985" y="3415" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="3452" class="body" font-weight="700">paper-ui</text><text x="1007" y="3492" class="small">Requires: Paper + UI</text><rect x="1875" y="3415" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="3452" class="body" font-weight="700">reflection-ui</text><text x="1897" y="3492" class="small">Requires: Reflections + UI</text><rect x="95" y="3540" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="3577" class="body" font-weight="700">research-ui</text><text x="117" y="3617" class="small">Requires: Research + UI</text><rect x="985" y="3540" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="3577" class="body" font-weight="700">review-ui</text><text x="1007" y="3617" class="small">Requires: Reviews + UI</text><rect x="1875" y="3540" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1897" y="3577" class="body" font-weight="700">scope-ui</text><text x="1897" y="3617" class="small">Requires: Scope + UI</text><rect x="95" y="3665" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="117" y="3702" class="body" font-weight="700">sessions-ui</text><text x="117" y="3742" class="small">Requires: Agent Sessions + UI</text><rect x="985" y="3665" width="840" height="103" rx="12" fill="#F3F6FC"/><text x="1007" y="3702" class="body" font-weight="700">task-ui</text><text x="1007" y="3742" class="small">Requires: Tasks + UI</text><text x="80" y="3885" class="small"><tspan font-weight="700">Runtime:</tspan> Removing a required provider suspends its dependents. Optional providers can be absent without stopping the plugin.</text><text x="80" y="3927" class="small"><tspan font-weight="700">Composition:</tspan> server default: 53 entries; API-only: 38. Runner is a separate machine runtime; External Mounts remains optional.</text><text x="80" y="3966" font-size="19">25 providers (24 server + 1 machine) + 14 tool adapters + 15 UI adapters + 2 API adapters · 56 plugin entrypoints</text></g></svg>

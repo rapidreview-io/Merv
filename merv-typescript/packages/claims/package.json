@@ -1,0 +1,17 @@
+{
+  "name": "@merv/claims",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.10",
+    "zod": "^3.25.0",
+    "@merv/contracts": "0.1.0",
+    "@merv/api": "0.1.0",
+    "@merv/ui": "0.1.0"
+  }
+}

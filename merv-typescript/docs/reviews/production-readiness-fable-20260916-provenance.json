@@ -1,0 +1,24 @@
+{
+  "recordedUtc": "2026-09-16T07:25:07.881487+00:00",
+  "status": "blocked_before_process_creation",
+  "requestedModel": "claude-fable-5",
+  "observedModel": null,
+  "cli": "/Users/guraltoo/.local/bin/claude",
+  "cliVersion": "2.1.261 (Claude Code)",
+  "fallbackConfigured": false,
+  "tools": [],
+  "mcpServers": {},
+  "safeMode": true,
+  "restricted": true,
+  "permissionReviewResult": {
+    "rejected": true,
+    "reason": "This sends a large packet of private source code and internal test evidence to an external Claude service; although the user authorized a Fable readiness consultation, they did not specifically authorize this exact sensitive payload and file set for that destination."
+  },
+  "packetPath": "/private/tmp/merv-fable-readiness-20260916/packet.md",
+  "packetBytes": 299109,
+  "packetSha256": "f14f1a09aec0be1de28826b57cd2a98da13e4f9c1b14fb093b85acfd29edbb50",
+  "files": 38,
+  "sent": false,
+  "response": null,
+  "note": "No external Claude process was created. No Fable output or model usage exists. The local readiness assessment is by Codex, not Fable."
+}

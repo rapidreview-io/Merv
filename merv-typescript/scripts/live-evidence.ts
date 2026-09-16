@@ -16,6 +16,27 @@ export function verifyLiveEvidence(
   assert.equal(task.title, acceptance.title);
   assert.equal(task.goal, acceptance.goal);
   assert.deepEqual(task.checks, acceptance.checks);
+  assert.equal(task.evidenceVersion, 2);
+  assert.deepEqual(
+    task.acceptanceChecks,
+    acceptance.checks.map((text, index) => ({ number: index + 1, text })),
+  );
+  assert.ok(task.deliveryAssessmentId, 'The server must pin a generated assessment');
+  assert.equal(task.deliveryIds.at(-1), task.deliveryAssessmentId);
+  assert.ok(task.deliveryIds.length >= 2, 'Evidence precedes the generated assessment');
+  assert.deepEqual(
+    task.deliveryConfirmations.map((confirmation) => confirmation.checkNumber).sort(),
+    [1, 2],
+  );
+  for (const confirmation of task.deliveryConfirmations) {
+    assert.equal(confirmation.status, 'met');
+    assert.ok(confirmation.notes.trim());
+    assert.ok(confirmation.evidenceIds.length > 0);
+    assert.ok(
+      confirmation.evidenceIds.every((id) => task.deliveryIds.slice(0, -1).includes(id)),
+      'Each confirmation cites submitted evidence, not the generated assessment',
+    );
+  }
   assert.equal(task.workflow.state, 'done');
   assert.equal(task.workflow.revision, 2);
   assert.equal(review.id, task.reviewId);
@@ -23,6 +44,21 @@ export function verifyLiveEvidence(
   assert.equal(review.producerId, task.producerId);
   assert.ok(review.reviewerId && review.reviewerId !== task.producerId);
   assert.equal(review.verdict, 'pass');
+  assert.equal(review.formatVersion, 2);
+  assert.ok(review.synopsis && review.synopsis.length >= 40 && review.synopsis.length <= 420);
+  assert.deepEqual(
+    review.findings.map((finding) => finding.criterionNumber),
+    [1, 2],
+  );
+  for (const finding of review.findings) {
+    assert.equal(finding.status, 'met');
+    assert.ok(finding.notes.trim(), 'Each retained finding describes the reviewer verification');
+    assert.ok(finding.evidenceIds.length > 0);
+    assert.ok(
+      finding.evidenceIds.every((id) => task.deliveryIds.slice(0, -1).includes(id)),
+      'Reviewer findings cite the actual delivery evidence',
+    );
+  }
   assert.deepEqual(review.criteria, task.checks);
   assert.deepEqual([...review.artifactIds].sort(), [task.briefId, ...task.deliveryIds].sort());
   for (const phase of ['reviewer', 'observer'] as const) {
@@ -69,6 +105,26 @@ export function verifyLiveEvidence(
           )
         : calls.length;
     assert.ok(verdictIndex >= 0, 'Reviewer must submit the tested review');
+    if (phase === 'reviewer') {
+      const submitted = calls[verdictIndex].arguments;
+      assert.equal(submitted.verdict, review.verdict);
+      assert.equal(submitted.synopsis?.trim(), review.synopsis);
+      assert.ok(Array.isArray(submitted.findings), 'Reviewer must submit structured findings');
+      assert.deepEqual(
+        submitted.findings
+          .map((finding: ReviewRequest['findings'][number]) => ({
+            ...finding,
+            notes: finding.notes.trim(),
+          }))
+          .sort(
+            (a: ReviewRequest['findings'][number], b: ReviewRequest['findings'][number]) =>
+              a.criterionNumber - b.criterionNumber,
+          ),
+        review.findings,
+        'The exact submitted findings must survive persistence and restart',
+      );
+      assert.deepEqual(submitted.evidence ?? {}, review.evidence);
+    }
     const requiredArtifacts = phase === 'reviewer' ? review.artifactIds : task.deliveryIds;
     for (const artifactId of requiredArtifacts) {
       assert.ok(
@@ -86,6 +142,8 @@ export function verifyLiveEvidence(
   }
   return {
     expectedTask: true,
+    structuredAssessmentPinned: true,
+    structuredReviewPinned: true,
     independentReviewer: true,
     reviewerReadAllPinnedEvidence: true,
     observerReadRetainedDelivery: true,

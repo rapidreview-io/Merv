@@ -16,7 +16,7 @@ Finish one numbered step before starting the next. Every step includes its contr
 
 Keep each completed step as a separately reviewable commit. Run the boundary checks and affected behavioral tests; run the complete task/evidence/review/feed scenario when a shared contract or lifecycle changes. Re-run live agents at integration milestones that affect their transport or workflow, rather than spending live calls on formatting changes.
 
-Consult Claude Fable at critical development checkpoints: after each significant integrated wave and before committing to major architectural changes. Give it the concrete implementation, relevant diff, acceptance criteria, and verification evidence; resolve material findings before advancing. Prioritize these reviews for the external-service boundary, identity and permission changes, asynchronous transactions, alternative storage providers, and runner recovery. Record Fable's actual feedback separately from other reviews; if it cannot be invoked, report that explicitly instead of substituting another reviewer under its name.
+Current goal policy (restored by the user’s overall-parity continuation): consult Claude Fable at critical development checkpoints: after each significant integrated wave and before committing to major architectural changes. Give it the concrete implementation, relevant diff, acceptance criteria, and verification evidence; resolve material findings before advancing. Prioritize these reviews for the external-service boundary, identity and permission changes, asynchronous transactions, alternative storage providers, and runner recovery. Record Fable's actual feedback separately from other reviews; if it cannot be invoked, report that explicitly instead of substituting another reviewer under its name.
 
 UI implementation may be delegated to Claude Fable when step 8 begins. Keep that work within the current step's scope, then integrate and verify it against the actual API, browser states, and optional-plugin removal behavior before moving on. Delegation does not change the ordered acceptance gates below.
 
@@ -186,3 +186,138 @@ Cordis's loader owns configuration entries and asynchronous tree initialization;
 MCP's current documented revision is 2026-07-28; earlier revisions use a different initialization model. Therefore protocol compatibility is an explicit step before live mounting, not an assumed benefit of the rewrite. See [MCP versioning](https://modelcontextprotocol.io/docs/2026-07-28/learn/versioning).
 
 The credential boundary uses separately validated inbound and upstream authority, consistent with MCP's prohibition on token passthrough. See [MCP authorization guidance](https://modelcontextprotocol.io/specification/draft/basic/security_best_practices#token-passthrough). This does not require building the full OAuth system before a configuration-backed, scoped mount.
+
+## 2026-09-14 approved recovery/context slice
+
+The user approved implementing durable Domain Events, automatic revoked-review recovery with claim identity fencing, a dedicated Context Builder, and context recipes owned directly by task types. This slice is executed ahead of the future Runner. It adds no context-adapter plugins. Saved checkpoints support continuity; agent launch, leases and remote cancellation remain later work. See [implementation](docs/RECOVERY_AND_CONTEXT.md). At that checkpoint, the user asked not to consult Fable. The later persistent parity goal explicitly requests periodic Fable consultation; a generic design consultation is now completed, while the earlier private-source export still awaits its specific approval.
+
+## Current parity sequence
+
+The user’s subsequent direction prioritizes completing small functional slices in
+the TypeScript stack. Workflow-owned guidance, producer/operator task closure and work-item
+dependencies are integrated. Structured producer delivery confirmations and server-rendered briefs are now integrated, including stable context replay and binary evidence references. Per-check reviewer findings, synopsis, explicit waivers and observations are now integrated. [Generic workflow assignment/begin](docs/WORKFLOW_ASSIGNMENT_PLAN.md) and [separate project-bound actor credentials](docs/ACTOR_CREDENTIALS.md) are now integrated.
+
+Follow the [identity/session parity order](docs/IDENTITY_SESSION_PARITY_PLAN.md):
+shared-user verification and project memberships are now integrated locally.
+User-owned project/account machine keys are now integrated. The
+[fixed workflow policy foundation](docs/WORKFLOW_EXECUTION.md) supplies durable
+declarations, metadata admission and a common tool-description path. [Sessions](docs/SESSION_LEASES.md)
+now enforces those declarations through real credentials, durable leases and
+worker/reviewer recovery. Native execution, controller crash recovery and Git workspace preparation/capture are now integrated. Immutable Code proposals and generic Reviews routing are integrated. Project Claims now supplies scoped facts through its service, tools and UI. [Explicit review return paths](docs/REVIEW_RETURN_PATHS.md) are now integrated, preserving Tasks' fixed routes. Use the [audited Experiment contract](docs/EXPERIMENTS_PARITY_REFERENCE.md) to complete the production Experiment lifecycle next, then authoritative corpus references, Reflection and its consolidation/publication gate, including durable publication receipts. Configuring the real shared Supabase realm and provider-backed browser verification
+remain explicit deployment gates.
+An operator actor is not proof of a shared human account, and ready-action
+suggestions are not a session allowlist. Each row requires its own complete
+integration proof. Research programs and storage-provider parity remain open;
+see [the full gap inventory](docs/BACKEND_PARITY_AUDIT.md).
+A recipe named for experimentation or reflection does not complete those programs.
+Overall parity remains the goal; individual checkpoints do not close it.
+
+## Server dispatch checkpoint — 2026-09-15
+
+The [runner control plane](docs/RUNNER_CONTROL_PLANE.md) is integrated through Workflows, Sessions and optional API/UI adapters. Verification passes 425 tests and a real two-agent automatic assignment run. Complete native process launch/reconciliation on scratch assignments next, then workspace preparation/capture and durable central-publication receipts. Machine pairing, editable operational settings, trace delivery and telemetry remain required parts of Runner parity. Scheduling alone does not complete that gate.
+
+## Machine runner checkpoint — 2026-09-15
+
+The optional [machine Runner](docs/MACHINE_RUNNER.md) integrates native scratch execution,
+a private launch ledger, scoped credentials, independent deadlines and controller
+restart recovery. It has no injected server dependencies and adds no agent tools.
+Complete Git workspace resolution/preparation/capture and publication receipts
+next, followed by pairing, source rotation, operational settings and trace delivery.
+Native scratch execution is a bounded milestone, not full Runner parity.
+
+## Git workspace checkpoint — 2026-09-15
+
+The [workspace lifecycle](docs/WORKSPACES.md) now prepares private persistent and
+ephemeral checkouts, captures stopped workers' changes, reports immutable results
+through Sessions and retains ownership until acknowledgement. Actual Git/MCP
+tests cover lost responses and controller restart. Two fresh native agents edited
+and independently inspected the same captured commit on one machine.
+
+Complete the reviewed code-proposal and central-publication protocol next. A
+successful process exit or workspace capture cannot advance central by itself.
+Native sandboxed agents currently edit checkout files; Runner creates WIP commits.
+Agent-authored Git operations, cross-machine object transport and publication need
+an explicit integration before consolidation parity. Preserve the Python first-
+proposal behavior through an explicit initial base declaration, rather than an
+implicit fallback for missing references. Then complete pairing, source rotation,
+operational settings and trace delivery. The overall parity goal remains open.
+
+## Live code checkpoint — 2026-09-15
+
+The [Code plugin](docs/CODE_OPERATIONS.md) now supplies durable `code.commit` and
+`code.operation` tools, source-controlled HTTP and a UI row. Existing Runner
+executes fixed Git checkpoints and recovers exact receipts. The worker remains
+alive under its original identity and does not gain Git metadata write access.
+The 526-test suite and a real two-agent producer/Reviews workflow pass, including
+controller crashes, response loss, closed-session recovery and plugin reload.
+
+Code now seals immutable proposals against these receipts and authored evidence,
+and Reviews routes verdicts to registered domain owners. The Python audit changed
+the next integration order: production consolidation requires actual experiments
+and a reflection-owned frozen corpus. Build Claims and the complete Experiment
+path, then Reflection and its consolidation gate, before reviewed publication.
+Follow the [research order](docs/RESEARCH_PROGRAM_PARITY_PLAN.md) and
+[publication plan](docs/CODE_PUBLICATION_PLAN.md), including the Python stale-attempt
+race that must not be copied. The private repository still belongs to one machine;
+project repository authority and object transport remain explicit work.
+
+## Claims checkpoint — 2026-09-15
+
+The [Claims provider](docs/CLAIMS.md) is integrated with project facts, explicit
+transactions, revision-checked edits, stable request receipts, three tools and an
+optional Claims page. It depends only on State and Scope and owns no workflow.
+The suite passes 566 tests; two fresh native agents verify retries, worker
+attribution and project isolation. Browser verification is recorded separately
+from backend and native evidence in [the checkpoint](verification/claims.json).
+
+Continue with the complete Experiment program: design review, exact execution
+attempts, immutable result rounds and explicit review return paths. It consumes
+Claims through the public service rather than owning duplicate claim records.
+Then build authoritative corpus/capture references, actual Reflection and its
+consolidation/publication gate. The remaining production storage, deployment,
+Runner operations and cross-machine repository work are still parity requirements.
+
+## Explicit review return paths checkpoint — 2026-09-15
+
+The existing generic `review.submit` now accepts optional `returnTo`. Its one
+registered domain owner validates the route and commits the verdict, domain
+transition, events and command receipt together. Nullable migration preserves
+old snapshots and absent-field receipts; identical retries replay and a changed
+route conflicts. Task preflight and direct submission reject supplied routes
+before replay. See [the implemented contract](docs/REVIEW_RETURN_PATHS.md).
+
+The full suite passes **574/574**, the focused integration set **30/30**, and
+independent review validation **17/17**. Two fresh native reviewers made seven
+successful MCP calls and no failed calls, reading all three pinned artifacts
+in full before routing `fail → planned` and `needs_changes → running`.
+This used a synthetic registered owner, seeded producer evidence and a seeded
+approved plan. The two destinations terminate that fixture; it does not prove
+production Experiment creation, attempt repair or a four-stage research loop.
+
+The [exact Python reference](docs/EXPERIMENTS_PARITY_REFERENCE.md) records the
+41 passing source tests, input fields, artifact caps, graph schema, metrics
+provenance and new-attempt versus same-attempt return semantics. Implement that
+complete Experiment slice next. The whole parity goal remains active.
+
+Inventory is unchanged: 40 plugins, 21 providers, 84 Cordis dependencies,
+37 default entries, 28 API-only entries and 37 domain tools (39 with UI).
+No Fable export was performed for this checkpoint; the earlier specific export
+approval remains pending. Verification records remain in
+[VERIFICATION.md](VERIFICATION.md).
+
+## Production Experiments checkpoint — 2026-09-15
+
+The complete first Experiment lifecycle is integrated: real records and attempts,
+exact design/result rounds, both independent reviews, explicit return/retry paths,
+recovery context and figures, shared exit guidance, seven tools and optional UI.
+All 610 tests pass. Four actual native workers completed one bounded synthetic
+experiment with 24 successful MCP calls, no failed calls and five shell commands.
+Independent evidence audit and actual browser removal/restoration checks pass.
+The report assembler correction is disclosed in [verification](VERIFICATION.md).
+
+Proceed in order: authoritative research corpus and code capture references,
+actual Reflection, then reflection-owned consolidation and reviewed publication.
+Do not create a standalone Code workflow to substitute for these domain owners.
+The overall parity goal remains active, including the other storage, deployment,
+Runner and cross-machine requirements. No new Fable export occurred; the earlier
+specific-payload approval remains pending.

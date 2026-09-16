@@ -1,0 +1,174 @@
+{
+  "date": "2026-09-15",
+  "scope": "Optional explicit review return destinations with immutable assessment storage, route-sensitive replay, domain validation, unchanged Task routes and read-only UI display.",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-review-return-suite.log",
+    "tests": 574,
+    "pass": 574,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-review-return-build.log"
+    },
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-review-return-final-typecheck.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-review-return-ui-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-review-return-ui-typecheck.log"
+    },
+    "diffWhitespace": {
+      "status": "passed",
+      "command": "git diff --check",
+      "log": "/private/tmp/merv-review-return-diff-check.log"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-review-return-format-check.log"
+    },
+    "recordHashesAndLinks": {
+      "status": "passed",
+      "sourceFiles": 20,
+      "localDocumentationLinks": 346,
+      "missingLinks": 0,
+      "log": "/private/tmp/merv-review-return-records-links.json"
+    }
+  },
+  "focused": {
+    "newReturnTests": 8,
+    "combinedTests": 30,
+    "log": "/private/tmp/merv-review-return-tests.log",
+    "independentTests": 17,
+    "independentLog": "/private/tmp/merv-review-return-independent-approved.log"
+  },
+  "regressions": [
+    "Migration6 adds a bounded nullable return_to without rewriting legacy snapshots, records or receipts; missing fields remain absent on the wire.",
+    "The exact chosen route is persisted with verdict/event/receipt; submitted review immutability prevents replacement.",
+    "A changed route conflicts under a successful request ID, while omitted/undefined legacy retries remain identical.",
+    "Current actor, credential and domain-owner authority is checked before replay and through atomic application.",
+    "Registered owners enforce required/allowed routes; generic Reviews does not choose a workflow transition or infer intent from prose.",
+    "Owner refusal and post-verdict failures roll back domain state, assessment, events and receipt together.",
+    "Task preflight and direct submission reject an explicit route before replay; fixed pass/done, needs_changes/in_progress and fail/failed mapping is unchanged.",
+    "Route validation rejects direct/revoked/prototype proxies and route accessors without executing their traps/getters.",
+    "Actual HTTP/MCP/Cordis tests verify schema validation, route transport, authorized replay, plugin removal and restoration."
+  ],
+  "composition": {
+    "pluginEntrypoints": 40,
+    "serviceProviders": 21,
+    "directCordisDependencies": 84,
+    "defaultServerEntries": 37,
+    "domainApiEntries": 28,
+    "domainTools": 37,
+    "withUiTools": 39,
+    "newPlugins": [],
+    "newTools": [],
+    "newDependencies": []
+  },
+  "live": {
+    "status": "passed",
+    "record": "verification/review-returns-live.json",
+    "freshAgents": 2,
+    "successfulMcpCalls": 7,
+    "failedMcpCalls": 0,
+    "shellCalls": 0,
+    "routes": ["fail -> planned", "needs_changes -> running"],
+    "workersStopped": true
+  },
+  "ui": {
+    "status": "component_ssr_verified",
+    "report": "/private/tmp/merv-review-return-ui-report.json",
+    "reportSha256": "97b4c6ab2883317148d71d398ba0ede2e135c1d9f4b37b1295b77aaa18f7fea7",
+    "method": "Actual exported React ReviewCard rendered with saved native ReviewRequest records through MemoryRouter and renderToStaticMarkup.",
+    "checks": [
+      {
+        "reviewId": "review_25c750f8268e4030bbfe842741c5d037",
+        "verdict": "fail",
+        "returnTo": "planned",
+        "exactNotesAndFindings": true,
+        "reviewAndArtifactLinks": true,
+        "htmlSha256": "8cb781bc7120b07d44b88dee1188b21c47735a6b8ddd20e27bf4e0c27420a87d"
+      },
+      {
+        "reviewId": "review_c7f62c06a89949e794e0e0115c82c860",
+        "verdict": "needs_changes",
+        "returnTo": "running",
+        "exactNotesAndFindings": true,
+        "reviewAndArtifactLinks": true,
+        "htmlSha256": "45018fc18e5cd41bf9c3641a7f8267cbbc4b672aaa7b6ee1634b9b948c9671aa"
+      }
+    ],
+    "absentRouteOmitted": true,
+    "injectedProseEscaped": true,
+    "initialFixtureCorrection": "The first absent-route assertion matched reviewer prose containing Return to. The corrected check targets the actual definition-list label; no product change was needed.",
+    "limits": [
+      "Component SSR only, not browser interaction or UI HTTP transport verification.",
+      "The native records come from a synthetic owner; no production Experiment implementation is exercised."
+    ]
+  },
+  "pythonReference": {
+    "status": "passed",
+    "tests": 41,
+    "log": "/private/tmp/merv-experiments-reference-20260915.log",
+    "document": "docs/EXPERIMENTS_PARITY_REFERENCE.md",
+    "boundaryProbe": "/private/tmp/merv-experiments-boundary-probe-20260915.json",
+    "scope": "Audited Python Experiment behavior, not TypeScript Experiment parity."
+  },
+  "review": {
+    "local": "Independent review completed. Two malformed-input findings were fixed red-to-green and independently retested; no remaining concrete findings. Root compared native transcripts with SQLite and rendered the actual ReviewCard with saved results.",
+    "inputProbe": "/private/tmp/merv-review-return-input-probe-after.json",
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "sha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review previously rejected exporting the specific internal architecture payload without payload/destination approval. No new export or retry occurred."
+    }
+  },
+  "nextOrder": [
+    "Complete production Experiment lifecycle, immutable attempt/submission evidence, four assignments/context formulas and both domain review stages",
+    "Authoritative project corpus and code capture references",
+    "Actual Reflection through approved research",
+    "Reflection-owned consolidation and reviewed publication"
+  ],
+  "limits": [
+    "This integrates a shared prerequisite; it does not install an Experiments provider or implement attempt creation or execution repair.",
+    "Domain owners must validate route semantics. The lower Reviews.submit writer intentionally validates only the route shape.",
+    "The native owner and evidence are synthetic; planned/running are terminal only for its bounded acceptance.",
+    "UI proof uses actual component SSR, not browser interaction.",
+    "Overall backend parity remains open, including research/publication, cross-machine Git, operational Runner controls, asynchronous State/Postgres and real shared login/deployment."
+  ],
+  "runtime": {
+    "node": "v22.13.1"
+  },
+  "sourceSha256": {
+    "EXECUTION_LOG.md": "0cdd004b6a476dbc7f45ec3d3a82b07104f19880ce9ecda8d76d9212bcc0ab5b",
+    "EXECUTION_PLAN.md": "db40a7a2bbf1d733d0339ab30ca6538205d85eb183d05a6b9ccb8c6fde55485a",
+    "VERIFICATION.md": "aa27eca96f588a5ec255aab9252857a1e28965e898c2209ebcc6f91148c96701",
+    "docs/BACKEND_PARITY_AUDIT.md": "a9e27090de48d6769f30731ed7fea15a7a3e5310316f12f226cf7ce208f419a3",
+    "docs/EXPERIMENTS_PARITY_REFERENCE.md": "ff1f4dfa7e0cad0595ce9b6349db8adfe11a8ce720380fa3d9a05cfdc6a48492",
+    "docs/RESEARCH_PROGRAM_PARITY_PLAN.md": "7ed8e907627e2bae523427e995a490c91edafa283d0b2ef390f82e1830429472",
+    "docs/REVIEW_ASSESSMENTS.md": "fe39b9f9eb6386e57b2375fc90d1ea0502a7ed4f5db98d7e30efd77589f6a717",
+    "docs/REVIEW_RETURN_PATHS.md": "d19fb331b6d66bdfe198a58eca728ee74ad2310e642621ea65d1a138877671b8",
+    "docs/architecture/current-dependencies.json": "601e79f4124f7cc0babb7c608062756f4221c17e6242d55e9698ff5d8fbe9276",
+    "config/default.json": "48ebb9b7825664f06c1dd054c05fbe2b19fd11ef680172b505ba96f081cde573",
+    "packages/contracts/src/index.ts": "eff7056e18c78e9d0124b42e2a76f7575378cae277a0c61bc4342ec8501cda7d",
+    "packages/reviews/README.md": "9306aecc9e367e31b3e77c2841281ab73f88072d223c3af410a74a31f5a2efdb",
+    "packages/reviews/src/index.ts": "da119c648a6a48919c83a1bb4f1fa3b74fbaad5d13c3b1d826a50b1e269c4804",
+    "packages/reviews/src/tools.ts": "640d522881c6fa38e47f412f3f00cbda898c13ad18697bd200342ceee7abe49b",
+    "packages/tasks/src/index.ts": "53de7b7d8ccd91fc3e80c88de463c5dbe817197ba24bb9fb4842bded875bf3e4",
+    "packages/ui/web/views/reviews.tsx": "5c9da5ffac4c7ebec568bee4b6c323076362bae32a7328a7ad93c369b9896e30",
+    "scripts/live-review-returns.ts": "4fec7ef6ec4f5183803b687de7b82b054c40fd8c9ebc28b53fa94f7c5a7e55a9",
+    "tests/review-return.test.ts": "6f8a509e034245f0738d77e9cfcd486377338e1d9b9817ace72d978e2ec6f9d5",
+    "tests/structured-reviews.test.ts": "e86f190ed2d6a70970530d6996af2db8fa17a3d5d72b3b1055f5ffd746f2a340",
+    "verification/README.md": "f3c24d7b1dbd8e7e2951a4fc63f51400cae968edd6a8167f35f58198173591ef"
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "date": "2026-09-14",
+  "scope": "Fixed workflow policy declarations and trusted metadata admission, plus canonical HTTP/MCP descriptions; public session enforcement remains open",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-fixed-execution-final-suite.log",
+    "tests": 386,
+    "pass": 386,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "formatting": "passed",
+    "diffWhitespace": "passed"
+  },
+  "regressions": [
+    "Strict finite JSON, required literal values, sparse-array refusal and safe binding fields",
+    "Locale-independent policy normalization with format-version hash",
+    "Whole-value equality, disjoint OR alternatives and ambiguous default refusal",
+    "Explicit absence and immutable policy persistence across restart",
+    "Current caller, revision, references, rollback and registration fences",
+    "Real Cordis Task unload/reload and application restart",
+    "Metadata admission without document bytes, assignment rendering or readiness evaluation",
+    "Checkpoint attachment laundering blocked before writes and context rendering",
+    "Claim succession and assisting-operator delivery restrictions",
+    "Canonical HTTP/MCP descriptions and native schema capture",
+    "Unchanged ordinary credential access with fixed assignment metadata",
+    "Legacy row fixtures retain their existing declarations without weakening production pinning"
+  ],
+  "initialSuite": {
+    "log": "/private/tmp/merv-fixed-execution-initial-suite.log",
+    "tests": 386,
+    "pass": 380,
+    "fail": 6,
+    "resolution": "Five legacy fixture registrations now retain the pinned manifests; one API expectation now checks fixed declarations with unavailable claim binding. No production authority rule was relaxed."
+  },
+  "pythonReference": {
+    "tests": 31,
+    "pass": 31,
+    "groups": [
+      {
+        "command": "PYTHONPATH=src /opt/anaconda3/bin/python -m unittest tests.surface.test_http_gateway tests.workflow.test_dispatch tests.workflow.test_project_intent",
+        "tests": 23,
+        "log": "/private/tmp/merv-fixed-execution-parity-python.log"
+      },
+      {
+        "command": "PYTHONPATH=src /opt/anaconda3/bin/python -m unittest tests.workflow.test_auth_contention",
+        "tests": 8,
+        "log": "/private/tmp/merv-fixed-execution-contention-python.log"
+      }
+    ],
+    "workingDirectory": "merv/"
+  },
+  "liveModel": {
+    "status": "passed",
+    "record": "verification/workflow-execution-live.json",
+    "freshAgents": 3,
+    "serverRestarts": 2,
+    "toolCalls": 40,
+    "successfulCalls": 37,
+    "expectedPermissionRefusals": 3,
+    "transportErrors": 0,
+    "fixedAssignmentPackets": 3,
+    "workStartEvents": 2,
+    "timing": "Live run preceded final removal of interactive workflow.begin from node grants; final deterministic tests cover that exclusion. Ordinary begin behavior is unchanged."
+  },
+  "composition": {
+    "pluginEntrypoints": 29,
+    "serviceProviders": 17,
+    "directCordisDependencies": 59,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugins": 0,
+    "newAgentTools": 0,
+    "owners": ["Workflows", "Tasks", "API"]
+  },
+  "review": {
+    "local": "Two independent reviews passed after reproducing and verifying required literal, sparse-array, locale-sort and checkpoint-leakage fixes. Final documentation review found no material overclaims.",
+    "taskProbe": {
+      "script": "/private/tmp/merv-fixed-execution-task-probe.mjs",
+      "log": "/private/tmp/merv-fixed-execution-task-probe.log",
+      "cases": 8
+    },
+    "fable": {
+      "type": "generic_design_consultation_without_source",
+      "model": "claude-fable-5",
+      "status": "completed",
+      "report": "docs/reviews/workflow-execution-fable-design.md",
+      "promptBytes": 3374,
+      "promptSha256": "13703969b9d27b29ea9977b88a2c835948a95c632d4e6fb9e7d7d83b7108bc9c",
+      "responseSha256": "89853b2e59f5b929714feffd1a989827598baa2df4986ae53e10178e9ab66510",
+      "durationMs": 126119,
+      "costUsd": 0.465596,
+      "privateSourceSent": false,
+      "earlierSourcePacket": "specific_approval_still_pending_no_retry"
+    }
+  },
+  "limits": [
+    "Execution metadata and authorizeDispatch are trusted checks, not bearer credentials or ownership reservations.",
+    "Ordinary human, actor and user-key paths retain existing authority. No session-specific catalog, mandatory session transaction guard or mounted policy enforcement is claimed.",
+    "Declarations are hash-pinned; trusted callback and tool-handler implementations are not fingerprinted. Metadata-only behavior is a program contract, not a plugin sandbox.",
+    "Reference resolution uses current transaction facts. Sessions must additionally bind their principal, source credential, membership and frozen assignment/reference/ownership facts.",
+    "Direct artifact rules do not classify every byte in composite assignment/context; historical broad-caller checkpoints may be included.",
+    "Current delivery artifact ownership is by actor, not execution. Session output ownership and review-claim succession remain open.",
+    "The current binding format constrains top-level fields and complete literal values; no general nested-path expression language, sandbox provisioner or workspace policy is implemented.",
+    "Real shared-provider browser login, session leases, runner processes, research programs and async/Postgres parity remain open."
+  ],
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "a4cada247d891892f26f8d61ebd637356466401a3733330f62b930953c77db39",
+    "packages/workflows/src/index.ts": "23469056f38a48f414f40b5a6d255064a9178c501b63e71c7c40a68081b13080",
+    "packages/workflows/src/evaluation.ts": "da18fc77b4a3245a7a314e0e938102f2dba82c5cd31b5788c93aa6594fbb266d",
+    "packages/workflows/src/execution.ts": "ef6c7b7468113ebf8b83aec2926734f8615496ed0721c1d172b6d446325f1c1e",
+    "packages/tasks/src/index.ts": "bee66aa759fdc92b86006d76c84edd4135ac6b8a0293450c24821985a9200490",
+    "packages/tasks/src/execution-policy.ts": "973491349af3ef13b672cf2c4068348f1aab54a312712311353562359ddb0b08",
+    "packages/api/src/http.ts": "2540484e3d8c46adc6d19a229a4ad79c63dc78b22c6c752f8bc7507838a013a3",
+    "packages/api/src/registry.ts": "0792c99cc62998f8b2283cad087992cb57862bf66bea14c277e6e551b9678257",
+    "packages/api/src/types.ts": "e53fe0fc64a5fb71bc64c8711d27f1975ee255e79733f5cd391af69955cde7b4",
+    "tests/api.test.ts": "477816336f85ef90fad51d62bbdc0bafb1fbd847fd7b6ef6e826950ae9c45a54",
+    "tests/workflow-assignment-api.test.ts": "8483b401c4a3a90d9aca510ea2e2ced83cd78622cd758781bee358b146d9ecc6",
+    "tests/workflow-execution.test.ts": "d4e07cf8aa913279118371bcad66c8becddc44faab5bc3d2213b589002ffc1e3",
+    "tests/workflow-execution-integration.test.ts": "002a2ec898c36d7afe862b1a87f9e1f8e4d261f97392cdde5423886bfbd3aac3",
+    "tests/task-execution.test.ts": "612910de9d4e5ac5c36f304b731e0e286a5bb2687955e57b63a5e620dde91194",
+    "tests/tasks.test.ts": "65583061d5e7865cd698a13d20ee2aa1aa6d35af3d7a61acfe770fe402a4ecff",
+    "tests/context-replay.test.ts": "348860778c6f136397bc0d1cfa87f3859bb7df7565328a910a995763ffe420aa",
+    "tests/structured-task-evidence.test.ts": "096b9ffba0776dc28f209a6437ab1df5690ed50a28de32e516673c8e658d99ae",
+    "tests/task-dependencies.test.ts": "786ea8a93c3c8835c2603ea62454f7e8e07958dba1ad565488218b7dd7101ce1",
+    "tests/task-failure.test.ts": "992e50ee5a98d79617a6b9f67eadd7838d43c48755aca459e18c01a5250ee8e8",
+    "tests/fixtures/legacy-task-policy.ts": "e0bfda6c09ec54c5858d9fa29502c3ada6e2be6b612d90bf225e445357b0e3b0",
+    "scripts/live-codex.ts": "5e2213ce7bc3aa3eac65402497fa9745d13908b48ed410e47ea81c21f42e4c2c"
+  }
+}

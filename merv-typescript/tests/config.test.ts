@@ -19,15 +19,37 @@ function folder(t: TestContext) {
   return directory;
 }
 
-test('default configuration selects eight providers and API adds six adapters, registry/transport, access, and credentials', () => {
+test('default configuration includes session enforcement and API adds its control adapter and tool transports', () => {
   const core = loadConfiguration({ directory: './data' });
   assert.deepEqual(
     core.entries.map((entry) => entry.id),
-    ['feed', 'tasks', 'reviews', 'artifacts', 'workflows', 'scope', 'blobs', 'state'],
+    [
+      'research',
+      'paper',
+      'reflections',
+      'consolidation',
+      'knowledge',
+      'experiments',
+      'claims',
+      'code',
+      'sessions',
+      'feed',
+      'tasks',
+      'reviews',
+      'context-builder',
+      'artifacts',
+      'workflows',
+      'scope',
+      'blobs',
+      'domain-events',
+      'state',
+    ],
   );
   assert.ok(
     core.entries.every(
-      (entry) => entry.required === (entry.id !== 'feed') && entry.disabled === false,
+      (entry) =>
+        entry.required === !['feed', 'consolidation'].includes(entry.id) &&
+        entry.disabled === false,
     ),
   );
   assert.deepEqual(core.entries.find((entry) => entry.id === 'state')?.config, {
@@ -37,7 +59,7 @@ test('default configuration selects eight providers and API adds six adapters, r
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 18);
+  assert.equal(full.entries.length, 38, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -46,18 +68,57 @@ test('default configuration selects eight providers and API adds six adapters, r
   assert.equal(full.baseUrl, new URL('../config/default.json', import.meta.url).href);
   const order = (id: string) => full.entries.findIndex((entry) => entry.id === id);
   const requirements: Record<string, string[]> = {
-    api: ['tools', 'scope'],
-    tools: ['scope', 'access'],
-    access: ['scope'],
-    credentials: ['scope'],
+    api: ['tools', 'scope', 'identity'],
+    'sessions-api': ['sessions', 'api'],
+    'code-api': ['code', 'api'],
+    code: ['state', 'scope', 'sessions', 'artifacts'],
+    claims: ['state', 'scope'],
+    knowledge: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews'],
+    consolidation: [
+      'state',
+      'scope',
+      'artifacts',
+      'workflows',
+      'reviews',
+      'context-builder',
+      'code',
+    ],
+    experiments: [
+      'state',
+      'scope',
+      'claims',
+      'artifacts',
+      'workflows',
+      'reviews',
+      'context-builder',
+    ],
+    sessions: ['state', 'scope', 'workflows', 'domain-events'],
+    tools: ['scope'],
     feed: ['state', 'scope', 'artifacts'],
-    tasks: ['state', 'scope', 'artifacts', 'workflows', 'reviews'],
-    reviews: ['state', 'scope', 'artifacts'],
+    tasks: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'context-builder'],
+    reviews: ['state', 'scope', 'artifacts', 'domain-events'],
     artifacts: ['state', 'scope', 'blobs'],
     workflows: ['state', 'scope'],
     scope: ['state'],
+    'context-builder': ['state', 'scope', 'artifacts'],
+    'domain-events': ['state'],
   };
-  for (const name of ['feed', 'tasks', 'reviews', 'workflows', 'artifacts', 'scope']) {
+  for (const name of [
+    'research',
+    'paper',
+    'reflections',
+    'consolidation',
+    'knowledge',
+    'experiments',
+    'claims',
+    'code',
+    'feed',
+    'tasks',
+    'reviews',
+    'artifacts',
+    'scope',
+    'workflows',
+  ]) {
     requirements[`${name}-tools`] = [name, 'tools'];
     assert.equal(
       full.entries.find((entry) => entry.id === `${name}-tools`)?.name,
@@ -82,7 +143,7 @@ test('legacy selection keeps only matching providers and adapters without adding
   });
   assert.deepEqual(
     selected.entries.map((entry) => entry.id),
-    ['api', 'scope-tools', 'tools', 'access', 'credentials', 'scope', 'state'],
+    ['api', 'scope-tools', 'tools', 'identity', 'scope', 'state'],
   );
   assert.equal(selected.entries.find((entry) => entry.id === 'api')?.config?.port, 0);
   assert.deepEqual(
@@ -105,13 +166,14 @@ test('legacy selection keeps only matching providers and adapters without adding
   );
 });
 
-test('default Feed and its adapter are optional so disabling its provider preserves the other declarations', () => {
+test('default Feed and Consolidation are optional so disabling them preserves the other declarations', () => {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
   config.plugins.find((entry) => entry.id === 'feed')!.disabled = true;
+  config.plugins.find((entry) => entry.id === 'consolidation')!.disabled = true;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 18);
+  assert.equal(loaded.entries.length, 53);
   assert.deepEqual(
     loaded.entries.find((entry) => entry.id === 'feed'),
     { id: 'feed', name: '@merv/feed', required: false, disabled: true },
@@ -120,10 +182,40 @@ test('default Feed and its adapter are optional so disabling its provider preser
     loaded.entries.find((entry) => entry.id === 'feed-tools'),
     { id: 'feed-tools', name: '@merv/feed/tools', required: false, disabled: false },
   );
+  assert.deepEqual(
+    loaded.entries.find((entry) => entry.id === 'consolidation'),
+    { id: 'consolidation', name: '@merv/consolidation', required: false, disabled: true },
+  );
+  assert.deepEqual(
+    loaded.entries.find((entry) => entry.id === 'consolidation-tools'),
+    {
+      id: 'consolidation-tools',
+      name: '@merv/consolidation/tools',
+      required: false,
+      disabled: false,
+    },
+  );
+  const browser = (id: string) => id === 'ui' || id.endsWith('-ui');
   assert.ok(
     loaded.entries
-      .filter((entry) => entry.id !== 'feed' && entry.id !== 'feed-tools')
+      .filter(
+        (entry) =>
+          ![
+            'feed',
+            'feed-tools',
+            'consolidation',
+            'consolidation-tools',
+            'code-tools',
+            'code-api',
+          ].includes(entry.id) && !browser(entry.id),
+      )
       .every((entry) => entry.required),
+  );
+  assert.ok(loaded.entries.filter((entry) => browser(entry.id)).every((entry) => !entry.required));
+  assert.ok(
+    loaded.entries
+      .filter((entry) => ['code-tools', 'code-api'].includes(entry.id))
+      .every((entry) => !entry.required),
   );
 });
 
@@ -236,7 +328,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    18,
+    53,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

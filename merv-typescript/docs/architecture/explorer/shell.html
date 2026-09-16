@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Merv — the living plugin map</title>
+  <style>/* EXPLORER_CSS */</style>
+</head>
+<body>
+  <main id="merv-explorer">
+    <header class="masthead">
+      <div><span class="eyebrow">Merv / architecture sketchbook</span><h1>The living plugin map<span class="pencil-dot">.</span></h1></div>
+      <div class="edition"><span id="snapshot"></span><span>Source snapshot, not live server status</span></div>
+    </header>
+    <nav class="view-tabs" aria-label="Architecture views">
+      <button id="map-view" type="button" aria-pressed="true" aria-controls="map-page">01 · Sketch map</button>
+      <button id="tree-view" type="button" aria-pressed="false" aria-controls="tree-page">02 · Dependency DAG</button>
+    </nav>
+    <div class="workbench">
+      <section class="paper" id="map-page" aria-label="Interactive plugin dependency map">
+        <div class="binding" aria-hidden="true"></div>
+        <div class="page-top"><span id="inventory"></span><button id="overview" type="button">↶ Whole map</button></div>
+        <div class="map" id="map"><svg id="wires" aria-hidden="true"></svg><div class="groups" id="groups"></div></div>
+        <div class="map-status" id="map-status">Hover a name to trace it. Click to keep it open.</div>
+        <footer class="legend"><span><i class="line"></i>requires →</span><span><i class="line incoming"></i>← used by</span><span><i class="line dashed"></i>network connection</span><span>Boxes group independent plugins</span></footer>
+      </section>
+      <section class="paper tree-paper" id="tree-page" aria-label="Plugin dependency DAG" hidden>
+        <div class="binding" aria-hidden="true"></div>
+        <header class="tree-intro">
+          <span class="eyebrow">One node per plugin · every dependency visible</span>
+          <h2>The complete dependency DAG.</h2>
+          <p>Arrows run from a plugin down to the services it requires. Shared services appear once, with multiple incoming arrows. Hide adapters to focus on the service plugins.</p>
+        </header>
+        <div class="tree-controls">
+          <label>Find a plugin<input id="dag-search" type="search" placeholder="Name or package…" autocomplete="off"></label>
+          <label>Jump to plugin<select id="dag-jump"></select></label>
+        </div>
+        <div class="tree-actions">
+          <button type="button" id="dag-knowledge">Find Knowledge</button><button type="button" id="dag-ui">Find UI</button><button type="button" id="dag-selected">Center selected</button><button type="button" id="dag-clear">Clear highlight</button><button type="button" id="dag-adapters" aria-pressed="false">Hide adapters</button>
+        </div>
+        <p class="tree-count" id="dag-count" aria-live="polite"></p>
+        <div class="tree-zoom"><button type="button" id="dag-minus" aria-label="Zoom out">−</button><output id="dag-scale">100%</output><button type="button" id="dag-plus" aria-label="Zoom in">+</button><button type="button" id="dag-fit">Fit DAG</button><button type="button" id="dag-actual">100%</button><span>Drag the background or scroll to pan · pinch / Ctrl-scroll to zoom</span></div>
+        <div class="dag-viewport" id="dag-viewport" tabindex="0" aria-label="Pannable dependency DAG"><div id="dag-space"><div id="dag-canvas"><svg id="dag-edges" aria-hidden="true"></svg><div id="dag-nodes"></div></div></div></div>
+        <p class="tree-status" id="dag-status" aria-live="polite">Hover or focus a plugin to trace its direct relationships. Click for details.</p>
+        <footer class="legend"><span><i class="line"></i>requires →</span><span><i class="line incoming"></i>← used by</span><span>Dashed cards are adapters. HTTP / MCP links stay in details, outside this Cordis DAG.</span></footer>
+      </section>
+      <aside class="inspector" id="inspector" aria-label="Plugin details"></aside>
+    </div>
+    <footer class="page-footer"><span>Built from Cordis declarations. Internal edges appear when you select a plugin.</span><span>Next chapter: Reflection, consolidation & publication.</span></footer>
+    <div class="sr-only" id="announcement" aria-live="polite"></div>
+    <button class="detail-jump" id="detail-jump" type="button" hidden>View details ↓</button>
+  </main>
+  <script id="architecture-data" type="application/json">/* EXPLORER_DATA */</script>
+  <script>/* EXPLORER_JS */</script>
+</body>
+</html>

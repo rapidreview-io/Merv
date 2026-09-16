@@ -1,0 +1,138 @@
+{
+  "date": "2026-09-14",
+  "scope": "Human-owned project/account machine keys integrated in Scope, API, UI, domain-event provenance and mounted dispatch",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-user-key-final-suite.log",
+    "tests": 369,
+    "pass": 369,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": "passed",
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "formatting": "passed",
+    "diffWhitespace": "passed"
+  },
+  "testGroups": {
+    "coreUserKeys": 12,
+    "httpMcpUserKeys": 7,
+    "domainProvenanceAndUpstreamCredentialIsolation": 2,
+    "mountedDispatchRaces": 2,
+    "browserClientTotal": 14
+  },
+  "concurrency": {
+    "actualSqliteWorkers": true,
+    "cases": [
+      "rotate vs rotate: exactly one successor",
+      "rotate then revoke: descendant revoked",
+      "revoke then rotate: rotation refused"
+    ],
+    "overlap": "First writer deliberately holds its transaction while the second blocks at BEGIN IMMEDIATE."
+  },
+  "liveModel": {
+    "status": "passed",
+    "report": "verification/user-keys-live.json",
+    "freshAgents": 3,
+    "serverRestarts": 2,
+    "toolCalls": 40,
+    "successfulCalls": 37,
+    "expectedRoleDenials": 3,
+    "guidanceCalls": 10,
+    "assignmentCalls": 3,
+    "beginCalls": 4,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "pythonReference": {
+    "tests": 38,
+    "pass": 38,
+    "isolatedProbes": [
+      "Membership removal denies key access; rejoining restores the same live key.",
+      "Public Python create(parent_key_id) can mint under a revoked parent; TypeScript prohibits caller-chosen lineage and uses atomic rotation."
+    ],
+    "command": "PYTHONPATH=src /opt/anaconda3/bin/python -m unittest tests.surface.test_project_keys tests.surface.test_account_scoped_keys",
+    "workingDirectory": "merv/",
+    "log": "/private/tmp/merv-user-key-parity-python.log",
+    "probeRetention": "Additional fixture probes were run inline by the reference-audit agent; observations retained in the tool transcript, no standalone script or log."
+  },
+  "composition": {
+    "pluginEntrypoints": 29,
+    "serviceProviders": 17,
+    "directCordisDependencies": 59,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugins": 0,
+    "newAgentTools": 0,
+    "owner": "Scope"
+  },
+  "review": {
+    "local": "Independent read-only review found no actionable ownership, transaction, lineage, legacy-credential escape or event-source bugs. Validation review strengthened actual grant/epoch assertions.",
+    "fable": {
+      "type": "generic_design_consultation_without_source",
+      "model": "claude-fable-5",
+      "status": "completed",
+      "report": "docs/reviews/user-keys-fable-design.md",
+      "promptBytes": 3134,
+      "promptSha256": "8e64f3e53fd417dc44689caf0b927f7b55cda8f5881631d5f6bf46939dc0de6f",
+      "responseSha256": "65d05178b9339bf879c2647307fc8e8a436a0ad5bd7d39468268a8f7ace6a7c2",
+      "durationMs": 111259,
+      "costUsd": 0.399579,
+      "privateSourceSent": false,
+      "earlierSourcePacket": "specific_approval_still_pending_no_retry"
+    }
+  },
+  "browser": {
+    "syntheticClientTests": 14,
+    "realSignInAttempted": false,
+    "realSupabaseOrNisaAccountUsed": false,
+    "earlierSignInApproval": "pending"
+  },
+  "limits": [
+    "Account grants deliberately follow all current/future owner memberships and their current roles; no per-key role cap is implied.",
+    "Keys reuse the owner member actor. Retirement blocks that bearer without declaring the owner dead or releasing actor-owned claims.",
+    "Domain events record key and membership provenance; no exact-node session lease or automatic source-key claim reassignment is implemented.",
+    "Only verified humans manage keys. Creation/rotation return a secret once; a lost response requires owner cleanup and new issuance, not secret replay.",
+    "Legacy independent actor credentials remain a deliberate trusted administration path; user keys cannot mint or administer them.",
+    "Membership loss blocks new work. Already-dispatched upstream work may finish; no upstream job cancellation or automatic grant/binding exists.",
+    "Real shared-provider browser login, OAuth refresh families/MCP audiences, fixed node authority, sessions, runner, research programs and async/Postgres storage remain parity gaps."
+  ],
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "cbc2c5b468675bda3f7759f88211731d91f3be5b55efae5d5e2b1b1401fd92ba",
+    "packages/scope/src/index.ts": "5dfd4b8507598cf4e5ebaf6a30a30fa5ffd5ef8fc5201cc4c57529edb7512ed3",
+    "packages/scope/src/memberships.ts": "9d6f893b086cece7ca9ce5736a563f512dd15472b29421f50a14c9fdefde1269",
+    "packages/scope/src/user-keys.ts": "c6082b944eff6acbb6a0000816d0621c7d2cf4d5afa7c39dc395b122ae283952",
+    "packages/api/src/http.ts": "07e69bc8cd496d5c70173d454f3bdd74b68712d66cdcade68d6d87f704c0937f",
+    "packages/artifacts/src/index.ts": "33299b6d2bf0c8e5dd7e574f3d7c7b20c3e8828d48da4bac072efb1c3fe01bfe",
+    "packages/tasks/src/index.ts": "8aaebed91c2fbee6879a17b789cf7abf683c956bf68becaf3e626743e9ff24d7",
+    "packages/reviews/src/index.ts": "8e658211c3e1061111e0d1e50b126cb7b84cbc3f75d4da1e7a620c8081fded03",
+    "packages/workflows/src/index.ts": "d0b76c462ef18eb327564c726a7039c4537f7ebf6efeeda6b60ef4383a92af56",
+    "packages/feed/src/index.ts": "91d71da0179fe7e191c8fda4027489e170227cd90ed67df83d1d2b26fde6c591",
+    "packages/context-builder/src/index.ts": "5957b9ec3947dea6ce31a3c51faecf486f2a35e1cb41015a59bfc3dd4e3d54e4",
+    "packages/credentials/src/index.ts": "1b4991dbd726cd1bc4319f48a0a5ad1d1bcde1ff408b4d1b03b648b9e6648b8a",
+    "packages/mounts/src/credential-client.ts": "a8ef389ea75fbb4b1ff471b012a50d5dd87a171f3452608c10803c164b0e10b4",
+    "packages/ui/web/api.ts": "c94fae073f55c898361c6b4fb64124dd09941fc8826af5de09869025b1d80c0d",
+    "packages/ui/web/session.tsx": "26cc8425ddace0896f093f2a55fb00ce95bec986a3450320a008140ed0e50a23",
+    "packages/ui/web/shell.tsx": "61adbf5781d3ec98b1eb25addaa16e21834ac8f037d19695415660e802559321",
+    "packages/ui/web/views/keys.tsx": "039c96ba1a7fbdc05235ba363908a0134d98b71c2975749f9913462f1b86a75f",
+    "src/cli.ts": "15008e4fa997ca1171db179ccd995b3948591bc78e5fbdf104966e7c8e873ae2",
+    "scripts/live-codex.ts": "5e2213ce7bc3aa3eac65402497fa9745d13908b48ed410e47ea81c21f42e4c2c",
+    "tests/user-keys.test.ts": "f7ea16de7a83a3f4d2e43e4a860992330fa9ce4f56435c4c173aba0c238c91a9",
+    "tests/user-key-api.test.ts": "3b90dfa3c7225ff73767ed59384b905f057f83430f4b60992f6fe3cc0c21282c",
+    "tests/user-key-domain.test.ts": "ff1cd88d48152f4c2a82ade74e45e94ccfa8e36fd40d9af86543abea573cfcdb",
+    "tests/user-key-mount.test.ts": "91146e21290cf49343f37475a726cfc12bd569f92c2babca4142c26cacb6f411",
+    "tests/ui-identity-client.test.ts": "9768ed61d2bf686e0a97a0264d75ab5702cbeb7a05fc27d0ed5f762a2fac3497"
+  },
+  "verifiedAtUtc": "2026-09-15T05:07:34.475758+00:00",
+  "compatibilityRegression": {
+    "case": "Legacy 43-character actor token beginning with mk_ remains an actor credential.",
+    "beforeLog": "/private/tmp/merv-user-key-prefix-before.log",
+    "before": "failed with HTTP 401 instead of 200",
+    "afterLog": "/private/tmp/merv-user-key-final-api-tests.log",
+    "after": "all seven API tests passed, followed by the full 369-test suite"
+  }
+}

@@ -11,7 +11,7 @@ import { mountsPlugin } from '@merv/mounts';
 const origin = 'https://sandboxes.rapidreview.io';
 const mountId = 'sandbox';
 const rawTool = 'usage_report';
-const tool = `mount__${mountId}__${rawTool}`;
+const tool = `_${mountId}.${rawTool}`;
 const secretVariable = 'MERV_SANDBOX_MOUNT_UPSTREAM_TOKEN';
 const localVariable = 'MERV_SANDBOX_MOUNT_LOCAL_TOKEN';
 const timeoutMs = 15_000;
@@ -57,7 +57,7 @@ function configuration(caller: Caller, namespace: string): ApplicationConfig {
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   );
   requireCondition(Array.isArray(config.plugins), 'default_configuration_invalid');
-  for (const id of ['api', 'credentials', 'access'])
+  for (const id of ['api', 'scope'])
     requireCondition(
       config.plugins.some((entry) => entry.id === id),
       'required_plugin_missing',
@@ -66,7 +66,7 @@ function configuration(caller: Caller, namespace: string): ApplicationConfig {
     !config.plugins.some((entry) => entry.id === 'sandbox-mount'),
     'mount_id_collision',
   );
-  config.plugins.find((entry) => entry.id === 'credentials')!.config = {
+  const credentialConfig = {
     bindings: [
       {
         id: 'live-sandbox-consumer',
@@ -77,10 +77,11 @@ function configuration(caller: Caller, namespace: string): ApplicationConfig {
       },
     ],
   };
-  config.plugins.find((entry) => entry.id === 'access')!.config = {
+  config.plugins.find((entry) => entry.id === 'scope')!.config = {
     grants: [{ ...caller, mountId, tools: [rawTool] }],
   };
   const mountConfig = {
+    ...credentialConfig,
     mounts: [
       { id: mountId, url: origin + '/mcp', tools: [rawTool], timeoutMs, reconnectMs: 60_000 },
     ],
@@ -403,7 +404,7 @@ async function runAgent(
     if (process.env[key] !== undefined) childEnv[key] = process.env[key];
   requireCondition(!childEnv[secretVariable], 'upstream_secret_in_child_environment');
   let child: ChildProcess | undefined;
-  let forceKill: ReturnType<typeof setTimeout> | undefined;
+  let forceKill: Awaited<ReturnType<typeof setTimeout>> | undefined;
   const stop = () => {
     if (!child || evidence.processStopped) return;
     child.kill('SIGTERM');
@@ -530,11 +531,11 @@ async function live(outputDirectory: string) {
     process.env[secretVariable] = boundary.token;
     const directory = join(workspace, 'data');
     app = await createApp({ directory, components: ['state', 'scope'] });
-    const operator = app.ctx.scope.bootstrap({
+    const operator = await app.ctx.scope.bootstrap({
       projectName: 'Read-only sandbox mount verification',
       actorName: 'Temporary local operator',
     });
-    const actor = app.ctx.scope.issueActor(
+    const actor = await app.ctx.scope.issueActor(
       { actorId: operator.actor.id, projectId: operator.project.id },
       { name: 'Fresh sandbox verifier', role: 'reader' },
     );
@@ -554,9 +555,8 @@ async function live(outputDirectory: string) {
       'mount_not_ready',
     );
     requireCondition(
-      app.ctx.tools
-        .list(caller)
-        .filter((entry) => entry.name.startsWith('mount__'))
+      (await app.ctx.tools.list(caller))
+        .filter((entry) => entry.name.startsWith('_'))
         .map((entry) => entry.name)
         .join() === tool,
       'selected_catalog_mismatch',

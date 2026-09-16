@@ -1,0 +1,293 @@
+import { createService } from '@merv/contracts';
+import test, { type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SqliteState } from '@merv/state';
+import { ProjectScope } from '@merv/scope';
+import { DiskBlobs } from '@merv/blobs';
+import { ArtifactStore } from '@merv/artifacts';
+import { ReviewService } from '@merv/reviews';
+import type { Caller, ReviewInput, Role } from '@merv/contracts';
+
+async function fixture(t: TestContext, version = Infinity) {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));
+  const state = new SqliteState(join(directory, 'state.sqlite'));
+  const scope = await createService(new ProjectScope(state));
+  const bootstrap = await scope.bootstrap({
+    projectName: 'Contributor independence',
+    actorName: 'Operator',
+  });
+  const operator: Caller = { actorId: bootstrap.actor.id, projectId: bootstrap.project.id };
+  const issue = async (role: Role) => ({
+    actorId: (await scope.issueActor(operator, { name: role, role })).actor.id,
+    projectId: operator.projectId,
+  });
+  const producer = await issue('producer'),
+    lensA = await issue('operator'),
+    lensB = await issue('operator'),
+    reviewer = await issue('reviewer');
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const output = await artifacts.create(producer, {
+    title: 'Synthesis',
+    content: 'The combined project findings.',
+  });
+  const inputA = await artifacts.create(lensA, {
+    title: 'Lens A',
+    content: 'Independent analysis A.',
+  });
+  const inputB = await artifacts.create(lensB, {
+    title: 'Lens B',
+    content: 'Independent analysis B.',
+  });
+  const migrate = state.migrate.bind(state);
+  state.migrate = async (component, migrations) =>
+    await migrate(
+      component,
+      component === 'reviews' ? migrations.filter((m) => m.version <= version) : migrations,
+    );
+  let reviews = await createService(new ReviewService(state, scope, artifacts));
+  state.migrate = migrate;
+  let seq = 0;
+  const input = (): ReviewInput => ({
+    subjectId: 'reflection-wave',
+    subjectRevision: 4,
+    producerId: producer.actorId,
+    artifactIds: [output.id, inputA.id, inputB.id],
+    pinnedInputIds: [inputA.id, inputB.id],
+    criteria: ['The synthesis represents the evidence accurately.'],
+    requestId: `exclusions-${++seq}`,
+  });
+  t.after(async () => {
+    reviews.close();
+    await state.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  return {
+    state,
+    scope,
+    artifacts,
+    operator,
+    producer,
+    lensA,
+    lensB,
+    reviewer,
+    input,
+    get reviews() {
+      return reviews;
+    },
+    async reload() {
+      reviews.close();
+      reviews = await createService(new ReviewService(state, scope, artifacts));
+    },
+  };
+}
+
+test('pinned contributors cannot claim or submit synthesis review; independent reviewers retain normal lifecycle', async (t) => {
+  const f = await fixture(t);
+  const input = { ...f.input(), excludedActorIds: [f.lensB.actorId, f.lensA.actorId] };
+  const review = await f.reviews.request(f.producer, input);
+  assert.deepEqual(review.excludedActorIds, [f.lensA.actorId, f.lensB.actorId].sort());
+  for (const caller of [f.lensA, f.lensB]) {
+    await assert.rejects(async () => await f.reviews.checkStart(caller, review.id), {
+      code: 'review_independence',
+    });
+    await assert.rejects(async () => await f.reviews.start(caller, review.id), {
+      code: 'review_independence',
+    });
+  }
+  const claimed = await f.reviews.start(f.reviewer, review.id);
+  for (const caller of [f.lensA, f.lensB])
+    await assert.rejects(async () => await f.reviews.checkSubmit(caller, review.id), {
+      code: 'review_independence',
+    });
+  const submitted = await f.reviews.submit(f.reviewer, {
+    reviewId: review.id,
+    claimId: claimed.claimId!,
+    verdict: 'pass',
+    notes: 'Verified the synthesis against each pinned lens.',
+    requestId: 'verdict',
+  });
+  assert.equal(submitted.status, 'submitted');
+  assert.deepEqual(submitted.excludedActorIds, review.excludedActorIds);
+  await f.reload();
+  assert.deepEqual(await f.reviews.get(f.reviewer, review.id), submitted);
+  assert.deepEqual(await f.reviews.request(f.producer, input), review);
+});
+
+test('exclusions are immutable set-valued provenance in snapshot and replay, retained across reissue and revocation', async (t) => {
+  const f = await fixture(t);
+  const input = { ...f.input(), excludedActorIds: [f.lensB.actorId, f.lensA.actorId] };
+  const review = await f.reviews.request(f.producer, input);
+  assert.deepEqual(
+    await f.reviews.request(f.producer, {
+      ...input,
+      excludedActorIds: [f.lensA.actorId, f.lensB.actorId, f.lensA.actorId],
+    }),
+    review,
+  );
+  for (const exclusions of [[f.lensA.actorId], [], undefined])
+    await assert.rejects(
+      async () => await f.reviews.request(f.producer, { ...input, excludedActorIds: exclusions }),
+      {
+        code: 'request_conflict',
+      },
+    );
+  const otherwiseSame = await f.reviews.request(f.producer, {
+    ...input,
+    requestId: 'different-snapshot',
+    excludedActorIds: [f.lensA.actorId],
+  });
+  assert.notEqual(otherwiseSame.snapshotHash, review.snapshotHash);
+  await assert.rejects(
+    async () =>
+      await f.state.transaction(
+        async (tx) =>
+          await tx.run('UPDATE reviews SET excluded_actor_ids=? WHERE id=?', '[]', review.id),
+      ),
+    /immutable/,
+  );
+  await assert.rejects(
+    async () =>
+      await f.state.transaction(
+        async (tx) =>
+          await tx.run(
+            "UPDATE reviews SET reviewer_id=?,status='started' WHERE id=?",
+            f.lensA.actorId,
+            review.id,
+          ),
+      ),
+    /contributor/,
+  );
+  await f.scope.revokeActor(f.operator, f.lensA.actorId);
+  const reissued = await f.reviews.reissue(f.producer, {
+    reviewId: review.id,
+    subjectRevision: 5,
+    requestId: 'reissue',
+  });
+  assert.deepEqual(reissued.excludedActorIds, review.excludedActorIds);
+  await assert.rejects(async () => await f.reviews.start(f.lensA, reissued.id), {
+    code: 'forbidden',
+  });
+  await assert.rejects(async () => await f.reviews.start(f.lensB, reissued.id), {
+    code: 'review_independence',
+  });
+  assert.deepEqual(
+    (await f.reviews.request(f.producer, { ...input, requestId: 'after-contributor-revoked' }))
+      .excludedActorIds,
+    review.excludedActorIds,
+  );
+  const claimed = await f.reviews.start(f.reviewer, reissued.id);
+  await f.scope.revokeActor(f.operator, f.reviewer.actorId);
+  await assert.rejects(
+    async () =>
+      await f.reviews.submit(f.reviewer, {
+        reviewId: reissued.id,
+        claimId: claimed.claimId!,
+        verdict: 'pass',
+        notes: 'Cannot submit after losing authority.',
+        requestId: 'revoked-verdict',
+      }),
+    { code: 'forbidden' },
+  );
+});
+
+test('excluded IDs must be authors in the exact scoped manifest and are validated without accessor effects', async (t) => {
+  const f = await fixture(t);
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const outsider = { projectId: other.project.id, actorId: other.actor.id };
+  const otherOutput = await f.artifacts.create(outsider, {
+    title: 'Foreign lens',
+    content: 'Not this project.',
+  });
+  for (const excludedActorIds of [
+    [outsider.actorId],
+    [f.reviewer.actorId],
+    ['actor_missing'],
+    [''],
+    Array(1),
+  ])
+    await assert.rejects(
+      async () => await f.reviews.request(f.producer, { ...f.input(), excludedActorIds }),
+      {
+        code: 'invalid_review_exclusions',
+      },
+    );
+  const cross = f.input();
+  await assert.rejects(
+    async () =>
+      await f.reviews.request(f.producer, {
+        ...cross,
+        artifactIds: [...cross.artifactIds, otherOutput.id],
+        pinnedInputIds: [...cross.pinnedInputIds!, otherOutput.id],
+        excludedActorIds: [outsider.actorId],
+      }),
+    { code: 'not_found' },
+  );
+  let calls = 0;
+  const accessor = Object.defineProperty(f.input(), 'excludedActorIds', {
+    enumerable: true,
+    get() {
+      calls++;
+      return [f.lensA.actorId];
+    },
+  });
+  await assert.rejects(async () => await f.reviews.request(f.producer, accessor), {
+    code: 'invalid_review_exclusions',
+  });
+  const array = Object.defineProperty([f.lensA.actorId], 0, {
+    get() {
+      calls++;
+      return f.lensA.actorId;
+    },
+  });
+  await assert.rejects(
+    async () => await f.reviews.request(f.producer, { ...f.input(), excludedActorIds: array }),
+    {
+      code: 'invalid_review_exclusions',
+    },
+  );
+  assert.equal(calls, 0);
+  assert.equal((await f.reviews.list(f.operator)).length, 0);
+});
+
+test('additive migration preserves legacy snapshot hash, absent field and stored command replay', async (t) => {
+  const f = await fixture(t, 6);
+  const input = f.input();
+  const requested = await f.reviews.request(f.producer, input);
+  const claimed = await f.reviews.start(f.reviewer, requested.id);
+  const submit = {
+    reviewId: claimed.id,
+    claimId: claimed.claimId!,
+    verdict: 'pass' as const,
+    notes: 'Verified independently before migration.',
+    requestId: 'legacy-verdict',
+  };
+  const submitted = await f.reviews.submit(f.reviewer, submit);
+  const stored = await f.state.read(
+    async (sql) => await sql.all('SELECT * FROM review_commands ORDER BY request_id'),
+  );
+  assert.equal(Object.hasOwn(requested, 'excludedActorIds'), false);
+  await f.reload();
+  assert.deepEqual(
+    await f.state.read(
+      async (sql) => await sql.all('SELECT * FROM review_commands ORDER BY request_id'),
+    ),
+    stored,
+  );
+  assert.deepEqual(await f.reviews.get(f.operator, requested.id), submitted);
+  assert.deepEqual(
+    await f.reviews.request(f.producer, { ...input, excludedActorIds: undefined }),
+    requested,
+  );
+  assert.deepEqual(await f.reviews.submit(f.reviewer, submit), submitted);
+  assert.equal(
+    Object.hasOwn(await f.reviews.get(f.operator, requested.id), 'excludedActorIds'),
+    false,
+  );
+  const legacy = await f.reviews.request(f.producer, f.input());
+  assert.equal((await f.reviews.start(f.lensA, legacy.id)).reviewerId, f.lensA.actorId);
+});

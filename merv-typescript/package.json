@@ -11,22 +11,31 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postbuild": "node --import tsx scripts/copy-runtime-assets.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test tests/*.test.ts",
     "start": "node --import tsx src/cli.ts serve",
     "init": "node --import tsx src/cli.ts init",
     "cli": "node --import tsx src/cli.ts",
     "test:live": "node --import tsx scripts/live-codex.ts",
+    "test:live:sessions": "node --import tsx scripts/live-sessions.ts",
+    "test:live:dispatch": "node --import tsx scripts/live-sessions.ts --automatic",
+    "test:sessions": "node --import tsx --test tests/sessions.test.ts tests/sessions-api.test.ts tests/sessions-integration.test.ts tests/workflow-leases.test.ts tests/workflow-dispatch.test.ts tests/session-dispatch-api.test.ts",
+    "test:runner": "node --import tsx --test tests/runner-*.test.ts",
     "test:feed-unload": "node --import tsx scripts/feed-unload.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:credentials": "node --import tsx --test tests/remote-permissions.test.ts tests/credential-http.test.ts tests/credential-client.test.ts",
     "test:mount-unload": "node --import tsx scripts/mount-unload.ts",
     "test:mounts": "node --import tsx --test tests/mounts.test.ts tests/mount-config.test.ts tests/mount-unload.test.ts",
-    "test:nisa": "node --import tsx --test tests/nisa.test.ts tests/nisa-config.test.ts tests/nisa-unload.test.ts tests/live-nisa.test.ts",
-    "test:nisa-unload": "node --import tsx scripts/nisa-unload.ts",
+    "test:nisa": "node --import tsx scripts/nisa-mcp.ts",
     "test:nisa-mcp": "node --import tsx scripts/nisa-mcp.ts",
-    "test:nisa-live": "node --import tsx scripts/live-nisa.ts"
+    "build:ui": "npm run build --workspace @merv/ui",
+    "typecheck:ui": "npm run typecheck --workspace @merv/ui",
+    "dev:ui": "npm run dev --workspace @merv/ui",
+    "test:ui": "node --import tsx --test tests/ui.test.ts",
+    "demo:ui": "node --import tsx scripts/ui-demo.ts",
+    "docs:architecture": "node --import tsx scripts/dependency-map.ts"
   },
   "dependencies": {
     "@cordisjs/plugin-loader": "1.0.0-rc.7",
@@ -36,6 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "@types/pg": "^8.23.1",
     "prettier": "3.9.6",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"

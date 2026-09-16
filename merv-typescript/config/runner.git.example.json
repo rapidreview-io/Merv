@@ -1,0 +1,20 @@
+{
+  "directory": "../.merv-runner",
+  "baseUrl": "http://127.0.0.1:3081",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "credentialEnv": "MERV_RUNNER_SOURCE_TOKEN",
+  "capacity": 1,
+  "workspace": {
+    "repository": "/absolute/path/to/source-repository",
+    "baseRef": "HEAD"
+  },
+  "profiles": [
+    {
+      "name": "codex",
+      "harness": "codex",
+      "executable": "codex",
+      "enabled": true,
+      "parallelism": 1
+    }
+  ]
+}

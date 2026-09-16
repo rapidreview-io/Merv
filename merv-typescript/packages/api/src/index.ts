@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import type {} from './types.js';
 import { z } from 'zod';
 import '@merv/contracts';
-import type {} from '@merv/access/types';
+import type {} from '@merv/identity/types';
 import { ApiServer, type HttpOptions } from './http.js';
 import { ToolRegistry } from './registry.js';
 
@@ -11,19 +11,13 @@ export type { HttpOptions } from './http.js';
 export { ApiError, ToolRegistry } from './registry.js';
 export type { ToolDescription } from './registry.js';
 
-declare module 'cordis' {
-  interface Context {
-    api: ApiServer;
-  }
-}
-
 export const toolsPlugin = {
   name: 'merv-tools',
   Config: z.object({}).strict().default({}),
-  inject: ['scope', 'access'],
+  inject: ['scope'],
   apply(ctx: Context) {
     ctx.effect(function* () {
-      const tools = new ToolRegistry(ctx.scope, ctx.access);
+      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy);
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.
       yield ctx.provide('tools', tools);
@@ -59,10 +53,10 @@ export const apiPlugin = {
     })
     .strict()
     .default({}),
-  inject: ['scope', 'tools'],
+  inject: ['scope', 'tools', 'identity'],
   async apply(ctx: Context, config: HttpOptions = {}) {
     await ctx.effect(async function* () {
-      const api = new ApiServer(ctx.scope, ctx.tools, config);
+      const api = new ApiServer(ctx.scope, ctx.tools, config, ctx.identity);
       yield () => api.stop();
       await api.start();
       yield ctx.provide('api', api);

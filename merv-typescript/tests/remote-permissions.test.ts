@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -19,18 +20,24 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const a = app.ctx.scope.bootstrap({ projectName: 'A', actorName: 'A operator' });
-  const b = app.ctx.scope.bootstrap({ projectName: 'B', actorName: 'B operator' });
+  const a = await app.ctx.scope.bootstrap({ projectName: 'A', actorName: 'A operator' });
+  const b = await app.ctx.scope.bootstrap({ projectName: 'B', actorName: 'B operator' });
   const callerA = { actorId: a.actor.id, projectId: a.project.id };
-  const reader = app.ctx.scope.issueActor(callerA, { name: 'A reader', role: 'reader' });
-  const producer = app.ctx.scope.issueActor(callerA, { name: 'A producer', role: 'producer' });
+  const reader = await app.ctx.scope.issueActor(callerA, { name: 'A reader', role: 'reader' });
+  const producer = await app.ctx.scope.issueActor(callerA, {
+    name: 'A producer',
+    role: 'producer',
+  });
   const grant = {
     actorId: reader.actor.id,
     projectId: a.project.id,
     mountId: 'bridge',
     tools: ['inspect'],
   };
-  app.ctx.access.replace([grant, { ...grant, actorId: producer.actor.id, tools: ['write'] }]);
+  app.ctx.scope.toolPolicy.replace([
+    grant,
+    { ...grant, actorId: producer.actor.id, tools: ['write'] },
+  ]);
   const admitted: string[] = [];
   const catalog = app.ctx.tools.createCatalog('bridge');
   const definitions: RemoteToolDefinition[] = ['inspect', 'write'].map((name) => ({
@@ -72,40 +79,34 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   };
   const readerMcp = await connect(reader.token),
     otherMcp = await connect(b.token);
-  assert.equal((await httpList(reader.token)).body.tools.length, 27);
-  assert.equal((await readerMcp.listTools()).tools.length, 27);
+  assert.equal((await httpList(reader.token)).body.tools.length, 65);
+  assert.equal((await readerMcp.listTools()).tools.length, 65);
   assert.equal(
     (await httpList(producer.token)).body.tools.filter((tool: { name: string }) =>
-      tool.name.startsWith('mount__'),
+      tool.name.startsWith('_'),
     )[0].name,
-    'mount__bridge__write',
+    '_bridge.write',
   );
-  assert.equal((await otherMcp.listTools()).tools.length, 26);
+  assert.equal((await otherMcp.listTools()).tools.length, 64);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
-    26,
+    64,
     'Operator role is not a remote grant',
   );
-  assert.equal((await httpCall(reader.token, 'mount__bridge__inspect')).status, 200);
+  assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 200);
   assert.equal(
-    (await readerMcp.callTool({ name: 'mount__bridge__inspect', arguments: {} })).isError,
+    (await readerMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError,
     undefined,
   );
   const count = admitted.length;
-  assert.equal((await httpCall(reader.token, 'mount__bridge__write')).status, 403);
-  assert.equal(
-    (await readerMcp.callTool({ name: 'mount__bridge__write', arguments: {} })).isError,
-    true,
-  );
-  assert.equal(
-    (await otherMcp.callTool({ name: 'mount__bridge__inspect', arguments: {} })).isError,
-    true,
-  );
+  assert.equal((await httpCall(reader.token, '_bridge.write')).status, 403);
+  assert.equal((await readerMcp.callTool({ name: '_bridge.write', arguments: {} })).isError, true);
+  assert.equal((await otherMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError, true);
   const forged = await readerMcp.request(
     {
       method: 'tools/call',
       params: {
-        name: 'mount__bridge__inspect',
+        name: '_bridge.inspect',
         arguments: {},
         _meta: { 'merv/projectId': b.project.id },
       },
@@ -123,18 +124,18 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     ).status,
     403,
   );
-  app.ctx.access.replace([]);
-  assert.equal((await readerMcp.listTools()).tools.length, 26);
-  assert.equal((await httpList(reader.token)).body.tools.length, 26);
-  assert.equal((await httpCall(reader.token, 'mount__bridge__inspect')).status, 403);
+  app.ctx.scope.toolPolicy.replace([]);
+  assert.equal((await readerMcp.listTools()).tools.length, 64);
+  assert.equal((await httpList(reader.token)).body.tools.length, 64);
+  assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 403);
   assert.equal(
-    (await readerMcp.callTool({ name: 'mount__bridge__inspect', arguments: {} })).isError,
+    (await readerMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError,
     true,
   );
   assert.equal(admitted.length, count);
-  app.ctx.access.replace([grant]);
-  assert.equal((await readerMcp.listTools()).tools.length, 27);
-  app.ctx.scope.revokeActor(callerA, reader.actor.id);
+  app.ctx.scope.toolPolicy.replace([grant]);
+  assert.equal((await readerMcp.listTools()).tools.length, 65);
+  await app.ctx.scope.revokeActor(callerA, reader.actor.id);
   assert.equal((await httpList(reader.token)).status, 401);
   await assert.rejects(readerMcp.listTools());
   assert.equal((await httpCall(a.token, 'task.list')).status, 200);
@@ -143,7 +144,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
 test('a registry without an access provider defaults to denying remote calls and discovery', async () => {
   const caller = { actorId: 'actor', projectId: 'project' };
   const registry = new ToolRegistry({
-    require: () => ({
+    require: async () => ({
       id: caller.actorId,
       projectId: caller.projectId,
       name: 'Operator',
@@ -152,21 +153,21 @@ test('a registry without an access provider defaults to denying remote calls and
     }),
   });
   try {
-    await registry.createCatalog('ungranted').replace([
+    registry.createCatalog('ungranted').replace([
       {
         kind: 'mcp',
         name: 'inspect',
         inputSchema: { type: 'object' },
-        handler: () => ({ content: [] }),
+        handler: async () => ({ content: [] }),
       },
     ]);
     assert.equal(
-      registry.list().length,
+      (await registry.list()).length,
       1,
       'Embedded administration can inspect the installed catalog',
     );
-    assert.deepEqual(registry.list(caller), []);
-    await assert.rejects(registry.call('mount__ungranted__inspect', caller, {}), {
+    assert.deepEqual(await registry.list(caller), []);
+    await assert.rejects(registry.call('_ungranted.inspect', caller, {}), {
       code: 'tool_forbidden',
       status: 403,
     });

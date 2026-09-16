@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-15",
+  "status": "verified",
+  "scope": "Research owns reflection entry, optional live evidence authorization, and consolidation input selection; Reflections has no Knowledge dependency",
+  "changes": {
+    "newTools": 0,
+    "newPlugins": 0,
+    "movedTool": "reflection.create: Reflections adapter to Research adapter, unchanged schema",
+    "movedDependency": "Reflections -> Knowledge becomes Research -> Knowledge",
+    "nativeTools": 64,
+    "uiTools": 66,
+    "plugins": 56,
+    "requiredDependencies": 141,
+    "optionalDependencies": 3
+  },
+  "validation": {
+    "fullSuite": {
+      "passed": 694,
+      "failed": 0,
+      "skipped": 1,
+      "log": "/private/tmp/merv-research-coordinator-full-suite.log"
+    },
+    "backendBuild": "passed",
+    "backendTypecheck": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed; existing bundle-size warning",
+    "architecture": "inventory generated; required/optional edge sets validated; static image visually checked",
+    "diffCheck": "passed"
+  },
+  "coverage": [
+    "Research activation failure releases its earlier workflow registration",
+    "Exactly one existing reflection.create tool is registered",
+    "Knowledge unload withdraws Research but preserves Reflections",
+    "Existing agent can read newly linked research evidence after assignment and after reload",
+    "Own artifact reads, assignments, heartbeat and submission survive missing Research",
+    "Standalone reflection completes without Research or Knowledge",
+    "Cross-project evidence, peer lens reports, undeclared tools and writes remain denied",
+    "Read providers cannot replace scalar bindings or persist extra permissions",
+    "Provider disposal and replacement are generation-safe",
+    "Research selects current evidence and terminal experiments at consolidation handoff"
+  ],
+  "compatibility": "Version-1 waves retain snapshot behavior. Version-2 workflows and existing tools retain their versions and schemas. New live reflections no longer select downstream experimentIds; Research selects those at handoff.",
+  "parallelWork": "Experiments, Consolidation and Knowledge source packages were left to the side conversation. Their current optional Code integration is included in this regression run.",
+  "agreedFollowUp": "Not yet implemented: Code remains optional for Experiments/Knowledge, becomes mandatory inside Consolidation; Consolidation becomes optional to Research and is used only for code changes. Current diagrams show implemented dependencies."
+}

@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -15,6 +16,8 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { Context } from 'cordis';
+import { contextBuilderPlugin } from '@merv/context-builder';
+import { domainEventsPlugin } from '@merv/domain-events';
 import { statePlugin } from '@merv/state';
 import { blobsPlugin } from '@merv/blobs';
 import { scopePlugin } from '@merv/scope';
@@ -23,8 +26,9 @@ import { workflowsPlugin } from '@merv/workflows';
 import { reviewsPlugin } from '@merv/reviews';
 import { tasksPlugin } from '@merv/tasks';
 import { feedPlugin } from '@merv/feed';
-import { accessPlugin } from '@merv/access';
-import { credentialsPlugin } from '@merv/credentials';
+import { identityPlugin } from '@merv/identity';
+import { sessionsPlugin } from '@merv/sessions';
+import { runnerPlugin } from '@merv/runner';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packagesRoot = join(root, 'packages');
@@ -63,20 +67,89 @@ const initializer = (node: ts.ObjectLiteralElementLike | undefined) =>
 /** Architectural policy, independent of package manifests and runtime declarations. */
 const capabilities: Record<string, readonly string[]> = {
   state: [],
+  domainEvents: ['state'],
+  contextBuilder: ['state', 'scope', 'artifacts'],
   blobs: [],
   scope: ['state'],
   artifacts: ['state', 'scope', 'blobs'],
+  claims: ['state', 'scope'],
+  experiments: [
+    'state',
+    'scope',
+    'claims',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'paper',
+  ],
+  knowledge: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews'],
+  research: ['state', 'scope', 'workflows'],
+  paper: ['state', 'scope', 'artifacts'],
+  reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  consolidation: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'code'],
   workflows: ['state', 'scope'],
-  reviews: ['state', 'scope', 'artifacts'],
-  tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews'],
+  reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
+  tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder'],
   feed: ['state', 'scope', 'artifacts'],
-  access: ['scope'],
-  credentials: ['scope'],
-  tools: ['scope', 'access'],
-  api: ['scope', 'tools'],
-  mounts: ['tools', 'credentials', 'access'],
-  nisa: ['tools', 'credentials', 'access'],
+  identity: [],
+  sessions: ['state', 'scope', 'workflows', 'domainEvents'],
+  code: ['state', 'scope', 'sessions', 'artifacts'],
+  runner: [],
+  tools: ['scope'],
+  api: ['scope', 'tools', 'identity'],
+  mounts: ['tools', 'scope'],
+  ui: ['api', 'tools'],
 };
+const optionalCapabilities: Record<string, readonly string[]> = {
+  experiments: ['code'],
+  research: ['paper', 'reflections', 'knowledge', 'consolidation'],
+  knowledge: ['code'],
+};
+
+/** Child injections may use their dependencies only inside their own callback. */
+function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optional: Set<string>) {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'ctx' &&
+    node.expression.name.text === 'inject'
+  ) {
+    const [deps, callback] = node.arguments;
+    assert.ok(deps && ts.isArrayLiteralExpression(deps), 'Child injection must be a static list');
+    assert.ok(
+      callback && ts.isArrowFunction(callback),
+      'Child injection must have an inline callback',
+    );
+    const childDeps = deps.elements.map((element) => {
+      assert.ok(
+        ts.isStringLiteral(element) && element.text in capabilities,
+        'Unknown child capability',
+      );
+      optional.add(element.text);
+      return element.text;
+    });
+    checkCapabilityAccess(callback, [...declared, ...childDeps], optional);
+    return;
+  }
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === 'ctx'
+  ) {
+    const accessed = node.name.text;
+    if (accessed in capabilities)
+      assert.ok(declared.includes(accessed), `ctx.${accessed} is an undeclared dependency`);
+    assert.notEqual(accessed, 'root', 'Root-context access bypasses declared dependencies');
+  }
+  ts.forEachChild(node, (child) => checkCapabilityAccess(child, declared, optional));
+}
+/** Feature adapters publish to a transport or UI registry without owning domain state. */
+const adapterKinds = { tools: 'tools', ui: 'ui', api: 'api' } as const;
+const adapterKind = (path: string) =>
+  (/[/\\](tools|ui|api)\.ts$/.exec(path)?.[1] as keyof typeof adapterKinds | undefined) ??
+  undefined;
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 
@@ -144,8 +217,11 @@ function moduleReferences(source: ts.SourceFile): ModuleReference[] {
 }
 
 function publicTypesTarget(specifier: string, base: string): string {
-  const match = /^@merv\/([^/]+)\/types$/.exec(specifier);
-  assert.ok(match, `${specifier}: cross-component imports must use the public /types contract`);
+  const match = /^@merv\/([^/]+)\/(types|models)$/.exec(specifier);
+  assert.ok(
+    match,
+    `${specifier}: cross-component imports must use a public /types or /models contract`,
+  );
   const directory = join(base, match[1]);
   const manifestPath = join(directory, 'package.json');
   assert.ok(existsSync(manifestPath), `${specifier}: package manifest is missing`);
@@ -156,8 +232,8 @@ function publicTypesTarget(specifier: string, base: string): string {
   assert.equal(manifest.name, `@merv/${match[1]}`, `${specifier}: package identity mismatch`);
   const wildcard = manifest.exports['./*'];
   const target =
-    manifest.exports['./types'] ??
-    (typeof wildcard === 'string' ? wildcard.replace('*', 'types') : undefined);
+    manifest.exports[`./${match[2]}`] ??
+    (typeof wildcard === 'string' ? wildcard.replace('*', match[2]) : undefined);
   assert.ok(
     typeof target === 'string' && target.startsWith('./') && !target.includes('..'),
     `${specifier}: missing or escaping /types export`,
@@ -262,7 +338,7 @@ function assertComponentReferences(
   seen = new Set<string>(),
 ): void {
   const owner = relative(base, path).split(sep)[0];
-  const isAdapter = path.endsWith(`${sep}tools.ts`);
+  const isAdapter = adapterKind(path) !== undefined;
   for (const reference of moduleReferences(source)) {
     const { specifier, typeOnly } = reference;
     if (specifier.startsWith('@merv/') && specifier !== '@merv/contracts') {
@@ -281,7 +357,7 @@ function assertComponentReferences(
       );
       if (!isAdapter && !['api', 'mounts'].includes(owner))
         assert.ok(
-          !/(?:^|[/\\])(tools|http|registry)\.[cm]?[jt]s$/.test(specifier),
+          !/(?:^|[/\\])(tools|ui|api|http|registry)\.[cm]?[jt]s$/.test(specifier),
           `${path} loads a transport adapter from its core entrypoint`,
         );
     }
@@ -380,9 +456,27 @@ test('public contract imports resolve genuine type-only modules without runtime 
   assert.throws(() => verify("import type { Contract } from '@merv/supplier/types';"), /escaping/);
 });
 
+test('optional capabilities cannot escape their Cordis child injection', () => {
+  const verify = (code: string) =>
+    checkCapabilityAccess(
+      ts.createSourceFile('optional.ts', code, ts.ScriptTarget.Latest, true),
+      [],
+      new Set(),
+    );
+  assert.doesNotThrow(() => verify("ctx.inject(['code'], (ctx) => ctx.code);"));
+  assert.throws(
+    () => verify("ctx.inject(['code'], (ctx) => ctx.code); ctx.code;"),
+    /undeclared dependency/,
+  );
+  assert.throws(
+    () => verify("ctx.inject(['code'], (ctx) => ctx.sessions);"),
+    /undeclared dependency/,
+  );
+});
+
 test('Cordis service requirements match the architecture and every accessed capability is declared', () => {
   const provided = new Set<string>();
-  for (const path of sourceFiles.filter((path) => !path.endsWith(`${sep}tools.ts`))) {
+  for (const path of sourceFiles.filter((path) => adapterKind(path) === undefined)) {
     visit(parse(path), (node) => {
       if (!ts.isObjectLiteralExpression(node) || !property(node, 'apply')) return;
       const name = initializer(property(node, 'name'));
@@ -403,6 +497,8 @@ test('Cordis service requirements match the architecture and every accessed capa
             })
           : [];
       const actualProvided: string[] = [];
+      const optional = new Set<string>();
+      checkCapabilityAccess(node, declared, optional);
       visit(node, (child) => {
         if (
           ts.isCallExpression(child) &&
@@ -415,23 +511,6 @@ test('Cordis service requirements match the architecture and every accessed capa
           );
           actualProvided.push(child.arguments[0].text);
         }
-        if (
-          ts.isPropertyAccessExpression(child) &&
-          ts.isIdentifier(child.expression) &&
-          child.expression.text === 'ctx'
-        ) {
-          const accessed = child.name.text;
-          if (accessed in capabilities)
-            assert.ok(
-              declared.includes(accessed),
-              `${name.text}: ctx.${accessed} is an undeclared dependency`,
-            );
-          assert.notEqual(
-            accessed,
-            'root',
-            `${name.text}: root-context access bypasses declared dependencies`,
-          );
-        }
       });
       assert.equal(
         actualProvided.length,
@@ -439,6 +518,11 @@ test('Cordis service requirements match the architecture and every accessed capa
         `${name.text} must provide one independently owned service`,
       );
       const service = actualProvided[0];
+      assert.deepEqual(
+        sorted([...optional]),
+        sorted(optionalCapabilities[service] ?? []),
+        `${name.text}: optional dependency policy changed`,
+      );
       assert.ok(service in capabilities, `Add the architectural policy for new service ${service}`);
       assert.deepEqual(
         sorted(declared),
@@ -456,50 +540,86 @@ test('Cordis service requirements match the architecture and every accessed capa
   );
 });
 
-test('feature tools inject their owner and registry, without acquiring sibling business capabilities', () => {
-  const adapters = sourceFiles.filter((path) => path.endsWith(`${sep}tools.ts`));
-  assert.deepEqual(sorted(adapters.map(ownerOf)), [
-    'artifacts',
-    'feed',
-    'reviews',
-    'scope',
-    'tasks',
-    'workflows',
-  ]);
-  for (const path of adapters) {
-    const owner = ownerOf(path);
-    const declarations: ts.ObjectLiteralExpression[] = [];
-    visit(parse(path), (node) => {
-      if (ts.isObjectLiteralExpression(node) && property(node, 'apply') && property(node, 'inject'))
-        declarations.push(node);
-    });
-    assert.equal(declarations.length, 1, `${owner}: expected one feature adapter plugin`);
-    const declaration = declarations[0];
-    const deps = initializer(property(declaration, 'inject'));
-    assert.ok(deps && ts.isArrayLiteralExpression(deps));
-    const declared = deps.elements.map((value) => {
-      assert.ok(ts.isStringLiteral(value));
-      return value.text;
-    });
-    assert.ok(declared.includes(owner), `${owner}: tool adapter must inject its own feature`);
-    assert.ok(declared.includes('tools'), `${owner}: tool adapter must inject the registry`);
-    assert.ok(
-      declared.every((name) => [owner, 'tools', 'scope'].includes(name)),
-      `${owner}: cross-feature orchestration belongs in a program service`,
-    );
-    visit(declaration, (child) => {
-      if (
-        ts.isPropertyAccessExpression(child) &&
-        ts.isIdentifier(child.expression) &&
-        child.expression.text === 'ctx' &&
-        child.name.text in capabilities
-      ) {
-        assert.ok(
-          declared.includes(child.name.text),
-          `${owner}: undeclared tool-adapter dependency ${child.name.text}`,
-        );
-      }
-    });
+test('feature adapters inject their owner and one registry, without acquiring sibling business capabilities', () => {
+  const expected: Record<keyof typeof adapterKinds, string[]> = {
+    tools: [
+      'artifacts',
+      'claims',
+      'code',
+      'consolidation',
+      'experiments',
+      'feed',
+      'knowledge',
+      'paper',
+      'reflections',
+      'research',
+      'reviews',
+      'scope',
+      'tasks',
+      'workflows',
+    ],
+    ui: [
+      'artifacts',
+      'claims',
+      'code',
+      'consolidation',
+      'experiments',
+      'feed',
+      'knowledge',
+      'mounts',
+      'paper',
+      'reflections',
+      'research',
+      'reviews',
+      'scope',
+      'sessions',
+      'tasks',
+    ],
+    api: ['code', 'sessions'],
+  };
+  for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
+    const registry = adapterKinds[kind];
+    const adapters = sourceFiles.filter((path) => adapterKind(path) === kind);
+    assert.deepEqual(sorted(adapters.map(ownerOf)), expected[kind]);
+    for (const path of adapters) {
+      const owner = ownerOf(path);
+      const declarations: ts.ObjectLiteralExpression[] = [];
+      visit(parse(path), (node) => {
+        if (
+          ts.isObjectLiteralExpression(node) &&
+          property(node, 'apply') &&
+          property(node, 'inject')
+        )
+          declarations.push(node);
+      });
+      assert.equal(declarations.length, 1, `${owner}: expected one ${kind} adapter plugin`);
+      const declaration = declarations[0];
+      const deps = initializer(property(declaration, 'inject'));
+      assert.ok(deps && ts.isArrayLiteralExpression(deps));
+      const declared = deps.elements.map((value) => {
+        assert.ok(ts.isStringLiteral(value));
+        return value.text;
+      });
+      assert.ok(declared.includes(owner), `${owner}: ${kind} adapter must inject its own feature`);
+      assert.ok(declared.includes(registry), `${owner}: ${kind} adapter must inject ${registry}`);
+      assert.ok(
+        declared.every((name) => [owner, registry, 'scope'].includes(name)),
+        `${owner}: cross-feature orchestration belongs in a program service`,
+      );
+      visit(declaration, (child) => {
+        if (
+          ts.isPropertyAccessExpression(child) &&
+          ts.isIdentifier(child.expression) &&
+          child.expression.text === 'ctx' &&
+          child.name.text in capabilities
+        ) {
+          assert.ok(
+            declared.includes(child.name.text),
+            `${owner}: undeclared ${kind}-adapter dependency ${child.name.text}`,
+          );
+        }
+      });
+    }
   }
 });
 
@@ -572,7 +692,16 @@ test('workspace exports and imported export subpaths resolve to real implementat
 test('each service boots with only its declared dependency closure and without API or tools', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-independent-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const credentialEnv = 'MERV_BOUNDARY_RUNNER_CREDENTIAL';
+  const previousCredential = process.env[credentialEnv];
+  process.env[credentialEnv] = 'synthetic-boundary-source';
+  t.after(() => {
+    if (previousCredential === undefined) delete process.env[credentialEnv];
+    else process.env[credentialEnv] = previousCredential;
+  });
   const plugins: Record<string, { plugin: any; config?: any }> = {
+    domainEvents: { plugin: domainEventsPlugin },
+    contextBuilder: { plugin: contextBuilderPlugin },
     state: { plugin: statePlugin, config: { path: ':memory:' } },
     blobs: { plugin: blobsPlugin, config: { root: directory } },
     scope: { plugin: scopePlugin },
@@ -581,8 +710,19 @@ test('each service boots with only its declared dependency closure and without A
     reviews: { plugin: reviewsPlugin },
     tasks: { plugin: tasksPlugin },
     feed: { plugin: feedPlugin },
-    access: { plugin: accessPlugin },
-    credentials: { plugin: credentialsPlugin },
+    identity: { plugin: identityPlugin },
+    sessions: { plugin: sessionsPlugin },
+    runner: {
+      plugin: runnerPlugin,
+      config: {
+        directory: join(directory, 'machine'),
+        baseUrl: 'http://127.0.0.1:1',
+        projectId: 'synthetic',
+        credentialEnv,
+        profiles: [],
+        requestTimeoutMs: 100,
+      },
+    },
   };
   for (const target of Object.keys(plugins))
     await t.test(target, async () => {
@@ -600,6 +740,9 @@ test('each service boots with only its declared dependency closure and without A
         for (const name of required)
           fibers.push(await ctx.plugin(plugins[name].plugin, plugins[name].config));
         await Promise.all(fibers.map((fiber) => fiber.await()));
+        const deadline = Date.now() + 5000;
+        while ([...required].some((name) => !ctx.get(name)) && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 10));
         for (const name of Object.keys(capabilities))
           assert.equal(
             !!ctx.get(name),
@@ -608,22 +751,26 @@ test('each service boots with only its declared dependency closure and without A
           );
         if (target === 'state')
           assert.equal(
-            ctx.state.read((sql) => sql.get<{ answer: number }>('SELECT 42 AS answer'))?.answer,
+            (
+              await ctx.state.read(
+                async (sql) => await sql.get<{ answer: number }>('SELECT 42 AS answer'),
+              )
+            )?.answer,
             42,
           );
         if (target === 'blobs') {
-          const stored = ctx.blobs.put('isolated', Buffer.from('durable bytes'));
-          assert.equal(ctx.blobs.get('isolated', stored.hash).toString(), 'durable bytes');
+          const stored = await ctx.blobs.put('isolated', Buffer.from('durable bytes'));
+          assert.equal((await ctx.blobs.get('isolated', stored.hash)).toString(), 'durable bytes');
         }
         if (required.has('scope')) {
-          const credentials = ctx.scope.bootstrap({
+          const credentials = await ctx.scope.bootstrap({
             projectName: 'Independent component',
             actorName: 'Operator',
           });
           const caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
-          assert.equal(ctx.scope.project(caller).id, caller.projectId);
+          assert.equal((await ctx.scope.project(caller)).id, caller.projectId);
           if (target === 'workflows') {
-            const program = ctx.workflows.register({
+            const program = await ctx.workflows.register({
               name: 'minimal',
               version: 1,
               initial: 'done',
@@ -632,49 +779,55 @@ test('each service boots with only its declared dependency closure and without A
               edges: [],
             });
             assert.equal(
-              program.start(caller, { workflow: 'minimal', requestId: 'start' }).state,
+              (await program.start(caller, { workflow: 'minimal', requestId: 'start' })).state,
               'done',
             );
           }
           if (required.has('artifacts')) {
-            const artifact = ctx.artifacts.create(caller, {
+            const artifact = await ctx.artifacts.create(caller, {
               title: 'Brief',
               content: 'Goal: Run alone.\nCheck: The service works.',
             });
             assert.equal(
-              ctx.artifacts.read(caller, artifact.id).content,
+              (await ctx.artifacts.read(caller, artifact.id)).content,
               'Goal: Run alone.\nCheck: The service works.',
             );
             if (target === 'reviews')
               assert.equal(
-                ctx.reviews.request(caller, {
-                  subjectId: 'opaque-target',
-                  subjectRevision: 0,
-                  producerId: caller.actorId,
-                  artifactIds: [artifact.id],
-                  criteria: ['The service works.'],
-                  requestId: 'review',
-                }).status,
+                (
+                  await ctx.reviews.request(caller, {
+                    subjectId: 'opaque-target',
+                    subjectRevision: 0,
+                    producerId: caller.actorId,
+                    artifactIds: [artifact.id],
+                    criteria: ['The service works.'],
+                    requestId: 'review',
+                  })
+                ).status,
                 'requested',
               );
             if (target === 'tasks')
               assert.equal(
-                ctx.tasks.create(caller, {
-                  title: 'Standalone task',
-                  goal: 'Run alone.',
-                  checks: ['The service works.'],
-                  briefId: artifact.id,
-                  requestId: 'task',
-                }).workflow.state,
+                (
+                  await ctx.tasks.create(caller, {
+                    title: 'Standalone task',
+                    goal: 'Run alone.',
+                    checks: ['The service works.'],
+                    briefId: artifact.id,
+                    requestId: 'task',
+                  })
+                ).workflow.state,
                 'in_progress',
               );
             if (target === 'feed')
               assert.equal(
-                ctx.feed.post(caller, {
-                  body: 'The service works.',
-                  artifactIds: [artifact.id],
-                  requestId: 'post',
-                }).body,
+                (
+                  await ctx.feed.post(caller, {
+                    body: 'The service works.',
+                    artifactIds: [artifact.id],
+                    requestId: 'post',
+                  })
+                ).body,
                 'The service works.',
               );
           }

@@ -1,0 +1,83 @@
+{
+  "date": "2026-09-14",
+  "scope": "Task producer/operator terminal closure, additive managed workflow upgrade, legacy compatibility, mounted-tool guidance name validation",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-task-closure-suite.log",
+    "tests": 208,
+    "pass": 208,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "typecheck": "passed",
+    "build": "passed",
+    "uiBuild": "passed",
+    "uiTypecheck": "passed",
+    "format": "passed",
+    "diffWhitespace": "passed"
+  },
+  "composition": {
+    "domainTools": 26,
+    "withUiTools": 28,
+    "pluginEntrypoints": 28,
+    "providers": 16,
+    "toolAdapters": 6,
+    "uiAdapters": 6,
+    "directDependencies": 58,
+    "defaultEntries": 26,
+    "apiOnlyEntries": 20
+  },
+  "compatibility": {
+    "newTaskWorkflowVersion": 2,
+    "legacyDefinitionRetained": true,
+    "legacyUpgradeOnClosureOnly": true,
+    "legacyClosureRevisionDelta": 2,
+    "newTaskClosureRevisionDelta": 1
+  },
+  "liveAgent": {
+    "status": "passed_after_prompt_clarification",
+    "firstAttemptDirectory": "/private/tmp/merv-guidance-live-20260915T015504Z",
+    "firstAttemptResult": "producer exited zero with 12 calls including four successful guidance reads and expected self-review refusal; harness rejected missing explicit task.get call. Prompts now request all mandatory tool reads; assertions unchanged.",
+    "freshRunDirectory": "/private/tmp/merv-guidance-live-20260915T015728Z",
+    "sanitizedEvidence": "verification/workflow-guidance-live.json",
+    "sessions": 3,
+    "serverRestarts": 2,
+    "toolCalls": 30,
+    "successfulCalls": 27,
+    "expectedPermissionDenials": 3,
+    "guidanceCalls": 9,
+    "transportErrors": 0,
+    "scope": "Guidance and ordinary task completion with retained evidence; closure and version upgrade are covered by deterministic tests."
+  },
+  "fable": {
+    "status": "awaiting_exact_packet_approval",
+    "report": "docs/reviews/workflow-guidance-fable.md",
+    "submitted": false
+  },
+  "browser": {
+    "status": "sign_in_blocked_pending_approval",
+    "note": "Automatic approval review rejected sign-in to the synthetic disposable preview; specific approval requested. Preview was shut down and its temporary data removed. No visual verification claimed.",
+    "previewStopped": true,
+    "temporaryTabClosed": true
+  },
+  "sourceSha256": {
+    "packages/contracts/src/index.ts": "4d39bf737ff811b90c63f9e70135690e47f3668333b29e3b927081f77d2a4c43",
+    "packages/workflows/src/index.ts": "a693052426ac43b4bbc333b210119d1213aee62c6fc5d6829a1df72a6f6eb1bd",
+    "packages/workflows/src/evaluation.ts": "19d176eff2a12c8d6a39a36e8c082bba56452a3f71be2258b273ba613935ad4a",
+    "packages/tasks/src/index.ts": "f05630654b335326ca2591dbd68633a2401450c4197aa294c0614d2b09382373",
+    "packages/tasks/src/tools.ts": "01aa32397d457253b6626e6a4d7e2e3b33d5adfd7482b0c554ff3f54b0d658b6",
+    "packages/ui/web/views/tasks.tsx": "839c75bc3de6fe5e55f594808a0498aa674c2a8a545b90838ccdae908733687c",
+    "tests/task-failure.test.ts": "d8ef777700e62663a5ce2d74451507858c5e6ec8054ef5e8f62174a05fa9eb67",
+    "tests/workflow-upgrade.test.ts": "a40f1b408609a7daf8d92550ccb122c00fdf9259b5ea862a94cf96e145eb64fa",
+    "tests/workflow-mounted-guidance.test.ts": "73bc08cb9729eb002c61ec222a192bd16124decb60897432ea64bf4f988eb79e",
+    "scripts/live-codex.ts": "cbb67da833af685c0db0132eacee65cb4269295928cdfd52ff91b3750f2a100b"
+  },
+  "remainingParity": "Work-item dependencies, structured delivery confirmations, actual experiment/reflection programs, sessions/leases/runner, shared authentication, async State/Postgres and other items in BACKEND_PARITY_AUDIT.md remain open.",
+  "localReview": {
+    "status": "no_material_findings",
+    "scope": "Task closure, managed upgrades, replay, review fencing, legacy compatibility, permissions and lifecycle",
+    "external": false
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "redirects": [
+    {
+      "source": "/merv",
+      "destination": "https://experiments.rapidreview.io/ui/",
+      "permanent": false
+    },
+    {
+      "source": "/merv/",
+      "destination": "https://experiments.rapidreview.io/ui/",
+      "permanent": false
+    },
+    {
+      "source": "/merv/projects",
+      "destination": "https://experiments.rapidreview.io/ui/",
+      "permanent": false
+    },
+    {
+      "source": "/merv/projects/:path*",
+      "destination": "https://experiments.rapidreview.io/ui/",
+      "permanent": false
+    },
+    {
+      "source": "/merv/p/:path*",
+      "destination": "https://experiments.rapidreview.io/ui/",
+      "permanent": false
+    }
+  ]
+}

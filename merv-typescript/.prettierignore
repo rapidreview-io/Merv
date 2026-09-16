@@ -11,3 +11,7 @@ credentials/
 package-lock.json
 *.sqlite*
 *.log
+# Generated self-contained viewer and JSON-placeholder template.
+docs/architecture/explorer/index.html
+docs/architecture/explorer/data.json
+docs/architecture/explorer/shell.html

@@ -1,0 +1,645 @@
+import { createService } from '@merv/contracts';
+import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SqliteState } from '@merv/state';
+import { DurableEvents } from '@merv/domain-events';
+import { digest, type EventConsumer } from '@merv/contracts';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(check: () => boolean | Promise<boolean>) {
+  const deadline = Date.now() + 3000;
+  while (!(await check())) {
+    assert.ok(Date.now() < deadline, 'Delivery did not converge');
+    await sleep(10);
+  }
+}
+
+test('durable delivery rolls back effects with its cursor, isolates failures, resumes after restart and does not duplicate commits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merv-events-'));
+  let state = new SqliteState(join(dir, 'state.db'));
+  let events = await createService(new DurableEvents(state));
+  try {
+    await state.migrate('probe', [
+      {
+        version: 1,
+        sql: 'CREATE TABLE probe (consumer TEXT, event INTEGER, UNIQUE(consumer,event));',
+      },
+    ]);
+    const emit = async () =>
+      await state.transaction(
+        async (tx) =>
+          await state.appendEvent(tx, {
+            projectId: 'p',
+            actorId: 'a',
+            type: 'probe.created',
+            subjectId: 's',
+            data: {},
+          }),
+      );
+    await assert.rejects(
+      async () =>
+        await state.transaction(async (tx) => {
+          await state.appendEvent(tx, {
+            projectId: 'p',
+            actorId: 'a',
+            type: 'probe.created',
+            subjectId: 'rolled-back',
+            data: {},
+          });
+          throw Error('abort');
+        }),
+    );
+    assert.equal(await state.eventHead(), 0);
+    let fail = true;
+    const handler = (id: string) => ({
+      id,
+      types: ['probe.created'],
+      from: 'beginning' as const,
+      async handle(event: any, tx: any) {
+        await tx.run('INSERT INTO probe VALUES (?,?)', id, event.id);
+        if (id === 'flaky' && fail) throw Error('sensitive failure detail');
+      },
+    });
+    await events.subscribe(handler('flaky'));
+    const detach = await events.subscribe(handler('healthy'));
+    const first = await emit();
+    await events.drain();
+    assert.equal((await events.status()).find((x) => x.id === 'flaky')!.cursor, 0);
+    assert.equal((await events.status()).find((x) => x.id === 'flaky')!.error, 'handler_failed');
+    assert.equal((await events.status()).find((x) => x.id === 'healthy')!.cursor, first.id);
+    assert.equal((await state.read(async (sql) => await sql.all('SELECT * FROM probe'))).length, 1);
+    await detach();
+    await emit();
+    await events.drain();
+    assert.equal((await state.read(async (sql) => await sql.all('SELECT * FROM probe'))).length, 1);
+    await events.close();
+    await state.close();
+    state = new SqliteState(join(dir, 'state.db'));
+    events = await createService(new DurableEvents(state));
+    fail = false;
+    await events.subscribe(handler('flaky'));
+    await events.subscribe(handler('healthy'));
+    await until(
+      async () =>
+        (await state.read(async (sql) => await sql.all('SELECT * FROM probe'))).length === 4,
+    );
+    await events.drain();
+    await events.drain();
+    assert.equal((await state.read(async (sql) => await sql.all('SELECT * FROM probe'))).length, 4);
+    assert.ok((await events.status()).every((x) => x.attempts === 0 && x.error === null));
+    await assert.rejects(
+      async () => await events.subscribe({ ...handler('healthy'), types: ['different'] }),
+      /already active/,
+    );
+    await events.subscribe({ ...handler('new-consumer'), from: 'now' });
+    await events.drain();
+    assert.equal((await state.read(async (sql) => await sql.all('SELECT * FROM probe'))).length, 4);
+  } finally {
+    await events.close();
+    await state.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review recovery survives unloaded consumers and revoked initiators, preserves snapshots, and fences stale claims', async () => {
+  const { createApp } = await import('../src/app.js');
+  const directory = mkdtempSync(join(tmpdir(), 'merv-recovery-'));
+  let app = await createApp({ directory, api: false });
+  try {
+    const bootstrap = await app.ctx.scope.bootstrap({
+      projectName: 'Recovery',
+      actorName: 'Operator',
+    });
+    const operator = { actorId: bootstrap.actor.id, projectId: bootstrap.project.id };
+    const issue = async (role: 'producer' | 'reviewer' | 'operator') => ({
+      actorId: (await app.ctx.scope.issueActor(operator, { name: role, role })).actor.id,
+      projectId: operator.projectId,
+    });
+    const producer = await issue('producer'),
+      reviewer = await issue('reviewer'),
+      replacement = await issue('reviewer'),
+      otherOperator = await issue('operator');
+    const brief = await app.ctx.artifacts.create(producer, {
+      title: 'Brief',
+      content: 'Goal. Check.',
+    });
+    const task = await app.ctx.tasks.create(producer, {
+      title: 'Task',
+      goal: 'Goal.',
+      checks: ['Check.'],
+      briefId: brief.id,
+      requestId: 'create',
+    });
+    const delivery = await app.ctx.artifacts.create(producer, {
+      title: 'Delivery',
+      content: 'Check. Verified.',
+    });
+    const pending = await app.ctx.tasks.submitDelivery(
+      producer,
+      confirmedDelivery({
+        taskId: task.id,
+        artifactIds: [delivery.id],
+        expectedRevision: 0,
+        requestId: 'deliver',
+      }),
+    );
+    const claim = await app.ctx.reviews.start(reviewer, pending.reviewId!);
+    await app.setEnabled('domain-events', false);
+    assert.equal(app.ctx.get('reviews'), undefined);
+    await app.ctx.scope.revokeActor(otherOperator, reviewer.actorId);
+    await app.ctx.scope.revokeActor(operator, otherOperator.actorId);
+    await app.setEnabled('domain-events', true);
+    await until(async () => (await app.ctx.reviews.get(operator, claim.id)).status === 'requested');
+    const recovered = await app.ctx.reviews.get(operator, claim.id);
+    assert.equal(recovered.snapshotHash, claim.snapshotHash);
+    assert.deepEqual(await app.ctx.tasks.get(producer, task.id), pending);
+    assert.equal(recovered.recovery!.previousClaimId, claim.claimId);
+    const newClaim = await app.ctx.reviews.start(replacement, claim.id);
+    assert.notEqual(newClaim.claimId, claim.claimId);
+    assert.equal(newClaim.claimGeneration, 2);
+    await assert.rejects(
+      () =>
+        app.ctx.tasks.submitReview(replacement, {
+          ...reviewedFindings(claim),
+          reviewId: claim.id,
+          claimId: claim.claimId!,
+          expectedRevision: 1,
+          verdict: 'pass',
+          notes: 'stale',
+          requestId: 'stale',
+        }),
+      /current review claim/,
+    );
+    await assert.rejects(
+      () =>
+        app.ctx.tasks.submitReview(reviewer, {
+          ...reviewedFindings(claim),
+          reviewId: claim.id,
+          claimId: claim.claimId!,
+          expectedRevision: 1,
+          verdict: 'pass',
+          notes: 'revoked',
+          requestId: 'revoked',
+        }),
+      /access this project/,
+    );
+    const done = await app.ctx.tasks.submitReview(replacement, {
+      ...reviewedFindings(newClaim),
+      reviewId: claim.id,
+      claimId: newClaim.claimId!,
+      expectedRevision: 1,
+      verdict: 'pass',
+      notes: 'Independently checked.',
+      requestId: 'accept',
+    });
+    assert.equal(done.workflow.state, 'done');
+    await app.ctx.scope.revokeActor(operator, replacement.actorId);
+    await app.ctx.domainEvents.drain();
+    assert.equal((await app.ctx.reviews.get(operator, claim.id)).status, 'submitted');
+    await app.stop();
+    app = await createApp({ directory, api: false });
+    await app.ctx.domainEvents.drain();
+    assert.equal(
+      (await app.ctx.state.events(operator.projectId)).filter(
+        (e) => e.type === 'review.claim_released',
+      ).length,
+      1,
+    );
+    assert.equal((await app.ctx.tasks.get(operator, task.id)).workflow.state, 'done');
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('async handlers are supported, changed subscriptions require a new ID, and detach stops further admissions', async () => {
+  const state = new SqliteState(':memory:'),
+    events = await createService(new DurableEvents(state));
+  try {
+    const detachAsync = await events.subscribe({
+      id: 'async',
+      types: ['test'],
+      from: 'beginning',
+      handle: async () => {},
+    });
+    await detachAsync();
+    const cancel = await events.subscribe({
+      id: 'stable',
+      types: ['test'],
+      from: 'beginning',
+      handle: () => {},
+    });
+    await cancel();
+    await assert.rejects(
+      async () =>
+        await events.subscribe({
+          id: 'stable',
+          types: ['other'],
+          from: 'beginning',
+          handle: () => {},
+        }),
+      /new consumer ID/,
+    );
+    let count = 0;
+    const stop = await events.subscribe({
+      id: 'once',
+      types: ['test'],
+      from: 'beginning',
+      handle: () => {
+        count++;
+        stop();
+      },
+    });
+    await state.transaction(async (tx) => {
+      for (let i = 0; i < 2; i++)
+        await state.appendEvent(tx, {
+          projectId: 'p',
+          actorId: 'a',
+          subjectId: 's',
+          type: 'test',
+          data: {},
+        });
+    });
+    await events.drain();
+    assert.equal(count, 1);
+    await events.close();
+    await assert.rejects(
+      async () =>
+        await events.subscribe({
+          id: 'closed',
+          types: ['test'],
+          from: 'beginning',
+          handle: () => {},
+        }),
+      /closed/,
+    );
+  } finally {
+    await events.close();
+    await state.close();
+  }
+});
+
+test('existing review databases acquire resumable claim IDs without rewriting completed verdicts', async () => {
+  const { ProjectScope } = await import('@merv/scope');
+  const { ReviewService } = await import('@merv/reviews');
+  const { DiskBlobs } = await import('@merv/blobs');
+  const { ArtifactStore } = await import('@merv/artifacts');
+  const directory = mkdtempSync(join(tmpdir(), 'merv-review-migration-'));
+  const state = new SqliteState(':memory:'),
+    scope = await createService(new ProjectScope(state));
+  try {
+    const identity = await scope.bootstrap({ projectName: 'Migration', actorName: 'Producer' });
+    const producer = { actorId: identity.actor.id, projectId: identity.project.id };
+    const reviewer = {
+      actorId: (await scope.issueActor(producer, { name: 'Reviewer', role: 'reviewer' })).actor.id,
+      projectId: producer.projectId,
+    };
+    const artifacts = await createService(
+      new ArtifactStore(state, scope, new DiskBlobs(directory)),
+    );
+    const artifact = await artifacts.create(producer, {
+      title: 'Evidence',
+      content: 'Original evidence.',
+    });
+    const migrate = state.migrate.bind(state);
+    // Create the actual published v1/v2 schema, before claim-identity columns existed.
+    state.migrate = async (component, migrations) =>
+      await migrate(
+        component,
+        component === 'reviews' ? migrations.filter((m) => m.version <= 2) : migrations,
+      );
+    await createService(new ReviewService(state, scope, artifacts));
+    const request = async (id: string) => {
+      const manifest = [await artifacts.get(producer, artifact.id)];
+      const snapshotHash = digest({
+        subjectId: id,
+        subjectRevision: 1,
+        producerId: producer.actorId,
+        criteria: ['Verify.'],
+        manifest,
+      });
+      await state.transaction(
+        async (tx) =>
+          await tx.run(
+            `INSERT INTO reviews (id, project_id, subject_id, subject_revision, producer_id,
+            artifact_ids, criteria, manifest, snapshot_hash, status, created_at)
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, 'requested', ?)`,
+            id,
+            producer.projectId,
+            id,
+            producer.actorId,
+            JSON.stringify([artifact.id]),
+            JSON.stringify(['Verify.']),
+            JSON.stringify(manifest),
+            snapshotHash,
+            '2026-01-01T00:00:00.000Z',
+          ),
+      );
+      return { id, snapshotHash };
+    };
+    const open = await request('open'),
+      done = await request('done');
+    await state.transaction(async (tx) => {
+      await tx.run(
+        "UPDATE reviews SET status='started',reviewer_id=? WHERE id=?",
+        reviewer.actorId,
+        open.id,
+      );
+      await tx.run(
+        "UPDATE reviews SET status='submitted',reviewer_id=?,verdict='pass',notes='Original verdict.' WHERE id=?",
+        reviewer.actorId,
+        done.id,
+      );
+    });
+    state.migrate = migrate;
+    const current = await createService(new ReviewService(state, scope, artifacts));
+    const claim = await current.get(reviewer, open.id);
+    assert.equal(claim.formatVersion, 1);
+    assert.equal(claim.synopsis, null);
+    assert.deepEqual(claim.findings, []);
+    assert.deepEqual(claim.evidence, {});
+    assert.equal(claim.claimId, `legacy:${open.id}`);
+    assert.equal(claim.snapshotHash, open.snapshotHash);
+    assert.equal((await current.get(producer, done.id)).notes, 'Original verdict.');
+    assert.equal((await current.get(producer, done.id)).snapshotHash, done.snapshotHash);
+    assert.equal(
+      (
+        await current.submit(reviewer, {
+          ...reviewedFindings(claim),
+          reviewId: open.id,
+          claimId: claim.claimId!,
+          verdict: 'pass',
+          notes: 'Resumed using the migrated claim.',
+          requestId: 'resume',
+        })
+      ).status,
+      'submitted',
+    );
+  } finally {
+    await state.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function signal() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function emitProbe(state: SqliteState) {
+  return state.transaction((tx) =>
+    state.appendEvent(tx, {
+      projectId: 'p',
+      actorId: 'a',
+      subjectId: 's',
+      type: 'probe.created',
+      data: {},
+    }),
+  );
+}
+
+test('drain joins async handlers and close waits for their atomic commit without admitting the next event', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-drain-'));
+  const state = new SqliteState(join(directory, 'state.db'));
+  const observer = new SqliteState(join(directory, 'state.db'));
+  const events = await createService(new DurableEvents(state));
+  const entered = signal(),
+    released = signal();
+  try {
+    await state.migrate('probe', [
+      { version: 1, sql: 'CREATE TABLE probe (event INTEGER PRIMARY KEY);' },
+    ]);
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle(event, tx) {
+        await tx.run('INSERT INTO probe VALUES (?)', event.id);
+        entered.resolve();
+        await released.promise;
+      },
+    });
+    const first = await emitProbe(state);
+    await emitProbe(state);
+    const draining = events.drain();
+    await entered.promise;
+    assert.equal(events.drain(), draining);
+    let closed = false;
+    const closing = events.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    assert.equal(closed, false);
+    assert.deepEqual(await observer.read((sql) => sql.all('SELECT * FROM probe')), []);
+    assert.equal(
+      (await observer.read((sql) =>
+        sql.get<{ cursor: number }>('SELECT cursor FROM event_consumers WHERE id=?', 'worker'),
+      ))!.cursor,
+      0,
+    );
+    released.resolve();
+    await Promise.all([draining, closing]);
+    assert.equal(closed, true);
+    assert.deepEqual(
+      (await observer.read((sql) => sql.all<{ event: number }>('SELECT * FROM probe'))).map(
+        (row) => row.event,
+      ),
+      [first.id],
+    );
+    assert.equal((await events.status())[0]!.cursor, first.id);
+    assert.equal((await events.status())[0]!.active, false);
+  } finally {
+    released.resolve();
+    await events.close();
+    await observer.close();
+    await state.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('consumer disposer withdraws future admissions and waits for an admitted async transaction', async () => {
+  const state = new SqliteState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const entered = signal(),
+    released = signal();
+  let calls = 0;
+  try {
+    const detach = await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle() {
+        calls++;
+        entered.resolve();
+        await released.promise;
+      },
+    });
+    await emitProbe(state);
+    await emitProbe(state);
+    const draining = events.drain();
+    await entered.promise;
+    let detached = false;
+    const detaching = Promise.resolve(detach()).then(() => {
+      detached = true;
+    });
+    await Promise.resolve();
+    assert.equal(detached, false);
+    released.resolve();
+    await Promise.all([draining, detaching]);
+    await events.drain();
+    assert.equal(detached, true);
+    assert.equal(calls, 1);
+  } finally {
+    released.resolve();
+    await events.close();
+    await state.close();
+  }
+});
+
+test('async self-detachment does not wait for its own transaction', async () => {
+  const state = new SqliteState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  let calls = 0;
+  try {
+    const detach = await events.subscribe({
+      id: 'self',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle() {
+        calls++;
+        await detach();
+      },
+    });
+    await emitProbe(state);
+    await emitProbe(state);
+    await events.drain();
+    assert.equal(calls, 1);
+  } finally {
+    await events.close();
+    await state.close();
+  }
+});
+
+test('close joins pending subscriptions and duplicate registration cannot race activation', async () => {
+  const state = new SqliteState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const entered = signal(),
+    released = signal();
+  const consumer: EventConsumer = {
+    id: 'pending',
+    types: ['probe.created'],
+    from: 'beginning',
+    handle() {},
+  };
+  try {
+    const busy = state.transaction(async () => {
+      entered.resolve();
+      await released.promise;
+    });
+    await entered.promise;
+    const pending = events.subscribe(consumer);
+    const refused = assert.rejects(pending, /closed/);
+    await assert.rejects(events.subscribe(consumer), /already active/);
+    let closed = false;
+    const closing = events.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    assert.equal(closed, false);
+    released.resolve();
+    await Promise.all([busy, refused, closing]);
+    assert.equal((await events.status())[0]!.active, false);
+  } finally {
+    released.resolve();
+    await events.close();
+    await state.close();
+  }
+});
+
+test('background drain contains transient storage rejections and retries durable work', async () => {
+  const state = new SqliteState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  let calls = 0;
+  try {
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle() {
+        calls++;
+      },
+    });
+    await emitProbe(state);
+    let failures = 2;
+    state.transaction = async (fn) => {
+      if (failures-- > 0) throw new Error('temporary storage failure');
+      return transaction(fn);
+    };
+    await until(() => calls === 1);
+    await events.drain();
+    assert.equal((await events.status())[0]!.cursor, 1);
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});
+
+test('joining drain includes a commit made after an earlier consumer exhausted its backlog', async () => {
+  const state = new SqliteState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  const entered = signal(),
+    released = signal();
+  const delivered: number[] = [];
+  try {
+    await events.subscribe({
+      id: 'first',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle(event) {
+        delivered.push(event.id);
+      },
+    });
+    await events.subscribe({
+      id: 'second',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle() {},
+    });
+    const first = await emitProbe(state);
+    let pause = true;
+    state.transaction = async (fn) => {
+      const result = await transaction(fn);
+      // Pause after the first consumer's empty poll has committed. This leaves
+      // the database free for a new event before this drain visits other consumers.
+      if (pause && result === false) {
+        pause = false;
+        entered.resolve();
+        await released.promise;
+      }
+      return result;
+    };
+    const draining = events.drain();
+    await entered.promise;
+    const next = await emitProbe(state);
+    const joined = events.drain();
+    released.resolve();
+    await Promise.all([draining, joined]);
+    assert.deepEqual(delivered, [first.id, next.id]);
+    assert.equal((await events.status()).find((row) => row.id === 'first')!.cursor, next.id);
+  } finally {
+    released.resolve();
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});

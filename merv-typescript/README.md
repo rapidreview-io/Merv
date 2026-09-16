@@ -11,6 +11,34 @@ flowchart LR
   R -->|"fail"| F["failed"]
 ```
 
+## Shared accounts and project membership
+
+The independent Identity provider verifies the shared Supabase account; Scope
+owns project memberships and per-project roles. The UI supports shared login,
+project creation/selection and membership administration. Existing actor tokens
+retain their fixed project. See [configuration, request rules and local ownership
+repair](docs/SHARED_IDENTITY.md). [User-owned machine keys](docs/USER_KEYS.md)
+support fixed project or explicit account grants, current membership roles,
+rotation and recursive revocation. Owners manage them through the UI and account
+HTTP routes. [Assignment-scoped sessions](docs/SESSION_LEASES.md) now enforce workflow tool policies and worker ownership. The [runner control plane](docs/RUNNER_CONTROL_PLANE.md) adds automatic assignment, project pause/halt and a Sessions page; the optional [machine Runner](docs/MACHINE_RUNNER.md) executes scratch and Git assignments through scoped native agents. [Git workspaces](docs/WORKSPACES.md) preserve captured commits across handoffs and controller restarts. The independent [Code service](docs/CODE_OPERATIONS.md) queues `code.commit` requests from live workers and retains the Runner's immutable commit receipts; `code.operation` reads their progress. Its service API also seals immutable proposal artifacts inside an admitting domain command's transaction; this adds no agent tool or standalone workflow.
+
+Claims records research statements with a prose scope, status and confidence. Producers and operators create/update them; readers and reviewers can inspect them. Updates use revisions and retry receipts, and ordinary edits preserve statement/scope. [Claims](packages/claims/README.md) depends only on State and Scope. Experiments uses these statements; applying reviewed Reflection changes to claims remains follow-up work.
+
+[Experiments](docs/EXPERIMENTS.md) owns real experiment records and attempts: plan, independent design review, execution, and independent results review. It pins the approved plan and exact evidence for each submission, creates deterministic metrics exhibits, and routes rejected work back to planning or execution. Workflow guidance checks the same evidence gates as submission. The Experiments page displays current guidance, attempts, sealed submissions and the retained graph. Completing an experiment does not automatically change its linked claims.
+
+## Durable recovery and context recipes
+
+[Living paper](docs/LIVING_PAPER.md) stores structured problem/scope/goals/constraints,
+literature, citations, versioned Methods/Results and reviewed edit proposals. Existing
+experiment and [reflection](docs/REFLECTIONS.md) agents submit paper changes with their
+scientific deliverables; their existing reviews accept those edits atomically. Paper
+creates no assignments or context recipes. [Consolidation](docs/CONSOLIDATION.md)
+consumes retained artifacts and explicit work prerequisites without depending on
+Reflections. A [Research cycle](docs/RESEARCH.md) coordinates research, reflection and
+consolidation; it creates no separate paper-writing workflows.
+
+Domain Events and Context Builder are implemented as two independent services. Task types own their versioned recipes directly, with no context-adapter plugins. `task.context` builds a persisted starting package; `task.checkpoint` saves attributed progress. Built-in recipes cover ordinary work, experiment planning, project reflection and independent review. See [the contract and examples](docs/RECOVERY_AND_CONTEXT.md), [Domain Events](packages/domain-events/README.md), and [Context Builder](packages/context-builder/README.md). Server-side scheduling, native execution and Git workspace capture are integrated. Experiments owns its production planning, execution and independent review recipes. Reflections and Consolidation own their workflow recipes; Paper is a document store. Reviewed central publication remains open.
+
 ## Run locally
 
 Requires Node.js **22.13 or later** and npm. The development baseline is Node **22.13.1** (`.nvmrc`) and npm **11.1.0** (`packageManager`). SQLite uses Node's built-in `node:sqlite`; some supported Node versions print an experimental-module warning.
@@ -29,7 +57,7 @@ npm start -- --dir .merv --host 127.0.0.1 --port 3081
 
 `init` creates a project and local operator. It writes `.merv/credentials.json` with mode `0600`. Each `actor` command prints the path to its own credential file under `.merv/credentials/`; its token is stored there, not printed. The server prints its HTTP and MCP URLs when ready. `Ctrl-C` drains admitted calls and shuts down the plugin graph.
 
-The data directory contains `state.sqlite`, immutable blobs, and local credential files. Keep that directory to retain work across restarts. The HTTP server binds to loopback by default; hosted authentication, TLS termination, and public deployment are outside this release.
+The default data directory contains `state.sqlite`, immutable blobs, and local credential files. Keep that directory to retain local work across restarts. For PostgreSQL metadata and S3/R2 artifact bytes, use [the production storage configuration](config/production.example.json) and [storage setup guide](docs/PRODUCTION_STORAGE.md). Both provider choices use asynchronous interfaces. The HTTP server binds to loopback by default; hosted authentication and public TLS termination remain separate deployment concerns.
 
 ### Development
 
@@ -48,7 +76,7 @@ Dependencies, build output, caches, default runtime directories, SQLite files, a
 
 ### Configure plugins
 
-The full API composition now has eighteen plugin entries, including empty access and credential providers. The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
+The domain/API composition has 38 plugin entries. The default server configuration adds the browser layer for 53 entries. The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
 
 ```sh
 npm start -- --dir .merv --config config/default.json --host 127.0.0.1 --port 3081
@@ -75,7 +103,18 @@ Roles:
 
 Operators, producers, and reviewers can publish feed posts; readers can read posts and activity. Posting to the feed does not grant other write permissions.
 
-The producer cannot review their own submission, including when they have the operator role. Distinct credentials establish distinct Merv identities; review quality still depends on the reviewer actually inspecting the evidence.
+The producer cannot review their own submission, including when they have the operator role. Distinct worker sessions establish independent agent identities even under the same human or source key. Rotating a credential does not create a new actor. Review quality still depends on the reviewer actually inspecting the evidence.
+
+## Workflow guidance
+
+Start or resume with `workflow.status_and_next`. With `{ "instanceId": "<task or experiment ID>" }`,
+it returns the current gate, caller-specific next action, missing input or blockers,
+evidence references and revision. With `{}`, it reports all workflow instances in
+this project. Optional action preflight uses the same checks as commands.
+
+Tasks and Experiments register their domain checks with Workflows. The resulting decision also
+appears in `task.get.guidance`, saved task contexts and the task detail UI. Read
+[the guidance contract and examples](docs/WORKFLOW_GUIDANCE.md).
 
 ## Connect a coding agent
 
@@ -108,7 +147,20 @@ A suitable first instruction to the producer is:
 
 The reviewer should inspect `task.get`, `review.get`, and the pinned artifacts through `artifact.read`, claim with `review.start`, then submit a verdict through `review.submit` with the current task workflow revision.
 
-If a reviewer becomes unavailable or their credential is revoked, the task's producer or an operator can call `task.reissue_review` with `taskId`, `expectedRevision`, `reason`, and a fresh `requestId`. It replaces an open review with a new unclaimed review, preserves the evidence and criteria, and advances the task revision. Refresh `task.get` for the new review ID and revision. The old claim is superseded; an already submitted verdict cannot be reset this way.
+Revoked reviewers now have their unfinished claims released automatically through durable Domain Events, preserving the current review ID, evidence and task revision. A new `review.start` returns the claim ID required by `review.submit`.
+
+For other cases where a reviewer becomes unavailable, the task's producer or an operator can call `task.reissue_review` with `taskId`, `expectedRevision`, `reason`, and a fresh `requestId`. It replaces an open review with a new unclaimed review, preserves the evidence and criteria, and advances the task revision. Refresh `task.get` for the new review ID and revision. The old claim is superseded; an already submitted verdict cannot be reset this way.
+
+## Browser UI
+
+The optional `@merv/ui` plugin serves a read-only browser shell at `<url>/ui/` from the same API server. Its left sidebar is built from rows that feature plugins register; a row disappears when its plugin is disabled and the shell keeps working. Build the bundle once, then start the server:
+
+```sh
+npm run build:ui
+npm start -- --dir .merv --host 127.0.0.1 --port 3081
+```
+
+Sign in with a token from a credential file under `.merv/credentials/`. See [docs/UI_PLUGIN.md](docs/UI_PLUGIN.md) for the row contract, the adapters, and the demo server.
 
 ## HTTP and tools
 
@@ -118,8 +170,9 @@ If a reviewer becomes unavailable or their credential is revoked, the task's pro
 | `GET /tools`         | Authenticated tool catalog and JSON schemas               |
 | `POST /tools/<name>` | Authenticated tool call with a JSON argument object       |
 | `POST /mcp`          | Authenticated MCP initialization, tool listing, and calls |
+| `GET /ui/`           | Browser UI bundle when `@merv/ui` is active and built     |
 
-All tool endpoints require `Authorization: Bearer <token>`. Arguments may include an optional `projectId`; it defaults to the actor's project, and the server checks access. Caller identity is constructed from the bearer token. A tool argument never substitutes for the authenticated actor.
+All tool endpoints require `Authorization: Bearer <token>`. Human users and account keys explicitly select a project. Actor credentials and project keys may default to their fixed project. The server constructs Caller identity from the bearer and checks current scope; tool arguments never substitute for authenticated authority.
 
 For example, with `MERV_TOKEN` set:
 
@@ -133,24 +186,29 @@ curl --fail-with-body http://127.0.0.1:3081/tools/actor.whoami \
   --data '{}'
 ```
 
+[Upload local files with the CLI](docs/ARTIFACT_UPLOAD.md) to keep file/base64 contents out of agent tool arguments and receive a verified compact artifact receipt.
+
 HTTP successes return `{ "result": ... }`; failures return `{ "error": { "code": "...", "message": "..." } }` with an appropriate status. MCP tool failures use `isError: true` and the same error object in a text content block. HTTP request bodies are limited to 3 MiB by default, covering a 2,000,000-byte artifact encoded as base64. Origin-bearing requests are rejected unless an origin is explicitly configured in `ApiServer`.
 
-The installed feature adapters contribute **26 tools**:
+The installed feature adapters contribute **44 domain tools**, or **46 tools** with the optional UI registry:
 
-| Owner        | Tools                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------ |
-| Scope        | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.revoke`                            |
-| Artifacts    | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list`                                    |
-| Workflows    | `workflow.catalog`, `workflow.list`, `workflow.get`, `workflow.history`                                |
-| Reviews      | `review.list`, `review.get`, `review.start`                                                            |
-| Task program | `task.create`, `task.get`, `task.list`, `task.submit_delivery`, `task.reissue_review`, `review.submit` |
-| Feed         | `feed.post`, `feed.get`, `feed.list`, `feed.activity`                                                  |
+| Owner        | Tools                                                                                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.credentials`, `actor.issue_token`, `actor.rotate_token`, `actor.revoke_token`, `actor.revoke` |
+| Claims       | `claim.create`, `claim.list`, `claim.update`                                                                                                                      |
+| Artifacts    | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list`                                                                                               |
+| Experiments  | `experiment.create`, `experiment.list`, `experiment.get_state`, `experiment.attach`, `experiment.transition`, `experiment.exhibit`, `experiment.graph`            |
+| Reviews      | `review.list`, `review.get`, `review.start`, `review.submit`                                                                                                      |
+| Task program | `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, `task.reissue_review`, `task.mark_failed`                      |
+| Workflows    | `workflow.status_and_next`, `workflow.assignment`, `workflow.begin`                                                                                               |
+| Feed         | `feed.post`, `feed.get`, `feed.list`, `feed.activity`                                                                                                             |
+| Code         | `code.commit`, `code.operation`                                                                                                                                   |
 
-Tool schemas are strict and runtime-validated. Use `GET /tools` or MCP `tools/list` for the exact required arguments. Workflow mutation tools are owned by the task program so callers cannot bypass its evidence and review gates.
+Tool schemas are strict and runtime-validated. Use `GET /tools` or MCP `tools/list` for the exact required arguments. The Workflows adapter exposes guidance, assignment and begin. The workflow catalog, instance list and history remain available only to trusted in-process code.
 
 ## Remote-tool transport
 
-The API plugin owns its public tool and catalog contracts in `@merv/api/types`. The registry accepts native Zod definitions and remote MCP catalogs. A catalog owns a reserved namespace: `createCatalog('sandboxes')` publishes remote `inspect` as `mount__sandboxes__inspect`. Duplicate mount IDs, duplicate tools, overlong names, and native registrations in that namespace are refused. Remote definitions must be registered through a catalog.
+The API plugin owns its public tool and catalog contracts in `@merv/api/types`. The registry accepts native Zod definitions and remote MCP catalogs. A catalog owns a reserved namespace: `createCatalog('sandboxes')` publishes remote `inspect` as `_sandboxes.inspect`. Duplicate mount IDs, duplicate tools, overlong names, and native registrations in that namespace are refused. Remote definitions must be registered through a catalog. Mounted names use `_<mountId>.<upstreamToolName>`: for example, `_nisa.search` and `_nisa.qa.ask`. The leading underscore is reserved for mounted tools. Upstream names, Access grants and credential bindings keep their original values; only the published name changes. Clients must rediscover tools and replace old `mount__<id>__<tool>` references; old names are not aliases.
 
 Remote schemas retain their original shape. The validator supports JSON Schema 2020-12 (the default) and explicit draft-07, including local references and standard formats. Unsupported dialects, external references, unknown keywords, invalid schemas, and MCP task execution fail before publication. Inputs are validated without coercion, default insertion, or field removal. Structured successful output is checked against its declared output schema.
 
@@ -158,21 +216,21 @@ A catalog replacement validates every tool first, publishes the complete new gen
 
 Remote `content`, `structuredContent`, `isError`, annotations, and metadata survive MCP forwarding. HTTP wraps that complete MCP result in its usual `{ "result": ... }` envelope. Native results retain their existing JSON-text MCP format.
 
-A remote tool's arguments are untouched, including its own `projectId`. Select the **Merv** project separately using the HTTP `X-Merv-Project-Id` header or MCP call `params._meta["merv/projectId"]`; selection defaults to the authenticated actor's project and is checked by Scope. Native tools continue to accept their existing `projectId` argument. A live mount is not installed by the default composition; credentials and grants are supplied through the independent providers described below.
+A remote tool's arguments are untouched, including its own `projectId`. Select the **Merv** project separately using the HTTP `X-Merv-Project-Id` header or MCP call `params._meta["merv/projectId"]`; selection defaults to the authenticated actor's project and is checked by Scope. Native tools continue to accept their existing `projectId` argument. A live mount is not installed by the default composition; credentials and grants are configured as described below.
 
 The installed SDK supports the legacy protocol family through `2025-11-25`. Unsupported request versions in the HTTP header or MCP metadata are refused explicitly. A legacy `initialize` request can negotiate a different supported version; Merv does not implement `server/discover` or claim the `2026-07-28` protocol. The intended sandbox endpoint was separately verified to accept the current SDK. See the [tested compatibility matrix](docs/TRANSPORT_COMPATIBILITY.md).
 
 ## Remote credentials and grants
 
-`@merv/access` and `@merv/credentials` each depend only on Scope. Their public contracts live in their own `/types` entries. Both default to empty configuration. Native roles retain their existing permissions; every remote tool requires an explicit actor/project/mount/tool grant, including for operators. Discovery filters by the authenticated caller, and invocation checks the current grant again. Calling a hidden name directly does not bypass this check.
+`@merv/scope` owns remote-tool grants through `scope.toolPolicy`; its public policy contracts live in `@merv/contracts`. `@merv/mounts` owns upstream credential resolution internally. Grants and credential bindings both default to empty lists. See [Scope and the Access migration](packages/scope/README.md). Native roles retain their existing permissions; every remote tool requires an explicit actor/project/mount/tool grant, including for operators. Discovery filters by the authenticated caller, and invocation checks the current grant again. Calling a hidden name directly does not bypass this check.
 
-Configure the two entries in the plugin list using actual Merv actor/project IDs and an upstream-issued credential reference:
+Configure the Scope and External Mounts entries in the plugin list (merge these fields into any existing entries) using actual Merv actor/project IDs and an upstream-issued credential reference:
 
 ```json
 [
   {
-    "id": "access",
-    "name": "@merv/access",
+    "id": "scope",
+    "name": "@merv/scope",
     "config": {
       "grants": [
         {
@@ -185,9 +243,10 @@ Configure the two entries in the plugin list using actual Merv actor/project IDs
     }
   },
   {
-    "id": "credentials",
-    "name": "@merv/credentials",
+    "id": "mounts",
+    "name": "@merv/mounts",
     "config": {
+      "mounts": [{ "id": "sandboxes", "url": "http://127.0.0.1:4000/mcp", "tools": ["inspect"] }],
       "bindings": [
         {
           "id": "sandbox-example",
@@ -202,11 +261,11 @@ Configure the two entries in the plugin list using actual Merv actor/project IDs
 ]
 ```
 
-The example tool name is illustrative; select actual names when configuring a mount. Secrets stay in the server environment. Optional fixed `x-*` selector headers are for nonsecret upstream namespace/subject values; authentication comes from the secret reference. The provider reads the environment reference on every resolution, rejects known active local Merv bearer tokens, and returns an opaque snapshot with explicit server-only header access. JSON and diagnostic inspection of the snapshot omit its secret.
+The example tool name is illustrative; select actual names when configuring a mount. Secrets stay in the server environment. Optional fixed `x-*` selector headers are for nonsecret upstream namespace/subject values; authentication comes from the secret reference. The provider reads the environment reference on every resolution, rejects known local Merv bearer tokens, including revoked and rotated ones, and returns an opaque snapshot with explicit server-only header access. JSON and diagnostic inspection of the snapshot omit its secret.
 
-`replace(...)` on either provider is trusted in-process configuration administration: it validates the complete replacement before changing state. Removing a grant or binding affects new calls immediately. This initial configuration is in memory; persist changes in the plugin configuration for restart. Neither provider exposes management tools to agents.
+Scope’s `toolPolicy.replace(...)` is trusted in-process grant administration. Apply credential binding changes by updating and reloading the Mounts entry; removal withdraws tools and drains admitted calls. Persist both configurations for restart. Neither exposes credential-management tools to agents. See [the credential migration](packages/mounts/README.md#credential-ownership-and-migration).
 
-`ScopedRemoteClients` supplies the transport consumer for these contracts. It uses a separate upstream bearer and isolates connections by mount, endpoint, actor, project, and resolved credential identity. It rechecks authority after asynchronous connection setup, retires old connections on rotation/revocation, drains admitted calls, bounds connection/call time, and does not retry operations. SDK errors are returned as fixed messages without upstream error text. The optional `@merv/mounts` plugin now consumes these contracts; its controlled integration is described below. A fresh agent has completed one permitted real sandbox `usage_report` call through this plugin; see [live verification](verification/step-06-live-sandbox.json).
+`ScopedRemoteClients` supplies the transport consumer for these contracts. It uses a separate upstream bearer and isolates connections by mount, endpoint, actor, project, and resolved credential identity. It rechecks authority after asynchronous connection setup, retires old connections on rotation/revocation, drains admitted calls, bounds connection/call time, and does not retry operations. SDK errors are returned as fixed messages without upstream error text. The optional `@merv/mounts` plugin owns credential resolution and consumes Scope tool policy; its controlled integration is described below. A fresh agent has completed one permitted real sandbox `usage_report` call through this plugin; see [live verification](verification/step-06-live-sandbox.json).
 
 Run the integrated two-project demonstration and connection regressions:
 
@@ -216,9 +275,9 @@ npm run test:credentials
 
 It uses real local HTTP/MCP servers with different upstream identities. It verifies scoped discovery, direct-call denial, native role checks, credential isolation, revocation, rotation, sanitized results/errors, and cleanup. No cloud resources are created.
 
-## Nine plugin packages
+## Plugin service boundaries
 
-Arrows mean **requires**. Solid edges describe service dependencies. The dotted edges aggregate the optional feature adapters: each adapter requires its own service and the tool registry; the workflow adapter also checks scope. API/tools is one package containing two Cordis plugins.
+This selected service view uses arrows to mean **requires**. Solid edges describe service dependencies. Dotted edges group the optional feature tool adapters: each adapter requires its own service and the tool registry. API/tools is one package containing two Cordis plugins. The [complete inventory](docs/architecture/current-dependencies.json) also includes every HTTP/UI adapter and the separate machine Runner.
 
 ```mermaid
 flowchart TB
@@ -230,8 +289,31 @@ flowchart TB
   Reviews --> State
   Reviews --> Scope
   Reviews --> Artifacts
+  Reviews --> DomainEvents["@merv/domain-events"]
+  DomainEvents --> State
+  Task --> ContextBuilder["@merv/context-builder"]
+  ContextBuilder --> State
+  ContextBuilder --> Scope
+  ContextBuilder --> Artifacts
+  Claims["@merv/claims"] --> State
+  Claims --> Scope
+  Experiments["@merv/experiments"] --> State
+  Experiments --> Scope
+  Experiments --> Claims
+  Experiments --> Artifacts
+  Experiments --> Workflows
+  Experiments --> Reviews
+  Experiments --> ContextBuilder
   Workflows --> State
   Workflows --> Scope
+  Sessions["@merv/sessions"] --> State
+  Sessions --> Scope
+  Sessions --> Workflows
+  Sessions --> DomainEvents
+  Code["@merv/code"] --> State
+  Code --> Scope
+  Code --> Sessions
+  Code --> Artifacts
   Artifacts --> State
   Artifacts --> Scope
   Artifacts --> Blobs["@merv/blobs"]
@@ -243,32 +325,41 @@ flowchart TB
     HTTP["HTTP/MCP transport"] --> Tools["Tool registry"]
   end
   HTTP --> Scope
+  HTTP --> Identity["@merv/identity"]
   Tools --> Scope
-  Tools --> Access["@merv/access"]
-  Access --> Scope
-  Credentials["@merv/credentials"] --> Scope
+  Mounts["@merv/mounts"] --> Scope
+  Mounts --> Tools
   Adapters["Feature-owned tool adapters"] -.-> Tools
   Adapters -.-> Task
   Adapters -.-> Artifacts
   Adapters -.-> Reviews
-  Adapters -.-> Workflows
   Adapters -.-> Scope
   Adapters -.-> Feed
+  Adapters -.-> Code
+  Adapters -.-> Claims
+  Adapters -.-> Experiments
 ```
 
-| Package             | Owns                                                                                  | Required capabilities                               |
-| ------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `@merv/state`       | Synchronous SQLite transactions, per-component migrations, durable events             | None                                                |
-| `@merv/blobs`       | Immutable bytes on disk, project namespaces, content hashes                           | None                                                |
-| `@merv/scope`       | Projects, actor identities, bearer credentials, roles and access checks               | State                                               |
-| `@merv/artifacts`   | Completed immutable documents/files, metadata and authorship                          | State, scope, blobs                                 |
-| `@merv/workflows`   | Versioned graphs, durable instances, transitions, revisions and request deduplication | State, scope                                        |
-| `@merv/reviews`     | Pinned evidence/criteria snapshots, independent claims and immutable verdicts         | State, scope, artifacts                             |
-| `@merv/tasks`       | Brief/delivery rules, task records, installed task graph and atomic review routing    | State, scope, workflows, artifacts, reviews         |
-| `@merv/feed`        | Immutable project posts, artifact attachments, cursor reads and durable activity      | State, scope, artifacts                             |
-| `@merv/access`      | Exact remote tool grants and current identity checks                                  | Scope                                               |
-| `@merv/credentials` | Exact upstream credential bindings and private secret snapshots                       | Scope                                               |
-| `@merv/api`         | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining   | Registry: scope, access. Transport: scope, registry |
+| Package                 | Owns                                                                                      | Required capabilities                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `@merv/domain-events`   | Durable local event delivery, progress and retries                                        | State                                                               |
+| `@merv/context-builder` | Versioned recipes and immutable agent context packages                                    | State, scope, artifacts                                             |
+| `@merv/state`           | Async SQLite or PostgreSQL transactions, per-component migrations, durable events          | None                                                                |
+| `@merv/blobs`           | Async immutable bytes on disk or S3/R2, project namespaces, content hashes                 | None                                                                |
+| `@merv/scope`           | Projects, actor identities, bearer credentials, roles and access checks                   | State                                                               |
+| `@merv/identity`        | Shared signed-user identity verification                                                  | None                                                                |
+| `@merv/claims`          | Research statements, status/confidence, revision checks and mutation receipts             | State, scope                                                        |
+| `@merv/experiments`     | Experiment attempts, evidence and metrics, design/results reviews and recovery            | State, scope, claims, artifacts, workflows, reviews, contextBuilder |
+| `@merv/artifacts`       | Completed immutable documents/files, metadata and authorship                              | State, scope, blobs                                                 |
+| `@merv/workflows`       | Versioned graphs, durable instances, transitions, revisions and request deduplication     | State, scope                                                        |
+| `@merv/reviews`         | Pinned evidence/criteria snapshots, independent claims and immutable verdicts             | State, scope, artifacts, domainEvents                               |
+| `@merv/tasks`           | Brief/delivery rules, task records, installed task graph and atomic review routing        | State, scope, workflows, artifacts, reviews, contextBuilder         |
+| `@merv/feed`            | Immutable project posts, artifact attachments, cursor reads and durable activity          | State, scope, artifacts                                             |
+| `@merv/sessions`        | Scoped worker leases, activation, source fencing and runner controls                      | State, scope, workflows, domainEvents                               |
+| `@merv/code`            | Durable commit commands, immutable receipts and sealed proposals                          | State, scope, sessions, artifacts                                   |
+| `@merv/mounts`          | External MCP connections, exact upstream credential bindings and private secret snapshots | Tools, scope                                                        |
+| `@merv/api`             | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining       | Registry: scope. Transport: scope, registry, identity               |
+| `@merv/runner`          | Machine-local process ownership, Git workspaces and fixed commit execution over HTTP      | None; separate machine context                                      |
 
 `@merv/contracts` contains shared interfaces and runtime helpers. Domain packages import those contracts or type-only public contracts such as `@merv/feed/types`, rather than sibling implementations. Each feature's `tools.ts` is an optional adapter depending on the generic registry and its own service. `src/app.ts` is the composition root; services also work through explicit constructor injection without HTTP, MCP, or the task program.
 
@@ -276,27 +367,36 @@ For example, an artifacts-only Cordis application can install `statePlugin`, `bl
 
 ### Shared dependencies and the exposure hub
 
-**State and scope have the most foundational dependents.** State serves scope and all five durable feature services; scope supplies project access to those features and the API plugins. Their contracts stay limited to storage transactions and identity/access, so neither acquires task or review rules.
+**State and scope have the most foundational dependents.** State has thirteen direct consumers and Scope has seventeen in the current inventory. Their contracts stay limited to storage transactions and identity/access, so neither acquires task or review rules.
 
-**Artifacts is the shared evidence dependency.** Tasks, reviews, and feed attachments use the same immutable files and metadata; future programs can reuse that capability. Workflows is the corresponding reusable execution-state component, currently consumed by the task program. These services remain useful when the Merv task program is absent.
+**Artifacts is the shared evidence dependency.** Tasks, reviews, Code proposals and feed attachments use the same immutable files and metadata; future programs can reuse that capability. Workflows is the corresponding reusable execution-state component, currently consumed by the task program. These services remain useful when the Merv task program is absent.
 
-**The tool registry is an exposure hub.** Six feature adapters and the HTTP/MCP transport meet there. The feature cores do not depend on it, and the registry imports no feature implementation. Adding a tool means registering a validated handler from its owner; it does not add a task-specific dispatch branch to the gateway. Cordis owns activation and registration disposal, while each service owns its durable records and rules.
+**The tool registry is an exposure hub.** Eight feature tool adapters, the HTTP/MCP transport, UI and optional Mounts meet there. The feature cores do not depend on it, and the registry imports no feature implementation. Adding a tool means registering a validated handler from its owner; it does not add a task-specific dispatch branch to the gateway. Cordis owns activation and registration disposal, while each service owns its durable records and rules.
 
 ## Durable behavior and lifecycle
 
-- **Transactions stay synchronous.** `SqliteState.transaction()` rejects promise-returning callbacks. Cross-component operations pass the same live transaction through declared interfaces. A foreign or expired transaction is rejected. The store uses WAL, full synchronous writes, and `BEGIN IMMEDIATE` for write transactions.
+- **Transactions are asynchronous and explicit.** Components await storage and pass the same live transaction through declared interfaces, so verdicts, transitions, events and replay receipts commit together. Foreign, expired and implicit nested transactions are rejected. SQLite retains WAL, full synchronous disk writes and `BEGIN IMMEDIATE`; PostgreSQL pins one connection and serializes writers with a schema-scoped transaction lock to preserve event commit ordering. Services await initialization before Cordis publishes them.
 - **Migrations belong to components.** Applied SQL is hashed under `(component, version)`. Changing an applied migration or inserting an older version is rejected. Migration failure rolls back the component's changes.
 - **Artifacts are completed and immutable.** Bytes are content-addressed, writes do not overwrite existing content, reads verify hashes, and database triggers reject metadata updates/deletes. Upload streaming and mutable drafts are outside this version. A failed metadata transaction can leave an unreferenced blob; no garbage collector runs automatically.
 - **Workflow versions are pinned.** Persisted graph definitions are fingerprinted and immutable. Existing instances retain their version. Publishing another version does not migrate live instances. A managed graph returns an owner registration handle; direct generic mutations are rejected. The task program keeps that handle private.
-- **Supported mutations are retryable.** Task commands, workflow commands, and review request/verdict commands persist their original response. Reusing a request ID with different input is a conflict. `artifact.create` and `actor.create` are not deduplicated commands. Revision checks reject stale transitions; request retries return the previously committed response.
-- **Review routing is atomic.** Delivery submission pins the evidence and opens review with the task transition in one transaction. A verdict, task transition, events, and deduplication records also commit or roll back together. `needs_changes` permits a new delivery and a fresh review snapshot.
-- **Open claims can be recovered.** `task.reissue_review` atomically supersedes the current unsubmitted review, pins the same evidence and criteria into a new review, increments the task revision, and records the reason. Only the task producer or an operator can do this. Stale claims and stale revisions cannot submit a verdict against the replacement.
+- **Supported mutations are retryable.** Claim commands, task commands, workflow commands, and review request/verdict commands persist their original response. Reusing a request ID with different input is a conflict. `artifact.create` and `actor.create` are not deduplicated commands. Revision checks reject stale transitions; request retries return the previously committed response.
+- **Review routing is atomic.** Reviews owns `review.submit` and selects exactly one registered domain owner. Tasks applies its verdict, transition, events and deduplication records in that same transaction, preserving its existing result and replay behavior. Missing or ambiguous ownership is refused, including while Tasks drains during unload. `needs_changes` permits a new delivery and a fresh review snapshot.
+- **Revoked claims recover automatically.** Domain Events persists per-consumer progress and retries. Reviews releases unfinished claims while preserving evidence; current claim IDs fence context builds, checkpoints and verdicts. See [recovery and context](docs/RECOVERY_AND_CONTEXT.md).
+- **Open claims can also be replaced manually.** `task.reissue_review` atomically supersedes the current unsubmitted review, pins the same evidence and criteria into a new review, increments the task revision, and records the reason. Only the task producer or an operator can do this. Stale claims and stale revisions cannot submit a verdict against the replacement.
 - **Feed posts commit once.** Body, author, same-project artifact references, activity event, and request response commit together. Posts are immutable. `feed.list` uses a post sequence cursor; `feed.activity` uses a separate event ID cursor and includes activity recorded while the feed was unloaded.
 - **Unloading releases runtime resources.** Feature tool registrations return awaited disposers; they stop admission and drain admitted calls. HTTP shutdown also drains calls when their clients have disconnected. Grouped Cordis effects withdraw provided services and await consumers before closing resources. Durable records, blobs, and workflow histories remain on disk.
 
 The runtime is pinned to **`cordis@4.0.0-rc.10`**. It is upstream Cordis, not the Harness vendored fork. Keep grouped lifecycle effects and their tests when upgrading. TypeScript uses Bundler module resolution for Cordis's extensionless declaration imports. `@merv/contracts` imports `cordis` before augmenting its `Context`, ensuring service types merge with the actual runtime declaration.
 
-This release includes no model provider, agent scheduler/session manager, sandbox service, frontend, experiment program, reflection, literature search, or ML execution. Existing coding agents invoke the tools; Merv remains the durable authority for the task-and-review loop. The existing Python Merv is unchanged, and its database is not automatically migrated into this implementation.
+The current stack includes an optional plugin UI, shared-identity verification and
+generic mounts for external Nisa and sandbox capabilities. Automatic assignment,
+native execution, Git workspace capture, queued `code.commit` and immutable proposal sealing
+are integrated. The synthetic proposal/review acceptance workflow exercises production service APIs;
+the actual Experiments, Reflections and Consolidation programs now use these foundations.
+Central publication, general merges, cross-machine Git transport and remaining runner
+operations remain open. Coding agents invoke the
+tools; Merv is the durable authority for the task/review loop. The Python database
+is not automatically migrated into this implementation.
 
 ## Feed and runtime removal
 
@@ -324,7 +424,7 @@ Run the repeatable removal experiment with the official MCP SDK client:
 npm run test:feed-unload
 ```
 
-It pauses an admitted `feed.post` at a test barrier, disables **only the feed provider entry**, checks that Cordis removes the four tools and waits for the call, then finishes a task/review loop while feed is absent. Re-enabling only the provider restores the original adapter, posts, and durable activity. The same process, listener, client connections, and unrelated service instances remain throughout. The barrier makes removal overlap the otherwise synchronous feed call; it does not replace Cordis, SQLite, or the MCP transport. The command retains a synthetic database and `report.json` under a new `live-runs/feed-unload-<timestamp>/` directory.
+It pauses an admitted `feed.post` at a test barrier, disables **only the feed provider entry**, checks that Cordis removes the four tools and waits for the call, then finishes a task/review loop while feed is absent. Re-enabling only the provider restores the original adapter, posts, and durable activity. The same process, listener, client connections, and unrelated service instances remain throughout. The barrier makes removal overlap the feed call; it does not replace Cordis, SQLite, or the MCP transport. The command retains a synthetic database and `report.json` under a new `live-runs/feed-unload-<timestamp>/` directory.
 
 ## Verification
 
@@ -382,9 +482,9 @@ Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each 
 
 ## Optional upstream mounts
 
-The current complete plugin network is available as a [PNG diagram](docs/architecture/current-dependencies.png), [zoomable SVG](docs/architecture/current-dependencies.svg), and [extracted dependency list](docs/architecture/current-dependencies.json). It distinguishes the eighteen default entries from optional Mounts and the Nisa integration under verification.
+The current complete plugin network is available as a [PNG diagram](docs/architecture/current-dependencies.png), [zoomable SVG](docs/architecture/current-dependencies.svg), and [extracted dependency list](docs/architecture/current-dependencies.json). It contains 44 plugins, with 21 service providers (20 server providers and one machine Runner) and 103 direct Cordis dependencies. The server default has 41 entries; Mounts, its UI adapter and the separate machine Runner are optional. Nisa and Sandboxes connect through Mounts as external MCP services.
 
-Add a `@merv/mounts` entry to your explicit application config alongside the default entries. No bootstrap implementation changes are needed. The default eighteen-entry config remains local and exposes 26 native tools. For the intended sandbox connection, the additional entry is:
+Add a `@merv/mounts` entry to your explicit application config alongside the default entries. No bootstrap implementation changes are needed. The domain/API composition has 38 entries and 64 domain tools. The explicit default configuration also includes the optional browser layer (53 entries and 66 tools including two UI tools). For the intended sandbox connection, the additional entry is:
 
 ```json
 {
@@ -405,7 +505,7 @@ Add a `@merv/mounts` entry to your explicit application config alongside the def
 }
 ```
 
-This selects `mount__sandbox__usage_report`; callers still require an exact Access grant and Credentials binding. Public catalog discovery is the default. A service that requires authenticated discovery can configure a separate local `discovery` caller. Its authority never supplies another caller's upstream credential. See the [Mounts contract and lifecycle](packages/mounts/README.md) and [sandbox preparation](docs/READ_ONLY_SANDBOX_MOUNT.md).
+This selects `_sandbox.usage_report`; callers still require an exact Scope tool grant and a credential binding in Mounts. Public catalog discovery is the default. A service that requires authenticated discovery can configure a separate local `discovery` caller. Its authority never supplies another caller's upstream credential. See the [Mounts contract and lifecycle](packages/mounts/README.md) and [sandbox preparation](docs/READ_ONLY_SANDBOX_MOUNT.md).
 
 The plugin validates only the selected tools before publication. It listens for catalog notifications and polls within configured bounds to detect loss; failure withdraws mounted tools, and bounded backoff attempts discovery again. It never retries tool operations. `app.ctx.mounts.status()` returns sanitized connection status; `reconnect(id)` requests a new discovery connection. `app.setEnabled('mounts', false)` withdraws all mount namespaces, waits for admitted calls, then closes upstream clients. Re-enable the entry to restore its configured mounts.
 
@@ -414,15 +514,51 @@ npm run test:mounts
 npm run test:mount-unload
 ```
 
-These commands use an independent local MCP server with synthetic credentials. The whole-application scenario verifies 27 → 26 → 27 tools, an actual admitted upstream call during removal, a completed task and independent review with feed posts while the mount is absent, and fresh connections after restoration. This controlled proof does **not** complete the real sandbox-service gate.
+These commands use an independent local MCP server with synthetic credentials. The whole-application scenario checks withdrawal and restoration of its mounted catalog in the explicit configuration with the browser layer, an actual admitted upstream call during removal, a completed task and independent review with feed posts while the mount is absent, and fresh connections after restoration. This controlled proof does **not** complete the real sandbox-service gate.
 
 ## Optional Nisa literature retrieval
 
 The Nisa-owned six-tool MCP integration is also implemented: search, paper,
 excerpts and Q&A ask/get/cancel through generic Mounts, with independent removal
 during an accepted Q&A operation. See [implementation, verification and deployment limits](docs/NISA_PLUGIN_IMPLEMENTATION.md).
-The two-tool REST adapter below remains available for the existing deployment.
+The older `@merv/nisa` REST adapter has been removed after verifying its replacement
+through local HTTP/MCP. See [configuration and migration](docs/NISA_PLUGIN.md).
+Production deployment and real-model verification remain open.
 
-Add `@merv/nisa` to an explicit configuration to expose `mount__nisa__search` and `mount__nisa__paper`. The plugin uses Nisa's supported REST API, reuses exact Access grants and scoped Credentials, and has no task/experiment dependency. It preserves upstream records and arXiv references while bounding requests and disabling background enrichment. See [configuration, supported interface, and verification](docs/NISA_PLUGIN.md).
+With `MERV_NISA_CHECKOUT` and `MERV_NISA_PYTHON` set, `npm run test:nisa` (also
+`npm run test:nisa-mcp`) runs the actual Nisa API and MCP server through generic
+Mounts using synthetic identity, corpus and model providers. It is configured to check
+catalog withdrawal and restoration in the explicit configuration with the browser layer, durable Q&A surviving unmount, and task/review/feed work plus
+the same sandbox connections during Nisa's absence. These commands fail if no
+prepared Nisa checkout is supplied; they do not silently skip verification.
 
-`npm run test:nisa` exercises the permission, response, timeout, and lifecycle boundaries. `npm run test:nisa-unload` runs the whole application with independent REST/MCP fixtures: 29 → 27 → 29 tools, admitted search drain, retained sandbox connection, and completed task/review/feed work during absence. `npm run test:nisa-live -- --check` prepares the bounded real-service proof without reading credentials or making requests. Fable consultation is complete; the real-service gate is pending a renewed Nisa login or explicitly supplied API key. See [the execution ledger](EXECUTION_LOG.md).
+### Work-item prerequisites
+
+`task.create` accepts `dependsOn`. Workflows holds the durable dependency graph;
+producer context and delivery wait until all prerequisites succeed. Task reads and
+the UI show “Waits on” and “Unblocks”. Failed prerequisites produce guidance and
+an explicit withdrawal option rather than automatic failure. No new plugin or
+tool was added. [Contracts, examples and verification](docs/WORK_ITEM_DEPENDENCIES.md).
+
+## Structured task evidence
+
+New tasks can omit `briefId`: Merv renders the brief from the goal and acceptance checks. Delivery requires one numbered confirmation per check, evidence references and verification notes; independent review still decides the outcome. Guidance, pinned review evidence, saved contexts and UI use this contract. Existing tasks retain their original evidence version. See [details and compatibility](docs/STRUCTURED_TASK_EVIDENCE.md).
+
+New task reviews also pin a structured verdict format: synopsis, numbered findings, explicit reviewer waivers and retained observations. Revision context and the UI expose the same assessment. See [review assessments](docs/REVIEW_ASSESSMENTS.md).
+
+### Workflow assignments
+
+Workflows now owns read-only `workflow.assignment` and atomic `workflow.begin`. Tasks supplies the current work/review declaration and full recipe preview through Context Builder. First starts survive restart and appear in task reads and UI; review ownership remains in Reviews. See [behavior and parity limits](docs/WORKFLOW_ASSIGNMENT_PLAN.md).
+
+Assignment packets also carry [fixed execution policies](docs/WORKFLOW_EXECUTION.md).
+Their tool names and argument constraints are declared by the workflow state,
+independently of which actions are currently ready. Workflows checks policy,
+revision, admission and metadata through an internal dispatch interface. Public
+HTTP/MCP descriptions share one registry path. Ordinary credentials retain their
+existing authority. [Sessions](docs/SESSION_LEASES.md) now enforces the fixed policies for leased workers, with MCP-only secrets, immutable assignments, expiry, source checks and exact ownership recovery.
+
+## Continuing agents
+
+[Agent Sessions](docs/AGENT_CONTINUITY.md) now owns stable agent instances separately from assignment executions. External agents register once and explicitly change assignments with the same agent ID, Scope actor and connection credential. Assignment leases, context snapshots, tool permissions and Code/Runner references remain execution-specific. Automatic dispatch still launches fresh agents; no automatic handoff was added.
+
+Reflection waves now read live research using existing tools. New task/experiment creation pauses until approval, while existing work continues. Assignments contain compact instructions and output references, without copying the research corpus. See [Reflections](docs/REFLECTIONS.md).

@@ -20,10 +20,10 @@ export interface FeedListInput {
   limit?: number;
 }
 export interface Feed {
-  post(caller: Caller, input: FeedInput, tx?: Transaction): FeedPost;
-  get(caller: Caller, postId: string): FeedPost;
-  list(caller: Caller, input?: FeedListInput): FeedPost[];
-  activity(caller: Caller, after?: number): StoredEvent[];
+  post(caller: Caller, input: FeedInput, tx?: Transaction): Promise<FeedPost>;
+  get(caller: Caller, postId: string): Promise<FeedPost>;
+  list(caller: Caller, input?: FeedListInput): Promise<FeedPost[]>;
+  activity(caller: Caller, after?: number): Promise<StoredEvent[]>;
 }
 declare module 'cordis' {
   interface Context {

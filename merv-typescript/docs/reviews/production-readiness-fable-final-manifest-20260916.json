@@ -1,0 +1,1171 @@
+{
+  "status": "frozen-awaiting-exact-payload-approval",
+  "capturedUtc": "2026-09-16T08:54:02.152542+00:00",
+  "requestedModel": "claude-fable-5",
+  "fallbackConfigured": false,
+  "transmitted": false,
+  "externalInvocationPerformed": false,
+  "priorPacket": {
+    "bytes": 299109,
+    "sha256": "f14f1a09aec0be1de28826b57cd2a98da13e4f9c1b14fb093b85acfd29edbb50",
+    "unchanged": true
+  },
+  "verificationBytes": 3485,
+  "verificationSha256": "1c8c01ac7623a9900bc61b64030518015ae30544e7023294970bbd0e150755fd",
+  "sourceCapBytes": 510000,
+  "files": [
+    {
+      "path": "package.json",
+      "fullFileSha256": "e9c220ab59026064f2b66d5ce3cdc4523403ae8a1378e4ce1ca614234d389d01",
+      "fullFileBytes": 2385,
+      "fullFileLines": 54,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 54,
+          "sha256": "e9c220ab59026064f2b66d5ce3cdc4523403ae8a1378e4ce1ca614234d389d01",
+          "bytes": 2385
+        }
+      ]
+    },
+    {
+      "path": "config/default.json",
+      "fullFileSha256": "ddd0e6bad71f46c0cb5adcc56c15a172f83f114e63e7f386b4340e41e0725766",
+      "fullFileBytes": 4375,
+      "fullFileLines": 206,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 206,
+          "sha256": "ddd0e6bad71f46c0cb5adcc56c15a172f83f114e63e7f386b4340e41e0725766",
+          "bytes": 4375
+        }
+      ]
+    },
+    {
+      "path": "src/app.ts",
+      "fullFileSha256": "be8113ca91c6de85e71958c5cf547937826c340aaf98e6d0afdd5aaf3a372059",
+      "fullFileBytes": 6244,
+      "fullFileLines": 169,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 169,
+          "sha256": "be8113ca91c6de85e71958c5cf547937826c340aaf98e6d0afdd5aaf3a372059",
+          "bytes": 6244
+        }
+      ]
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "fullFileSha256": "aa7969a839f62cfe49ee046fddf13c1277c72562c08dec1a4c3242311fe76aca",
+      "fullFileBytes": 36093,
+      "fullFileLines": 1060,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 89,
+          "end": 194,
+          "sha256": "6f24cea76e082c8dfdaf4e3c115fa541c7120dc68137210e8ffe50702759c234",
+          "bytes": 4075
+        },
+        {
+          "start": 390,
+          "end": 448,
+          "sha256": "826e6f1a59788b1e7657442e859124f1a38ce19079400c4e9ce67554c0657acb",
+          "bytes": 1889
+        }
+      ]
+    },
+    {
+      "path": "packages/state/src/base.ts",
+      "fullFileSha256": "a455c45423e5aa8751448f5afbdfebde00eea536ed81055fa22298b144c349c2",
+      "fullFileBytes": 11527,
+      "fullFileLines": 371,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 371,
+          "sha256": "a455c45423e5aa8751448f5afbdfebde00eea536ed81055fa22298b144c349c2",
+          "bytes": 11527
+        }
+      ]
+    },
+    {
+      "path": "packages/state/src/postgres.ts",
+      "fullFileSha256": "884dccc3679aa76c79e84e943a354dc503c31513820e136c7b0435a8a701bcc2",
+      "fullFileBytes": 7924,
+      "fullFileLines": 218,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 218,
+          "sha256": "884dccc3679aa76c79e84e943a354dc503c31513820e136c7b0435a8a701bcc2",
+          "bytes": 7924
+        }
+      ]
+    },
+    {
+      "path": "packages/state/src/index.ts",
+      "fullFileSha256": "5c6e3eee93f2aa11e8666164f131d8b465b7d888a9657b4aa0935c71593c1b94",
+      "fullFileBytes": 2182,
+      "fullFileLines": 69,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 69,
+          "sha256": "5c6e3eee93f2aa11e8666164f131d8b465b7d888a9657b4aa0935c71593c1b94",
+          "bytes": 2182
+        }
+      ]
+    },
+    {
+      "path": "packages/state/package.json",
+      "fullFileSha256": "f53877604c15eaa6730a9ecbf0d7ab2991930820d00083574e46cd67d6c32dfa",
+      "fullFileBytes": 288,
+      "fullFileLines": 16,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 16,
+          "sha256": "f53877604c15eaa6730a9ecbf0d7ab2991930820d00083574e46cd67d6c32dfa",
+          "bytes": 288
+        }
+      ]
+    },
+    {
+      "path": "packages/blobs/src/index.ts",
+      "fullFileSha256": "f3adcb1bfe1bdfed274d5c8b0c311357bdc3792f118fb7ef386d8f3536ee67ef",
+      "fullFileBytes": 2248,
+      "fullFileLines": 65,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 65,
+          "sha256": "f3adcb1bfe1bdfed274d5c8b0c311357bdc3792f118fb7ef386d8f3536ee67ef",
+          "bytes": 2248
+        }
+      ]
+    },
+    {
+      "path": "packages/blobs/src/disk.ts",
+      "fullFileSha256": "8da99bf7a95843e49b3590dd045eb2e67df60a51613ce133bca4de416c3a001d",
+      "fullFileBytes": 3154,
+      "fullFileLines": 103,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 103,
+          "sha256": "8da99bf7a95843e49b3590dd045eb2e67df60a51613ce133bca4de416c3a001d",
+          "bytes": 3154
+        }
+      ]
+    },
+    {
+      "path": "packages/blobs/src/s3.ts",
+      "fullFileSha256": "ec61e86136013c89be31b9a570b54f5ee25788ad667c3ebe96082585cb2a69c3",
+      "fullFileBytes": 14698,
+      "fullFileLines": 415,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 415,
+          "sha256": "ec61e86136013c89be31b9a570b54f5ee25788ad667c3ebe96082585cb2a69c3",
+          "bytes": 14698
+        }
+      ]
+    },
+    {
+      "path": "packages/blobs/package.json",
+      "fullFileSha256": "fafdc431b9b8c0dca10b67038ab76d371ac70a398f8bc651944d9c1196546ae1",
+      "fullFileBytes": 356,
+      "fullFileLines": 17,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 17,
+          "sha256": "fafdc431b9b8c0dca10b67038ab76d371ac70a398f8bc651944d9c1196546ae1",
+          "bytes": 356
+        }
+      ]
+    },
+    {
+      "path": "packages/artifacts/src/index.ts",
+      "fullFileSha256": "74754e13ca1ceec9ca4b26b46b0f6bdf97da12b0038f7039c5946d45536871b9",
+      "fullFileBytes": 7772,
+      "fullFileLines": 210,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 210,
+          "sha256": "74754e13ca1ceec9ca4b26b46b0f6bdf97da12b0038f7039c5946d45536871b9",
+          "bytes": 7772
+        }
+      ]
+    },
+    {
+      "path": "packages/artifacts/src/tools.ts",
+      "fullFileSha256": "1ee86ad8cc0e8bcfbbfbb351ae414c8bb276b9712d5cfc8b4d96e3809268e31d",
+      "fullFileBytes": 2097,
+      "fullFileLines": 58,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 58,
+          "sha256": "1ee86ad8cc0e8bcfbbfbb351ae414c8bb276b9712d5cfc8b4d96e3809268e31d",
+          "bytes": 2097
+        }
+      ]
+    },
+    {
+      "path": "packages/identity/src/index.ts",
+      "fullFileSha256": "b975d6ac126ae7f7c5a4cbc9e084b64d6a944ce3b4dd49f68488b17b79604f12",
+      "fullFileBytes": 9250,
+      "fullFileLines": 273,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 273,
+          "sha256": "b975d6ac126ae7f7c5a4cbc9e084b64d6a944ce3b4dd49f68488b17b79604f12",
+          "bytes": 9250
+        }
+      ]
+    },
+    {
+      "path": "packages/identity/package.json",
+      "fullFileSha256": "545dd7c57013525a3f0332129001db87d5dd7dd932d1019a05e3a8acfe84272f",
+      "fullFileBytes": 278,
+      "fullFileLines": 15,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 15,
+          "sha256": "545dd7c57013525a3f0332129001db87d5dd7dd932d1019a05e3a8acfe84272f",
+          "bytes": 278
+        }
+      ]
+    },
+    {
+      "path": "packages/api/src/index.ts",
+      "fullFileSha256": "63a131aa8a960b7fc571027373efd52c5c84b55e44f1a70c009b7dba25b1c968",
+      "fullFileBytes": 2143,
+      "fullFileLines": 67,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 67,
+          "sha256": "63a131aa8a960b7fc571027373efd52c5c84b55e44f1a70c009b7dba25b1c968",
+          "bytes": 2143
+        }
+      ]
+    },
+    {
+      "path": "packages/api/src/http.ts",
+      "fullFileSha256": "daa1b631b411975924781696c86047806e2e651108ebb8dcaf1a467066e6d326",
+      "fullFileBytes": 36042,
+      "fullFileLines": 943,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 285,
+          "end": 575,
+          "sha256": "e65d02f0b5571af3dd9888837e736c0c730342d4abaeabf2b5b64a64cf0c8dd5",
+          "bytes": 11479
+        },
+        {
+          "start": 815,
+          "end": 943,
+          "sha256": "bab334ff4ea4081c11fb7ba7ad74923bc2c75b1f703d1f597a27be2dcd7ded4b",
+          "bytes": 5063
+        }
+      ]
+    },
+    {
+      "path": "packages/api/src/registry.ts",
+      "fullFileSha256": "03435541cd17efa0a27aed8341407321be77d18dd716a5f780d7a99a56e54eea",
+      "fullFileBytes": 15829,
+      "fullFileLines": 407,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 190,
+          "end": 407,
+          "sha256": "cff25765719227f34907da38188d35cdb6a4b870491c8636d9b6821d3fcfbd6f",
+          "bytes": 8897
+        }
+      ]
+    },
+    {
+      "path": "packages/scope/src/index.ts",
+      "fullFileSha256": "a684c52ae8a61f5979b49edeb77f206481f3d78b21023de9d79141a859b0497e",
+      "fullFileBytes": 41610,
+      "fullFileLines": 1115,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 277,
+          "end": 478,
+          "sha256": "b265731e031acffd3f4bac151309d777d0e21b61d39da5a60a5a9d7abc2db749",
+          "bytes": 7293
+        },
+        {
+          "start": 592,
+          "end": 754,
+          "sha256": "15f97c91eb2a5606c1d298ec3311b781c5e87630508e7ac50907ac7f3e3c8f01",
+          "bytes": 6261
+        },
+        {
+          "start": 1078,
+          "end": 1115,
+          "sha256": "78ceaa9611a0b143d989e98931266d88af0e58d05dc0d0496150ca036af67362",
+          "bytes": 1235
+        }
+      ]
+    },
+    {
+      "path": "packages/scope/src/memberships.ts",
+      "fullFileSha256": "b52fd551fbe84dbe7784082caa6a174131ec8100aae8409f3764b7181f8c657e",
+      "fullFileBytes": 23616,
+      "fullFileLines": 702,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 105,
+          "end": 290,
+          "sha256": "ccecf91e8f8aab1b128deb9378d7f4d16ce1a83361f3d2473e42647a367b9b85",
+          "bytes": 6005
+        },
+        {
+          "start": 366,
+          "end": 391,
+          "sha256": "b7a155c1282fa77c8e1e519b3642ea86fd09d6d87a35c0cc1177c524227448b9",
+          "bytes": 862
+        },
+        {
+          "start": 493,
+          "end": 599,
+          "sha256": "ac2b31fdff47348d7052df8a5639a5702575fd31e1d7e75d8e223ba212b0c4c1",
+          "bytes": 3781
+        }
+      ]
+    },
+    {
+      "path": "packages/scope/src/user-keys.ts",
+      "fullFileSha256": "16935f6f7bdf256c802c8afef0588608448e3956fb496b59cab6094965ba3fea",
+      "fullFileBytes": 15866,
+      "fullFileLines": 444,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 83,
+          "end": 207,
+          "sha256": "3f0ed8c9cc5067eb73a332a8eab3d3a00bfe6395e8d70315e232d6f5fd58b011",
+          "bytes": 4154
+        },
+        {
+          "start": 358,
+          "end": 444,
+          "sha256": "64331564ebeff9c5532302ea2fc1e9138d1e3537e132c57922f10d3380c55a50",
+          "bytes": 3227
+        }
+      ]
+    },
+    {
+      "path": "packages/scope/src/tool-policy.ts",
+      "fullFileSha256": "36e3abb9555c55a85fa1e9910f4f3f9f42c40d41c995e2e86230361c96e3d280",
+      "fullFileBytes": 4381,
+      "fullFileLines": 131,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 131,
+          "sha256": "36e3abb9555c55a85fa1e9910f4f3f9f42c40d41c995e2e86230361c96e3d280",
+          "bytes": 4381
+        }
+      ]
+    },
+    {
+      "path": "packages/sessions/src/agents.ts",
+      "fullFileSha256": "428807aa08e3fcb3235157c5ef8b56586f52f8842556477bf47fda118f315bb2",
+      "fullFileBytes": 9416,
+      "fullFileLines": 259,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 15,
+          "end": 41,
+          "sha256": "d683569a4e8f22d7db3130760a42655e89d72457a8838fddf4fd0a37a0848db8",
+          "bytes": 1007
+        },
+        {
+          "start": 76,
+          "end": 168,
+          "sha256": "53a02643db4e8d47e4802df2ba4290921a40ae8d14deed34c1d980286c8a71ee",
+          "bytes": 2905
+        },
+        {
+          "start": 184,
+          "end": 254,
+          "sha256": "6b01c9b2a60c823a068972fef05ca26f63913926ba251db687d9e246a8719401",
+          "bytes": 2667
+        }
+      ]
+    },
+    {
+      "path": "packages/sessions/src/index.ts",
+      "fullFileSha256": "7625712c49f354c6852ae31a02683de05a50e89d2d1bd048bd777bc76a8bf626",
+      "fullFileBytes": 57328,
+      "fullFileLines": 1484,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 190,
+          "end": 277,
+          "sha256": "1486dc7e40c211ab6a1868b40f3344cc6ebd79c2fe1c73a326c9005d7af14b80",
+          "bytes": 4345
+        },
+        {
+          "start": 319,
+          "end": 425,
+          "sha256": "948e4f2f58c0b4969c2b102b02c08696aa5ca66a0a0e7eb78ab858503d6e255b",
+          "bytes": 3736
+        },
+        {
+          "start": 457,
+          "end": 503,
+          "sha256": "4802f97b13657c690e10c40d82f6e586925823ed023f1368917afc168888e344",
+          "bytes": 1705
+        },
+        {
+          "start": 714,
+          "end": 818,
+          "sha256": "66bdd269d41c0b0b51f049db4aa9b000ef65321a6590a29bd8dc4027b56ce9f5",
+          "bytes": 4304
+        },
+        {
+          "start": 1190,
+          "end": 1320,
+          "sha256": "ed4b82fb405ba5b69bf73b688c063ccbce8a355e8e8b7d8e5882fe050cbae2ce",
+          "bytes": 4846
+        },
+        {
+          "start": 1356,
+          "end": 1484,
+          "sha256": "106dec4c58b48a63058b5812242586d3154520cccee92c4ef1863e54b5c572cf",
+          "bytes": 4681
+        }
+      ]
+    },
+    {
+      "path": "packages/sessions/src/observations.ts",
+      "fullFileSha256": "dc055a5411d2ebdd42a29d87c226cea5f674698a727bbc78858ff5379a89e648",
+      "fullFileBytes": 8148,
+      "fullFileLines": 201,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 201,
+          "sha256": "dc055a5411d2ebdd42a29d87c226cea5f674698a727bbc78858ff5379a89e648",
+          "bytes": 8148
+        }
+      ]
+    },
+    {
+      "path": "packages/workflows/src/index.ts",
+      "fullFileSha256": "503279245885c39017165e9b5957ede562ca0cc0f03d065bc91d9936d439ad54",
+      "fullFileBytes": 64878,
+      "fullFileLines": 1875,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 224,
+          "end": 398,
+          "sha256": "d52c6e28dff5c89260902a420e5fc54bd2a58bac2ec3ddf9234e69c67b4baa50",
+          "bytes": 6460
+        },
+        {
+          "start": 670,
+          "end": 801,
+          "sha256": "e0edc8dbf96561a98e9b430ddc79cc5bdee22c556962fbbdf1b5d873e914a1f4",
+          "bytes": 5110
+        },
+        {
+          "start": 1304,
+          "end": 1424,
+          "sha256": "96d302d3da1010bb68e234536409ab372d6a299a3bca05958c3bdbbdff854c7a",
+          "bytes": 4161
+        },
+        {
+          "start": 1661,
+          "end": 1731,
+          "sha256": "9cea43baf25d2a2e4db292f53322124fc4d1367ad244649ceb55ea6a4fb82cc3",
+          "bytes": 2237
+        }
+      ]
+    },
+    {
+      "path": "packages/domain-events/src/index.ts",
+      "fullFileSha256": "e0c1072035ec8b9b449b7670ae7f40826b870fafaabbbfe7b4c1c4c73feacdcc",
+      "fullFileBytes": 8916,
+      "fullFileLines": 267,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 267,
+          "sha256": "e0c1072035ec8b9b449b7670ae7f40826b870fafaabbbfe7b4c1c4c73feacdcc",
+          "bytes": 8916
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/src/index.ts",
+      "fullFileSha256": "7c9053ae4c0aedae8901e22322eb7a372f71eadff7af918fbc6b62c244d58bd4",
+      "fullFileBytes": 5500,
+      "fullFileLines": 156,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 156,
+          "sha256": "7c9053ae4c0aedae8901e22322eb7a372f71eadff7af918fbc6b62c244d58bd4",
+          "bytes": 5500
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/src/static.ts",
+      "fullFileSha256": "3a7576bba786b52ae69ac22e47e876c1e139743fbfc4bec6ef476cc46876dda2",
+      "fullFileBytes": 2526,
+      "fullFileLines": 64,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 64,
+          "sha256": "3a7576bba786b52ae69ac22e47e876c1e139743fbfc4bec6ef476cc46876dda2",
+          "bytes": 2526
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/web/auth.ts",
+      "fullFileSha256": "e11bc80b12c4efadd8401250eeaab2467444db66a41170d7ef078c7859d26f07",
+      "fullFileBytes": 6604,
+      "fullFileLines": 209,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 209,
+          "sha256": "e11bc80b12c4efadd8401250eeaab2467444db66a41170d7ef078c7859d26f07",
+          "bytes": 6604
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/web/api.ts",
+      "fullFileSha256": "b14cb53d13be813e99f3f1c4867c25646149c3415b865b5c85f19dca8ac1d719",
+      "fullFileBytes": 10750,
+      "fullFileLines": 335,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 210,
+          "sha256": "db5c669372fa11cd3085c8a15c5edc4528c585a6384817582a747da52fb33c5c",
+          "bytes": 6464
+        },
+        {
+          "start": 254,
+          "end": 335,
+          "sha256": "67c70fc9f5d0db516ff849d41e41e3dc6a9dd92793ba4a5f5cdaad836268b838",
+          "bytes": 2795
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/web/session.tsx",
+      "fullFileSha256": "26cc8425ddace0896f093f2a55fb00ce95bec986a3450320a008140ed0e50a23",
+      "fullFileBytes": 13362,
+      "fullFileLines": 455,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 40,
+          "end": 240,
+          "sha256": "a3b22719679c1d57b91cb237dd3d320c8297de2c1caa16bec517532576d7ace3",
+          "bytes": 5982
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/web/views/agent-sessions-panel.tsx",
+      "fullFileSha256": "8deed931db05ce36f1bec036f3da6b19e8dce926366c3be85c1d5cb2073dfdbf",
+      "fullFileBytes": 15088,
+      "fullFileLines": 423,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 125,
+          "end": 238,
+          "sha256": "3ec3c71a9fcc92801331d9f61c71db5ebbffed28bc80b72e13b6d70845f74f9d",
+          "bytes": 4374
+        },
+        {
+          "start": 281,
+          "end": 423,
+          "sha256": "b89a156c2268bbca35ccdacf63160b48277c36d29e30d4790b663bdeda86fb82",
+          "bytes": 5487
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/web/views/artifacts.tsx",
+      "fullFileSha256": "2170b4e43d8c129c3c07088a7641bf54abcd40f1614064e565b0a1f26beca106",
+      "fullFileBytes": 7308,
+      "fullFileLines": 227,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 150,
+          "sha256": "d1a968e2529c43750a32b31055b859234833f1ab139b445452f8146d3fc1f6c3",
+          "bytes": 4876
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/web/views/legacy-history.tsx",
+      "fullFileSha256": "a23734f1648d15eb6426baeb6d5ff9275d3e8a5fa424629fc67158451ea5756d",
+      "fullFileBytes": 9844,
+      "fullFileLines": 266,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 266,
+          "sha256": "a23734f1648d15eb6426baeb6d5ff9275d3e8a5fa424629fc67158451ea5756d",
+          "bytes": 9844
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/package.json",
+      "fullFileSha256": "a0f30cdb21ee7d89f768f0bce037ce886e222c970cc4a19c4ee6fe796a23c963",
+      "fullFileBytes": 710,
+      "fullFileLines": 31,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 31,
+          "sha256": "a0f30cdb21ee7d89f768f0bce037ce886e222c970cc4a19c4ee6fe796a23c963",
+          "bytes": 710
+        }
+      ]
+    },
+    {
+      "path": "packages/ui/vite.config.ts",
+      "fullFileSha256": "62f93dd737f873fce420dc9ee037069477cd709805b204d94bd0d10ae43b557b",
+      "fullFileBytes": 824,
+      "fullFileLines": 21,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 21,
+          "sha256": "62f93dd737f873fce420dc9ee037069477cd709805b204d94bd0d10ae43b557b",
+          "bytes": 824
+        }
+      ]
+    },
+    {
+      "path": "scripts/copy-runtime-assets.ts",
+      "fullFileSha256": "6805cc57c0592851c54570164283ef665703e5a6b5541e258f9c6b1341a49275",
+      "fullFileBytes": 981,
+      "fullFileLines": 18,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 18,
+          "sha256": "6805cc57c0592851c54570164283ef665703e5a6b5541e258f9c6b1341a49275",
+          "bytes": 981
+        }
+      ]
+    },
+    {
+      "path": "src/legacy-import.ts",
+      "fullFileSha256": "56aef392bfc341de77544cebc29d20ff675f77748a6245bca08b7e2a80c2cdca",
+      "fullFileBytes": 12943,
+      "fullFileLines": 372,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 372,
+          "sha256": "56aef392bfc341de77544cebc29d20ff675f77748a6245bca08b7e2a80c2cdca",
+          "bytes": 12943
+        }
+      ]
+    },
+    {
+      "path": "src/legacy-history.ts",
+      "fullFileSha256": "e6cd422b52821d98b47a3dcd9c7f9e1c8f0a2f6f333ed98a4dff0fa56c42600a",
+      "fullFileBytes": 40746,
+      "fullFileLines": 1390,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 14,
+          "sha256": "b75b2c4d39c6127769fb95756afc96fceb6bdb8d9452c5a8c1c113d48b091122",
+          "bytes": 263
+        },
+        {
+          "start": 15,
+          "end": 557,
+          "sha256": "49075fef0da607935f126c0c88d7db4bf610be29f912ad79fdb56e9cd84d4921",
+          "bytes": 10818
+        },
+        {
+          "start": 558,
+          "end": 850,
+          "sha256": "a0281670a7d5aacbb7a1128ef6083e35f76064bc1594b5ff05495e076801bce9",
+          "bytes": 9950
+        },
+        {
+          "start": 870,
+          "end": 1390,
+          "sha256": "8de03ffe562930c88cd3e6b94aceb6312ef313e53ede258751668a16417e2754",
+          "bytes": 19035
+        }
+      ]
+    },
+    {
+      "path": "src/legacy-media.ts",
+      "fullFileSha256": "60801668c99f362b6f5ba340f82f6030340cdf726a6de5db41000327baaf5d69",
+      "fullFileBytes": 15980,
+      "fullFileLines": 455,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 455,
+          "sha256": "60801668c99f362b6f5ba340f82f6030340cdf726a6de5db41000327baaf5d69",
+          "bytes": 15980
+        }
+      ]
+    },
+    {
+      "path": "src/legacy-media-links.ts",
+      "fullFileSha256": "575145c2a2eff2cb5c3a80b506131cb449197408e2ec3713fd68c400bf39e595",
+      "fullFileBytes": 3444,
+      "fullFileLines": 104,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 104,
+          "sha256": "575145c2a2eff2cb5c3a80b506131cb449197408e2ec3713fd68c400bf39e595",
+          "bytes": 3444
+        }
+      ]
+    },
+    {
+      "path": "src/legacy-history-ui.ts",
+      "fullFileSha256": "bb00fe3de3507f31e5f9fe57a65dc99bfdfdf4c8907c05dd0f6d02dafb5dea05",
+      "fullFileBytes": 3073,
+      "fullFileLines": 80,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 80,
+          "sha256": "bb00fe3de3507f31e5f9fe57a65dc99bfdfdf4c8907c05dd0f6d02dafb5dea05",
+          "bytes": 3073
+        }
+      ]
+    },
+    {
+      "path": "deploy/Dockerfile",
+      "fullFileSha256": "e38963e2fade787e35b3b6caa0d4489f13fa38c1daa7e4439d460950da4663a5",
+      "fullFileBytes": 806,
+      "fullFileLines": 20,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 20,
+          "sha256": "e38963e2fade787e35b3b6caa0d4489f13fa38c1daa7e4439d460950da4663a5",
+          "bytes": 806
+        }
+      ]
+    },
+    {
+      "path": "deploy/prepare-runtime.mjs",
+      "fullFileSha256": "aa8ea256110a539ab53a7575bf9c43679f15517335a9cce6958324b5d93c0a72",
+      "fullFileBytes": 1053,
+      "fullFileLines": 22,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 22,
+          "sha256": "aa8ea256110a539ab53a7575bf9c43679f15517335a9cce6958324b5d93c0a72",
+          "bytes": 1053
+        }
+      ]
+    },
+    {
+      "path": "deploy/render-config.mjs",
+      "fullFileSha256": "6861338f24e51fe2c54496a7c0325a9380d758f0bfa0899c6659522398cf1c5d",
+      "fullFileBytes": 2836,
+      "fullFileLines": 88,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 88,
+          "sha256": "6861338f24e51fe2c54496a7c0325a9380d758f0bfa0899c6659522398cf1c5d",
+          "bytes": 2836
+        }
+      ]
+    },
+    {
+      "path": "deploy/schema.mjs",
+      "fullFileSha256": "0688e60f4436e68b9ad4da285903ec166c537edc61c7f35492331f7457a8d2e2",
+      "fullFileBytes": 323,
+      "fullFileLines": 7,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 7,
+          "sha256": "0688e60f4436e68b9ad4da285903ec166c537edc61c7f35492331f7457a8d2e2",
+          "bytes": 323
+        }
+      ]
+    },
+    {
+      "path": "deploy/entrypoint.sh",
+      "fullFileSha256": "ca3916c54e2a6a5a3314d229001ca04811cdffa50bc6a6211e586c89f60a9a52",
+      "fullFileBytes": 203,
+      "fullFileLines": 5,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 5,
+          "sha256": "ca3916c54e2a6a5a3314d229001ca04811cdffa50bc6a6211e586c89f60a9a52",
+          "bytes": 203
+        }
+      ]
+    },
+    {
+      "path": "deploy/legacy-rehearsal.mjs",
+      "fullFileSha256": "85d939b6a5f0a3538dde495bdd49d771aa903043d2c80a03540b635ae4646eb6",
+      "fullFileBytes": 28010,
+      "fullFileLines": 821,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 821,
+          "sha256": "85d939b6a5f0a3538dde495bdd49d771aa903043d2c80a03540b635ae4646eb6",
+          "bytes": 28010
+        }
+      ]
+    },
+    {
+      "path": "deploy/runtime-acceptance.mjs",
+      "fullFileSha256": "a993c0f997bc504a11ee5964d4f877d72d967da4cd2291b0f1b57c462cc05da7",
+      "fullFileBytes": 17644,
+      "fullFileLines": 441,
+      "included": true,
+      "excerpts": [
+        {
+          "start": 1,
+          "end": 83,
+          "sha256": "e1f73d4988750f859c7bcdab6db0dbb7255989e5ad0f6b160b826655949ed600",
+          "bytes": 3675
+        },
+        {
+          "start": 287,
+          "end": 441,
+          "sha256": "9e47c82d381cc2b0502390db2751f27c9923bcdc279d306a6695a75e951564eb",
+          "bytes": 5536
+        }
+      ]
+    },
+    {
+      "path": "tests/state-postgres.test.ts",
+      "fullFileSha256": "3285275c291df4129376e9e8045d74a252971b6fa31ab9eb70802a5e499df644",
+      "fullFileBytes": 10264,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/production-storage.test.ts",
+      "fullFileSha256": "d6bf3d3eab5cfe6402f8c5284886db586debf813eb6c044c04a3f0f495ddf8cd",
+      "fullFileBytes": 12282,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/domain-events.test.ts",
+      "fullFileSha256": "90151f1d49bbffbbed6e3892fa4d47047455a79f9e9359fa8b46153ea4872f3c",
+      "fullFileBytes": 21758,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/blobs-s3.test.ts",
+      "fullFileSha256": "c720e0eed892890daac8916c0b5b8796e8a42d4c6b426b0e19c9964ce7903637",
+      "fullFileBytes": 16467,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/artifact-download.test.ts",
+      "fullFileSha256": "87756716d1ddffdcd11dcda0a837ba65daf6371ce6f45cd9ee2935f40ee2977f",
+      "fullFileBytes": 8134,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/sessions.test.ts",
+      "fullFileSha256": "baff0a3da980964302cd26f97a571a16132934240ca2b5a196edd0f7f13f2865",
+      "fullFileBytes": 53310,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/sessions-api.test.ts",
+      "fullFileSha256": "ff2b1b386944f7486053e48b0853d355f1d52e09a5b2efbdfce01abdc4d9ae70",
+      "fullFileBytes": 23688,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/sessions-integration.test.ts",
+      "fullFileSha256": "baa3fde87806c8b662be89b2d2b533fc01fbc3f2c5a2b75fda58e44b0f378b44",
+      "fullFileBytes": 19011,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/sessions-lifecycle.test.ts",
+      "fullFileSha256": "46bb364fc432d8533cf1768d0774b1375ed6ef6c5dad951cbf6c6eaf23a5efb0",
+      "fullFileBytes": 4799,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/legacy-import.test.ts",
+      "fullFileSha256": "a261bd29e190d5200fa16419b378bccd6ca70dd5d7af5db960f0adf23233a67d",
+      "fullFileBytes": 10724,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/legacy-history.test.ts",
+      "fullFileSha256": "757d28ff0c6ae082a822ef49bc920f6970624a99179daef3aa726b206448e729",
+      "fullFileBytes": 27514,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/legacy-media.test.ts",
+      "fullFileSha256": "d62dbe145732e7ca6c05fe631044decc5bd4bc87143947f0ac6e995092d0e1ab",
+      "fullFileBytes": 18344,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "tests/legacy-history-ui.test.ts",
+      "fullFileSha256": "17c4a7c8f7ab13cb2229a30fb26c9b7d3088422dd1f980b574f7b68055d73336",
+      "fullFileBytes": 5103,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "deploy/legacy-rehearsal.test.mjs",
+      "fullFileSha256": "ef218e3af848e46c834143e924d8b0487feaa8be3b25d4e3dca1d3e8a7d5afe3",
+      "fullFileBytes": 15299,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "deploy/render-config.test.mjs",
+      "fullFileSha256": "65f1903c00769eba96217963c8336821483900cb86b26e4526be8ddac92854d6",
+      "fullFileBytes": 2887,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    },
+    {
+      "path": "package-lock.json",
+      "fullFileSha256": "a0aa0e0515d0a9ea5b2e4276ba8ada3d142a9d77cdbb221c1af514b61dd21437",
+      "fullFileBytes": 155639,
+      "included": false,
+      "reason": "Fingerprint only; source/body excluded from packet"
+    }
+  ],
+  "evidence": {
+    "run": "2026-09-16T08:44:13Z\u201308:45:23Z",
+    "logSha256": "c8f251928cfbc02860dd2fac0a70c975a6f8baf9eec7959faf730e208053ae24",
+    "steps": [
+      {
+        "step": "backend-typecheck",
+        "exitCode": 0,
+        "durationMs": 5103
+      },
+      {
+        "step": "ui-typecheck",
+        "exitCode": 0,
+        "durationMs": 1614
+      },
+      {
+        "step": "ui-build",
+        "exitCode": 0,
+        "durationMs": 1117
+      },
+      {
+        "step": "backend-build",
+        "exitCode": 0,
+        "durationMs": 5954
+      },
+      {
+        "step": "native-postgres-and-sqlite",
+        "exitCode": 0,
+        "durationMs": 55355
+      },
+      {
+        "step": "deployment-fixtures",
+        "exitCode": 0,
+        "durationMs": 341
+      }
+    ],
+    "native": {
+      "tests": 781,
+      "pass": 780,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 1
+    },
+    "deploymentFixtures": {
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "postgres": "Both MERV_TEST_POSTGRES_URL and MERV_TEST_POSTGRES_DSN set to the disposable local PG17 cluster.",
+    "onlySkip": "Optional cross-repository Nisa integration requires MERV_NISA_CHECKOUT; external mounts are not enabled in the deployment composition.",
+    "warnings": [
+      "Existing Vite bundle chunk exceeds 500 kB",
+      "Node SQLite experimental warning"
+    ],
+    "rawLogIncluded": false
+  },
+  "frozenUtc": "2026-09-16T09:02:38.475523+00:00",
+  "packetFile": "packet.md",
+  "packetBytes": 463356,
+  "packetSha256": "aeaf7122d22ee7f5c1de38da5a7b05dbad59451ce6a146f877dd8e1bef338cca",
+  "sourceSectionBytes": 454430,
+  "sourceSectionSha256": "924059ce60c0719011e1de441e4ff1c52c8d5feb61ba87c349dec63b459ce64b",
+  "azureEvidenceBytes": 5437,
+  "azureEvidenceSha256": "7450d58c1ea69e4280d8c81d428311ca513ed78875b38ce184a38cfbb4bfc571",
+  "approval": {
+    "exactPayloadApproved": false,
+    "transmissionAttempted": false,
+    "externalInvocationPerformed": false
+  },
+  "reviewer": {
+    "model": "claude-fable-5",
+    "effort": "high",
+    "fallback": false,
+    "tools": [],
+    "mcpServers": {},
+    "sessionPersistence": false
+  },
+  "laterEvidencePolicy": "Operational receipts evaluated locally; frozen payload is not appended to or expanded.",
+  "secretScan": {
+    "method": "Conservative literal patterns plus manual source/file exclusion review",
+    "patterns": [
+      "private_key",
+      "aws_access_key",
+      "service_token",
+      "jwt_value",
+      "credential_dsn",
+      "presigned_url",
+      "personal_email"
+    ],
+    "matches": 0,
+    "limitations": "Pattern scan is not a proof against all possible secrets; source set excludes runtime/env/export/log bodies and is independently reviewed.",
+    "independentLocalReview": "51 selected source sections matched source/ranges exactly; no secret/private-record literals found. Exact allowlist added in v2 in response to reviewer coverage note."
+  },
+  "payloadVersion": 2,
+  "supersedesUnsentV1": {
+    "bytes": 449554,
+    "sha256": "2f59004cef2600adf5f7afd12f5e3e71434b15a49958470fbfe7d7d0df5722e4",
+    "unchanged": true
+  },
+  "systemPrompt": {
+    "file": "system-prompt.txt",
+    "bytes": 159,
+    "sha256": "8c41835c8b08ee2b76673e7f111a266b8db05a8dc787c063df3d829d6a4d197a",
+    "text": "You are an independent read-only reviewer. Analyze only the approved packet supplied on standard input. Do not use tools or assume access to omitted materials."
+  },
+  "reviewedContentBytes": 463515,
+  "invocationPlan": {
+    "cwd": "/private/tmp/merv-fable-readiness-final-20260916/v2/invocation",
+    "argv": [
+      "/Users/guraltoo/.local/bin/claude",
+      "--print",
+      "--model",
+      "claude-fable-5",
+      "--effort",
+      "high",
+      "--safe-mode",
+      "--restricted",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--mcp-config",
+      "{\"mcpServers\":{}}",
+      "--tools",
+      "",
+      "--disable-slash-commands",
+      "--system-prompt",
+      "You are an independent read-only reviewer. Analyze only the approved packet supplied on standard input. Do not use tools or assume access to omitted materials.",
+      "--no-session-persistence",
+      "--system-prompt-snapshot",
+      "off",
+      "--output-format",
+      "json"
+    ],
+    "executed": false,
+    "localHelpVersionChecked": "2.1.261 (Claude Code)",
+    "defaultDynamicPrompt": "Replaced by the fixed explicitly reviewed system prompt; --exclude-dynamic-system-prompt-sections is deliberately NOT used, because it moves context into the user message."
+  }
+}

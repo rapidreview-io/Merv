@@ -1,0 +1,42 @@
+digraph G {
+graph [rankdir=TB,bgcolor="transparent",fontname="Arial",pad="0.18",nodesep="0.25",ranksep="0.65",splines=polyline,outputorder=edgesfirst];
+node [shape=box,style="rounded,filled",fontname="Arial",margin="0.18,0.14",penwidth=1.6];
+edge [penwidth=1.5,arrowsize=0.65];
+research [id="node-research",color="#5855A8",fillcolor="#F6F2FC",label=<<FONT POINT-SIZE="21"><B>Research</B></FONT><BR/><FONT POINT-SIZE="12">Outer research cycle</FONT>>];
+consolidation [id="node-consolidation",color="#287D71",fillcolor="#F6F2FC",label=<<FONT POINT-SIZE="21"><B>Consolidation</B></FONT><BR/><FONT POINT-SIZE="12">Reviewed code changes</FONT><BR/><FONT POINT-SIZE="12">Requires Code</FONT>>];
+reflections [id="node-reflections",color="#7B529B",fillcolor="#F6F2FC",label=<<FONT POINT-SIZE="21"><B>Reflections</B></FONT><BR/><FONT POINT-SIZE="12">Five lenses + synthesis review</FONT>>];
+paper [id="node-paper",color="#327C87",fillcolor="#F6F2FC",label=<<FONT POINT-SIZE="21"><B>Paper</B></FONT><BR/><FONT POINT-SIZE="12">Problem, literature, Methods + Results</FONT>>];
+artifacts [id="node-artifacts",color="#1C8480",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Artifacts</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+code [id="node-code",color="#287D71",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Code</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+contextBuilder [id="node-contextBuilder",color="#208B78",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Context Builder</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+knowledge [id="node-knowledge",color="#7B529B",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Knowledge</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+reviews [id="node-reviews",color="#4A7793",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Reviews</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+scope [id="node-scope",color="#A76013",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Scope</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+state [id="node-state",color="#2365B5",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>State</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+workflows [id="node-workflows",color="#326B90",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Workflows</B></FONT><BR/><FONT POINT-SIZE="12">Shared provider reference</FONT>>];
+research -> state [id="edge-research-state",color="#2365B5"];
+research -> scope [id="edge-research-scope",color="#A76013"];
+research -> workflows [id="edge-research-workflows",color="#326B90"];
+research -> paper [id="edge-research-paper",color="#327C87",style="dashed",label="optional",fontsize=11];
+research -> reflections [id="edge-research-reflections",color="#7B529B",style="dashed",label="optional",fontsize=11];
+research -> consolidation [id="edge-research-consolidation",color="#287D71",style="dashed",label="optional",fontsize=11];
+research -> knowledge [id="edge-research-knowledge",color="#7B529B",style="dashed",label="optional",fontsize=11];
+consolidation -> state [id="edge-consolidation-state",color="#2365B5"];
+consolidation -> scope [id="edge-consolidation-scope",color="#A76013"];
+consolidation -> artifacts [id="edge-consolidation-artifacts",color="#1C8480"];
+consolidation -> workflows [id="edge-consolidation-workflows",color="#326B90"];
+consolidation -> reviews [id="edge-consolidation-reviews",color="#4A7793"];
+consolidation -> contextBuilder [id="edge-consolidation-contextBuilder",color="#208B78"];
+consolidation -> code [id="edge-consolidation-code",color="#287D71"];
+reflections -> state [id="edge-reflections-state",color="#2365B5"];
+reflections -> scope [id="edge-reflections-scope",color="#A76013"];
+reflections -> artifacts [id="edge-reflections-artifacts",color="#1C8480"];
+reflections -> paper [id="edge-reflections-paper",color="#327C87"];
+reflections -> workflows [id="edge-reflections-workflows",color="#326B90"];
+reflections -> reviews [id="edge-reflections-reviews",color="#4A7793"];
+reflections -> contextBuilder [id="edge-reflections-contextBuilder",color="#208B78"];
+paper -> state [id="edge-paper-state",color="#2365B5"];
+paper -> scope [id="edge-paper-scope",color="#A76013"];
+paper -> artifacts [id="edge-paper-artifacts",color="#1C8480"];
+{rank=sink;artifacts;code;contextBuilder;knowledge;reviews;scope;state;workflows;}
+}

@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -8,9 +9,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from '../src/app.js';
+import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
-import type { CredentialBinding } from '@merv/credentials/types';
+import type { CredentialBinding } from '@merv/mounts/types';
 
 test('two projects use separate upstream credentials and connections through real HTTP/MCP', async (t) => {
   const envNames = ['MERV_HTTP_CREDENTIAL_A', 'MERV_HTTP_CREDENTIAL_B'] as const;
@@ -30,7 +32,8 @@ test('two projects use separate upstream credentials and connections through rea
     { id: 'upstream-a-rotated', token: secrets[2], namespace: 'namespace-a', subject: 'subject-a' },
   ]);
   await upstream.start();
-  const pool = new ScopedRemoteClients(app.ctx.credentials, app.ctx.access, {
+  const credentials = new EnvironmentCredentials(app.ctx.scope);
+  const pool = new ScopedRemoteClients(credentials, app.ctx.scope.toolPolicy, {
     mounts: { bridge: { url: upstream.url } },
     timeoutMs: 2000,
   });
@@ -46,16 +49,16 @@ test('two projects use separate upstream credentials and connections through rea
       else process.env[name] = previous[index];
     });
   });
-  const a = app.ctx.scope.bootstrap({ projectName: 'A', actorName: 'A operator' });
-  const b = app.ctx.scope.bootstrap({ projectName: 'B', actorName: 'B operator' });
+  const a = await app.ctx.scope.bootstrap({ projectName: 'A', actorName: 'A operator' });
+  const b = await app.ctx.scope.bootstrap({ projectName: 'B', actorName: 'B operator' });
   const ac = { actorId: a.actor.id, projectId: a.project.id },
     bc = { actorId: b.actor.id, projectId: b.project.id };
-  const readerA = app.ctx.scope.issueActor(ac, { name: 'Reader A', role: 'reader' });
-  const readerB = app.ctx.scope.issueActor(bc, { name: 'Reader B', role: 'reader' });
+  const readerA = await app.ctx.scope.issueActor(ac, { name: 'Reader A', role: 'reader' });
+  const readerB = await app.ctx.scope.issueActor(bc, { name: 'Reader B', role: 'reader' });
   const ca = { actorId: readerA.actor.id, projectId: a.project.id },
     cb = { actorId: readerB.actor.id, projectId: b.project.id };
   const grants = [ca, cb].map((caller) => ({ ...caller, mountId: 'bridge', tools: ['inspect'] }));
-  app.ctx.access.replace(grants);
+  app.ctx.scope.toolPolicy.replace(grants);
   const bindings: CredentialBinding[] = [ca, cb].map((caller, i) => ({
     ...caller,
     id: `binding-${i}`,
@@ -66,14 +69,14 @@ test('two projects use separate upstream credentials and connections through rea
       'x-sandbox-subject': `subject-${i === 0 ? 'a' : 'b'}`,
     },
   }));
-  app.ctx.credentials.replace(bindings);
-  await app.ctx.tools.createCatalog('bridge').replace([
+  credentials.replace(bindings);
+  app.ctx.tools.createCatalog('bridge').replace([
     {
       kind: 'mcp',
       name: 'inspect',
       inputSchema: { type: 'object', additionalProperties: false },
       annotations: { readOnlyHint: true },
-      handler: (caller, input) => pool.call(caller, 'bridge', 'inspect', input),
+      handler: async (caller, input) => pool.call(caller, 'bridge', 'inspect', input),
     },
   ]);
   const connect = async (token: string) => {
@@ -90,11 +93,11 @@ test('two projects use separate upstream credentials and connections through rea
     mcpB = await connect(readerB.token);
   const mcpCall = (client: Client) =>
     client.request(
-      { method: 'tools/call', params: { name: 'mount__bridge__inspect', arguments: {} } },
+      { method: 'tools/call', params: { name: '_bridge.inspect', arguments: {} } },
       CallToolResultSchema,
     );
   const httpCall = async (token: string, projectId?: string) => {
-    const response = await fetch(`${app.ctx.api.url}/tools/mount__bridge__inspect`, {
+    const response = await fetch(`${app.ctx.api.url}/tools/_bridge.inspect`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${token}`,
@@ -105,7 +108,7 @@ test('two projects use separate upstream credentials and connections through rea
     });
     return { status: response.status, body: (await response.json()) as any };
   };
-  const [firstA, firstB] = await Promise.all([mcpCall(mcpA), mcpCall(mcpB)]);
+  const [firstA, firstB] = await Promise.all([await mcpCall(mcpA), await mcpCall(mcpB)]);
   assert.equal(firstA.structuredContent?.identity, 'upstream-a');
   assert.equal(firstB.structuredContent?.identity, 'upstream-b');
   assert.equal(firstA.structuredContent?.namespace, 'namespace-a');
@@ -116,21 +119,21 @@ test('two projects use separate upstream credentials and connections through rea
   assert.deepEqual(repeatedA.body.result.structuredContent, firstA.structuredContent);
   const count = upstream.calls.length;
   assert.equal((await httpCall(readerA.token, b.project.id)).status, 403);
-  app.ctx.access.replace([grants[0]]);
+  app.ctx.scope.toolPolicy.replace([grants[0]]);
   assert.equal((await httpCall(readerB.token)).status, 403);
   assert.equal((await mcpCall(mcpB)).isError, true);
   assert.equal(upstream.calls.length, count);
-  app.ctx.access.replace(grants);
-  app.ctx.credentials.replace([bindings[0]]);
+  app.ctx.scope.toolPolicy.replace(grants);
+  credentials.replace([bindings[0]]);
   assert.equal((await httpCall(readerB.token)).status, 403);
   assert.equal((await mcpCall(mcpB)).isError, true);
   assert.equal(upstream.calls.length, count, 'Revoked bindings must not reuse the cached client');
-  app.ctx.credentials.replace(bindings);
+  credentials.replace(bindings);
   process.env[envNames[0]] = secrets[2];
   const rotated = await mcpCall(mcpA);
   assert.equal(rotated.structuredContent?.identity, 'upstream-a-rotated');
   assert.notEqual(rotated.structuredContent?.connectionId, firstA.structuredContent?.connectionId);
-  app.ctx.scope.revokeActor(ac, readerA.actor.id);
+  await app.ctx.scope.revokeActor(ac, readerA.actor.id);
   assert.equal((await httpCall(readerA.token)).status, 401);
   const visible = JSON.stringify({
     firstA,
@@ -139,10 +142,10 @@ test('two projects use separate upstream credentials and connections through rea
     rotated,
     calls: upstream.calls,
     status: app.status(),
-    credential: app.ctx.credentials.resolve(cb, 'bridge'),
+    credential: await credentials.resolve(cb, 'bridge'),
   });
   for (const secret of [...secrets, a.token, b.token, readerA.token, readerB.token]) {
     assert.equal(visible.includes(secret), false);
-    assert.equal(inspect(app.ctx.credentials.resolve(cb, 'bridge')).includes(secret), false);
+    assert.equal(inspect(await credentials.resolve(cb, 'bridge')).includes(secret), false);
   }
 });

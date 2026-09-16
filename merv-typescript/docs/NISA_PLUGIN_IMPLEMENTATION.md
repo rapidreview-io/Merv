@@ -6,12 +6,12 @@ inspection and collection tools are excluded.
 
 Nisa owns retrieval, authentication, Q&A admission/execution and durable results.
 Merv uses generic Cordis Mounts with exact project/actor tool grants and credential
-bindings. No new Nisa-specific provider was added to Merv. Its old two-tool REST
-adapter remains available until production migration; do not enable both under
-the same mount ID.
+bindings. No new Nisa-specific provider was added to Merv. The old two-tool REST
+adapter was removed on 2026-09-14 after repeating the local cross-repository
+verification. See [configuration and migration](NISA_PLUGIN.md).
 
 ```
-Merv: Scope -> Access + Credentials -> Tools -> generic Mounts
+Merv: Scope (tool policy) -> Tools -> generic Mounts (upstream credentials)
                                                 |
                                     Nisa MCP (six tools)
                                                 |
@@ -30,7 +30,9 @@ based on `3489d7d`; its canonical main checkout is unchanged. Merv changes are o
 ## Verified behavior
 
 The [saved integration report](../verification/nisa-plugin-integration.json)
-records **33 -> 27 -> 33 tools**. Merv removed only Nisa's mount while an accepted
+records the original **33 -> 27 -> 33 tools**. With the four workflow tools retired,
+the current scenario verifies **29 -> 23 -> 29 tools**, recorded in the
+[workflow-tool removal check](../verification/workflow-tools-removal.json). Merv removed only Nisa's mount while an accepted
 Q&A operation stayed running on Nisa. A native task, evidence delivery, independent
 review and feed activity completed during its absence; sandbox clients and
 unrelated Cordis providers kept the same instances. Reattachment returned the
@@ -38,10 +40,14 @@ same complete answer, sources and usage. Instrumented runner entries prove the
 question did not run again. Cross-account reads/cancels, quota denial and an
 independent cancellation were also exercised.
 
-Final validation: **174 Python tests, 13 Nisa MCP tests and 193 Merv checks**, all
+Original 2026-09-13 validation: **174 Python tests, 13 Nisa MCP tests and 193 Merv checks**, all
 passing with no skips. Typechecks, Merv build, formatting and boundary checks
 pass. The full Merv suite was run with the Nisa checkout enabled; the optional
 cross-repository test skips explicitly only when that checkout is not provided.
+
+After the 2026-09-14 REST removal, the full Merv suite passed **171 checks with
+zero skips**; Nisa MCP again passed **13 tests** and typecheck. Merv typecheck,
+build and formatting also passed. [Removal verification](../verification/nisa-rest-removal.json).
 
 The actual agent-core loop was tested separately with simulated model providers.
 The cross-repository scenario uses synthetic identities, corpus/index and model
@@ -86,5 +92,5 @@ accepted Nisa-owned research running. Explicit `qa.cancel` is a separate action.
   completeness markers. The 4 MiB default limit applies to the backend HTTP
   response; the MCP wire message also includes a text copy and can be larger.
 - The production Nisa domain has not been deployed with these routes by this
-  task. Real service/model verification and the original Step 7 live gate remain
-  open. No production sandbox operation was invoked.
+  task. Real service/model verification remains open; the original Step 7 REST
+  harness is retired with its adapter. No production sandbox operation was invoked.

@@ -1,0 +1,29 @@
+import type { Context } from 'cordis';
+import type { Caller, Json } from '@merv/contracts';
+import type {} from '@merv/ui/types';
+import type {} from './types.js';
+export const reflectionUiPlugin = {
+  name: 'merv-reflection-ui',
+  inject: ['reflections', 'ui'],
+  apply(ctx: Context) {
+    const reflections = ctx.reflections;
+    ctx.effect(() =>
+      ctx.ui.register({
+        id: 'reflections',
+        label: 'Reflections',
+        group: 'work',
+        order: 35,
+        path: '/reflections',
+        view: { kind: 'reflections' },
+        status: async (caller: Caller) => ({
+          count: (await reflections.list(caller)).filter(
+            (wave) => wave.workflow.state !== 'approved',
+          ).length,
+        }),
+        read: async (caller: Caller) =>
+          JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
+      }),
+    );
+  },
+};
+export default reflectionUiPlugin;

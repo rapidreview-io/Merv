@@ -1,0 +1,88 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { deploymentSchema } from './schema.mjs';
+
+const required = (name) => {
+  const value = process.env[name];
+  if (!value?.trim() || value.trim() !== value) throw new Error(`Missing or invalid ${name}`);
+  return value;
+};
+const httpsOrigin = (name) => {
+  const value = required(name);
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${name}`);
+  }
+  if (url.protocol !== 'https:' || url.origin !== value) throw new Error(`Invalid ${name}`);
+  return value;
+};
+const mode = required('MERV_TS_AUTH_MODE');
+if (!['hs256', 'jwks'].includes(mode)) throw new Error('Invalid MERV_TS_AUTH_MODE');
+// Refuse to silently place new objects among the legacy Python objects.
+if (!/^merv-ts(?:\/[A-Za-z0-9_-]+)*$/.test(required('MERV_BLOB_PREFIX'))) {
+  throw new Error('MERV_BLOB_PREFIX must be merv-ts or a directory below it');
+}
+for (const name of [
+  'MERV_DB_URL',
+  'MERV_BLOB_BUCKET',
+  'MERV_BLOB_ENDPOINT_URL',
+  'MERV_BLOB_ACCESS_KEY_ID',
+  'MERV_BLOB_SECRET_ACCESS_KEY',
+  'SUPABASE_ANON_KEY',
+  ...(mode === 'hs256' ? ['SUPABASE_JWT_SECRET'] : []),
+])
+  required(name);
+
+const config = JSON.parse(
+  readFileSync(new URL('../dist/config/default.json', import.meta.url), 'utf8'),
+);
+const set = (id, value) => {
+  const plugin = config.plugins.find((entry) => entry.id === id);
+  if (!plugin) throw new Error(`Missing required deployment plugin: ${id}`);
+  plugin.config = value;
+  plugin.required = true;
+  plugin.disabled = false;
+};
+set('state', {
+  backend: 'postgres',
+  connectionStringEnv: 'MERV_DB_URL',
+  schema: deploymentSchema(),
+  maxConnections: 10,
+  connectionTimeoutMs: 5000,
+  statementTimeoutMs: 30000,
+  lockTimeoutMs: 5000,
+});
+set('blobs', {
+  backend: 's3',
+  bucketEnv: 'MERV_BLOB_BUCKET',
+  endpointEnv: 'MERV_BLOB_ENDPOINT_URL',
+  accessKeyIdEnv: 'MERV_BLOB_ACCESS_KEY_ID',
+  secretAccessKeyEnv: 'MERV_BLOB_SECRET_ACCESS_KEY',
+  regionEnv: 'MERV_BLOB_REGION',
+  prefixEnv: 'MERV_BLOB_PREFIX',
+});
+set('identity', {
+  supabaseUrl: httpsOrigin('SUPABASE_URL'),
+  mode,
+  publishableKeyEnv: 'SUPABASE_ANON_KEY',
+  ...(mode === 'hs256' ? { secretEnv: 'SUPABASE_JWT_SECRET' } : {}),
+});
+set('api', {
+  host: '0.0.0.0',
+  port: 3081,
+  allowedOrigins: [httpsOrigin('MERV_TS_PUBLIC_ORIGIN')],
+});
+set('ui', {});
+const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
+if (legacySourceId !== undefined) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(legacySourceId)) {
+    throw new Error('Invalid MERV_TS_LEGACY_SOURCE_ID');
+  }
+  config.plugins.push({
+    id: 'legacy-history-ui',
+    name: new URL('../dist/src/legacy-history-ui.js', import.meta.url).href,
+    config: { sourceId: legacySourceId },
+  });
+}
+writeFileSync(process.argv[2] ?? '/tmp/merv-config.json', JSON.stringify(config), { mode: 0o600 });

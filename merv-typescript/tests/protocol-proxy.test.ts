@@ -38,7 +38,7 @@ for (const encoding of ['json', 'sse']) {
     await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
     const target = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     const proxy = await startProtocolProxy(target);
-    t.after(() => proxy.close());
+    t.after(async () => await proxy.close());
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,

@@ -1,65 +1,65 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, linkSync, unlinkSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, type Blobs } from '@merv/contracts';
+import { check } from '@merv/contracts';
+import { DiskBlobs } from './disk.js';
+import { S3Blobs } from './s3.js';
 
-export class DiskBlobs implements Blobs {
-  private root: string;
-  constructor(root: string) {
-    this.root = resolve(root);
-    mkdirSync(this.root, { recursive: true, mode: 0o700 });
-  }
-  private path(namespace: string, hash: string): string {
-    check(/^[a-zA-Z0-9_-]{1,100}$/.test(namespace), 'invalid_namespace', 'Invalid blob namespace');
-    check(/^[a-f0-9]{64}$/.test(hash), 'invalid_hash', 'Invalid content hash');
-    return join(this.root, namespace, hash.slice(0, 2), hash);
-  }
-  put(namespace: string, bytes: Uint8Array) {
-    const hash = createHash('sha256').update(bytes).digest('hex');
-    const destination = this.path(namespace, hash);
-    const directory = join(this.root, namespace, hash.slice(0, 2));
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temporary = join(directory, `.${randomUUID()}`);
-    writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600, flush: true });
-    try {
-      linkSync(temporary, destination);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      this.get(namespace, hash);
-    } finally {
-      unlinkSync(temporary);
-    }
-    return { hash, size: bytes.byteLength };
-  }
-  get(namespace: string, hash: string): Buffer {
-    let bytes: Buffer;
-    try {
-      bytes = readFileSync(this.path(namespace, hash));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-        throw new MervError('blob_not_found', 'Blob not found', 404);
-      throw error;
-    }
-    check(
-      createHash('sha256').update(bytes).digest('hex') === hash,
-      'blob_corrupt',
-      'Stored blob failed its integrity check',
-      500,
-    );
-    return bytes;
-  }
-}
-export const blobsPlugin = {
-  name: 'merv-blobs',
-  Config: z
+export { DiskBlobs } from './disk.js';
+export { S3Blobs, MAX_TRANSFER_BYTES, type S3BlobOptions } from './s3.js';
+
+const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const configuration = z.union([
+  z
     .object({
-      root: z.string().refine((root) => root.trim().length > 0, 'Blob root must be nonblank'),
+      backend: z.literal('disk').optional(),
+      root: z.string().refine((root) => !!root.trim(), 'Blob root must be nonblank'),
     })
     .strict(),
-  apply(ctx: Context, config: { root: string }) {
-    ctx.provide('blobs', new DiskBlobs(config.root));
+  z
+    .object({
+      backend: z.literal('s3'),
+      bucketEnv: envName.default('MERV_BLOB_BUCKET'),
+      endpointEnv: envName.default('MERV_BLOB_ENDPOINT_URL'),
+      accessKeyIdEnv: envName.default('MERV_BLOB_ACCESS_KEY_ID'),
+      secretAccessKeyEnv: envName.default('MERV_BLOB_SECRET_ACCESS_KEY'),
+      regionEnv: envName.default('MERV_BLOB_REGION'),
+      prefixEnv: envName.default('MERV_BLOB_PREFIX'),
+      timeoutMs: z.number().int().min(1).max(120_000).default(30_000),
+      maxAttempts: z.number().int().min(1).max(5).default(3),
+    })
+    .strict(),
+]);
+
+export const blobsPlugin = {
+  name: 'merv-blobs',
+  Config: configuration,
+  apply(ctx: Context, config: z.infer<typeof configuration>) {
+    const required = (name: string) => {
+      const value = process.env[name];
+      check(
+        !!value?.trim(),
+        'invalid_blob_config',
+        `Missing blob configuration environment variable: ${name}`,
+      );
+      return value!;
+    };
+    const service =
+      config.backend === 's3'
+        ? new S3Blobs({
+            bucket: required(config.bucketEnv),
+            endpoint: required(config.endpointEnv),
+            accessKeyId: required(config.accessKeyIdEnv),
+            secretAccessKey: required(config.secretAccessKeyEnv),
+            region: process.env[config.regionEnv]?.trim() || 'auto',
+            prefix: process.env[config.prefixEnv]?.trim() || '',
+            timeoutMs: config.timeoutMs,
+            maxAttempts: config.maxAttempts,
+          })
+        : new DiskBlobs(config.root);
+    ctx.effect(function* () {
+      yield () => service.close();
+      yield ctx.provide('blobs', service);
+    });
   },
 };
 export default blobsPlugin;

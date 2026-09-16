@@ -1,5 +1,6 @@
 export type {
   Task,
+  TaskRecord,
   TaskCreate,
   TaskDelivery,
   TaskReview,

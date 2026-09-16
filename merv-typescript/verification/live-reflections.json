@@ -1,0 +1,47 @@
+{
+  "date": "2026-09-15",
+  "status": "verified",
+  "scope": "Live reflection research using existing tools; pause new task and experiment creation during version-2 reflection waves",
+  "changes": {
+    "newTools": 0,
+    "newPlugins": 0,
+    "newDependencyEdges": 0,
+    "nativeTools": 64,
+    "uiTools": 66,
+    "dependencies": 144,
+    "reflectionWorkflowVersion": 2,
+    "recipeVersion": 3
+  },
+  "validation": {
+    "fullSuite": {
+      "passed": 684,
+      "failed": 0,
+      "skipped": 1,
+      "log": "/private/tmp/live-reflection-full-suite.log"
+    },
+    "focusedSuite": {
+      "passed": 39,
+      "log": "/private/tmp/live-reflection-final-focused.log"
+    },
+    "finalLiveChecks": {
+      "passed": 8,
+      "log": "/private/tmp/live-reflection-final-live.log"
+    },
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed",
+    "architecture": "passed"
+  },
+  "coverage": [
+    "No new corpus snapshots or input artifacts",
+    "Live evidence and review reads after assignment creation",
+    "Peer lens and cross-project isolation",
+    "Existing work progresses while new creation is paused",
+    "Idempotent create replay while paused",
+    "Pause survives plugin unload",
+    "Approval resumes creation",
+    "Large research excluded from assignment prompt",
+    "Consolidation receives approved output references and experiment IDs"
+  ],
+  "compatibility": "Existing version-1 waves retain their snapshot behavior and immutable receipts; version-2 waves use live reads. The existing project.records tool still returns the complete metadata inventory on demand."
+}

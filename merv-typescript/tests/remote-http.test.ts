@@ -33,11 +33,11 @@ async function fixture(t: test.TestContext) {
   });
   await remote.connect(new StreamableHTTPClientTransport(new URL(upstream.url)));
   await catalog.replace(await collectRemoteCatalog(remote));
-  const identity = app.ctx.scope.bootstrap({
+  const identity = await app.ctx.scope.bootstrap({
     projectName: 'Transport test',
     actorName: 'Operator',
   });
-  app.ctx.access.replace([
+  app.ctx.scope.toolPolicy.replace([
     {
       actorId: identity.actor.id,
       projectId: identity.project.id,
@@ -68,13 +68,13 @@ async function fixture(t: test.TestContext) {
 test('independent MCP results and catalog metadata survive both Merv transports', async (t) => {
   const { downstream, http, upstream } = await fixture(t);
   const listed = await downstream.listTools();
-  assert.equal(listed.tools.length, 29);
+  assert.equal(listed.tools.length, 67);
   for (const description of representativeTools) {
     assert.deepEqual(
-      listed.tools.find((tool) => tool.name === `mount__fixture__${description.name}`),
+      listed.tools.find((tool) => tool.name === `_fixture.${description.name}`),
       {
         ...description,
-        name: `mount__fixture__${description.name}`,
+        name: `_fixture.${description.name}`,
       },
     );
   }
@@ -84,13 +84,19 @@ test('independent MCP results and catalog metadata survive both Merv transports'
       .map((request) => request.cursor),
     [undefined, '1', '2'],
   );
-  const result = await downstream.callTool({ name: 'mount__fixture__media', arguments: {} });
+  const result = await downstream.callTool({ name: '_fixture.media', arguments: {} });
   assert.deepEqual(result, representativeResult);
-  assert.deepEqual(await http('mount__fixture__media', {}), {
+  assert.ok(listed.tools.every((tool) => !tool.name.startsWith('mount__')));
+  assert.equal((await http('mount__fixture__media', {})).status, 404);
+  assert.equal(
+    (await downstream.callTool({ name: 'mount__fixture__media', arguments: {} })).isError,
+    true,
+  );
+  assert.deepEqual(await http('_fixture.media', {}), {
     status: 200,
     body: { result: representativeResult },
   });
-  const failure = await downstream.callTool({ name: 'mount__fixture__failure', arguments: {} });
+  const failure = await downstream.callTool({ name: '_fixture.failure', arguments: {} });
   assert.deepEqual(failure, {
     content: [{ type: 'text', text: 'Remote operation declined.' }],
     isError: true,
@@ -108,7 +114,7 @@ test('remote projectId stays an upstream argument and local project selection is
     {
       method: 'tools/call',
       params: {
-        name: 'mount__fixture__inspect',
+        name: '_fixture.inspect',
         arguments: args,
         _meta: { 'merv/projectId': identity.project.id },
       },
@@ -116,14 +122,14 @@ test('remote projectId stays an upstream argument and local project selection is
     CallToolResultSchema,
   );
   assert.deepEqual(success.structuredContent, { ok: true, projectId: 'remote-project' });
-  assert.equal((await http('mount__fixture__inspect', args, identity.project.id)).status, 200);
+  assert.equal((await http('_fixture.inspect', args, identity.project.id)).status, 200);
   const calls = upstream.requests.filter((request) => request.method === 'tools/call').length;
-  assert.equal((await http('mount__fixture__inspect', args, 'foreign-merv-project')).status, 403);
+  assert.equal((await http('_fixture.inspect', args, 'foreign-merv-project')).status, 403);
   const denied = await downstream.request(
     {
       method: 'tools/call',
       params: {
-        name: 'mount__fixture__inspect',
+        name: '_fixture.inspect',
         arguments: args,
         _meta: { 'merv/projectId': 'foreign-merv-project' },
       },
@@ -132,7 +138,7 @@ test('remote projectId stays an upstream argument and local project selection is
   );
   assert.equal(denied.isError, true);
   assert.equal(
-    (await http('mount__fixture__inspect', { ...args, options: { label: '', limit: 0 } })).status,
+    (await http('_fixture.inspect', { ...args, options: { label: '', limit: 0 } })).status,
     400,
   );
   assert.equal(
@@ -150,19 +156,25 @@ test('remote projectId stays an upstream argument and local project selection is
 test('catalog withdrawal stops all new remote HTTP/MCP calls while an admitted call drains', async (t) => {
   const { downstream, upstream, catalog, http } = await fixture(t);
   const held = upstream.holdNextCall('media');
-  const operation = downstream.callTool({ name: 'mount__fixture__media', arguments: {} });
+  const operation = downstream.callTool({ name: '_fixture.media', arguments: {} });
   await held.entered;
   let done = false;
   const disposing = catalog.dispose().then(() => {
     done = true;
   });
   try {
-    assert.equal((await downstream.listTools()).tools.length, 26);
+    assert.equal((await downstream.listTools()).tools.length, 64);
     assert.equal(done, false);
     for (const { name } of representativeTools) {
-      assert.equal((await http(`mount__fixture__${name}`, {})).status, 404);
+      // A withdrawn remote tool's projectId still belongs to the upstream tool.
+      assert.equal((await http(`_fixture.${name}`, { projectId: 'remote-project' })).status, 404);
       assert.equal(
-        (await downstream.callTool({ name: `mount__fixture__${name}`, arguments: {} })).isError,
+        (
+          await downstream.callTool({
+            name: `_fixture.${name}`,
+            arguments: { projectId: 'remote-project' },
+          })
+        ).isError,
         true,
       );
     }

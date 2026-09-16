@@ -24,27 +24,33 @@ export const artifactToolsPlugin = {
           encoding: z.enum(['utf8', 'base64']).optional(),
         })
         .strict(),
-      (c: any, i: any) => ctx.artifacts.create(c, i),
+      async (c: any, i: any) => await ctx.artifacts.create(c, i),
     );
     register(
       'artifact.get',
       'Read immutable artifact metadata.',
       z.object({ artifactId: z.string().min(1) }).strict(),
-      (c: any, i: any) => ctx.artifacts.get(c, i.artifactId),
+      async (c: any, i: any) => ({
+        ...(await ctx.artifacts.get(c, i.artifactId)),
+        downloadAvailable: ctx.artifacts.downloadSupported,
+      }),
       true,
     );
     register(
       'artifact.read',
-      'Read immutable artifact content; binary content is returned as base64.',
-      z.object({ artifactId: z.string().min(1) }).strict(),
-      (c: any, i: any) => ctx.artifacts.read(c, i.artifactId),
+      'Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.',
+      z.object({ artifactId: z.string().min(1), mode: z.literal('download').optional() }).strict(),
+      async (c: any, i: any) =>
+        i.mode === 'download'
+          ? await ctx.artifacts.download(c, i.artifactId)
+          : await ctx.artifacts.read(c, i.artifactId),
       true,
     );
     register(
       'artifact.list',
       'List immutable artifacts in this project.',
       z.object({}).strict(),
-      (c: any) => ctx.artifacts.list(c),
+      async (c: any) => await ctx.artifacts.list(c),
       true,
     );
   },

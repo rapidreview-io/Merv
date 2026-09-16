@@ -1,0 +1,8 @@
+# Review against the saved CURRENT Caddyfile; this is NOT a complete replacement file.
+# Apply only to experiments.rapidreview.io after authenticated acceptance and data decision.
+# Preserve sandboxes.rapidreview.io and all unrelated host blocks unchanged.
+experiments.rapidreview.io {
+	# The browser app has a /ui/ Vite base and root-level API endpoints.
+	redir / /ui/ 302
+	reverse_proxy 127.0.0.1:3081
+}

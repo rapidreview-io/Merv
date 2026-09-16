@@ -1,0 +1,311 @@
+{
+  "date": "2026-09-14",
+  "status": "passed",
+  "scope": "Fresh ordinary user-key producer/reviewer/observer flow with fixed assignment declarations; not session credential enforcement",
+  "sourceReport": "/private/tmp/merv-fixed-execution-live-20260915-01/report.json",
+  "sourceLog": "/private/tmp/merv-fixed-execution-live-20260915-01.log",
+  "freshAgents": 3,
+  "serverRestarts": 2,
+  "toolCalls": 40,
+  "successfulCalls": 37,
+  "expectedPermissionRefusals": 3,
+  "transportErrors": 0,
+  "guidanceCalls": 9,
+  "assignmentCalls": 3,
+  "beginCalls": 4,
+  "contextCalls": 2,
+  "workStartEvents": 2,
+  "phases": [
+    {
+      "phase": "producer",
+      "threadId": "01a0a38c-930c-7f63-82bd-6c6703499610",
+      "exitCode": 0,
+      "toolCalls": 13,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.create",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed"
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    },
+    {
+      "phase": "reviewer",
+      "threadId": "01a0a38d-b445-7a01-8e00-93213ee5d2f9",
+      "exitCode": 0,
+      "toolCalls": 17,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "phase": "observer",
+      "threadId": "01a0a38e-dcbf-7b03-b444-7295d0829b1c",
+      "exitCode": 0,
+      "toolCalls": 10,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.list",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    }
+  ],
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "structuredReviewPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "assignmentChecks": {
+    "bothAgentsReadAssignments": true,
+    "bothAgentsRepeatedBegin": true,
+    "exactlyTwoStartEvents": true,
+    "startsSurvivedTwoRestarts": true,
+    "startAttributionMatchesActors": true
+  },
+  "userKeyChecks": {
+    "humanOwnerHttpIssuance": true,
+    "accountAndProjectGrants": true,
+    "explicitMcpProjectSelection": true,
+    "twoWorkerKeyRotations": true,
+    "oldBearersRefusedOverHttp": true,
+    "attributionGrantAndExpiryPreserved": true,
+    "rotatedReviewerAuthenticatedAfterRestart": true,
+    "currentAndFutureMembershipRoles": true,
+    "crossProjectArtifactRefused": true,
+    "ownerCanManageAfterLeavingIssuanceProject": true,
+    "accountRotationUsingAnotherMembership": true,
+    "ancestorRevocationKillsLaterSuccessor": true,
+    "independentKeyAndHumanLoginPreserved": true,
+    "domainWritesRetainKeyAndMembershipProvenance": true
+  },
+  "executionPacketChecks": {
+    "fixedAssignmentPacketsVerified": 3,
+    "reviewClaimPreservesManifest": true,
+    "packets": [
+      {
+        "phase": "producer",
+        "instanceId": "wf_283fb9b00d1c4f2fb4df80ba1ac1924d",
+        "revision": 0,
+        "policyHash": "6ce28d549ce07ee40e75e708d01df431204ea63d59d5f14341d5fecb1b570daf",
+        "registrationId": "execution_41da5b27793a470fbae2fe2d091dbb74",
+        "declaredTools": [
+          "artifact.create",
+          "artifact.get",
+          "artifact.read",
+          "review.get",
+          "task.checkpoint",
+          "task.context",
+          "task.get",
+          "task.mark_failed",
+          "task.submit_delivery",
+          "workflow.assignment",
+          "workflow.begin",
+          "workflow.status_and_next"
+        ]
+      },
+      {
+        "phase": "reviewer",
+        "instanceId": "wf_283fb9b00d1c4f2fb4df80ba1ac1924d",
+        "revision": 1,
+        "policyHash": "f0c9ab9aebd52c9d7d35b1fa7820c1ed40639d6cdfb1314f00a373194564b374",
+        "registrationId": "execution_172731f2ce374a4f879a86059aa81507",
+        "declaredTools": [
+          "artifact.get",
+          "artifact.read",
+          "review.get",
+          "review.start",
+          "review.submit",
+          "task.checkpoint",
+          "task.context",
+          "task.get",
+          "workflow.assignment",
+          "workflow.begin",
+          "workflow.status_and_next"
+        ]
+      },
+      {
+        "phase": "reviewer",
+        "instanceId": "wf_283fb9b00d1c4f2fb4df80ba1ac1924d",
+        "revision": 1,
+        "policyHash": "f0c9ab9aebd52c9d7d35b1fa7820c1ed40639d6cdfb1314f00a373194564b374",
+        "registrationId": "execution_172731f2ce374a4f879a86059aa81507",
+        "declaredTools": [
+          "artifact.get",
+          "artifact.read",
+          "review.get",
+          "review.start",
+          "review.submit",
+          "task.checkpoint",
+          "task.context",
+          "task.get",
+          "workflow.assignment",
+          "workflow.begin",
+          "workflow.status_and_next"
+        ]
+      }
+    ]
+  },
+  "timing": "Live run preceded the final exclusion of interactive workflow.begin from fixed node declarations. That exclusion leaves ordinary begin unchanged and is covered by the final deterministic suite. The recorded live policy hashes are historical, not the final current declarations.",
+  "limitations": [
+    "Ordinary user keys retain project/account authority; no restricted session credential was issued.",
+    "Composite context is program-built; individual artifact bindings do not classify every returned byte.",
+    "No real Supabase/Nisa browser login or production deployment was attempted."
+  ]
+}

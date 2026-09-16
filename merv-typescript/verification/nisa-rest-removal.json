@@ -1,0 +1,59 @@
+{
+  "status": "legacy_rest_adapter_removed_after_local_mcp_verification",
+  "completedAt": "2026-09-14T23:08:10.465614+00:00",
+  "mervBaseCommit": "be69497b",
+  "nisaCommit": "0d1ab17",
+  "nisaCheckout": "/private/tmp/nisa-mcp-plugin",
+  "replacementVerifiedBeforeRemoval": true,
+  "preRemovalCrossRepositoryMcpTest": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nisaMcpTests": {
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nisaMcpTypecheck": "passed",
+  "postRemovalMervTests": {
+    "passed": 171,
+    "failed": 0,
+    "skipped": 0
+  },
+  "mervTypecheck": "passed",
+  "mervBuild": "passed",
+  "mervFormatCheck": "passed",
+  "workspaceResolution": "passed",
+  "architecture": {
+    "plugins": 19,
+    "serviceProviders": 13,
+    "toolAdapters": 6,
+    "defaultEntries": 18,
+    "directDependencies": 39
+  },
+  "crossRepositoryChecks": {
+    "toolCounts": [33, 27, 33],
+    "nativeTaskState": "done",
+    "retainedFeedPosts": 2,
+    "runnerDispatches": 2,
+    "noReplay": true,
+    "sameSandboxConnections": true
+  },
+  "commands": [
+    "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python node --import tsx --test tests/nisa-mcp.test.ts",
+    "npm test && npm run typecheck (in Nisa project/mcp)",
+    "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "npm run typecheck && npm run build && npm run format:check",
+    "npm ls --workspaces --depth=0",
+    "git diff --check"
+  ],
+  "fixtureScope": "actual Nisa API/operation service and MCP server; synthetic identity, corpus/index and model runner",
+  "initialSandboxAttempt": "Local listeners denied (EPERM); repeated successfully with loopback permission. No tests were skipped.",
+  "realNisaServiceVerified": false,
+  "realModelCalled": false,
+  "realSandboxOperationCalled": false,
+  "savedCredentialReadOrSent": false,
+  "newFableReview": false,
+  "historicalEvidence": "Step 7 REST JSON reports and Fable reviews retained; historical notices added outside original report contents."
+}

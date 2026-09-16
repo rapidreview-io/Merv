@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .merv/
+.merv-runner/
 .test-data/
 *.sqlite*
 *.log

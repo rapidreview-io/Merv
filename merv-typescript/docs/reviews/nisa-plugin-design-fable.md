@@ -1,5 +1,9 @@
 # Nisa plugin architecture debate with Claude Fable
 
+> Historical review: references to the Merv-specific Nisa REST adapter describe
+> the implementation at review time. That adapter was removed on 2026-09-14 after
+> local MCP verification; see [current integration](../NISA_PLUGIN.md).
+
 Two approved rounds completed on 2026-09-13 using Claude Code 2.1.261 and
 explicitly pinned `claude-fable-5` at high effort. Each process exited 0 with a
 successful result. This was a source-based design debate, not a code review with

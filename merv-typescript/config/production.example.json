@@ -1,0 +1,259 @@
+{
+  "plugins": [
+    {
+      "id": "research-tools",
+      "name": "@merv/research/tools"
+    },
+    {
+      "id": "research-ui",
+      "name": "@merv/research/ui",
+      "required": false
+    },
+    {
+      "id": "research",
+      "name": "@merv/research"
+    },
+    {
+      "id": "paper-tools",
+      "name": "@merv/paper/tools"
+    },
+    {
+      "id": "paper-ui",
+      "name": "@merv/paper/ui",
+      "required": false
+    },
+    {
+      "id": "paper",
+      "name": "@merv/paper"
+    },
+    {
+      "id": "reflections-tools",
+      "name": "@merv/reflections/tools"
+    },
+    {
+      "id": "reflections-ui",
+      "name": "@merv/reflections/ui",
+      "required": false
+    },
+    {
+      "id": "reflections",
+      "name": "@merv/reflections"
+    },
+    {
+      "id": "consolidation-tools",
+      "name": "@merv/consolidation/tools",
+      "required": false
+    },
+    {
+      "id": "consolidation-ui",
+      "name": "@merv/consolidation/ui",
+      "required": false
+    },
+    {
+      "id": "consolidation",
+      "name": "@merv/consolidation",
+      "required": false
+    },
+    {
+      "id": "knowledge-tools",
+      "name": "@merv/knowledge/tools"
+    },
+    {
+      "id": "knowledge-ui",
+      "name": "@merv/knowledge/ui",
+      "required": false
+    },
+    {
+      "id": "knowledge",
+      "name": "@merv/knowledge"
+    },
+    {
+      "id": "experiments-tools",
+      "name": "@merv/experiments/tools"
+    },
+    {
+      "id": "experiments-ui",
+      "name": "@merv/experiments/ui",
+      "required": false
+    },
+    {
+      "id": "experiments",
+      "name": "@merv/experiments"
+    },
+    {
+      "id": "claims-tools",
+      "name": "@merv/claims/tools"
+    },
+    {
+      "id": "claims-ui",
+      "name": "@merv/claims/ui",
+      "required": false
+    },
+    {
+      "id": "claims",
+      "name": "@merv/claims"
+    },
+    {
+      "id": "code-tools",
+      "name": "@merv/code/tools",
+      "required": false
+    },
+    {
+      "id": "code-api",
+      "name": "@merv/code/api",
+      "required": false
+    },
+    {
+      "id": "code-ui",
+      "name": "@merv/code/ui",
+      "required": false
+    },
+    {
+      "id": "code",
+      "name": "@merv/code"
+    },
+    {
+      "id": "sessions-api",
+      "name": "@merv/sessions/api"
+    },
+    {
+      "id": "api",
+      "name": "@merv/api",
+      "config": {
+        "host": "${host}",
+        "port": "${port}"
+      }
+    },
+    {
+      "id": "ui",
+      "name": "@merv/ui",
+      "required": false
+    },
+    {
+      "id": "sessions-ui",
+      "name": "@merv/sessions/ui",
+      "required": false
+    },
+    {
+      "id": "scope-ui",
+      "name": "@merv/scope/ui",
+      "required": false
+    },
+    {
+      "id": "tasks-ui",
+      "name": "@merv/tasks/ui",
+      "required": false
+    },
+    {
+      "id": "reviews-ui",
+      "name": "@merv/reviews/ui",
+      "required": false
+    },
+    {
+      "id": "artifacts-ui",
+      "name": "@merv/artifacts/ui",
+      "required": false
+    },
+    {
+      "id": "feed-ui",
+      "name": "@merv/feed/ui",
+      "required": false
+    },
+    {
+      "id": "feed-tools",
+      "name": "@merv/feed/tools",
+      "required": false
+    },
+    {
+      "id": "tasks-tools",
+      "name": "@merv/tasks/tools"
+    },
+    {
+      "id": "workflows-tools",
+      "name": "@merv/workflows/tools"
+    },
+    {
+      "id": "reviews-tools",
+      "name": "@merv/reviews/tools"
+    },
+    {
+      "id": "artifacts-tools",
+      "name": "@merv/artifacts/tools"
+    },
+    {
+      "id": "scope-tools",
+      "name": "@merv/scope/tools"
+    },
+    {
+      "id": "tools",
+      "name": "@merv/api/tools-plugin"
+    },
+    {
+      "id": "sessions",
+      "name": "@merv/sessions"
+    },
+    {
+      "id": "identity",
+      "name": "@merv/identity",
+      "config": {}
+    },
+    {
+      "id": "feed",
+      "name": "@merv/feed",
+      "required": false
+    },
+    {
+      "id": "tasks",
+      "name": "@merv/tasks"
+    },
+    {
+      "id": "reviews",
+      "name": "@merv/reviews"
+    },
+    {
+      "id": "context-builder",
+      "name": "@merv/context-builder"
+    },
+    {
+      "id": "artifacts",
+      "name": "@merv/artifacts"
+    },
+    {
+      "id": "workflows",
+      "name": "@merv/workflows"
+    },
+    {
+      "id": "scope",
+      "name": "@merv/scope"
+    },
+    {
+      "id": "blobs",
+      "name": "@merv/blobs",
+      "config": {
+        "backend": "s3",
+        "bucketEnv": "MERV_BLOB_BUCKET",
+        "endpointEnv": "MERV_BLOB_ENDPOINT_URL",
+        "accessKeyIdEnv": "MERV_BLOB_ACCESS_KEY_ID",
+        "secretAccessKeyEnv": "MERV_BLOB_SECRET_ACCESS_KEY",
+        "regionEnv": "MERV_BLOB_REGION",
+        "prefixEnv": "MERV_BLOB_PREFIX"
+      }
+    },
+    {
+      "id": "domain-events",
+      "name": "@merv/domain-events"
+    },
+    {
+      "id": "state",
+      "name": "@merv/state",
+      "config": {
+        "backend": "postgres",
+        "connectionStringEnv": "MERV_DB_URL",
+        "schema": "merv",
+        "ssl": {
+          "rejectUnauthorized": true
+        }
+      }
+    }
+  ]
+}

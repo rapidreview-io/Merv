@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import {
   createServer,
   type IncomingMessage,
@@ -34,7 +35,7 @@ function barrier() {
     release: () => release(),
   };
 }
-type Barrier = ReturnType<typeof barrier>;
+type Barrier = Awaited<ReturnType<typeof barrier>>;
 interface Session {
   identity: UpstreamIdentity;
   connectionId: number;

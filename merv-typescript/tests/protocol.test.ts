@@ -57,7 +57,10 @@ async function fixture(t: test.TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const identity = app.ctx.scope.bootstrap({ projectName: 'Protocol test', actorName: 'Operator' });
+  const identity = await app.ctx.scope.bootstrap({
+    projectName: 'Protocol test',
+    actorName: 'Operator',
+  });
   const request = async (body: unknown, version?: string) => {
     const response = await fetch(`${app.ctx.api.url}/mcp`, {
       method: 'POST',
@@ -94,7 +97,7 @@ test('SDK-supported legacy versions negotiate and list/call the native stack', a
       version,
     );
     assert.equal(listed.status, 200);
-    assert.equal(listed.body.result.tools.length, 26);
+    assert.equal(listed.body.result.tools.length, 64);
     const called = await request(
       {
         jsonrpc: '2.0',
@@ -173,7 +176,7 @@ test('unsupported or conflicting request versions are refused before dispatch', 
     '2025-11-25',
   );
   assert.equal(supportedMeta.status, 200);
-  assert.equal(supportedMeta.body.result.tools.length, 26);
+  assert.equal(supportedMeta.body.result.tools.length, 64);
   const discover = await request({ jsonrpc: '2.0', id: 12, method: 'server/discover' });
   assert.equal(discover.body.error.code, -32601);
 });

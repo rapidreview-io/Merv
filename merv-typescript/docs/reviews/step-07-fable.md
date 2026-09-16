@@ -1,5 +1,9 @@
 # Step 7 Claude Fable review
 
+> Historical review: references to the Merv-specific Nisa REST adapter describe
+> the implementation at review time. That adapter was removed on 2026-09-14 after
+> local MCP verification; see [current integration](../NISA_PLUGIN.md).
+
 Completed on 2026-09-13 after the user explicitly approved sending the exact
 prepared 24-file source-and-test packet to Claude Fable. The approved packet was
 submitted once and remained unchanged. Fable found no supported high- or

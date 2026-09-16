@@ -1,0 +1,273 @@
+{
+  "date": "2026-09-15",
+  "scope": "Project Claims provider with transactional facts, revision-checked status/confidence, immutable replay receipts, scoped tools and optional Claims UI.",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-claims-suite-final.log",
+    "tests": 566,
+    "pass": 566,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-claims-final-build.log"
+    },
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-claims-final-typecheck.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-claims-final-ui-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-claims-final-ui-typecheck.log"
+    },
+    "diffWhitespace": {
+      "status": "passed",
+      "command": "git diff --check"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-claims-final-format.log"
+    },
+    "recordHashesAndLinks": {
+      "status": "passed",
+      "sourceFiles": 47,
+      "localDocumentationLinks": 337,
+      "missingLinks": 0,
+      "log": "/private/tmp/merv-claims-final-records-links.json"
+    }
+  },
+  "focused": {
+    "newClaimsTests": 13,
+    "combinedClaimsAndProposalsTests": 31,
+    "log": "/private/tmp/merv-claims-focused.log",
+    "independentCoreTests": 10,
+    "independentLog": "/private/tmp/merv-claims-independent-core.log"
+  },
+  "regressions": [
+    "Project-scoped facts with current Scope read/write roles and authorization before command replay.",
+    "Normalized create/update request replay returns the original receipt after later updates or restart; changed operation/input conflicts.",
+    "Two real worker threads with separate SQLite connections verify serialized writes and one winning revision comparison.",
+    "Borrowed transaction rolls back claim/event/receipt together; final authority check catches source revocation during event persistence.",
+    "Original identity and immutable command receipt database guards; all statuses included in stable created-time/ID order.",
+    "Same-value accepted update increments revision and records actual prior/current values; authenticated worker or verified user-key provenance.",
+    "Flat scalar inputs reject proxies, accessors and nested objects without execution; malformed scalar claim ID is type-checked before schema inspection.",
+    "Actual authenticated HTTP/MCP verifies schemas, fixed-session tool grants and claimId argument constraints, source revocation and project isolation.",
+    "Cordis removal closes original Claims provider and withdraws its tools/UI row; restoration retains records and avoids duplicate events.",
+    "UI retains the same frozen request through later 403/404/409 refusals after an ambiguous earlier outcome, until a successful original receipt resolves it."
+  ],
+  "correctedPriorProof": {
+    "historicalRecord": "verification/code-proposals.json",
+    "problem": "The old post-artifact source-revocation regression accepted any rejection; nested transaction refusal happened before revocation and therefore did not test the final authority guard.",
+    "correction": "Inject same-transaction credential revocation, require the exact authorization refusal, and verify all state rolls back.",
+    "mutation": "A temporary bundle omitting only final post-artifact Scope.write/Sessions.validate fails the corrected test with Missing expected rejection.",
+    "productionCodeChanged": false,
+    "historicalRecordUnchanged": true,
+    "log": "/private/tmp/merv-proposal-authority-mutant.log",
+    "record": "/private/tmp/merv-proposal-authority-mutation.json"
+  },
+  "composition": {
+    "pluginEntrypoints": 40,
+    "serviceProviders": 21,
+    "serverProviders": 20,
+    "machineProviders": 1,
+    "directCordisDependencies": 84,
+    "defaultServerEntries": 37,
+    "domainApiEntries": 28,
+    "domainTools": 37,
+    "withUiTools": 39,
+    "newProvider": "claims",
+    "providerRequires": ["state", "scope"],
+    "newAdapterPlugins": ["claims-tools", "claims-ui"],
+    "newAgentTools": ["claim.create", "claim.list", "claim.update"]
+  },
+  "live": {
+    "status": "passed",
+    "record": "verification/claims-live.json",
+    "freshAgents": 2,
+    "successfulMcpCalls": 9,
+    "failedMcpCalls": 0,
+    "shellCalls": 0,
+    "finalWorkflowState": "done",
+    "exactCreateAndUpdateReplay": true,
+    "independentRead": true,
+    "otherProjectUnchanged": true,
+    "workersStopped": true
+  },
+  "ui": {
+    "status": "browser_interaction_verified",
+    "method": "Root-controlled Codex in-app browser; actual production Claims bundle and authenticated API through disposable loopback fault-injection proxies. Two locally signed synthetic account identities.",
+    "report": "/private/tmp/merv-claims-ui-browser-report.json",
+    "checks": [
+      "Create with high confidence and prose scope; HTML-looking statement renders as literal text.",
+      "Committed upstream response dropped; outer proxy returns 500. Later retry404 retains locked fields and original request, next retry returns original receipt; one stored claim.",
+      "Normal status/confidence edit advances revision; concurrent update makes stale editor return409 without overwriting newer values.",
+      "In-app project switching clears unsaved draft and isolates records; other project remains empty.",
+      "Reader sees the saved record with no Create/Edit controls and only its project."
+    ],
+    "visualInspection": "Actual 1280x720 CUA screenshots of conflict and reader states inspected; images are retained inline in conversation, not as claimed local files.",
+    "initialFixtureIssue": "Temporary proxy forwarded Origin while replacing Host, causing module requests to fail403. Corrected fixture forwarding only; production Origin checks remained unchanged.",
+    "hookRegression": {
+      "status": "red_then_green",
+      "report": "/private/tmp/merv-claims-retry-audit.json",
+      "log": "/private/tmp/merv-claims-retry-audit.log",
+      "method": "Actual private hook extracted with TypeScript parser; mocked React scheduling and transport. Separate from actual browser acceptance.",
+      "reportSha256": "ccb19bffd022fdbba3684d6cbd0e48c99a680646d4d0105fbdd44d4df4bd2a6b"
+    },
+    "limits": [
+      "Synthetic identities and local fixture only; no real shared-provider login or production deployment.",
+      "Pending request lives in mounted UI memory, not a durable browser outbox.",
+      "Transient404 was injected at the proxy, not actual provider removal during this browser sequence; real Cordis removal is separately tested through HTTP/MCP."
+    ],
+    "reportSha256": "01fdc7789cac7506229bb9f1d5bd75a22de65d2fc70292508c52dd9153908a14",
+    "cleanup": {
+      "complete": true,
+      "appStopped": true,
+      "proxyStopped": true,
+      "diagnosticStopped": true,
+      "processesExited": [2536, 8811],
+      "ports": [
+        {
+          "port": 53930,
+          "closed": true,
+          "error": "ECONNREFUSED"
+        },
+        {
+          "port": 54236,
+          "closed": true,
+          "error": "ECONNREFUSED"
+        }
+      ],
+      "credentialFileRemoved": true,
+      "browserTabClosed": true,
+      "temporaryCredentialBindingsCleared": true,
+      "clipboard": "Root restored the originally empty clipboard only while it still contained the disposable token; no user clipboard content discarded.",
+      "retained": "Synthetic fixture database and sanitized verification artifacts retained locally."
+    },
+    "independentAudit": {
+      "passed": true,
+      "storedClaimCount": 1,
+      "secondProjectClaimCount": 0,
+      "createAttemptCount": 3,
+      "allThreeCreateInputsExactlyEqual": true,
+      "allThreeRequestIdsEqual": true,
+      "requestId": "4d507cd5-c6a8-4861-b88a-0dd9bd9872c4",
+      "receiptId": "claim_64f8e452d2dd49dab3858b782ce4c24f",
+      "successfulCreateReceiptRevisions": [0, 0],
+      "claimStatementAndScopeUnchanged": true,
+      "successfulUpdate": {
+        "status": 200,
+        "revision": 1,
+        "expectedRevision": 0
+      },
+      "conflictingUpdate": {
+        "status": 409,
+        "code": "claim_revision_conflict",
+        "expectedRevision": 1
+      },
+      "finalClaim": {
+        "id": "claim_64f8e452d2dd49dab3858b782ce4c24f",
+        "revision": 2,
+        "status": "contradicted",
+        "confidence": "low"
+      }
+    }
+  },
+  "architecture": {
+    "status": "source_sets_and_visual_checked",
+    "plugins": 40,
+    "dependencies": 84,
+    "drawnArrowEdges": 50,
+    "adapterRowEdges": 34,
+    "httpConnections": 1,
+    "image": "docs/architecture/current-dependencies.png"
+  },
+  "pythonReference": {
+    "tests": 12,
+    "status": "passed",
+    "log": "/private/tmp/merv-claims-reference-tests.log",
+    "document": "docs/CLAIMS_PARITY_REFERENCE.md"
+  },
+  "review": {
+    "local": "Independent Python contract, Claims authority/replay/transaction/input, HTTP/MCP/Cordis, UI source, dependency map, native transcript/database and cleanup reviews completed. Scalar-ID getter execution fixed; historical Code authority proof corrected. Actual browser acceptance confirms the sticky retry fix, CAS conflict, project switching and reader controls.",
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "sha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review previously rejected exporting the specific internal architecture payload without payload/destination approval. No new export or retry occurred."
+    }
+  },
+  "nextOrder": [
+    "Complete Experiment records, design review, exact execution attempts, immutable result rounds and explicit return routes",
+    "Authoritative project corpus and code capture references",
+    "Actual Reflection through approved research",
+    "Reflection-owned consolidation and reviewed publication"
+  ],
+  "limits": [
+    "Claims is a fact provider with no workflow program or automatic scientific assessment.",
+    "No linked-experiment or belief-history UI yet.",
+    "Public statements and scope are immutable; reviewed reflection writer and publication provenance remain future domain integration.",
+    "Pending UI retries live in mounted component memory, not a durable browser outbox.",
+    "Native fixture uses a synthetic managed program and read-only verifier, not a Reviews scientific assessment.",
+    "Cross-machine Git, operational Runner controls, asynchronous State/Postgres and production shared login/deployment remain open."
+  ],
+  "runtime": {
+    "node": "v22.13.1"
+  },
+  "sourceSha256": {
+    "EXECUTION_LOG.md": "f89b65ac3a6c0757f002a71a3ac866e4290f65d9f6422cf8525731013f8e3eb0",
+    "EXECUTION_PLAN.md": "dba7d0628d137381b2aa95ebce4b643a47e6d9ef1e5d3d3ceebbe5e1ea24cbee",
+    "README.md": "b78d17c42cb9f9e0f66320b796fe85756daaffb2c8a9bd10b6f656abac1e5779",
+    "VERIFICATION.md": "e83917a8badc0f6ae37c218c6b6d978500d3fcb60e3ede8633a9470781c89f6b",
+    "config/default.json": "48ebb9b7825664f06c1dd054c05fbe2b19fd11ef680172b505ba96f081cde573",
+    "docs/BACKEND_PARITY_AUDIT.md": "5062ddb7b646691041b52e7ce0e34ab581232292954e4c26ff5ca8c27dcae1f6",
+    "docs/CLAIMS.md": "ec8393f4b62c5ce488bc375e01aa5ddbca20f2689dcd217e6890892404ff2c4e",
+    "docs/CLAIMS_PARITY_REFERENCE.md": "f125aa6d27cb00e4baa78db07304cd9b2b4c3d6294deb6ac6627ab50b907cfee",
+    "docs/RESEARCH_PROGRAM_PARITY_PLAN.md": "ef9fe1685040849392da32635a07df20236f3de7d6a4e91fed0d221ad0971504",
+    "docs/architecture/README.md": "31b18c23be983e10c9e8998e392b54deb665ab4508ffd60548d442567271a176",
+    "docs/architecture/current-dependencies.json": "601e79f4124f7cc0babb7c608062756f4221c17e6242d55e9698ff5d8fbe9276",
+    "docs/architecture/current-dependencies.mmd": "6aa40e59158cb4bd6ea7d3ea8f64bd03a8d5953e08a954e9c4f9cbf7c1cc89c6",
+    "docs/architecture/current-dependencies.png": "69ffef3f3fde268865b690a3bc315868b227973e31cb00fc483cf634e0a806d6",
+    "docs/architecture/current-dependencies.svg": "1559eee0f2293b00c05f95a0fc547f67240fab8bf2fe0aa4ccd5e4f780f98f46",
+    "docs/architecture/domain-dependencies.dot": "c4e4a8ad4b4ba4eeb5a8dc88c74679cfd12eb2b29846531724e5ef76969577f2",
+    "package-lock.json": "a8ca08eb51763bc1f0c3f46a179cba998ebd6958dc6d5239ddd03d0872b3bae1",
+    "package.json": "b2d6d649b7d20b5ac81ac5fcf30ffed524bf5cc9d4cf2c4f4ce45b8e707569a5",
+    "packages/claims/README.md": "0c395d548f2063f3790aab921fea270fca877f43feeed3e07218b25ecdb893da",
+    "packages/claims/package.json": "fb1c704ea6ee1146b66e2904d8cc3a6e2226949cc10bb9bd879dec1e7834cec8",
+    "packages/claims/src/index.ts": "f8b346ce18265280341aa2c42a749f48d499328f0f105150cd391098b793d4f8",
+    "packages/claims/src/input.ts": "57661b1e68651a2cc532dd807429fb10b720841ed5a84cd2d159b47bc6bd3ada",
+    "packages/claims/src/tools.ts": "7170774803c1dede2c26081b604b4952e88f0dd14510af676c09d7466f91f00f",
+    "packages/claims/src/types.ts": "01150f2439ab148249dec4b34c57c244140ca69b6586837834fc13113dc6594d",
+    "packages/claims/src/ui.ts": "b5d3954c53db2020bc4131ead64613bc806c1b5a0acfef3cdf738da4164259a9",
+    "packages/ui/web/styles.css": "ecf06db380b24818634813f80f70b2e95cf3ee037c0da63024f2ab646a46099a",
+    "packages/ui/web/views/claims.tsx": "e799a826ad0f69662581b8e97b3113260bedfb124d576a6623a5474a60a115eb",
+    "packages/ui/web/views/index.tsx": "b0595a8c30573518560fc2d370ca4dfd88f9e73116550759b3ea0899343386f1",
+    "scripts/dependency-map.ts": "dcee6386c6f4539b81b96b54987aabe3b2e472d9b0f63775e198e0c2bf0ba046",
+    "scripts/feed-unload-scenario.ts": "f70dc20db1d371cbe7243783167bb3e108e045924584df361af6a6ed7b08b9ee",
+    "scripts/live-claims.ts": "a65cc2705951e45ee3f9ae84f35bc011ce09e9e236d710605aec1bba7c0c6a41",
+    "scripts/mount-unload-scenario.ts": "0a21930ead9f4b9313d1b042f902b47a2375184895771231786bd59d5052a49b",
+    "scripts/nisa-mcp-scenario.ts": "f0b38d3a5228dfd24552cd77e3ddbc30f0c37109ea8e404c24b1ccc74a58980b",
+    "scripts/render-dependencies.mjs": "673d2a0ef909ff43b291243c1404700b2a2bada4928fa914b93eeef38bbf16c3",
+    "tests/app.test.ts": "29ce50dbb6283feff4b92dfd0d9b238b2cd15d4f09ac3883bcb14bd43f652d27",
+    "tests/boundaries.test.ts": "54ce1a8b25db2af2d00ecce504cd8b1dec201fd53652fdcae457cc912ff9fcdb",
+    "tests/claims-api.test.ts": "e2de88af4b4c3128a40a82e69885b20640e732ed636c669f758b73653674b72b",
+    "tests/claims.test.ts": "da176a457256612099014f16bbf5d0eae7b211a2b0ff8ae73e8fe0fb0ef818c9",
+    "tests/cli-config.test.ts": "5cf00c82ce5927c9f875cf354628bdaa1c3d1957ad6f8f4d4f4cd8e8e7f4151f",
+    "tests/code-proposals.test.ts": "aa900bbf8a3ff9ea50f3d01c6f99c0633e13c9a2567063b5f85965eedf9f97b6",
+    "tests/config.test.ts": "36f038ad539c6a4fac30fb2606c327770aac79723b519e388fdb3beb1fdd2843",
+    "tests/loader.test.ts": "69ffe2421b3c942b08975afebfd4a6831397642d161751015e6e684c17c3c231",
+    "tests/nisa-mcp.test.ts": "b9a862abe8d2f5b885c34ed6cdb1e2cd1846376501b0192d1799bf540a626d46",
+    "tests/protocol.test.ts": "9ea0e871da6059acac499533ec55e02915f4f9190486d0052af7d265c75d9a83",
+    "tests/remote-http.test.ts": "b6f5ba005a4f1cd25b31c042829c2b44c7354837a2ef07db08be57b0fe518d73",
+    "tests/remote-permissions.test.ts": "506c6c85f316714e0b30c0aba7f3f0cfd89bca502ade978cb1066b9a84262207",
+    "tests/ui.test.ts": "852496bf5a6856500058f9e1443deb42d594beb5c2e8d1edc48bae315eb58328",
+    "verification/README.md": "22d95261fc78815c0039b25ae5fb1482bf2573441ff23010de36b089bddd5176"
+  },
+  "timing": "Final566-test suite includes the UI sticky-uncertainty fix. Native Claims run used the same production core/tools; the later UI fix does not alter native Claims execution."
+}

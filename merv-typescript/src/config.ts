@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { check, MervError } from '@merv/contracts';
 
 export interface ConfiguredPlugin {
@@ -137,6 +137,9 @@ function substitute(
   }
 }
 
+/** The committed default composition, including the optional browser layer. */
+export const defaultConfigFile = fileURLToPath(defaultUrl);
+
 /** Validate declarations only; upstream Cordis Loader resolves and activates their modules. */
 export function loadConfiguration(options: ConfigurationOptions): {
   entries: ConfiguredPlugin[];
@@ -183,8 +186,17 @@ export function loadConfiguration(options: ConfigurationOptions): {
     configured = entries(options.config);
   } else {
     configured = entries(readConfiguration(defaultUrl));
+    // The browser layer (ui and *-ui rows) is composed only from configuration files.
+    const browser = (id: string) => id === 'ui' || id.endsWith('-ui');
     const providerIds = configured
-      .filter((entry) => entry.id !== 'api' && entry.id !== 'tools' && !entry.id.endsWith('-tools'))
+      .filter(
+        (entry) =>
+          entry.id !== 'api' &&
+          entry.id !== 'tools' &&
+          !entry.id.endsWith('-tools') &&
+          !entry.id.endsWith('-api') &&
+          !browser(entry.id),
+      )
       .map((entry) => entry.id);
     invalid(
       options.components === undefined ||
@@ -194,13 +206,16 @@ export function loadConfiguration(options: ConfigurationOptions): {
           )),
       'components must contain known default provider IDs',
     );
-    const apiSupport = ['access', 'credentials'];
+    const apiSupport = ['identity'];
     const selected = new Set(
-      options.components ?? providerIds.filter((id) => !apiSupport.includes(id)),
+      options.components ?? providerIds.filter((id) => !['identity'].includes(id)),
     );
     if (options.api) for (const id of apiSupport) selected.add(id);
     configured = configured.filter((entry) => {
+      if (browser(entry.id)) return false;
       if (entry.id === 'api' || entry.id === 'tools') return options.api === true;
+      if (entry.id.endsWith('-api'))
+        return options.api === true && selected.has(entry.id.slice(0, -'-api'.length));
       if (entry.id.endsWith('-tools'))
         return options.api === true && selected.has(entry.id.slice(0, -'-tools'.length));
       return selected.has(entry.id);

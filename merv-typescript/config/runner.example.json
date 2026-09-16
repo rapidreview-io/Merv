@@ -1,0 +1,18 @@
+{
+  "directory": "../.merv-runner",
+  "baseUrl": "http://127.0.0.1:3081",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "credentialEnv": "MERV_RUNNER_SOURCE_TOKEN",
+  "capacity": 1,
+  "pollIntervalMs": 1000,
+  "requestTimeoutMs": 10000,
+  "profiles": [
+    {
+      "name": "codex",
+      "harness": "codex",
+      "executable": "codex",
+      "enabled": true,
+      "parallelism": 1
+    }
+  ]
+}

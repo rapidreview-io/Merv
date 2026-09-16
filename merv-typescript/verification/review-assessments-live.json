@@ -1,0 +1,148 @@
+{
+  "status": "passed",
+  "scope": "Fresh independent structured review with synopsis, numbered findings and retained evidence across two server restarts",
+  "createdAt": "2026-09-15T02:55:41.472Z",
+  "completedAt": "2026-09-15T02:57:42.978Z",
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "structuredReviewPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "phases": [
+    {
+      "phase": "producer",
+      "exitCode": 0,
+      "total": 10,
+      "successful": 9,
+      "guidanceCalls": 3,
+      "contextCalls": 1,
+      "expectedDenials": ["review.start"],
+      "transportErrors": 0
+    },
+    {
+      "phase": "reviewer",
+      "exitCode": 0,
+      "total": 14,
+      "successful": 13,
+      "guidanceCalls": 4,
+      "contextCalls": 1,
+      "expectedDenials": ["artifact.create"],
+      "transportErrors": 0
+    },
+    {
+      "phase": "observer",
+      "exitCode": 0,
+      "total": 10,
+      "successful": 9,
+      "guidanceCalls": 2,
+      "contextCalls": 0,
+      "expectedDenials": ["actor.create"],
+      "transportErrors": 0
+    }
+  ],
+  "protocol": [
+    {
+      "phase": "producer",
+      "requests": 13
+    },
+    {
+      "phase": "reviewer",
+      "requests": 17
+    },
+    {
+      "phase": "observer",
+      "requests": 13
+    }
+  ],
+  "task": {
+    "id": "wf_b4169fabb94e4e3e83cd72ef48e9aaf7",
+    "title": "Verify arithmetic evidence",
+    "goal": "Verify the sum and mean of 2, 4, 6, 8.",
+    "checks": ["Sum equals 20", "Mean equals 5"],
+    "evidenceVersion": 2,
+    "acceptanceChecks": [
+      {
+        "number": 1,
+        "text": "Sum equals 20"
+      },
+      {
+        "number": 2,
+        "text": "Mean equals 5"
+      }
+    ],
+    "briefId": "art_aca1a5ef3cc448df87ac8f44fe4926ec",
+    "deliveryIds": ["art_4502d1751f1e44f28f455210962e4c69", "art_e558b20a2fd14785b825e445a2bd3f6e"],
+    "deliveryAssessmentId": "art_e558b20a2fd14785b825e445a2bd3f6e",
+    "deliveryConfirmations": [
+      {
+        "checkNumber": 1,
+        "evidenceIds": ["art_4502d1751f1e44f28f455210962e4c69"],
+        "notes": "Verified direct addition: 2 + 4 + 6 + 8 = 20. Rechecked by pairing (2 + 8) + (4 + 6) = 10 + 10 = 20.",
+        "status": "met"
+      },
+      {
+        "checkNumber": 2,
+        "evidenceIds": ["art_4502d1751f1e44f28f455210962e4c69"],
+        "notes": "Counted four values and divided their verified sum by four: 20 / 4 = 5. Rechecked deviations from 5: -3 - 1 + 1 + 3 = 0.",
+        "status": "met"
+      }
+    ],
+    "reviewId": "review_cb59c8ebea9f459d9690f7efa3bd96b7"
+  },
+  "workflow": {
+    "version": 2,
+    "state": "done",
+    "revision": 2
+  },
+  "outcome": "Verified the sum is 20 and the arithmetic mean is 5 for 2, 4, 6, 8.",
+  "review": {
+    "id": "review_cb59c8ebea9f459d9690f7efa3bd96b7",
+    "subjectRevision": 1,
+    "producerId": "actor_e0c93ce8d9c846f486d6976da4da3ff4",
+    "reviewerId": "actor_5191df2ca2414f2593a429d532ad7b7b",
+    "artifactIds": [
+      "art_aca1a5ef3cc448df87ac8f44fe4926ec",
+      "art_4502d1751f1e44f28f455210962e4c69",
+      "art_e558b20a2fd14785b825e445a2bd3f6e"
+    ],
+    "criteria": ["Sum equals 20", "Mean equals 5"],
+    "formatVersion": 2,
+    "status": "submitted",
+    "verdict": "pass",
+    "notes": "Used review context context_a253d773ba5847e9a440383fdb304b08 for the current claim and task workflow revision 1. Explicitly read task.get and review.get, then artifact.read for the pinned brief, arithmetic delivery, and generated delivery assessment. Both numbered confirmations cite the actual arithmetic delivery and agree with independent recomputation from the required inputs; the overall task goal is achieved. Reviewer artifact.create permission test returned isError true with code forbidden and message Actor lacks write permission.",
+    "synopsis": "Independent review passes: the delivery uses the four required inputs, whose sum is 20 and arithmetic mean is 5. Both numbered producer confirmations agree with the cited evidence and my recalculation.",
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": ["art_4502d1751f1e44f28f455210962e4c69"],
+        "notes": "Read the cited delivery and checked its inputs against the brief: 2, 4, 6, 8. Independently grouped adjacent values: (2 + 4) + (6 + 8) = 6 + 14 = 20. This verifies criterion 1 and the assessment's check 1 confirmation against its actual cited delivery."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": ["art_4502d1751f1e44f28f455210962e4c69"],
+        "notes": "Read the cited delivery and independently counted four inputs. Using my independently calculated sum of 20, the arithmetic mean is 20 / 4 = 5; equivalently 2/4 + 4/4 + 6/4 + 8/4 = 0.5 + 1 + 1.5 + 2 = 5. This verifies criterion 2 and the assessment's check 2 confirmation against its cited delivery."
+      }
+    ],
+    "evidence": {
+      "outcome": "Verified the sum is 20 and the arithmetic mean is 5 for 2, 4, 6, 8.",
+      "reviewContextId": "context_a253d773ba5847e9a440383fdb304b08",
+      "permissionTest": {
+        "tool": "artifact.create",
+        "code": "forbidden",
+        "message": "Actor lacks write permission"
+      }
+    },
+    "snapshotHash": "7ce299454bfc5634c2efef35f4eba41f5f75255942112ce656e81af81d6de707"
+  },
+  "model": "Default configured Codex model; no override",
+  "rawTranscripts": "Kept outside repository in isolated temporary run directory",
+  "limits": [
+    "Synthetic arithmetic and passing text evidence. Explicit waiver, revision, rejection, recovery and malformed-input cases are covered by deterministic integration tests.",
+    "No production research program, remote compute, shared auth or browser sign-in is claimed."
+  ]
+}

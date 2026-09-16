@@ -1,0 +1,55 @@
+{
+  "date": "2026-09-15",
+  "status": "verified",
+  "scope": "Consolidation requires Code; Research optionally uses Consolidation and new no-code cycles finish after reflection approval",
+  "dependencies": {
+    "consolidation": "Code is mandatory; provider and adapters suspend when Code unloads",
+    "research": "Consolidation is an optional child injection; Research survives its unload",
+    "experimentsAndKnowledge": "Existing optional Code connections retained",
+    "pluginCount": 56,
+    "requiredEdges": 141,
+    "optionalEdges": 3
+  },
+  "behavior": {
+    "newWorkflowVersion": 3,
+    "none": "Approved reflection advances directly to complete without a Consolidation child",
+    "git": "Approved reflection advances to Git consolidation; missing Consolidation produces a 409 workflow blocker and leaves the cycle unchanged",
+    "existingVersion2": "Original graph and report-only/Git semantics retained, including stored request receipts",
+    "version1": "Historical records remain readable; unsupported advancement is explicitly rejected",
+    "newTools": 0,
+    "newPlugins": 0
+  },
+  "validation": {
+    "fullSuite": {
+      "passed": 695,
+      "failed": 0,
+      "skipped": 1,
+      "log": "/private/tmp/merv-optional-consolidation-full-suite.log"
+    },
+    "researchAndLifecycleTests": {
+      "passed": 11,
+      "log": "/private/tmp/merv-optional-consolidation-focused.log"
+    },
+    "consolidationConfigAndBoundaries": {
+      "passed": 34,
+      "log": "/private/tmp/merv-consolidation-required-focused.log"
+    },
+    "backendBuild": "passed",
+    "uiTypecheck": "passed",
+    "uiBuild": "passed; existing bundle-size warning",
+    "architecture": "interactive inventory regenerated; exact required/optional edge sets validated; static image visually checked",
+    "formattingAndDiffCheck": "passed"
+  },
+  "coverage": [
+    "Server startup with Code disabled and Consolidation pending",
+    "No-code research cycle completes an independently reviewed reflection without Code",
+    "Leased reflection worker can read live research evidence without Code",
+    "Two Code unload/reload cycles preserve Research, Experiments, Knowledge and non-Git sessions",
+    "Consolidation tools withdraw while its provider is unavailable",
+    "Git research guidance reports a missing-provider blocker",
+    "Same handoff request succeeds after Code reload with exactly one child",
+    "Committed handoff replay succeeds while the child provider is absent",
+    "Persisted version-2 report-only cycle continues across restart and replay"
+  ],
+  "limits": "Existing standalone report-only Consolidation workflows and tool inputs remain supported for compatibility. New version-3 Research cycles never create that redundant stage. Verification uses local integration fixtures; no production records were rewritten."
+}

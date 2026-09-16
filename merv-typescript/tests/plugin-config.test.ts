@@ -7,7 +7,7 @@ import { Context, FiberState, ValidationError, type Plugin } from 'cordis';
 import { statePlugin } from '@merv/state';
 import { blobsPlugin } from '@merv/blobs';
 import { scopePlugin } from '@merv/scope';
-import { accessPlugin } from '@merv/access';
+import { identityPlugin } from '@merv/identity';
 import { apiPlugin, toolsPlugin } from '@merv/api';
 
 function folder(t: TestContext) {
@@ -20,8 +20,10 @@ async function dependencies(ctx: Context, service: string) {
   if (service !== 'tools' && service !== 'api') return;
   await ctx.plugin(statePlugin, { path: ':memory:' });
   await ctx.plugin(scopePlugin);
-  await ctx.plugin(accessPlugin);
-  if (service === 'api') await ctx.plugin(toolsPlugin);
+  if (service === 'api') {
+    await ctx.plugin(toolsPlugin);
+    await ctx.plugin(identityPlugin, {});
+  }
 }
 
 async function rejectsBeforePublication(plugin: Plugin, service: string, config: unknown) {
@@ -83,8 +85,8 @@ test('Tools Config defaults to an empty object and rejects accidental resource o
     const fiber = await ctx.plugin(toolsPlugin);
     assert.equal(fiber.state, FiberState.ACTIVE);
     assert.deepEqual(fiber.config, {});
-    assert.deepEqual(ctx.tools.list(), []);
-    const credential = ctx.scope.bootstrap({
+    assert.deepEqual(await ctx.tools.list(), []);
+    const credential = await ctx.scope.bootstrap({
       projectName: 'Registry defaults',
       actorName: 'Operator',
     });
@@ -139,9 +141,12 @@ test('valid resource paths are preserved and Cordis owns their published service
     assert.equal(state.config.path, path);
     assert.equal(blobs.config.root, root);
     assert.equal(existsSync(path), true);
-    const stored = ctx.blobs.put('config-test', Buffer.from('Configuration preserved bytes.'));
+    const stored = await ctx.blobs.put(
+      'config-test',
+      Buffer.from('Configuration preserved bytes.'),
+    );
     assert.equal(
-      ctx.blobs.get('config-test', stored.hash).toString(),
+      (await ctx.blobs.get('config-test', stored.hash)).toString(),
       'Configuration preserved bytes.',
     );
   } finally {
@@ -159,8 +164,12 @@ test('API no-config defaults remain loopback and ephemeral with a working regist
     const url = new URL(ctx.api.url!);
     assert.equal(url.hostname, '127.0.0.1');
     assert.ok(Number(url.port) > 0);
-    const credentials = ctx.scope.bootstrap({ projectName: 'API defaults', actorName: 'Operator' });
+    const credentials = await ctx.scope.bootstrap({
+      projectName: 'API defaults',
+      actorName: 'Operator',
+    });
     assert.equal((await fetch(new URL('/health', url))).status, 200);
+    assert.deepEqual(await (await fetch(new URL('/auth/config', url))).json(), { enabled: false });
     const response = await fetch(new URL('/tools', url), {
       headers: { authorization: `Bearer ${credentials.token}` },
     });

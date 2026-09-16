@@ -1,0 +1,43 @@
+{
+  "invocations": [
+    {
+      "purpose": "Fable-authored first-principles UI overhaul, explicitly requested by user",
+      "requestedModel": "claude-fable-5",
+      "fallbackConfigured": false,
+      "packetSha256": "0cc302b925747f5286f572dead60df788f2f95402f075c1d3970ad1b91c19017",
+      "packetBytes": 341718,
+      "systemSha256": "f71b0c573a6f1592e5d1766c2701bdd2c9f205f96c5dc9f8d01cfa8a5179ade0",
+      "startedUtc": "2026-09-16T18:04:20.870561+00:00",
+      "finishedUtc": "2026-09-16T18:21:51.926863+00:00",
+      "exitCode": 0,
+      "responseSha256": "37067a2e4978759786e41210e4f4facfdf6cc9859db7d1fb3101a4c74c44e440",
+      "responseBytes": 74345,
+      "actualModels": [
+        "claude-fable-5"
+      ],
+      "toolsEnabled": false,
+      "responseComplete": false,
+      "stage": "main generation"
+    },
+    {
+      "purpose": "Fable-authored first-principles UI overhaul, explicitly requested by user",
+      "requestedModel": "claude-fable-5",
+      "fallbackConfigured": false,
+      "packetSha256": "bc3a960592884291e9c5f8c6d292c2a04d1567cc52388c08ccd33718a56b2697",
+      "packetBytes": 37900,
+      "systemSha256": "f71b0c573a6f1592e5d1766c2701bdd2c9f205f96c5dc9f8d01cfa8a5179ade0",
+      "startedUtc": "2026-09-16T18:27:21.073199+00:00",
+      "finishedUtc": "2026-09-16T18:28:24.301259+00:00",
+      "exitCode": 0,
+      "responseSha256": "d35af8f1d9e01ad5af6456a8c0d7ae59b03d94ab117e368c89e92bf233a06f5b",
+      "responseBytes": 12074,
+      "actualModels": [
+        "claude-fable-5"
+      ],
+      "toolsEnabled": false,
+      "responseComplete": true,
+      "stage": "missing helper recovery"
+    }
+  ],
+  "note": "First response began mid-file; four complete files were recovered. Second invocation supplied complete navigation/components files. No fallback model used."
+}

@@ -1,3 +1,4 @@
+import { mapAsync } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -12,7 +13,7 @@ import type { ApplicationConfig } from '../src/config.js';
 import { CredentialServer } from '../tests/fixtures/credential-server.js';
 
 const rawTools = ['search', 'paper', 'excerpts', 'qa.ask', 'qa.get', 'qa.cancel'];
-const mounted = (name: string) => `mount__nisa__${name}`;
+const mounted = (name: string) => `_nisa.${name}`;
 
 interface ProcessHost {
   child: ChildProcess;
@@ -211,16 +212,19 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     });
     const identity = await (async () => {
       try {
-        const admin = seed.ctx.scope.bootstrap({
+        const admin = await seed.ctx.scope.bootstrap({
           projectName: 'Nisa MCP composition',
           actorName: 'Operator',
         });
         const operator = { actorId: admin.actor.id, projectId: admin.project.id };
         return {
           operator,
-          alice: seed.ctx.scope.issueActor(operator, { name: 'Alice', role: 'producer' }),
-          bob: seed.ctx.scope.issueActor(operator, { name: 'Bob', role: 'producer' }),
-          observer: seed.ctx.scope.issueActor(operator, { name: 'Observer', role: 'reviewer' }),
+          alice: await seed.ctx.scope.issueActor(operator, { name: 'Alice', role: 'producer' }),
+          bob: await seed.ctx.scope.issueActor(operator, { name: 'Bob', role: 'producer' }),
+          observer: await seed.ctx.scope.issueActor(operator, {
+            name: 'Observer',
+            role: 'reviewer',
+          }),
         };
       } finally {
         await seed.stop();
@@ -232,7 +236,7 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     const config = JSON.parse(
       readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
     ) as ApplicationConfig;
-    config.plugins.find((entry) => entry.id === 'access')!.config = {
+    config.plugins.find((entry) => entry.id === 'scope')!.config = {
       grants: [
         ...[identity.operator, alice, bob].map((who) => ({
           ...who,
@@ -246,7 +250,7 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
         })),
       ],
     };
-    config.plugins.find((entry) => entry.id === 'credentials')!.config = {
+    const credentialConfig = {
       bindings: [
         ...[identity.operator, alice].map((who, index) => ({
           ...who,
@@ -276,6 +280,7 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       name: '@merv/mounts',
       required: false,
       config: {
+        ...credentialConfig,
         mounts: [
           {
             id: 'nisa',
@@ -303,9 +308,9 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     const bobClient = await connect(apiUrl + '/mcp', identity.bob.token);
     const observer = await connect(apiUrl + '/mcp', identity.observer.token);
     const before = (await aliceClient.listTools()).tools;
-    assert.equal(before.length, 33);
+    assert.equal(before.length, 56);
     assert.ok(rawTools.every((name) => before.some((tool) => tool.name === mounted(name))));
-    assert.equal((await observer.listTools()).tools.length, 26);
+    assert.equal((await observer.listTools()).tools.length, 49);
     assert.equal((await call(observer, mounted('search'), { query: 'attention' })).isError, true);
     for (const tool of directCatalog)
       assert.deepEqual(
@@ -325,7 +330,7 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       assert.deepEqual(fromMerv, fromDirect, `${name} lost MCP result fields`);
     }
     checks.threeRetrievalToolsFullResultParity = true;
-    const sandboxBefore = payload(await call(aliceClient, 'mount__sandbox__inspect'));
+    const sandboxBefore = payload(await call(aliceClient, '_sandbox.inspect'));
     const sandboxConnections = structuredClone(sandbox.connections);
     assert.equal(sandboxConnections.length, 2, 'Discovery and actor calls have separate clients');
     const originals = Object.fromEntries(
@@ -340,8 +345,6 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
         'blobs',
         'workflows',
         'reviews',
-        'access',
-        'credentials',
         'mounts',
       ].map((name) => [name, running.ctx.get(name)]),
     );
@@ -364,8 +367,8 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     checks.otherAccountCannotObserveOrCancel = true;
     await running.ctx.mounts.setEnabled('nisa', false);
     const during = (await aliceClient.listTools()).tools.map(({ name }) => name);
-    assert.equal(during.length, 27);
-    assert.ok(during.every((name) => !name.startsWith('mount__nisa__')));
+    assert.equal(during.length, 50);
+    assert.ok(during.every((name) => !name.startsWith('_nisa.')));
     assert.equal(
       errorCode(await call(aliceClient, mounted('qa.get'), { operationId: operation.operationId })),
       'unknown_tool',
@@ -408,17 +411,40 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       await call(aliceClient, 'task.submit_delivery', {
         taskId: task.id,
         artifactIds: [delivery.id],
+        confirmations: [
+          {
+            checkNumber: 1,
+            status: 'met',
+            evidenceIds: [delivery.id],
+            notes:
+              'Native review evidence was saved while Nisa tools were absent; the independent verdict verifies completion.',
+          },
+        ],
         expectedRevision: 0,
         requestId: 'nisa-mcp-native-delivery',
       }),
     );
     await call(observer, 'artifact.read', { artifactId: brief.id }).then(payload);
-    await call(observer, 'artifact.read', { artifactId: delivery.id }).then(payload);
-    await call(observer, 'review.start', { reviewId: submitted.reviewId }).then(payload);
+    for (const artifactId of submitted.deliveryIds)
+      await call(observer, 'artifact.read', { artifactId }).then(payload);
+    const claim = await call(observer, 'review.start', { reviewId: submitted.reviewId }).then(
+      payload,
+    );
     const done = payload(
       await call(observer, 'review.submit', {
         reviewId: submitted.reviewId,
+        claimId: claim.claimId,
         verdict: 'pass',
+        synopsis:
+          'Native task work and independent review completed while the Nisa mount was absent.',
+        findings: [
+          {
+            criterionNumber: 1,
+            status: 'met',
+            evidenceIds: [delivery.id],
+            notes: 'The pinned delivery records native task operations continuing without Nisa.',
+          },
+        ],
         notes: 'Checked the pinned brief and delivery while the Nisa mount was absent.',
         expectedRevision: 1,
         requestId: 'nisa-mcp-native-review',
@@ -437,10 +463,10 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       'running',
     );
     assert.ok(
-      (await aliceClient.listTools()).tools.every(({ name }) => !name.startsWith('mount__nisa__')),
+      (await aliceClient.listTools()).tools.every(({ name }) => !name.startsWith('_nisa.')),
     );
     checks.nativeTaskReviewFeedCompletedWhileNisaAbsent = true;
-    const sandboxDuring = payload(await call(aliceClient, 'mount__sandbox__inspect'));
+    const sandboxDuring = payload(await call(aliceClient, '_sandbox.inspect'));
     assert.equal(sandboxDuring.connectionId, sandboxBefore.connectionId);
     assert.deepEqual(sandbox.connections, sandboxConnections);
     assert.equal((await fetch(apiUrl + '/health')).status, 200);

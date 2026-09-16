@@ -7,9 +7,9 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { MervError, type Caller } from '@merv/contracts';
-import type { CredentialProvider, ResolvedCredential } from '@merv/credentials/types';
-import type { AccessPolicy } from '@merv/access/types';
+import { MervError, type Caller, type Data } from '@merv/contracts';
+import type { CredentialProvider, ResolvedCredential } from './types.js';
+import type { ToolPolicy } from '@merv/contracts';
 
 const losslessResult = z.custom<CallToolResult>(
   (value) => CallToolResultSchema.safeParse(value).success,
@@ -81,7 +81,7 @@ export class ScopedRemoteClients {
 
   constructor(
     private readonly credentials: CredentialProvider,
-    private readonly access: AccessPolicy,
+    private readonly access: ToolPolicy,
     private readonly options: ScopedRemoteClientOptions,
   ) {
     this.timeoutMs = options.timeoutMs ?? 5000;
@@ -110,7 +110,7 @@ export class ScopedRemoteClients {
     }
   }
 
-  call(
+  async call(
     caller: Caller,
     mountId: string,
     rawToolName: string,
@@ -118,35 +118,41 @@ export class ScopedRemoteClients {
   ): Promise<CallToolResult> {
     if (this.stopping)
       return Promise.reject(new MervError('remote_closed', 'Remote client pool is closed', 503));
-    let connection: Connection;
-    let lane: string | undefined;
-    try {
-      const url = this.mounts.get(mountId);
-      if (!url)
-        throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
-      lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
-      this.access.require(caller, mountId, rawToolName);
-      const credential = this.credentials.resolve(caller, mountId);
-      const key = JSON.stringify([
-        mountId,
-        url,
-        caller.actorId,
-        caller.projectId,
-        credential.identityKey,
-      ]);
-      const previous = this.current.get(lane);
-      if (previous && previous.key !== key) this.retire(previous);
-      connection = this.connections.get(key) ?? this.createConnection(key, lane, url, credential);
-    } catch (error) {
-      const previous = lane ? this.current.get(lane) : undefined;
-      if (previous) this.retire(previous);
-      return Promise.reject(error instanceof MervError ? error : unavailable());
-    }
-    const operation = this.invoke(connection, caller, mountId, rawToolName, args);
+    const operation = Promise.resolve().then(async () => {
+      let connection: Connection;
+      let lane: string | undefined;
+      try {
+        const url = this.mounts.get(mountId);
+        if (!url)
+          throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
+        lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
+        await this.access.require(caller, mountId, rawToolName);
+        if (caller.session)
+          await this.access.validate(caller, `_${mountId}.${rawToolName}`, args as Data);
+        const credential = await this.credentials.resolve(caller, mountId);
+        const key = JSON.stringify([
+          mountId,
+          url,
+          caller.actorId,
+          caller.projectId,
+          credential.identityKey,
+        ]);
+        const previous = this.current.get(lane);
+        if (previous && previous.key !== key) this.retire(previous);
+        connection = this.connections.get(key) ?? this.createConnection(key, lane, url, credential);
+      } catch (error) {
+        const previous = lane ? this.current.get(lane) : undefined;
+        if (previous) this.retire(previous);
+        throw error instanceof MervError ? error : unavailable();
+      }
+      return await this.invoke(connection, caller, mountId, rawToolName, args);
+    });
     this.running.add(operation);
-    const remove = () => this.running.delete(operation);
-    void operation.then(remove, remove);
-    return operation;
+    try {
+      return await operation;
+    } finally {
+      this.running.delete(operation);
+    }
   }
 
   private createConnection(
@@ -206,14 +212,18 @@ export class ScopedRemoteClients {
       await connection.ready;
       // Connection setup can yield. Revocation or rotation during that wait must
       // be observed before an operation crosses the upstream boundary.
-      this.access.require(caller, mountId, name);
-      const currentCredential = this.credentials.resolve(caller, mountId);
+      await this.access.require(caller, mountId, name);
+      if (caller.session) await this.access.validate(caller, `_${mountId}.${name}`, args as Data);
+      const currentCredential = await this.credentials.resolve(caller, mountId);
       if (currentCredential.identityKey !== connection.identityKey)
         throw new MervError(
           'credential_changed',
           'Upstream credential changed before dispatch',
           409,
         );
+      // Credential resolution can also yield after the connection is ready.
+      await this.access.require(caller, mountId, name);
+      if (caller.session) await this.access.validate(caller, `_${mountId}.${name}`, args as Data);
       return await deadline(
         connection.client.request(
           { method: 'tools/call', params: { name, arguments: args } },
@@ -258,7 +268,7 @@ export class ScopedRemoteClients {
     this.closing = (async () => {
       await Promise.allSettled([...this.running]);
       const results = await Promise.allSettled(
-        [...this.all].map((connection) => this.dispose(connection)),
+        [...this.all].map(async (connection) => this.dispose(connection)),
       );
       this.connections.clear();
       this.current.clear();

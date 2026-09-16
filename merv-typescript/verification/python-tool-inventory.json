@@ -1,0 +1,347 @@
+{
+  "checkedAt": "2026-09-14",
+  "source": "merv/src/merv/brain/surface/tools/contracts.py:TOOL_MANIFEST",
+  "scope": "Declared default Python program manifest, before runtime feature flags and credential filtering. Infrastructure entries are facades over the separate merv-sandboxes service.",
+  "tools": [
+    {
+      "name": "agent.hello",
+      "handler": "agents.hello",
+      "visibility": "public"
+    },
+    {
+      "name": "artifact.attach",
+      "handler": "artifact_submissions.attach",
+      "visibility": "public"
+    },
+    {
+      "name": "artifact.read",
+      "handler": "artifact_submissions.read",
+      "visibility": "public"
+    },
+    {
+      "name": "artifact.upload",
+      "handler": "artifact_submissions.upload",
+      "visibility": "public"
+    },
+    {
+      "name": "candidate.list",
+      "handler": "research.list_candidates",
+      "visibility": "public"
+    },
+    {
+      "name": "candidate.promote",
+      "handler": "research.promote_candidate",
+      "visibility": "public"
+    },
+    {
+      "name": "candidate.stage",
+      "handler": "application.stage_candidate",
+      "visibility": "public"
+    },
+    {
+      "name": "candidate.submit",
+      "handler": "application.submit_candidate",
+      "visibility": "public"
+    },
+    {
+      "name": "claim.create",
+      "handler": "research.create_claim",
+      "visibility": "public"
+    },
+    {
+      "name": "claim.list",
+      "handler": "research.list_claims",
+      "visibility": "internal"
+    },
+    {
+      "name": "claim.update",
+      "handler": "research.update_claim",
+      "visibility": "public"
+    },
+    {
+      "name": "consolidation.get",
+      "handler": "application.consolidation",
+      "visibility": "public"
+    },
+    {
+      "name": "consolidation.submit",
+      "handler": "application.submit_consolidation",
+      "visibility": "public"
+    },
+    {
+      "name": "experiment.create",
+      "handler": "application.create_experiment",
+      "visibility": "public"
+    },
+    {
+      "name": "experiment.exhibit",
+      "handler": "application.exhibit",
+      "visibility": "public"
+    },
+    {
+      "name": "experiment.get_state",
+      "handler": "application.experiment",
+      "visibility": "internal"
+    },
+    {
+      "name": "experiment.list",
+      "handler": "application.experiments",
+      "visibility": "internal"
+    },
+    {
+      "name": "experiment.transition",
+      "handler": "application.transition_experiment",
+      "visibility": "public"
+    },
+    {
+      "name": "feed.list",
+      "handler": "feed.list_posts",
+      "visibility": "public"
+    },
+    {
+      "name": "feed.post",
+      "handler": "feed.post",
+      "visibility": "public"
+    },
+    {
+      "name": "feed.register",
+      "handler": "feed.register",
+      "visibility": "public"
+    },
+    {
+      "name": "litreview.cite",
+      "handler": "litreview.cite",
+      "visibility": "public"
+    },
+    {
+      "name": "litreview.edit",
+      "handler": "litreview.edit",
+      "visibility": "public"
+    },
+    {
+      "name": "litreview.view",
+      "handler": "litreview.view",
+      "visibility": "public"
+    },
+    {
+      "name": "project",
+      "handler": "application.project",
+      "visibility": "public"
+    },
+    {
+      "name": "project.context.update",
+      "handler": "research.update_project_context",
+      "visibility": "public"
+    },
+    {
+      "name": "project.get",
+      "handler": "research.get_project",
+      "visibility": "internal"
+    },
+    {
+      "name": "project.list",
+      "handler": "application.project_list",
+      "visibility": "internal"
+    },
+    {
+      "name": "project.synthesis.read",
+      "handler": "synthesis.inputs",
+      "visibility": "public"
+    },
+    {
+      "name": "project.update",
+      "handler": "research.update_project",
+      "visibility": "internal"
+    },
+    {
+      "name": "reflection.create",
+      "handler": "application.create_reflection",
+      "visibility": "public"
+    },
+    {
+      "name": "reflection.get",
+      "handler": "application.reflection",
+      "visibility": "public"
+    },
+    {
+      "name": "reflection.list",
+      "handler": "application.reflections",
+      "visibility": "internal"
+    },
+    {
+      "name": "reflection.transition",
+      "handler": "application.transition_reflection",
+      "visibility": "public"
+    },
+    {
+      "name": "review.request",
+      "handler": "application.request_review",
+      "visibility": "public"
+    },
+    {
+      "name": "review.start",
+      "handler": "application.start_review",
+      "visibility": "public"
+    },
+    {
+      "name": "review.status",
+      "handler": "application.review_status",
+      "visibility": "internal"
+    },
+    {
+      "name": "review.submit",
+      "handler": "application.submit_review",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.attach",
+      "handler": "sandboxes.attach",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.extend",
+      "handler": "sandboxes.extend",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.get",
+      "handler": "sandboxes.get",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.health",
+      "handler": "sandboxes.health",
+      "visibility": "internal"
+    },
+    {
+      "name": "sandbox.job",
+      "handler": "sandboxes.job",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.list",
+      "handler": "sandboxes.list_sandboxes",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.options",
+      "handler": "sandboxes.options",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.pull_outputs",
+      "handler": "sandboxes.pull_outputs_command",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.release",
+      "handler": "sandboxes.release",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.request",
+      "handler": "sandboxes.request",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.run",
+      "handler": "sandboxes.run",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.runs",
+      "handler": "sandboxes.runs",
+      "visibility": "public"
+    },
+    {
+      "name": "sandbox.terminal",
+      "handler": "sandboxes.terminal",
+      "visibility": "public"
+    },
+    {
+      "name": "storage.complete_upload",
+      "handler": "storage.complete_upload",
+      "visibility": "internal"
+    },
+    {
+      "name": "storage.fetch",
+      "handler": "storage.fetch",
+      "visibility": "public"
+    },
+    {
+      "name": "storage.find",
+      "handler": "storage.find",
+      "visibility": "public"
+    },
+    {
+      "name": "storage.object",
+      "handler": "storage.manage",
+      "visibility": "public"
+    },
+    {
+      "name": "storage.put_object",
+      "handler": "storage.put_object",
+      "visibility": "internal"
+    },
+    {
+      "name": "storage.submit",
+      "handler": "storage.submit",
+      "visibility": "public"
+    },
+    {
+      "name": "task.create",
+      "handler": "application.create_task",
+      "visibility": "public"
+    },
+    {
+      "name": "task.get_state",
+      "handler": "application.task",
+      "visibility": "internal"
+    },
+    {
+      "name": "task.list",
+      "handler": "application.tasks",
+      "visibility": "internal"
+    },
+    {
+      "name": "task.transition",
+      "handler": "application.transition_task",
+      "visibility": "public"
+    },
+    {
+      "name": "workflow.assignment",
+      "handler": "workflows.assignment",
+      "visibility": "public"
+    },
+    {
+      "name": "workflow.begin",
+      "handler": "workflows.begin",
+      "visibility": "public"
+    },
+    {
+      "name": "workflow.catalog",
+      "handler": "workflows.catalog",
+      "visibility": "internal"
+    },
+    {
+      "name": "workflow.history",
+      "handler": "workflows.history",
+      "visibility": "public"
+    },
+    {
+      "name": "workflow.start",
+      "handler": "workflows.start",
+      "visibility": "internal"
+    },
+    {
+      "name": "workflow.status_and_next",
+      "handler": "application.status_for_agent",
+      "visibility": "public"
+    },
+    {
+      "name": "workflow.transition",
+      "handler": "workflows.transition",
+      "visibility": "public"
+    }
+  ]
+}

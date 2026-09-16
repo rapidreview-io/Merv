@@ -1,0 +1,178 @@
+{
+  "groups": [
+    {
+      "id": "front",
+      "label": "Front door",
+      "caption": "HTTP, MCP & the browser",
+      "members": ["api", "tools", "ui"],
+      "description": "API accepts requests, Tools controls the callable catalog, and UI hosts the browser. Small adapters connect these registries to the domain plugins."
+    },
+    {
+      "id": "auth",
+      "label": "Identity",
+      "caption": "Shared user login",
+      "members": ["identity"],
+      "description": "Identity verifies shared users. Scope owns project membership, permissions and tool policy. External Mounts owns upstream credential selection."
+    },
+    {
+      "id": "mounts",
+      "label": "External Mounts",
+      "caption": "Optional remote tools",
+      "members": ["mounts"],
+      "description": "External Mounts connects independent MCP servers to the local tool registry and selects their upstream credentials. An available mount is not proof that an upstream service is healthy."
+    },
+    {
+      "id": "research",
+      "label": "Research",
+      "caption": "The work & what we learn",
+      "members": [
+        "claims",
+        "tasks",
+        "experiments",
+        "knowledge",
+        "paper",
+        "reflections",
+        "consolidation",
+        "research"
+      ],
+      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds Paper, Reflections, Knowledge and Consolidation optionally. Only stages that use a missing provider wait. Selected code changes use Consolidation, which requires Code."
+    },
+    {
+      "id": "coordination",
+      "label": "Coordination",
+      "caption": "Gates, agents & code",
+      "members": ["workflows", "sessions", "code"],
+      "description": "Workflows evaluates gates and assignments. Agent Sessions controls worker authority and recovery. Code retains requests and exact code-capture references. The separate Runner performs machine work."
+    },
+    {
+      "id": "evidence",
+      "label": "Evidence",
+      "caption": "Files, reviews & context",
+      "members": ["artifacts", "reviews", "contextBuilder", "feed"],
+      "description": "Artifacts owns file metadata. Reviews retains independent assessments. Context Builder assembles the domain's context recipe. Feed records project activity."
+    },
+    {
+      "id": "external",
+      "label": "External services",
+      "caption": "Connected over MCP",
+      "members": [],
+      "description": "Nisa and Sandboxes are independent remote systems, not local Cordis plugins. Their tools are mounted only when configured and permitted."
+    },
+    {
+      "id": "foundation",
+      "label": "Foundation",
+      "caption": "Shared durable capabilities",
+      "members": ["state", "scope", "blobs", "domainEvents"],
+      "description": "State and Scope are the most shared dependencies. Blobs stores bytes without depending on State; Artifacts connects file metadata to those bytes. Domain Events reads durable events from State."
+    },
+    {
+      "id": "runner",
+      "label": "Separate machine",
+      "caption": "Agents & Git checkouts",
+      "members": ["runner"],
+      "description": "Runner has its own Cordis context. It talks to the server over authenticated HTTP and launches scoped agents in scratch or Git workspaces. It has no injected server-plugin dependencies."
+    }
+  ],
+  "plugins": {
+    "api": {
+      "label": "API",
+      "purpose": "Accepts authenticated HTTP and MCP requests and routes them through the tool registry."
+    },
+    "tools": {
+      "label": "Tools",
+      "purpose": "Registers native and mounted tools, applies grants and worker constraints, and drains admitted calls during unload."
+    },
+    "ui": {
+      "label": "UI",
+      "purpose": "Serves the browser and the registry of plugin-owned views. Removing a UI adapter removes that view."
+    },
+    "identity": {
+      "label": "Identity",
+      "purpose": "Verifies the shared user's identity. Project membership and roles remain in Scope."
+    },
+    "mounts": {
+      "label": "External Mounts",
+      "purpose": "Connects remote MCP tools to Tools with names such as _nisa.search. Owns upstream credential bindings and secret resolution; Scope supplies caller tool policy."
+    },
+    "claims": {
+      "label": "Claims",
+      "purpose": "Stores research statements, their scope, status and confidence with revision checks and replayable edits."
+    },
+    "tasks": {
+      "label": "Tasks",
+      "purpose": "Owns task briefs, acceptance checks, evidence submissions, closure rules and task-specific context formulas."
+    },
+    "experiments": {
+      "label": "Experiments",
+      "purpose": "Owns plans, attempts, approved evidence, results, exhibits and both independent review stages. Git experiments bind review to the exact producer capture."
+    },
+    "knowledge": {
+      "label": "Knowledge",
+      "purpose": "Reads live project research records and resolves research-linked evidence for reflection agents. Historical corpus capture remains available to existing callers."
+    },
+    "workflows": {
+      "label": "Workflows",
+      "purpose": "Owns the common state graph, revisions, prerequisites, current gate, blockers, next actions, assignments and lease hooks. Domains provide their own rules."
+    },
+    "sessions": {
+      "label": "Agent Sessions",
+      "purpose": "Owns continuing agent identity, context-reset history and authenticated sessions. Attaches one workflow assignment at a time, freezes its context and tool permissions, and fences each execution independently. Runner launches fresh agents; external agents can explicitly change assignments."
+    },
+    "code": {
+      "label": "Code",
+      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. It does not execute Git itself."
+    },
+    "artifacts": {
+      "label": "Artifacts",
+      "purpose": "Owns immutable file metadata, content hashes and permission-checked reads. It stores records in State and bytes through Blobs."
+    },
+    "reviews": {
+      "label": "Reviews",
+      "purpose": "Pins evidence, enforces independent review, retains findings and verdicts, and invokes the owning domain's transition in the same transaction."
+    },
+    "contextBuilder": {
+      "label": "Context Builder",
+      "purpose": "Assembles and persists starting context from the domain's versioned recipe and exact input references. It does not own task or experiment rules."
+    },
+    "feed": {
+      "label": "Feed",
+      "purpose": "Records project posts, replies and activity with optional artifact references."
+    },
+    "state": {
+      "label": "State",
+      "purpose": "Provides async transactions, migrations, durable records and the event ledger. Configuration selects SQLite or PostgreSQL behind the same contract."
+    },
+    "scope": {
+      "label": "Scope",
+      "purpose": "Owns projects, security actors, memberships, credentials and permissions, plus the project Introduction. Agent Sessions owns agent identity and lifetime; Scope enforces its security actor and delegated authority. Scope also owns exact remote-tool grants and the registered session policy."
+    },
+    "blobs": {
+      "label": "Blobs",
+      "purpose": "Stores and reads file bytes by content hash. It has no State dependency; Artifacts owns the associated file metadata."
+    },
+    "domainEvents": {
+      "label": "Domain Events",
+      "purpose": "Delivers durable events from State so consumers can react and recover without losing their place."
+    },
+    "runner": {
+      "label": "Runner",
+      "purpose": "Runs on a separate machine, launches agents, maintains their leases and captures Git workspaces. It calls server controls over HTTP."
+    },
+    "paper": {
+      "label": "Paper",
+      "purpose": "Stores project documents, citations and immutable edit proposals. Experiment and reflection reviews accept paper edits; Paper creates no assignments or context recipes."
+    },
+    "reflections": {
+      "label": "Reflections",
+      "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required."
+    },
+    "consolidation": {
+      "label": "Consolidation",
+      "purpose": "Implements and reviews code changes from pinned source artifacts and a selected experiment scope. Requires Code and does not depend on Reflections. Historical report-only cycles remain supported."
+    },
+    "research": {
+      "label": "Research",
+      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Optional Paper supplies the problem definition; Reflections starts waves and verifies approval; Knowledge supplies live-evidence permissions and unsnapshotted consolidation inputs; Consolidation handles selected code changes. Research stays active when any optional provider is removed, and only operations that use it wait with a named blocker. Stored records and completed command receipts remain readable; absence never means empty or approved evidence. New cycles can finish after approved reflection without consolidation. Paper changes belong to scientific workflows."
+    }
+  }
+}

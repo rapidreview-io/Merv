@@ -3,8 +3,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { check, MervError } from '@merv/contracts';
 import type { Tools, ToolCatalog, RemoteToolDefinition } from '@merv/api/types';
-import type { CredentialProvider, ResolvedCredential } from '@merv/credentials/types';
-import type { AccessPolicy } from '@merv/access/types';
+import type { CredentialProvider, ResolvedCredential } from './types.js';
+import type { ToolPolicy } from '@merv/contracts';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
 import { ScopedRemoteClients } from './credential-client.js';
@@ -63,7 +63,7 @@ export class MountRuntime {
   private refreshAgain = false;
   private failures = 0;
   private cleanupFailed = false;
-  private timer?: ReturnType<typeof setTimeout>;
+  private timer?: Awaited<ReturnType<typeof setTimeout>>;
   private readonly drains = new Set<Promise<void>>();
   private stopping = false;
   private closing?: Promise<void>;
@@ -71,7 +71,7 @@ export class MountRuntime {
   constructor(
     tools: Tools,
     private readonly credentials: CredentialProvider,
-    private readonly access: AccessPolicy,
+    private readonly access: ToolPolicy,
     private readonly config: MountConfig,
   ) {
     this.timeoutMs = config.timeoutMs ?? 5000;
@@ -97,7 +97,7 @@ export class MountRuntime {
     if (this.stopping)
       return Promise.reject(new MervError('mounts_stopped', 'Mounts are stopped', 503));
     if (force && this.current)
-      return this.current.catch(() => undefined).then(() => this.refresh(true));
+      return this.current.catch(() => undefined).then(async () => this.refresh(true));
     this.clearTimer();
     if (force) this.forceNext = true;
     else this.refreshAgain = true;
@@ -127,23 +127,23 @@ export class MountRuntime {
     return operation;
   }
 
-  private credential(): ResolvedCredential | undefined {
+  private async credential(): Promise<ResolvedCredential | undefined> {
     if (!this.config.discovery) return undefined;
     // Discovery has its own configured actor. Its grants and credential never authorize calls.
     for (const name of this.config.tools)
-      this.access.require(this.config.discovery, this.config.id, name);
-    return this.credentials.resolve(this.config.discovery, this.config.id);
+      await this.access.require(this.config.discovery, this.config.id, name);
+    return await this.credentials.resolve(this.config.discovery, this.config.id);
   }
 
   private async refreshOnce(): Promise<void> {
     check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
-    const credential = this.credential();
+    const credential = await this.credential();
     if (this.client && this.discoveryIdentity !== credential?.identityKey)
       await this.resetDiscovery();
     if (!this.client) await this.connect(credential);
     const client = this.client!;
     check(
-      this.credential()?.identityKey === this.discoveryIdentity,
+      (await this.credential())?.identityKey === this.discoveryIdentity,
       'credential_changed',
       'Discovery credential changed before query',
       409,
@@ -160,10 +160,16 @@ export class MountRuntime {
     );
     // Credentials can change while discovery yields; do not publish a catalog using revoked authority.
     check(
-      this.credential()?.identityKey === this.discoveryIdentity,
+      (await this.credential())?.identityKey === this.discoveryIdentity,
       'credential_changed',
       'Discovery credential changed',
       409,
+    );
+    check(
+      !this.stopping && this.client === client,
+      'mount_disconnected',
+      'Discovery connection changed',
+      503,
     );
     const available = new Map(definitions.map((definition) => [definition.name, definition]));
     const selected: RemoteToolDefinition[] = this.config.tools.map((name) => {
@@ -172,7 +178,7 @@ export class MountRuntime {
       return {
         ...definition,
         // The discovery handler is deliberately discarded; every call selects its own authority.
-        handler: (caller, input) => this.pool.call(caller, this.config.id, name, input),
+        handler: async (caller, input) => this.pool.call(caller, this.config.id, name, input),
       };
     });
     // Registry compilation only sees the selected subset and swaps the entire generation atomically.
@@ -195,7 +201,7 @@ export class MountRuntime {
     this.client = client;
     this.discoveryAbort = controller;
     this.discoveryIdentity = credential?.identityKey;
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
       if (!this.stopping && this.client === client) void this.refresh().catch(() => undefined);
     });
     client.onclose = () => {
@@ -299,7 +305,7 @@ export class MountRuntime {
     this.timer.unref();
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     if (this.closing) return this.closing;
     this.stopping = true;
     this.clearTimer();

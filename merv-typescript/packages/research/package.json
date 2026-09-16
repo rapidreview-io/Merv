@@ -1,0 +1,22 @@
+{
+  "name": "@merv/research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./models": "./src/models.ts"
+  },
+  "dependencies": {
+    "@merv/contracts": "0.1.0",
+    "@merv/paper": "0.1.0",
+    "@merv/reflections": "0.1.0",
+    "@merv/consolidation": "0.1.0",
+    "@merv/api": "0.1.0",
+    "@merv/ui": "0.1.0",
+    "cordis": "4.0.0-rc.10",
+    "zod": "^3.25.0",
+    "@merv/knowledge": "0.1.0"
+  }
+}

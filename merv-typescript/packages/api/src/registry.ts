@@ -1,17 +1,19 @@
+import { filterAsync } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
-import { MervError, type Caller, type Scope } from '@merv/contracts';
+import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
 import type {
   AnyToolDefinition,
   RemoteToolDefinition,
   RemoteToolDescription,
   ToolCatalog,
   ToolDefinition,
+  ToolDescription,
   ToolInvocation,
   Tools,
 } from './types.js';
 import { cloneJson, compileSchema } from './schema.js';
-import type { AccessPolicy } from '@merv/access/types';
+import type { ToolPolicy } from '@merv/contracts';
 
 export class ApiError extends MervError {
   constructor(
@@ -25,9 +27,38 @@ export class ApiError extends MervError {
   }
 }
 
-export type ToolDescription = RemoteToolDescription;
+export type { ToolDescription } from './types.js';
 export function isRemoteTool(tool: AnyToolDefinition): tool is RemoteToolDefinition {
   return !!tool && typeof tool === 'object' && 'kind' in tool && tool.kind === 'mcp';
+}
+
+/** Canonical public metadata; project selection is a transport envelope, not handler input. */
+export function describeTool(tool: AnyToolDefinition): ToolDescription {
+  if (isRemoteTool(tool)) {
+    const { handler: _handler, kind: _kind, ...description } = tool;
+    return structuredClone(description);
+  }
+  const schema = zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
+  if (!('type' in schema) || schema.type !== 'object')
+    throw new ApiError('invalid_tool', 'Tool input must be an object');
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: {
+      ...schema,
+      type: 'object',
+      properties: {
+        ...('properties' in schema ? schema.properties : {}),
+        projectId: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Project scope. Human sessions and account machine keys must select a project; actor tokens and project machine keys default to their fixed project. Access is checked by the server.',
+        },
+      },
+    },
+    annotations: { readOnlyHint: tool.readOnly ?? false, openWorldHint: false },
+  };
 }
 
 interface Entry {
@@ -45,8 +76,12 @@ interface CatalogState {
   owned: Set<Entry>;
 }
 const namePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+const publishedNamePattern = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
 const mountPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const namespace = 'mount__';
+const namespace = '_';
+
+/** Reserved even while a catalog is absent, so remote arguments keep their meaning. */
+export const isMountedToolName = (name: string): boolean => name.startsWith(namespace);
 
 /** Registrations own admission and draining; remote catalogs swap as one validated generation. */
 export class ToolRegistry implements Tools {
@@ -57,35 +92,32 @@ export class ToolRegistry implements Tools {
 
   constructor(
     private readonly scope: Pick<Scope, 'require'>,
-    private readonly access?: Pick<AccessPolicy, 'allows' | 'require'>,
+    private readonly access?: Pick<ToolPolicy, 'allows' | 'require'> &
+      Partial<Pick<ToolPolicy, 'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'>>,
   ) {}
 
   private open(): void {
     if (this.stopping) throw new ApiError('unavailable', 'Tool registry is stopping', 503);
   }
 
-  private prepare(definition: AnyToolDefinition): Entry {
-    if (!namePattern.test(definition.name)) throw new ApiError('invalid_tool', 'Invalid tool name');
+  private prepare(definition: AnyToolDefinition, remote?: Entry['remote']): Entry {
+    if (!publishedNamePattern.test(definition.name))
+      throw new ApiError('invalid_tool', 'Invalid tool name');
     if (typeof definition.handler !== 'function')
       throw new ApiError('invalid_tool', 'Tool handler is required');
-    if (isRemoteTool(definition)) return this.prepareRemote(definition);
-    const inputSchema = zodToJsonSchema(definition.inputSchema, {
-      $refStrategy: 'none',
-      target: 'jsonSchema7',
-    });
-    if (!('type' in inputSchema) || inputSchema.type !== 'object')
-      throw new ApiError('invalid_tool', 'Tool input must be an object');
+    if (isRemoteTool(definition)) {
+      if (!remote)
+        throw new ApiError('catalog_required', 'Remote tools require a catalog identity');
+      return this.prepareRemote(definition, remote);
+    }
+    // Schema changes require a new registration, keeping validation paired with its catalog.
+    const inputSchema = definition.inputSchema;
     return {
       name: definition.name,
       definition,
-      description: {
-        name: definition.name,
-        description: definition.description,
-        inputSchema: inputSchema as ToolDescription['inputSchema'],
-        annotations: { readOnlyHint: definition.readOnly ?? false, openWorldHint: false },
-      },
-      parse(input) {
-        const parsed = definition.inputSchema.safeParse(input);
+      description: describeTool({ ...definition, inputSchema }),
+      async parse(input) {
+        const parsed = await inputSchema.safeParseAsync(input);
         if (!parsed.success)
           throw new ApiError(
             'invalid_input',
@@ -100,7 +132,7 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  private prepareRemote(input: RemoteToolDefinition): Entry {
+  private prepareRemote(input: RemoteToolDefinition, remote: NonNullable<Entry['remote']>): Entry {
     const { kind: _kind, handler, ...metadata } = input;
     let description: RemoteToolDescription;
     try {
@@ -124,10 +156,7 @@ export class ToolRegistry implements Tools {
       name: definition.name,
       definition,
       description,
-      remote: {
-        mountId: definition.name.slice(namespace.length).split('__')[0]!,
-        toolName: definition.name.slice(definition.name.indexOf('__', namespace.length) + 2),
-      },
+      remote,
       running: new Set(),
       parse(input) {
         let data: unknown;
@@ -189,7 +218,7 @@ export class ToolRegistry implements Tools {
       );
     if (!definition || typeof definition.name !== 'string')
       throw new ApiError('invalid_tool', 'Tool name is required');
-    if (definition.name.startsWith(namespace))
+    if (isMountedToolName(definition.name))
       throw new ApiError('reserved_namespace', 'Mounted tool namespaces are owned by catalogs');
     if (this.entries.has(definition.name))
       throw new ApiError('duplicate_tool', `Tool already registered: ${definition.name}`, 409);
@@ -229,13 +258,16 @@ export class ToolRegistry implements Tools {
             !namePattern.test(definition.name)
           )
             throw new ApiError('invalid_tool', 'Catalog entries must be named MCP tools');
-          const name = `${namespace}${mountId}__${definition.name}`;
+          const name = `${namespace}${mountId}.${definition.name}`;
           if (candidate.has(name))
             throw new ApiError('duplicate_tool', `Duplicate remote tool: ${definition.name}`, 409);
           const current = this.entries.get(name);
           if (current && !catalog.current.has(current))
             throw new ApiError('duplicate_tool', `Tool already registered: ${name}`, 409);
-          candidate.set(name, this.prepare({ ...definition, name }));
+          candidate.set(
+            name,
+            this.prepare({ ...definition, name }, { mountId, toolName: definition.name }),
+          );
         }
         this.open();
         if (!catalog.active)
@@ -266,24 +298,38 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  private visible(caller?: Caller): Entry[] {
-    if (caller) this.scope.require(caller, 'read');
-    return [...this.entries.values()].filter(
-      (entry) =>
-        !caller ||
-        !entry.remote ||
-        this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName) === true,
+  private sessionAccess(): Pick<
+    ToolPolicy,
+    'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'
+  > {
+    const access = this.access;
+    if (!access?.allowsTool || !access.prepare || !access.validate || !access.run || !access.cancel)
+      throw new ApiError('session_unavailable', 'Session policy is unavailable', 503);
+    return access as Pick<ToolPolicy, 'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'>;
+  }
+
+  private async visible(caller?: Caller): Promise<Entry[]> {
+    if (caller) await this.scope.require(caller, 'read');
+    const policy = caller?.session ? this.sessionAccess() : undefined;
+    return await filterAsync(
+      [...this.entries.values()],
+      async (entry) =>
+        (!caller || !policy || (await policy.allowsTool(caller, entry.name))) &&
+        (!caller ||
+          !entry.remote ||
+          (await this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName)) ===
+            true),
     );
   }
 
-  describe(caller?: Caller): ToolDescription[] {
-    return this.visible(caller)
+  async describe(caller?: Caller): Promise<ToolDescription[]> {
+    return (await this.visible(caller))
       .map((entry) => structuredClone(entry.description))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  list(caller?: Caller): AnyToolDefinition[] {
-    return this.visible(caller)
+  async list(caller?: Caller): Promise<AnyToolDefinition[]> {
+    return (await this.visible(caller))
       .map(({ definition, description }) =>
         isRemoteTool(definition)
           ? { ...structuredClone(description), kind: 'mcp' as const, handler: definition.handler }
@@ -296,16 +342,42 @@ export class ToolRegistry implements Tools {
     this.open();
     const entry = this.entries.get(name);
     if (!entry) throw new ApiError('unknown_tool', `Unknown tool: ${name}`, 404);
-    this.scope.require(caller, 'read');
-    if (entry.remote) {
-      if (!this.access)
-        throw new ApiError('tool_forbidden', 'Remote tools require an explicit access policy', 403);
-      this.access.require(caller, entry.remote.mountId, entry.remote.toolName);
-    }
-    const parsed = entry.parse(input);
-    const operation = Promise.resolve().then(async () =>
-      entry.complete(await entry.definition.handler(caller, parsed)),
-    );
+    // Admission owns the entire operation, including asynchronous authentication and parsing.
+    const operation = Promise.resolve().then(async () => {
+      await this.scope.require(caller, 'read');
+      if (entry.remote) {
+        if (!this.access)
+          throw new ApiError(
+            'tool_forbidden',
+            'Remote tools require an explicit access policy',
+            403,
+          );
+        await this.access.require(caller, entry.remote.mountId, entry.remote.toolName);
+      }
+      const policy = caller.session ? this.sessionAccess() : undefined;
+      const prepared = await policy?.prepare(caller, name, input as Data);
+      try {
+        const dispatchCaller = prepared?.caller ?? caller;
+        const parsed = await entry.parse(prepared ? prepared.input : input);
+        await policy?.validate(dispatchCaller, name, parsed as Data);
+        let completed: ToolInvocation | undefined;
+        const dispatch = async (activeCaller: Caller) => {
+          await this.scope.require(activeCaller, 'read');
+          await policy?.validate(activeCaller, name, parsed as Data);
+          if (entry.remote)
+            await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
+          const result = await entry.definition.handler(activeCaller, parsed);
+          completed = entry.complete(result);
+          return result;
+        };
+        const result = prepared
+          ? await policy!.run(prepared, (activeCaller) => dispatch(activeCaller))
+          : await dispatch(caller);
+        return completed ?? entry.complete(result);
+      } finally {
+        if (prepared) await policy!.cancel(prepared);
+      }
+    });
     entry.running.add(operation);
     this.running.add(operation);
     try {

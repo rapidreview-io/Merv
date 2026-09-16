@@ -1,0 +1,148 @@
+{
+  "date": "2026-09-15",
+  "scope": "Independent machine Runner plugin for native scratch assignments; durable local launch intent, owned process groups, scoped credentials and restart recovery",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-runner-full-suite.log",
+    "tests": 464,
+    "pass": 464,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "checks": {
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-runner-typecheck.log"
+    },
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-runner-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-runner-ui-typecheck.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-runner-ui-build.log"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-runner-format.log"
+    },
+    "compiledSupervisor": {
+      "status": "passed",
+      "log": "/private/tmp/merv-runner-compiled-smoke.log"
+    }
+  },
+  "regressions": [
+    "Pending request and derived secret survive lost lease responses; stable attached launch identity and guardian SQL claim prevent duplicate workers",
+    "Actual child calls scoped MCP, creates attributed artifact/checkpoint and receives no controller source credential",
+    "Controller SIGKILL and replacement reconnect to the same live process; a second controller cannot acquire ownership or stop the first controller jobs",
+    "Pause preserves active work; halt and source refusal stop owned processes; transient outage and unreachable ownership retain occupied slots",
+    "Independent guardian/group-owner deadlines; process-tree cleanup; authenticated IPC; no saved PID kill targets",
+    "Session get reconciles expiry and current workflow eligibility without activation or context rendering",
+    "Strict remote settings never replace local harness/executable/argv; controls correlate project/session/runner and lifecycle state",
+    "Source-level lease refusal stops all owned work; session_closed between get and attach affects only that session",
+    "Command profiles refuse read-only work; declared Git workspaces fail before attach/spawn/activation",
+    "Native profile disables unrelated inherited integrations, uses fixed MCP tools and keeps session credential out of model-generated shell environment",
+    "Runner-only Cordis activation waits for its async effect, and SIGINT/SIGTERM await disposal",
+    "Compiled ProcessHost launches through copied supervisor.mjs using plain Node"
+  ],
+  "composition": {
+    "pluginEntrypoints": 33,
+    "serviceProviders": 19,
+    "serverProviders": 18,
+    "machineProviders": 1,
+    "directCordisDependencies": 68,
+    "defaultServerEntries": 30,
+    "domainApiEntries": 23,
+    "domainTools": 32,
+    "withUiTools": 34,
+    "newPlugin": "merv-runner",
+    "inject": [],
+    "newAgentTools": 0
+  },
+  "live": {
+    "status": "passed",
+    "record": "verification/runner-live.json",
+    "freshAgents": 2,
+    "shellCalls": 2,
+    "successfulToolCalls": 9,
+    "failedToolCalls": 0,
+    "workStarts": 2,
+    "finalTaskState": "done",
+    "finalReviewVerdict": "pass",
+    "allLocalLaunchesConfirmedStopped": true,
+    "timing": "Live acceptance preceded final classification of source-level versus per-session authentication refusal; final deterministic suite covers that refinement."
+  },
+  "review": {
+    "local": "Independent process, controller/client and CLI/integration reviews completed; final bounded review has no remaining actionable findings.",
+    "fixes": [
+      "Explicit IPC projection bypasses logging redaction hooks only for intended in-memory command transport",
+      "Closed remote-settings schema and whitelisted local projection prevent executable injection",
+      "Control response identities and lifecycle states are correlated before saving metadata or extending deadlines",
+      "Global shutdown classifies source-level lease failures separately from a concurrently closed individual session",
+      "Awaited async Cordis effect makes readiness reflect the provided runner",
+      "Authentic guardian inspection repairs conservative uncertainty without respawning"
+    ],
+    "regressionLog": "/private/tmp/merv-runner-single-session-refusal.log",
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "sha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review rejected sending the prepared internal architecture prompt without approval of that specific payload/destination. No retry or new payload export occurred."
+    }
+  },
+  "architecture": {
+    "json": "docs/architecture/current-dependencies.json",
+    "image": "docs/architecture/current-dependencies.png",
+    "drawnCordisEdges": 42,
+    "adapterRowEdges": 26,
+    "separateHttpConnections": 1,
+    "dimensions": [2800, 3380],
+    "visuallyChecked": true
+  },
+  "remaining": [
+    "Git base resolution, isolated/persistent worktrees, output capture and durable publication receipts",
+    "Machine pairing, source credential rotation for an existing ledger, operational settings editor, trace delivery and telemetry",
+    "Additional native harnesses and stronger hostile-process isolation where required",
+    "Real experiment/reflection/consolidation programs",
+    "Asynchronous State and Postgres provider",
+    "Production shared login and real-service deployment verification"
+  ],
+  "runtime": {
+    "node": "v22.13.1"
+  },
+  "sourceSha256": {
+    "package.json": "b2d6d649b7d20b5ac81ac5fcf30ffed524bf5cc9d4cf2c4f4ce45b8e707569a5",
+    "package-lock.json": "2f59cf741e7a16e8d3295a9816dc4619e3c199f23ba6b897210590467fb342d9",
+    ".gitignore": "eb6ada2682b1cb5429c1d239a860b023c6e58d4b1534d4435f4cf2f76a37f09c",
+    "src/cli.ts": "2498755ab4c3946d53797cf1dfa13a628c879ff0e61fca19e57b069dc7314bbd",
+    "config/runner.example.json": "98b779b9216a261783cf8e3f4e8eb79ec396d3e037896e2a4d5b79b39c4cd1a8",
+    "packages/sessions/src/index.ts": "bbcfc1669483a718ce674170b80d65f349ac3cc75c8edc9c9176993ace956bf2",
+    "tests/sessions.test.ts": "c10da311f18921aee08051c6b8bdb2b2d5ea19d3daf6faa55fb0865b194ee73a",
+    "tests/boundaries.test.ts": "4a46c25aa4bb013a68369e366b45edf78e033d27d5a2c966fc652091157016d6",
+    "scripts/copy-runtime-assets.ts": "642935174b6c9fb3af006736c7a64d16df8a966537e02a2c36dfe18ddf9044d5",
+    "scripts/live-runner.ts": "f1590c1eb43825f91f1e85ac02fa09fd9848df5cae132f232de5c0124b985dc5",
+    "scripts/dependency-map.ts": "58feea08cc59196d0fbbf24d154847cff33b44ad1ea353e7bceb954068975d78",
+    "scripts/render-dependencies.mjs": "8f90df3705ba769aa1273e74d36e45249009ba89054ad0d067556677004dc65f",
+    "packages/runner/README.md": "9f3d1de08e4188288c426f333a9325de32166c4dbfe8152623af326b7c5fab8e",
+    "packages/runner/package.json": "4ff5b6b1cc09eef1377d24a03a165b62450d7122a40570bec4831084cde93585",
+    "packages/runner/src/client.ts": "f0e7aaf6a4618ea324e75282e79cc8501c2177fe77274b20c3064b638db3b5b8",
+    "packages/runner/src/index.ts": "1a48157de62cd25c6b19b9ecdacfba9e111f8b436b0ac5c607a9785cd95686cd",
+    "packages/runner/src/ledger.ts": "ab9dc02370300308f5ef5737808bc8c3b1051537f287be64c9f45e33dce7559e",
+    "packages/runner/src/process-host.ts": "110f97e504c38674af337aed1adfffc86fa39aa1b15900913444488647591be4",
+    "packages/runner/src/profiles.ts": "5c607947ca13f635507fa86f13975db830b5ce6f9dc84f41b2f6e417fc16c9db",
+    "packages/runner/src/supervisor.mjs": "f1f09d97161bbda5d21014706a30d68bf20f3b5a2098091f7910af6783c5ccd3",
+    "packages/runner/src/types.ts": "bf89f01161f68f5c8b6fb85eb6e7d2cb78ad300418045483f5bf445b0cd0e907",
+    "tests/runner-cli.test.ts": "fc2b75e2a86e35d6225bab64cc0ab6eaed3c3ebbc445a40f6f724bd1f748250b",
+    "tests/runner-client.test.ts": "5fdee857e114562f18204dcad4e1ea886538c9a0ebb65dbaa3d0bb8829bdceb6",
+    "tests/runner-integration.test.ts": "14933dffed0c8100fa9146fa2737b3c8662fe2fbf100e4c1e4015bcf44c689de",
+    "tests/runner-process.test.ts": "4b9c727a45a66e8d0166b99261425dbd1b77f158f347352a3be890dd6fa838ec",
+    "tests/runner-profiles.test.ts": "7cecd797f1e10e7a11024c7959c0918c1db2e516e95b961e238b105b5f26fa87",
+    "tests/fixtures/runner-controller.mjs": "444bf0104806d4466dbdffea465d87cbeb386be306d0eb40aa5e1b955986137e",
+    "tests/fixtures/runner-worker.mjs": "e358101a1a2a22b67115144857f78f0112dc2809e33b2d573e6b62fea65a91c6"
+  }
+}

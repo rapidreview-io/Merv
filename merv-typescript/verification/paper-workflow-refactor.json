@@ -1,0 +1,43 @@
+{
+  "date": "2026-09-15",
+  "result": "verified",
+  "scope": "Paper as document store; scientific workflow-owned writing; artifact-based consolidation",
+  "dependencies": {
+    "paper": [
+      "state",
+      "scope",
+      "artifacts"
+    ],
+    "experimentsAdds": [
+      "paper"
+    ],
+    "consolidationRemoves": [
+      "reflections"
+    ],
+    "edges": 144
+  },
+  "removedTools": [
+    "paper.begin_update",
+    "paper.publish",
+    "paper.cancel"
+  ],
+  "tests": {
+    "total": 683,
+    "passed": 682,
+    "failed": 0,
+    "skipped": 1,
+    "log": "/private/tmp/merv-refactor-suite-final.log"
+  },
+  "build": {
+    "backend": "passed",
+    "frontendTypecheck": "passed",
+    "frontendBuild": "passed"
+  },
+  "browser": {
+    "syntheticHttpCalls": 24,
+    "reviewedPaperVisible": true,
+    "artifactBasedConsolidationCreated": true,
+    "temporaryResourcesClosed": true
+  },
+  "compatibility": "docs/PAPER_WORKFLOW_REFACTOR.md"
+}

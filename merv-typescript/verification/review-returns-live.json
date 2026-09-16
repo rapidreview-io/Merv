@@ -1,0 +1,76 @@
+{
+  "date": "2026-09-15",
+  "status": "passed",
+  "scope": "Generic review returnTo transport, assessment persistence and domain route application through real native reviewers and production Sessions/Runner/Reviews services.",
+  "command": "node --import tsx scripts/live-review-returns.ts /private/tmp/merv-native-review-returns-live-20260915-01",
+  "script": "scripts/live-review-returns.ts",
+  "report": "/private/tmp/merv-native-review-returns-live-20260915-01/report.json",
+  "reportSha256": "0b296af83b67ccbb919b1b4ea1bc93edb0b4eadb3b876b33cd681239c6c7ff19",
+  "attempts": 1,
+  "freshAgents": 2,
+  "successfulMcpCalls": 7,
+  "failedMcpCalls": 0,
+  "shellCalls": 0,
+  "reviews": [
+    {
+      "reviewId": "review_25c750f8268e4030bbfe842741c5d037",
+      "verdict": "fail",
+      "returnTo": "planned",
+      "fullArtifactReads": 1,
+      "transcriptMatchesStoredAssessment": true,
+      "exactCommandReceipt": true,
+      "workflowRevision": 1,
+      "originalWorkerAndSource": true
+    },
+    {
+      "reviewId": "review_c7f62c06a89949e794e0e0115c82c860",
+      "verdict": "needs_changes",
+      "returnTo": "running",
+      "fullArtifactReads": 2,
+      "transcriptMatchesStoredAssessment": true,
+      "exactCommandReceipt": true,
+      "workflowRevision": 1,
+      "originalWorkerAndSource": true
+    }
+  ],
+  "distinctWorkerActors": 2,
+  "distinctNativeThreads": 2,
+  "allPinnedArtifactsReadFullyBeforeVerdict": true,
+  "reviewEvents": 2,
+  "domainApplicationEvents": 2,
+  "commandReceipts": 2,
+  "independentInspection": {
+    "status": "passed",
+    "rootReport": "/private/tmp/merv-review-return-root-audit.json",
+    "rootReportSha256": "4b7b11664915c626238555a7d1dea5d3eeae2591bc513f33e6d4f62feadffd4b",
+    "nativeAgentAudit": "/private/tmp/merv-native-review-returns-live-20260915-01-audit.json",
+    "nativeAgentAuditSha256": "c8364a2a1c4a07c34e452e63d9ff736cfba40bfc1792300e44951eda6dbb140f",
+    "actualTranscriptArgumentsAndResultsInspected": true,
+    "storedAssessmentsAndReceiptsCompared": true,
+    "artifactBytesAndHashesCompared": true,
+    "rawBearerPatternsAbsentFromSanitizedReport": true
+  },
+  "cleanup": {
+    "report": "/private/tmp/merv-native-review-returns-live-20260915-01/cleanup.json",
+    "sha256": "288568b9e19d6db14e15f1d6fe8762176975179d996e6f4e96800487c552e641",
+    "allLaunchesStopped": true,
+    "allWorkspaceLifecyclesClosed": true,
+    "pendingRequests": 0,
+    "ownedSlots": 0,
+    "appStopped": true,
+    "cleanupErrors": 0,
+    "guardianSocketsAbsent": true,
+    "noMatchingNativeOrGuardianProcess": true,
+    "serverListenerClosed": true,
+    "scratchDirectoriesRetained": true
+  },
+  "limits": [
+    "Synthetic registered owner and immutable fixture reviews; no production Experiment lifecycle, attempt records or scientific acceptance is implemented.",
+    "The plan approval in the execution fixture is a seeded document, not a prior native design-review run.",
+    "The evidence producer is a synthetic credentialed actor; the two reviewers are fresh native leased workers.",
+    "planned and running are terminal only in this bounded fixture, so no producer execution follows the routed verdict."
+  ],
+  "sourceSha256": {
+    "scripts/live-review-returns.ts": "4fec7ef6ec4f5183803b687de7b82b054c40fd8c9ebc28b53fa94f7c5a7e55a9"
+  }
+}

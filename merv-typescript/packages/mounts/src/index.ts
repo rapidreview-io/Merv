@@ -1,10 +1,16 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError } from '@merv/contracts';
+import { check, MervError, type ToolPolicy } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
-import type { CredentialProvider } from '@merv/credentials/types';
-import type { AccessPolicy } from '@merv/access/types';
-import type { MountConfig, Mounts, MountsConfig, MountStatus } from './types.js';
+import { EnvironmentCredentials } from './credentials.js';
+import type {
+  CredentialBinding,
+  CredentialProvider,
+  MountConfig,
+  Mounts,
+  MountsConfig,
+  MountStatus,
+} from './types.js';
 import { MountRuntime } from './runtime.js';
 
 export type { MountConfig, Mounts, MountsConfig, MountStatus } from './types.js';
@@ -38,7 +44,11 @@ const mountSchema = z
   })
   .strict();
 const configuration = z
-  .object({ mounts: z.array(mountSchema).default([]) })
+  .object({
+    mounts: z.array(mountSchema).default([]),
+    // The resolver validates exact bindings before any catalogs or connections are created.
+    bindings: z.array(z.custom<CredentialBinding>()).default([]),
+  })
   .strict()
   .refine(
     (config) => new Set(config.mounts.map((mount) => mount.id)).size === config.mounts.length,
@@ -58,7 +68,7 @@ export class MountManager implements Mounts {
   constructor(
     private readonly tools: Tools,
     private readonly credentials: CredentialProvider,
-    private readonly access: AccessPolicy,
+    private readonly access: ToolPolicy,
     config: MountsConfig = { mounts: [] },
   ) {
     const parsed = configuration.safeParse(config);
@@ -77,14 +87,16 @@ export class MountManager implements Mounts {
   }
 
   async start(): Promise<void> {
-    await Promise.allSettled([...this.runtimes.values()].map((runtime) => runtime.refresh(true)));
+    await Promise.allSettled(
+      [...this.runtimes.values()].map(async (runtime) => await runtime.refresh(true)),
+    );
   }
   status(): MountStatus[] {
     return [...this.runtimes.values()]
       .map((runtime) => runtime.status())
       .sort((a, b) => a.id.localeCompare(b.id));
   }
-  reconnect(id: string): Promise<void> {
+  async reconnect(id: string): Promise<void> {
     if (this.stopping)
       return Promise.reject(new MervError('mounts_stopped', 'Mounts are stopped', 503));
     const runtime = this.runtimes.get(id);
@@ -92,7 +104,7 @@ export class MountManager implements Mounts {
       return Promise.reject(new MervError('mount_not_found', 'Mount is not configured', 404));
     if (!this.enabled.get(id))
       return Promise.reject(new MervError('mount_disabled', 'Mount is disabled', 409));
-    return runtime.refresh(true);
+    return await runtime.refresh(true);
   }
   setEnabled(id: string, enabled: boolean): Promise<void> {
     if (this.stopping)
@@ -136,7 +148,7 @@ export class MountManager implements Mounts {
     void pending.then(settled, settled);
     return pending;
   }
-  close(): Promise<void> {
+  async close(): Promise<void> {
     if (this.closing) return this.closing;
     this.stopping = true;
     // Each stop performs withdrawal synchronously before its first await. Start all of them now.
@@ -154,11 +166,12 @@ export class MountManager implements Mounts {
 export const mountsPlugin = {
   name: 'merv-mounts',
   Config: configuration,
-  inject: ['tools', 'credentials', 'access'],
+  inject: ['tools', 'scope'],
   async apply(ctx: Context, config: MountsConfig = { mounts: [] }) {
-    const manager = new MountManager(ctx.tools, ctx.credentials, ctx.access, config);
+    const credentials = new EnvironmentCredentials(ctx.scope, config.bindings);
+    const manager = new MountManager(ctx.tools, credentials, ctx.scope.toolPolicy, config);
     // Keep catalog withdrawal independent of consumers draining the public status service.
-    ctx.effect(() => () => manager.close());
+    ctx.effect(() => async () => manager.close());
     ctx.provide('mounts', manager);
     await manager.start();
   },

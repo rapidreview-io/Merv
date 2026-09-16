@@ -1,0 +1,275 @@
+{
+  "status": "passed",
+  "localRunDirectory": "/private/tmp/merv-user-key-live-20260915-01",
+  "identityMode": "human-issued project/account machine keys under synthetic signed owner login",
+  "freshAgents": 3,
+  "serverRestarts": 2,
+  "counts": {
+    "toolCalls": 40,
+    "successfulCalls": 37,
+    "expectedRoleDenials": 3,
+    "guidanceCalls": 10,
+    "assignmentCalls": 3,
+    "beginCalls": 4,
+    "contextCalls": 2,
+    "transportErrors": 0
+  },
+  "userKeyChecks": {
+    "humanOwnerHttpIssuance": true,
+    "accountAndProjectGrants": true,
+    "explicitMcpProjectSelection": true,
+    "twoWorkerKeyRotations": true,
+    "oldBearersRefusedOverHttp": true,
+    "attributionGrantAndExpiryPreserved": true,
+    "rotatedReviewerAuthenticatedAfterRestart": true,
+    "currentAndFutureMembershipRoles": true,
+    "crossProjectArtifactRefused": true,
+    "ownerCanManageAfterLeavingIssuanceProject": true,
+    "accountRotationUsingAnotherMembership": true,
+    "ancestorRevocationKillsLaterSuccessor": true,
+    "independentKeyAndHumanLoginPreserved": true,
+    "domainWritesRetainKeyAndMembershipProvenance": true
+  },
+  "assignmentChecks": {
+    "bothAgentsReadAssignments": true,
+    "bothAgentsRepeatedBegin": true,
+    "exactlyTwoStartEvents": true,
+    "startsSurvivedTwoRestarts": true,
+    "startAttributionMatchesActors": true
+  },
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "structuredReviewPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "phases": [
+    {
+      "phase": "producer",
+      "threadId": "01a0a36b-8403-79b2-828a-e53d54ec145a",
+      "exitCode": 0,
+      "toolCalls": 13,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.create",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed"
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    },
+    {
+      "phase": "reviewer",
+      "threadId": "01a0a36c-af58-7c32-8774-84e377228879",
+      "exitCode": 0,
+      "toolCalls": 18,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "review.start",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.begin",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "task.context",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "phase": "observer",
+      "threadId": "01a0a36d-ff2e-7ca3-b113-82275d68c20f",
+      "exitCode": 0,
+      "toolCalls": 9,
+      "calls": [
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "completed"
+        },
+        {
+          "tool": "review.get",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.whoami",
+          "status": "completed"
+        },
+        {
+          "tool": "task.get",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed"
+        },
+        {
+          "tool": "actor.create",
+          "status": "failed",
+          "errorCode": "forbidden"
+        }
+      ]
+    }
+  ],
+  "taskId": "wf_bb30d85189e54d1ba8907207bc8056f2",
+  "taskState": "done",
+  "taskRevision": 2,
+  "workStarts": [
+    {
+      "instanceId": "wf_bb30d85189e54d1ba8907207bc8056f2",
+      "projectId": "project_96dbdfd665db4ca3b89fd56ad435e56e",
+      "workflow": "task",
+      "version": 2,
+      "state": "in_progress",
+      "revision": 0,
+      "actorId": "actor_f8c862936214405fb679ee0d2f98d876",
+      "startedAt": "2026-09-15T04:55:52.927Z",
+      "eventId": 11
+    },
+    {
+      "instanceId": "wf_bb30d85189e54d1ba8907207bc8056f2",
+      "projectId": "project_96dbdfd665db4ca3b89fd56ad435e56e",
+      "workflow": "task",
+      "version": 2,
+      "state": "in_review",
+      "revision": 1,
+      "actorId": "actor_f9270f605cad4d33a6f344d17a820587",
+      "startedAt": "2026-09-15T04:57:19.578Z",
+      "eventId": 24
+    }
+  ],
+  "sourceAttributedEvents": 16,
+  "negotiatedProtocols": ["2025-06-18"],
+  "rawReportSha256": "0b0eabbb733d64f19ca76b83d1fcd3a6189253e1b35fd0560ec85a325a3a790c",
+  "transcriptSha256": {
+    "producer": "68932c37a3308de9139bc1a1958f506c458fb704790352cf81200d42b016291d",
+    "reviewer": "b9f47d4e4cfc86b4bcf6c47a11a3b5558b44dc60574ff0fbcffe0e5bfd1f4214",
+    "observer": "92c7a8b0c2aa99a3807465340317f026cb3ee9baac95c6643ccf6971422b3026"
+  },
+  "credentialsIncluded": false,
+  "realSupabaseBrowserLogin": false,
+  "timing": "Live key run preceded the final legacy actor-prefix routing fix; valid user-key dispatch is unchanged and the final 369-test suite covers both formats."
+}

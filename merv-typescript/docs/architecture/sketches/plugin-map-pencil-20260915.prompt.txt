@@ -1,0 +1,83 @@
+Use case: infographic-diagram.
+Draw a technically accurate, beautifully hand-drawn PENCIL ARCHITECTURE DEPENDENCY MAP on a warm ivory sketchbook page. Wide landscape, high resolution, extremely readable. Fine graphite strokes, subtle imperfect pencil outlines, neat architect's handwritten lettering, light cross-hatching and paper grain, small spiral-binding holes at far left. Flat top-down scan with no perspective distortion. Predominantly graphite, no colorful UI, no photorealistic objects obscuring diagram. Lots of breathing room. This is a BIG PICTURE plugin map, not a workflow sequence or tool catalog.
+
+TITLE exactly: "MERV — THE PLUGIN MAP"
+Subtitle: "Current TypeScript / Cordis architecture"
+Use a faint large enclosing boundary labelled "MERV SERVER · Cordis manages activation and unloading".
+Use these SIX primary server cluster boxes, plus a small Mounts box. Every named service listed below is a real independent plugin; a large outline is only a visual grouping. Do not imply a cluster is itself one plugin.
+Layout: slim FRONT DOOR across upper-left/top, ACCESS upper-right, three main boxes across middle (RESEARCH at left, COORDINATION at center, EVIDENCE at right), broad FOUNDATION below. Put MOUNTS at far upper-right edge beside ACCESS. Put a separate RUNNER machine outside server at lower-left and a separate EXTERNAL SERVICES box outside server at far right. Design clean intentional routes with visible arrowheads and no lines over lettering.
+
+BOX CONTENT EXACT:
+FRONT DOOR
+"API · Tools · UI"
+small subtitle "HTTP / MCP and browser"
+small outlined inset "23 adapters connect domain plugins to API, Tools and UI"
+
+RESEARCH
+"Claims — research statements"
+"Tasks — managed work"
+"Experiments — plans, attempts & results"
+"Knowledge — research inventory & snapshots"
+
+COORDINATION
+"Workflows — gates & next actions"
+"Sessions — assignments & recovery"
+"Code — commits & capture references"
+
+EVIDENCE
+"Artifacts — file metadata"
+"Reviews — independent verdicts"
+"Context Builder — starting context"
+"Feed — project activity"
+
+ACCESS
+"Identity — verify shared users"
+"Access — tool grants"
+"Credentials — upstream secrets"
+
+FOUNDATION
+"State — durable records"
+"Scope — actors, projects & permissions"
+"Blobs — file bytes"
+"Domain Events — durable events"
+Small pencil annotation below State and Scope: "The two most shared dependencies"
+Small annotation: "Scope → State   ·   Domain Events → State"
+Small annotation: "Artifacts → Blobs (file storage)"
+
+MOUNTS
+"Mounts"
+"Optional remote tools"
+
+RUNNER outside boundary, label "SEPARATE MACHINE"
+"Runner"
+"Launches agents & manages Git checkouts"
+
+EXTERNAL SERVICES outside boundary
+"Nisa MCP"
+"Sandboxes MCP"
+"Remote services, not local Cordis plugins"
+
+ARROW SEMANTICS: Solid pencil arrows A→B ALWAYS mean A depends on B. Group arrow means one or more plugins in A directly require a plugin in B, NOT that every member depends on every other member. Main exact grouped dependencies:
+RESEARCH → COORDINATION (label "workflow & code")
+RESEARCH → EVIDENCE (label "evidence, reviews, context")
+COORDINATION → EVIDENCE (label "Code uses Artifacts")
+COORDINATION → ACCESS (label "Sessions uses Access")
+MOUNTS → ACCESS (label "grants & credentials")
+MOUNTS → FRONT DOOR (label "Tools registry")
+FRONT DOOR → ACCESS (label "identity & grants")
+Draw four neat downward dependency branches to FOUNDATION from RESEARCH, COORDINATION, EVIDENCE and FRONT DOOR. They may share a clearly labelled dependency rail "Shared State / Scope dependencies" to reduce clutter, but remain visibly connected and have arrowheads toward FOUNDATION. ACCESS → FOUNDATION is labelled "Scope". Avoid more individual foundation arrows.
+For adapter wiring, the inset inside FRONT DOOR has a thin bracket labelled "Domain adapters" visually spanning the three middle domain clusters; this is an explicitly labelled aggregation, NOT a reversed dependency arrow. Caption at that bracket "Adapter → its owner + registry". The direct base-provider arrows above still apply.
+Two DASHED network connections, visually distinct from dependency arrows:
+RUNNER ↔ FRONT DOOR labelled "authenticated HTTP · Sessions / Code controls"
+MOUNTS ↔ EXTERNAL SERVICES labelled "MCP"
+Do NOT draw any solid Cordis dependency from Runner. Runner is independently configured on its machine.
+
+Bottom-left legend:
+"Solid → requires"
+"Dashed ↔ network connection"
+"Names = plugins · Boxes = groups"
+Bottom-right note:
+"23 service plugins + 23 adapters"
+"Grouped view; internal edges condensed"
+Tiny light pencil note outside main graph: "Next: Reflection → consolidation → publication (not implemented)"
+Accuracy constraints: do not put Reflection in the implemented server. Do not suggest Context Builder depends on Tasks or Experiments. Do not show Blobs depending on State. Do not show Scope depending on Identity. No older Nisa REST plugin. No invented plugins, tools or dependency arrows. Prioritize legible names, correctly directed arrows, cluster relationships, generous layout and authentic sketchbook pencil aesthetic over decoration.

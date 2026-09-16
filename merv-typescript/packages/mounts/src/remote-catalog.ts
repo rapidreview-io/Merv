@@ -142,7 +142,7 @@ export class RemoteCatalog {
       'This client already has a remote catalog controller',
       409,
     );
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
       if (!this.stopping) void this.refresh().catch(() => undefined);
     });
     controllers.set(client, this);
@@ -184,7 +184,7 @@ export class RemoteCatalog {
     return this.tail;
   }
 
-  close(): Promise<void> {
+  async close(): Promise<void> {
     if (this.closing) return this.closing;
     this.stopping = true;
     this.client.removeNotificationHandler('notifications/tools/list_changed');

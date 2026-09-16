@@ -1,0 +1,88 @@
+/** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
+export const postgresMigrations: Record<number, string> = {
+  1: `
+CREATE TABLE worker_sessions (
+ _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+        actor_id TEXT NOT NULL UNIQUE REFERENCES actors(id), instance_id TEXT NOT NULL, revision BIGINT NOT NULL,
+        owner_hash TEXT NOT NULL, runner_id TEXT NOT NULL, request_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('offered','active','released','expired')), session_json TEXT NOT NULL,
+        UNIQUE(owner_hash,runner_id,request_id)
+      );
+      CREATE UNIQUE INDEX worker_sessions_live_target ON worker_sessions(project_id,instance_id,revision)
+        WHERE status IN ('offered','active');
+      CREATE OR REPLACE FUNCTION worker_sessions_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Session history is retained', ERRCODE = '23514';
+  RETURN OLD;
+END;
+$merv$;
+CREATE TRIGGER worker_sessions_no_delete BEFORE DELETE ON worker_sessions
+FOR EACH ROW EXECUTE FUNCTION worker_sessions_no_delete_guard();
+      CREATE OR REPLACE FUNCTION worker_sessions_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.actor_id IS DISTINCT FROM OLD.actor_id OR
+          NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.owner_hash IS DISTINCT FROM OLD.owner_hash OR
+          NEW.runner_id IS DISTINCT FROM OLD.runner_id OR NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.token_hash IS DISTINCT FROM OLD.token_hash OR
+          NEW.fingerprint IS DISTINCT FROM OLD.fingerprint OR OLD.status IN ('released','expired') OR
+          (OLD.status='active' AND NEW.status='offered') OR
+          NULLIF((NEW.session_json::jsonb #> '{source}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{source}'), 'null'::jsonb) OR
+          NULLIF((NEW.session_json::jsonb #> '{assignment}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{assignment}'), 'null'::jsonb) OR
+          NULLIF((NEW.session_json::jsonb #> '{execution}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{execution}'), 'null'::jsonb) OR
+          NULLIF((NEW.session_json::jsonb #> '{lease}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{lease}'), 'null'::jsonb) OR
+          NULLIF((NEW.session_json::jsonb #> '{hardDeadline}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{hardDeadline}'), 'null'::jsonb) OR
+          NULLIF((NEW.session_json::jsonb #> '{createdAt}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{createdAt}'), 'null'::jsonb) OR
+          NULLIF((NEW.session_json::jsonb #> '{role}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{role}'), 'null'::jsonb) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Session assignment and delegation are immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER worker_sessions_immutable BEFORE UPDATE ON worker_sessions
+FOR EACH ROW EXECUTE FUNCTION worker_sessions_immutable_guard();
+`,
+  2: `
+CREATE TABLE session_workspaces (
+        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id),
+        attachment_json TEXT NOT NULL CHECK((attachment_json IS JSON)),
+        result_json TEXT CHECK(result_json IS NULL OR (result_json IS JSON))
+      );
+      CREATE OR REPLACE FUNCTION session_workspaces_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Workspace capture history is retained', ERRCODE = '23514';
+  RETURN OLD;
+END;
+$merv$;
+CREATE TRIGGER session_workspaces_no_delete BEFORE DELETE ON session_workspaces
+FOR EACH ROW EXECUTE FUNCTION session_workspaces_no_delete_guard();
+      CREATE OR REPLACE FUNCTION session_workspaces_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.session_id IS DISTINCT FROM OLD.session_id OR NEW.attachment_json IS DISTINCT FROM OLD.attachment_json OR
+          (OLD.result_json IS NOT NULL AND NEW.result_json IS DISTINCT FROM OLD.result_json) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Workspace attachment and final capture are immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_workspaces_immutable BEFORE UPDATE ON session_workspaces
+FOR EACH ROW EXECUTE FUNCTION session_workspaces_immutable_guard();
+`,
+  3: `
+ALTER TABLE worker_sessions DROP CONSTRAINT worker_sessions_actor_id_key;
+
+CREATE UNIQUE INDEX worker_sessions_live_actor ON worker_sessions(actor_id) WHERE status IN ('offered','active');
+CREATE OR REPLACE FUNCTION worker_sessions_agent_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NULLIF((NEW.session_json::jsonb #> '{agentId}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{agentId}'), 'null'::jsonb) OR
+NULLIF((NEW.session_json::jsonb #> '{agentSessionId}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{agentSessionId}'), 'null'::jsonb) OR
+NULLIF((NEW.session_json::jsonb #> '{contextEpoch}'), 'null'::jsonb) IS DISTINCT FROM NULLIF((OLD.session_json::jsonb #> '{contextEpoch}'), 'null'::jsonb) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Agent attribution is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER worker_sessions_agent_immutable BEFORE UPDATE ON worker_sessions
+FOR EACH ROW EXECUTE FUNCTION worker_sessions_agent_immutable_guard();
+`,
+};

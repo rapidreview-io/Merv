@@ -1,0 +1,213 @@
+{
+  "date": "2026-09-15",
+  "command": "node --import tsx scripts/live-code-proposals.ts /private/tmp/merv-native-proposals-live-20260915-01",
+  "log": "/private/tmp/merv-native-proposals-live-20260915-01.log",
+  "privateReport": "/private/tmp/merv-native-proposals-live-20260915-01/report.json",
+  "privateReportSha256": "47c332a6f33b4e141c3ca45e36208a8ae9feb0a48448686c708d8b7585ed8614",
+  "passed": true,
+  "source": "Disposable synthetic answer.txt Git repository and project; source actor credential. Native model access uses the installed Codex account. No internal repository export.",
+  "nativeRunner": true,
+  "protocolProxy": false,
+  "machines": 1,
+  "freshAgents": 2,
+  "shellCalls": 5,
+  "successfulCalls": 8,
+  "failedCalls": 0,
+  "phases": [
+    {
+      "threadId": "01a0a46c-70bb-7242-b050-2549b1d2abae",
+      "shellCalls": 4,
+      "calls": [
+        {
+          "tool": "code.commit",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "code.operation",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "step.propose",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "threadId": "01a0a46d-2848-72d2-88be-c453947050dc",
+      "shellCalls": 1,
+      "calls": [
+        {
+          "tool": "review.get",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false,
+          "artifactId": "art_29815417ab5645358e99b68b3bc321a3"
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false,
+          "artifactId": "art_c46601743bfe4c40ad7ec380eccd2446"
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    }
+  ],
+  "finalWorkflowState": "done",
+  "finalRevision": 2,
+  "review": {
+    "id": "review_a00fc4d058364cda8c348684d4fc23ee",
+    "producerId": "actor_8cdcb16381ae49469fb8ce91f4df4e63",
+    "reviewerId": "actor_0b44479328454c8aa7f0c3916f4f8ab3",
+    "status": "submitted",
+    "verdict": "pass",
+    "formatVersion": 2,
+    "claimId": "claim_65f728d6cde84a8f9b83c2dd02c0aaae",
+    "artifactIds": ["art_c46601743bfe4c40ad7ec380eccd2446", "art_29815417ab5645358e99b68b3bc321a3"],
+    "snapshotHash": "d42f342efbb873ec6ff4abe91e65880c55392558d9432f129209dfce22d18819",
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": ["art_29815417ab5645358e99b68b3bc321a3"],
+        "notes": "Independently calculated 6*7 with Python, obtaining 42. Read answer.txt as bytes: b'42\\n', hexadecimal 34320a. Independently read the committed blob with git show HEAD:answer.txt and obtained the same exact three bytes."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": ["art_29815417ab5645358e99b68b3bc321a3"],
+        "notes": "git rev-parse HEAD returned 6924fe3d043bd47be2db5c4f387a4bae223ab6e8, matching the required pinned commit and both immutable receipt artifacts. git rev-parse HEAD^{tree} returned da0d024e6b3569dc3a424a531f7791d232e6e48d, matching the receipt. git --no-optional-locks status --porcelain returned empty output with exit code 0, confirming a clean worktree."
+      }
+    ]
+  },
+  "proposal": {
+    "id": "codeprop_1934c3b424e249eb8e5cc23024ebe0f1",
+    "revision": 1,
+    "producer": {
+      "actorId": "actor_8cdcb16381ae49469fb8ce91f4df4e63",
+      "sessionId": "session_49cd852088214517830f19db3d2d9789",
+      "source": {
+        "actorId": "actor_5dc1f7b74ea24ea493e6ee8eb40f960e",
+        "credentialId": "credential_b8994cf807e34d0e84b03dc8921fdc13",
+        "expiresAt": null,
+        "kind": "actor",
+        "projectId": "project_b7c446fde9d7440aa032da310939e3b2"
+      }
+    },
+    "workflow": {
+      "name": "native-code-proposals",
+      "policyHash": "8095c815d763f398aa66f3c54758e50564bad8d1372f77c20e3aaadd5e1b83bc",
+      "registrationId": "execution_9fefcad2a50c4a3380580e2739201bf5",
+      "revision": 0,
+      "state": "work",
+      "version": 1
+    },
+    "manifestHash": "54eb2ab5e0b972f9d1e6ff2db32b902b7d9f774bd2d955e6528ed75a5bf8e535",
+    "manifestArtifact": {
+      "createdAt": "2026-09-15T09:36:50.837Z",
+      "createdBy": "actor_8cdcb16381ae49469fb8ce91f4df4e63",
+      "hash": "54eb2ab5e0b972f9d1e6ff2db32b902b7d9f774bd2d955e6528ed75a5bf8e535",
+      "id": "art_29815417ab5645358e99b68b3bc321a3",
+      "mediaType": "application/json",
+      "projectId": "project_b7c446fde9d7440aa032da310939e3b2",
+      "size": 3168,
+      "title": "Code proposal 1: native-code-proposals"
+    },
+    "artifacts": [
+      {
+        "createdAt": "2026-09-15T09:36:47.266Z",
+        "createdBy": "actor_8cdcb16381ae49469fb8ce91f4df4e63",
+        "hash": "815b7dcfbce002cfd490062531e2d71b58ec194530cc31938461c1e13723fe06",
+        "id": "art_c46601743bfe4c40ad7ec380eccd2446",
+        "mediaType": "text/plain",
+        "projectId": "project_b7c446fde9d7440aa032da310939e3b2",
+        "size": 1080,
+        "title": "Verified answer and successful commit receipt"
+      }
+    ],
+    "admission": {
+      "input": {
+        "artifactIds": ["art_c46601743bfe4c40ad7ec380eccd2446"],
+        "commandId": "codecmd_fccb1d0454c64b75a84c6d5647f6c621"
+      },
+      "tool": "step.propose"
+    }
+  },
+  "originalWorkerOwnsEvidenceAndManifest": true,
+  "distinctWorkerActors": 2,
+  "producerReceivedLiveCommit": true,
+  "reviewerReadEveryPinnedArtifact": true,
+  "initialOid": "9ccf36d78641031fcbf80d473401ffe245d786bb",
+  "receipt": {
+    "baseOid": "9ccf36d78641031fcbf80d473401ffe245d786bb",
+    "commandId": "codecmd_fccb1d0454c64b75a84c6d5647f6c621",
+    "headOid": "6924fe3d043bd47be2db5c4f387a4bae223ab6e8",
+    "parentOid": "9ccf36d78641031fcbf80d473401ffe245d786bb",
+    "repositoryId": "repo_e260ce1c-7493-4321-9782-49dad6d567cf",
+    "stats": {
+      "commitCount": 1,
+      "deletions": 1,
+      "filesChanged": 1,
+      "insertions": 1
+    },
+    "treeOid": "da0d024e6b3569dc3a424a531f7791d232e6e48d",
+    "workspaceId": "workspace_0f4a4ae3caab3e2ce60d3a99e427a9982f54c4f312bd1745d3d023c0a700c44f"
+  },
+  "sourceRepositoryUnchanged": true,
+  "privateCentralUnchanged": true,
+  "independentInspection": {
+    "report": "/private/tmp/merv-native-proposals-live-20260915-01-audit.json",
+    "sha256": "943f61a59c1f91371b12e121ae451a032a8f18dadc5d477605205ffc761853cc",
+    "artifactBytesAndCanonicalManifestVerified": true,
+    "rawGitObjectHashesVerified": true,
+    "actualReviewerTranscriptInspected": true
+  },
+  "cleanup": {
+    "report": "/private/tmp/merv-native-proposals-live-20260915-01/cleanup.json",
+    "sha256": "f65da1e659830b37ebf06fc47531afec503287f84864e77e17b87cf5bf4531a2",
+    "allLaunchesStopped": true,
+    "allWorkspaceLifecyclesClosed": true,
+    "pendingRequests": 0,
+    "ownedSlots": 0,
+    "unacknowledgedCommands": 0,
+    "acknowledgedCommands": 1,
+    "ephemeralCheckoutDeleted": true,
+    "persistentCheckoutRetainedClean": true,
+    "guardianSocketsAbsent": true,
+    "noMatchingNativeOrGuardianProcess": true,
+    "serverListenerClosed": true,
+    "processProof": "Terminal launch records are written only after authenticated guardian SIGKILL of its current direct group owner and observed owner exit. Both records are terminal; both guardian sockets and matching native/guardian processes are absent. No persisted PID was signaled during this audit."
+  },
+  "timing": "Native run used the final production changes. Later edits extended the proposal unload/reload test and updated documentation and verification only. The final 553-test suite includes that extension.",
+  "warnings": [
+    "Producer first heredoc was blocked by sandbox temporary-file restrictions; shell wrapper exited 0 after subsequent git command. Agent retried successfully with python -c before code.commit.",
+    "Both agents emitted an under-development-feature warning; successful Python/Git checks also emitted sandbox temp/cache warnings."
+  ],
+  "limits": [
+    "Synthetic domain uses production Code.seal and Reviews.apply; no standalone Code workflow",
+    "Synthetic verdict handler lacks command replay after transition; production Tasks replay is tested separately",
+    "One machine and private object store",
+    "No reflection proposal coverage or central publication",
+    "Code seal replay requires current assignment authority; a completed handoff does not reopen the old worker.",
+    "Server receipts authenticate Runner observations; retained Git object inspection is acceptance evidence, not production server verification."
+  ],
+  "sourceSha256": {
+    "scripts/live-code-proposals.ts": "7de5709f1fdab1abf647baa1c1fad544e0e2d2d7147f96ccfb4e0784d47ff5e3"
+  }
+}

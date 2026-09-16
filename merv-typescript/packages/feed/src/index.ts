@@ -1,5 +1,8 @@
+import { createService } from '@merv/contracts';
+import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
+  eventSource,
   check,
   digest,
   inTransaction,
@@ -38,15 +41,19 @@ const hydrate = (row: PostRow): FeedPost => ({
 
 /** Project-scoped communication and activity. No knowledge of tasks, reviews, or workflows. */
 export class FeedService implements Feed {
+  /** Complete storage migrations before publishing this service. */
+  initialize!: () => Promise<void>;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
     private readonly artifacts: Artifacts,
   ) {
-    state.migrate('feed', [
-      {
-        version: 1,
-        sql: `
+    this.initialize = async () => {
+      await state.migrate('feed', [
+        {
+          version: 1,
+          postgres: postgresMigrations[1],
+          sql: `
       CREATE TABLE feed_posts (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, author_id TEXT NOT NULL,
@@ -67,13 +74,14 @@ export class FeedService implements Feed {
       CREATE TRIGGER feed_requests_no_delete BEFORE DELETE ON feed_requests
         BEGIN SELECT RAISE(ABORT, 'Feed request records are immutable'); END;
     `,
-      },
-    ]);
+        },
+      ]);
+    };
   }
 
-  post(caller: Caller, input: FeedInput, transaction?: Transaction): FeedPost {
-    return inTransaction(this.state, transaction, (tx) => {
-      const actor = this.scope.require(caller, 'read', tx);
+  async post(caller: Caller, input: FeedInput, transaction?: Transaction): Promise<FeedPost> {
+    return await inTransaction(this.state, transaction, async (tx) => {
+      const actor = await this.scope.require(caller, 'read', tx);
       check(
         ['operator', 'producer', 'reviewer'].includes(actor.role),
         'forbidden',
@@ -93,7 +101,7 @@ export class FeedService implements Feed {
         'requestId must contain 1–200 characters',
       );
       const hash = digest(input);
-      const old = tx.get<{ input_hash: string; response_json: string }>(
+      const old = await tx.get<{ input_hash: string; response_json: string }>(
         'SELECT input_hash, response_json FROM feed_requests WHERE project_id = ? AND author_id = ? AND request_id = ?',
         caller.projectId,
         caller.actorId,
@@ -123,11 +131,11 @@ export class FeedService implements Feed {
         'Attach at most 10 distinct artifact IDs',
       );
       // Attachments may be authored by anyone in this project; access comes from Artifacts.
-      for (const id of artifactIds) this.artifacts.get(caller, id, tx);
+      for (const id of artifactIds) await this.artifacts.get(caller, id, tx);
       const id = newId('post'),
         createdAt = now();
-      const inserted = tx.run(
-        'INSERT INTO feed_posts (id, project_id, author_id, body, artifact_ids, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      const inserted = await tx.get<{ sequence: number }>(
+        'INSERT INTO feed_posts (id, project_id, author_id, body, artifact_ids, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING sequence',
         id,
         caller.projectId,
         caller.actorId,
@@ -137,21 +145,21 @@ export class FeedService implements Feed {
       );
       const post: FeedPost = {
         id,
-        sequence: Number(inserted.lastInsertRowid),
+        sequence: Number(inserted!.sequence),
         projectId: caller.projectId,
         authorId: caller.actorId,
         body: input.body,
         artifactIds: [...artifactIds],
         createdAt,
       };
-      this.state.appendEvent(tx, {
+      await this.state.appendEvent(tx, {
         projectId: caller.projectId,
         actorId: caller.actorId,
         type: 'feed.posted',
         subjectId: id,
-        data: { sequence: post.sequence, artifactIds: post.artifactIds },
+        data: { sequence: post.sequence, artifactIds: post.artifactIds, ...eventSource(caller) },
       });
-      tx.run(
+      await tx.run(
         'INSERT INTO feed_requests (project_id, author_id, request_id, input_hash, response_json) VALUES (?, ?, ?, ?, ?)',
         caller.projectId,
         caller.actorId,
@@ -163,26 +171,27 @@ export class FeedService implements Feed {
     });
   }
 
-  get(caller: Caller, postId: string): FeedPost {
-    this.scope.require(caller, 'read');
+  async get(caller: Caller, postId: string): Promise<FeedPost> {
+    await this.scope.require(caller, 'read');
     check(
       typeof postId === 'string' && postId.trim().length > 0,
       'invalid_post',
       'A post ID is required',
     );
-    const row = this.state.read((sql) =>
-      sql.get<PostRow>(
-        'SELECT * FROM feed_posts WHERE id = ? AND project_id = ?',
-        postId,
-        caller.projectId,
-      ),
+    const row = await this.state.read(
+      async (sql) =>
+        await sql.get<PostRow>(
+          'SELECT * FROM feed_posts WHERE id = ? AND project_id = ?',
+          postId,
+          caller.projectId,
+        ),
     );
     check(row, 'not_found', 'Feed post not found in this project', 404);
     return hydrate(row);
   }
 
-  list(caller: Caller, input: FeedListInput = {}): FeedPost[] {
-    this.scope.require(caller, 'read');
+  async list(caller: Caller, input: FeedListInput = {}): Promise<FeedPost[]> {
+    await this.scope.require(caller, 'read');
     check(
       input && typeof input === 'object' && !Array.isArray(input),
       'invalid_input',
@@ -200,30 +209,32 @@ export class FeedService implements Feed {
       'invalid_limit',
       'limit must be an integer from 1 to 100',
     );
-    return this.state.read((sql) =>
-      sql
-        .all<PostRow>(
+    return await this.state.read(async (sql) =>
+      (
+        await sql.all<PostRow>(
           'SELECT * FROM feed_posts WHERE project_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?',
           caller.projectId,
           after,
           limit,
         )
-        .map(hydrate),
+      ).map(hydrate),
     );
   }
 
-  activity(caller: Caller, after = 0): StoredEvent[] {
-    const actor = this.scope.require(caller, 'read');
+  async activity(caller: Caller, after = 0): Promise<StoredEvent[]> {
+    const actor = await this.scope.require(caller, 'read');
     check(
       Number.isSafeInteger(after) && after >= 0,
       'invalid_cursor',
       'after must be a nonnegative event ID',
     );
-    if (actor.role === 'operator') return this.state.events(caller.projectId, after);
+    if (actor.role === 'operator') return await this.state.events(caller.projectId, after);
     let cursor = after;
     while (true) {
-      const events = this.state.events(caller.projectId, cursor);
-      const visible = events.filter((event) => !event.type.startsWith('actor.'));
+      const events = await this.state.events(caller.projectId, cursor);
+      const visible = events.filter(
+        (event) => !event.type.startsWith('actor.') && !event.type.startsWith('membership.'),
+      );
       // State.events pages contain at most 1000 events. Do not signal exhaustion
       // merely because a complete page consists of private actor administration.
       if (visible.length > 0 || events.length < 1000) return visible;
@@ -237,8 +248,8 @@ export class FeedService implements Feed {
 export const feedPlugin = {
   name: 'merv-feed',
   inject: ['state', 'scope', 'artifacts'],
-  apply(ctx: Context) {
-    ctx.provide('feed', new FeedService(ctx.state, ctx.scope, ctx.artifacts));
+  async apply(ctx: Context) {
+    ctx.provide('feed', await createService(new FeedService(ctx.state, ctx.scope, ctx.artifacts)));
   },
 };
 export default feedPlugin;

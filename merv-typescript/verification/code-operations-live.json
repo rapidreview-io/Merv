@@ -1,0 +1,131 @@
+{
+  "date": "2026-09-15",
+  "command": "node --import tsx scripts/live-code.ts /private/tmp/merv-native-code-live-20260915-01",
+  "log": "/private/tmp/merv-native-code-live-20260915-01.log",
+  "privateReport": "/private/tmp/merv-native-code-live-20260915-01/report.json",
+  "privateReportSha256": "0c4dcf25e4f6c6525f22e4e7061dd5963d3204f583c6eff1de3de8abc7110356",
+  "passed": true,
+  "source": "Disposable synthetic answer.txt Git repository and project; ordinary source actor credential; installed Codex account supplies model access. No internal repository export.",
+  "nativeRunner": true,
+  "protocolProxy": false,
+  "machines": 1,
+  "freshAgents": 2,
+  "shellCalls": 6,
+  "successfulCalls": 6,
+  "failedCalls": 0,
+  "phases": [
+    {
+      "threadId": "01a0a44e-5118-7e82-a6d8-ea2123382bbe",
+      "shellCalls": 2,
+      "calls": [
+        {
+          "tool": "review.get",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "step.review",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "threadId": "01a0a44d-c123-7e22-85cd-5e79f396553c",
+      "shellCalls": 4,
+      "calls": [
+        {
+          "tool": "code.commit",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "code.operation",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "step.propose",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    }
+  ],
+  "finalWorkflowState": "done",
+  "finalRevision": 2,
+  "review": {
+    "id": "review_b44ecfcb5a6b408ca57d45ffba2057c8",
+    "producerId": "actor_5ee795b53626421dbc46d8ce443dadd5",
+    "reviewerId": "actor_048fde76f690461896c923d7fcbe0ab8",
+    "status": "submitted",
+    "verdict": "pass",
+    "formatVersion": 2,
+    "claimId": "claim_0270cabdc1054377996c0721c6f854e7",
+    "artifactIds": ["art_738d1c5ff59a4c63bf4d5bbfe46dd164"],
+    "snapshotHash": "e858e37de5c60aaab02c2e4969819ff9fe071a9db5834e2910787d94cb2b2f64",
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": ["art_738d1c5ff59a4c63bf4d5bbfe46dd164"],
+        "notes": "Python independently calculated 6*7 as 42 and read answer.txt as b'42\\n', hex 34320a. git show HEAD:answer.txt | od -An -tx1 independently confirmed committed bytes 34 32 0a, with exactly one newline."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": ["art_738d1c5ff59a4c63bf4d5bbfe46dd164"],
+        "notes": "git rev-parse HEAD returned 1a6ed660bb0c8284757b9cb0b0eea4920e1d58ad, matching the required pinned commit and receipt.headOid. git rev-parse HEAD^{tree} returned da0d024e6b3569dc3a424a531f7791d232e6e48d, matching receipt.treeOid. git status --porcelain emitted no status entries, confirming a clean worktree."
+      }
+    ]
+  },
+  "originalWorkerOwnsArtifact": true,
+  "distinctWorkerActors": 2,
+  "initialOid": "8c8babcb8cbdc0a573d751394c0d48f1771262ec",
+  "receipt": {
+    "baseOid": "8c8babcb8cbdc0a573d751394c0d48f1771262ec",
+    "commandId": "codecmd_c66b82daf8f84e8d8c0b61cb55dbe0ed",
+    "headOid": "1a6ed660bb0c8284757b9cb0b0eea4920e1d58ad",
+    "parentOid": "8c8babcb8cbdc0a573d751394c0d48f1771262ec",
+    "repositoryId": "repo_dbd0f2a4-68a3-4561-a609-52c50b93dd8b",
+    "stats": {
+      "commitCount": 1,
+      "deletions": 1,
+      "filesChanged": 1,
+      "insertions": 1
+    },
+    "treeOid": "da0d024e6b3569dc3a424a531f7791d232e6e48d",
+    "workspaceId": "workspace_5dc38f4244d7de821759f677087aba1dbb5b69455d2c73b815be3bb5dadc5595"
+  },
+  "producerReceivedLiveCommit": true,
+  "verifierBaseEqualsNamedCommit": true,
+  "verifierHeadUnchanged": true,
+  "sourceRepositoryUnchanged": true,
+  "privateCentralUnchanged": true,
+  "cleanup": {
+    "runnerState": "stopped",
+    "allLocalLaunchesConfirmedStopped": true,
+    "allWorkspaceLifecyclesClosed": true,
+    "pendingRequests": 0,
+    "ownedSlots": 0,
+    "acknowledgedCommands": 1,
+    "ephemeralCheckoutDeleted": true,
+    "persistentCheckoutRetained": true
+  },
+  "timing": "Native execution used the final production Code/Runner changes. Later edits changed documentation, graph formatting and a Nisa expected tool count only.",
+  "limits": [
+    "Synthetic generic program with actual Reviews",
+    "One machine and private object store",
+    "No reflection proposal coverage or central publication",
+    "step.propose and step.review are fixture program tools; no production code.propose exists",
+    "Server receipt validates source and identity, not independent Git object verification"
+  ],
+  "sourceSha256": {
+    "scripts/live-code.ts": "3d5994118cd486c1dec87d2a4bbbed4dc5750b5f7a7f7dde86c8e3ad6feeaa75"
+  }
+}

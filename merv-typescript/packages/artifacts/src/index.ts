@@ -1,6 +1,9 @@
+import { createService } from '@merv/contracts';
+import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { isUtf8 } from 'node:buffer';
 import {
+  eventSource,
   check,
   newId,
   now,
@@ -25,23 +28,28 @@ const fromRow = (row: any): Artifact => ({
   createdAt: row.created_at,
 });
 export class ArtifactStore implements Artifacts {
+  /** Complete storage migrations before publishing this service. */
+  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
     private blobs: Blobs,
   ) {
-    state.migrate('artifacts', [
-      {
-        version: 1,
-        sql: `CREATE TABLE artifacts(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,created_by TEXT NOT NULL,title TEXT NOT NULL,media_type TEXT NOT NULL,hash TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);
+    this.initialize = async () => {
+      await state.migrate('artifacts', [
+        {
+          version: 1,
+          postgres: postgresMigrations[1],
+          sql: `CREATE TABLE artifacts(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,created_by TEXT NOT NULL,title TEXT NOT NULL,media_type TEXT NOT NULL,hash TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);
       CREATE INDEX artifacts_project ON artifacts(project_id);
       CREATE TRIGGER artifacts_immutable_update BEFORE UPDATE ON artifacts BEGIN SELECT RAISE(ABORT,'Artifacts are immutable'); END;
       CREATE TRIGGER artifacts_immutable_delete BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'Artifacts are immutable'); END;`,
-      },
-    ]);
+        },
+      ]);
+    };
   }
-  create(caller: Caller, input: ArtifactInput, tx?: Transaction): Artifact {
-    this.scope.require(caller, 'write', tx);
+  async create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact> {
+    await this.scope.require(caller, 'write', tx);
     check(
       typeof input.title === 'string' && input.title.trim().length > 0 && input.title.length <= 300,
       'invalid_artifact',
@@ -71,9 +79,9 @@ export class ArtifactStore implements Artifacts {
       'artifact_size',
       'Artifact must contain 1–2,000,000 bytes',
     );
-    const stored = this.blobs.put(caller.projectId, bytes);
-    return inTransaction(this.state, tx, (tx) => {
-      this.scope.require(caller, 'write', tx);
+    const stored = await this.blobs.put(caller.projectId, bytes);
+    return await inTransaction(this.state, tx, async (tx) => {
+      await this.scope.require(caller, 'write', tx);
       const artifact: Artifact = {
         id: newId('art'),
         projectId: caller.projectId,
@@ -84,7 +92,7 @@ export class ArtifactStore implements Artifacts {
         size: stored.size,
         createdAt: now(),
       };
-      tx.run(
+      await tx.run(
         'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES(?,?,?,?,?,?,?,?)',
         artifact.id,
         artifact.projectId,
@@ -95,33 +103,81 @@ export class ArtifactStore implements Artifacts {
         artifact.size,
         artifact.createdAt,
       );
-      this.state.appendEvent(tx, {
+      await this.state.appendEvent(tx, {
         projectId: caller.projectId,
         actorId: caller.actorId,
         type: 'artifact.created',
         subjectId: artifact.id,
-        data: { hash: artifact.hash, size: artifact.size },
+        data: { hash: artifact.hash, size: artifact.size, ...eventSource(caller) },
       });
       return artifact;
     });
   }
-  get(caller: Caller, artifactId: string, tx?: Transaction): Artifact {
-    this.scope.require(caller, 'read', tx);
+  async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {
+    await this.scope.require(caller, 'read', tx);
     const row = tx
-      ? tx.get('SELECT * FROM artifacts WHERE id=? AND project_id=?', artifactId, caller.projectId)
-      : this.state.read((sql) =>
-          sql.get(
-            'SELECT * FROM artifacts WHERE id=? AND project_id=?',
-            artifactId,
-            caller.projectId,
-          ),
+      ? await tx.get(
+          'SELECT * FROM artifacts WHERE id=? AND project_id=?',
+          artifactId,
+          caller.projectId,
+        )
+      : await this.state.read(
+          async (sql) =>
+            await sql.get(
+              'SELECT * FROM artifacts WHERE id=? AND project_id=?',
+              artifactId,
+              caller.projectId,
+            ),
         );
     check(row, 'not_found', 'Artifact not found in this project', 404);
     return fromRow(row);
   }
-  read(caller: Caller, artifactId: string) {
-    const artifact = this.get(caller, artifactId);
-    const bytes = this.blobs.get(caller.projectId, artifact.hash);
+  async authored(caller: Caller, transaction?: Transaction): Promise<Artifact[]> {
+    return await inTransaction(this.state, transaction, async (tx) => {
+      const actor = await this.scope.require(caller, 'read', tx);
+      check(
+        caller.session && actor.sessionId === (caller.session.agentSessionId ?? caller.session.id),
+        'forbidden',
+        'Output receipts require an authenticated session worker',
+        403,
+      );
+      return (
+        await tx.all(
+          tx.dialect === 'postgres'
+            ? `SELECT a.* FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND (e.data_json::jsonb #>> '{source,sessionId}')=?) ORDER BY a.created_at,a.id`
+            : `SELECT a.* FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND json_extract(e.data_json,'$.source.sessionId')=?) ORDER BY a.created_at,a.id`,
+          caller.projectId,
+          caller.actorId,
+          caller.session.id,
+        )
+      ).map(fromRow);
+    });
+  }
+  get downloadSupported() {
+    return typeof this.blobs.download === 'function';
+  }
+  async download(caller: Caller, artifactId: string) {
+    const artifact = await this.get(caller, artifactId);
+    check(
+      this.blobs.download,
+      'download_unsupported',
+      'This storage provider does not support direct downloads',
+      501,
+    );
+    const download = await this.blobs.download(caller.projectId, artifact.hash, artifact.size);
+    // Signing can wait for remote storage. Revocation during that wait must prevent issuance.
+    await this.get(caller, artifactId);
+    return { artifact, download };
+  }
+  async read(caller: Caller, artifactId: string) {
+    const artifact = await this.get(caller, artifactId);
+    check(
+      artifact.size <= 2_000_000,
+      'artifact_size',
+      'Artifact exceeds the inline limit; use artifact.read with mode download',
+    );
+    const bytes = await this.blobs.get(caller.projectId, artifact.hash);
+    await this.get(caller, artifactId);
     const encoding =
       (artifact.mediaType.startsWith('text/') || artifact.mediaType === 'application/json') &&
       isUtf8(bytes)
@@ -129,23 +185,26 @@ export class ArtifactStore implements Artifacts {
         : ('base64' as const);
     return { artifact, content: bytes.toString(encoding), encoding };
   }
-  list(caller: Caller): Artifact[] {
-    this.scope.require(caller, 'read');
-    return this.state.read((sql) =>
-      sql
-        .all(
+  async list(caller: Caller): Promise<Artifact[]> {
+    await this.scope.require(caller, 'read');
+    return await this.state.read(async (sql) =>
+      (
+        await sql.all(
           'SELECT * FROM artifacts WHERE project_id=? ORDER BY created_at,id LIMIT 1000',
           caller.projectId,
         )
-        .map(fromRow),
+      ).map(fromRow),
     );
   }
 }
 export const artifactsPlugin = {
   name: 'merv-artifacts',
   inject: ['state', 'scope', 'blobs'],
-  apply(ctx: Context) {
-    ctx.provide('artifacts', new ArtifactStore(ctx.state, ctx.scope, ctx.blobs));
+  async apply(ctx: Context) {
+    ctx.provide(
+      'artifacts',
+      await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs)),
+    );
   },
 };
 export default artifactsPlugin;

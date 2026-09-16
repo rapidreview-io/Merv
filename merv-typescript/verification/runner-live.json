@@ -1,0 +1,91 @@
+{
+  "date": "2026-09-15",
+  "command": "node --import tsx scripts/live-runner.ts /private/tmp/merv-native-runner-live-20260915-01",
+  "log": "/private/tmp/merv-native-runner-live-20260915-01.log",
+  "privateReport": "/private/tmp/merv-native-runner-live-20260915-01/report.json",
+  "passed": true,
+  "source": "Disposable synthetic project with an ordinary actor credential held only by the controller; existing Codex account used for model access",
+  "nativeRunner": true,
+  "protocolProxy": false,
+  "freshAgents": 2,
+  "shellCalls": 2,
+  "successfulCalls": 9,
+  "failedCalls": 0,
+  "finalTaskState": "done",
+  "reviewVerdict": "pass",
+  "workStarts": 2,
+  "distinctWorkers": 2,
+  "phases": [
+    {
+      "log": "/private/tmp/merv-native-runner-live-20260915-01/machine/launches/2cc9a9ebd0f1b5a58ee9ae287c54472938840715d60c361a1563bcd3059bff4a/stdout.log",
+      "threadId": "01a0a404-8abf-7301-a996-f2183976a3b4",
+      "shellCalls": 1,
+      "calls": [
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "review.get",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "review.submit",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    },
+    {
+      "log": "/private/tmp/merv-native-runner-live-20260915-01/machine/launches/6c3300b28e70e46fb610d6033beb8aebd52416b88d26b638f56288e36c6d09d2/stdout.log",
+      "threadId": "01a0a403-ea10-7601-b272-8a6d4ddff35b",
+      "shellCalls": 1,
+      "calls": [
+        {
+          "tool": "task.context",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.read",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "artifact.create",
+          "status": "completed",
+          "failed": false
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "completed",
+          "failed": false
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "runnerState": "stopped",
+    "pendingRequests": 0,
+    "launchStatuses": ["stopped", "stopped"],
+    "releasePending": [false, false],
+    "serverStopped": true
+  },
+  "limits": [
+    "Scratch assignments; no Git workspace, pairing or remote execution proof",
+    "Live run preceded final source-versus-session refusal classification, covered by full final deterministic tests",
+    "No production shared-identity deployment or additional harness was exercised"
+  ]
+}

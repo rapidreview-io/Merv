@@ -1,0 +1,34 @@
+/** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
+export const postgresMigrations: Record<number, string> = {
+  1: `
+CREATE TABLE research_cycles (
+ _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record TEXT NOT NULL,problem TEXT,reflection_id TEXT,consolidation_id TEXT,methods_update_id TEXT,results_update_id TEXT);
+CREATE OR REPLACE FUNCTION research_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Research inputs are immutable', ERRCODE = '23514';
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER research_identity BEFORE UPDATE OF id,project_id,record ON research_cycles
+FOR EACH ROW EXECUTE FUNCTION research_identity_guard();
+CREATE OR REPLACE FUNCTION research_children_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF (OLD.problem IS NOT NULL AND NEW.problem IS DISTINCT FROM OLD.problem) OR (OLD.reflection_id IS NOT NULL AND NEW.reflection_id IS DISTINCT FROM OLD.reflection_id) OR (OLD.consolidation_id IS NOT NULL AND NEW.consolidation_id IS DISTINCT FROM OLD.consolidation_id) OR (OLD.methods_update_id IS NOT NULL AND NEW.methods_update_id IS DISTINCT FROM OLD.methods_update_id) OR (OLD.results_update_id IS NOT NULL AND NEW.results_update_id IS DISTINCT FROM OLD.results_update_id) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Research children and accepted definition are immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER research_children BEFORE UPDATE ON research_cycles
+FOR EACH ROW EXECUTE FUNCTION research_children_guard();
+CREATE OR REPLACE FUNCTION research_retained_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Research history is retained', ERRCODE = '23514';
+  RETURN OLD;
+END;
+$merv$;
+CREATE TRIGGER research_retained BEFORE DELETE ON research_cycles
+FOR EACH ROW EXECUTE FUNCTION research_retained_guard();
+CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,request_id TEXT NOT NULL,input_hash TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(project_id,actor_id,request_id));
+`,
+};

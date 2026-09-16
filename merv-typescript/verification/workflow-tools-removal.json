@@ -1,0 +1,33 @@
+{
+  "status": "workflow_tool_adapter_removed",
+  "completedAt": "2026-09-14T23:20:15.455887+00:00",
+  "removedTools": ["workflow.catalog", "workflow.list", "workflow.get", "workflow.history"],
+  "workflowsServiceRetained": true,
+  "checks": {
+    "mcpCatalogOmitsWorkflowTools": true,
+    "httpAndMcpRejectRemovedTools": true,
+    "taskReviewSurvivesRestarts": true,
+    "workflowUnloadDrainsAndRestoresTaskTools": true,
+    "nisaMcpComposition": true,
+    "sourceMatchesArchitecture": true
+  },
+  "tests": {
+    "passed": 171,
+    "failed": 0,
+    "skipped": 0
+  },
+  "typecheck": "passed",
+  "build": "passed",
+  "formatCheck": "passed",
+  "inventory": {
+    "nativeTools": 22,
+    "defaultPlugins": 17,
+    "implementedPlugins": 18,
+    "serviceProviders": 13,
+    "toolAdapters": 5,
+    "directDependencies": 36
+  },
+  "nisaScenarioToolCounts": [29, 23, 29],
+  "testCommand": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+  "verificationScope": "Actual local HTTP/MCP and SQLite with synthetic Nisa identities, corpus and model runner; no production or live-model run."
+}

@@ -1,0 +1,60 @@
+{
+  "checkedAt": "2026-09-15T01:23:29.146299+00:00",
+  "status": "passed",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "exitCode": 0,
+    "tests": 187,
+    "pass": 187,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "checks": {
+    "genericProgramWithoutEngineCases": true,
+    "registeredChecksEnforcedOnTransitions": true,
+    "preflightReadOnlyAndFactsRechecked": true,
+    "callerAndTenantSpecificGuidance": true,
+    "reviewIndependenceAndClaimFencing": true,
+    "revokedReviewRecovery": true,
+    "contextContainsCanonicalDecision": true,
+    "revisionCycleAndBothTerminalOutcomes": true,
+    "unloadReinstallAndHeldCallDrain": true,
+    "sameGuidanceThroughHTTPAndMCP": true,
+    "invalidProgramMetadataFailsBeforeMutation": true
+  },
+  "composition": {
+    "nativeDomainTools": 25,
+    "withUITools": 27,
+    "defaultEntries": 26,
+    "pluginEntrypoints": 28,
+    "serviceProviders": 16,
+    "toolAdapters": 6,
+    "uiAdapters": 6,
+    "directDependencies": 58
+  },
+  "browser": {
+    "method": "Opened the built UI in the in-app browser with a disposable local producer credential. Inspected the accessibility tree and screenshot, then closed the tab and stopped the isolated server.",
+    "states": [
+      "producer work: delivery required and submit delivery",
+      "producer awaiting review: review required and waiting"
+    ],
+    "passed": true
+  },
+  "scope": "Guidance for the existing task program plus an independent custom program test. No production service or model-powered agent run claimed. Other research programs and scheduling remain future work.",
+  "sourceSha256": {
+    "packages/workflows/src/index.ts": "3b16e20d255a9c21c268fb0f3c92ba240691be3fe7cbecf3baead3286f12d116",
+    "packages/workflows/src/evaluation.ts": "9fcf6b78d72a62e8cdcb98bc39d7d6be04e361c1e49be7d40b4b311362ca88f4",
+    "packages/workflows/src/tools.ts": "54fcc54f100d5df8b3208c03d5618c6431c0a8322416e8699875eb0d20d60a86",
+    "packages/tasks/src/index.ts": "1224421470cc47524f2687ff46f81c167243b82f8ffdb65cb00677e8e10976fc",
+    "packages/tasks/src/tools.ts": "59ce90bea91b886a5d397e44757d09f05ddfe0b5fde76a7a64328b29de5189dd",
+    "packages/reviews/src/index.ts": "2eb6c2f95a1d200b5de0884139816d6e3e38f159f33728de6442aec02c955845",
+    "packages/contracts/src/index.ts": "4c70fb6ddedd8caa7ce3f531434134258d26af521991b9e958915920dbb5d30b",
+    "packages/contracts/src/workflow-guidance.ts": "09f6438f7588d3106fc6cf8dc697d1dc07113275319b46e4b5a8485d283e6ce2",
+    "packages/contracts/src/data.ts": "6d8ab453bf91a98749b33a8bc4d22f23f076cbb94447693775962d8d3dc99ddd",
+    "packages/ui/web/views/tasks.tsx": "ea91724028a7f9a08e620a653cab38a057d0c63046879e73137c1b01eed2836b",
+    "tests/workflow-guidance.test.ts": "6dcf8bcbfe685190b48367e9db8b858c47072f2ad6b111cf219c9158bb99c3dd",
+    "tests/app.test.ts": "5a4269757ca9839bbbf44e858d6e7265b0adc38d884be6d3e79f573b42684931",
+    "tests/workflow-unload.test.ts": "fa7311efedb639b1968e9e8956fa2e9fb298dd813fc5b66f3420d97dae423d1c"
+  }
+}

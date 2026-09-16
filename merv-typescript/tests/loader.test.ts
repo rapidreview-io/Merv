@@ -134,7 +134,7 @@ test('disabling only optional feed in configuration leaves the API and task prog
   };
   const app = await createApp({ directory, config });
   try {
-    const credentials = app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.bootstrap({
       projectName: 'Configured feed removal',
       actorName: 'Operator',
     });
@@ -143,12 +143,12 @@ test('disabling only optional feed in configuration leaves the API and task prog
     });
     const { tools } = (await response.json()) as { tools: { name: string }[] };
     assert.equal(response.status, 200);
-    assert.equal(tools.length, 22);
+    assert.equal(tools.length, 60);
     assert.ok(tools.some((tool) => tool.name === 'task.create'));
     assert.ok(!tools.some((tool) => tool.name.startsWith('feed.')));
     assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'pending');
     await app.setEnabled('feed', true);
-    assert.equal(app.ctx.tools.list().length, 26);
+    assert.equal((await app.ctx.tools.list()).length, 64);
     assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'active');
   } finally {
     await app.stop();

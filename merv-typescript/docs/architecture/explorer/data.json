@@ -1,0 +1,2675 @@
+{
+  "snapshot": "2026-09-16",
+  "groups": [
+    {
+      "id": "front",
+      "label": "Front door",
+      "caption": "HTTP, MCP & the browser",
+      "members": [
+        "api",
+        "tools",
+        "ui"
+      ],
+      "description": "API accepts requests, Tools controls the callable catalog, and UI hosts the browser. Small adapters connect these registries to the domain plugins."
+    },
+    {
+      "id": "auth",
+      "label": "Identity",
+      "caption": "Shared user login",
+      "members": [
+        "identity"
+      ],
+      "description": "Identity verifies shared users. Scope owns project membership, permissions and tool policy. External Mounts owns upstream credential selection."
+    },
+    {
+      "id": "mounts",
+      "label": "External Mounts",
+      "caption": "Optional remote tools",
+      "members": [
+        "mounts"
+      ],
+      "description": "External Mounts connects independent MCP servers to the local tool registry and selects their upstream credentials. An available mount is not proof that an upstream service is healthy."
+    },
+    {
+      "id": "research",
+      "label": "Research",
+      "caption": "The work & what we learn",
+      "members": [
+        "claims",
+        "tasks",
+        "experiments",
+        "knowledge",
+        "paper",
+        "reflections",
+        "consolidation",
+        "research"
+      ],
+      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds Paper, Reflections, Knowledge and Consolidation optionally. Only stages that use a missing provider wait. Selected code changes use Consolidation, which requires Code."
+    },
+    {
+      "id": "coordination",
+      "label": "Coordination",
+      "caption": "Gates, agents & code",
+      "members": [
+        "workflows",
+        "sessions",
+        "code"
+      ],
+      "description": "Workflows evaluates gates and assignments. Agent Sessions controls worker authority and recovery. Code retains requests and exact code-capture references. The separate Runner performs machine work."
+    },
+    {
+      "id": "evidence",
+      "label": "Evidence",
+      "caption": "Files, reviews & context",
+      "members": [
+        "artifacts",
+        "reviews",
+        "contextBuilder",
+        "feed"
+      ],
+      "description": "Artifacts owns file metadata. Reviews retains independent assessments. Context Builder assembles the domain's context recipe. Feed records project activity."
+    },
+    {
+      "id": "external",
+      "label": "External services",
+      "caption": "Connected over MCP",
+      "members": [],
+      "description": "Nisa and Sandboxes are independent remote systems, not local Cordis plugins. Their tools are mounted only when configured and permitted."
+    },
+    {
+      "id": "foundation",
+      "label": "Foundation",
+      "caption": "Shared durable capabilities",
+      "members": [
+        "state",
+        "scope",
+        "blobs",
+        "domainEvents"
+      ],
+      "description": "State and Scope are the most shared dependencies. Blobs stores bytes without depending on State; Artifacts connects file metadata to those bytes. Domain Events reads durable events from State."
+    },
+    {
+      "id": "runner",
+      "label": "Separate machine",
+      "caption": "Agents & Git checkouts",
+      "members": [
+        "runner"
+      ],
+      "description": "Runner has its own Cordis context. It talks to the server over authenticated HTTP and launches scoped agents in scratch or Git workspaces. It has no injected server-plugin dependencies."
+    }
+  ],
+  "nodes": [
+    {
+      "plugin": "merv-api",
+      "source": "packages/api/src/index.ts",
+      "provides": [
+        "api"
+      ],
+      "requires": [
+        "scope",
+        "tools",
+        "identity"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "api",
+      "group": "front",
+      "owner": "api",
+      "label": "API",
+      "purpose": "Accepts authenticated HTTP and MCP requests and routes them through the tool registry.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-artifact-tools",
+      "source": "packages/artifacts/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "artifacts",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-artifact-tools",
+      "group": "front",
+      "owner": "artifacts",
+      "label": "Artifacts · tools adapter",
+      "purpose": "Connects Artifacts to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "artifact.create",
+          "description": "Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.",
+          "readOnly": false
+        },
+        {
+          "name": "artifact.get",
+          "description": "Read immutable artifact metadata.",
+          "readOnly": true
+        },
+        {
+          "name": "artifact.list",
+          "description": "List immutable artifacts in this project.",
+          "readOnly": true
+        },
+        {
+          "name": "artifact.read",
+          "description": "Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-artifact-ui",
+      "source": "packages/artifacts/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "artifacts",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-artifact-ui",
+      "group": "front",
+      "owner": "artifacts",
+      "label": "Artifacts · ui adapter",
+      "purpose": "Connects Artifacts to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-artifacts",
+      "source": "packages/artifacts/src/index.ts",
+      "provides": [
+        "artifacts"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "blobs"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "artifacts",
+      "group": "evidence",
+      "owner": "artifacts",
+      "label": "Artifacts",
+      "purpose": "Owns immutable file metadata, content hashes and permission-checked reads. It stores records in State and bytes through Blobs.",
+      "exposedTools": [
+        {
+          "name": "artifact.create",
+          "description": "Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.",
+          "readOnly": false
+        },
+        {
+          "name": "artifact.get",
+          "description": "Read immutable artifact metadata.",
+          "readOnly": true
+        },
+        {
+          "name": "artifact.list",
+          "description": "List immutable artifacts in this project.",
+          "readOnly": true
+        },
+        {
+          "name": "artifact.read",
+          "description": "Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-blobs",
+      "source": "packages/blobs/src/index.ts",
+      "provides": [
+        "blobs"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "blobs",
+      "group": "foundation",
+      "owner": "blobs",
+      "label": "Blobs",
+      "purpose": "Stores and reads file bytes by content hash. It has no State dependency; Artifacts owns the associated file metadata.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-claims",
+      "source": "packages/claims/src/index.ts",
+      "provides": [
+        "claims"
+      ],
+      "requires": [
+        "state",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "claims",
+      "group": "research",
+      "owner": "claims",
+      "label": "Claims",
+      "purpose": "Stores research statements, their scope, status and confidence with revision checks and replayable edits.",
+      "exposedTools": [
+        {
+          "name": "claim.create",
+          "description": "Create a project research claim with a statement and optional prose scope. Status starts active; confidence defaults to medium. Producers and operators may write. The same normalized requestId retry returns its original receipt.",
+          "readOnly": false
+        },
+        {
+          "name": "claim.list",
+          "description": "Read all claims in the current project, including every status, in creation-time/ID order. Each record carries its current revision for updates. This does not select or start an experiment.",
+          "readOnly": true
+        },
+        {
+          "name": "claim.update",
+          "description": "Update a claim status and/or confidence using its current expectedRevision. Statement and scope stay unchanged. A conflicting edit requires a fresh read and decision; retrying the same requestId and input returns the original committed receipt. A completed experiment does not automatically support its claim.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-claims-tools",
+      "source": "packages/claims/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "claims",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-claims-tools",
+      "group": "front",
+      "owner": "claims",
+      "label": "Claims · tools adapter",
+      "purpose": "Connects Claims to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "claim.create",
+          "description": "Create a project research claim with a statement and optional prose scope. Status starts active; confidence defaults to medium. Producers and operators may write. The same normalized requestId retry returns its original receipt.",
+          "readOnly": false
+        },
+        {
+          "name": "claim.list",
+          "description": "Read all claims in the current project, including every status, in creation-time/ID order. Each record carries its current revision for updates. This does not select or start an experiment.",
+          "readOnly": true
+        },
+        {
+          "name": "claim.update",
+          "description": "Update a claim status and/or confidence using its current expectedRevision. Statement and scope stay unchanged. A conflicting edit requires a fresh read and decision; retrying the same requestId and input returns the original committed receipt. A completed experiment does not automatically support its claim.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-claims-ui",
+      "source": "packages/claims/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "claims",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-claims-ui",
+      "group": "front",
+      "owner": "claims",
+      "label": "Claims · ui adapter",
+      "purpose": "Connects Claims to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-code",
+      "source": "packages/code/src/index.ts",
+      "provides": [
+        "code"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "sessions",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "code",
+      "group": "coordination",
+      "owner": "code",
+      "label": "Code",
+      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. It does not execute Git itself.",
+      "exposedTools": [
+        {
+          "name": "code.commit",
+          "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.operation",
+          "description": "Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-code-api",
+      "source": "packages/code/src/api.ts",
+      "provides": [],
+      "requires": [
+        "api",
+        "code"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-api",
+      "group": "front",
+      "owner": "code",
+      "label": "Code · api adapter",
+      "purpose": "Connects Code to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-code-tools",
+      "source": "packages/code/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "code",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-tools",
+      "group": "front",
+      "owner": "code",
+      "label": "Code · tools adapter",
+      "purpose": "Connects Code to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "code.commit",
+          "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.operation",
+          "description": "Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-code-ui",
+      "source": "packages/code/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "code",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-ui",
+      "group": "front",
+      "owner": "code",
+      "label": "Code · ui adapter",
+      "purpose": "Connects Code to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-consolidation",
+      "source": "packages/consolidation/src/index.ts",
+      "provides": [
+        "consolidation"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "workflows",
+        "reviews",
+        "contextBuilder",
+        "code"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "consolidation",
+      "group": "research",
+      "owner": "consolidation",
+      "label": "Consolidation",
+      "purpose": "Implements and reviews code changes from pinned source artifacts and a selected experiment scope. Requires Code and does not depend on Reflections. Historical report-only cycles remain supported.",
+      "exposedTools": [
+        {
+          "name": "consolidation.create",
+          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.",
+          "readOnly": false
+        },
+        {
+          "name": "consolidation.get",
+          "description": "Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
+          "readOnly": true
+        },
+        {
+          "name": "consolidation.list",
+          "description": "List project consolidations and their exact reviewed outputs. Workflow guidance uses workflow.status_and_next.",
+          "readOnly": true
+        },
+        {
+          "name": "consolidation.submit",
+          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-consolidation-tools",
+      "source": "packages/consolidation/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "consolidation",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-consolidation-tools",
+      "group": "front",
+      "owner": "consolidation",
+      "label": "Consolidation · tools adapter",
+      "purpose": "Connects Consolidation to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "consolidation.create",
+          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.",
+          "readOnly": false
+        },
+        {
+          "name": "consolidation.get",
+          "description": "Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
+          "readOnly": true
+        },
+        {
+          "name": "consolidation.list",
+          "description": "List project consolidations and their exact reviewed outputs. Workflow guidance uses workflow.status_and_next.",
+          "readOnly": true
+        },
+        {
+          "name": "consolidation.submit",
+          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-consolidation-ui",
+      "source": "packages/consolidation/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "consolidation",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-consolidation-ui",
+      "group": "front",
+      "owner": "consolidation",
+      "label": "Consolidation · ui adapter",
+      "purpose": "Connects Consolidation to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-context-builder",
+      "source": "packages/context-builder/src/index.ts",
+      "provides": [
+        "contextBuilder"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "contextBuilder",
+      "group": "evidence",
+      "owner": "contextBuilder",
+      "label": "Context Builder",
+      "purpose": "Assembles and persists starting context from the domain's versioned recipe and exact input references. It does not own task or experiment rules.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-domain-events",
+      "source": "packages/domain-events/src/index.ts",
+      "provides": [
+        "domainEvents"
+      ],
+      "requires": [
+        "state"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "domainEvents",
+      "group": "foundation",
+      "owner": "domainEvents",
+      "label": "Domain Events",
+      "purpose": "Delivers durable events from State so consumers can react and recover without losing their place.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-experiments",
+      "source": "packages/experiments/src/index.ts",
+      "provides": [
+        "experiments"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "workflows",
+        "reviews",
+        "contextBuilder",
+        "claims",
+        "paper"
+      ],
+      "optional": [
+        "code"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "experiments",
+      "group": "research",
+      "owner": "experiments",
+      "label": "Experiments",
+      "purpose": "Owns plans, attempts, approved evidence, results, exhibits and both independent review stages. Git experiments bind review to the exact producer capture.",
+      "exposedTools": [
+        {
+          "name": "experiment.attach",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "readOnly": false
+        },
+        {
+          "name": "experiment.create",
+          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.",
+          "readOnly": false
+        },
+        {
+          "name": "experiment.exhibit",
+          "description": "Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.get_state",
+          "description": "Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.graph",
+          "description": "Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.list",
+          "description": "Read the selected project's experiment records, including terminal work, attempt history and sealed submission metadata. Artifact bytes use artifact.read. Current gate and next-action guidance come from workflow.status_and_next.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.transition",
+          "description": "Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. Retry preserves the approved plan and attempt. Terminal closure requires a specific reason in evidence.reason. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-experiments-tools",
+      "source": "packages/experiments/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "experiments",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-experiments-tools",
+      "group": "front",
+      "owner": "experiments",
+      "label": "Experiments · tools adapter",
+      "purpose": "Connects Experiments to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "experiment.attach",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "readOnly": false
+        },
+        {
+          "name": "experiment.create",
+          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.",
+          "readOnly": false
+        },
+        {
+          "name": "experiment.exhibit",
+          "description": "Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.get_state",
+          "description": "Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.graph",
+          "description": "Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.list",
+          "description": "Read the selected project's experiment records, including terminal work, attempt history and sealed submission metadata. Artifact bytes use artifact.read. Current gate and next-action guidance come from workflow.status_and_next.",
+          "readOnly": true
+        },
+        {
+          "name": "experiment.transition",
+          "description": "Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. Retry preserves the approved plan and attempt. Terminal closure requires a specific reason in evidence.reason. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-experiments-ui",
+      "source": "packages/experiments/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "experiments",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-experiments-ui",
+      "group": "front",
+      "owner": "experiments",
+      "label": "Experiments · ui adapter",
+      "purpose": "Connects Experiments to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-feed",
+      "source": "packages/feed/src/index.ts",
+      "provides": [
+        "feed"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "feed",
+      "group": "evidence",
+      "owner": "feed",
+      "label": "Feed",
+      "purpose": "Records project posts, replies and activity with optional artifact references.",
+      "exposedTools": [
+        {
+          "name": "feed.activity",
+          "description": "Read durable activity events for the current project. after is an exclusive event ID cursor, independent of the feed post sequence.",
+          "readOnly": true
+        },
+        {
+          "name": "feed.get",
+          "description": "Read an immutable post in the current project.",
+          "readOnly": true
+        },
+        {
+          "name": "feed.list",
+          "description": "Read project posts in ascending sequence order. after is an exclusive post sequence cursor; limit defaults to 50 and is capped at 100.",
+          "readOnly": true
+        },
+        {
+          "name": "feed.post",
+          "description": "Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-feed-tools",
+      "source": "packages/feed/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "feed",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-feed-tools",
+      "group": "front",
+      "owner": "feed",
+      "label": "Feed · tools adapter",
+      "purpose": "Connects Feed to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "feed.activity",
+          "description": "Read durable activity events for the current project. after is an exclusive event ID cursor, independent of the feed post sequence.",
+          "readOnly": true
+        },
+        {
+          "name": "feed.get",
+          "description": "Read an immutable post in the current project.",
+          "readOnly": true
+        },
+        {
+          "name": "feed.list",
+          "description": "Read project posts in ascending sequence order. after is an exclusive post sequence cursor; limit defaults to 50 and is capped at 100.",
+          "readOnly": true
+        },
+        {
+          "name": "feed.post",
+          "description": "Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-feed-ui",
+      "source": "packages/feed/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "feed",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-feed-ui",
+      "group": "front",
+      "owner": "feed",
+      "label": "Feed · ui adapter",
+      "purpose": "Connects Feed to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-identity",
+      "source": "packages/identity/src/index.ts",
+      "provides": [
+        "identity"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "identity",
+      "group": "auth",
+      "owner": "identity",
+      "label": "Identity",
+      "purpose": "Verifies the shared user's identity. Project membership and roles remain in Scope.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-knowledge",
+      "source": "packages/knowledge/src/index.ts",
+      "provides": [
+        "knowledge"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "claims",
+        "tasks",
+        "experiments",
+        "artifacts",
+        "reviews"
+      ],
+      "optional": [
+        "code"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "knowledge",
+      "group": "research",
+      "owner": "knowledge",
+      "label": "Knowledge",
+      "purpose": "Reads live project research records and resolves research-linked evidence for reflection agents. Historical corpus capture remains available to existing callers.",
+      "exposedTools": [
+        {
+          "name": "project.records",
+          "description": "Read all project claims, tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
+          "readOnly": true
+        },
+        {
+          "name": "project.references",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or claim:, task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-knowledge-tools",
+      "source": "packages/knowledge/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "knowledge",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-knowledge-tools",
+      "group": "front",
+      "owner": "knowledge",
+      "label": "Knowledge · tools adapter",
+      "purpose": "Connects Knowledge to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "project.records",
+          "description": "Read all project claims, tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
+          "readOnly": true
+        },
+        {
+          "name": "project.references",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or claim:, task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-knowledge-ui",
+      "source": "packages/knowledge/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "knowledge",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-knowledge-ui",
+      "group": "front",
+      "owner": "knowledge",
+      "label": "Knowledge · ui adapter",
+      "purpose": "Connects Knowledge to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-mounts",
+      "source": "packages/mounts/src/index.ts",
+      "provides": [
+        "mounts"
+      ],
+      "requires": [
+        "tools",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "mounts",
+      "group": "mounts",
+      "owner": "mounts",
+      "label": "External Mounts",
+      "purpose": "Connects remote MCP tools to Tools with names such as _nisa.search. Owns upstream credential bindings and secret resolution; Scope supplies caller tool policy.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-mounts-ui",
+      "source": "packages/mounts/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "mounts",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-mounts-ui",
+      "group": "front",
+      "owner": "mounts",
+      "label": "External Mounts · ui adapter",
+      "purpose": "Connects External Mounts to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-paper",
+      "source": "packages/paper/src/index.ts",
+      "provides": [
+        "paper"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "paper",
+      "group": "research",
+      "owner": "paper",
+      "label": "Paper",
+      "purpose": "Stores project documents, citations and immutable edit proposals. Experiment and reflection reviews accept paper edits; Paper creates no assignments or context recipes.",
+      "exposedTools": [
+        {
+          "name": "paper.cite",
+          "description": "Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry.",
+          "readOnly": false
+        },
+        {
+          "name": "paper.patch",
+          "description": "Patch only changed sections of a living-paper document with expectedRevision. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Methods/Results edits are submitted as JSON change artifacts with experiment or reflection submissions and applied by their existing review.",
+          "readOnly": false
+        },
+        {
+          "name": "paper.read",
+          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-paper-tools",
+      "source": "packages/paper/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "paper",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-paper-tools",
+      "group": "front",
+      "owner": "paper",
+      "label": "Paper · tools adapter",
+      "purpose": "Connects Paper to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "paper.cite",
+          "description": "Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry.",
+          "readOnly": false
+        },
+        {
+          "name": "paper.patch",
+          "description": "Patch only changed sections of a living-paper document with expectedRevision. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Methods/Results edits are submitted as JSON change artifacts with experiment or reflection submissions and applied by their existing review.",
+          "readOnly": false
+        },
+        {
+          "name": "paper.read",
+          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-paper-ui",
+      "source": "packages/paper/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "paper",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-paper-ui",
+      "group": "front",
+      "owner": "paper",
+      "label": "Paper · ui adapter",
+      "purpose": "Connects Paper to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-reflection-tools",
+      "source": "packages/reflections/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "reflections",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-reflection-tools",
+      "group": "front",
+      "owner": "reflections",
+      "label": "Reflections · tools adapter",
+      "purpose": "Connects Reflections to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "reflection.get",
+          "description": "Read a reflection wave, current lens submissions and exact synthesis review. New waves use live research through project.records; only legacy waves contain a frozen corpus.",
+          "readOnly": true
+        },
+        {
+          "name": "reflection.lens",
+          "description": "Read one lens assignment and its own pinned output. This does not disclose other lens outputs.",
+          "readOnly": true
+        },
+        {
+          "name": "reflection.list",
+          "description": "List project reflection waves and their current stages.",
+          "readOnly": true
+        },
+        {
+          "name": "reflection.submit",
+          "description": "Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.",
+          "readOnly": false
+        },
+        {
+          "name": "reflection.submit_lens",
+          "description": "Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-reflection-ui",
+      "source": "packages/reflections/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "reflections",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-reflection-ui",
+      "group": "front",
+      "owner": "reflections",
+      "label": "Reflections · ui adapter",
+      "purpose": "Connects Reflections to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-reflections",
+      "source": "packages/reflections/src/index.ts",
+      "provides": [
+        "reflections"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "paper",
+        "workflows",
+        "reviews",
+        "contextBuilder"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "reflections",
+      "group": "research",
+      "owner": "reflections",
+      "label": "Reflections",
+      "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required.",
+      "exposedTools": [
+        {
+          "name": "reflection.get",
+          "description": "Read a reflection wave, current lens submissions and exact synthesis review. New waves use live research through project.records; only legacy waves contain a frozen corpus.",
+          "readOnly": true
+        },
+        {
+          "name": "reflection.lens",
+          "description": "Read one lens assignment and its own pinned output. This does not disclose other lens outputs.",
+          "readOnly": true
+        },
+        {
+          "name": "reflection.list",
+          "description": "List project reflection waves and their current stages.",
+          "readOnly": true
+        },
+        {
+          "name": "reflection.submit",
+          "description": "Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.",
+          "readOnly": false
+        },
+        {
+          "name": "reflection.submit_lens",
+          "description": "Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-research",
+      "source": "packages/research/src/index.ts",
+      "provides": [
+        "research"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows"
+      ],
+      "optional": [
+        "paper",
+        "reflections",
+        "knowledge",
+        "consolidation"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "research",
+      "group": "research",
+      "owner": "research",
+      "label": "Research",
+      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Optional Paper supplies the problem definition; Reflections starts waves and verifies approval; Knowledge supplies live-evidence permissions and unsnapshotted consolidation inputs; Consolidation handles selected code changes. Research stays active when any optional provider is removed, and only operations that use it wait with a named blocker. Stored records and completed command receipts remain readable; absence never means empty or approved evidence. New cycles can finish after approved reflection without consolidation. Paper changes belong to scientific workflows.",
+      "exposedTools": [
+        {
+          "name": "reflection.create",
+          "description": "Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.",
+          "readOnly": false
+        },
+        {
+          "name": "research.advance",
+          "description": "Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. Never launches agents or publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.",
+          "readOnly": false
+        },
+        {
+          "name": "research.create",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Paper edits are reviewed within scientific workflows.",
+          "readOnly": false
+        },
+        {
+          "name": "research.get",
+          "description": "Read a research cycle, its accepted project definition, current outer gate and child workflow IDs. Use workflow.status_and_next for blockers.",
+          "readOnly": true
+        },
+        {
+          "name": "research.list",
+          "description": "List research cycles and their exact child workflow references.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-research-tools",
+      "source": "packages/research/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "research",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-research-tools",
+      "group": "front",
+      "owner": "research",
+      "label": "Research · tools adapter",
+      "purpose": "Connects Research to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "reflection.create",
+          "description": "Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.",
+          "readOnly": false
+        },
+        {
+          "name": "research.advance",
+          "description": "Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. Never launches agents or publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.",
+          "readOnly": false
+        },
+        {
+          "name": "research.create",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Paper edits are reviewed within scientific workflows.",
+          "readOnly": false
+        },
+        {
+          "name": "research.get",
+          "description": "Read a research cycle, its accepted project definition, current outer gate and child workflow IDs. Use workflow.status_and_next for blockers.",
+          "readOnly": true
+        },
+        {
+          "name": "research.list",
+          "description": "List research cycles and their exact child workflow references.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-research-ui",
+      "source": "packages/research/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "research",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-research-ui",
+      "group": "front",
+      "owner": "research",
+      "label": "Research · ui adapter",
+      "purpose": "Connects Research to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-review-tools",
+      "source": "packages/reviews/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "tools",
+        "reviews"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-review-tools",
+      "group": "front",
+      "owner": "reviews",
+      "label": "Reviews · tools adapter",
+      "purpose": "Connects Reviews to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "review.get",
+          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.",
+          "readOnly": true
+        },
+        {
+          "name": "review.list",
+          "description": "List immutable review requests and their claim/verdict status in the current project.",
+          "readOnly": true
+        },
+        {
+          "name": "review.start",
+          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.",
+          "readOnly": false
+        },
+        {
+          "name": "review.submit",
+          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-review-ui",
+      "source": "packages/reviews/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "reviews",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-review-ui",
+      "group": "front",
+      "owner": "reviews",
+      "label": "Reviews · ui adapter",
+      "purpose": "Connects Reviews to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-reviews",
+      "source": "packages/reviews/src/index.ts",
+      "provides": [
+        "reviews"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "domainEvents"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "reviews",
+      "group": "evidence",
+      "owner": "reviews",
+      "label": "Reviews",
+      "purpose": "Pins evidence, enforces independent review, retains findings and verdicts, and invokes the owning domain's transition in the same transaction.",
+      "exposedTools": [
+        {
+          "name": "review.get",
+          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.",
+          "readOnly": true
+        },
+        {
+          "name": "review.list",
+          "description": "List immutable review requests and their claim/verdict status in the current project.",
+          "readOnly": true
+        },
+        {
+          "name": "review.start",
+          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.",
+          "readOnly": false
+        },
+        {
+          "name": "review.submit",
+          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-runner",
+      "source": "packages/runner/src/index.ts",
+      "provides": [
+        "runner"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "machine",
+      "defaultConfiguration": false,
+      "id": "runner",
+      "group": "runner",
+      "owner": "runner",
+      "label": "Runner",
+      "purpose": "Runs on a separate machine, launches agents, maintains their leases and captures Git workspaces. It calls server controls over HTTP.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-scope",
+      "source": "packages/scope/src/index.ts",
+      "provides": [
+        "scope"
+      ],
+      "requires": [
+        "state"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "scope",
+      "group": "foundation",
+      "owner": "scope",
+      "label": "Scope",
+      "purpose": "Owns projects, security actors, memberships, credentials and permissions, plus the project Introduction. Agent Sessions owns agent identity and lifetime; Scope enforces its security actor and delegated authority. Scope also owns exact remote-tool grants and the registered session policy.",
+      "exposedTools": [
+        {
+          "name": "actor.create",
+          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.credentials",
+          "description": "Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.",
+          "readOnly": true
+        },
+        {
+          "name": "actor.issue_token",
+          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.list",
+          "description": "Operator: list actors in this project.",
+          "readOnly": true
+        },
+        {
+          "name": "actor.revoke",
+          "description": "Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.revoke_token",
+          "description": "Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.rotate_token",
+          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.whoami",
+          "description": "Read your authenticated actor identity and role.",
+          "readOnly": true
+        },
+        {
+          "name": "project.context.update",
+          "description": "Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
+          "readOnly": false
+        },
+        {
+          "name": "project.get",
+          "description": "Read the current project.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-scope-tools",
+      "source": "packages/scope/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "scope",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-scope-tools",
+      "group": "front",
+      "owner": "scope",
+      "label": "Scope · tools adapter",
+      "purpose": "Connects Scope to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "actor.create",
+          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.credentials",
+          "description": "Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.",
+          "readOnly": true
+        },
+        {
+          "name": "actor.issue_token",
+          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.list",
+          "description": "Operator: list actors in this project.",
+          "readOnly": true
+        },
+        {
+          "name": "actor.revoke",
+          "description": "Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.revoke_token",
+          "description": "Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.rotate_token",
+          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.",
+          "readOnly": false
+        },
+        {
+          "name": "actor.whoami",
+          "description": "Read your authenticated actor identity and role.",
+          "readOnly": true
+        },
+        {
+          "name": "project.context.update",
+          "description": "Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
+          "readOnly": false
+        },
+        {
+          "name": "project.get",
+          "description": "Read the current project.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-scope-ui",
+      "source": "packages/scope/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "scope",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-scope-ui",
+      "group": "front",
+      "owner": "scope",
+      "label": "Scope · ui adapter",
+      "purpose": "Connects Scope to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-sessions",
+      "source": "packages/sessions/src/index.ts",
+      "provides": [
+        "sessions"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows",
+        "domainEvents"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "sessions",
+      "group": "coordination",
+      "owner": "sessions",
+      "label": "Agent Sessions",
+      "purpose": "Owns continuing agent identity, context-reset history and authenticated sessions. Attaches one workflow assignment at a time, freezes its context and tool permissions, and fences each execution independently. Runner launches fresh agents; external agents can explicitly change assignments.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-sessions-api",
+      "source": "packages/sessions/src/api.ts",
+      "provides": [],
+      "requires": [
+        "sessions",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-sessions-api",
+      "group": "front",
+      "owner": "sessions",
+      "label": "Agent Sessions · api adapter",
+      "purpose": "Connects Agent Sessions to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-sessions-ui",
+      "source": "packages/sessions/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "sessions",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-sessions-ui",
+      "group": "front",
+      "owner": "sessions",
+      "label": "Agent Sessions · ui adapter",
+      "purpose": "Connects Agent Sessions to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-state",
+      "source": "packages/state/src/index.ts",
+      "provides": [
+        "state"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "state",
+      "group": "foundation",
+      "owner": "state",
+      "label": "State",
+      "purpose": "Provides async transactions, migrations, durable records and the event ledger. Configuration selects SQLite or PostgreSQL behind the same contract.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-task-tools",
+      "source": "packages/tasks/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "tools",
+        "tasks"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-task-tools",
+      "group": "front",
+      "owner": "tasks",
+      "label": "Tasks · tools adapter",
+      "purpose": "Connects Tasks to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "task.checkpoint",
+          "description": "Save attributed progress for this task assignment. Checkpoints are unverified notes for continuity, not a delivery or verdict. Review checkpoints require the current claimId.",
+          "readOnly": false
+        },
+        {
+          "name": "task.context",
+          "description": "Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.",
+          "readOnly": false
+        },
+        {
+          "name": "task.create",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs; project.reflection requires experiments and projectKnowledge.",
+          "readOnly": false
+        },
+        {
+          "name": "task.get",
+          "description": "Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance.",
+          "readOnly": true
+        },
+        {
+          "name": "task.list",
+          "description": "List tasks in the current project.",
+          "readOnly": true
+        },
+        {
+          "name": "task.mark_failed",
+          "description": "Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
+          "readOnly": false
+        },
+        {
+          "name": "task.reissue_review",
+          "description": "Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.",
+          "readOnly": false
+        },
+        {
+          "name": "task.submit_delivery",
+          "description": "Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. expectedRevision is the task workflow revision.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-task-ui",
+      "source": "packages/tasks/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "tasks",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-task-ui",
+      "group": "front",
+      "owner": "tasks",
+      "label": "Tasks · ui adapter",
+      "purpose": "Connects Tasks to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-tasks",
+      "source": "packages/tasks/src/index.ts",
+      "provides": [
+        "tasks"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "workflows",
+        "reviews",
+        "contextBuilder"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "tasks",
+      "group": "research",
+      "owner": "tasks",
+      "label": "Tasks",
+      "purpose": "Owns task briefs, acceptance checks, evidence submissions, closure rules and task-specific context formulas.",
+      "exposedTools": [
+        {
+          "name": "task.checkpoint",
+          "description": "Save attributed progress for this task assignment. Checkpoints are unverified notes for continuity, not a delivery or verdict. Review checkpoints require the current claimId.",
+          "readOnly": false
+        },
+        {
+          "name": "task.context",
+          "description": "Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.",
+          "readOnly": false
+        },
+        {
+          "name": "task.create",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs; project.reflection requires experiments and projectKnowledge.",
+          "readOnly": false
+        },
+        {
+          "name": "task.get",
+          "description": "Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance.",
+          "readOnly": true
+        },
+        {
+          "name": "task.list",
+          "description": "List tasks in the current project.",
+          "readOnly": true
+        },
+        {
+          "name": "task.mark_failed",
+          "description": "Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
+          "readOnly": false
+        },
+        {
+          "name": "task.reissue_review",
+          "description": "Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.",
+          "readOnly": false
+        },
+        {
+          "name": "task.submit_delivery",
+          "description": "Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. expectedRevision is the task workflow revision.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-tools",
+      "source": "packages/api/src/index.ts",
+      "provides": [
+        "tools"
+      ],
+      "requires": [
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "tools",
+      "group": "front",
+      "owner": "tools",
+      "label": "Tools",
+      "purpose": "Registers native and mounted tools, applies grants and worker constraints, and drains admitted calls during unload.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-ui",
+      "source": "packages/ui/src/index.ts",
+      "provides": [
+        "ui"
+      ],
+      "requires": [
+        "api",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "ui",
+      "group": "front",
+      "owner": "ui",
+      "label": "UI",
+      "purpose": "Serves the browser and the registry of plugin-owned views. Removing a UI adapter removes that view.",
+      "exposedTools": [
+        {
+          "name": "ui.read",
+          "description": "Read the data a sidebar row owns when it has no dedicated domain tool.",
+          "readOnly": true
+        },
+        {
+          "name": "ui.shell",
+          "description": "Read the sidebar rows currently registered by active plugins, with live row status, and the plugin lifecycle table.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-workflow-tools",
+      "source": "packages/workflows/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "workflows",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-workflow-tools",
+      "group": "front",
+      "owner": "workflows",
+      "label": "Workflows · tools adapter",
+      "purpose": "Connects Workflows to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "workflow.assignment",
+          "description": "Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.",
+          "readOnly": true
+        },
+        {
+          "name": "workflow.begin",
+          "description": "Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.",
+          "readOnly": false
+        },
+        {
+          "name": "workflow.status_and_next",
+          "description": "Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. Omit instanceId for a project overview of all workflow instances. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-workflows",
+      "source": "packages/workflows/src/index.ts",
+      "provides": [
+        "workflows"
+      ],
+      "requires": [
+        "state",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "workflows",
+      "group": "coordination",
+      "owner": "workflows",
+      "label": "Workflows",
+      "purpose": "Owns the common state graph, revisions, prerequisites, current gate, blockers, next actions, assignments and lease hooks. Domains provide their own rules.",
+      "exposedTools": [
+        {
+          "name": "workflow.assignment",
+          "description": "Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.",
+          "readOnly": true
+        },
+        {
+          "name": "workflow.begin",
+          "description": "Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.",
+          "readOnly": false
+        },
+        {
+          "name": "workflow.status_and_next",
+          "description": "Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. Omit instanceId for a project overview of all workflow instances. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
+          "readOnly": true
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "api",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "api",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "api",
+      "to": "identity",
+      "optional": false
+    },
+    {
+      "from": "merv-artifact-tools",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-artifact-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-artifact-ui",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-artifact-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "artifacts",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "artifacts",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "artifacts",
+      "to": "blobs",
+      "optional": false
+    },
+    {
+      "from": "claims",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "claims",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-claims-tools",
+      "to": "claims",
+      "optional": false
+    },
+    {
+      "from": "merv-claims-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-claims-ui",
+      "to": "claims",
+      "optional": false
+    },
+    {
+      "from": "merv-claims-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "code",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "code",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "code",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "code",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-code-api",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "merv-code-api",
+      "to": "code",
+      "optional": false
+    },
+    {
+      "from": "merv-code-tools",
+      "to": "code",
+      "optional": false
+    },
+    {
+      "from": "merv-code-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-code-ui",
+      "to": "code",
+      "optional": false
+    },
+    {
+      "from": "merv-code-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "contextBuilder",
+      "optional": false
+    },
+    {
+      "from": "consolidation",
+      "to": "code",
+      "optional": false
+    },
+    {
+      "from": "merv-consolidation-tools",
+      "to": "consolidation",
+      "optional": false
+    },
+    {
+      "from": "merv-consolidation-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-consolidation-ui",
+      "to": "consolidation",
+      "optional": false
+    },
+    {
+      "from": "merv-consolidation-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "contextBuilder",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "contextBuilder",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "contextBuilder",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "domainEvents",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "contextBuilder",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "claims",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "code",
+      "optional": true
+    },
+    {
+      "from": "merv-experiments-tools",
+      "to": "experiments",
+      "optional": false
+    },
+    {
+      "from": "merv-experiments-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-experiments-ui",
+      "to": "experiments",
+      "optional": false
+    },
+    {
+      "from": "merv-experiments-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "feed",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "feed",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "feed",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-feed-tools",
+      "to": "feed",
+      "optional": false
+    },
+    {
+      "from": "merv-feed-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-feed-ui",
+      "to": "feed",
+      "optional": false
+    },
+    {
+      "from": "merv-feed-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "claims",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "tasks",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "experiments",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "knowledge",
+      "to": "code",
+      "optional": true
+    },
+    {
+      "from": "merv-knowledge-tools",
+      "to": "knowledge",
+      "optional": false
+    },
+    {
+      "from": "merv-knowledge-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-knowledge-ui",
+      "to": "knowledge",
+      "optional": false
+    },
+    {
+      "from": "merv-knowledge-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "mounts",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "mounts",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-mounts-ui",
+      "to": "mounts",
+      "optional": false
+    },
+    {
+      "from": "merv-mounts-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "paper",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "paper",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "paper",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-paper-tools",
+      "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "merv-paper-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-paper-ui",
+      "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "merv-paper-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "merv-reflection-tools",
+      "to": "reflections",
+      "optional": false
+    },
+    {
+      "from": "merv-reflection-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-reflection-ui",
+      "to": "reflections",
+      "optional": false
+    },
+    {
+      "from": "merv-reflection-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "reflections",
+      "to": "contextBuilder",
+      "optional": false
+    },
+    {
+      "from": "research",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "research",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "research",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "research",
+      "to": "paper",
+      "optional": true
+    },
+    {
+      "from": "research",
+      "to": "reflections",
+      "optional": true
+    },
+    {
+      "from": "research",
+      "to": "knowledge",
+      "optional": true
+    },
+    {
+      "from": "research",
+      "to": "consolidation",
+      "optional": true
+    },
+    {
+      "from": "merv-research-tools",
+      "to": "research",
+      "optional": false
+    },
+    {
+      "from": "merv-research-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-research-ui",
+      "to": "research",
+      "optional": false
+    },
+    {
+      "from": "merv-research-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "merv-review-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-review-tools",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "merv-review-ui",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "merv-review-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "reviews",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "reviews",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "reviews",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "reviews",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "scope",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "merv-scope-tools",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-scope-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-scope-ui",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-scope-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "sessions",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "sessions",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "sessions",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "sessions",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "merv-sessions-api",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "merv-sessions-api",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "merv-sessions-ui",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "merv-sessions-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "merv-task-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-task-tools",
+      "to": "tasks",
+      "optional": false
+    },
+    {
+      "from": "merv-task-ui",
+      "to": "tasks",
+      "optional": false
+    },
+    {
+      "from": "merv-task-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "tasks",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "tasks",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "tasks",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "tasks",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "tasks",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "tasks",
+      "to": "contextBuilder",
+      "optional": false
+    },
+    {
+      "from": "tools",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "ui",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "ui",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-workflow-tools",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "merv-workflow-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "workflows",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "workflows",
+      "to": "scope",
+      "optional": false
+    }
+  ],
+  "counts": {
+    "plugins": 56,
+    "providers": 25,
+    "adapters": 31,
+    "dependencies": 144
+  },
+  "network": [
+    {
+      "from": "runner",
+      "to": "api",
+      "protocol": "HTTP",
+      "description": "Authenticated Sessions and Code controls. Not a Cordis inject dependency."
+    },
+    {
+      "from": "mounts",
+      "to": "remote-nisa",
+      "protocol": "MCP",
+      "description": "Optional Nisa MCP connection; configured separately."
+    },
+    {
+      "from": "mounts",
+      "to": "remote-sandboxes",
+      "protocol": "MCP",
+      "description": "Optional Sandboxes MCP connection; configured separately."
+    }
+  ]
+}

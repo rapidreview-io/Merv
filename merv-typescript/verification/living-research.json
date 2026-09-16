@@ -1,0 +1,150 @@
+{
+  "date": "2026-09-15",
+  "scope": "User-authorized living research workflow wave; not full Python parity or production deployment",
+  "result": "verified",
+  "newProviders": [
+    "paper",
+    "reflections",
+    "consolidation",
+    "research"
+  ],
+  "newTools": {
+    "paper": [
+      "paper.read",
+      "paper.patch",
+      "paper.cite",
+      "paper.begin_update",
+      "paper.publish",
+      "paper.cancel"
+    ],
+    "reflections": [
+      "reflection.create",
+      "reflection.list",
+      "reflection.get",
+      "reflection.lens",
+      "reflection.submit_lens",
+      "reflection.submit"
+    ],
+    "consolidation": [
+      "consolidation.create",
+      "consolidation.list",
+      "consolidation.get",
+      "consolidation.submit"
+    ],
+    "research": [
+      "research.create",
+      "research.list",
+      "research.get",
+      "research.advance"
+    ]
+  },
+  "regression": {
+    "command": "node --import tsx --test tests/*.test.ts",
+    "tests": 682,
+    "passed": 681,
+    "failed": 0,
+    "skipped": 1,
+    "skip": "Optional Nisa checkout integration; MERV_NISA_CHECKOUT unset",
+    "log": "/private/tmp/merv-living-acceptance-suite.log"
+  },
+  "builds": [
+    "npm run build",
+    "npm run typecheck:ui",
+    "npm run build:ui"
+  ],
+  "focusedTests": [
+    "tests/paper.test.ts",
+    "tests/reflections.test.ts",
+    "tests/consolidation.test.ts",
+    "tests/research.test.ts",
+    "tests/review-exclusions.test.ts",
+    "tests/artifact-upload.test.ts"
+  ],
+  "httpAcceptance": {
+    "kind": "synthetic HTTP tool acceptance",
+    "calls": 39,
+    "cycleId": "wf_552dd7df969245b2b2e81ad8467b37a5",
+    "state": "complete",
+    "reflectionId": "wf_da934f5c8b3d43df81afc611f7895975",
+    "consolidationId": "wf_54c28137a9804c05a80c10a73f68ca97",
+    "publications": [
+      {
+        "id": "paperpub_be99592f0e824cd2858f0e76dc78be6d",
+        "kind": "methods",
+        "revision": 1,
+        "sourceArtifacts": 4,
+        "evidence": 4
+      },
+      {
+        "id": "paperpub_f423443747ef4116be95be71b667c7aa",
+        "kind": "results",
+        "revision": 1,
+        "sourceArtifacts": 4,
+        "evidence": 4
+      }
+    ],
+    "centralGit": "not-applicable"
+  },
+  "browser": {
+    "fixture": "Disposable synthetic UI demo, stopped after acceptance",
+    "checked": [
+      "Four project definition fields saved with revision updates",
+      "Literature section and linked citation created through actual forms",
+      "Citation draft retained across document tabs",
+      "Research cycle created and advanced into a real five-child reflection",
+      "Reflection sources, lens contributors, pinned artifacts and independent review rendered",
+      "Completed consolidation shows exact source and review links and truthful centralGit status",
+      "Methods and Results display published revision 1, 1 covered source and 4 retained evidence artifacts each",
+      "Read-only actor sees paper without edit controls",
+      "Completed outer cycle shows exact four child references and disabled completion action",
+      "Main acceptance tab reported no browser error logs"
+    ],
+    "lostReply": {
+      "fault": "First paper.patch committed upstream; proxy replaced successful reply with HTTP500",
+      "originalRevision": 4,
+      "committedRevision": 5,
+      "retryRevision": 5,
+      "attempts": 2,
+      "requestBodiesIdentical": true,
+      "lockedFields": true,
+      "survived": [
+        "document tab change",
+        "paper refresh"
+      ],
+      "recoveredOriginalReceipt": true,
+      "publishedDocumentsMarkedStaleAfterProblemEdit": true
+    }
+  },
+  "independentReview": {
+    "finding": "Synthesis admission allowed a producer whose source could not administer the ensuing review",
+    "fixed": "Authorize the verified wave owner or operator consistently during admission, assignment, dispatch, lease checks and submission",
+    "regression": "synthesis admission matches review administration, including source-bound workers",
+    "remainingGoalBlockers": []
+  },
+  "boundaries": [
+    "No new compute/storage provider; merv-sandboxes remains external",
+    "Key authentication retained; OAuth deferred",
+    "Artifact upload client reads local bytes, uses normal MCP authorization and returns verified metadata; max 2000000 bytes",
+    "No automatic identity handoff or second scheduler",
+    "Consolidation approval does not publish central Git",
+    "Reviewed reflection change specs are retained but not materialized into project claims/new research work"
+  ],
+  "cleanup": {
+    "syntheticDemoStopped": true,
+    "retryProxyStopped": true,
+    "temporaryBrowserTabsClosed": true,
+    "productionDataChanged": false
+  },
+  "architecture": {
+    "plugins": 56,
+    "providers": 25,
+    "dependencies": 147,
+    "defaultEntries": 53,
+    "apiEntries": 38,
+    "nativeTools": 67,
+    "toolsWithUi": 69,
+    "staticRenderer": "scripts/render-dependencies.mjs",
+    "validated": "Exact plugin/edge sets checked against current-dependencies.json; SVG and PNG regenerated and visually inspected; interactive explorer regenerated"
+  },
+  "subsequentArchitectureChange": "paper-workflow-refactor.json"
+}

@@ -8,7 +8,7 @@ import { ToolRegistry } from '../packages/api/src/registry.js';
 
 const caller = { actorId: 'alice', projectId: 'local-project' };
 const scope = {
-  require(value: Caller) {
+  async require(value: Caller) {
     if (value.actorId !== caller.actorId || value.projectId !== caller.projectId)
       throw new MervError('forbidden', 'Access denied', 403);
     return {
@@ -28,7 +28,7 @@ function remote(
     kind: 'mcp',
     name,
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    handler: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
     ...overrides,
   };
 }
@@ -38,6 +38,67 @@ function latch() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+for (const phase of ['authentication', 'parsing'] as const) {
+  test(`tool disposal drains pending ${phase} and revocation still prevents handler dispatch`, async () => {
+    const entered = latch(),
+      release = latch();
+    let allowed = true,
+      first = true,
+      calls = 0,
+      disposed = false;
+    const registry = new ToolRegistry({
+      async require(value) {
+        if (phase === 'authentication' && first) {
+          first = false;
+          entered.resolve();
+          await release.promise;
+        }
+        if (!allowed) throw new MervError('forbidden', 'Access was revoked', 403);
+        return await scope.require(value);
+      },
+    });
+    const remove = registry.register({
+      name: 'awaited',
+      description: 'Asynchronous admission fixture',
+      inputSchema: z
+        .object({})
+        .strict()
+        .transform(async (value) => {
+          if (phase === 'parsing') {
+            entered.resolve();
+            await release.promise;
+          }
+          return value;
+        }),
+      handler: () => {
+        calls++;
+        return 'unreachable';
+      },
+    });
+    try {
+      const pending = registry.call('awaited', caller, {});
+      const rejected = assert.rejects(pending, { code: 'forbidden' });
+      await entered.promise;
+      const draining = remove().then(() => {
+        disposed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(disposed, false);
+      assert.deepEqual(await registry.list(), []);
+      await assert.rejects(registry.call('awaited', caller, {}), { code: 'unknown_tool' });
+      allowed = false;
+      release.resolve();
+      await rejected;
+      await draining;
+      assert.equal(calls, 0);
+      assert.equal(disposed, true);
+    } finally {
+      release.resolve();
+      await registry.close();
+    }
+  });
 }
 
 test('native invocation remains JSON even when its value resembles MCP, while remote results retain all content and metadata', async () => {
@@ -106,14 +167,14 @@ test('native invocation remains JSON even when its value resembles MCP, while re
   await registry.createCatalog('remote').replace([tool]);
   const { kind: _kind, handler: _handler, ...metadata } = tool;
   assert.deepEqual(
-    registry.describe().find((item) => item.name === 'mount__remote__rich'),
-    { ...metadata, name: 'mount__remote__rich' },
+    (await registry.describe()).find((item) => item.name === '_remote.rich'),
+    { ...metadata, name: '_remote.rich' },
   );
-  assert.deepEqual(await registry.invoke('mount__remote__rich', caller, {}), {
+  assert.deepEqual(await registry.invoke('_remote.rich', caller, {}), {
     format: 'mcp',
     value: result,
   });
-  assert.deepEqual(await registry.call('mount__remote__rich', caller, {}), result);
+  assert.deepEqual(await registry.call('_remote.rich', caller, {}), result);
 });
 
 test('remote JSON Schema validates without coercion, defaults, argument stripping, or consuming remote projectId', async () => {
@@ -143,7 +204,7 @@ test('remote JSON Schema validates without coercion, defaults, argument strippin
     }),
   ]);
   const args = { projectId: 'upstream-project', count: 3, email: 'a@example.com' };
-  await registry.call('mount__schema__validate', caller, args);
+  await registry.call('_schema.validate', caller, args);
   assert.deepEqual(seen, args);
   assert.deepEqual(args, { projectId: 'upstream-project', count: 3, email: 'a@example.com' });
   for (const invalid of [
@@ -153,12 +214,12 @@ test('remote JSON Schema validates without coercion, defaults, argument strippin
     { ...args, extra: true },
     { count: 3 },
   ]) {
-    await assert.rejects(registry.call('mount__schema__validate', caller, invalid), {
+    await assert.rejects(registry.call('_schema.validate', caller, invalid), {
       code: 'invalid_input',
     });
   }
   await assert.rejects(
-    registry.call('mount__schema__validate', { ...caller, projectId: 'foreign' }, args),
+    registry.call('_schema.validate', { ...caller, projectId: 'foreign' }, args),
     { code: 'forbidden' },
   );
   await catalog.replace([
@@ -179,8 +240,8 @@ test('remote JSON Schema validates without coercion, defaults, argument strippin
       },
     }),
   ]);
-  await registry.call('mount__schema__tuple', caller, { pair: ['x', 2] });
-  await assert.rejects(registry.call('mount__schema__tuple', caller, { pair: [2, 'x'] }), {
+  await registry.call('_schema.tuple', caller, { pair: ['x', 2] });
+  await assert.rejects(registry.call('_schema.tuple', caller, { pair: [2, 'x'] }), {
     code: 'invalid_input',
   });
 });
@@ -206,10 +267,10 @@ test('catalog compilation is atomic and unsupported schemas or execution modes n
       { code: 'invalid_schema' },
     );
     assert.deepEqual(
-      registry.list().map((tool) => tool.name),
-      ['mount__atomic__original'],
+      (await registry.list()).map((tool) => tool.name),
+      ['_atomic.original'],
     );
-    assert.ok(await registry.call('mount__atomic__original', caller, {}));
+    assert.ok(await registry.call('_atomic.original', caller, {}));
   }
   await assert.rejects(catalog.replace([remote('dup'), remote('dup')]), { code: 'duplicate_tool' });
   for (const taskSupport of ['optional', 'required'] as const) {
@@ -218,15 +279,15 @@ test('catalog compilation is atomic and unsupported schemas or execution modes n
     });
   }
   assert.deepEqual(
-    registry.list().map((tool) => tool.name),
-    ['mount__atomic__original'],
+    (await registry.list()).map((tool) => tool.name),
+    ['_atomic.original'],
   );
 });
 
 test('mounted namespaces are unique and reserved, and catalog descriptions are defensive snapshots', async () => {
   const registry = new ToolRegistry(scope, fixtureAccess);
   assert.throws(() => registry.register(remote('unprefixed')), { code: 'catalog_required' });
-  for (const mount of ['Uppercase', 'has__separator', '', 'x'.repeat(65)])
+  for (const mount of ['Uppercase', 'has__separator', 'has.separator', '', 'x'.repeat(65)])
     assert.throws(() => registry.createCatalog(mount), { code: 'invalid_mount' });
   const one = registry.createCatalog('one'),
     two = registry.createCatalog('two');
@@ -234,7 +295,7 @@ test('mounted namespaces are unique and reserved, and catalog descriptions are d
   assert.throws(
     () =>
       registry.register({
-        name: 'mount__future__tool',
+        name: '_future.tool',
         description: '',
         inputSchema: z.object({}),
         handler: () => null,
@@ -253,19 +314,58 @@ test('mounted namespaces are unique and reserved, and catalog descriptions are d
   await two.replace([remote('same')]);
   (tool.inputSchema.properties!.text as { minLength: number }).minLength = 0;
   tool._meta!.mutable = false;
-  const exposed = registry
-    .list()
-    .find((item) => item.name === 'mount__one__same') as RemoteToolDefinition;
+  const exposed = (await registry.list()).find(
+    (item) => item.name === '_one.same',
+  ) as RemoteToolDefinition;
   (exposed.inputSchema.properties!.text as { minLength: number }).minLength = 0;
   assert.equal(
-    registry.describe().find((item) => item.name === 'mount__one__same')?._meta?.mutable,
+    (await registry.describe()).find((item) => item.name === '_one.same')?._meta?.mutable,
     true,
   );
-  await assert.rejects(registry.call('mount__one__same', caller, { text: 'x' }), {
+  await assert.rejects(registry.call('_one.same', caller, { text: 'x' }), {
     code: 'invalid_input',
   });
   await assert.rejects(one.replace([remote('x'.repeat(128))]), { code: 'invalid_tool' });
-  assert.equal(registry.list().length, 2);
+  assert.equal((await registry.list()).length, 2);
+});
+
+test('compact mounted names preserve raw tool identities for grants and do not retain old aliases', async () => {
+  const rawName = 'qa.ask_more__detail';
+  const checks: [string, string][] = [];
+  const registry = new ToolRegistry(scope, {
+    allows: async (_caller, mountId, toolName) => mountId === 'nisa' && toolName === rawName,
+    require: async (_caller, mountId, toolName) => {
+      checks.push([mountId, toolName]);
+      if (mountId !== 'nisa' || toolName !== rawName)
+        throw new MervError('tool_forbidden', 'Tool is not granted', 403);
+    },
+  });
+  try {
+    await registry.createCatalog('nisa').replace([remote(rawName), remote('qa.cancel')]);
+    await registry.createCatalog('another-plugin').replace([remote(rawName)]);
+    assert.deepEqual(
+      (await registry.describe(caller)).map((tool) => tool.name),
+      [`_nisa.${rawName}`],
+    );
+    assert.deepEqual(await registry.call(`_nisa.${rawName}`, caller, {}), {
+      content: [{ type: 'text', text: 'ok' }],
+    });
+    // Authority is checked at admission and again before queued remote dispatch.
+    assert.deepEqual(checks, [
+      ['nisa', rawName],
+      ['nisa', rawName],
+    ]);
+    await assert.rejects(registry.call('_nisa.qa.cancel', caller, {}), { code: 'tool_forbidden' });
+    await assert.rejects(registry.call(`_another-plugin.${rawName}`, caller, {}), {
+      code: 'tool_forbidden',
+    });
+    await assert.rejects(registry.call(`mount__nisa__${rawName}`, caller, {}), {
+      code: 'unknown_tool',
+    });
+    await assert.rejects(registry.call(rawName, caller, {}), { code: 'unknown_tool' });
+  } finally {
+    await registry.close();
+  }
 });
 
 test('replacement publishes immediately, drains old calls, and disposal tracks both generations', async () => {
@@ -291,21 +391,21 @@ test('replacement publishes immediately, drains old calls, and disposal tracks b
   });
   try {
     await catalog.replace([old]);
-    const first = registry.call('mount__generations__work', caller, {});
+    const first = registry.call('_generations.work', caller, {});
     await oldEntered.promise;
     let replaced = false;
     const replacement = catalog.replace([next]).then(() => {
       replaced = true;
     });
-    const second = registry.call('mount__generations__work', caller, {});
+    const second = registry.call('_generations.work', caller, {});
     await nextEntered.promise;
     assert.equal(replaced, false);
     let disposed = false;
     const disposal = catalog.dispose().then(() => {
       disposed = true;
     });
-    assert.deepEqual(registry.list(), []);
-    await assert.rejects(registry.call('mount__generations__work', caller, {}), {
+    assert.deepEqual(await registry.list(), []);
+    await assert.rejects(registry.call('_generations.work', caller, {}), {
       code: 'unknown_tool',
     });
     oldRelease.resolve();
@@ -338,7 +438,7 @@ test('a stale catalog disposer cannot delete a replacement mount while its origi
         },
       }),
     ]);
-    const pending = registry.call('mount__reused__echo', caller, {});
+    const pending = registry.call('_reused.echo', caller, {});
     await entered.promise;
     const disposed = old.dispose();
     const replacement = registry.createCatalog('reused');
@@ -347,11 +447,11 @@ test('a stale catalog disposer cannot delete a replacement mount while its origi
     await pending;
     await disposed;
     await old.dispose();
-    assert.deepEqual(await registry.call('mount__reused__echo', caller, {}), {
+    assert.deepEqual(await registry.call('_reused.echo', caller, {}), {
       content: [{ type: 'text', text: 'ok' }],
     });
     await replacement.replace([]);
-    assert.deepEqual(registry.list(), []);
+    assert.deepEqual(await registry.list(), []);
   } finally {
     release.resolve();
     await registry.close();
@@ -380,14 +480,14 @@ test('remote error results stay MCP errors and successful structured results hon
       handler: () => ({ content: [], structuredContent: { value: 1 } }),
     }),
   ]);
-  assert.deepEqual(await registry.invoke('mount__results__error', caller, {}), {
+  assert.deepEqual(await registry.invoke('_results.error', caller, {}), {
     format: 'mcp',
     value: error,
   });
-  await assert.rejects(registry.call('mount__results__missing', caller, {}), {
+  await assert.rejects(registry.call('_results.missing', caller, {}), {
     code: 'invalid_remote_result',
   });
-  await assert.rejects(registry.call('mount__results__wrong', caller, {}), {
+  await assert.rejects(registry.call('_results.wrong', caller, {}), {
     code: 'invalid_remote_result',
   });
 });
@@ -407,15 +507,15 @@ test('registry close withdraws admission and drains retired catalog calls', asyn
         },
       }),
     ]);
-    const pending = registry.call('mount__closing__slow', caller, {});
+    const pending = registry.call('_closing.slow', caller, {});
     await entered.promise;
     const replacement = catalog.replace([remote('new')]);
     let closed = false;
     const closing = registry.close().then(() => {
       closed = true;
     });
-    assert.deepEqual(registry.list(), []);
-    await assert.rejects(registry.invoke('mount__closing__new', caller, {}), {
+    assert.deepEqual(await registry.list(), []);
+    await assert.rejects(registry.invoke('_closing.new', caller, {}), {
       code: 'unavailable',
     });
     assert.equal(closed, false);

@@ -1,0 +1,246 @@
+{
+  "date": "2026-09-15",
+  "scope": "Production Experiments provider, strict records/evidence tools, immutable attempts/submission rounds, design/results reviews, deterministic exhibits, shared exit guidance, scoped assignment/recovery and optional UI.",
+  "suite": {
+    "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+    "log": "/private/tmp/merv-experiments-suite-final.log",
+    "tests": 610,
+    "pass": 610,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "focused": {
+    "newTests": 36,
+    "independentCombinedTests": 34,
+    "independentCombinedLog": "/private/tmp/merv-experiment-independent-suite.log",
+    "boundariesAndCoreTests": 31,
+    "boundariesAndCoreLog": "/private/tmp/merv-experiments-boundaries-core.log"
+  },
+  "checks": {
+    "backendTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-experiments-typecheck.log"
+    },
+    "backendBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-experiments-build.log"
+    },
+    "uiTypecheck": {
+      "status": "passed",
+      "log": "/private/tmp/merv-experiments-ui-typecheck-final.log"
+    },
+    "uiBuild": {
+      "status": "passed",
+      "log": "/private/tmp/merv-experiments-ui-build-final.log"
+    },
+    "formatting": {
+      "status": "passed",
+      "log": "/private/tmp/merv-experiments-final-format-check.log"
+    },
+    "diffWhitespace": {
+      "status": "passed",
+      "log": "/private/tmp/merv-experiments-diff-check.log"
+    },
+    "recordHashesAndLinks": {
+      "passed": true,
+      "sourceFiles": 43,
+      "localDocumentationLinks": 351,
+      "missingLinks": [],
+      "log": "/private/tmp/merv-experiments-records-links.json"
+    }
+  },
+  "composition": {
+    "pluginEntrypoints": 43,
+    "serviceProviders": 22,
+    "serverProviders": 21,
+    "machineProviders": 1,
+    "directCordisDependencies": 95,
+    "defaultServerEntries": 40,
+    "domainApiEntries": 30,
+    "domainTools": 44,
+    "withUiTools": 46,
+    "newProvider": "experiments",
+    "providerRequires": [
+      "state",
+      "scope",
+      "claims",
+      "artifacts",
+      "workflows",
+      "reviews",
+      "contextBuilder"
+    ],
+    "newAdapterPlugins": ["experiments-tools", "experiments-ui"],
+    "newAgentTools": [
+      "experiment.create",
+      "experiment.list",
+      "experiment.get_state",
+      "experiment.attach",
+      "experiment.transition",
+      "experiment.exhibit",
+      "experiment.graph"
+    ]
+  },
+  "regressions": [
+    "Scoped create/list/read, seven-active cap, exact revision/attempt fencing and current authority before replay.",
+    "Borrowed transaction rolls back domain records, workflow/review, events, exhibit metadata and command receipts together.",
+    "Approved plan is exact sealed design; negative design creates a new attempt, negative results require planned versus running and retain exact findings.",
+    "Recovery freezes evidence and figure metadata, admits exact inherited associations, and preserves original authorship while requiring an own plan/report.",
+    "Exit guidance and actual submission share side-effect-free structural validation; assignment/dispatch admission remains metadata-only.",
+    "Retained image references reject missing/foreign/post-offer files; finite result JSON preserves reserved field names without prototype pollution.",
+    "Real first execution clock survives retry and worker replacement; dependencies gate execution, not planning or terminal closure.",
+    "Scope/session/review claim fences, owner terminal administration, immutable history, restart and Cordis unload/reload.",
+    "Actual HTTP/MCP completes both production review stages and continues Tasks while Experiments is removed."
+  ],
+  "live": {
+    "status": "passed",
+    "record": "verification/experiments-live.json",
+    "freshAgents": 4,
+    "successfulMcpCalls": 24,
+    "failedMcpCalls": 0,
+    "shellCalls": 5,
+    "finalState": "complete"
+  },
+  "browser": {
+    "passed": true,
+    "kind": "Actual in-app browser against built UI and disposable restored native Experiment database",
+    "sourceReport": "/private/tmp/merv-native-experiments-live-20260915-01/report.json",
+    "fixture": "/private/tmp/merv-experiments-browser-20260915-02",
+    "uiSourceSha256": "423fb1ac7b68a5490be93c02087f51d41749cb8953a20a3de8cbad1437ad2da9",
+    "checks": {
+      "restoredNativeRecordIdentical": true,
+      "readerSignIn": true,
+      "listShowsCompleteAttempt1": true,
+      "detailShowsRevision4": true,
+      "guidanceTerminalAndFinished": true,
+      "exactApprovedPlanLink": true,
+      "fiveEvidenceLinksAndHashes": true,
+      "latestResultsReviewPassAndAllFindings": true,
+      "sealedDesignAndResultsRounds": true,
+      "firstExecutionClockMatchesNative": true,
+      "sixNodeSixEdgeGraphAndFullDocument": true,
+      "claimStillActiveLowConfidenceRevision0": true,
+      "detailsCollapsedKeepingGuidanceVisible": true,
+      "removalWithdrawsRowAndRoute": true,
+      "claimsUsableDuringRemoval": true,
+      "restoreReturnsUnchangedExperimentAndGuidance": true,
+      "browserTabClosed": true,
+      "temporaryListenersClosed": true
+    },
+    "pluginToggleToolCounts": [46, 39, 46],
+    "visualInspection": "Current-gate and graph screenshots inspected in conversation at the normal in-app viewport; graph supports horizontal overflow and a full JSON disclosure.",
+    "cleanup": {
+      "stopped": true,
+      "pid": 74439,
+      "url": "http://127.0.0.1:61354"
+    },
+    "limits": [
+      "Disposable copy of native synthetic research records and a locally issued reader credential.",
+      "No shared-provider login or remote deployment exercised.",
+      "No negative-return browser interaction; those records are covered by separate service tests and actual component SSR."
+    ]
+  },
+  "componentRendering": {
+    "kind": "actual React SSR with real Experiment/Sessions service records",
+    "at": "2026-09-15T11:40:48.462Z",
+    "passed": true,
+    "assertions": [
+      "Recovery association names the successor while immutable artifact author remains the original producer.",
+      "Actual EvidenceTable renders Attached by, not Author.",
+      "Owner mark_failed during experiment_review superseded its results request while workflow.data.reviewId still names older design verdict.",
+      "ExperimentRecord renders latest sealed results review with superseded status.",
+      "ExperimentRecord refuses an older polled design review in Latest review."
+    ],
+    "source": "packages/ui/web/views/experiments.tsx",
+    "sourceSha256": "423fb1ac7b68a5490be93c02087f51d41749cb8953a20a3de8cbad1437ad2da9",
+    "records": "/private/tmp/merv-experiments-ui-review-20260915/records.json",
+    "html": "/private/tmp/merv-experiments-ui-review-20260915/rendered.html",
+    "limits": [
+      "Component server rendering, not browser interaction or layout verification.",
+      "Controlled synthetic research records and an actual issued session; no model ran.",
+      "Original service fixture and credentials were removed by its cleanup; retained JSON contains public metadata only."
+    ]
+  },
+  "independentReview": {
+    "status": "passed",
+    "reviewed": [
+      "input/evidence/core/program and recovery invariants",
+      "tool/HTTP/MCP adapter integration",
+      "UI source and real-record SSR",
+      "original native SQLite, executed files and transcripts"
+    ],
+    "correctedFindings": [
+      "Recovery context lost negative-review findings and draft figure references.",
+      "Inherited reattachment needed exact frozen evidence identity matching.",
+      "Guidance needed to run the same exit gates as submission.",
+      "UI attachment author label and latest-review fallback misrepresented history.",
+      "Long experiment details buried guidance; now a collapsed disclosure."
+    ],
+    "fable": {
+      "status": "not_run_pending_specific_payload_approval",
+      "prompt": "/private/tmp/merv-sessions-fable-20260915/prompt.txt",
+      "sha256": "48520b608467daa35fbd11975ba965d160dcf695b06f9956790d99a33ff39b24",
+      "reason": "Automatic approval review previously rejected exporting the specific internal architecture payload without payload/destination approval. No new export or retry occurred."
+    }
+  },
+  "nextOrder": [
+    "Authoritative research corpus and exact code capture references",
+    "Actual Reflection through approved research",
+    "Reflection-owned consolidation and reviewed publication"
+  ],
+  "limits": [
+    "Full backend parity remains active; this completes the first production experiment lifecycle.",
+    "Native proof uses one positive attempt on tiny fixed synthetic data, with four operational workers sharing one source owner. Negative returns and recovery are covered separately by service/transport tests.",
+    "Research corpus/reflection scheduling, authoritative project graphs and reviewed claim/publication history remain open.",
+    "Cloud and cross-machine Git, operational Runner controls, asynchronous State/Postgres and real shared login/deployment remain open.",
+    "Browser verification uses disposable local credentials and restored native records; no provider-backed login."
+  ],
+  "runtime": {
+    "node": "v22.13.1"
+  },
+  "sourceSha256": {
+    "packages/experiments/src/evidence.ts": "c7fe32bac70fc2e90db99fc46c02667cc50dd5bb000726bf79d9f9c7a0ea25a5",
+    "packages/experiments/src/index.ts": "ddbe3469ffa6ae8591441b30c6a77b909369aef7cf212d92b2cdede299bb8db5",
+    "packages/experiments/src/input.ts": "4fe50f7264858ee514cca1fb3dd662c255e0f5ffb507a38cc8408db9475b6d6e",
+    "packages/experiments/src/models.ts": "9a24b36416424d2252ddd99d83d31d13544d24712c5fc5ecd7f6f3c2aea508f8",
+    "packages/experiments/src/program.ts": "9a32cce7546a07b57e32c85b79f1f77c7962a8e2dcbfd1c36405e271aec59f64",
+    "packages/experiments/src/storage.ts": "caed74b9005fb4d41348f4ad9bd95e049c9b7dd262cb3008f5d05d83c033162e",
+    "packages/experiments/src/tools.ts": "a057b5be10656a64ad8f45a7834b47d30f916161a419c7f0c360788077a55960",
+    "packages/experiments/src/types.ts": "d0cf67831595b5824c756621f5457a692cbaae50dabb44ae508d9fdc2d4b825c",
+    "packages/experiments/src/ui.ts": "c74e7812932d5d9e480ffe8a06e83a182a13d8275f0f3795e403fabf93c76487",
+    "packages/experiments/package.json": "1d792bac02351796977566fc66b3ace15de2fc7a3ad74e0d9123325e6be0bb30",
+    "packages/ui/web/views/experiments.tsx": "423fb1ac7b68a5490be93c02087f51d41749cb8953a20a3de8cbad1437ad2da9",
+    "packages/ui/web/views/index.tsx": "bf26d5ea8a026f303eb6c3218f60ebf9c4655e22432902b64d31263c9e325b9f",
+    "packages/ui/web/styles.css": "e336cef8809c753b8b3442144569e380f66e4a6bc95f1e28192630be87fe8a7d",
+    "packages/contracts/src/workflow-models.ts": "c236046caec4882bf90136cb88a87129e7b1a3f0db0e685abbb6f92ee1914ee9",
+    "packages/contracts/src/types.ts": "dd8ec8facdbf1f4bed65194d241b0d361439c95b103c12cd8b206e190a224fbe",
+    "packages/contracts/src/index.ts": "5085835a9d99f1ea8a8102ee300870f61b1fd4dd4cf95745e673c98003974c04",
+    "config/default.json": "68c80c0e6b8b9d8b34f503c06c34cb2c434b1a3d00abd232754b14e3ef51cc00",
+    "package-lock.json": "6c1328411a54104b558ece1fdc3e15a90e965a5fa10eeac5da3ad90d80ab9f1e",
+    "tests/experiment-assignments.test.ts": "1a53be9ed73f85d5e1dfb07485ce22c4f2315b050542c2206f840c6086f373ed",
+    "tests/experiment-evidence.test.ts": "3e691a5545fb0572ee8769f2df0195dd20c7e3050a23ce796dff2ca871f56db6",
+    "tests/experiment-invariants.test.ts": "0597e11ebda489f45dd142e61781ab48a6b6acdd16cc8c02671b2cd415a4afc5",
+    "tests/experiments-api.test.ts": "8fa841967ea855665390015de7d19e5138d55cebaa79f9ac913b378440840e52",
+    "tests/experiments.test.ts": "845c155b7e3dc6fdb7325a667706509869e11d7b3bab37798fb307ed3937e8c8",
+    "tests/boundaries.test.ts": "cae42636b97833324df592284bedf86e269cd32fa5f34e91928bf7e307af47de",
+    "tests/config.test.ts": "0a411abaeca6a814ef225fe43b50be2ee09104a5f5d2647c430d021901db5b5e",
+    "tests/ui.test.ts": "ab7d27089edbafd3f6e84cc54ecbbc09a8f5b6b107f95313b2dd1998b526e549",
+    "tests/cli-config.test.ts": "7d0a421a401cbc2029e3b89131004543aba7938016cf29c843006d8b1761c12b",
+    "tests/protocol.test.ts": "dce67cd5541a05cb48f8b1277305160967bbdb4a50cf58c043ec66cfe0bd2d45",
+    "tests/remote-http.test.ts": "39272fc6955f6d71e23fb5a52c22c6dfff41342c7306067f39202a0b261fc8e7",
+    "tests/remote-permissions.test.ts": "d0cf4273501aaba3f2eed3d95ea15113e4bcb487112f4f2041eeadb0dfe08d8b",
+    "tests/nisa-mcp.test.ts": "a6f42bc150e00a7137a6f505f7d0a05a2f71909f629255f682778f29302c67cf",
+    "tests/app.test.ts": "b0013ac797dadc2a1dff2ce7ae274cc950bf56158d17c47f8d3b1ce5ae8a0726",
+    "tests/loader.test.ts": "f6183b69666ef4922376bbb073c30cd7558706d0f5f83e02d2117bf926a2a85a",
+    "scripts/live-experiments.ts": "3a6405a8ad739828ec585c47bf2a25486e543e9cb7d9c8739a0cf4eb422b156a",
+    "scripts/feed-unload-scenario.ts": "63755d59afc1b54f336f1c8ed93e79ba42c4db2aad7b9da68154ed96d9f942a3",
+    "scripts/mount-unload-scenario.ts": "92fa8fe26e0bf2990b808c7401b49e2afb7040cf31bdb1beed6aa930ba8e21dc",
+    "scripts/nisa-mcp-scenario.ts": "75cf2deab1b78a5671d84ead40293b735166ebacaf6f6298187d87b9b707f47b",
+    "scripts/render-dependencies.mjs": "d41936e49230c332751e8ec38c5e22cb3b2ae51dc92a819d636e4d951e388828",
+    "scripts/dependency-map.ts": "dcee6386c6f4539b81b96b54987aabe3b2e472d9b0f63775e198e0c2bf0ba046",
+    "docs/architecture/current-dependencies.json": "39227fa5ba33cb08bd78c677f964387feb96aeeecccaa6430ea02ac1a4e8100b",
+    "docs/architecture/domain-dependencies.dot": "eebfc29d4f12009eca9565038162c3db4102a05d4a5ecb14954485f04999ad37",
+    "docs/architecture/current-dependencies.svg": "b32e4049323f42ea827902c2ebef0f18adbcc0c1e33cc3d243191c2de11c39e9",
+    "docs/architecture/current-dependencies.png": "1742ac83a1764110b1d1dc1e94ca3314a4fb917312db26270f20b7ba7ba86431"
+  }
+}

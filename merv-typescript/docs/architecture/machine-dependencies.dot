@@ -1,0 +1,8 @@
+digraph G {
+  graph [rankdir=LR, bgcolor="transparent", fontname="Arial", pad="0.18", nodesep="0.3", ranksep="1.4", splines=polyline, outputorder=edgesfirst];
+  node [shape=box,style="rounded,filled",fontname="Arial",margin="0.25,0.18",penwidth=1.6];
+  edge [penwidth=2, arrowsize=0.75];
+runner [id="node-runner",color="#AD7041",fillcolor="#FFF7EB",label=<<FONT POINT-SIZE="24"><B>Runner</B></FONT><BR/><FONT POINT-SIZE="15">Local scheduling + process supervision</FONT><BR/><FONT POINT-SIZE="15">Private local SQLite ledger</FONT><BR/><BR/><FONT POINT-SIZE="15">Cordis requires: none</FONT>>];
+api [id="node-api",color="#4A70BC",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="22"><B>Server API</B></FONT><BR/><FONT POINT-SIZE="14">Shared provider reference</FONT><BR/><FONT POINT-SIZE="14">Session controls + Code command controls</FONT>>];
+runner -> api [id="http-runner-api",style=dotted,color="#AD7041",fontcolor="#72502F",fontsize=15,label="HTTP requests\nNot a Cordis dependency"];
+}

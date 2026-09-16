@@ -1,0 +1,29 @@
+{
+  "status": "mounted_tool_names_updated",
+  "completedAt": "2026-09-14T23:39:01.451907+00:00",
+  "format": "_<mountId>.<upstreamToolName>",
+  "examples": ["_nisa.search", "_nisa.qa.ask", "_sandbox.usage_report"],
+  "oldNamesSupported": false,
+  "nativeToolNamesChanged": false,
+  "actorAdministrationChanged": false,
+  "authorityIdentity": "Explicit original mountId and raw toolName; never parsed from published names",
+  "tests": {
+    "passed": 172,
+    "failed": 0,
+    "skipped": 0
+  },
+  "typecheck": "passed",
+  "build": "passed",
+  "formatCheck": "passed",
+  "checks": {
+    "exactGrantsAndRawNames": true,
+    "reservedPrefixAndDuplicateMounts": true,
+    "oldNamesRejectedOverHttpAndMcp": true,
+    "remoteProjectArgumentPreservedDuringWithdrawal": true,
+    "nisaMcpSixToolsAndDurableQa": true,
+    "mountUnloadRestore": true
+  },
+  "nisaToolCounts": [29, 23, 29],
+  "command": "MERV_NISA_CHECKOUT=/private/tmp/nisa-mcp-plugin MERV_NISA_PYTHON=/opt/anaconda3/bin/python npm test",
+  "verificationScope": "Actual local HTTP/MCP and SQLite with synthetic Nisa identities, corpus and model runner; no production or live-model run."
+}

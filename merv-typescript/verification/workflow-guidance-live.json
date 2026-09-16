@@ -1,0 +1,155 @@
+{
+  "status": "passed",
+  "evidenceChecks": {
+    "expectedTask": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "phases": [
+    {
+      "phase": "producer",
+      "exitCode": 0,
+      "total": 10,
+      "successful": 9,
+      "guidanceCalls": 3,
+      "expectedDenials": ["review.start"],
+      "transportErrors": 0
+    },
+    {
+      "phase": "reviewer",
+      "exitCode": 0,
+      "total": 13,
+      "successful": 12,
+      "guidanceCalls": 4,
+      "expectedDenials": ["artifact.create"],
+      "transportErrors": 0
+    },
+    {
+      "phase": "observer",
+      "exitCode": 0,
+      "total": 7,
+      "successful": 6,
+      "guidanceCalls": 2,
+      "expectedDenials": ["actor.create"],
+      "transportErrors": 0
+    }
+  ],
+  "task": {
+    "id": "wf_88238cff0c5f41038774c88cf381d5a8",
+    "workflow": {
+      "id": "wf_88238cff0c5f41038774c88cf381d5a8",
+      "projectId": "project_1e1eb0b155284d4aae9e24c2fd0c0422",
+      "workflow": "task",
+      "version": 2,
+      "state": "done",
+      "revision": 2,
+      "data": {
+        "briefId": "art_cb6a2cb14d544c44bb69340341f40b54",
+        "checks": ["Sum equals 20", "Mean equals 5"],
+        "deliveryIds": ["art_70574972beb440b2bca69836ace9b1d8"],
+        "goal": "Verify the sum and mean of 2, 4, 6, 8.",
+        "outcome": "Explicitly read task.get and review.get after the reported server restart, then read the pinned brief art_cb6a2cb14d544c44bb69340341f40b54 and the sole delivery art_70574972beb440b2bca69836ace9b1d8 through artifact.read. Both specify values 2, 4, 6, 8 and checks Sum equals 20 and Mean equals 5. Independently recomputed by pairing: (2 + 8) + (4 + 6) = 10 + 10 = 20. Counted four values; arithmetic mean = 20 / 4 = 5. Both checks match the delivery evidence, so pass. Claimed review and refreshed caller-specific guidance; using returned claimId and task workflow revision 1, matching pinned subjectRevision. Permission test: artifact.create as this reviewer returned isError true, code forbidden, message Actor lacks write permission.",
+        "producerId": "actor_688bbaba03e5452e9876bb5776ae088d",
+        "reviewId": "review_b1002af1dd6941dd889f02c308fc16a2",
+        "revisionContext": null,
+        "title": "Verify arithmetic evidence",
+        "verdict": "pass"
+      },
+      "createdAt": "2026-09-15T01:58:00.722Z",
+      "updatedAt": "2026-09-15T01:59:23.292Z"
+    },
+    "reviewId": "review_b1002af1dd6941dd889f02c308fc16a2",
+    "guidance": {
+      "instanceId": "wf_88238cff0c5f41038774c88cf381d5a8",
+      "workflow": "task",
+      "version": 2,
+      "state": "done",
+      "revision": 2,
+      "label": "Verify arithmetic evidence",
+      "terminal": true,
+      "available": true,
+      "currentGate": "terminal",
+      "nextAction": null,
+      "instruction": "This workflow has ended. No further action is required.",
+      "actions": [],
+      "blockers": [],
+      "references": [
+        {
+          "id": "art_cb6a2cb14d544c44bb69340341f40b54",
+          "kind": "artifact",
+          "label": "Pinned brief"
+        },
+        {
+          "id": "art_70574972beb440b2bca69836ace9b1d8",
+          "kind": "artifact",
+          "label": "Submitted delivery"
+        },
+        {
+          "id": "review_b1002af1dd6941dd889f02c308fc16a2",
+          "kind": "review",
+          "label": "Current independent review"
+        }
+      ]
+    }
+  },
+  "review": {
+    "status": "submitted",
+    "verdict": "pass",
+    "notes": "Explicitly read task.get and review.get after the reported server restart, then read the pinned brief art_cb6a2cb14d544c44bb69340341f40b54 and the sole delivery art_70574972beb440b2bca69836ace9b1d8 through artifact.read. Both specify values 2, 4, 6, 8 and checks Sum equals 20 and Mean equals 5. Independently recomputed by pairing: (2 + 8) + (4 + 6) = 10 + 10 = 20. Counted four values; arithmetic mean = 20 / 4 = 5. Both checks match the delivery evidence, so pass. Claimed review and refreshed caller-specific guidance; using returned claimId and task workflow revision 1, matching pinned subjectRevision. Permission test: artifact.create as this reviewer returned isError true, code forbidden, message Actor lacks write permission.",
+    "independent": true,
+    "pinnedArtifacts": [
+      "art_cb6a2cb14d544c44bb69340341f40b54",
+      "art_70574972beb440b2bca69836ace9b1d8"
+    ]
+  },
+  "history": [
+    {
+      "revision": 0,
+      "action": "start",
+      "from": null,
+      "to": "in_progress"
+    },
+    {
+      "revision": 1,
+      "action": "submit_delivery",
+      "from": "in_progress",
+      "to": "in_review"
+    },
+    {
+      "revision": 2,
+      "action": "accept",
+      "from": "in_review",
+      "to": "done"
+    }
+  ],
+  "protocol": [
+    {
+      "phase": "producer",
+      "requests": 13,
+      "versions": ["2025-06-18"],
+      "httpStatuses": {
+        "200": 12,
+        "202": 1
+      }
+    },
+    {
+      "phase": "reviewer",
+      "requests": 16,
+      "versions": ["2025-06-18"],
+      "httpStatuses": {
+        "200": 15,
+        "202": 1
+      }
+    },
+    {
+      "phase": "observer",
+      "requests": 10,
+      "versions": ["2025-06-18"],
+      "httpStatuses": {
+        "200": 9,
+        "202": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+digraph G {
+  graph [rankdir=TB, bgcolor="transparent", fontname="Arial", pad="0.18", nodesep="0.16", ranksep="0.45", splines=polyline, outputorder=edgesfirst];
+  node [shape=box,style="rounded,filled",fontname="Arial",margin="0.18,0.13",penwidth=1.6];
+  edge [penwidth=1.6, arrowsize=0.7];
+sessionsApi [id="node-sessionsApi",color="#7277BD",fillcolor="#F4F3FF",label=<<FONT POINT-SIZE="21"><B>sessions-api</B></FONT><BR/><FONT POINT-SIZE="12">HTTP adapter plugin</FONT><BR/><FONT POINT-SIZE="12">Requires: Agent Sessions, API</FONT>>];
+codeApi [id="node-codeApi",color="#7277BD",fillcolor="#F4F3FF",label=<<FONT POINT-SIZE="21"><B>code-api</B></FONT><BR/><FONT POINT-SIZE="12">HTTP adapter plugin</FONT><BR/><FONT POINT-SIZE="12">Requires: Code, API</FONT>>];
+code [id="node-code",color="#287D71",fillcolor="#EDFAF6",label=<<FONT POINT-SIZE="21"><B>Code</B></FONT><BR/><FONT POINT-SIZE="12">Commits + sealed proposals</FONT><BR/><FONT POINT-SIZE="12">Requires: State, Scope,<BR/>Agent Sessions, Artifacts</FONT>>];
+sessions [id="node-sessions",color="#287D71",fillcolor="#EDFAF6",label=<<FONT POINT-SIZE="21"><B>Agent Sessions</B></FONT><BR/><FONT POINT-SIZE="12">Agent identity + active assignment</FONT><BR/><FONT POINT-SIZE="12">Requires: State, Scope, Workflows,<BR/>Domain Events</FONT>>];
+api [id="node-api",color="#4A70BC",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>API</B></FONT><BR/><FONT POINT-SIZE="11">Shared provider reference</FONT>>];
+state [id="node-state",color="#2365B5",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>State</B></FONT><BR/><FONT POINT-SIZE="11">Shared provider reference</FONT>>];
+scope [id="node-scope",color="#A76013",fillcolor="#FFF9ED",label=<<FONT POINT-SIZE="18"><B>Scope</B></FONT><BR/><FONT POINT-SIZE="11">Shared provider reference</FONT>>];
+artifacts [id="node-artifacts",color="#1C8480",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Artifacts</B></FONT><BR/><FONT POINT-SIZE="11">Shared provider reference</FONT>>];
+workflows [id="node-workflows",color="#326B90",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Workflows</B></FONT><BR/><FONT POINT-SIZE="11">Shared provider reference</FONT>>];
+domainEvents [id="node-domainEvents",color="#BB7347",fillcolor="#F6FAFF",label=<<FONT POINT-SIZE="18"><B>Domain Events</B></FONT><BR/><FONT POINT-SIZE="11">Shared provider reference</FONT>>];
+sessionsApi -> sessions [id="edge-sessionsApi-sessions",color="#287D71"];
+sessionsApi -> api [id="edge-sessionsApi-api",color="#4A70BC"];
+codeApi -> code [id="edge-codeApi-code",color="#287D71"];
+codeApi -> api [id="edge-codeApi-api",color="#4A70BC"];
+code -> state [id="edge-code-state",color="#2365B5"];
+code -> scope [id="edge-code-scope",color="#A76013"];
+code -> sessions [id="edge-code-sessions",color="#287D71"];
+code -> artifacts [id="edge-code-artifacts",color="#1C8480"];
+sessions -> state [id="edge-sessions-state",color="#2365B5"];
+sessions -> scope [id="edge-sessions-scope",color="#A76013"];
+sessions -> workflows [id="edge-sessions-workflows",color="#326B90"];
+sessions -> domainEvents [id="edge-sessions-domainEvents",color="#BB7347"];
+{rank=same;codeApi;code;sessionsApi;sessions;}
+{rank=same;api;state;scope;artifacts;workflows;domainEvents;}
+}
