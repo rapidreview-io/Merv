@@ -334,7 +334,7 @@ function ReflectionList({ row }: ViewProps) {
         <div className="action-row">
           <button
             type="button"
-            className="btn"
+            className="btn btn--primary"
             aria-expanded={creating}
             onClick={() => setCreating((open) => !open)}
           >
@@ -392,6 +392,7 @@ function ReflectionDetail({ row }: ViewProps) {
         <>
           <PageHeader
             eyebrow={<Link to={row.path}>← {row.label}</Link>}
+            kind={row.view.kind}
             title={wave.title}
             summary={`Attempt ${wave.attempt} · workflow revision ${wave.workflow.revision}`}
             actions={<StatusPill value={wave.workflow.state} />}
@@ -622,7 +623,7 @@ function ConsolidationList({ row }: ViewProps) {
         <div className="action-row">
           <button
             type="button"
-            className="btn"
+            className="btn btn--primary"
             aria-expanded={creating}
             onClick={() => setCreating((open) => !open)}
           >
@@ -789,6 +790,7 @@ function ConsolidationDetail({ row }: ViewProps) {
         <>
           <PageHeader
             eyebrow={<Link to={row.path}>← {row.label}</Link>}
+            kind={row.view.kind}
             title={record.name}
             summary={`Workflow revision ${record.workflow.revision} · ${record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}`}
             actions={<StatusPill value={record.workflow.state} />}

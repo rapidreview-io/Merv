@@ -4,15 +4,15 @@ import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError, type Loaded, type Project } from '../api';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
-import { ObjId, StatusPill, relativeTime, shortId } from '../components';
+import { KindLabel, ObjId, StatusPill, kindStyle, relativeTime, shortId } from '../components';
 import { useActorNames } from './people';
 
 /**
  * The morning page: what needs me, what is running, what has been recorded. One
- * column of serif names under the server's own sentences, ordered by whose move
- * each is (see `whose`). Every source is gated on its owning ui.shell row, so it
- * goes quiet with its plugin while the Hooks keep their order. An absent value is
- * never rendered as zero and an error is never rendered as empty.
+ * column of record cards carrying the server's own sentences, ordered by whose
+ * move each is (see `whose`). Every source is gated on its owning ui.shell row,
+ * so it goes quiet with its plugin while the Hooks keep their order. An absent
+ * value is never rendered as zero and an error is never rendered as empty.
  */
 
 type Flow = { state: string; updatedAt: string };
@@ -55,6 +55,7 @@ type Work = { experiments: List<ExperimentLite>; tasks: List<TaskLite>; cycles: 
 /** An open record, and once its guidance is in, the sentences it stands on. */
 interface Line {
   id: string;
+  kind: string;
   name: ReactNode;
   to: string;
   at: string;
@@ -107,11 +108,20 @@ const sentences = ({ instruction, blockers, dependencies }: WorkflowDecision) =>
 const alive = (item: { workflow: Flow }) => !ENDED.includes(item.workflow.state);
 const open = (
   { id, workflow }: { id: string; workflow: Flow },
+  kind: string,
   name: string,
   owner: string,
   me: string,
   to: string,
-): Line => ({ id, name, to, at: workflow.updatedAt, mine: owner === me, state: workflow.state });
+): Line => ({
+  id,
+  kind,
+  name,
+  to,
+  at: workflow.updatedAt,
+  mine: owner === me,
+  state: workflow.state,
+});
 /** The whole ordering policy: four codes, and no promotion of what it cannot read. */
 const whose = (decision: WorkflowDecision, mine: boolean): Whose | null => {
   const codes = decision.blockers.map((blocker) => blocker.code);
@@ -121,14 +131,16 @@ const whose = (decision: WorkflowDecision, mine: boolean): Whose | null => {
   if (codes.includes('dependencies_pending')) return 'nobody';
   return 'unknown';
 };
-/** One line: a serif name, a quiet meta, a pill only where the state adds something. */
+/** One card: its kind, the record's name, the sentences it stands on, its state. */
 function Item({
+  kind,
   to,
   title,
   meta,
   state,
   say,
 }: {
+  kind: string;
   to: string;
   title: ReactNode;
   meta?: ReactNode;
@@ -136,27 +148,27 @@ function Item({
   say?: string[];
 }) {
   return (
-    <li className="ov-row">
+    <li className="record ov-row" style={kindStyle(kind)}>
+      <KindLabel kind={kind} />
       <Link className="ov-name" to={to}>
         {title}
       </Link>
-      <span className="ov-meta">
-        {state && <StatusPill value={state} />}
-        {meta}
-      </span>
       {say?.map((text) => (
         <p className="ov-say" key={text} title={text}>
           {text}
         </p>
       ))}
+      {meta && <span className="ov-meta">{meta}</span>}
+      {state && <StatusPill value={state} />}
     </li>
   );
 }
 
-/** Every open line reads the same way: the state pill gives way to a sentence. */
+/** Every open line reads the same way: the state gives way to a sentence. */
 const lineOf = (line: Line) => (
   <Item
     key={line.id}
+    kind={line.kind}
     to={line.to}
     title={line.name}
     state={line.says ? undefined : line.state}
@@ -218,7 +230,14 @@ function useStanding(rows: Row[], work: Work, me: string, named: Named): Standin
   const asked = newest(
     [
       ...(experimentsRow ? (experiments.data ?? []).filter(alive) : []).map((item) => ({
-        ...open(item, item.name, item.ownerId, me, `${experimentsRow!.path}/${item.id}`),
+        ...open(
+          item,
+          'experiments',
+          item.name,
+          item.ownerId,
+          me,
+          `${experimentsRow!.path}/${item.id}`,
+        ),
         meta: (
           <>
             attempt {item.attempt.index} · {when(item.workflow.updatedAt)}
@@ -226,7 +245,7 @@ function useStanding(rows: Row[], work: Work, me: string, named: Named): Standin
         ),
       })),
       ...(cyclesRow ? (cycles.data ?? []).filter(alive) : []).map((item) =>
-        open(item, item.name, item.ownerId, me, cyclesRow!.path),
+        open(item, 'research', item.name, item.ownerId, me, cyclesRow!.path),
       ),
     ],
     (item) => item.at,
@@ -244,7 +263,7 @@ function useStanding(rows: Row[], work: Work, me: string, named: Named): Standin
   if (tasksRow)
     for (const task of (tasks.data ?? []).filter((item) => !item.guidance.terminal))
       place(
-        open(task, task.title, task.producerId, me, `${tasksRow.path}/${task.id}`),
+        open(task, 'tasks', task.title, task.producerId, me, `${tasksRow.path}/${task.id}`),
         task.guidance,
       );
   asked.forEach((item, index) => place(item, decisions[index]?.data, decisions[index]?.error));
@@ -265,6 +284,7 @@ function useStanding(rows: Row[], work: Work, me: string, named: Named): Standin
           : `with ${named(held) ?? shortId(held)}`;
       add(mine ? 'yours' : 'agent', {
         id: review.id,
+        kind: 'reviews',
         name: name ?? <ObjId id={review.subjectId} />,
         to: `${reviewsRow.path}/${review.id}`,
         at: review.createdAt,
@@ -290,6 +310,7 @@ function NeedsYou({ rows, standing }: { rows: Row[]; standing: Standing }) {
       {unwell.map((row) => (
         <Item
           key={row.id}
+          kind={row.view.kind}
           to={row.path}
           title={row.label}
           state={row.status.state}
@@ -332,6 +353,7 @@ function InMotion({ rows, work, standing }: { rows: Row[]; work: Work; standing:
         agents.map((item) => (
           <Item
             key={item.id}
+            kind="sessions"
             to={sessionsRow.path}
             title={item.name}
             state={item.currentExecutionId ? 'assigned' : 'unassigned'}
@@ -394,6 +416,7 @@ function Recorded({ rows, work, named }: { rows: Row[]; work: Work; named: Named
         latestClaims.map((claim) => (
           <Item
             key={claim.id}
+            kind="claims"
             to={claimsRow.path}
             title={claim.statement}
             state={claim.status}
@@ -414,6 +437,7 @@ function Recorded({ rows, work, named }: { rows: Row[]; work: Work; named: Named
         latestPosts.map((post) => (
           <Item
             key={post.id}
+            kind="feed"
             to={feedRow.path}
             title={post.body.split('\n')[0]}
             meta={
@@ -432,6 +456,7 @@ function Recorded({ rows, work, named }: { rows: Row[]; work: Work; named: Named
         shown.map((experiment) => (
           <Item
             key={experiment.id}
+            kind="experiments"
             to={`${experimentsRow.path}/${experiment.id}`}
             title={experiment.name}
             meta={when(experiment.workflow.updatedAt)}

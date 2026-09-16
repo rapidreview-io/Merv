@@ -400,6 +400,7 @@ function ReviewDetail({ row }: ViewProps) {
     <div className="page-stage stack stack--lg">
       <PageHeader
         eyebrow={<Link to={row.path}>← {row.label}</Link>}
+        kind={row.view.kind}
         title={
           <>
             {kind} · {experiment?.name ?? task?.title ?? <ObjId id={r.subjectId} strong />}
@@ -431,7 +432,7 @@ function ReviewDetail({ row }: ViewProps) {
         }
       />
       {rest.length > 0 && (
-        <section className="stack">
+        <section className="card stack">
           <h2 className="section-title">Pinned evidence</h2>
           {rest.map((artifactId) => (
             <Evidence
@@ -443,7 +444,7 @@ function ReviewDetail({ row }: ViewProps) {
           ))}
         </section>
       )}
-      <section className="stack">
+      <section className="card stack">
         <h2 className="section-title">Verdict</h2>
         {r.verdict ? (
           <>
@@ -480,7 +481,7 @@ function Act({
   return (
     <div className="stack">
       <div>
-        <button className="btn btn--accent" disabled={disabled} onClick={onClick}>
+        <button className="btn btn--primary" disabled={disabled} onClick={onClick}>
           {label}
         </button>
       </div>

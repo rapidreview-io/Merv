@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { LoadState, ObjId, relativeTime, words } from '../components';
+import { KindLabel, LoadState, ObjId, kindStyle, relativeTime, words } from '../components';
 import type { Row } from '../shell';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
@@ -115,7 +115,7 @@ function Line({
 }) {
   const { subject, said } = SAID[event.type](event, agent);
   return (
-    <p className="record feed-line">
+    <p className="feed-line">
       <span>
         {subject && (
           <>
@@ -141,9 +141,12 @@ function Entry({
   author?: string;
 }) {
   return (
-    <article className="record feed-post">
+    <article className="record feed-post" style={kindStyle('feed')}>
       <p className="feed-by">
-        <span className="feed-author">{author ?? <ObjId id={post.authorId} />}</span>
+        <span className="feed-who">
+          <KindLabel kind="feed" />
+          <span className="feed-author">{author ?? <ObjId id={post.authorId} />}</span>
+        </span>
         <span className="feed-when" title={post.createdAt}>
           {relativeTime(post.createdAt)}
         </span>

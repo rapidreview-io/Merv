@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool } from './api';
 import { useSession } from './session';
-import { cx } from './components';
+import { cx, kindOf, kindStyle } from './components';
 import { buildNavigation } from './navigation';
 
 import type { Row, ShellData } from './shell-types';
@@ -50,20 +50,32 @@ function IconSwitch() {
 const unwell = (row: Row) =>
   row.status.state === 'degraded' || row.status.state === 'unavailable' ? row : undefined;
 
-/** One place in the rail: an accent bar when active, one dot when something behind it is unwell. */
+/**
+ * One place in the rail: the colour of the first kind behind it as a dot and,
+ * when it is the place you are in, as the bar at its left edge. A second dot
+ * appears only when something behind it is unwell.
+ */
 function RailRow({
   to,
   label,
+  kind,
   active,
   sick,
 }: {
   to: string;
   label: string;
+  kind: string;
   active: boolean;
   sick?: Row;
 }) {
   return (
-    <Link to={to} className={cx('rail-row', active && 'active')} title={sick?.status.detail}>
+    <Link
+      to={to}
+      className={cx('rail-row', active && 'active')}
+      style={kindStyle(kind)}
+      title={sick?.status.detail}
+    >
+      <span className="rail-kind" aria-hidden="true" />
       <span className="rail-row-label">{label}</span>
       {sick && (
         <span
@@ -200,6 +212,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
             key={section.id}
             to={section.rows[0]!.path}
             label={section.label}
+            kind={section.rows[0]!.view.kind}
             active={section.rows.some(holds)}
             sick={section.rows.find(unwell)}
           />
@@ -213,6 +226,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
               key={row.id}
               to={row.path}
               label={row.label}
+              kind={row.view.kind}
               active={holds(row)}
               sick={unwell(row)}
             />
@@ -242,7 +256,14 @@ export function TitleLine({ rows }: { rows: Row[] }) {
             {/* Real spaces around the dot: they are the line's only wrap points. */}
             {index > 0 && <span className="lede-sep">{' · '}</span>}
             {row === current ? (
-              <span className="lede-here">{row.label}</span>
+              <span className="lede-here">
+                {kindOf(row.view.kind).icon && (
+                  <span className="lede-icon" aria-hidden="true">
+                    {kindOf(row.view.kind).icon}
+                  </span>
+                )}
+                {row.label}
+              </span>
             ) : (
               <Link className="lede-other" to={row.path}>
                 {row.label}

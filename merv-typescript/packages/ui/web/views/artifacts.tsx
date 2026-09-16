@@ -198,7 +198,11 @@ function ArtifactDetail({ row }: ViewProps) {
   const a = meta.data;
   return (
     <div className="page-stage">
-      <PageHeader eyebrow={<Link to={row.path}>← {row.label}</Link>} title={a.title} />
+      <PageHeader
+        eyebrow={<Link to={row.path}>← {row.label}</Link>}
+        kind={row.view.kind}
+        title={a.title}
+      />
       <KV
         rows={[
           ['Id', <ObjId id={a.id} strong />],

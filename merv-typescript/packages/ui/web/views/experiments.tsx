@@ -218,6 +218,7 @@ export function ExperimentRecord({
     <div className="stack stack--lg">
       <PageHeader
         eyebrow={<Link to="/experiments">← Experiments</Link>}
+        kind="experiments"
         title={e.name}
         summary={e.intent}
         actions={<StatusPill value={e.workflow.state} />}

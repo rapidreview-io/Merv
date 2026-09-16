@@ -8,7 +8,7 @@ import {
   type Project,
   type UserKey,
 } from '../api';
-import { PageHeader } from '../components';
+import { PageHeader, kindStyle } from '../components';
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : 'The request could not be completed.';
@@ -266,7 +266,7 @@ export function KeysPanel({
           const project = projects.find((project) => project.id === key.projectId);
           const canRotate = key.grantScope === 'account' ? projects.length > 0 : !!project;
           return (
-            <section className="record stack" key={key.id}>
+            <section className="record stack" style={kindStyle('settings')} key={key.id}>
               <h3>{key.label || 'Unnamed key'}</h3>
               <code>{key.id}</code>
               <p>

@@ -168,6 +168,7 @@ function TaskDetail({ row }: ViewProps) {
     <div className="page-stage stack stack--lg">
       <PageHeader
         eyebrow={<Link to={row.path}>← {row.label}</Link>}
+        kind={row.view.kind}
         title={t.title}
         summary={t.goal}
         actions={<StatusPill value={t.workflow.state} />}

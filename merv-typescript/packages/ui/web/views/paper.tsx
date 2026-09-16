@@ -10,7 +10,7 @@ import type {
 } from '@merv/paper/models';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, StatusPill } from '../components';
+import { LoadState, ObjId, StatusPill, kindStyle } from '../components';
 import { useSession } from '../session';
 
 const labels: Record<PaperKind, string> = {
@@ -392,7 +392,7 @@ function DocumentPanel({
         )}
       </div>
       {document.published && (
-        <div className="record stack">
+        <div className="record stack" style={kindStyle('paper')}>
           <div className="cluster">
             <StatusPill
               value={document.published.publication.reviewId ? 'approved' : 'published'}
@@ -456,7 +456,7 @@ function DocumentPanel({
         <>
           {!shown.sections.length && <p className="empty">No sections yet.</p>}
           {shown.sections.map((section) => (
-            <article className="record stack" key={section.id}>
+            <article className="record stack" style={kindStyle('paper')} key={section.id}>
               <div className="cluster">
                 <h3>{section.title}</h3>
                 {canEdit && (
@@ -545,7 +545,7 @@ function PaperPage() {
               )}
               {!workspace.data.citations.length && <p className="empty">No citations yet.</p>}
               {workspace.data.citations.map((item) => (
-                <article className="record stack" key={item.id}>
+                <article className="record stack" style={kindStyle('paper')} key={item.id}>
                   <h3>{item.title}</h3>
                   <p>
                     {item.authors.join(', ')}

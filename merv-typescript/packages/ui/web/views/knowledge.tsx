@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { LoadState, ObjId, StatusPill, Table } from '../components';
+import { KindLabel, LoadState, ObjId, StatusPill, Table, kindStyle } from '../components';
 
 interface Records {
   claims: { id: string; statement: string; status: string; revision: number }[];
@@ -73,7 +73,12 @@ function ReferenceLookup() {
       {lookup.data && !lookup.error && (
         <div className="stack">
           {lookup.data.map((item, index) => (
-            <article className="record stack" key={`${index}:${item.ref}`}>
+            <article
+              className="record stack"
+              style={kindStyle('knowledge')}
+              key={`${index}:${item.ref}`}
+            >
+              <KindLabel kind="knowledge" />
               <div className="cluster">
                 <strong className="mono" style={{ overflowWrap: 'anywhere' }}>
                   {item.ref}

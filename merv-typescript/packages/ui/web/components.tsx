@@ -1,9 +1,54 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { ApiError } from './api';
 
 export const cx = (...names: (string | false | null | undefined)[]) =>
   names.filter(Boolean).join(' ');
+
+/**
+ * One colour and one icon per record kind, keyed by the view kind a row
+ * declares. The rail dot, a card's left edge, the title line's icon and every
+ * uppercase kind label read from this table and nowhere else. Kinds that share
+ * a subject share a colour; a kind this build does not know stays gray and
+ * wears no icon.
+ */
+export const KIND: Record<string, { color: string; icon: string; label: string }> = {
+  research: { color: '#6d28d9', icon: '🔍', label: 'Research' },
+  claims: { color: '#6d28d9', icon: '💡', label: 'Claim' },
+  paper: { color: '#2563eb', icon: '📄', label: 'Paper' },
+  knowledge: { color: '#2563eb', icon: '📚', label: 'Knowledge' },
+  tasks: { color: '#0d9488', icon: '✅', label: 'Task' },
+  experiments: { color: '#0d9488', icon: '🧪', label: 'Experiment' },
+  reviews: { color: '#dc2626', icon: '✏️', label: 'Review' },
+  reflections: { color: '#dc2626', icon: '🪞', label: 'Reflection' },
+  consolidation: { color: '#d97706', icon: '🧩', label: 'Consolidation' },
+  people: { color: '#475569', icon: '👤', label: 'Person' },
+  sessions: { color: '#475569', icon: '🤖', label: 'Agent' },
+  code: { color: '#475569', icon: '💻', label: 'Code' },
+  connections: { color: '#475569', icon: '🔌', label: 'Connection' },
+  feed: { color: '#6b7280', icon: '💬', label: 'Post' },
+  artifacts: { color: '#6b7280', icon: '📎', label: 'File' },
+  settings: { color: '#6b7280', icon: '⚙️', label: 'Settings' },
+  'legacy-history': { color: '#6b7280', icon: '🗄️', label: 'Archive' },
+};
+const UNKNOWN = { color: '#6b7280', icon: '', label: '' };
+export const kindOf = (kind: string | undefined) =>
+  (kind && KIND[kind]) || { ...UNKNOWN, label: words(kind ?? '') };
+/** The kind's colour reaches the CSS as --kind, so a card and its label agree. */
+export const kindStyle = (kind: string | undefined) =>
+  ({ '--kind': kindOf(kind).color }) as CSSProperties;
+
+/** The card's first line: the kind's icon and its name in small caps. */
+export function KindLabel({ kind }: { kind: string | undefined }) {
+  const { icon, label } = kindOf(kind);
+  if (!label) return null;
+  return (
+    <span className="kind" style={kindStyle(kind)}>
+      {icon && <span aria-hidden="true">{icon}</span>}
+      {label}
+    </span>
+  );
+}
 
 export const shortId = (id: string) => {
   const [prefix, rest] = id.split('_', 2);
@@ -24,9 +69,7 @@ export function relativeTime(iso: string): string {
 
 /**
  * Semantic tone for status text. Tones map to the status--ok/warn/bad/dim
- * classes in the generated CSS; any status this table does not know stays
- * neutral. The raw lowercased status class is kept alongside the tone class
- * so existing per-status overrides continue to apply.
+ * classes in the stylesheet; any status this table does not know stays neutral.
  */
 type Tone = 'ok' | 'warn' | 'bad' | 'dim';
 const TONES: [Tone, Set<string>][] = [
@@ -132,11 +175,14 @@ const TONES: [Tone, Set<string>][] = [
 ];
 const toneOf = (value: string) => TONES.find(([, set]) => set.has(value))?.[0] ?? 'neutral';
 
+/** A state reads as its dot and one small-caps word: ● COMPLETED. */
 export function StatusPill({ value }: { value: string | null | undefined }) {
   if (!value) return null;
-  const v = value.toLowerCase();
   return (
-    <span className={cx('status', 'status--pill', `status--${toneOf(v)}`, v)}>{words(value)}</span>
+    <span className={cx('status', `status--${toneOf(value.toLowerCase())}`)}>
+      <span className="status-dot" aria-hidden="true" />
+      {words(value)}
+    </span>
   );
 }
 
@@ -150,11 +196,13 @@ export function ObjId({ id, strong }: { id: string; strong?: boolean }) {
 
 export function PageHeader({
   eyebrow,
+  kind,
   title,
   summary,
   actions,
 }: {
   eyebrow?: ReactNode;
+  kind?: string;
   title: ReactNode;
   summary?: ReactNode;
   actions?: ReactNode;
@@ -162,6 +210,11 @@ export function PageHeader({
   return (
     <header className="page-header">
       {eyebrow && <div className="page-eyebrow">{eyebrow}</div>}
+      {kind && (
+        <div className="page-kind">
+          <KindLabel kind={kind} />
+        </div>
+      )}
       <div className="page-head-row">
         <h1 className="page-title">{title}</h1>
         {actions && <div className="page-actions">{actions}</div>}

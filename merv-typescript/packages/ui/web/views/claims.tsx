@@ -3,7 +3,15 @@ import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, StatusPill, relativeTime, words } from '../components';
+import {
+  KindLabel,
+  LoadState,
+  ObjId,
+  StatusPill,
+  kindStyle,
+  relativeTime,
+  words,
+} from '../components';
 import { useSession } from '../session';
 import type { Row } from '../shell-types';
 import type { ViewProps } from './index';
@@ -240,7 +248,8 @@ function ClaimEntry({
   const [conflictRevision, setConflictRevision] = useState<number>();
   const needsRefresh = conflictRevision !== undefined && claim.revision <= conflictRevision;
   return (
-    <article className="claim" aria-labelledby={heading}>
+    <article className="record claim" style={kindStyle('claims')} aria-labelledby={heading}>
+      <KindLabel kind="claims" />
       <h2 className="claim-statement" id={heading}>
         {claim.statement}
       </h2>
@@ -359,7 +368,7 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
         <div className="action-row">
           <button
             type="button"
-            className="btn"
+            className="btn btn--primary"
             aria-expanded={creating}
             onClick={() => setCreating((open) => !open)}
           >

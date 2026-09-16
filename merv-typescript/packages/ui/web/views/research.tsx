@@ -4,7 +4,7 @@ import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, StatusPill } from '../components';
+import { KindLabel, LoadState, ObjId, StatusPill, kindStyle } from '../components';
 import { useSession } from '../session';
 import { ResearchCommand } from './paper';
 
@@ -118,7 +118,8 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
     (blocker) => blocker.message !== guidance.data?.instruction,
   );
   return (
-    <article className="record stack">
+    <article className="record stack" style={kindStyle('research')}>
+      <KindLabel kind="research" />
       <div className="cluster">
         <h2>{record.name}</h2>
         <StatusPill value={record.workflow.state} />
@@ -198,7 +199,7 @@ function ResearchPage() {
         <div className="action-row">
           <button
             type="button"
-            className="btn"
+            className="btn btn--primary"
             aria-expanded={creating}
             onClick={() => setCreating((open) => !open)}
           >
