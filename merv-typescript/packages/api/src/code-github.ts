@@ -23,11 +23,17 @@ export async function githubCallback(
   check(
     [...url.searchParams.keys()].every(
       (key) =>
-        ['state', 'code', 'error', 'error_description', 'error_uri'].includes(key) &&
+        ['state', 'code', 'iss', 'error', 'error_description', 'error_uri'].includes(key) &&
         url.searchParams.getAll(key).length === 1,
     ),
     'invalid_input',
     'Invalid GitHub callback',
+  );
+  check(
+    !url.searchParams.has('iss') ||
+      url.searchParams.get('iss') === 'https://github.com/login/oauth',
+    'invalid_input',
+    'Invalid GitHub callback issuer',
   );
   const redirect = await provider.callback({
     state: url.searchParams.get('state') ?? '',

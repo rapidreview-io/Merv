@@ -549,7 +549,24 @@ test('actual HTTP routes authenticate Merv, keep callback cookies out of JSON, a
   const flow = new URL(body.url).searchParams.get('state');
   const callback = `${url}/code/github/callback?state=${flow}&code=synthetic-code`;
   assert.equal((await fetch(callback, { redirect: 'manual' })).status, 409);
-  const redirected = await fetch(callback, { headers: { cookie }, redirect: 'manual' });
+  const githubIssuer = encodeURIComponent('https://github.com/login/oauth');
+  for (const query of [
+    '&iss=https://evil.example',
+    '&iss=',
+    `&iss=${githubIssuer}&iss=${githubIssuer}`,
+    `&iss=${githubIssuer}%2F`,
+    '&unexpected=value',
+  ]) {
+    assert.equal(
+      (await fetch(callback + query, { headers: { cookie }, redirect: 'manual' })).status,
+      400,
+      `Reject callback without consuming its flow: ${query}`,
+    );
+  }
+  const redirected = await fetch(`${callback}&iss=${githubIssuer}`, {
+    headers: { cookie },
+    redirect: 'manual',
+  });
   assert.equal(redirected.status, 303);
   assert.equal(redirected.headers.get('referrer-policy'), 'no-referrer');
   assert.equal(redirected.headers.get('location'), `${config.origin}/ui/code?github=complete`);
