@@ -1,12 +1,12 @@
 import type { Context } from 'cordis';
-import type { Caller } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 
 export const scopeUiPlugin = {
   name: 'merv-scope-ui',
   inject: ['scope', 'ui'],
   apply(ctx: Context) {
-    const scope = ctx.scope;
+    // A directory of people is not a queue; counting its rows would put a number
+    // in the chrome that never moves and never asks for a click.
     ctx.effect(() =>
       ctx.ui.register({
         id: 'people',
@@ -15,11 +15,6 @@ export const scopeUiPlugin = {
         order: 10,
         path: '/people',
         view: { kind: 'people' },
-        status: async (caller: Caller) => {
-          const actor = await scope.require(caller, 'read');
-          if (caller.human && actor.role !== 'operator') return {};
-          return { count: (await scope.actors(caller)).length };
-        },
       }),
     );
   },

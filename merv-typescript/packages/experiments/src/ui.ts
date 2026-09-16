@@ -15,7 +15,14 @@ export const experimentsUiPlugin = {
         order: 16,
         path: '/experiments',
         view: { kind: 'experiments' },
-        status: async (caller) => ({ count: (await experiments.list(caller)).length }),
+        // Open work: an experiment still on its way to a result. A complete,
+        // abandoned or failed record is read, not worked, so it is not counted.
+        status: async (caller) => ({
+          count: (await experiments.list(caller)).filter(
+            (experiment) =>
+              !['complete', 'abandoned', 'failed'].includes(experiment.workflow.state),
+          ).length,
+        }),
       }),
     );
   },

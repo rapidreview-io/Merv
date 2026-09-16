@@ -335,7 +335,11 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
     1,
   );
   const shell = (await f.http('ui.shell', {}, f.reader.token)).body.result;
-  assert.equal(shell.rows.find((row: any) => row.id === 'experiments').status.count, 1);
+  assert.equal(
+    shell.rows.find((row: any) => row.id === 'experiments').status.count,
+    0,
+    'the row counts open experiments; this one is complete',
+  );
   const events = await f.call(producer, 'feed.activity');
   assert.ok(events.some((event: any) => event.type.startsWith('experiment.')));
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion, useTool } from '../api';
 import { LoadState, ObjId, StatusPill, Table, relativeTime } from '../components';
+import { ThreeStates } from '../states';
 import type { ViewProps } from './index';
 import { AgentSessionsPanel, type AgentSummary } from './agent-sessions-panel';
 
@@ -103,6 +104,8 @@ export function SessionsView({ row }: ViewProps) {
   };
   const status = state.data;
   const liveCount = status?.liveSessionCount ?? 0;
+  // An agent is named where it worked; the id stays as the fallback.
+  const agentName = new Map((status?.agents ?? []).map((agent) => [agent.id, agent.name]));
   return (
     <div className="page-stage sessions-page stack stack--lg">
       <LoadState loading={state.loading} error={state.error} />
@@ -250,26 +253,40 @@ export function SessionsView({ row }: ViewProps) {
                       {
                         key: 'agent',
                         label: 'Agent',
-                        render: (session) => <ObjId id={session.agentId ?? session.id} />,
+                        render: (session) =>
+                          agentName.get(session.agentId ?? '') ?? (
+                            <ObjId id={session.agentId ?? session.id} />
+                          ),
                       },
                       {
                         key: 'work',
                         label: 'Work',
                         render: (session) => (
                           <>
-                            <strong>{session.label}</strong>
-                            <div>
-                              <ObjId id={session.instanceId} /> · revision{' '}
-                              {session.expectedRevision}
-                            </div>
+                            <strong>{session.label || <ObjId id={session.instanceId} />}</strong>
+                            <div className="faint">revision {session.expectedRevision}</div>
                           </>
                         ),
                       },
                       { key: 'role', label: 'Role', render: (session) => session.role },
                       {
-                        key: 'status',
-                        label: 'Lease',
-                        render: (session) => <StatusPill value={session.status} />,
+                        // A lease is executed and closed but never reviewed, so the
+                        // middle clause is a fact this record cannot have.
+                        key: 'standing',
+                        label: 'Standing',
+                        render: (session) => {
+                          const closed = session.outcome ?? session.closeReason;
+                          return (
+                            <ThreeStates
+                              execution={session.status}
+                              outcome={
+                                closed
+                                  ? { word: closed }
+                                  : { word: 'no outcome recorded', absent: true }
+                              }
+                            />
+                          );
+                        },
                       },
                       {
                         key: 'platform',
@@ -307,14 +324,6 @@ export function SessionsView({ row }: ViewProps) {
                           ) : (
                             `${session.workspaceMode} · Not attached`
                           ),
-                      },
-                      {
-                        key: 'outcome',
-                        label: 'Close outcome',
-                        render: (session) =>
-                          session.outcome?.replaceAll('_', ' ') ??
-                          session.closeReason?.replaceAll('_', ' ') ??
-                          (session.activatedAt ? 'Activated' : 'Awaiting first MCP request'),
                       },
                       {
                         key: 'created',
@@ -363,12 +372,7 @@ export function SessionsView({ row }: ViewProps) {
                         key: 'label',
                         label: 'Work',
                         render: (candidate) => (
-                          <>
-                            <strong>{candidate.label}</strong>
-                            <div>
-                              <ObjId id={candidate.instanceId} />
-                            </div>
-                          </>
+                          <strong>{candidate.label || <ObjId id={candidate.instanceId} />}</strong>
                         ),
                       },
                       { key: 'gate', label: 'Gate', render: (candidate) => candidate.state },

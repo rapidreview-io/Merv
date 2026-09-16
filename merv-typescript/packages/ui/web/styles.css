@@ -1802,3 +1802,122 @@ select.input,
   font-size: var(--text-sm);
   color: var(--muted);
 }
+
+/* Experiment record. ------------------------------------------------------ */
+/* The record opens with the science and states three facts under its title:
+   execution, review and outcome, each its own clause, none of them a box. */
+.standing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  font-size: var(--text-sm);
+}
+.clause:not(:last-child)::after {
+  content: '·';
+  color: var(--line-strong);
+  margin-left: var(--space-3);
+}
+/* A clause names its fact, and evidence names the part it plays, in the same
+   small caps: neither is a column header the record is missing. */
+.clause-k,
+.ev-role {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.clause-k {
+  margin-right: 6px;
+}
+.ev-role {
+  display: block;
+  margin-bottom: var(--space-1);
+}
+/* The question the experiment was opened to answer, read before anything else. */
+.question {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.4;
+  max-width: 68ch;
+}
+.record-prose {
+  white-space: pre-wrap;
+  max-width: 68ch;
+}
+/* One round of the spine: submission, criticism, correction, re-review. */
+.round {
+  border-left: 2px solid var(--line);
+  padding-left: var(--space-4);
+}
+.round > * + * {
+  margin-top: var(--space-2);
+}
+
+/* List rows. -------------------------------------------------------------- */
+/* Three facts are never one word: a row states execution, review and outcome as
+   separate clauses, and a clause with nothing to say reads as an em dash rather
+   than borrowing its neighbour's answer. Colour reaches the verdict word alone,
+   through the same .crit-word table the criteria use. */
+.states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  max-width: 46ch;
+  font-size: var(--text-sm);
+}
+.states-clause {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.states-clause + .states-clause::before {
+  content: '·';
+  color: var(--faint);
+}
+.states .crit-word {
+  margin-right: 0;
+}
+.states-word,
+.states-detail {
+  color: var(--muted);
+}
+.states-absent {
+  color: var(--faint);
+}
+/* A row names its record: the kind mark above the name, as on a card. */
+.row-name .kind {
+  display: flex;
+}
+/* An exception is stated, never absorbed, and never coloured: a reviewer waiving
+   a check that does not apply is doing the right thing. One sentence per line. */
+.exceptions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.exceptions > li + li {
+  margin-top: 2px;
+}
+/* The unmet rule is the way to the criterion it names, and the criterion it sends
+   you to holds the focus it was given. */
+.verdict-jump {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.verdict-jump:hover {
+  color: var(--active);
+}
+.crit:focus {
+  outline: 2px solid var(--active);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}

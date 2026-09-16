@@ -359,8 +359,10 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'settings',
     ],
   );
+  // Every count in the chrome means open work; rows that are inventories report none.
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
-  assert.deepEqual(shell.rows.find((entry) => entry.id === 'people')?.status, { count: 2 });
+  for (const id of ['people', 'claims', 'knowledge'])
+    assert.deepEqual(shell.rows.find((entry) => entry.id === id)?.status, {});
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'code')?.view, { kind: 'code' });
   assert.equal(shell.rows.find((entry) => entry.id === 'code')?.readable, true);
@@ -374,12 +376,16 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   });
   assert.equal(shell.plugins.length, plugins(assets).length);
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
-  // A reader sees the rows; a status the reader may not compute reports itself instead of failing the shell.
+  // A reader sees the rows, and no row asks for a number it cannot answer for
+  // this caller: People is a directory and reports nothing. (A status that does
+  // fail still reports itself instead of failing the shell; the registry test
+  // above covers that path.)
   const readerShell = (await tool('ui.shell', reader)).body.result.rows as {
     id: string;
     status: { state?: string };
   }[];
-  assert.equal(readerShell.find((entry) => entry.id === 'people')?.status.state, 'unavailable');
+  assert.deepEqual(readerShell.find((entry) => entry.id === 'people')?.status, {});
+  assert.ok(readerShell.every((entry) => entry.status.state !== 'unavailable'));
   assert.equal(
     (await tool('ui.read', operator, { rowId: 'tasks' })).body.error.code,
     'row_unreadable',
@@ -545,7 +551,7 @@ test('the Connections row reports mount health and serves mount status through u
   assert.ok(connections, 'the mounts adapter registers its row');
   assert.equal(connections.group, 'system');
   assert.equal(connections.readable, true);
-  assert.equal(connections.status.count, 2);
+  assert.equal(connections.status.count, undefined, 'an inventory reports no count');
   assert.equal(connections.status.state, 'degraded');
   assert.equal(connections.status.detail, '1 of 2 not ready');
   const status = (await tool('ui.read', { rowId: 'connections' })).result as {

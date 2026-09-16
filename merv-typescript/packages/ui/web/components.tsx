@@ -1,6 +1,8 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { ApiError } from './api';
+import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import { useTool, type ApiError } from './api';
+import { ArtifactBody, bytes, type Artifact } from './views/artifacts';
 
 export const cx = (...names: (string | false | null | undefined)[]) =>
   names.filter(Boolean).join(' ');
@@ -334,6 +336,85 @@ export function Table<T>({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** One list serves every pinned title, so a record does not fetch each file to name it. */
+export const useArtifacts = () => {
+  const list = useTool<Artifact[]>('artifact.list');
+  return new Map((list.data ?? []).map((item) => [item.id, item]));
+};
+
+/**
+ * A pinned file read where it is cited: the summary opens the body in place and
+ * costs nothing until it is opened, and /artifacts/:id stays a destination —
+ * reachable from the opened head — rather than the only way to read a file.
+ */
+export function Evidence({
+  artifactId,
+  artifact,
+  label,
+  meta,
+}: {
+  artifactId: string;
+  artifact?: Artifact;
+  label?: ReactNode;
+  meta?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="crit-file" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        {label ?? artifact?.title ?? <ObjId id={artifactId} />}
+        {meta && artifact && (
+          <span className="faint">
+            {' '}
+            · {artifact.mediaType} · {bytes(artifact.size)}
+          </span>
+        )}
+      </summary>
+      {open && <ArtifactBody artifactId={artifactId} metadata={artifact} />}
+    </details>
+  );
+}
+
+/**
+ * One server answer rendered once: the instruction the workflow wrote, the
+ * conditions it named that the instruction does not already say, and the
+ * prerequisites it is still waiting on. Every string is the server's own —
+ * instruction, blocker.message, action.instruction, dependency.name — so the
+ * browser adds no rule, re-words no enum and re-derives no readiness.
+ */
+export function GateBox({ decision }: { decision: WorkflowDecision }) {
+  const lines = [
+    ...new Set([
+      ...decision.blockers.map((blocker) => blocker.message),
+      ...(decision.nextAction ? [decision.nextAction.instruction] : []),
+    ]),
+  ].filter((line) => line !== decision.instruction);
+  return (
+    <div className="stack">
+      <p>{decision.instruction}</p>
+      {lines.map((line) => (
+        <p className="muted" key={line}>
+          {line}
+        </p>
+      ))}
+      {decision.dependencies
+        .filter((item) => !item.settled || item.failed)
+        .map((item) => (
+          <p className="muted" key={item.id}>
+            {['task', 'experiment'].includes(item.workflow) ? (
+              <Link to={`/${item.workflow === 'task' ? 'tasks' : 'experiments'}/${item.id}`}>
+                {item.name || shortId(item.id)}
+              </Link>
+            ) : (
+              item.name || <ObjId id={item.id} />
+            )}{' '}
+            <StatusPill value={item.state} />
+          </p>
+        ))}
     </div>
   );
 }

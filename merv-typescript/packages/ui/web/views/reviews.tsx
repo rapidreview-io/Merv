@@ -1,9 +1,11 @@
 import { Link, Route, Routes, useParams } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { ListFilters } from '../list-filters';
 import {
+  Evidence,
+  KindLabel,
   LoadState,
   ObjId,
   PageHeader,
@@ -12,10 +14,11 @@ import {
   cx,
   relativeTime,
   shortId,
+  useArtifacts,
   words,
 } from '../components';
+import { OPEN, ThreeStates, firstSentence, isOpenReview, reviewClause } from '../states';
 import { useActorNames } from './people';
-import { ArtifactBody, bytes, type Artifact } from './artifacts';
 import type { ViewProps } from './index';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 
@@ -61,53 +64,24 @@ interface Draft {
 }
 const BLANK: Draft = { notes: '', evidenceIds: [] };
 
-/** One list serves every pinned title, so a record does not fetch each file to name it. */
-const useArtifacts = () => {
-  const list = useTool<Artifact[]>('artifact.list');
-  return new Map((list.data ?? []).map((item) => [item.id, item]));
-};
-
-/** A pinned file read where it is cited: the title opens the body without leaving the record. */
-function Evidence({
-  artifactId,
-  artifact,
-  meta,
-}: {
-  artifactId: string;
-  artifact?: Artifact;
-  meta?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details className="crit-file" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>
-        {artifact?.title ?? <ObjId id={artifactId} />}
-        {meta && artifact && (
-          <span className="faint">
-            {' '}
-            · {artifact.mediaType} · {bytes(artifact.size)}
-          </span>
-        )}
-      </summary>
-      {open && <ArtifactBody artifactId={artifactId} metadata={artifact} />}
-    </details>
-  );
-}
-
 /**
  * A criterion reads as one sentence: the check, the producer's confirmation of the
  * same number, the reviewer's finding, and the evidence it cites, readable in place.
  * The same rows carry the reviewer's draft while a verdict is still being written.
+ * In compact mode only the criteria that objected are drawn, so a record read
+ * elsewhere shows the objections rather than the roll call.
  */
 export function CriterionRows({
   review,
   confirmations,
   head,
+  compact,
   draft,
 }: {
   review: Review;
   confirmations?: Confirmation[];
   head?: boolean;
+  compact?: boolean;
   draft?: { values: Record<number, Draft>; set(number: number, value: Draft): void };
 }) {
   const artifacts = useArtifacts();
@@ -127,8 +101,12 @@ export function CriterionRows({
           const finding = review.findings?.find((item) => item.criterionNumber === number);
           const said = confirmations?.find((item) => item.checkNumber === number);
           const value = draft?.values[number] ?? BLANK;
+          if (compact && finding?.status !== 'not_met' && finding?.status !== 'not_verified')
+            return null;
           return (
-            <li className="crit" key={number}>
+            // The desk's unmet rule navigates here, so every criterion is a
+            // destination that can hold focus.
+            <li className="crit" key={number} id={`crit-${number}`} tabIndex={-1}>
               <span className="crit-n tabular">{number}</span>
               <div className="stack">
                 <p className="crit-text">{text}</p>
@@ -213,22 +191,51 @@ export function CriterionRows({
   );
 }
 
+/** What a review is about, named: the id is the fallback, never the first answer. */
+interface Subject {
+  kind: 'experiments' | 'tasks';
+  name: string;
+  state: string;
+  outcome: string | null;
+}
+function useSubjects() {
+  const experiments = useTool<SubjectExperiment[]>('experiment.list');
+  const tasks = useTool<SubjectTask[]>('task.list');
+  return (id: string | undefined): Subject | undefined => {
+    const experiment = experiments.data?.find((item) => item.id === id);
+    const task = experiment ? undefined : tasks.data?.find((item) => item.id === id);
+    const record = experiment ?? task;
+    const name = experiment?.name ?? task?.title;
+    if (!record || !name) return undefined;
+    return {
+      kind: experiment ? 'experiments' : 'tasks',
+      name,
+      state: record.workflow.state,
+      outcome: experiment?.conclusion ?? task?.failure?.reason ?? null,
+    };
+  };
+}
+
 function ReviewList() {
   const list = useTool<Review[]>('review.list', {}, { every: 10000 });
   const nameOf = useActorNames();
+  const subjectOf = useSubjects();
   const [query, setQuery] = useState('');
-  const [state, setState] = useState('');
+  const [chosen, setChosen] = useState<string>();
   const search = query.trim().toLowerCase();
-  const states = [
-    ...new Set([...(list.data ?? []).map((item) => item.status), ...(state ? [state] : [])]),
-  ].sort();
+  // The count in the title line is the filter: the page opens on the reviews it
+  // counted — unclaimed and in hand — and every status is one click away.
+  const open = (list.data ?? []).filter((item) => isOpenReview(item.status)).length;
+  const state = chosen ?? (open ? OPEN : '');
+  const states = [OPEN, ...[...new Set((list.data ?? []).map((item) => item.status))].sort()];
   const visible = (list.data ?? []).filter(
     (item) =>
-      (!state || item.status === state) &&
+      (state === OPEN ? isOpenReview(item.status) : !state || item.status === state) &&
       (!search ||
         [
           item.id,
           item.subjectId,
+          subjectOf(item.subjectId)?.name,
           item.synopsis,
           ...item.criteria,
           item.producerId,
@@ -246,7 +253,7 @@ function ReviewList() {
           query={query}
           onQueryChange={setQuery}
           state={state}
-          onStateChange={setState}
+          onStateChange={setChosen}
           states={states}
           stateLabel="Status"
           shown={visible.length}
@@ -279,54 +286,51 @@ function ReviewList() {
           onRow={(r) => r.id}
           columns={[
             {
-              key: 'id',
-              label: 'Review',
+              key: 'subject',
+              label: 'Work item',
               render: (r) => {
+                const subject = subjectOf(r.subjectId);
                 const summary = r.synopsis || r.criteria[0] || 'Independent review';
                 return (
-                  <div>
+                  <div className="row-name">
+                    <KindLabel kind={subject?.kind} />
                     <strong title={summary}>
-                      {summary.length > 120 ? `${summary.slice(0, 117)}…` : summary}
+                      {subject?.name ?? <ObjId id={r.subjectId} strong />}
                     </strong>
-                    <div className="faint">
-                      <ObjId id={r.id} />
+                    <div className="faint" title={summary}>
+                      {summary.length > 110 ? `${summary.slice(0, 107)}…` : summary}
                     </div>
                   </div>
                 );
               },
             },
-            { key: 'status', label: 'Status', render: (r) => <StatusPill value={r.status} /> },
             {
-              key: 'verdict',
-              label: 'Verdict',
-              render: (r) =>
-                r.verdict ? (
-                  <div className="cluster">
-                    <StatusPill value={r.verdict} />
-                    {r.returnTo && <span className="muted">Return to {r.returnTo}</span>}
-                    {r.findings?.some((item) => item.status === 'waived') && (
-                      <span className="muted">
-                        {r.findings.filter((item) => item.status === 'waived').length} waived
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="faint">—</span>
-                ),
+              key: 'standing',
+              label: 'Standing',
+              render: (r) => {
+                const subject = subjectOf(r.subjectId);
+                return (
+                  <ThreeStates
+                    execution={subject?.state ?? null}
+                    review={reviewClause(r)}
+                    outcome={
+                      firstSentence(subject?.outcome)
+                        ? { detail: firstSentence(subject?.outcome) }
+                        : { word: 'no outcome recorded', absent: true }
+                    }
+                  />
+                );
+              },
             },
             {
-              key: 'subject',
-              label: 'Work item',
-              render: (r) => <ObjId id={r.subjectId} />,
-            },
-            {
+              // Who holds it; that nobody does is the standing clause's to say.
               key: 'reviewer',
               label: 'Reviewer',
               render: (r) =>
                 r.reviewerId ? (
                   (nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId} />)
                 ) : (
-                  <span className="faint">unclaimed</span>
+                  <span className="faint">—</span>
                 ),
             },
             {
@@ -345,11 +349,14 @@ function ReviewList() {
 interface SubjectExperiment {
   id: string;
   name: string;
-  workflow: { state: string };
+  workflow: { state: string; revision: number };
+  conclusion: string | null;
 }
 interface SubjectTask {
   id: string;
   title: string;
+  workflow: { state: string; revision: number };
+  failure: { reason: string } | null;
   deliveryConfirmations: Confirmation[];
 }
 
@@ -366,10 +373,10 @@ function ReviewDetail({ row }: ViewProps) {
   const experiment = experiments.data?.find((item) => item.id === subjectId);
   const task = tasks.data?.find((item) => item.id === subjectId);
   const confirmations = useTool<SubjectTask>(task ? 'task.get' : null, { taskId: subjectId ?? '' });
-  const stages = useTool<{ submissions: { stage: string; reviewId: string | null }[] }>(
-    experiment ? 'experiment.get_state' : null,
-    { experimentId: subjectId ?? '' },
-  );
+  const stages = useTool<{
+    attempt: { index: number; approvedSubmissionId: string | null };
+    submissions: { id: string; stage: string; attemptIndex: number; reviewId: string | null }[];
+  }>(experiment ? 'experiment.get_state' : null, { experimentId: subjectId ?? '' });
   const guidance = useTool<WorkflowDecision>(
     review.data && !review.data.verdict ? 'workflow.status_and_next' : null,
     { instanceId: subjectId ?? '' },
@@ -396,6 +403,28 @@ function ReviewDetail({ row }: ViewProps) {
   const submit = guidance.data?.actions.find((action) => action.tool === 'review.submit');
   const cited = new Set(r.findings?.flatMap((finding) => finding.evidenceIds) ?? []);
   const rest = r.artifactIds.filter((artifactId) => !cited.has(artifactId));
+  // The findings are the record's once a verdict exists, and this desk's draft
+  // until then, so the exceptions are stated while their cost is being paid.
+  const approved = stages.data?.submissions.find(
+    (item) => item.id === stages.data?.attempt.approvedSubmissionId,
+  );
+  const exceptions = exceptionsOf({
+    review: r,
+    findings: r.verdict
+      ? r.findings.map((finding) => ({
+          number: finding.criterionNumber,
+          status: finding.status as string,
+        }))
+      : Object.entries(values).map(([number, draft]) => ({
+          number: Number(number),
+          status: draft.status ?? '',
+        })),
+    revision: experiment?.workflow.revision ?? task?.workflow.revision,
+    attempt:
+      approved && stages.data && approved.attemptIndex < stages.data.attempt.index
+        ? { approvedIn: approved.attemptIndex, index: stages.data.attempt.index }
+        : undefined,
+  });
   return (
     <div className="page-stage stack stack--lg">
       <PageHeader
@@ -446,7 +475,7 @@ function ReviewDetail({ row }: ViewProps) {
       )}
       <section className="card stack">
         <h2 className="section-title">Verdict</h2>
-        {r.verdict ? (
+        {r.verdict && (
           <>
             <p className="verdict-said">{r.synopsis ?? r.notes}</p>
             <p className="muted">
@@ -454,12 +483,62 @@ function ReviewDetail({ row }: ViewProps) {
               · by {nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId ?? r.id} />}
             </p>
           </>
-        ) : (
+        )}
+        {exceptions.length > 0 && (
+          <ul className="exceptions">
+            {exceptions.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        )}
+        {!r.verdict && (
           <Controls review={r} guidance={guidance} values={values} onDone={review.reload} />
         )}
       </section>
     </div>
   );
+}
+
+/**
+ * An exception is stated, never absorbed. Every sentence is derived from data
+ * already on the page and none of them is coloured: a reviewer waiving a check
+ * that does not apply is doing the right thing, not raising an alarm.
+ */
+function exceptionsOf({
+  review,
+  findings,
+  revision,
+  attempt,
+}: {
+  review: Review;
+  findings: { number: number; status: string }[];
+  revision?: number;
+  attempt?: { approvedIn: number; index: number };
+}): string[] {
+  const lines: string[] = [];
+  for (const [status, word] of [
+    ['waived', 'waived'],
+    ['not_verified', 'not verified'],
+  ]) {
+    const at = findings
+      .filter((item) => item.status === status)
+      .map((item) => item.number)
+      .sort((left, right) => left - right);
+    if (at.length === 1) lines.push(`Criterion ${at[0]} was ${word}.`);
+    else if (at.length > 1)
+      lines.push(`Criteria ${at.slice(0, -1).join(', ')} and ${at.at(-1)} were ${word}.`);
+  }
+  if (revision !== undefined && revision !== review.subjectRevision)
+    lines.push(
+      `This review pins revision ${review.subjectRevision}; the work is now at revision ${revision}.`,
+    );
+  if (review.status === 'superseded')
+    lines.push('This review was superseded: it was set aside before a verdict was recorded.');
+  if (attempt)
+    lines.push(
+      `The plan under review was approved in attempt ${attempt.approvedIn}; the work is now on attempt ${attempt.index}.`,
+    );
+  return lines;
 }
 
 /** The one primary control, with its consequence, its blocker or its error beneath. */
@@ -472,7 +551,7 @@ function Act({
   onClick,
 }: {
   label: string;
-  help: string;
+  help: ReactNode;
   error?: string;
   code?: string;
   disabled?: boolean;
@@ -597,22 +676,32 @@ function Desk({
   const said = synopsis.trim();
   const bare = drafts.findIndex((draft) => !draft.status || !draft.notes.trim());
   const uncited = drafts.findIndex((draft) => draft.status === 'met' && !draft.evidenceIds.length);
-  const unmet =
+  const objection = drafts.findIndex(
+    (draft) => draft.status !== 'met' && draft.status !== 'waived',
+  );
+  // The rule still unmet, and the criterion it is about: the sentence under the
+  // control is the way there, so nobody counts list items to find number 3.
+  const unmet: { text: string; at?: number } | undefined =
     bare >= 0
-      ? `Criterion ${bare + 1} still needs a finding and notes.`
+      ? { text: `Criterion ${bare + 1} still needs a finding and notes.`, at: bare + 1 }
       : uncited >= 0
-        ? `Criterion ${uncited + 1} is met, so it must cite at least one pinned file.`
+        ? {
+            text: `Criterion ${uncited + 1} is met, so it must cite at least one pinned file.`,
+            at: uncited + 1,
+          }
         : said.length < 40
-          ? `The synopsis needs ${40 - said.length} more characters.`
+          ? { text: `The synopsis needs ${40 - said.length} more characters.` }
           : said.length > 420
-            ? `The synopsis is ${said.length - 420} characters too long.`
+            ? { text: `The synopsis is ${said.length - 420} characters too long.` }
             : !verdict
-              ? 'Choose a verdict.'
-              : verdict === 'pass' &&
-                  drafts.some((draft) => draft.status !== 'met' && draft.status !== 'waived')
-                ? 'A passing verdict needs every criterion met or waived.'
+              ? { text: 'Choose a verdict.' }
+              : verdict === 'pass' && objection >= 0
+                ? {
+                    text: 'A passing verdict needs every criterion met or waived.',
+                    at: objection + 1,
+                  }
                 : verdict !== 'pass' && routes.length > 0 && !returnTo
-                  ? 'Choose where the work returns.'
+                  ? { text: 'Choose where the work returns.' }
                   : undefined;
   return (
     <div className="stack">
@@ -658,7 +747,13 @@ function Desk({
         label={
           command.retry ? 'Retry the same verdict' : command.busy ? 'Submitting…' : 'Submit verdict'
         }
-        help={unmet ?? 'The verdict is recorded once, with your findings, and cannot be changed.'}
+        help={
+          unmet ? (
+            <Unmet {...unmet} />
+          ) : (
+            'The verdict is recorded once, with your findings, and cannot be changed.'
+          )
+        }
         error={command.error}
         code={command.code}
         disabled={!!unmet || command.busy}
@@ -683,6 +778,28 @@ function Desk({
         }
       />
     </div>
+  );
+}
+
+/**
+ * The blocker is the navigation: the sentence goes to the criterion it is about
+ * and leaves the cursor there. Movement relocates focus and writes nothing.
+ */
+function Unmet({ text, at }: { text: string; at?: number }) {
+  if (!at) return <>{text}</>;
+  return (
+    <a
+      className="verdict-jump"
+      href={`#crit-${at}`}
+      onClick={(event) => {
+        event.preventDefault();
+        const criterion = document.getElementById(`crit-${at}`);
+        criterion?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        criterion?.focus({ preventScroll: true });
+      }}
+    >
+      {text}
+    </a>
   );
 }
 

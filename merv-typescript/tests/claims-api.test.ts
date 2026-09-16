@@ -190,7 +190,7 @@ test('Claims MCP and UI registrations withdraw with Cordis provider and restore 
   const row = shell.rows.find((r: any) => r.id === 'claims');
   assert.ok(row);
   assert.equal(row.view.kind, 'claims');
-  assert.equal(row.status.count, 1);
+  assert.deepEqual(row.status, {}, 'a claim book is consulted, so its row carries no count');
   const old = f.app.ctx.claims;
   await f.app.setEnabled('claims', false);
   assert.equal(
@@ -222,11 +222,11 @@ test('Claims MCP and UI registrations withdraw with Cordis provider and restore 
     ).value,
     claim,
   );
-  assert.equal(
+  assert.deepEqual(
     (await f.http('ui.shell', {}, f.reader.token)).body.result.rows.find(
       (r: any) => r.id === 'claims',
-    ).status.count,
-    1,
+    ).status,
+    {},
   );
   assert.notEqual(f.app.ctx.claims, old);
 });

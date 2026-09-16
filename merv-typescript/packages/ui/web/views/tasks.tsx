@@ -3,6 +3,14 @@ import { Link, Route, Routes, useParams } from 'react-router-dom';
 import { useTool } from '../api';
 import { ListFilters } from '../list-filters';
 import { KV, LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
+import {
+  OPEN,
+  ThreeStates,
+  firstSentence,
+  isOpenTask,
+  newestReview,
+  reviewClause,
+} from '../states';
 import { useActorNames } from './people';
 import { ArtifactBody } from './artifacts';
 import { CriterionRows, type Review } from './reviews';
@@ -18,15 +26,12 @@ interface Task {
   title: string;
   goal: string;
   checks: string[];
-  evidenceVersion: 1 | 2;
-  acceptanceChecks: { number: number; text: string }[];
   deliveryConfirmations: {
     checkNumber: number;
     status: 'met' | 'not_met';
     evidenceIds: string[];
     notes: string;
   }[];
-  deliveryAssessmentId: string | null;
   producerId: string;
   briefId: string;
   deliveryIds: string[];
@@ -42,19 +47,26 @@ interface Task {
 
 function TaskList() {
   const list = useTool<Task[]>('task.list', {}, { every: 8000 });
+  // The judgement of a task is a record of its own, so the list joins the
+  // project's reviews once rather than fetching one per row.
+  const reviews = useTool<Review[]>('review.list');
   const nameOf = useActorNames();
   const [query, setQuery] = useState('');
-  const [state, setState] = useState('');
+  const [chosen, setChosen] = useState<string>();
   const search = query.trim().toLowerCase();
+  // The count in the title line is the filter: the page opens on the open tasks
+  // it counted, and every state is one click away.
+  const open = (list.data ?? []).filter((item) => isOpenTask(item.workflow.state)).length;
+  const state = chosen ?? (open ? OPEN : '');
   const states = [
-    ...new Set([
-      ...(list.data ?? []).map((item) => item.workflow.state),
-      ...(state ? [state] : []),
-    ]),
-  ].sort();
+    OPEN,
+    ...[...new Set((list.data ?? []).map((item) => item.workflow.state))].sort(),
+  ];
   const visible = (list.data ?? []).filter(
     (item) =>
-      (!state || item.workflow.state === state) &&
+      (state === OPEN
+        ? isOpenTask(item.workflow.state)
+        : !state || item.workflow.state === state) &&
       (!search ||
         [item.title, item.goal, item.id, item.producerId, nameOf(item.producerId)].some((value) =>
           value?.toLowerCase().includes(search),
@@ -69,7 +81,7 @@ function TaskList() {
           query={query}
           onQueryChange={setQuery}
           state={state}
-          onStateChange={setState}
+          onStateChange={setChosen}
           states={states}
           shown={visible.length}
           total={list.data.length}
@@ -102,15 +114,27 @@ function TaskList() {
           columns={[
             { key: 'title', label: 'Task', render: (t) => <strong>{t.title}</strong> },
             {
-              key: 'state',
-              label: 'State',
-              render: (t) => <StatusPill value={t.workflow.state} />,
-            },
-            {
-              key: 'rev',
-              label: 'Rev',
-              render: (t) => <span className="tabular">{t.workflow.revision}</span>,
-              width: '60px',
+              key: 'standing',
+              label: 'Standing',
+              render: (t) => {
+                const review = newestReview(reviews.data, t.id);
+                return (
+                  <ThreeStates
+                    execution={t.workflow.state}
+                    review={
+                      reviewClause(review, nameOf(review?.reviewerId)) ?? {
+                        word: 'not reviewed',
+                        absent: true,
+                      }
+                    }
+                    outcome={
+                      t.failure
+                        ? { detail: firstSentence(t.failure.reason) }
+                        : { word: 'no outcome recorded', absent: true }
+                    }
+                  />
+                );
+              },
             },
             {
               key: 'producer',
@@ -124,12 +148,6 @@ function TaskList() {
                 t.dependencies?.length
                   ? `${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} succeeded`
                   : 'None',
-            },
-            {
-              key: 'deliveries',
-              label: 'Deliveries',
-              render: (t) => <span className="tabular">{t.deliveryIds.length}</span>,
-              width: '90px',
             },
             {
               key: 'when',

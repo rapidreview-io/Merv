@@ -78,6 +78,6 @@ Saved status is not a continuous GitHub health check. Live list/link operations 
 
 `tests/code-github.test.ts` covers the HTTP flow, browser/user/project binding, expiry and callback replay, permission changes during I/O, private repository authorization, ciphertext isolation, concurrent refresh, disconnect races, restart persistence, cancellation, unload/drain, and PostgreSQL. Set `MERV_TEST_POSTGRES_URL` to an isolated test database to include PostgreSQL.
 
-The implementation has been tested against simulated GitHub responses, including the browser repository picker. Real App credentials and a live private-repository authorization remain necessary before enabling it in production.
+The implementation has been tested against simulated GitHub responses, including the browser repository picker. Production App configuration was enabled on 2026-09-16; see the [activation record](../deploy/GITHUB_2026-09-16.md) for configuration, recovery, and the current live-verification status.
 
 Primary references: [GitHub App user tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [user-authorized repository listing](https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-user-access-token), [single-token revocation](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-token).

@@ -262,11 +262,12 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   assert.equal((await f.http('project.get', {}, f.reader.token)).status, 200);
   await f.app.setEnabled('knowledge', true);
   assert.deepEqual((await f.call(client, 'project.records')).value, records.value);
-  assert.equal(
+  assert.deepEqual(
     (await f.http('ui.shell', {}, f.reader.token)).body.result.rows.find(
       (row: any) => row.id === 'knowledge',
-    ).status.count,
-    3,
+    ).status,
+    {},
+    'a record inventory is consulted, not worked, so it carries no count',
   );
 });
 

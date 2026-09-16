@@ -7,8 +7,8 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 | Module               | Entry id       | Injects           | Owns                                                                                |
 | -------------------- | -------------- | ----------------- | ----------------------------------------------------------------------------------- |
 | `@merv/ui`           | `ui`           | `api`, `tools`    | The `ui` row registry, the bundle at `/ui`, `ui.shell`, `ui.read`, the Settings row |
-| `@merv/scope/ui`     | `scope-ui`     | `scope`, `ui`     | People (count of actors; operators only)                                            |
-| `@merv/tasks/ui`     | `tasks-ui`     | `tasks`, `ui`     | Tasks (count of open tasks)                                                         |
+| `@merv/scope/ui`     | `scope-ui`     | `scope`, `ui`     | People (a directory; no count)                                                      |
+| `@merv/tasks/ui`     | `tasks-ui`     | `tasks`, `ui`     | Tasks (count of tasks not done or failed)                                           |
 | `@merv/reviews/ui`   | `reviews-ui`   | `reviews`, `ui`   | Reviews (count of unclaimed and started reviews)                                    |
 | `@merv/artifacts/ui` | `artifacts-ui` | `artifacts`, `ui` | Artifacts                                                                           |
 | `@merv/sessions/ui`  | `sessions-ui`  | `sessions`, `ui`  | Sessions, runner presence and project dispatch controls                             |
@@ -29,6 +29,12 @@ ctx.effect(() =>
     path: '/feed', // browser route under /ui
     view: { kind: 'feed' }, // what the bundle renders
     status: (caller) => ({ count: 3 }), // optional live status shown on the row
+    // A count always means open work against the project, never a total: tasks
+    // not done or failed, experiments outside complete/abandoned/failed, reviews
+    // requested or started, cycles, reflections and consolidations not finished,
+    // live sessions. A row you consult rather than work — Claims, Records,
+    // Artifacts, People, Code, Connections, Paper — reports no count at all, and
+    // an absent count renders as nothing rather than as a zero.
     read: (caller) => data, // optional row-owned data served by ui.read
   }),
 );
