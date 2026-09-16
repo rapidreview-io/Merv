@@ -10,6 +10,7 @@ Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.
 ssh ResearchSuite_Control 'sudo bash -c "cd /opt/merv-typescript/releases/<previous-id>/source/deploy && MERV_TS_IMAGE=merv-typescript:<previous-id> docker compose -f compose.yml up -d"'
 ```
 
-| When (UTC)        | Release                                  | Image id       | Plugins active/total | Result | Checks                                             | Rollback                          |
-| ----------------- | ---------------------------------------- | -------------- | -------------------- | ------ | -------------------------------------------------- | --------------------------------- |
-| 2026-09-16 19:48Z | `20260916T190552Z-be69497b-3a026ebca252` | `3235cf85425f` | 54/54                | pass   | see [CUTOVER_2026-09-16.md](CUTOVER_2026-09-16.md) | legacy Python, see cutover record |
+| When (UTC)        | Release                                  | Image id       | Plugins active/total | Result | Checks                                                                                                             | Rollback                                                          |
+| ----------------- | ---------------------------------------- | -------------- | -------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| 2026-09-16 19:48Z | `20260916T190552Z-be69497b-3a026ebca252` | `3235cf85425f` | 54/54                | pass   | see [CUTOVER_2026-09-16.md](CUTOVER_2026-09-16.md)                                                                 | legacy Python, see cutover record                                 |
+| 2026-09-16T21:09Z | `20260916T210826Z-2e5273f8-5daf4318169d` | `c0bdc0419093` | 54/54                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-C4qNuYmg.js 200; /ui/assets/index-yXJbzxTW.css 200 | rollback `merv-typescript:20260916T190552Z-be69497b-3a026ebca252` |
