@@ -1,6 +1,7 @@
 import { useTool } from '../api';
 import { LoadState, ObjId, StatusPill, Table, relativeTime } from '../components';
 import type { ViewProps } from './index';
+import { GitHubConnection } from './github';
 
 interface Operation {
   command: { id: string; message: string; instanceId: string; actorId: string; createdAt: string };
@@ -28,6 +29,7 @@ export function CodeView({ row }: ViewProps) {
   const proposals = state.data?.proposals;
   return (
     <div className="page-stage stack stack--lg">
+      <GitHubConnection />
       {!!proposals?.length && (
         <section className="stack">
           <h2 className="section-title">Sealed proposals</h2>

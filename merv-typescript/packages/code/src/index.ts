@@ -3,6 +3,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/sessions/types';
 import type {} from './types.js';
 import { CodeService } from './service.js';
+import { githubConfig } from './github-client.js';
 
 export const codePlugin = {
   name: 'merv-code',
@@ -10,7 +11,7 @@ export const codePlugin = {
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.artifacts),
+        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.artifacts, githubConfig()),
       );
       yield () => service.close();
       yield ctx.provide('code', service);

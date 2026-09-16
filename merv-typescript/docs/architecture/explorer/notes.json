@@ -120,7 +120,7 @@
     },
     "code": {
       "label": "Code",
-      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. It does not execute Git itself."
+      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. Also owns optional project GitHub connections and repository selection through its existing API/UI adapters. Runner executes Git; GitHub adds no Cordis dependency."
     },
     "artifacts": {
       "label": "Artifacts",

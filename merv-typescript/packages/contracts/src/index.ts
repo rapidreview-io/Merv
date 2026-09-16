@@ -161,7 +161,11 @@ export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;
   /** Optional direct transfer capability; never expands the inline content limit. */
-  download?(namespace: string, hash: string, expectedSize: number): Promise<{ url: string; expiresAt: string }>;
+  download?(
+    namespace: string,
+    hash: string,
+    expectedSize: number,
+  ): Promise<{ url: string; expiresAt: string }>;
 }
 export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
 export type Permission = 'read' | 'write' | 'review' | 'admin';
@@ -414,8 +418,12 @@ export interface ArtifactInput {
 }
 export interface Artifacts {
   readonly downloadSupported: boolean;
-  download(caller: Caller, artifactId: string): Promise<{
-    artifact: Artifact; download: { url: string; expiresAt: string };
+  download(
+    caller: Caller,
+    artifactId: string,
+  ): Promise<{
+    artifact: Artifact;
+    download: { url: string; expiresAt: string };
   }>;
   /** Metadata-only output receipts for the authenticated session worker. */
   authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
@@ -1058,3 +1066,11 @@ declare module 'cordis' {
     tasks: Tasks;
   }
 }
+
+export { githubRevisionSchema, githubRepositoryInputSchema } from './code-github.js';
+export type {
+  CodeGitHub,
+  GitHubRepository,
+  GitHubRepositoryInput,
+  GitHubStatus,
+} from './code-github.js';

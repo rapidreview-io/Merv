@@ -5,13 +5,23 @@ import type { Code } from './types.js';
 import { CodeCommandService } from './commands.js';
 import { CodeProposalService } from './proposals.js';
 import { CodeCaptureReader } from './captures.js';
+import { CodeGitHubService } from './github.js';
+import type { GitHubConfig } from './github-client.js';
 
 /** One Code capability; immutable proposals and machine commands retain separate records. */
 export class CodeService extends CodeCommandService implements Code {
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
-  constructor(state: State, scope: Scope, sessions: Sessions, artifacts: Artifacts) {
+  readonly github: CodeGitHubService;
+  constructor(
+    state: State,
+    scope: Scope,
+    sessions: Sessions,
+    artifacts: Artifacts,
+    github?: GitHubConfig,
+  ) {
     super(state, scope, sessions);
+    this.github = new CodeGitHubService(state, scope, github);
     const initializeBase = this.initialize.bind(this);
     this.initialize = async () => {
       await initializeBase();
@@ -21,8 +31,9 @@ export class CodeService extends CodeCommandService implements Code {
         this.proposalStore = await createService(
           new CodeProposalService(this, state, scope, sessions, artifacts),
         );
+        await this.github.initialize();
       } catch (error) {
-        super.close();
+        await this.close();
         throw error;
       }
     };
@@ -39,9 +50,10 @@ export class CodeService extends CodeCommandService implements Code {
   async proposals(...args: Parameters<CodeProposalService['proposals']>) {
     return await this.proposalStore.proposals(...args);
   }
-  override close(): void {
-    this.captureReader.close();
-    this.proposalStore.close();
+  override async close(): Promise<void> {
+    this.captureReader?.close();
+    this.proposalStore?.close();
     super.close();
+    await this.github.close();
   }
 }

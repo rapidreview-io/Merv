@@ -143,6 +143,7 @@ export interface SessionApiProvider {
 }
 /** Optional authenticated machine controls; no Code implementation is imported by the API. */
 export interface CodeApiProvider {
+  readonly github?: import('@merv/contracts').CodeGitHub;
   nextCommand(caller: Caller, input: CodeCommandControl): Promise<CodeCommitCommand | null>;
   completeCommand(caller: Caller, input: CodeCommandCompletion): Promise<CodeCommandRecord>;
 }

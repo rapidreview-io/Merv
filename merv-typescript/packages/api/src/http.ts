@@ -32,6 +32,7 @@ import type {
 } from './types.js';
 import { ApiError, isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
+import { githubCallback, githubRequest } from './code-github.js';
 
 export { describeTool } from './registry.js';
 
@@ -511,6 +512,13 @@ export class ApiServer {
       throw new ApiError('forbidden_origin', 'Origin is not allowed', 403);
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
+    if (path === '/code/github/callback' && req.method === 'GET') {
+      const github = this.codeProvider().github;
+      if (!github) throw new ApiError('github_unavailable', 'GitHub is unavailable', 503);
+      res.setHeader('referrer-policy', 'no-referrer');
+      await githubCallback(req, res, github);
+      return;
+    }
     if (path === '/health' && req.method === 'GET') {
       json(res, 200, { status: 'ok' });
       return;
@@ -568,6 +576,19 @@ export class ApiServer {
       throw new ApiError('not_found', 'Unknown agent control route', 404);
     }
     const principal = await this.authenticate(req);
+    if (path === '/code/github' || path.startsWith('/code/github/')) {
+      const caller = await this.selectedCaller(
+        principal,
+        projectSelection(req.headers['x-merv-project-id']),
+      );
+      await this.scope.require(caller, 'read');
+      const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
+      await this.scope.require(caller, 'read');
+      const github = this.codeProvider().github;
+      if (!github) throw new ApiError('github_unavailable', 'GitHub is unavailable', 503);
+      json(res, 200, await githubRequest(req, res, caller, github, () => Promise.resolve(body)));
+      return;
+    }
     if (principal.kind !== 'session') {
       if (path === '/code/commands/next' || path === '/code/commands/complete') {
         if ([...url.searchParams].length)

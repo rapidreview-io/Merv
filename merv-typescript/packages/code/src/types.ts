@@ -90,7 +90,9 @@ export interface CodeCaptures {
   /** Historical, project-scoped immutable facts; never renders context or admits a new command. */
   capture(caller: Caller, ref: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture>;
 }
-export interface Code extends CodeCommands, CodeProposals, CodeCaptures {}
+export interface Code extends CodeCommands, CodeProposals, CodeCaptures {
+  readonly github: import('@merv/contracts').CodeGitHub;
+}
 declare module 'cordis' {
   interface Context {
     code: Code;
