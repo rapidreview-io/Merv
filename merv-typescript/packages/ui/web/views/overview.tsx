@@ -51,7 +51,11 @@ type AgentLite = {
 type SessionsLite = { agents?: AgentLite[]; runners: { live: boolean }[]; queueTotal: number };
 /** The three lists the work blocks share, read once for the whole page. */
 type List<T> = { row?: Row; load: Loaded<T[]> };
-type Work = { experiments: List<ExperimentLite>; tasks: List<TaskLite>; cycles: List<CycleLite> };
+export type Work = {
+  experiments: List<ExperimentLite>;
+  tasks: List<TaskLite>;
+  cycles: List<CycleLite>;
+};
 /** An open record, and once its guidance is in, the sentences it stands on. */
 interface Line {
   id: string;
@@ -67,7 +71,7 @@ interface Line {
 /** Whose move a record is. Anything still moving under its own power is `moving`. */
 type Whose = 'yours' | 'agent' | 'nobody' | 'unknown' | 'moving';
 type Lines = Record<Whose, Line[]>;
-interface Standing {
+export interface Standing {
   lines: Lines;
   reviews?: Loaded<ReviewLite[]>;
   loads: Loaded<unknown>[];
@@ -220,7 +224,7 @@ function useDecisions(ids: string[]): Loaded<WorkflowDecision>[] {
 }
 
 /** Sort every open record, and every open review, into whose move it is. */
-function useStanding(rows: Row[], work: Work, me: string, named: Named): Standing {
+export function useStanding(rows: Row[], work: Work, me: string, named: Named): Standing {
   const reviewsRow = rowOf(rows, 'reviews');
   const reviews = useTool<ReviewLite[]>(reviewsRow ? 'review.list' : null);
   const { row: experimentsRow, load: experiments } = work.experiments;

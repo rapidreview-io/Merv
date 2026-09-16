@@ -4,6 +4,7 @@ import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, TitleLine, useShell } from './shell';
 import { LoadState } from './components';
 import { viewFor } from './views';
+import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
 
 function UnavailableRoute() {
@@ -61,7 +62,9 @@ function Workspace() {
       {shell.data && <TitleLine rows={rows} />}
       {shell.data ? (
         <Routes>
-          <Route path="/" element={<OverviewView shell={shell.data} />} />
+          {/* The map is the home; the standing line it summarises stays one click away. */}
+          <Route path="/" element={<MapView shell={shell.data} />} />
+          <Route path="/now" element={<OverviewView shell={shell.data} />} />
           {rows.map((row) => {
             const View = viewFor(row.view.kind);
             return (
