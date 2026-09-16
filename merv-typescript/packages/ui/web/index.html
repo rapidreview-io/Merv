@@ -4,6 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Merv</title>
+    <style>
+      /* Interim: the display serif is withdrawn (founder ruling 2026-09-16); sans everywhere. */
+      html[lang] {
+        --font-display: var(--font-body);
+      }
+      html[lang] .lede-line,
+      html[lang] .page-title {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      html[lang] .lede-other {
+        font-weight: 500;
+      }
+      html[lang] .ov-name,
+      html[lang] .claim-statement {
+        font-weight: 600;
+      }
+      html[lang] .rail-wordmark,
+      html[lang] .rail-project-name {
+        font-size: 15px;
+        font-weight: 600;
+        font-style: normal;
+      }
+      html[lang] em,
+      html[lang] i,
+      html[lang] .ov-none {
+        font-style: normal;
+      }
+    </style>
     <meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#151412" media="(prefers-color-scheme: dark)" />
     <script>
