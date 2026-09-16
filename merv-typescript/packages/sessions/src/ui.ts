@@ -10,7 +10,7 @@ export const sessionsUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'sessions',
-        label: 'Agent sessions',
+        label: 'Sessions',
         group: 'work',
         order: 24,
         path: '/sessions',

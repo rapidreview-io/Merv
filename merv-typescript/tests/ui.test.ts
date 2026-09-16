@@ -224,7 +224,7 @@ test('human readers can open People and read active project membership without a
     result: { rows: { id: string; label: string; status: object }[] };
   };
   const people = shellData.result.rows.find((row) => row.id === 'people');
-  assert.equal(people?.label, 'People and agents');
+  assert.equal(people?.label, 'People');
   assert.deepEqual(people?.status, {}, 'a human reader does not need operator-only actor listing');
   const members = await fetch(`${app.ctx.api.url}/projects/${project.id}/members`, { headers });
   assert.equal(members.status, 200);
@@ -343,14 +343,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     shell.rows.map((entry) => entry.id),
     [
       'people',
-      'claims',
       'research',
+      'claims',
+      'tasks',
       'experiments',
       'paper',
       'knowledge',
-      'consolidation',
-      'tasks',
       'reviews',
+      'consolidation',
       'artifacts',
       'sessions',
       'code',
@@ -391,14 +391,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   await app.setEnabled('feed', false);
   assert.deepEqual(await rowIds(), [
     'people',
-    'claims',
     'research',
+    'claims',
+    'tasks',
     'experiments',
     'paper',
     'knowledge',
-    'consolidation',
-    'tasks',
     'reviews',
+    'consolidation',
     'artifacts',
     'sessions',
     'code',
@@ -411,14 +411,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   await app.setEnabled('feed', true);
   assert.deepEqual(await rowIds(), [
     'people',
-    'claims',
     'research',
+    'claims',
+    'tasks',
     'experiments',
     'paper',
     'knowledge',
-    'consolidation',
-    'tasks',
     'reviews',
+    'consolidation',
     'artifacts',
     'sessions',
     'code',
@@ -455,14 +455,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await raw(url, '/ui/')).status, 200);
   assert.deepEqual(await rowIds(), [
     'people',
-    'claims',
     'research',
+    'claims',
+    'tasks',
     'experiments',
     'paper',
     'knowledge',
-    'consolidation',
-    'tasks',
     'reviews',
+    'consolidation',
     'artifacts',
     'sessions',
     'code',

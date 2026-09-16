@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useSession, type Actor } from '../session';
-import { LoadState, ObjId, PageHeader, StatusPill, Table } from '../components';
-import type { ViewProps } from './index';
+import { LoadState, ObjId, StatusPill, Table } from '../components';
 
 /** Actor names for ids; operators get names, everyone else gets short ids. */
 export function useActorNames() {
@@ -32,7 +31,7 @@ const mutationMessage = (error: unknown): string =>
     ? 'Keep at least one operator with a verified account. Another operator must sign in before the last verified operator can be removed or demoted.'
     : failure(error).message;
 
-export function PeopleView({ row }: ViewProps) {
+export function PeopleView() {
   const { account, project, actor } = useSession();
   const human = account.kind === 'user';
   const subject = human ? account.user.subject : '';
@@ -44,8 +43,8 @@ export function PeopleView({ row }: ViewProps) {
   const [busy, setBusy] = useState(false);
   const [newSubject, setNewSubject] = useState('');
   const [newRole, setNewRole] = useState<Role>('reader');
+  const [adding, setAdding] = useState(false);
   const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
-  const [refresh, setRefresh] = useState(0);
   const generation = useRef(0);
   const currentMember = members?.find(
     (member) => member.subject === subject && member.issuer === issuer,
@@ -64,10 +63,12 @@ export function PeopleView({ row }: ViewProps) {
     setMutationError(undefined);
     setNewSubject('');
     setNewRole('reader');
+    setAdding(false);
     setDraftRoles({});
     setBusy(false);
     setLoading(human);
-    if (human)
+    // The list keeps itself current; a poll never disturbs a half-written form.
+    const load = () =>
       accountRequest<{ memberships: Membership[] }>(path, { scoped: true }).then(
         (result) => {
           if (current()) {
@@ -82,10 +83,13 @@ export function PeopleView({ row }: ViewProps) {
           }
         },
       );
+    if (human) void load();
+    const timer = human ? setInterval(() => void load(), 10000) : undefined;
     return () => {
+      clearInterval(timer);
       generation.current++;
     };
-  }, [path, human, issuer, subject, refresh]);
+  }, [path, human, issuer, subject]);
 
   const mutate = async (method: 'POST' | 'PATCH' | 'DELETE', target?: string, body?: unknown) => {
     if (!canManage || busy) return;
@@ -101,7 +105,10 @@ export function PeopleView({ row }: ViewProps) {
         scoped: true,
       });
       if (!current()) return;
-      if (method === 'POST') setNewSubject('');
+      if (method === 'POST') {
+        setNewSubject('');
+        setAdding(false);
+      }
       const result = await accountRequest<{ memberships: Membership[] }>(path, { scoped: true });
       if (!current()) return;
       setMembers(result.memberships.filter((member) => member.active));
@@ -125,22 +132,18 @@ export function PeopleView({ row }: ViewProps) {
 
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary={`Memberships and project identities in ${project.name}. Members use shared sign-in; agents use project credentials.`}
-        actions={
+      {canManage && (
+        <div className="action-row">
           <button
-            className="btn btn--sm"
-            disabled={busy}
-            onClick={() => {
-              setRefresh((value) => value + 1);
-              actors.reload();
-            }}
+            type="button"
+            className="btn"
+            aria-expanded={adding}
+            onClick={() => setAdding((open) => !open)}
           >
-            Refresh
+            Add member
           </button>
-        }
-      />
+        </div>
+      )}
       {human && (
         <section className="stack">
           <h2 className="section-title">Project members</h2>
@@ -149,6 +152,7 @@ export function PeopleView({ row }: ViewProps) {
             error={loadError}
             empty={members?.length === 0}
             emptyTitle="No active memberships"
+            emptyHint={`Everyone who can open ${project.name} is listed here; an operator adds them by account ID.`}
           />
           {members && members.length > 0 && (
             <Table
@@ -232,9 +236,9 @@ export function PeopleView({ row }: ViewProps) {
               ]}
             />
           )}
-          {canManage && (
+          {canManage && adding && (
             <form className="identity-form card" onSubmit={add}>
-              <h3 className="section-title">Add a member</h3>
+              <h3 className="label">Add a member</h3>
               <p className="faint">
                 Use the exact account ID from shared sign-in. This grants project access when that
                 account signs in; it does not create a login account.
@@ -282,15 +286,12 @@ export function PeopleView({ row }: ViewProps) {
       {isOperator && (
         <section className="stack">
           <h2 className="section-title">Project actors</h2>
-          <p className="faint">
-            These identities own work and reviews. Shared-account members do not hold local actor
-            tokens.
-          </p>
           <LoadState
             loading={actors.loading}
             error={actors.error}
             empty={actors.data?.length === 0}
             emptyTitle="No actors"
+            emptyHint="The identities that own work and reviews appear here as agents are issued credentials."
           />
           {actors.data && actors.data.length > 0 && (
             <Table

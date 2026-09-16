@@ -10,7 +10,7 @@ export const knowledgeUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'knowledge',
-        label: 'Research records',
+        label: 'Records',
         group: 'work',
         order: 17,
         path: '/knowledge',

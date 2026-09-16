@@ -1,5 +1,5 @@
 import { useTool } from '../api';
-import { LoadState, PageHeader, StatusPill, Table } from '../components';
+import { LoadState, StatusPill, Table } from '../components';
 import type { ViewProps } from './index';
 
 interface Mount {
@@ -14,15 +14,12 @@ export function ConnectionsView({ row }: ViewProps) {
   const mounts = useTool<Mount[]>('ui.read', { rowId: row.id }, { every: 4000 });
   return (
     <div className="page-stage">
-      <PageHeader
-        title={row.label}
-        summary="External MCP services mounted into this server. A disconnected mount keeps its configuration and reconnects on its own."
-      />
       <LoadState
         loading={mounts.loading}
         error={mounts.error}
         empty={mounts.data?.length === 0}
         emptyTitle="No mounts configured"
+        emptyHint="External services an operator mounts into this server appear here with their connection health."
       />
       {mounts.data && mounts.data.length > 0 && (
         <Table

@@ -1,5 +1,5 @@
 import { useTool } from '../api';
-import { LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
+import { LoadState, ObjId, StatusPill, Table, relativeTime } from '../components';
 import type { ViewProps } from './index';
 
 interface Operation {
@@ -28,16 +28,9 @@ export function CodeView({ row }: ViewProps) {
   const proposals = state.data?.proposals;
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="Recent Git checkpoint requests and the commits preserved by their owning runner."
-      />
       {!!proposals?.length && (
         <section className="stack">
-          <h2>Sealed proposals</h2>
-          <p className="faint">
-            Fixed code and evidence snapshots. Review and publication belong to the owning workflow.
-          </p>
+          <h2 className="section-title">Sealed proposals</h2>
           <Table
             rows={proposals}
             keyOf={(item) => item.id}
@@ -88,7 +81,7 @@ export function CodeView({ row }: ViewProps) {
         error={state.error}
         empty={operations?.length === 0}
         emptyTitle="No code operations yet"
-        emptyHint="A writable Git assignment can request a checkpoint through code.commit."
+        emptyHint="Commits appear here as agents working in a Git workspace save their checkpoints."
       />
       {!!operations?.length && (
         <Table

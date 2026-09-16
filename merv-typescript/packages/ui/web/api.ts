@@ -128,7 +128,7 @@ export const onAccessLost = (listener: (error: ApiError) => void) => {
 /** Account operations are deliberately independent of a selected project. */
 export async function accountRequest<T>(
   path: string,
-  options: { method?: string; body?: unknown; scoped?: boolean } = {},
+  options: { method?: string; body?: unknown; scoped?: boolean; credentials?: 'same-origin' } = {},
 ): Promise<T> {
   const epoch = scopeEpoch;
   const project = selectedProject;
@@ -138,7 +138,7 @@ export async function accountRequest<T>(
     try {
       response = await fetch(path, {
         method: options.method ?? 'GET',
-        credentials: 'omit',
+        credentials: options.credentials ?? 'omit',
         headers: {
           ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),

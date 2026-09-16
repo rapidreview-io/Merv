@@ -10,9 +10,8 @@ import type {
 } from '@merv/paper/models';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, PageHeader, StatusPill } from '../components';
+import { LoadState, ObjId, StatusPill } from '../components';
 import { useSession } from '../session';
-import type { ViewProps } from './index';
 
 const labels: Record<PaperKind, string> = {
   problem: 'Problem & scope',
@@ -379,8 +378,8 @@ function DocumentPanel({
   const shown = published && document.published ? document.published.document : document.current;
   return (
     <section className="stack stack--lg">
+      <h2 className="section-title">{labels[kind]}</h2>
       <div className="cluster">
-        <h2>{labels[kind]}</h2>
         <span className="faint">Revision {shown.revision}</span>
         {document.published && (
           <button
@@ -393,7 +392,7 @@ function DocumentPanel({
         )}
       </div>
       {document.published && (
-        <div className="card stack">
+        <div className="record stack">
           <div className="cluster">
             <StatusPill
               value={document.published.publication.reviewId ? 'approved' : 'published'}
@@ -415,7 +414,7 @@ function DocumentPanel({
         </p>
       )}
       {proposals.filter((p) => p.documents.some((d) => d.edit.kind === kind)).length > 0 && (
-        <details className="card stack">
+        <details className="stack">
           <summary>Proposed and reviewed updates</summary>
           {proposals
             .filter((p) => p.documents.some((d) => d.edit.kind === kind))
@@ -457,7 +456,7 @@ function DocumentPanel({
         <>
           {!shown.sections.length && <p className="empty">No sections yet.</p>}
           {shown.sections.map((section) => (
-            <article className="card stack" key={section.id}>
+            <article className="record stack" key={section.id}>
               <div className="cluster">
                 <h3>{section.title}</h3>
                 {canEdit && (
@@ -482,30 +481,21 @@ function DocumentPanel({
   );
 }
 
-function PaperPage({ row }: ViewProps) {
+function PaperPage() {
   const { actor } = useSession();
-  const workspace = useTool<PaperWorkspace>('paper.read');
+  const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
   const [kind, setKind] = useState<PaperKind>('problem');
   const [citation, setCitation] = useState<PaperCitation | 'new' | null>(null);
   const writable = actor.role === 'operator' || actor.role === 'producer';
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="The project's question, literature, Methods and Results, with retained revisions and reviewed evidence."
-        actions={
-          <button className="btn" onClick={workspace.reload}>
-            Refresh paper
-          </button>
-        }
-      />
       <LoadState {...workspace} />
       {workspace.data && (
         <>
-          <div className="cluster" role="tablist" aria-label="Paper documents">
+          <div className="action-row" role="tablist" aria-label="Paper documents">
             {(Object.keys(labels) as PaperKind[]).map((value) => (
               <button
-                className={`btn ${kind === value ? 'btn--primary' : ''}`}
+                className="btn-text"
                 role="tab"
                 id={`paper-tab-${value}`}
                 aria-controls={`paper-panel-${value}`}
@@ -536,7 +526,7 @@ function PaperPage({ row }: ViewProps) {
           ))}
           <div hidden={kind !== 'literature'}>
             <section className="stack">
-              <h2>Citation ledger</h2>
+              <h2 className="section-title">Citation ledger</h2>
               {citation !== null ? (
                 <CitationEditor
                   citation={citation === 'new' ? undefined : citation}
@@ -555,7 +545,7 @@ function PaperPage({ row }: ViewProps) {
               )}
               {!workspace.data.citations.length && <p className="empty">No citations yet.</p>}
               {workspace.data.citations.map((item) => (
-                <article className="card stack" key={item.id}>
+                <article className="record stack" key={item.id}>
                   <h3>{item.title}</h3>
                   <p>
                     {item.authors.join(', ')}
@@ -609,8 +599,8 @@ function PaperPage({ row }: ViewProps) {
   );
 }
 
-export function PaperView(props: ViewProps) {
+export function PaperView() {
   const epoch = useScopeVersion();
   const { actor, project } = useSession();
-  return <PaperPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} {...props} />;
+  return <PaperPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} />;
 }

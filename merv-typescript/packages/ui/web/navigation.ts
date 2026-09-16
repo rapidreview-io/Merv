@@ -2,7 +2,7 @@ import type { Row } from './shell-types';
 
 /**
  * Sidebar navigation model. Sections express what a person is doing
- * (Research, Work, Operations, Activity), not which plugin provided a row.
+ * (Research, Work, Agents, Feed), not which plugin provided a row.
  * Only rows registered through ui.shell are consumed; nothing is invented.
  * Settings rows are omitted here because the shell renders them in its
  * footer, and the built-in Overview link is likewise the shell's own.
@@ -37,8 +37,8 @@ const SECTION_OF_VIEW: Record<string, string> = {
 const SECTION_LABELS: Record<string, string> = {
   research: 'Research',
   work: 'Work',
-  operations: 'Operations',
-  activity: 'Activity',
+  operations: 'Agents',
+  activity: 'Feed',
 };
 
 const SECTION_ORDER = ['research', 'work', 'operations', 'activity'];

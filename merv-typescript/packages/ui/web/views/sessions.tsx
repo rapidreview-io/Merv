@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion, useTool } from '../api';
-import { LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
+import { LoadState, ObjId, StatusPill, Table, relativeTime } from '../components';
 import type { ViewProps } from './index';
 import { AgentSessionsPanel, type AgentSummary } from './agent-sessions-panel';
 
@@ -105,16 +105,12 @@ export function SessionsView({ row }: ViewProps) {
   const liveCount = status?.liveSessionCount ?? 0;
   return (
     <div className="page-stage sessions-page stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="See what each agent is working on and inspect its tool activity."
-      />
       <LoadState loading={state.loading} error={state.error} />
       {status && (
         <>
-          <div className="cluster" role="group" aria-label="Agent page views">
+          <div className="action-row" role="group" aria-label="Agent page views">
             <button
-              className={`btn btn--sm${view === 'agents' ? ' btn--primary' : ''}`}
+              className="btn-text"
               aria-pressed={view === 'agents'}
               aria-controls="sessions-agents-panel"
               onClick={() => setView('agents')}
@@ -122,7 +118,7 @@ export function SessionsView({ row }: ViewProps) {
               Agents
             </button>
             <button
-              className={`btn btn--sm${view === 'operations' ? ' btn--primary' : ''}`}
+              className="btn-text"
               aria-pressed={view === 'operations'}
               aria-controls="sessions-operations-panel"
               onClick={() => setView('operations')}
@@ -139,10 +135,7 @@ export function SessionsView({ row }: ViewProps) {
           </div>
           <div id="sessions-operations-panel" hidden={view !== 'operations'}>
             <div className="stack stack--lg">
-              <p className="faint">
-                Manage dispatch, runners, assignment executions and available work.
-              </p>
-              <section className="card stack">
+              <section className="stack">
                 <div className="cluster">
                   <strong>Automatic dispatch</strong>
                   <StatusPill value={status.dispatch.enabled ? 'enabled' : 'paused'} />
@@ -180,7 +173,7 @@ export function SessionsView({ row }: ViewProps) {
                 {error && <p role="alert">{error}</p>}
               </section>
               <section className="stack">
-                <h2>Runners</h2>
+                <h2 className="section-title">Runners</h2>
                 {status.runners.length === 0 ? (
                   <p className="faint">
                     No runner has reported its presence. Enabling dispatch alone does not launch an
@@ -240,7 +233,7 @@ export function SessionsView({ row }: ViewProps) {
                 )}
               </section>
               <section className="stack">
-                <h2>Assignment executions · {liveCount} live</h2>
+                <h2 className="section-title">Assignment executions · {liveCount} live</h2>
                 {status.sessionTotal > status.sessions.length && (
                   <p className="faint">
                     Showing {status.sessions.length} of {status.sessionTotal} sessions, with live
@@ -353,16 +346,12 @@ export function SessionsView({ row }: ViewProps) {
                 )}
               </section>
               <section className="stack">
-                <h2>Available work · {status.queueTotal}</h2>
+                <h2 className="section-title">Available work · {status.queueTotal}</h2>
                 {status.queueTotal > status.queue.length && (
                   <p className="faint">
                     Showing the first {status.queue.length} eligible assignments.
                   </p>
                 )}
-                <p className="faint">
-                  Work currently eligible for your project authority. Each runner receives work
-                  permitted by its own credential.
-                </p>
                 {status.queue.length === 0 ? (
                   <p className="faint">No eligible work is waiting for this identity.</p>
                 ) : (

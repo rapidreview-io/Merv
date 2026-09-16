@@ -43,7 +43,6 @@ export function KeysPanel({
   const [rotationExpiry, setRotationExpiry] = useState('');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [reload, setReload] = useState(0);
   const generation = useRef(0);
   const issuer = account.user.issuer;
   const subject = account.user.subject;
@@ -78,7 +77,7 @@ export function KeysPanel({
     return () => {
       generation.current++;
     };
-  }, [issuer, subject, reload]);
+  }, [issuer, subject]);
 
   const mutate = async (run: () => Promise<IssuedUserKey | { revoked: true }>) => {
     if (busy) return;
@@ -261,24 +260,14 @@ export function KeysPanel({
           Revoke also stops every replacement descended from the selected key. Rotation replaces
           only the selected key and stops its old bearer immediately.
         </p>
-        <button
-          className="btn"
-          disabled={busy}
-          onClick={() => {
-            forgetSecret();
-            setReload((value) => value + 1);
-          }}
-        >
-          Refresh
-        </button>
         {keys?.length === 0 && <p>No keys have been issued by this account.</p>}
         {keys?.map((key) => {
           const expired = !!key.expiresAt && Date.parse(key.expiresAt) <= Date.now();
           const project = projects.find((project) => project.id === key.projectId);
           const canRotate = key.grantScope === 'account' ? projects.length > 0 : !!project;
           return (
-            <section className="card stack" key={key.id}>
-              <h3 className="section-title">{key.label || 'Unnamed key'}</h3>
+            <section className="record stack" key={key.id}>
+              <h3>{key.label || 'Unnamed key'}</h3>
               <code>{key.id}</code>
               <p>
                 {key.grantScope === 'account'

@@ -4,10 +4,9 @@ import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, PageHeader, StatusPill } from '../components';
+import { LoadState, ObjId, StatusPill } from '../components';
 import { useSession } from '../session';
 import { ResearchCommand } from './paper';
-import type { ViewProps } from './index';
 
 const ids = (value: string) => value.split(/\s+/).filter(Boolean);
 
@@ -114,8 +113,12 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
   );
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && record.ownerId === actor.id);
+  // The instruction already says it; a blocker that repeats it word for word is noise.
+  const blockers = (guidance.data?.blockers ?? []).filter(
+    (blocker) => blocker.message !== guidance.data?.instruction,
+  );
   return (
-    <article className="card stack">
+    <article className="record stack">
       <div className="cluster">
         <h2>{record.name}</h2>
         <StatusPill value={record.workflow.state} />
@@ -133,9 +136,9 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
       {guidance.data && !guidance.error && (
         <>
           <p>{guidance.data.instruction}</p>
-          {!!guidance.data.blockers.length && (
+          {!!blockers.length && (
             <ul>
-              {guidance.data.blockers.map((blocker, index) => (
+              {blockers.map((blocker, index) => (
                 <li key={index}>{blocker.message}</li>
               ))}
             </ul>
@@ -185,27 +188,37 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
   );
 }
 
-function ResearchPage({ row }: ViewProps) {
+function ResearchPage() {
   const { actor } = useSession();
-  const cycles = useTool<ResearchRecord[]>('research.list');
+  const cycles = useTool<ResearchRecord[]>('research.list', {}, { every: 10000 });
+  const [creating, setCreating] = useState(false);
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="Follow a research cycle from the problem definition through reviewed findings and updated Methods and Results."
-        actions={
-          <button className="btn" onClick={cycles.reload}>
-            Refresh cycles
-          </button>
-        }
-      />
       {(actor.role === 'operator' || actor.role === 'producer') && (
-        <CreateResearch onSaved={cycles.reload} />
+        <div className="action-row">
+          <button
+            type="button"
+            className="btn"
+            aria-expanded={creating}
+            onClick={() => setCreating((open) => !open)}
+          >
+            New cycle
+          </button>
+        </div>
+      )}
+      {creating && (
+        <CreateResearch
+          onSaved={() => {
+            setCreating(false);
+            cycles.reload();
+          }}
+        />
       )}
       <LoadState
         {...cycles}
         empty={cycles.data?.length === 0}
         emptyTitle="No research cycles yet"
+        emptyHint="A cycle runs from the problem definition to reviewed findings; a producer starts one here."
       />
       {cycles.data?.map((record) => (
         <Cycle key={record.id} record={record} reload={cycles.reload} />
@@ -214,8 +227,8 @@ function ResearchPage({ row }: ViewProps) {
   );
 }
 
-export function ResearchView(props: ViewProps) {
+export function ResearchView() {
   const epoch = useScopeVersion();
   const { actor, project } = useSession();
-  return <ResearchPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} {...props} />;
+  return <ResearchPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} />;
 }

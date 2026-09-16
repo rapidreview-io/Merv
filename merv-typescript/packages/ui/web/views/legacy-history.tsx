@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
-import { KV, LoadState, PageHeader, StatusPill, Table, words } from '../components';
+import { KV, LoadState, StatusPill, Table, words } from '../components';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
 
@@ -282,13 +282,6 @@ function History({ row }: ViewProps) {
   const types = Object.entries(summary.data?.counts ?? {}).sort(([a], [b]) => a.localeCompare(b));
   return (
     <div className="page-stage page-stage--wide stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="Explore the findings, experiments and discussions from your earlier research."
-      />
-      <p className="faint">
-        Imported records are read-only. New work appears in Experiments and Tasks.
-      </p>
       <LoadState
         loading={summary.loading}
         error={summary.error?.code === 'legacy_history_not_found' ? undefined : summary.error}
@@ -342,6 +335,7 @@ function History({ row }: ViewProps) {
                 {...records}
                 empty={records.data?.records.length === 0}
                 emptyTitle="No records of this type"
+                emptyHint="Records imported from the previous backend are read-only; choose another category above."
               />
               {!!records.data?.records.length && !records.error && (
                 <Table

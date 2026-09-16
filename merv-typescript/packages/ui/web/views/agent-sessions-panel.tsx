@@ -364,14 +364,9 @@ export function AgentSessionsPanel({
   return (
     <section className="stack" aria-labelledby="agents-title">
       <div className="cluster cluster--between">
-        <div>
-          <h2 id="agents-title" ref={directoryHeading} tabIndex={-1}>
-            Agents <span className="muted">· {agents.length}</span>
-          </h2>
-          <p className="muted agent-help">
-            Newest joined first. Select an agent to inspect its work.
-          </p>
-        </div>
+        <h2 id="agents-title" ref={directoryHeading} tabIndex={-1}>
+          Agents <span className="muted">· {agents.length}</span>
+        </h2>
         <label className="agent-switch">
           <input
             type="checkbox"
@@ -453,10 +448,6 @@ export function AgentSessionsPanel({
                 : 'No agents have joined this project yet.'}
             </p>
           )}
-          <p className="muted agent-help">
-            A live assignment has an offered or active lease. An agent keeps its identity across
-            assignments; context epochs record declared resets.
-          </p>
         </div>
         {selected && (
           <aside
@@ -472,7 +463,7 @@ export function AgentSessionsPanel({
           >
             <div className="cluster cluster--between agent-detail-heading">
               <div>
-                <p className="section-title">Agent details</p>
+                <p className="label">Agent details</p>
                 <h2 id="agent-detail-title" ref={heading} tabIndex={-1}>
                   {selectedAgent?.name ?? 'Agent'}
                 </h2>

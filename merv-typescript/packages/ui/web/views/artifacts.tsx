@@ -137,21 +137,17 @@ export function ArtifactBody({
   );
 }
 
-function ArtifactList({ row }: ViewProps) {
-  const list = useTool<Artifact[]>('artifact.list');
+function ArtifactList() {
+  const list = useTool<Artifact[]>('artifact.list', {}, { every: 10000 });
   const nameOf = useActorNames();
   return (
     <div className="page-stage">
-      <PageHeader
-        title={row.label}
-        summary="Immutable briefs, deliveries, and files. Content never changes after creation."
-      />
       <LoadState
         loading={list.loading}
         error={list.error}
         empty={list.data?.length === 0}
         emptyTitle="No artifacts"
-        emptyHint="Agents store briefs and deliveries here with artifact.create."
+        emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
       />
       {list.data && list.data.length > 0 && (
         <Table
@@ -164,6 +160,7 @@ function ArtifactList({ row }: ViewProps) {
               key: 'type',
               label: 'Type',
               render: (a) => <span className="mono faint">{a.mediaType}</span>,
+              width: '150px',
             },
             { key: 'size', label: 'Size', render: (a) => bytes(a.size), width: '90px' },
             {
@@ -220,7 +217,7 @@ function ArtifactDetail({ row }: ViewProps) {
 export function ArtifactsView(props: ViewProps) {
   return (
     <Routes>
-      <Route index element={<ArtifactList {...props} />} />
+      <Route index element={<ArtifactList />} />
       <Route path=":id" element={<ArtifactDetail {...props} />} />
     </Routes>
   );

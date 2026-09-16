@@ -10,7 +10,7 @@ export const scopeUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'people',
-        label: 'People and agents',
+        label: 'People',
         group: 'project',
         order: 10,
         path: '/people',

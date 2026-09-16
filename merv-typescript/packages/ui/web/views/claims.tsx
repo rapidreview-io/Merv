@@ -1,9 +1,8 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, PageHeader, StatusPill, relativeTime } from '../components';
+import { LoadState, ObjId, StatusPill, relativeTime } from '../components';
 import { useSession } from '../session';
-import type { ViewProps } from './index';
 
 const statuses = ['draft', 'active', 'supported', 'weakened', 'contradicted', 'abandoned'] as const;
 const confidences = ['low', 'medium', 'high'] as const;
@@ -198,7 +197,7 @@ function ClaimCard({
   const [conflictRevision, setConflictRevision] = useState<number>();
   const needsRefresh = conflictRevision !== undefined && claim.revision <= conflictRevision;
   return (
-    <article className="card stack" aria-labelledby={heading}>
+    <article className="record stack" aria-labelledby={heading}>
       <div className="cluster">
         <h2 id={heading}>
           <ObjId id={claim.id} />
@@ -209,7 +208,7 @@ function ClaimCard({
       <p className="claims-text">{claim.statement}</p>
       {claim.scope && (
         <div>
-          <h3 className="section-title">Scope</h3>
+          <h3 className="label">Scope</h3>
           <p className="claims-text">{claim.scope}</p>
         </div>
       )}
@@ -263,37 +262,39 @@ function ClaimCard({
   );
 }
 
-function ClaimsPage({ row }: ViewProps) {
+function ClaimsPage() {
   const { actor } = useSession();
-  const claims = useTool<Claim[]>('claim.list');
-  const [created, setCreated] = useState(false);
+  const claims = useTool<Claim[]>('claim.list', {}, { every: 10000 });
+  const [creating, setCreating] = useState(false);
   const writable = actor.role === 'operator' || actor.role === 'producer';
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="Project claims, their scope, and your current confidence in them."
-        actions={
-          <button className="btn" onClick={claims.reload}>
-            Refresh claims
-          </button>
-        }
-      />
       {writable && (
+        <div className="action-row">
+          <button
+            type="button"
+            className="btn"
+            aria-expanded={creating}
+            onClick={() => setCreating((open) => !open)}
+          >
+            New claim
+          </button>
+        </div>
+      )}
+      {creating && (
         <CreateClaim
           onSaved={() => {
-            setCreated(true);
+            setCreating(false);
             claims.reload();
           }}
         />
       )}
-      {created && <p role="status">Claim created.</p>}
       <LoadState
         loading={claims.loading}
         error={claims.error}
         empty={claims.data?.length === 0}
         emptyTitle="No claims yet"
-        emptyHint="Claims record statements and the scope in which they apply."
+        emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here."
       />
       {claims.data?.map((claim) => (
         <ClaimCard key={claim.id} claim={claim} writable={writable} reload={claims.reload} />
@@ -302,8 +303,8 @@ function ClaimsPage({ row }: ViewProps) {
   );
 }
 
-export function ClaimsView(props: ViewProps) {
+export function ClaimsView() {
   const epoch = useScopeVersion();
   const { actor, project } = useSession();
-  return <ClaimsPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} {...props} />;
+  return <ClaimsPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} />;
 }

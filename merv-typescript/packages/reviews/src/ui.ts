@@ -12,7 +12,7 @@ export const reviewUiPlugin = {
         id: 'reviews',
         label: 'Reviews',
         group: 'work',
-        order: 21,
+        order: 17,
         path: '/reviews',
         view: { kind: 'reviews' },
         status: async (caller: Caller) => ({

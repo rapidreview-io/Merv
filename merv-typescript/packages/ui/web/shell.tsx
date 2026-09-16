@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { NavLink, useLocation, useNavigationType } from 'react-router-dom';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool } from './api';
 import { useSession } from './session';
 import { cx } from './components';
@@ -29,27 +29,50 @@ export function IconSidebar() {
   );
 }
 
-function SideLink({ row }: { row: Row }) {
-  const { status } = row;
-  const dot =
-    status.state === 'degraded'
-      ? 'degraded'
-      : status.state === 'unavailable'
-        ? 'unavailable'
-        : null;
+function IconSwitch() {
   return (
-    <NavLink
-      to={row.path}
-      end={row.path === '/'}
-      className={({ isActive }) => cx('sidebar-link', isActive && 'active')}
-      title={status.detail}
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
     >
-      <span className="sidebar-link-label">{row.label}</span>
-      {status.count !== undefined && <span className="sidebar-link-count">{status.count}</span>}
-      {dot && (
-        <span className={cx('sidebar-dot', dot)} role="img" aria-label={status.detail ?? dot} />
+      <path d="M4 9h15l-4-4M20 15H5l4 4" />
+    </svg>
+  );
+}
+
+const unwell = (row: Row) =>
+  row.status.state === 'degraded' || row.status.state === 'unavailable' ? row : undefined;
+
+/** One place in the rail: an accent bar when active, one dot when something behind it is unwell. */
+function RailRow({
+  to,
+  label,
+  active,
+  sick,
+}: {
+  to: string;
+  label: string;
+  active: boolean;
+  sick?: Row;
+}) {
+  return (
+    <Link to={to} className={cx('rail-row', active && 'active')} title={sick?.status.detail}>
+      <span className="rail-row-label">{label}</span>
+      {sick && (
+        <span
+          className={cx('rail-dot', sick.status.state)}
+          role="img"
+          aria-label={sick.status.detail ?? sick.status.state}
+        />
       )}
-    </NavLink>
+    </Link>
   );
 }
 
@@ -130,28 +153,15 @@ function AccountFoot() {
   );
 }
 
-/** Kept for compatibility: rows grouped by their server-declared group. */
-export function groupRows(rows: Row[]): { group: string; rows: Row[] }[] {
-  const groups: { group: string; rows: Row[] }[] = [];
-  for (const row of rows) {
-    if (row.group === 'settings') continue;
-    const bucket = groups.find((g) => g.group === row.group);
-    if (bucket) bucket.rows.push(row);
-    else groups.push({ group: row.group, rows: [row] });
-  }
-  return groups;
-}
-
 export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHide(): void }) {
   const { project, account, chooseProject } = useSession();
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
-  const foot = rows.filter((row) => row.group === 'settings');
-  const sections = buildNavigation(rows);
+  const holds = (row: Row) => pathname === row.path || pathname.startsWith(`${row.path}/`);
   return (
     <aside className="sidebar" aria-label="Primary">
-      <div className="sidebar-util">
-        <span className="sidebar-wordmark">merv</span>
+      <div className="rail-util">
+        <span className="rail-wordmark">merv</span>
         <button
           type="button"
           className="sidebar-hide"
@@ -162,64 +172,87 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           <IconSidebar />
         </button>
       </div>
-      <div className="sidebar-top">
-        <div className="proj-chip" title={project.id}>
-          <div className="proj-chip-body">
-            <span className="proj-chip-name">{project.name}</span>
-          </div>
-        </div>
+      <div className="rail-project">
+        <NavLink
+          to="/"
+          end
+          className={({ isActive }) => cx('rail-row', 'rail-project-name', isActive && 'active')}
+          title={project.id}
+        >
+          {project.name}
+        </NavLink>
         {(account.kind === 'user' ||
           (account.kind === 'key' && account.key.grantScope === 'account')) && (
-          <button className="btn identity-project-switch" onClick={chooseProject}>
-            Change project
+          <button
+            type="button"
+            className="rail-switch"
+            onClick={chooseProject}
+            title="Switch project"
+            aria-label="Switch project"
+          >
+            <IconSwitch />
           </button>
         )}
       </div>
-      <nav className="sidebar-nav">
-        <div className="sidebar-group">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) => cx('sidebar-link', isActive && 'active')}
-          >
-            <span className="sidebar-link-label">Overview</span>
-          </NavLink>
-        </div>
-        {sections.map((section) => {
-          const links = section.rows.map((row) => <SideLink key={row.id} row={row} />);
-          return section.id === 'operations' || section.id === 'activity' ? (
-            <details
-              key={section.id}
-              className="sidebar-disclosure"
-              open={
-                section.rows.some(
-                  (row) => pathname === row.path || pathname.startsWith(`${row.path}/`),
-                ) || undefined
-              }
-            >
-              <summary className="sidebar-section">{section.label}</summary>
-              {links}
-            </details>
-          ) : (
-            <div key={section.id} className="sidebar-group">
-              <div className="sidebar-section">{section.label}</div>
-              {links}
-            </div>
-          );
-        })}
-        {shell && rows.length === 0 && (
-          <div className="sidebar-note">
-            No plugin has registered a row yet. The Overview stays available.
-          </div>
-        )}
+      <nav className="rail-nav">
+        {buildNavigation(rows).map((section) => (
+          <RailRow
+            key={section.id}
+            to={section.rows[0]!.path}
+            label={section.label}
+            active={section.rows.some(holds)}
+            sick={section.rows.find(unwell)}
+          />
+        ))}
       </nav>
       <div className="sidebar-foot">
-        {foot.map((row) => (
-          <SideLink key={row.id} row={row} />
-        ))}
+        {rows
+          .filter((row) => row.group === 'settings')
+          .map((row) => (
+            <RailRow
+              key={row.id}
+              to={row.path}
+              label={row.label}
+              active={holds(row)}
+              sick={unwell(row)}
+            />
+          ))}
         <AccountFoot />
       </div>
     </aside>
+  );
+}
+
+/**
+ * The page header the shell owns. On a row's index route it names the section,
+ * then the section's rows with the current one in ink; views render no title there.
+ */
+export function TitleLine({ rows }: { rows: Row[] }) {
+  const { pathname } = useLocation();
+  const current = pathname === '/' ? undefined : rows.find((row) => row.path === pathname);
+  if (!current) return null;
+  const section = buildNavigation(rows).find((entry) => entry.rows.includes(current));
+  const line = section?.rows ?? [current];
+  return (
+    <header className="page-lede">
+      {section && line.length > 1 && <div className="lede-eyebrow">{section.label}</div>}
+      <h1 className="lede-line">
+        {line.map((row, index) => (
+          <Fragment key={row.id}>
+            {/* Real spaces around the dot: they are the line's only wrap points. */}
+            {index > 0 && <span className="lede-sep">{' · '}</span>}
+            {row === current ? (
+              <span className="lede-here">{row.label}</span>
+            ) : (
+              <Link className="lede-other" to={row.path}>
+                {row.label}
+              </Link>
+            )}
+            {row.status.count ? <span className="lede-count">{row.status.count}</span> : null}
+          </Fragment>
+        ))}
+      </h1>
+    </header>
   );
 }
 

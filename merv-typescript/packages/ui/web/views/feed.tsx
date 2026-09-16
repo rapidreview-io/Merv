@@ -1,8 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
+import { LoadState, ObjId, StatusPill, Table, relativeTime } from '../components';
 import { useActorNames } from './people';
-import type { ViewProps } from './index';
 
 interface Post {
   id: string;
@@ -21,25 +20,21 @@ interface Event {
   createdAt: string;
 }
 
-export function FeedView({ row }: ViewProps) {
+export function FeedView() {
   const posts = useTool<Post[]>('feed.list', { limit: 100 }, { every: 6000 });
   const nameOf = useActorNames();
   return (
     <div className="page-stage">
-      <PageHeader
-        title={row.label}
-        summary="Immutable project messages from producers, reviewers, and operators."
-      />
       <LoadState
         loading={posts.loading}
         error={posts.error}
         empty={posts.data?.length === 0}
         emptyTitle="Nothing posted yet"
-        emptyHint="Posts arrive through feed.post."
+        emptyHint="Notes that producers, reviewers and operators write during their work arrive here."
       />
       <div className="stack">
         {[...(posts.data ?? [])].reverse().map((post) => (
-          <article key={post.id} className="card post">
+          <article key={post.id} className="record post">
             <div className="post-head">
               <span className="post-author">
                 {nameOf(post.authorId) ?? <ObjId id={post.authorId} />}
@@ -65,20 +60,17 @@ export function FeedView({ row }: ViewProps) {
   );
 }
 
-export function ActivityView({ row }: ViewProps) {
+export function ActivityView() {
   const events = useTool<Event[]>('feed.activity', {}, { every: 6000 });
   const nameOf = useActorNames();
   return (
     <div className="page-stage">
-      <PageHeader
-        title={row.label}
-        summary="Durable events the domain plugins recorded, newest first."
-      />
       <LoadState
         loading={events.loading}
         error={events.error}
         empty={events.data?.length === 0}
         emptyTitle="No activity yet"
+        emptyHint="Every recorded change to the project's work lands here, newest first."
       />
       {events.data && events.data.length > 0 && (
         <Table

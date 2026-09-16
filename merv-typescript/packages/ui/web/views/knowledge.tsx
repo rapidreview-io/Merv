@@ -1,15 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { useTool, type Project } from '../api';
-import { LoadState, ObjId, PageHeader, StatusPill, Table } from '../components';
-import type { ViewProps } from './index';
+import { useTool } from '../api';
+import { LoadState, ObjId, StatusPill, Table } from '../components';
 
 interface Records {
-  project: Project;
   claims: { id: string; statement: string; status: string; revision: number }[];
   tasks: { id: string; title: string; workflow: { state: string; revision: number } }[];
   experiments: { id: string; name: string; workflow: { state: string; revision: number } }[];
-  publication: { status: 'none' };
 }
 interface Reference {
   ref: string;
@@ -45,7 +42,6 @@ function ReferenceLookup() {
   };
   return (
     <section className="stack">
-      <h2 className="section-title">Check references</h2>
       <form className="card stack claims-form" onSubmit={submit}>
         <label>
           Record IDs or references
@@ -77,7 +73,7 @@ function ReferenceLookup() {
       {lookup.data && !lookup.error && (
         <div className="stack">
           {lookup.data.map((item, index) => (
-            <article className="card stack" key={`${index}:${item.ref}`}>
+            <article className="record stack" key={`${index}:${item.ref}`}>
               <div className="cluster">
                 <strong className="mono" style={{ overflowWrap: 'anywhere' }}>
                   {item.ref}
@@ -128,8 +124,9 @@ function ReferenceLookup() {
   );
 }
 
-export function KnowledgeView({ row }: ViewProps) {
+export function KnowledgeView() {
   const records = useTool<Records>('project.records', {}, { every: 10000 });
+  const [checking, setChecking] = useState(false);
   const inventory = records.data
     ? [
         ...records.data.claims.map((claim) => ({
@@ -160,63 +157,55 @@ export function KnowledgeView({ row }: ViewProps) {
     : [];
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="All claims, tasks and experiments in this project, including completed and closed work."
+      <div className="action-row">
+        {records.data && (
+          <span className="muted">
+            {records.data.claims.length} claims · {records.data.tasks.length} tasks ·{' '}
+            {records.data.experiments.length} experiments
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn"
+          aria-expanded={checking}
+          onClick={() => setChecking((open) => !open)}
+        >
+          Check references
+        </button>
+      </div>
+      {checking && <ReferenceLookup />}
+      <LoadState
+        loading={records.loading}
+        error={records.error}
+        empty={!!records.data && inventory.length === 0}
+        emptyTitle="No research records yet"
+        emptyHint="Every claim, task and experiment anyone opens in this project is listed here, closed work included."
       />
-      <LoadState {...records} />
-      {records.data && !records.error && (
-        <>
-          <section className="stack">
-            <h2 className="section-title">Project Introduction</h2>
-            <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-              {records.data.project.summary || 'No Introduction has been set.'}
-            </p>
-          </section>
-          <section className="stack">
-            <h2 className="section-title">Research inventory</h2>
-            <p className="faint">
-              {records.data.claims.length} claims · {records.data.tasks.length} tasks ·{' '}
-              {records.data.experiments.length} experiments
-            </p>
-            {inventory.length ? (
-              <Table
-                rows={inventory}
-                keyOf={(item) => item.id}
-                columns={[
-                  { key: 'kind', label: 'Kind', render: (item) => item.kind },
-                  {
-                    key: 'name',
-                    label: 'Record',
-                    render: (item) => (
-                      <div className="stack">
-                        <Link to={item.path}>{item.name}</Link>
-                        <ObjId id={item.id} />
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'state',
-                    label: 'State',
-                    render: (item) => <StatusPill value={item.state} />,
-                  },
-                  { key: 'revision', label: 'Revision', render: (item) => item.revision },
-                ]}
-              />
-            ) : (
-              <p className="empty">No research records yet.</p>
-            )}
-          </section>
-          <section className="stack">
-            <h2 className="section-title">Published Reflection</h2>
-            <p>
-              No published Reflection is available. This inventory shows source records; it does not
-              establish that they have been reviewed together.
-            </p>
-          </section>
-        </>
+      {inventory.length > 0 && !records.error && (
+        <Table
+          rows={inventory}
+          keyOf={(item) => item.id}
+          columns={[
+            { key: 'kind', label: 'Kind', render: (item) => item.kind },
+            {
+              key: 'name',
+              label: 'Record',
+              render: (item) => (
+                <div className="stack">
+                  <Link to={item.path}>{item.name}</Link>
+                  <ObjId id={item.id} />
+                </div>
+              ),
+            },
+            {
+              key: 'state',
+              label: 'State',
+              render: (item) => <StatusPill value={item.state} />,
+            },
+            { key: 'revision', label: 'Revision', render: (item) => item.revision },
+          ]}
+        />
       )}
-      <ReferenceLookup />
     </div>
   );
 }

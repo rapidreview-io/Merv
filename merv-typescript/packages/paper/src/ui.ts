@@ -10,7 +10,7 @@ export const paperUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'paper',
-        label: 'Living paper',
+        label: 'Paper',
         group: 'work',
         order: 16,
         path: '/paper',

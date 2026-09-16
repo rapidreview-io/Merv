@@ -12,7 +12,7 @@ export const taskUiPlugin = {
         id: 'tasks',
         label: 'Tasks',
         group: 'work',
-        order: 20,
+        order: 15,
         path: '/tasks',
         view: { kind: 'tasks' },
         status: async (caller: Caller) => ({

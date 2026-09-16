@@ -327,25 +327,27 @@ function ReflectionList({ row }: ViewProps) {
   const list = useTool<Reflection[]>('reflection.list', {}, { every: 8000 });
   const { actor } = useSession();
   const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="Five independent perspectives, one synthesis, and an independent review using live research."
-        actions={
-          <button className="btn" onClick={list.reload}>
-            Refresh
-          </button>
-        }
-      />
       {(actor.role === 'producer' || actor.role === 'operator') && (
-        <CreateReflection onCreated={(wave) => navigate(`${row.path}/${wave.id}`)} />
+        <div className="action-row">
+          <button
+            type="button"
+            className="btn"
+            aria-expanded={creating}
+            onClick={() => setCreating((open) => !open)}
+          >
+            New reflection
+          </button>
+        </div>
       )}
+      {creating && <CreateReflection onCreated={(wave) => navigate(`${row.path}/${wave.id}`)} />}
       <LoadState
         {...list}
         empty={list.data?.length === 0}
         emptyTitle="No reflection waves yet"
-        emptyHint="A producer can start a wave when there is research to examine together."
+        emptyHint="A wave gathers five independent readings of the research so far; a producer starts one here."
       />
       {list.data && !list.error && list.data.length > 0 && (
         <Table
@@ -610,26 +612,33 @@ function ConsolidationList({ row }: ViewProps) {
   const list = useTool<ConsolidationRecord[]>('consolidation.list', {}, { every: 8000 });
   const { actor } = useSession();
   const navigate = useNavigate();
+  // Arriving from an approved reflection carries the sources: open the form on those.
+  const [creating, setCreating] = useState(() =>
+    new URLSearchParams(window.location.search).has('sources'),
+  );
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
-        title={row.label}
-        summary="Turn retained source artifacts into reviewed research decisions and, when requested, an exact code proposal."
-        actions={
-          <button
-            className="btn"
-            onClick={() => {
-              list.reload();
-            }}
-          >
-            Refresh
-          </button>
-        }
-      />
       {(actor.role === 'operator' || actor.role === 'producer') && (
+        <div className="action-row">
+          <button
+            type="button"
+            className="btn"
+            aria-expanded={creating}
+            onClick={() => setCreating((open) => !open)}
+          >
+            New consolidation
+          </button>
+        </div>
+      )}
+      {creating && (
         <CreateConsolidation onCreated={(record) => navigate(`${row.path}/${record.id}`)} />
       )}
-      <LoadState {...list} empty={list.data?.length === 0} emptyTitle="No consolidations yet" />
+      <LoadState
+        {...list}
+        empty={list.data?.length === 0}
+        emptyTitle="No consolidations yet"
+        emptyHint="A consolidation turns approved findings into reviewed decisions; a producer starts one here."
+      />
       {list.data && !list.error && list.data.length > 0 && (
         <Table
           rows={list.data}

@@ -454,7 +454,7 @@ export function ExperimentRecord({
   );
 }
 
-function ExperimentList({ row }: ViewProps) {
+function ExperimentList() {
   const list = useTool<Experiment[]>('experiment.list', {}, { every: 8000 });
   const nameOf = useActorNames();
   const [query, setQuery] = useState('');
@@ -476,17 +476,6 @@ function ExperimentList({ row }: ViewProps) {
   );
   return (
     <div className="page-stage stack">
-      <PageHeader
-        title={row.label}
-        summary="Research questions move through design, independent review, execution and result review. Attempts retain what was tested and why work returned."
-      />
-      <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
-        emptyTitle="No experiments yet"
-        emptyHint="Create a research question with experiment.create, then follow its workflow assignment."
-      />
       {list.data && list.data.length > 0 && !list.error && (
         <ListFilters
           noun="experiments"
@@ -500,6 +489,13 @@ function ExperimentList({ row }: ViewProps) {
           total={list.data.length}
         />
       )}
+      <LoadState
+        loading={list.loading}
+        error={list.error}
+        empty={list.data?.length === 0}
+        emptyTitle="No experiments yet"
+        emptyHint="Experiments appear here once a producer opens one to test a claim."
+      />
       {list.data &&
         list.data.length > 0 &&
         !list.error &&
@@ -602,7 +598,7 @@ function ExperimentDetail({ row }: ViewProps) {
 export function ExperimentsView(props: ViewProps) {
   return (
     <Routes>
-      <Route index element={<ExperimentList {...props} />} />
+      <Route index element={<ExperimentList />} />
       <Route path=":id" element={<ExperimentDetail {...props} />} />
     </Routes>
   );

@@ -40,7 +40,7 @@ interface Task {
   createdAt: string;
 }
 
-function TaskList({ row }: ViewProps) {
+function TaskList() {
   const list = useTool<Task[]>('task.list', {}, { every: 8000 });
   const nameOf = useActorNames();
   const [query, setQuery] = useState('');
@@ -62,17 +62,6 @@ function TaskList({ row }: ViewProps) {
   );
   return (
     <div className="page-stage stack">
-      <PageHeader
-        title={row.label}
-        summary="Units of work with a pinned brief. Each moves through delivery and independent review."
-      />
-      <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
-        emptyTitle="No tasks yet"
-        emptyHint="A producer creates one with a goal and acceptance checks. Merv pins its brief."
-      />
       {list.data && list.data.length > 0 && !list.error && (
         <ListFilters
           noun="tasks"
@@ -86,6 +75,13 @@ function TaskList({ row }: ViewProps) {
           total={list.data.length}
         />
       )}
+      <LoadState
+        loading={list.loading}
+        error={list.error}
+        empty={list.data?.length === 0}
+        emptyTitle="No tasks yet"
+        emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
+      />
       {list.data &&
         list.data.length > 0 &&
         !list.error &&
@@ -402,7 +398,7 @@ function WorkRelations({
 export function TasksView(props: ViewProps) {
   return (
     <Routes>
-      <Route index element={<TaskList {...props} />} />
+      <Route index element={<TaskList />} />
       <Route path=":id" element={<TaskDetail {...props} />} />
     </Routes>
   );

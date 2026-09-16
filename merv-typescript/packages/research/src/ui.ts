@@ -10,9 +10,9 @@ export const researchUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'research',
-        label: 'Research cycles',
+        label: 'Cycles',
         group: 'work',
-        order: 15,
+        order: 14,
         path: '/research',
         view: { kind: 'research' },
         read: async (caller) => JSON.parse(JSON.stringify(await research.list(caller))) as Json,

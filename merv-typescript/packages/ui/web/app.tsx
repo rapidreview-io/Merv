@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
-import { Sidebar, ShellFrame, useShell } from './shell';
+import { Sidebar, ShellFrame, TitleLine, useShell } from './shell';
 import { LoadState } from './components';
 import { viewFor } from './views';
 import { OverviewView } from './views/overview';
@@ -58,6 +58,7 @@ function Workspace() {
           Navigation could not refresh: {shell.error.message}. Showing the last available views.
         </div>
       )}
+      {shell.data && <TitleLine rows={rows} />}
       {shell.data ? (
         <Routes>
           <Route path="/" element={<OverviewView shell={shell.data} />} />

@@ -146,8 +146,8 @@ export function ReviewCard({
   );
 }
 
-function ReviewList({ row }: ViewProps) {
-  const list = useTool<Review[]>('review.list');
+function ReviewList() {
+  const list = useTool<Review[]>('review.list', {}, { every: 10000 });
   const nameOf = useActorNames();
   const [query, setQuery] = useState('');
   const [state, setState] = useState('');
@@ -172,17 +172,6 @@ function ReviewList({ row }: ViewProps) {
   );
   return (
     <div className="page-stage stack">
-      <PageHeader
-        title={row.label}
-        summary="Independent verdicts on submitted work. A producer never reviews their own submission."
-      />
-      <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
-        emptyTitle="No reviews"
-        emptyHint="Reviews appear when work is submitted for independent assessment."
-      />
       {list.data && list.data.length > 0 && !list.error && (
         <ListFilters
           noun="reviews"
@@ -197,6 +186,13 @@ function ReviewList({ row }: ViewProps) {
           total={list.data.length}
         />
       )}
+      <LoadState
+        loading={list.loading}
+        error={list.error}
+        empty={list.data?.length === 0}
+        emptyTitle="No reviews"
+        emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
+      />
       {list.data &&
         list.data.length > 0 &&
         !list.error &&
@@ -324,7 +320,7 @@ function ReviewDetail({ row }: ViewProps) {
 export function ReviewsView(props: ViewProps) {
   return (
     <Routes>
-      <Route index element={<ReviewList {...props} />} />
+      <Route index element={<ReviewList />} />
       <Route path=":id" element={<ReviewDetail {...props} />} />
     </Routes>
   );

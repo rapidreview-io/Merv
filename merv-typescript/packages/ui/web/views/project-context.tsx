@@ -27,14 +27,16 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
   });
   if (!draft)
     return (
-      <button
-        className="btn btn--sm"
-        onClick={() =>
-          setDraft({ summary: project.summary ?? '', expectedSummary: project.summary ?? '' })
-        }
-      >
-        Edit Introduction
-      </button>
+      <div>
+        <button
+          className="btn btn--sm"
+          onClick={() =>
+            setDraft({ summary: project.summary ?? '', expectedSummary: project.summary ?? '' })
+          }
+        >
+          Edit Introduction
+        </button>
+      </div>
     );
   const submit = (event: FormEvent) => {
     event.preventDefault();
