@@ -194,7 +194,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       const legacy = stored.reflection;
       const artifacts: Artifact[] = [
         legacy.report,
-        legacy.graph,
+        ...(legacy.graph ? [legacy.graph] : []),
         legacy.changeSpec,
         ...legacy.lenses.map((lens: { artifact: Artifact }) => lens.artifact),
         ...legacy.corpus.selection.artifacts

@@ -75,3 +75,10 @@ Deferred: the experiment record as an attempt spine (every experiment has one at
 - **D — signature surfaces**: the verdict page, the narrative feed, the claim book.
 
 Each phase must pass `npm run typecheck:ui`, `npm run test:ui`, `node --import tsx --test tests/ui-navigation.test.ts`, `npm run build:ui` and `npm run format:check`, and must report the net line count of `packages/ui/web` against the phase's starting point.
+
+## Rulings of 2026-09-16 (evening)
+
+1. **Graphs are process graphs.** No agent-authored graph anywhere: the `graph` evidence role, `experiment.graph` as an authored document, reflection graphs and the "Logic graph" section are retired. Any graph the UI shows is derived from records (states, transitions, submissions, reviews, dependencies, claims tested). Imported legacy graph artifacts stay readable as plain files. This ships first.
+2. **The map is the home page.** The rail keeps its four sections. Opening a project shows the map (sketch board 13): planes for Workflows, Analytics and Integrations above; the record as an object graph with verb edges and a property card in the middle; Data and Agents & compute below. It gives high-level observability, stats and live data, deliberately not enough to decide anything; the person clicks a component on the map, or a rail row, to see more and act. The standing line (Needs you / In motion / Recorded) becomes the Work landing and a block reachable from the map.
+3. **Split pane on desktop.** Above about 1080px a list stays mounted on the left while the selected record opens beside it, addressed by the same URL; below that width the record is the page. This is the one sanctioned exception to "one dominant element".
+4. **Build order.** Graph retirement; then the Linear-style onboarding and Settings › Integrations pages and the map home in parallel on disjoint files; then the legacy carry-overs from the old React UI study.

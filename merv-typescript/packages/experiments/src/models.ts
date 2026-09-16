@@ -1,5 +1,5 @@
 import type { PaperProposal } from '@merv/paper/models';
-import type { CodeCaptureRef, Json, WorkflowSnapshot } from '@merv/contracts/types';
+import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
 
 export type ExperimentStatus =
   | 'planned'
@@ -9,7 +9,9 @@ export type ExperimentStatus =
   | 'complete'
   | 'abandoned'
   | 'failed';
-export type ExperimentRole = 'plan' | 'result' | 'report' | 'graph' | 'exhibit';
+export type ExperimentRole = 'plan' | 'result' | 'report' | 'exhibit';
+/** Retired roles stay readable: stored rows predate the 2026-09-16 graph retirement. */
+export type StoredExperimentRole = ExperimentRole | 'graph';
 export type ExperimentTransitionName =
   'submit_design' | 'submit_results' | 'retry_running' | 'abandon' | 'mark_failed';
 export interface ExperimentCreate {
@@ -45,7 +47,7 @@ export interface ExperimentEvidence {
   id: string;
   experimentId: string;
   attemptIndex: number;
-  role: ExperimentRole;
+  role: StoredExperimentRole;
   path: string;
   artifactId: string;
   hash: string;
@@ -92,7 +94,7 @@ export interface ExperimentAttempt {
   startedAt: string | null;
   createdAt: string;
 }
-/** All fields here are metadata; artifact bytes and graph/exhibit documents use separate reads. */
+/** All fields here are metadata; artifact bytes and the exhibit document use separate reads. */
 export interface Experiment {
   id: string;
   projectId: string;
@@ -122,10 +124,4 @@ export interface ExperimentExhibit {
   willPin: boolean;
   sources: ExperimentEvidence[];
   startedAt: string | null;
-}
-export interface ExperimentGraphView {
-  experimentId: string;
-  attemptIndex: number;
-  evidence: ExperimentEvidence;
-  document: Json;
 }

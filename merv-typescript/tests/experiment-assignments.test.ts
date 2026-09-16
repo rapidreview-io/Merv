@@ -27,11 +27,6 @@ const plan =
   '# Summary\nCompare two methods.\n# Objective & hypothesis\nA improves held-out accuracy.\n# Evaluation\nUse the same held-out examples, baseline, metric and denominator.\n';
 const report =
   '# Summary\nThe qualitative result is retained.\n# Results\nThe control and intervention behaved alike.\n# Deviations from plan\nNone.\n# Conclusion\nThe observation does not support an improvement.\n';
-const graph = JSON.stringify({
-  version: 1,
-  nodes: [{ id: 'observation', label: 'No observed improvement' }],
-  edges: [],
-});
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiment-program-'));
@@ -101,7 +96,7 @@ async function fixture(t: TestContext) {
     const artifact = await artifacts.create(caller, {
       title: role,
       content,
-      mediaType: role === 'graph' ? 'application/json' : 'text/markdown',
+      mediaType: 'text/markdown',
     });
     const association = await experiments.attach(caller, {
       experimentId: experiment.id,
@@ -109,7 +104,7 @@ async function fixture(t: TestContext) {
       attemptIndex: experiment.attempt.index,
       artifactId: artifact.id,
       role,
-      path: `${role}.${role === 'graph' ? 'json' : 'md'}`,
+      path: `${role}.md`,
       ...(role === 'result' ? { resultFormat: 'qualitative' as const } : {}),
       requestId: request(),
     });
@@ -159,7 +154,6 @@ async function fixture(t: TestContext) {
     });
     await attach(experiment, 'result', 'The retained observations show no difference.');
     await attach(experiment, 'report', report);
-    await attach(experiment, 'graph', graph);
     return await transition(experiment, 'submit_results');
   };
   const offer = async (experiment: Experiment, caller = source) => {
@@ -428,19 +422,15 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
   );
   // Fault-inject a later association independently of the normal owner-write fence.
   // Even historical/imported metadata must not enlarge an already issued lease.
-  const lateGraph = await f.artifacts.create(f.source, {
-    title: 'Unrelated graph',
-    content: JSON.stringify({
-      version: 1,
-      nodes: [{ id: 'secret', label: 'LATE_FOREIGN_GRAPH_254' }],
-      edges: [],
-    }),
-    mediaType: 'application/json',
+  const lateReport = await f.artifacts.create(f.source, {
+    title: 'Unrelated report',
+    content: '# Summary\nLATE_FOREIGN_REPORT_254\n',
+    mediaType: 'text/markdown',
   });
   await f.state.transaction(async (tx) => {
     for (const [artifact, role, sequence] of [
       [foreign, 'plan', 90],
-      [lateGraph, 'graph', 91],
+      [lateReport, 'report', 91],
     ] as const) {
       const evidence = {
         ...inherited.association,
@@ -448,7 +438,7 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
         artifactId: artifact.id,
         hash: artifact.hash,
         role,
-        path: `late-${role}.json`,
+        path: `late-${role}.md`,
         sequence,
         current: true,
       };
@@ -479,14 +469,18 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
     'General state remains an honest metadata view',
   );
   const noForeignReads = t.mock.method(f.artifacts, 'read');
-  assert.equal(await f.experiments.graph(worker, experiment.id), null);
+  await assert.rejects(
+    async () => await f.sessions.prepare(worker, 'artifact.read', { artifactId: lateReport.id }),
+    { code: 'execution_arguments_forbidden' },
+    'A late association must not enlarge an already issued lease',
+  );
   assert.doesNotMatch(
     (await f.workflows.assignment(worker, experiment.id)).context!.prompt,
-    /LATE_FOREIGN_BODY_87013|LATE_FOREIGN_GRAPH_254/,
+    /LATE_FOREIGN_BODY_87013|LATE_FOREIGN_REPORT_254/,
   );
   assert.ok(
     noForeignReads.mock.calls.every(
-      (call) => call.arguments[1] !== foreign.id && call.arguments[1] !== lateGraph.id,
+      (call) => call.arguments[1] !== foreign.id && call.arguments[1] !== lateReport.id,
     ),
   );
   noForeignReads.mock.restore();
@@ -872,12 +866,11 @@ test('Git Experiments preserve version 1 and wait for their exact late final cap
   for (const [role, content] of [
     ['result', 'The independently retained observation.'],
     ['report', report],
-    ['graph', graph],
   ] as const) {
     const artifact = await f.run(
       worker,
       'artifact.create',
-      { title: role, content, mediaType: role === 'graph' ? 'application/json' : 'text/markdown' },
+      { title: role, content, mediaType: 'text/markdown' },
       async (caller, input) =>
         await f.artifacts.create(
           caller,
@@ -890,7 +883,7 @@ test('Git Experiments preserve version 1 and wait for their exact late final cap
       {
         artifactId: artifact.id,
         role,
-        path: `${role}.${role === 'graph' ? 'json' : 'md'}`,
+        path: `${role}.md`,
         attemptIndex: 1,
         ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
         requestId: f.request(),

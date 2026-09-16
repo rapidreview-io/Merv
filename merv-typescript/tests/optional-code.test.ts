@@ -120,7 +120,6 @@ async function fixture(t: TestContext, enabled: boolean) {
       reflectionId: wave.id,
       expectedRevision: wave.workflow.revision,
       reportArtifactId: (await artifact(owner, 'Report')).id,
-      graphArtifactId: (await artifact(owner, 'Graph')).id,
       changeSpecArtifactId: (await artifact(owner, 'Changes')).id,
       requestId: id(),
     });

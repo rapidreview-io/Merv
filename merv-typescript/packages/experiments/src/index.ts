@@ -14,7 +14,6 @@ import {
   type Caller,
   type ContextBuilder,
   type Data,
-  type Json,
   type ReviewApplication,
   type Reviews,
   type Scope,
@@ -33,7 +32,6 @@ import type {
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
-  ExperimentGraphView,
   Experiments,
   ExperimentSubmission,
   ExperimentTransition,
@@ -54,7 +52,6 @@ import {
   parseResult,
   shouldPinExhibit,
   reportConclusion,
-  validateGraph,
   validatePlan,
   validateReport,
 } from './evidence.js';
@@ -78,11 +75,11 @@ const designCriteria = [
 ];
 const resultsCriteria = [
   'The retained execution and results follow the exact approved plan, with deviations and failures explained.',
-  'The submitted measurements and graph agree with the retained results and any metrics exhibit.',
+  'The submitted measurements agree with the retained results and any metrics exhibit, and the report selects what mattered without hiding known rework.',
   'The report’s conclusions follow from the evidence, including negative findings and limitations.',
 ];
 
-/** Owns the research experiment lifecycle; Workflows owns graph execution and Reviews owns verdicts. */
+/** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService implements Experiments {
   private closed = false;
   private releaseReviewOwner?: () => void;
@@ -341,7 +338,7 @@ export class ExperimentService implements Experiments {
         check(
           experiment.workflow.state === 'planned'
             ? input.role === 'plan'
-            : ['result', 'report', 'graph'].includes(input.role),
+            : ['result', 'report'].includes(input.role),
           'invalid_experiment_role',
           'This evidence role is not writable in the current state',
           409,
@@ -546,30 +543,6 @@ export class ExperimentService implements Experiments {
       return await this.buildExhibit(caller, experiment, tx);
     });
   }
-  async graph(
-    caller: Caller,
-    id: string,
-    transaction?: Transaction,
-  ): Promise<ExperimentGraphView | null> {
-    this.open();
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const experiment = await this.get(caller, id, tx);
-      const allowed = caller.session
-        ? new Set(await this.program.allowedArtifacts(caller, experiment, tx))
-        : null;
-      const evidence = experiment.evidence
-        .filter((e) => e.current && e.role === 'graph' && (!allowed || allowed.has(e.artifactId)))
-        .sort((a, b) => b.sequence - a.sequence)[0];
-      if (!evidence) return null;
-      return {
-        experimentId: id,
-        attemptIndex: evidence.attemptIndex,
-        evidence,
-        document: validateGraph(await this.text(caller, evidence.artifactId, tx)) as Json,
-      };
-    });
-  }
   async transition(
     caller: Caller,
     value: ExperimentTransition,
@@ -662,7 +635,7 @@ export class ExperimentService implements Experiments {
     let evidence = await this.selected(
       caller,
       experiment,
-      stage === 'design' ? ['plan'] : ['result', 'report', 'graph'],
+      stage === 'design' ? ['plan'] : ['result', 'report'],
       tx,
     );
     let figureIds: string[] = [];
@@ -676,15 +649,12 @@ export class ExperimentService implements Experiments {
       const approved = this.approved(experiment);
       // Include the exact approved design, never a newer plan association.
       evidence = [...approved.evidence, ...evidence];
-      const report = this.one(evidence, 'report'),
-        graph = this.one(evidence, 'graph');
+      const report = this.one(evidence, 'report');
       const text = await this.text(caller, report.artifactId, tx);
       figureIds = [
         ...new Set([...approved.figureIds, ...(await this.figures(caller, text, experiment, tx))]),
       ];
       for (const id of approved.figureIds) await this.bytes(caller, id, tx);
-      const document = validateGraph(await this.text(caller, graph.artifactId, tx));
-      await this.graphReferences(caller, document as Json, tx);
       exhibit = await this.buildExhibit(caller, experiment, tx);
       validateReport(text, {
         figures: figureIds,
@@ -896,22 +866,6 @@ export class ExperimentService implements Experiments {
       tx,
     );
     return await this.get(caller, experiment.id, tx);
-  }
-  private async graphReferences(caller: Caller, document: Json, tx: Transaction): Promise<void> {
-    const nodes = (document as { nodes: Array<{ refs?: string[] }> }).nodes;
-    for (const node of nodes)
-      for (const ref of node.refs ?? []) {
-        if (ref.startsWith('claim_')) await this.claims.get(caller, ref, tx);
-        else if (ref.startsWith('art_')) await this.artifacts.get(caller, ref, tx);
-        else {
-          const workflow = await this.workflows.get(caller, ref, tx);
-          check(
-            ['task', 'experiment'].includes(workflow.workflow),
-            'invalid_experiment_evidence',
-            'Graph references must name claims, artifacts, tasks or experiments in this project',
-          );
-        }
-      }
   }
   private route(stage: 'design' | 'results', input: ReviewApplication): string {
     check(
@@ -1182,7 +1136,7 @@ export class ExperimentService implements Experiments {
       const selection = await this.selected(
         caller,
         experiment,
-        action === 'submit_design' ? ['plan'] : ['result', 'report', 'graph'],
+        action === 'submit_design' ? ['plan'] : ['result', 'report'],
         tx,
       );
       const own = this.one(selection, action === 'submit_design' ? 'plan' : 'report');
@@ -1203,7 +1157,6 @@ export class ExperimentService implements Experiments {
           'At least one result is required',
           409,
         );
-        this.one(selection, 'graph');
         this.approved(experiment);
         await this.workflows.checkDependencies(caller, experiment.id, tx);
       }

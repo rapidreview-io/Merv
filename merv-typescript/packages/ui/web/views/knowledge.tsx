@@ -51,7 +51,7 @@ function ReferenceLookup() {
             value={text}
             maxLength={40200}
             onChange={(event) => setText(event.target.value)}
-            placeholder="claim:claim_… artifact:art_… published-graph"
+            placeholder="claim:claim_… artifact:art_… task:task_…"
           />
         </label>
         <p className="faint">

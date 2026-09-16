@@ -139,9 +139,9 @@ checks, brief, delivery, and dependencies. A closed task refuses new artifacts.
 `experiment.create` answers `{id, name, status, folder, next}`. Create `folder`
 (normally `experiments/<name>/`) yourself before writing experiment files, and
 write the document `next` names with its `required_sections`. Keep the plan,
-code, configuration, compact results, figures, report, and logic graph together.
-Choose a short experiment name that distinguishes it from sibling
-experiments. Write the `intent` as the ask, standalone: what this tests and
+code, configuration, compact results, figures and report together. Choose a
+short experiment name that distinguishes it from sibling experiments. Write
+the `intent` as the ask, standalone: what this tests and
 why the project needs it, naming the datasets, tasks, and sibling experiments
 involved by their own names — another agent may write the plan from it alone.
 Put anything else the planner should have — givens, boundaries with siblings,
@@ -179,17 +179,14 @@ Use the bundled templates only when creating their corresponding documents:
 - [report-template.md](report-template.md) for `report.md`. Interpret the
   submitted results against the plan's decision rule, disclose deviations and
   failures, and keep conclusions within the tested scope.
-- [graph-template.md](graph-template.md) for `graph.json`. Record the reasoning
-  path—questions, decisions, pivots, consequences, and lessons—not a pipeline,
-  event log, or generated metrics diagram.
 
-Start the graph early and update it when reasoning changes. Write the plan,
-report, and graph for a human reader; raw data and logs belong in separate
+Do not generate the report from logs or result files: selecting what mattered
+is the authorship, and a report that hides known rework is not honest. Write
+the plan and report for a human reader; raw data and logs belong in separate
 result artifacts. A fresh executor must be able to follow the plan without this
 conversation; name controls, confounds, the data/compute budget and decision rule.
-When a review changes the experiment's reasoning, revise its logic graph too;
-the 16-node budget still applies. A planning return starts a new attempt; an
-execution return keeps the approved plan and repairs the current attempt.
+A planning return starts a new attempt; an execution return keeps the approved
+plan and repairs the current attempt.
 
 Prefer the smallest experiment capable of producing a credible,
 decision-relevant signal about its intent. Start with the minimum data, scale,
@@ -294,6 +291,6 @@ revisions. Revise and resubmit affected artifacts before retrying a rejected gat
 ## Complete only through MCP
 
 An experiment completes when its attempt review passes on the submitted plan,
-result, report and logic-graph evidence; no agent call completes it. If MCP
+result and report evidence; no agent call completes it. If MCP
 rejects an action, follow its reported gate and next action. Do not work
 around the state machine.

@@ -40,11 +40,6 @@ const plan =
   '# Summary\nA paired test.\n# Objective & hypothesis\nThe treatment improves accuracy.\n# Evaluation\nUse matched controls on two fixed seeds.';
 const report =
   '# Summary\nThe treatment did not improve.\n# Results\nSee metrics_exhibit.json for retained results.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
-const graph = JSON.stringify({
-  version: 1,
-  nodes: [{ id: 'observation', label: 'No improvement' }],
-  edges: [],
-});
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-knowledge-'));
@@ -137,7 +132,7 @@ async function fixture(t: TestContext) {
     const artifact = await artifacts.create(producer, {
       title: role,
       content,
-      mediaType: role === 'graph' || role === 'result' ? 'application/json' : 'text/markdown',
+      mediaType: role === 'result' ? 'application/json' : 'text/markdown',
     });
     return await experiments.attach(producer, {
       experimentId: e.id,
@@ -145,7 +140,7 @@ async function fixture(t: TestContext) {
       expectedRevision: e.workflow.revision,
       artifactId: artifact.id,
       role,
-      path: `${role}.${role === 'graph' || role === 'result' ? 'json' : 'md'}`,
+      path: `${role}.${role === 'result' ? 'json' : 'md'}`,
       requestId: id(),
     });
   };
@@ -187,7 +182,6 @@ async function fixture(t: TestContext) {
   const submitResults = async (e: Experiment) => {
     await attach(e, 'result', '{"accuracy":0.5,"raw":[1,0]}');
     await attach(e, 'report', report);
-    await attach(e, 'graph', graph);
     return await transition(e, 'submit_results');
   };
   const completeExperiment = async () => {
@@ -336,7 +330,6 @@ test('Knowledge inventories real records and freezes every terminal attempt, rou
   assert.deepEqual(records.claims, [claim]);
   assert.deepEqual(records.publication, {
     status: 'none',
-    graph: null,
     reflection: null,
     lenses: [],
   });
@@ -549,7 +542,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
       'resolved',
       'missing',
       'missing',
-      'unpublished',
+      'unsupported',
       'unpublished',
       'unpublished',
       'unsupported',
@@ -562,6 +555,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   assert.equal(results[1]!.kind, 'task');
   assert.equal(results[2]!.kind, 'experiment');
   assert.equal(results[3]!.hash, (await f.artifacts.get(f.reader, task.briefId)).hash);
+  assert.equal(results[7]!.kind, null, 'a retired published-graph ref still parses, unsupported');
   assert.ok(!JSON.stringify(results).includes(privateArtifact.title));
   assert.deepEqual(
     results.map((item) => item.ref),
@@ -870,7 +864,6 @@ test('A real Git Experiment submission freezes its pending exact capture and a l
   for (const [role, content] of [
     ['result', '{"result":1}'],
     ['report', report],
-    ['graph', graph],
   ] as const) {
     const artifact = await run(
       'artifact.create',

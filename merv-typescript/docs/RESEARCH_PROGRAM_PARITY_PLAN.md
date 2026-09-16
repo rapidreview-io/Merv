@@ -45,14 +45,14 @@ goal is active.
 
 Use domain providers, with ordinary internal modules for their smaller parts:
 
-| Owner                                    | Owns                                                                                                                                                               | Requires                                                                                                               |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Existing Claims provider                 | Project-scoped claim facts and changes                                                                                                                             | State, Scope                                                                                                           |
-| Experiments, implemented managed program | Experiments, attempts, evidence associations, immutable submission rounds, deterministic metrics exhibits, experiment graph reads, review application and recovery | State, Scope, Claims, Artifacts, Workflows, Reviews, Context Builder; existing generic lifecycle hooks supply recovery |
-| Existing Artifacts                       | Immutable content and file metadata                                                                                                                                | Existing dependencies; no experiment state in Blobs                                                                    |
-| Existing Reviews                         | Exact evidence manifests, independent claims, immutable assessments, dispatch to one registered domain owner                                                       | Existing dependencies; no experiment transition switch in Reviews                                                      |
-| Existing Workflows                       | Generic graph/revision/dependency/assignment/lease machinery                                                                                                       | Existing dependencies; Experiments supplies its rules                                                                  |
-| Reflections, a later managed program     | Frozen research corpus, lens children, synthesis, approved research, experiment decision coverage and domain publication                                           | Experiments, Tasks, Claims, Artifacts, Workflows, Reviews, Context Builder, Code and the reviewed-publication contract |
+| Owner                                    | Owns                                                                                                                                       | Requires                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Existing Claims provider                 | Project-scoped claim facts and changes                                                                                                     | State, Scope                                                                                                           |
+| Experiments, implemented managed program | Experiments, attempts, evidence associations, immutable submission rounds, deterministic metrics exhibits, review application and recovery | State, Scope, Claims, Artifacts, Workflows, Reviews, Context Builder; existing generic lifecycle hooks supply recovery |
+| Existing Artifacts                       | Immutable content and file metadata                                                                                                        | Existing dependencies; no experiment state in Blobs                                                                    |
+| Existing Reviews                         | Exact evidence manifests, independent claims, immutable assessments, dispatch to one registered domain owner                               | Existing dependencies; no experiment transition switch in Reviews                                                      |
+| Existing Workflows                       | Generic graph/revision/dependency/assignment/lease machinery                                                                               | Existing dependencies; Experiments supplies its rules                                                                  |
+| Reflections, a later managed program     | Frozen research corpus, lens children, synthesis, approved research, experiment decision coverage and domain publication                   | Experiments, Tasks, Claims, Artifacts, Workflows, Reviews, Context Builder, Code and the reviewed-publication contract |
 
 Names for new packages are proposed; these ownership boundaries are the
 requirement. Do not create separate Attempts, Metrics, Plan Context or Review
@@ -123,7 +123,7 @@ The following increments are implemented. Each increment includes tools,
 the registered workflow rules, context and the existing plugin-driven UI. All increments pass the [610-test, native and browser checkpoint](../verification/experiments.json).
 Use [EXPERIMENTS_PARITY_REFERENCE.md](EXPERIMENTS_PARITY_REFERENCE.md) for the
 source-backed command fields, byte caps, exact review return rules, immutable
-rounds, graph shape and deterministic metrics record. It distinguishes deliberate
+rounds and the deterministic metrics record. It distinguishes deliberate
 TypeScript revision/path/JSON strengthening from legacy Python behavior.
 
 **2a. Records and evidence ownership.** Add experiment creation/reads, an attempt
@@ -144,7 +144,7 @@ those dependencies; there is no additional `ready` state.
 
 **2c. Execution, quantitative evidence and attempt review.** Execute the pinned
 plan, retain all relevant results, build the deterministic exhibit described
-below, and seal result/report/graph evidence into a new submission round.
+below, and seal result/report evidence into a new submission round.
 Create an independent attempt review and move to `experiment_review` in the
 same transaction. Its pass completes the experiment; its rejection explicitly
 returns to plan revision or execution repair. Add interruption retry and the
@@ -155,7 +155,7 @@ and bounded policies. Use existing generic lease hooks for exact producer work
 ownership and Reviews claims. Register the program as the sole submit owner for
 its reviews. Native execution, metadata dispatch and context selection must
 observe the same state and authority as commands. Add the experiment list/detail,
-gate guidance, current attempt, sealed history, review feedback and graph view.
+gate guidance, current attempt, sealed history and review feedback.
 Surface committed domain events in Feed. Optional UI/Feed unload must not break
 the experiment's domain transactions.
 
@@ -168,15 +168,14 @@ can run. The active cap remains enforceable without Reflections.
 
 Build the read model needed by actual reflection: project introduction, claims,
 all terminal experiments and their sealed attempts, completed tasks, and the
-latest published graph/reflection references. Keep unpublished research clearly
-separate from the last publication. A project with no published reflection has
-no authoritative published graph; do not manufacture one from a recipe result.
+latest published reflection references. Keep unpublished research clearly
+separate from the last publication.
 
 Add stable capture IDs and exact Git object references for code-producing
 attempts. Consume trusted Session workspace results or accepted live Code
 receipts with project/instance/attempt/revision/worker provenance. Do not use a
 mutable latest-head lookup as the definition of what a later agent reviewed.
-Provide the same scoped graph-reference resolver for experiment and project
+Provide the same scoped reference resolver for experiment and project
 views; unresolved references remain explicit.
 
 This stage supplies a query and immutable source-selection contract for the
@@ -188,11 +187,10 @@ literature-maintenance programs. Those remain separate parity work.
 Only after real experiments exist, implement one open reflection per project,
 its five-lens roster, versioned child workflows, join and synthesis. Freeze at
 wave creation: **all** terminal experiments, terminal tasks, claims, previous
-published graph/reflection and previous lens references. Track newly terminal
+published reflection and previous lens references. Track newly terminal
 work separately as the reason for the wave; it is not the whole corpus.
 
-Require lens coverage plus the project graph, reflection document and validated
-change spec. Independent reflection review can return to synthesis in the same
+Require lens coverage plus the reflection document and validated change spec. Independent reflection review can return to synthesis in the same
 attempt or reopen lenses in a new attempt. Its pass freezes the authoritative
 research and enters consolidation. Context comes from these server records,
 never the caller-supplied `project.reflection` task inputs.
@@ -213,7 +211,7 @@ only to consolidation; it cannot reopen the approved research.
 
 Then implement reviewed publication intent, repository authority, runner CAS
 and immutable receipt reconciliation, followed by separate retryable domain
-publication. Publication applies the approved graph/claim changes and creates
+publication. Publication applies the approved claim changes and creates
 the planned tasks/experiments plus dependency edges atomically. Validate the
 change-spec rule that new experiments cannot depend on sibling experiments,
 including through a task; prior-wave lineage is not an implicit dependency.
@@ -270,14 +268,10 @@ Experiments owns the target checks and route in the same transaction.
 - Plan Markdown requires **Summary**, **Objective & hypothesis**, **Evaluation**.
   Structural validation does not decide whether the experiment is scientifically
   useful; design review does.
-- Results require `result`, `report`, `graph` evidence. Report requires **Summary**,
+- Results require `result` and `report` evidence. Report requires **Summary**,
   **Results**, **Deviations from plan**, **Conclusion**, with retained figure
   references. When an exhibit is pinned, the report must reference and interpret
   it. Keep raw runs/logs in artifacts, not the report.
-- The logic graph is versioned JSON with unique labeled node IDs and valid
-  directed edges, no self-loop/cycle, and bounded size. Python uses version 1,
-  at most 16 nodes and 16,000 bytes. Resolve evidence/claim references through
-  project-scoped services; graph validity is not proof of the hypothesis.
 - Current Python metrics are **a deterministic observation bundle**, not an
   optimizer, metric database or automatic scientific verdict. The exhibit
   contains project/experiment/attempt, execution-start window, and result files
@@ -366,7 +360,7 @@ were the original submitted commit.
 4. Native acceptance uses **the production Experiments program**, an actual claim,
    a small falsifiable local experiment and four fresh leased stages: designer,
    design reviewer, executor, attempt reviewer. Verify real retained result data,
-   report/graph, exhibit, actual verdicts and source attribution. No fixture-only
+   report, exhibit, actual verdicts and source attribution. No fixture-only
    `step.*` routes or task recipes count as this proof. Long/cloud computation
    remains with the independent sandbox service; a local first slice must state
    that limitation rather than rebuilding sandbox orchestration inside Experiments.
@@ -379,16 +373,18 @@ were the original submitted commit.
 The following current Python modules/tests define the behavior above. These are
 source references, not instructions to copy Python's storage layout verbatim.
 
-| Concern                                             | Source and focused tests                                                                                                                                                                   |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| States, gates, attempt returns, assignment formulas | [Experiment definition][py-experiment-graph]; [graph tests][py-experiment-graph-tests], [runtime tests][py-experiment-runtime], [experiment tests][py-experiment-tests]                    |
-| Creation, claims, active cap, actual execution time | [Experiment records][py-experiments], [claim writer][py-claims], [constants][py-contracts]                                                                                                 |
-| Evidence associations and immutable rounds          | [Research artifacts][py-artifacts], [submission model][py-artifact-models]; [attempt tests][py-attempt-tests]                                                                              |
-| Deterministic metrics and preparation fencing       | [exhibit builder][py-exhibit], [source selection][py-exhibit-sources], [transition coordinator][py-experiment-transition]; [metrics tests][py-metric-tests]                                |
-| Graph validation and scoped read models             | [document schemas][py-documents]; [graph read tests][py-graph-tests]                                                                                                                       |
-| Reflection corpus, children and publication         | [reflection records][py-reflections], [corpus][py-corpus], [reflection graph][py-reflection-graph]; [reflection tests][py-reflection-tests], [child/wave tests][py-reflection-graph-tests] |
+| Concern                                             | Source and focused tests                                                                                                                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| States, gates, attempt returns, assignment formulas | [Experiment definition][py-experiment-graph]; [runtime tests][py-experiment-runtime], [experiment tests][py-experiment-tests]                               |
+| Creation, claims, active cap, actual execution time | [Experiment records][py-experiments], [claim writer][py-claims], [constants][py-contracts]                                                                  |
+| Evidence associations and immutable rounds          | [Research artifacts][py-artifacts], [submission model][py-artifact-models]; [attempt tests][py-attempt-tests]                                               |
+| Deterministic metrics and preparation fencing       | [exhibit builder][py-exhibit], [source selection][py-exhibit-sources], [transition coordinator][py-experiment-transition]; [metrics tests][py-metric-tests] |
+| Document validation and scoped read models          | [document schemas][py-documents]                                                                                                                            |
+| Reflection corpus, children and publication         | [reflection records][py-reflections], [corpus][py-corpus]; [reflection tests][py-reflection-tests], [child/wave tests][py-reflection-graph-tests]           |
 
-On 2026-09-15, **41 Python reference tests passed in 3.501 seconds** using:
+On 2026-09-15, **41 Python reference tests passed in 3.501 seconds**. That run
+also exercised the logic-graph tests retired by the 2026-09-16 ruling, dropped
+from the command below:
 
 ```sh
 cd ../merv
@@ -396,9 +392,7 @@ PYTHONPATH=src:. /opt/anaconda3/bin/python -m unittest -v \
   tests.research_core.test_experiments \
   tests.research_core.test_experiment_runtime \
   tests.state.test_submission_attempts \
-  tests.workflow.test_metrics_exhibit \
-  tests.workflow.test_experiment_graph \
-  tests.application.test_logic_graph
+  tests.workflow.test_metrics_exhibit
 ```
 
 Local log: `/private/tmp/merv-research-program-reference-tests.log`. These tests
@@ -418,12 +412,9 @@ and is recorded at `/private/tmp/merv-code-proposal-reference-tests.log`.
 [py-experiment-transition]: ../../merv/src/merv/brain/application/experiments/transition.py
 [py-reflections]: ../../merv/src/merv/brain/research_core/reflections.py
 [py-corpus]: ../../merv/src/merv/brain/workflows/definitions/reflection_corpus.py
-[py-reflection-graph]: ../../merv/src/merv/brain/workflows/definitions/reflection.py
 [py-experiment-tests]: ../../merv/tests/research_core/test_experiments.py
 [py-experiment-runtime]: ../../merv/tests/research_core/test_experiment_runtime.py
-[py-experiment-graph-tests]: ../../merv/tests/workflow/test_experiment_graph.py
 [py-attempt-tests]: ../../merv/tests/state/test_submission_attempts.py
 [py-metric-tests]: ../../merv/tests/workflow/test_metrics_exhibit.py
-[py-graph-tests]: ../../merv/tests/application/test_logic_graph.py
 [py-reflection-tests]: ../../merv/tests/research_core/test_reflections.py
 [py-reflection-graph-tests]: ../../merv/tests/workflow/test_reflection_graph.py

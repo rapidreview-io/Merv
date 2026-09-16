@@ -24,7 +24,7 @@ HTTP routes. [Assignment-scoped sessions](docs/SESSION_LEASES.md) now enforce wo
 
 Claims records research statements with a prose scope, status and confidence. Producers and operators create/update them; readers and reviewers can inspect them. Updates use revisions and retry receipts, and ordinary edits preserve statement/scope. [Claims](packages/claims/README.md) depends only on State and Scope. Experiments uses these statements; applying reviewed Reflection changes to claims remains follow-up work.
 
-[Experiments](docs/EXPERIMENTS.md) owns real experiment records and attempts: plan, independent design review, execution, and independent results review. It pins the approved plan and exact evidence for each submission, creates deterministic metrics exhibits, and routes rejected work back to planning or execution. Workflow guidance checks the same evidence gates as submission. The Experiments page displays current guidance, attempts, sealed submissions and the retained graph. Completing an experiment does not automatically change its linked claims.
+[Experiments](docs/EXPERIMENTS.md) owns real experiment records and attempts: plan, independent design review, execution, and independent results review. It pins the approved plan and exact evidence for each submission, creates deterministic metrics exhibits, and routes rejected work back to planning or execution. Workflow guidance checks the same evidence gates as submission. The Experiments page displays current guidance, attempts and sealed submissions. Completing an experiment does not automatically change its linked claims.
 
 ## Durable recovery and context recipes
 
@@ -197,7 +197,7 @@ The installed feature adapters contribute **44 domain tools**, or **46 tools** w
 | Scope        | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.credentials`, `actor.issue_token`, `actor.rotate_token`, `actor.revoke_token`, `actor.revoke` |
 | Claims       | `claim.create`, `claim.list`, `claim.update`                                                                                                                      |
 | Artifacts    | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list`                                                                                               |
-| Experiments  | `experiment.create`, `experiment.list`, `experiment.get_state`, `experiment.attach`, `experiment.transition`, `experiment.exhibit`, `experiment.graph`            |
+| Experiments  | `experiment.create`, `experiment.list`, `experiment.get_state`, `experiment.attach`, `experiment.transition`, `experiment.exhibit`                                |
 | Reviews      | `review.list`, `review.get`, `review.start`, `review.submit`                                                                                                      |
 | Task program | `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, `task.reissue_review`, `task.mark_failed`                      |
 | Workflows    | `workflow.status_and_next`, `workflow.assignment`, `workflow.begin`                                                                                               |

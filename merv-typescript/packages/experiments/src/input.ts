@@ -16,7 +16,7 @@ const ids = z
   .array(experimentIdSchema)
   .max(100)
   .transform((value) => [...new Set(value)]);
-export const experimentRoleSchema = z.enum(['plan', 'result', 'report', 'graph']);
+export const experimentRoleSchema = z.enum(['plan', 'result', 'report']);
 export const resultFormatSchema = z.enum(['json', 'qualitative']);
 export const experimentPathSchema = z
   .string()
@@ -49,7 +49,6 @@ export const experimentCreateSchema = z
 export const experimentListSchema = z.object({}).strict();
 export const experimentGetSchema = z.object({ experimentId: experimentIdSchema }).strict();
 export const experimentExhibitSchema = experimentGetSchema;
-export const experimentGraphSchema = experimentGetSchema;
 export const experimentAttachSchema = z
   .object({
     experimentId: experimentIdSchema,

@@ -82,7 +82,6 @@ interface Submission {
   paperProposal?: PaperProposal;
   experimentIds?: string[];
   report: Artifact;
-  graph: Artifact;
   changeSpec: Artifact;
   producerId: string;
 }
@@ -267,7 +266,6 @@ export class ReflectionService implements Reflections {
         workflow: await this.workflows.get(caller, id, tx),
         review: row.review_id ? await this.reviews.get(caller, row.review_id, tx) : null,
         report: submission?.report ?? null,
-        graph: submission?.graph ?? null,
         changeSpec: submission?.changeSpec ?? null,
         paperProposal: submission?.paperProposal ?? null,
       };
@@ -614,7 +612,6 @@ export class ReflectionService implements Reflections {
             submission: {
               artifactIds: [
                 submission.report.id,
-                submission.graph.id,
                 submission.changeSpec.id,
                 ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
               ],
@@ -973,8 +970,7 @@ export class ReflectionService implements Reflections {
                 states: ['synthesizing'],
                 transitions: ['submit'],
                 tool: 'reflection.submit',
-                instruction:
-                  'Submit your report, graph and change specification for independent review.',
+                instruction: 'Submit your report and change specification for independent review.',
                 arguments: ({ snapshot }: WorkflowCheckContext) => ({
                   reflectionId: snapshot.id,
                   expectedRevision: snapshot.revision,
@@ -1111,14 +1107,12 @@ export class ReflectionService implements Reflections {
           409,
         );
         check(
-          new Set([input.reportArtifactId, input.graphArtifactId, input.changeSpecArtifactId])
-            .size === 3,
+          input.reportArtifactId !== input.changeSpecArtifactId,
           'distinct_evidence_required',
-          'Report, graph and change specification must be distinct artifacts',
+          'Report and change specification must be distinct artifacts',
         );
         const submission: Submission = {
           report: await this.author(caller, input.reportArtifactId, tx),
-          graph: await this.author(caller, input.graphArtifactId, tx),
           changeSpec: await this.author(caller, input.changeSpecArtifactId, tx),
           producerId: caller.actorId,
         };
@@ -1147,7 +1141,6 @@ export class ReflectionService implements Reflections {
               source: { kind: 'reflection', id: wave.id, revision: next.revision },
               evidenceIds: [
                 submission.report.id,
-                submission.graph.id,
                 submission.changeSpec.id,
                 ...lenses.map((lens) => (JSON.parse(lens.artifact!) as Artifact).id),
               ],
@@ -1164,7 +1157,6 @@ export class ReflectionService implements Reflections {
             administrativeActorId: wave.owner_id,
             artifactIds: [
               submission.report.id,
-              submission.graph.id,
               submission.changeSpec.id,
               ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
               ...pinnedInputIds,

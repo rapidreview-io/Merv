@@ -216,7 +216,6 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     artifact.id,
     foreignClaim.id,
     'claim:claim_missing',
-    'published-graph',
     'paper:arxiv-1234',
   ];
   const resolved = (await f.http('project.references', { refs }, f.reader.token)).body.result;
@@ -226,16 +225,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   );
   assert.deepEqual(
     resolved.map((item: any) => item.status),
-    [
-      'resolved',
-      'resolved',
-      'resolved',
-      'resolved',
-      'missing',
-      'missing',
-      'unpublished',
-      'unsupported',
-    ],
+    ['resolved', 'resolved', 'resolved', 'resolved', 'missing', 'missing', 'unsupported'],
   );
   assert.equal(resolved[3].hash, artifact.hash);
   assert.equal(JSON.stringify(resolved).includes(foreignClaim.statement), false);

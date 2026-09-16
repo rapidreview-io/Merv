@@ -1074,3 +1074,12 @@ export type {
   GitHubRepositoryInput,
   GitHubStatus,
 } from './code-github.js';
+export type {
+  GitHubBranch,
+  GitHubCommit,
+  GitHubPullRequest,
+  GitHubChangedFile,
+  GitHubCheck,
+  GitHubReview,
+  GitHubPullDetails,
+} from './github-models.js';

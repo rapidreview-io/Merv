@@ -17,7 +17,6 @@ import {
   parseResult,
   reportConclusion,
   shouldPinExhibit,
-  validateGraph,
   validatePlan,
   validateReport,
   type MetricsResultSource,
@@ -262,38 +261,6 @@ test('figures must be retained, verified inline artifact references', () => {
   );
 });
 
-test('graphs preserve original JSON metadata but require a bounded versioned DAG', () => {
-  const graph = {
-    version: 1,
-    notes: { confidence: 0.5 },
-    nodes: [
-      { id: 'a', label: 'Claim', refs: ['clm_a'], evidence: ['observed'] },
-      { id: 'b', label: 'Result' },
-    ],
-    edges: [{ from: 'a', to: 'b', relation: 'tested_by' }],
-  };
-  assert.deepEqual(validateGraph(JSON.stringify(graph)), graph);
-  assert.deepEqual(validateGraph('{"version":1,"nodes":[{"id":"a","label":"Claim"}]}').edges, []);
-  for (const delta of [
-    { version: 2 },
-    { nodes: [] },
-    { nodes: Array.from({ length: 17 }, (_, i) => ({ id: String(i), label: 'Node' })) },
-    { nodes: [graph.nodes[0], graph.nodes[0]] },
-    { edges: [{ from: 'a', to: 'missing' }] },
-    { edges: [{ from: 'a', to: 'a' }] },
-    {
-      edges: [
-        { from: 'a', to: 'b' },
-        { from: 'b', to: 'a' },
-      ],
-    },
-  ])
-    invalidEvidence(() => validateGraph(JSON.stringify({ ...graph, ...delta })));
-  invalidEvidence(() =>
-    validateGraph('{"version":1,"nodes":[{"id":"a","label":"A"}],"score":1e999}'),
-  );
-});
-
 test('explicit result format distinguishes any valid JSON including null from qualitative text', () => {
   for (const value of [
     null,
@@ -399,10 +366,5 @@ test('finite evidence preserves reserved-looking data keys without changing obje
   );
   assert.deepEqual(JSON.parse(encoded.toString()).resultFiles[0].data, JSON.parse(raw));
   assert.equal(encoded.toString().includes('"__proto__": {'), true);
-  const graph = JSON.parse(
-    '{"version":1,"nodes":[{"id":"a","label":"A","__proto__":{"meaning":"data"}}],"constructor":"graph generator"}',
-  );
-  assert.deepEqual(validateGraph(JSON.stringify(graph)), { ...graph, edges: [] });
-  assert.equal(Object.hasOwn(validateGraph(JSON.stringify(graph)).nodes[0], '__proto__'), true);
   invalidInput(() => copyExperimentJson(JSON.parse(raw)));
 });

@@ -14,7 +14,6 @@ import type {} from 'cordis';
 /** No publication writer exists yet. A corpus snapshot is not a published reflection. */
 export interface KnowledgePublication {
   status: 'none';
-  graph: null;
   reflection: null;
   lenses: [];
 }
@@ -35,7 +34,6 @@ export type KnowledgeReferenceKind =
   | 'review'
   | 'code-proposal'
   | 'code-capture'
-  | 'published-graph'
   | 'published-reflection'
   | 'published-lens';
 export interface KnowledgeReference {

@@ -105,7 +105,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
         },
       ]);
       try {
-        // Existing cycles keep their immutable graph; only new cycles may skip consolidation.
+        // Existing cycles keep their immutable state machine; only new cycles may skip consolidation.
         for (const version of [2, 3]) {
           this.handles.set(
             version,
@@ -424,7 +424,8 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
             const sourceArtifactIds = [
               ...new Set([
                 reflection.report.id,
-                reflection.graph.id,
+                // Legacy waves approved before the 2026-09-16 ruling still pin an authored graph.
+                ...(reflection.graph ? [reflection.graph.id] : []),
                 reflection.changeSpec.id,
                 ...reflection.lenses.map((lens) => lens.artifact.id),
                 ...(sources?.artifacts ?? []),

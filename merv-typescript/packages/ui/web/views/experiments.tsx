@@ -1,12 +1,6 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Link, Route, Routes, useParams } from 'react-router-dom';
-import type {
-  Experiment,
-  ExperimentEvidence,
-  ExperimentExhibit,
-  ExperimentGraphView,
-  ExperimentRole,
-} from '@merv/experiments/models';
+import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { ListFilters } from '../list-filters';
@@ -31,7 +25,7 @@ import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
 /** The domain's own order. A role with nothing in it is a fact, so it keeps its line. */
-const ROLES: ExperimentRole[] = ['plan', 'result', 'report', 'graph', 'exhibit'];
+const ROLES = ['plan', 'result', 'report', 'exhibit'] as const;
 const STAGE = { design: 'Design review', results: 'Results review' };
 
 /** Retained files grouped by the part they play, each opening where it is listed. */
@@ -43,30 +37,34 @@ function EvidenceFiles({
   figures: string[];
 }) {
   const artifacts = useArtifacts();
+  const bands: [string, ExperimentEvidence[]][] = ROLES.map((role) => [
+    role,
+    evidence.filter((item) => item.role === role),
+  ]);
+  // A role the domain no longer writes is still on the record, so it keeps a band of its own.
+  const retained = evidence.filter((item) => !ROLES.some((role) => role === item.role));
+  if (retained.length) bands.push(['other retained files', retained]);
   return (
     <div className="stack">
-      {ROLES.map((role) => {
-        const rows = evidence.filter((item) => item.role === role);
-        return (
-          <div key={role}>
-            <span className="ev-role">{role}</span>
-            {rows.length ? (
-              rows.map((item) => (
-                <Evidence
-                  key={item.id}
-                  artifactId={item.artifactId}
-                  artifact={artifacts.get(item.artifactId)}
-                  label={`${item.path} · retained ${relativeTime(item.createdAt)}${
-                    item.systemGenerated ? ' · written by the system' : ''
-                  }`}
-                />
-              ))
-            ) : (
-              <p className="empty">no {role} attached</p>
-            )}
-          </div>
-        );
-      })}
+      {bands.map(([role, rows]) => (
+        <div key={role}>
+          <span className="ev-role">{role}</span>
+          {rows.length ? (
+            rows.map((item) => (
+              <Evidence
+                key={item.id}
+                artifactId={item.artifactId}
+                artifact={artifacts.get(item.artifactId)}
+                label={`${item.path} · retained ${relativeTime(item.createdAt)}${
+                  item.systemGenerated ? ' · written by the system' : ''
+                }`}
+              />
+            ))
+          ) : (
+            <p className="empty">no {role} attached</p>
+          )}
+        </div>
+      ))}
       {figures.length > 0 && (
         <div>
           <span className="ev-role">figures</span>
@@ -76,126 +74,6 @@ function EvidenceFiles({
         </div>
       )}
     </div>
-  );
-}
-
-/** The bounded, validated graph stays code-native and uses the UI's existing theme. */
-export function ExperimentGraph({
-  graph,
-  currentAttempt,
-}: {
-  graph: ExperimentGraphView;
-  currentAttempt: number;
-}) {
-  const marker = useId();
-  const doc = graph.document as {
-    nodes?: { id: string; label: string }[];
-    edges?: { from: string; to: string }[];
-  } | null;
-  if (!doc || !Array.isArray(doc.nodes) || !doc.nodes.length)
-    return <p className="muted">No readable graph document.</p>;
-  const nodes = doc.nodes,
-    edges = doc.edges ?? [];
-  const levels = new Map(nodes.map((node) => [node.id, 0]));
-  for (let pass = 0; pass < nodes.length; pass++) {
-    let changed = false;
-    for (const edge of edges) {
-      const from = levels.get(edge.from),
-        to = levels.get(edge.to);
-      if (from !== undefined && to !== undefined && to < from + 1) {
-        levels.set(edge.to, from + 1);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  const columns = new Map<number, number>();
-  const positions = new Map(
-    nodes.map((node) => {
-      const level = levels.get(node.id) ?? 0,
-        row = columns.get(level) ?? 0;
-      columns.set(level, row + 1);
-      return [node.id, { x: 24 + level * 216, y: 24 + row * 108 }];
-    }),
-  );
-  const width = Math.max(640, (Math.max(...levels.values()) + 1) * 216 + 16);
-  const height = Math.max(132, Math.max(...columns.values()) * 108 + 24);
-  return (
-    <section className="stack" aria-label="Experiment logic graph">
-      <h2 className="section-title">Logic graph</h2>
-      <p className="muted">
-        Attempt {graph.attemptIndex}
-        {graph.attemptIndex !== currentAttempt
-          ? ' · historical evidence from an earlier attempt'
-          : ''}
-        . Arrows follow the submitted graph; they do not imply that a claim has been accepted.
-      </p>
-      <div style={{ overflowX: 'auto', border: '1px solid var(--line)', borderRadius: 6 }}>
-        <svg
-          role="img"
-          aria-label={`Experiment logic graph from attempt ${graph.attemptIndex}`}
-          width={width}
-          height={height}
-          viewBox={`0 0 ${width} ${height}`}
-        >
-          <defs>
-            <marker
-              id={marker}
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--steel)" />
-            </marker>
-          </defs>
-          {edges.map((edge, index) => {
-            const from = positions.get(edge.from),
-              to = positions.get(edge.to);
-            if (!from || !to) return null;
-            return (
-              <path
-                key={index}
-                d={`M ${from.x + 172} ${from.y + 34} C ${from.x + 194} ${from.y + 34}, ${to.x - 22} ${to.y + 34}, ${to.x - 2} ${to.y + 34}`}
-                fill="none"
-                stroke="var(--steel)"
-                strokeWidth="1.5"
-                markerEnd={`url(#${marker})`}
-              />
-            );
-          })}
-          {nodes.map((node) => {
-            const point = positions.get(node.id)!;
-            const label = node.label.length > 46 ? `${node.label.slice(0, 43)}…` : node.label;
-            const split =
-              label.length > 23 ? Math.max(label.lastIndexOf(' ', 23), 16) : label.length;
-            return (
-              <g key={node.id} transform={`translate(${point.x},${point.y})`}>
-                <title>
-                  {node.id}: {node.label}
-                </title>
-                <rect
-                  width="172"
-                  height="68"
-                  rx="6"
-                  fill="var(--bg-elev)"
-                  stroke="var(--line-strong)"
-                />
-                <text x="12" y="25" fill="var(--text)" fontSize="12">
-                  <tspan x="12">{label.slice(0, split)}</tspan>
-                  <tspan x="12" dy="18">
-                    {label.slice(split).trim()}
-                  </tspan>
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <Evidence artifactId={graph.evidence.artifactId} label="The retained graph document" />
-    </section>
   );
 }
 
@@ -342,14 +220,12 @@ export function ExperimentRecord({
   experiment: e,
   guidance,
   reviews,
-  graph,
   exhibit,
   nameOf,
 }: {
   experiment: Experiment;
   guidance?: WorkflowDecision;
   reviews?: Review[];
-  graph?: ExperimentGraphView | null;
   exhibit?: ExperimentExhibit;
   nameOf(id: string | null | undefined): string | undefined;
 }) {
@@ -400,7 +276,6 @@ export function ExperimentRecord({
           </figure>
         )}
       </section>
-      {graph && <ExperimentGraph graph={graph} currentAttempt={e.attempt.index} />}
       {!!e.testedClaimIds.length && (
         <section className="stack">
           <h2 className="section-title">Claims tested</h2>
@@ -563,8 +438,6 @@ function ExperimentDetail({ row }: ViewProps) {
     { every: live },
   );
   const reviews = useTool<Review[]>('review.list', {}, { every: live });
-  // The graph is a sealed document: it changes only when a submission replaces it.
-  const graph = useTool<ExperimentGraphView | null>('experiment.graph', { experimentId: id });
   const exhibit = useTool<ExperimentExhibit>(
     state === 'running' ? 'experiment.exhibit' : null,
     { experimentId: id },
@@ -575,7 +448,7 @@ function ExperimentDetail({ row }: ViewProps) {
     <div className="page-stage stack stack--lg">
       <LoadState
         loading={experiment.loading}
-        error={experiment.error ?? guidance.error ?? reviews.error ?? graph.error ?? exhibit.error}
+        error={experiment.error ?? guidance.error ?? reviews.error ?? exhibit.error}
         back={experiment.data ? undefined : { to: row.path, label: row.label }}
       />
       {experiment.data && (
@@ -583,7 +456,6 @@ function ExperimentDetail({ row }: ViewProps) {
           experiment={experiment.data}
           guidance={guidance.data}
           reviews={reviews.data}
-          graph={graph.data}
           exhibit={exhibit.data}
           nameOf={nameOf}
         />

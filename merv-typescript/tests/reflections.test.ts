@@ -64,12 +64,10 @@ async function fixture(t: TestContext) {
   };
   const synthesize = async (wave: Reflection) => {
     const report = await create(owner, 'Synthesis'),
-      graph = await create(owner, 'Graph'),
       spec = await create(owner, 'Changes');
     return await app.ctx.reflections.submit(owner, {
       reflectionId: wave.id,
       reportArtifactId: report.id,
-      graphArtifactId: graph.id,
       changeSpecArtifactId: spec.id,
       expectedRevision: wave.workflow.revision,
       requestId: `synthesis-${wave.workflow.revision}`,
@@ -394,7 +392,7 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
   });
   const caller = await f.app.ctx.sessions.authenticate(synthesisToken);
   const outputs: Artifact[] = [];
-  for (const title of ['Report', 'Graph', 'Change specification'])
+  for (const title of ['Report', 'Change specification'])
     outputs.push(
       (await f.app.ctx.tools.call('artifact.create', caller, {
         title,
@@ -420,15 +418,24 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
       ],
     }),
   })) as Artifact;
-  wave = (await f.app.ctx.tools.call('reflection.submit', caller, {
+  const submission = {
     reflectionId: wave.id,
     expectedRevision: wave.workflow.revision,
     reportArtifactId: outputs[0]!.id,
-    graphArtifactId: outputs[1]!.id,
-    changeSpecArtifactId: outputs[2]!.id,
+    changeSpecArtifactId: outputs[1]!.id,
     paperChangesArtifactId: paperChanges.id,
     requestId: 'submit-synthesis',
-  })) as Reflection;
+  };
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.tools.call('reflection.submit', caller, {
+        ...submission,
+        graphArtifactId: outputs[0]!.id,
+      }),
+    { code: 'invalid_input' },
+    'the retired project graph is refused as an unexpected field',
+  );
+  wave = (await f.app.ctx.tools.call('reflection.submit', caller, submission)) as Reflection;
   await f.app.ctx.sessions.releaseAgentAssignment(synthesisToken, execution.id);
   await f.app.ctx.domainEvents.drain();
   assert.deepEqual(new Set(wave.review!.excludedActorIds), new Set(actors));
@@ -501,7 +508,7 @@ test('synthesis admission matches review ownership for direct producers and sour
   });
   assert.equal((await f.app.ctx.workflows.assignment(owner, wave.id)).role, 'producer');
   const outputs = await mapAsync(
-    ['Report', 'Graph', 'Changes'],
+    ['Report', 'Changes'],
     async (title) => await f.create(outsider, title),
   );
   await assert.rejects(
@@ -510,8 +517,7 @@ test('synthesis admission matches review ownership for direct producers and sour
         reflectionId: wave.id,
         expectedRevision: wave.workflow.revision,
         reportArtifactId: outputs[0]!.id,
-        graphArtifactId: outputs[1]!.id,
-        changeSpecArtifactId: outputs[2]!.id,
+        changeSpecArtifactId: outputs[1]!.id,
         requestId: 'outsider-submit',
       }),
     { code: 'forbidden' },
@@ -549,7 +555,7 @@ test('synthesis admission matches review ownership for direct producers and sour
   const worker = await f.app.ctx.sessions.authenticate(secret);
   assert.equal((await f.app.ctx.scope.authorityActor(worker)).id, owner.actorId);
   const evidence: Artifact[] = [];
-  for (const title of ['Report', 'Graph', 'Change specification'])
+  for (const title of ['Report', 'Change specification'])
     evidence.push(
       (await f.app.ctx.tools.call('artifact.create', worker, {
         title,
@@ -561,8 +567,7 @@ test('synthesis admission matches review ownership for direct producers and sour
     reflectionId: wave.id,
     expectedRevision: wave.workflow.revision,
     reportArtifactId: evidence[0]!.id,
-    graphArtifactId: evidence[1]!.id,
-    changeSpecArtifactId: evidence[2]!.id,
+    changeSpecArtifactId: evidence[1]!.id,
     requestId: 'worker-submit',
   })) as Reflection;
   assert.equal(submitted.workflow.state, 'in_review');
@@ -599,7 +604,6 @@ test('reflection synthesis and its existing review own paper changes atomically'
   const input = {
     reflectionId: wave.id,
     reportArtifactId: (await f.create(f.owner, 'Report')).id,
-    graphArtifactId: (await f.create(f.owner, 'Graph')).id,
     changeSpecArtifactId: (await f.create(f.owner, 'Change specification')).id,
     paperChangesArtifactId: changes.id,
     expectedRevision: wave.workflow.revision,

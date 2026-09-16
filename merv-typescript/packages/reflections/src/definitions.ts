@@ -55,20 +55,20 @@ export const LENS_WORKFLOW: WorkflowDefinition = {
 export const REFLECTION_CRITERIA = [
   'Research coverage is explained, including unfinished work and any new results observed during the wave; factual conclusions and claim changes cite exact evidence and preserve uncertainty.',
   'Five independently authored lens reports are reconciled, including disagreements, negative results and methodological limitations.',
-  'The project graph, synthesis report and proposed change specification agree; proposals are clearly separated from established results.',
+  'The synthesis report and proposed change specification agree and honestly preserve rework, stopped runs and dead ends; proposals are clearly separated from established results.',
   'Proposed follow-up research and consolidation decisions follow from the evidence and respect the current project scope.',
 ];
 export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage) => ({
   name: `reflection.${stage}`,
-  version: 3,
+  version: 4,
   kind: stage === 'review' ? 'review' : 'work',
   recipe: {
     instructions:
       stage === 'lens'
         ? 'Independently examine the live project research from your assigned perspective. Do not consult other lens outputs. Verify sources before forming conclusions.'
         : stage === 'synthesis'
-          ? 'Reconcile all five independent lens reports against the current research. Preserve disagreement and uncertainty. Produce an evidence-linked synthesis report, project graph and explicit proposed change specification.'
-          : 'Independently verify the synthesis, project graph and change specification against all five lens reports and the current research. Verify the exact proposed paper edits in reflection.get against their original text and evidence as part of this review. Reading assertions is not verification.',
+          ? 'Reconcile all five independent lens reports against the current research. Preserve disagreement and uncertainty. Produce an evidence-linked synthesis report and explicit proposed change specification.'
+          : 'Independently verify the synthesis report and change specification against all five lens reports and the current research. Verify the exact proposed paper edits in reflection.get against their original text and evidence as part of this review. Reading assertions is not verification.',
     sections: [
       { key: 'assignment', title: 'Exact assignment and perspective', required: true },
       { key: 'research', title: 'Live research access', required: true },
@@ -81,7 +81,7 @@ export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map
       stage === 'lens'
         ? 'Write an evidence-linked UTF-8 report with a nonempty Summary section. Save it with artifact.create, then reflection.submit_lens with lensId, artifactId, expectedRevision and requestId.'
         : stage === 'synthesis'
-          ? 'Retain your own report, graph and change specification as immutable text artifacts. Prepare any cross-experiment Methods/Results edits in an application/json artifact with documents: [{kind: methods or results, expectedRevision: current paper revision, changes: [{id, title, content}]}]. Call reflection.submit with their IDs, optional paperChangesArtifactId, reflectionId, expectedRevision and requestId. Explain in the report if no paper edits are needed. Stop for independent review.'
+          ? 'Retain your own report and change specification as immutable text artifacts. Prepare any cross-experiment Methods/Results edits in an application/json artifact with documents: [{kind: methods or results, expectedRevision: current paper revision, changes: [{id, title, content}]}]. Call reflection.submit with their IDs, optional paperChangesArtifactId, reflectionId, expectedRevision and requestId. Explain in the report if no paper edits are needed. Stop for independent review.'
           : 'Use review.submit with the exact claimId and expectedRevision, verdict, verification notes, synopsis and one finding per criterion. A pass approves this immutable report. For needs_changes or fail choose returnTo synthesizing to retain the lenses, or reflecting to require five fresh lens reports.',
     maxChars: 24000,
   },

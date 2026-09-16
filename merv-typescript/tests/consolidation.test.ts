@@ -100,7 +100,6 @@ async function fixture(t: TestContext) {
     projectId: owner.projectId,
     revision: 1,
     report,
-    graph: report,
     changeSpec: report,
     producerId: owner.actorId,
     reviewerId: reviewer.actorId,
@@ -146,7 +145,7 @@ async function fixture(t: TestContext) {
         artifacts: [{ id: report.id, status: 'retained', artifact: report }],
         assessments: [],
         captures: [],
-        publication: { status: 'none', graph: null, reflection: null, lenses: [] },
+        publication: { status: 'none', reflection: null, lenses: [] },
         taskReviewCoverage: 'current-record-references',
       },
     },
@@ -354,6 +353,42 @@ test('consolidation pins source artifacts without a Reflections service, exact e
   await assert.rejects(async () => await f.consolidation.approved(f.owner, record.id), {
     code: 'consolidation_not_approved',
   });
+});
+
+test('a consolidation row written before the sources field keeps its legacy project graph as a source', async (t) => {
+  const f = await fixture(t);
+  const instance = await f.prior.start(f.owner, {
+    workflow: 'approved-reflection-fixture',
+    requestId: 'legacy-consolidation',
+  });
+  const graph = await f.artifacts.create(f.owner, {
+    title: 'Project graph',
+    content: 'An authored project graph pinned before the 2026-09-16 ruling.',
+  });
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        'INSERT INTO consolidations(id,project_id,record) VALUES(?,?,?)',
+        instance.id,
+        f.owner.projectId,
+        JSON.stringify({
+          id: instance.id,
+          projectId: f.owner.projectId,
+          name: 'Legacy consolidation',
+          ownerId: f.owner.actorId,
+          createdAt: new Date().toISOString(),
+          workspace: 'none',
+          reflection: { ...f.reflection, graph },
+        }),
+      ),
+  );
+  const record = await f.consolidation.get(f.reader, instance.id);
+  assert.deepEqual(
+    record.sources.map((a) => a.id).sort(),
+    [f.reflection.report.id, graph.id].sort(),
+    'the reconstructed source set of an already-completed consolidation does not shrink',
+  );
+  assert.deepEqual(record.experimentIds, ['experiment-1']);
 });
 
 test('independent review returns only consolidation and seals the reviewed result', async (t) => {

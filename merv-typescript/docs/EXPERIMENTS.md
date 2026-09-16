@@ -40,7 +40,6 @@ there is no separate legacy experiment REST contract.
 | `experiment.attach`     | `experimentId`, `artifactId`, `role`, `path`, `attemptIndex`, `expectedRevision`, `requestId`; optional `resultFormat` for results | Immutable evidence association replacing the current role/path slot                                        |
 | `experiment.transition` | `experimentId`, `transition`, `expectedRevision`, `requestId`; optional `evidence.reason`/`detail` for applicable owner actions    | Original committed experiment response                                                                     |
 | `experiment.exhibit`    | `experimentId`                                                                                                                     | Read-only metrics preview while running, including source associations, bytes, hash and `willPin`          |
-| `experiment.graph`      | `experimentId`                                                                                                                     | Latest available retained graph and its actual producing attempt, or `null`                                |
 
 Names are trimmed, 3–48 characters, begin with an ASCII letter/digit and then
 use letters, digits, `.`, `_` or `-`. They are unique within a project without
@@ -119,7 +118,6 @@ Create retained artifacts first, then attach their IDs. The role rules are:
 | `plan`    | planned        | Exactly one selected plan, with nonempty Summary, Objective & hypothesis, Evaluation sections          |
 | `result`  | running        | At least one selected result; declared finite JSON or explicitly qualitative text                      |
 | `report`  | running        | Exactly one selected report, with nonempty Summary, Results, Deviations from plan, Conclusion sections |
-| `graph`   | running        | Exactly one selected version-1 graph with 1–16 unique labeled nodes and valid directed acyclic edges   |
 | `exhibit` | System only    | Generated and pinned when a submitted result declares JSON                                             |
 
 Each input role accepts nonempty valid UTF-8 at most **16,000 bytes**. Logical
@@ -128,9 +126,9 @@ backslashes or URL syntax. They do not direct filesystem writes. Role and path
 form the replaceable slot within an attempt. Public attachment is refused during
 review and after termination.
 
-Draft plan/report sections and graph content may be unfinished at attachment.
-Declared JSON results are parsed immediately, and any plan/report images must
-already resolve. Full document/graph gates run at submission. Heading checks
+Draft plan/report sections may be unfinished at attachment. Declared JSON
+results are parsed immediately, and any plan/report images must already
+resolve. Full document gates run at submission. Heading checks
 ignore HTML comments and fenced examples; they verify structure, not scientific
 truth. The independent reviewer still judges controls, execution and inference.
 
@@ -142,13 +140,6 @@ own output. Attachment records figure IDs so unfinished drafts can survive a
 worker handoff; submission includes them in the sealed review and artifact
 grants. Figure checks validate retained bytes/provenance and declared media type;
 they are not a full image-decoder validation pass.
-
-Graph reads preserve meaningful submitted JSON, including additional node/edge
-metadata. Edges must reference existing distinct nodes and cannot form a cycle.
-Optional node `refs` must name same-project claims, artifacts, tasks or
-experiments when submitting results. The graph read can return a previous
-attempt's retained graph and labels that attempt explicitly. It does not present
-historical evidence as output of the new attempt.
 
 Result submission includes the exact approved design selection, never a newer
 plan upload. It retains the selected association records, figures, producing
@@ -182,7 +173,7 @@ immutable review round. After submission, read the pinned artifact rather than
 asking for a fresh running-stage preview.
 
 `workflow.status_and_next` uses the same read-only exit validator as submission,
-so missing sections, malformed graphs and missing exhibit references become
+so missing sections and missing exhibit references become
 blockers. Guidance creates no artifacts, events or transitions. Assignment
 eligibility, fixed-policy reference resolution, dispatch and activation remain
 metadata-only; building a context packet reads its pinned inputs deliberately.
@@ -205,8 +196,8 @@ New artifacts authored by that worker can extend its output set. Later ordinary
 project uploads do not widen an existing lease's read grants.
 
 The submitting worker must retain its **own plan or report**, after checking any
-inherited work. A successor may reuse and reattach exact frozen result/graph
-tuples: experiment, attempt, role, path, artifact/hash and result format must
+inherited work. A successor may reuse and reattach exact frozen result tuples:
+experiment, attempt, role, path, artifact/hash and result format must
 match. This does not transfer the artifact's original authorship. Reviews receives
 server-computed pinned input IDs and the actual submitting worker as producer.
 
@@ -234,9 +225,8 @@ other trusted components compose these commands atomically.
 
 The Experiments UI reads the actual plugin tools. It shows inventory and detail,
 revision/attempt, approved plan, retained evidence, review history, feedback,
-workflow blockers/dependencies, metrics preview and a code-native logic graph.
-Agents create and update experiments through tools; this page reads their records.
-Graph arrows show submitted relationships, not accepted claim truth. The browser
+workflow blockers/dependencies and a metrics preview. Agents create and update
+experiments through tools; this page reads their records. The browser
 verification checkpoint is recorded below.
 
 Provider unload withdraws its generic review route, workflow/context registrations
@@ -250,10 +240,9 @@ research system. Knowledge now provides current metadata inventory, scoped
 reference resolution and immutable terminal corpus snapshots; see
 [research inputs](RESEARCH_INPUTS.md). Remaining work includes reflection-wave
 scheduling and its seven-slot reservation/threshold policy, five-lens reflection,
-published project graphs, reviewed claim publication/history, and production
-code consolidation and central publication. Experiment graph references remain
-scoped validation, not the full Python published-graph query surface. No completed experiment automatically
-changes linked claims.
+reviewed claim publication/history, and production code consolidation and
+central publication. No completed experiment automatically changes linked
+claims.
 
 ## Explicit Git execution
 
@@ -307,7 +296,7 @@ calculation and final state. A post-run report lookup bug was repaired against
 retained evidence without repeating model execution; exact hashes are recorded.
 
 Actual browser verification on a restored copy of those records checks the gate,
-plan/evidence/reviews, attempts/graph and plugin removal/restoration while Claims
+plan/evidence/reviews, attempts/evidence and plugin removal/restoration while Claims
 continues. Separate real-record component SSR checks recovery attribution and
 latest-review selection after closure. Builds, typechecks and formatting pass.
 These use tiny synthetic data and local credentials; they do not claim shared

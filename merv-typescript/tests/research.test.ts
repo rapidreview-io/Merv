@@ -169,7 +169,6 @@ async function fixture(t: TestContext) {
     wave = await app.ctx.reflections.submit(owner, {
       reflectionId: wave.id,
       reportArtifactId: (await artifact(owner, 'Report')).id,
-      graphArtifactId: (await artifact(owner, 'Graph')).id,
       changeSpecArtifactId: (await artifact(owner, 'Change specification')).id,
       expectedRevision: wave.workflow.revision,
       requestId: id(),

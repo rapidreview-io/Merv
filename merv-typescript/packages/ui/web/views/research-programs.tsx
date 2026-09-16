@@ -58,7 +58,6 @@ interface Reflection extends FrozenSource {
     artifact: Artifact | null;
   }[];
   report: Artifact | null;
-  graph: Artifact | null;
   changeSpec: Artifact | null;
   review: {
     id: string;
@@ -444,10 +443,6 @@ function ReflectionDetail({ row }: ViewProps) {
                 rows={[
                   ['Report', <EvidenceLink artifact={wave.report} />],
                   [
-                    'Project graph',
-                    wave.graph ? <EvidenceLink artifact={wave.graph} /> : 'Not submitted',
-                  ],
-                  [
                     'Change specification',
                     wave.changeSpec ? <EvidenceLink artifact={wave.changeSpec} /> : 'Not submitted',
                   ],
@@ -479,7 +474,7 @@ function ReflectionDetail({ row }: ViewProps) {
               <p>
                 Reflection approved. Code consolidation is optional.{' '}
                 <Link
-                  to={`/consolidation?sources=${encodeURIComponent([wave.report!.id, wave.graph!.id, wave.changeSpec!.id, ...wave.lenses.flatMap((l) => (l.artifact ? [l.artifact.id] : [])), ...(wave.corpus?.selection.artifacts ?? []).flatMap((a) => (a.status === 'retained' ? [a.id] : []))].join(' '))}&experiments=${encodeURIComponent((wave.experimentIds ?? wave.corpus?.selection.experiments.map((e) => e.id) ?? []).join(' '))}&dependsOn=${encodeURIComponent(wave.id)}`}
+                  to={`/consolidation?sources=${encodeURIComponent([wave.report!.id, wave.changeSpec!.id, ...wave.lenses.flatMap((l) => (l.artifact ? [l.artifact.id] : [])), ...(wave.corpus?.selection.artifacts ?? []).flatMap((a) => (a.status === 'retained' ? [a.id] : []))].join(' '))}&experiments=${encodeURIComponent((wave.experimentIds ?? wave.corpus?.selection.experiments.map((e) => e.id) ?? []).join(' '))}&dependsOn=${encodeURIComponent(wave.id)}`}
                 >
                   Configure consolidation from these outputs
                 </Link>

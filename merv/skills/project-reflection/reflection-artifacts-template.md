@@ -36,19 +36,6 @@ For the `avoid` lens, include a cumulative negative-knowledge ledger:
 
 Re-verify inherited rows so the current ledger stands alone.
 
-## Project logic graph
-
-Submit the reconciled project state as `project_graph`. Start from the prior
-published graph returned by `reflection.get` when one exists; otherwise author
-the first graph. Follow
-[the graph template](../research-workflow/graph-template.md) for the enforced
-JSON envelope.
-
-Represent the current logic—not chronology or dataflow—with brief lessons,
-dead-end patterns, established beliefs, and open questions. Use references for
-detail. Prune or combine stale nodes to make the new story coherent within the
-graph budget.
-
 ## Reflection document
 
 Submit a concise Markdown `reflection_doc`:

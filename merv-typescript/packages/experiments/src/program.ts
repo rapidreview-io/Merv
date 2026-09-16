@@ -75,7 +75,7 @@ const instructions: Record<ActiveState, string> = {
   running:
     'Execute the exact approved plan below. Recover completed work and retained outputs before rerunning after interruption. Preserve errors and failed runs. Compare observations with the planned criteria without treating a negative finding as failed execution. Do not replace the approved plan with a newer upload.',
   experiment_review:
-    'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, graphs, deviations and conclusions from retained evidence. Review the pinned paper proposal and its original document text alongside the results; accepted edits apply in this verdict transaction. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
+    'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. Review the pinned paper proposal and its original document text alongside the results; accepted edits apply in this verdict transaction. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
 };
 const handoffs: Record<ActiveState, string> = {
   planned:
@@ -83,14 +83,14 @@ const handoffs: Record<ActiveState, string> = {
   design_review:
     'Submit through review.submit with the current reviewId, claimId and expectedRevision. Supply verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo. Either needs_changes or fail returns to planned; returnTo may be omitted or planned. A design rejection creates a new attempt. Stop after the verdict.',
   running:
-    'Retain result, report and graph artifacts and attach them to this attempt. Verify inherited results, graphs and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. Include any Methods/Results changes as an application/json artifact with documents: [{kind, expectedRevision, changes: [{id, title, content}]}], using the supplied current paper revisions. Pass its ID as paperChangesArtifactId in this same submit_results call; the existing reviewer will assess and accept those edits with the results. If no paper change is warranted, explain why in the report. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
+    'Retain result and report artifacts and attach them to this attempt. Verify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. Include any Methods/Results changes as an application/json artifact with documents: [{kind, expectedRevision, changes: [{id, title, content}]}], using the supplied current paper revisions. Pass its ID as paperChangesArtifactId in this same submit_results call; the existing reviewer will assess and accept those edits with the results. If no paper change is warranted, explain why in the report. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
   experiment_review:
     'Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
 };
 
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 2,
+  version: 3,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
     instructions: instructions[state],
@@ -166,7 +166,7 @@ type Bindings = Record<string, WorkflowExecutionBinding>;
 const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
 
-/** One owned program: graph, context and lease rules. It never launches or authenticates a session. */
+/** One owned program: workflow, context and lease rules. It never launches or authenticates a session. */
 export class ExperimentProgram {
   handle!: Awaited<ReturnType<Workflows['register']>>;
   private gitHandle?: Awaited<ReturnType<Workflows['register']>>;
@@ -480,8 +480,7 @@ DROP TABLE experiment_leases_backup;`,
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
-    const roles =
-      experiment.workflow.state === 'planned' ? ['plan'] : ['result', 'report', 'graph'];
+    const roles = experiment.workflow.state === 'planned' ? ['plan'] : ['result', 'report'];
     return experiment.evidence.filter(
       (evidence) =>
         evidence.current &&
@@ -736,7 +735,7 @@ DROP TABLE experiment_leases_backup;`,
       state === 'planned'
         ? ['submit_design', 'abandon', 'mark_failed']
         : ['submit_results', 'retry_running', 'abandon', 'mark_failed'];
-    const roles = state === 'planned' ? ['plan'] : ['result', 'report', 'graph'];
+    const roles = state === 'planned' ? ['plan'] : ['result', 'report'];
     return {
       readOnly: reviewing(state),
       workspace:
@@ -765,7 +764,6 @@ DROP TABLE experiment_leases_backup;`,
         ),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
-        grant('experiment.graph', experiment),
         grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),

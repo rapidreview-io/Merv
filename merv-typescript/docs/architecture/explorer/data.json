@@ -612,7 +612,7 @@
       "exposedTools": [
         {
           "name": "experiment.attach",
-          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
           "readOnly": false
         },
         {
@@ -628,11 +628,6 @@
         {
           "name": "experiment.get_state",
           "description": "Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.",
-          "readOnly": true
-        },
-        {
-          "name": "experiment.graph",
-          "description": "Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.",
           "readOnly": true
         },
         {
@@ -667,7 +662,7 @@
       "exposedTools": [
         {
           "name": "experiment.attach",
-          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
           "readOnly": false
         },
         {
@@ -683,11 +678,6 @@
         {
           "name": "experiment.get_state",
           "description": "Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.",
-          "readOnly": true
-        },
-        {
-          "name": "experiment.graph",
-          "description": "Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.",
           "readOnly": true
         },
         {
@@ -1096,7 +1086,7 @@
         },
         {
           "name": "reflection.submit",
-          "description": "Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.",
+          "description": "Submit your immutable synthesis report, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.",
           "readOnly": false
         },
         {
@@ -1167,7 +1157,7 @@
         },
         {
           "name": "reflection.submit",
-          "description": "Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.",
+          "description": "Submit your immutable synthesis report, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.",
           "readOnly": false
         },
         {

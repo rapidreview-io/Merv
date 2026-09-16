@@ -24,10 +24,10 @@ For an interactive handoff, use its exact capability and your own stable
 `caller_session_id`, distinct from the producer's. The session binds to your
 `agent_id`: only this context window can submit its verdict. Use the returned
 `project_context` and experiment `context` as the default evidence; read a
-listed artifact id (the logic graph, an exhibit) with `artifact.read
-include_content=true` when a load-bearing detail needs it. On a revised plan,
-inspect previous findings and reused evidence before demanding new work;
-identify what evidence would disprove the claim and whether the plan can produce it.
+listed artifact id (an exhibit) with `artifact.read include_content=true` when
+a load-bearing detail needs it. On a revised plan, inspect previous findings
+and reused evidence before demanding new work; identify what evidence would
+disprove the claim and whether the plan can produce it.
 
 Operate read-only: auto-run credentials enforce it, a general project key
 relies on you. Only `review.start` and `review.submit` mutate anything; the

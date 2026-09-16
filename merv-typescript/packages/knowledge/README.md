@@ -53,7 +53,7 @@ replays the original snapshot under current authority, including any pending
 capture status saved at that time. Later source changes require a new capture.
 There is no agent-facing capture tool.
 
-Publication currently returns `status: "none"`, null graph/reflection and an
+Publication currently returns `status: "none"`, null reflection and an
 empty lens list. This is explicit absence: the provider implements neither a
 Reflection workflow nor a published baseline, coverage/debt rules or literature
 maintenance. It does not assess claims or grant central Git publication.

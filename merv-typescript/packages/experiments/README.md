@@ -10,12 +10,12 @@ scientific claim is true.
 | Entrypoint                | Requires                                                                   | Provides                                                        |
 | ------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `@merv/experiments`       | State, Scope, Artifacts, Workflows, Reviews, Context Builder, Claims, Code | `experiments` service and owned workflow/context/review routing |
-| `@merv/experiments/tools` | Experiments, Tools                                                         | Seven experiment tools                                          |
+| `@merv/experiments/tools` | Experiments, Tools                                                         | Six experiment tools                                            |
 | `@merv/experiments/ui`    | Experiments, UI                                                            | Experiment inventory and detail page                            |
 
 The tools are `experiment.create`, `experiment.list`, `experiment.get_state`,
-`experiment.attach`, `experiment.transition`, `experiment.exhibit` and
-`experiment.graph`. Current gates and next actions come from
+`experiment.attach`, `experiment.transition` and `experiment.exhibit`.
+Current gates and next actions come from
 `workflow.status_and_next`; assigned context comes from `workflow.assignment`.
 Independent reviewers claim and submit through the existing `review.start` and
 `review.submit` tools.
@@ -42,24 +42,24 @@ required even for replay. Records, events and receipts compose in one State
 transaction, including the owned review transition.
 
 Evidence is retained through Artifacts before attachment. Planning accepts
-`plan`; execution accepts `result`, `report` and `graph`. Each input file is
+`plan`; execution accepts `result` and `report`. Each input file is
 nonempty UTF-8, at most 16,000 bytes. Draft document sections may be unfinished,
 but included figures must already resolve to scoped retained image artifacts.
 Results explicitly distinguish finite JSON from qualitative text. Submission
-and exit guidance share the same document/graph/exhibit gates; guidance creates
+and exit guidance share the same document/exhibit gates; guidance creates
 no evidence or events. The generated exhibit and sealed review selections are
 immutable.
 
 Sessions consumes the program's generic lease hooks, so Experiments has no
 direct dependency on Sessions or Runner. A lease freezes context, the Project Introduction, recovery associations, figures,
 prior assessments and artifact grants. The replacement
-worker may reuse exact retained result/graph inputs, but must author its own
+worker may reuse exact retained result inputs, but must author its own
 verified plan or report. Ordinary owner production is blocked while a worker
 owns that revision. Review independence uses the actual producing and reviewing
 actors; two independent worker leases may have the same delegation source.
 
 The optional UI shows state, attempts, evidence, approved plan, review history,
-guidance, a metrics preview and the retained logic graph. Production mutations
+guidance and a metrics preview. Production mutations
 remain available through tools. Feed can display committed experiment events
 without being a dependency. Unloading the provider withdraws its routing,
 workflow/context registrations and dependent adapters; durable records remain.
@@ -74,15 +74,15 @@ packages/experiments/
     ├── models.ts      # Record and command DTOs
     ├── types.ts       # Service contract and Cordis capability
     ├── input.ts       # Strict shared tool/core schemas and safe JSON boundary
-    ├── evidence.ts    # Document, figure, graph and metrics validation
+    ├── evidence.ts    # Document, figure and metrics validation
     ├── program.ts     # Workflow, recipes, fixed execution policy and lease hooks
-    ├── tools.ts       # Seven tool registrations
+    ├── tools.ts       # Six tool registrations
     └── ui.ts          # Optional UI registration
 ```
 
 Knowledge now owns metadata inventory, exact reference resolution and immutable
-terminal corpus capture. Reflection waves, published project graphs, reviewed
-claim publication and code consolidation remain separate implementation work.
+terminal corpus capture. Reflection waves, reviewed claim publication and code
+consolidation remain separate implementation work.
 This program does not automatically update claims or publish code.
 
 Omitting create `workspace`, or choosing `"none"`, retains the original scratch

@@ -6,7 +6,6 @@ import type {
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
-  ExperimentGraphView,
   ExperimentTransition,
 } from './models.js';
 export type * from './models.js';
@@ -18,11 +17,6 @@ export interface Experiments {
   attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentEvidence>;
   transition(caller: Caller, input: ExperimentTransition, tx?: Transaction): Promise<Experiment>;
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;
-  graph(
-    caller: Caller,
-    experimentId: string,
-    tx?: Transaction,
-  ): Promise<ExperimentGraphView | null>;
   submitReview(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<Experiment>;
   /** Withdraw generic review routing before the provider's dependent consumers drain. */
   withdrawReviewOwner(): void;

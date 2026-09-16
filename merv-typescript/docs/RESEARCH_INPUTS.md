@@ -76,7 +76,7 @@ saved snapshot by exact ID under current project read authority.
 | Assessments | Reviews referenced by selected records, including Experiment approval/feedback/submission reviews                 |
 | Artifacts   | Deduplicated metadata for selected evidence, figures, task inputs/deliveries and assessment evidence              |
 | Code        | Exact capture references declared by selected Experiment submissions, with their observed status and provenance   |
-| Publication | Explicit `status: "none"`, null graph/reflection, and no lenses                                                   |
+| Publication | Explicit `status: "none"`, null reflection, and no lenses                                                         |
 
 Task review coverage is explicitly `current-record-references`; this is not a
 claim to recover every earlier task review round. Corpus selection does not
@@ -179,7 +179,7 @@ create a consolidation proposal, merge branches or advance central. See
 
 Python separates current project facts, a reflection's frozen corpus and the
 latest published wave's coverage. Its corpus selects all terminal work and all
-claims, with smaller current-attempt report/graph and task brief/delivery
+claims, with smaller current-attempt report and task brief/delivery
 references. Its Introduction is read separately, and its consolidation source
 binding uses a mutable latest workspace row per project/instance.
 
@@ -187,9 +187,9 @@ The TypeScript implementation deliberately freezes project facts, richer domain
 metadata and exact per-session/per-command code observations. It retains a
 clear absence of published knowledge. These differences and source locations
 are recorded in the [Python corpus reference](CORPUS_PARITY_REFERENCE.md).
-No Reflection wave, five-lens ownership, synthesis/review cycle, published
-project graph, coverage delta, reflection-debt gate or literature-maintenance
-program is supplied here. The existing Experiment cap is not the future
+No Reflection wave, five-lens ownership, synthesis/review cycle, coverage
+delta, reflection-debt gate or literature-maintenance program is supplied
+here. The existing Experiment cap is not the future
 reflection scheduler's reserved-slot policy.
 
 ## Verification scope

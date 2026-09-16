@@ -40,7 +40,7 @@ lines 161–186.
 | `new_terminal_experiments`         | `{id,name,status}` for corpus experiments absent from the previous published corpus's experiment ID set             |
 | `new_terminal_tasks`               | Equivalent task delta against the previous published task ID set                                                    |
 | `previous_published_reflection_id` | Latest published reflection ID, or null                                                                             |
-| `previous_published_artifacts`     | Prior wave's current-attempt `project_graph` and `reflection_doc`, if present                                       |
+| `previous_published_artifacts`     | Prior wave's current-attempt `reflection_doc`, if present                                                           |
 | `previous_lens_reflections`        | Prior wave's covered lens contributions, keyed by lens ID                                                           |
 
 Experiments, tasks and claims are selected in ascending `created_at, id` order.
@@ -64,11 +64,11 @@ and [Task definition](../../merv/src/merv/brain/workflows/definitions/task.py).
 ### Which evidence is selected
 
 For each terminal experiment, Python chooses its **current attempt's latest
-report and latest graph**, one per role. It does not include every result file,
-the exhibit or plan in this corpus projection. For each terminal task it selects
-the current attempt's latest brief and delivery. A terminal failed/abandoned
-experiment may have no report/graph, or only unfinished evidence; selection
-must not imply that an independent review accepted it.
+report**, one per role. It does not include every result file, the exhibit or
+plan in this corpus projection. For each terminal task it selects the current
+attempt's latest brief and delivery. A terminal failed/abandoned experiment may
+have no report, or only unfinished evidence; selection must not imply that an
+independent review accepted it.
 
 “Latest” uses the tuple `(submitted_order, updated_at-or-created_at, id-or-artifact_id,
 path)`. Filtering to the attempt happens first. Selecting one artifact per role
@@ -85,13 +85,12 @@ already has these facts and should retain them with a captured selection.
 
 Sources: [reference selection](../../merv/src/merv/brain/workflows/definitions/reflection_corpus.py)
 lines 25–46; [recency, slot and seal selectors](../../merv/src/merv/brain/workflows/definitions/documents.py)
-lines 132–177; [association-handle regression](../../merv/tests/application/test_logic_graph.py)
-lines 227–244.
+lines 132–177.
 
 ### Prior lenses and publication
 
 The previous published wave contributes covered lens references plus its
-project graph and reflection document. It does not supply an unreviewed newer
+reflection document. It does not supply an unreviewed newer
 wave as the publication baseline. Within the current wave, submitted lens
 children pin their exact artifact IDs; a newer upload under the same lens does
 not replace that submitted child contribution. Lens identity is part of the
@@ -173,28 +172,10 @@ lines 693–764; [brief composition](../../merv/src/merv/brain/workflows/definit
 lines 57–59; [document renderer](../../merv/src/merv/brain/workflows/definitions/research_contracts.py)
 lines 13–33; [full-intent tests](../../merv/tests/workflow/test_project_intent.py).
 
-## Graph selection and reference resolution
+## Reference resolution
 
-Python's project graph **display** prefers the open wave's current-attempt graph.
-If that attempt has no graph, it falls back to the latest published wave's graph.
-A rejected prior attempt's graph must not reappear as the current open graph.
-The graph's reflection ID/status/attempt/publication timestamp travel with it.
-The corpus baseline still uses the previous published wave.
-
-A TypeScript query should distinguish a working graph from a published graph;
-calling the UI-preferred open graph “authoritative published knowledge” would
-change its meaning. With no graph, return unavailable/null plus the project
-signal, not an invented graph from a task recipe.
-
-The common graph view returns availability, graph artifact/path, producing
-attempt, parsed document, validation problems and a `ref_index`. Missing bytes
-make the graph unavailable. Present but malformed JSON can still be reported as
-an available artifact with `graph: null` and problems. The current TypeScript
-Experiment graph reader instead throws on invalid graph content; choose and
-document an explicit presentation contract when adding the shared query.
-
-Node `refs` are traversed in document order and deduplicated by first occurrence.
-Resolution is project-scoped, returns metadata only, and supports:
+Typed references are traversed in document order and deduplicated by first
+occurrence. Resolution is project-scoped, returns metadata only, and supports:
 
 | Prefix/type                                | Resolved fields beyond identity/type |
 | ------------------------------------------ | ------------------------------------ |
@@ -214,21 +195,9 @@ the application layer composes artifact lookup and preserves first-seen order.
 Do not invent a currently absent Reflection/Literature service just to make its
 reference resolve: unsupported types can remain explicit unresolved entries.
 
-Sources: [graph selection](../../merv/src/merv/brain/research_core/reflections.py)
-lines 463–510; [shared view/resolver](../../merv/src/merv/brain/application/queries.py)
+Sources: [resolver composition](../../merv/src/merv/brain/application/queries.py)
 lines 94–195; [typed resolver](../../merv/src/merv/brain/research_core/research.py)
-lines 50–71 and 766–786; [graph-selection regressions](../../merv/tests/workflow/test_evidence_selection.py)
-lines 326–391 and [query tests](../../merv/tests/application/test_logic_graph.py).
-
-Graph comparison names both published baseline and current graph version. It
-returns explicit reasons for missing current graph, absent previous publication,
-or unreadable/invalid content. A diff is produced only after both documents
-validate. For a published wave, its baseline is the prior published wave with an
-earlier creation sequence; for an open wave it is the latest published wave.
-
-Sources: [comparison selection](../../merv/src/merv/brain/research_core/reflections.py)
-lines 513–543; [pure graph comparison](../../merv/src/merv/brain/workflows/definitions/reflection_corpus.py)
-lines 184–223.
+lines 50–71 and 766–786.
 
 ## Exact code references: improve the Python boundary
 
@@ -251,7 +220,7 @@ instance, attempt/revision, producing worker/session, repository/workspace,
 base/head OIDs, stats and source receipt. Retain the exact capture reference used
 by a corpus or proposal; never reinterpret a mutable “latest head” as what a
 reviewer previously assessed. Late results may be appended to history but must
-not rewrite an existing corpus. A report/graph-only experiment can validly have
+not rewrite an existing corpus. A report-only experiment can validly have
 no code capture. Recorded capture facts are not evidence that Git objects exist
 on another runner or permission to advance central.
 
@@ -270,14 +239,14 @@ lines 630–680. Existing TypeScript mechanisms are documented in
    explicit.
 2. Add one authoritative current-project read model over the existing public
    Claims, Experiments, Tasks, Artifacts and Workflows contracts. Keep summary
-   reads metadata-only; expose scoped graph reference resolution with explicit
+   reads metadata-only; expose scoped reference resolution with explicit
    unavailable/unsupported results.
 3. Retain exact authenticated code-capture facts and immutable source-selection
    receipts. Freeze all terminal work and claims in one consistent read,
    preserving distinction between current slots, reviewed seals and history.
 4. Build actual Reflection on that capture contract: one open wave, fixed lens
    membership, synthesis/review and eventual publication. Only publication can
-   advance coverage. Published graph/doc/lens pointers remain absent until the
+   advance coverage. Published doc/lens pointers remain absent until the
    owning program can produce them legitimately.
 
 The Scope Introduction foundation is now implemented in
@@ -306,12 +275,13 @@ Git publication remain outside this read/capture prerequisite.
 ## Verification
 
 **18 existing Python tests passed in 1.728 seconds**, with no external service or
-live research operation. Command from the Python `merv/` directory:
+live research operation. That recorded run also exercised the logic-graph tests
+retired by the 2026-09-16 ruling, dropped from the command below. Command from
+the Python `merv/` directory:
 
 ```sh
 PYTHONPATH=src:. /opt/anaconda3/bin/python -m unittest -v \
   tests.workflow.test_evidence_selection \
-  tests.application.test_logic_graph \
   tests.workflow.test_project_intent \
   tests.research_core.test_reflections.ReflectionWorkflowTest.test_roster_and_single_open_wave_are_enforced \
   tests.research_core.test_reflections.ReflectionWorkflowTest.test_reflection_signal_blocks_new_work_and_publish_resets_it \

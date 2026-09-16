@@ -3,11 +3,10 @@ name: project-reflection
 description: >-
   Run a Merv project-reflection wave across completed experiments: create the
   five-lens roster, fan out independent lens agents, reconcile their findings
-  into the project graph, reflection document, and change spec, coordinate
-  independent review, and hand approved research to code consolidation. Use
-  when the user requests reflection or
-  workflow.status_and_next reports stale project knowledge or a reflection
-  gate.
+  into the reflection document and change spec, coordinate independent review,
+  and hand approved research to code consolidation. Use when the user requests
+  reflection or workflow.status_and_next reports stale project knowledge or a
+  reflection gate.
 ---
 
 # Project Reflection
@@ -27,7 +26,7 @@ create → reflecting → synthesizing → reflection review → consolidating
 ```
 
 A rejection returns to `synthesizing` when the five lens reflections stand but
-the graph, reflection document, or change spec needs revision. It returns to
+the reflection document or change spec needs revision. It returns to
 `reflecting` when the lens inputs themselves are inadequate; that starts a new
 attempt and requires all five lenses again.
 
@@ -74,8 +73,8 @@ give each independently dispatched lens agent:
   own document with `artifact.upload(project_id, path)`, execute the returned
   upload command, and submit that content id through
   `workflow.transition(action="submit", payload={"artifact_id": ...})`, following
-  [reflection-artifacts-template.md](reflection-artifacts-template.md). The graph
-  associates the contribution with the exact roster lens.
+  [reflection-artifacts-template.md](reflection-artifacts-template.md). The
+  child workflow associates the contribution with the exact roster lens.
 
 Lens agents must not mutate project state, read a checkout, or replace the
 snapshot with live experiment state. Start from the bounded summaries and use
@@ -90,9 +89,9 @@ those exact contributions in its fresh assignment.
 
 ## Reconcile the lenses
 
-Read all current lens documents and the previous published graph and reflection
-through `reflection.get(include_content=true)`. Treat lens outputs as
-independent arguments, not truth and not votes.
+Read all current lens documents and the previous reflection through
+`reflection.get(include_content=true)`. Treat lens outputs as independent
+arguments, not truth and not votes.
 
 Reconcile them against the snapshotted records:
 
@@ -102,18 +101,16 @@ Reconcile them against the snapshotted records:
   uncertainty explicit.
 - Make new terminal experiments materially affect the result when warranted;
   tasks inform the work without becoming experimental confirmation of a claim.
-- Compare the new graph with the previous one and explain changed beliefs.
-  On a synthesis return, revise affected graph, reflection and change-spec
-  artifacts within the 16-node graph budget; keep the completed lenses.
+- Explain which project beliefs changed since the previous wave and why.
+  On a synthesis return, revise the affected reflection and change-spec
+  artifacts; keep the completed lenses.
 - Select a coherent next wave rather than concatenating every suggested idea.
 
-Produce the three artifacts defined in the template:
+Produce the two artifacts defined in the template:
 
-1. `project_graph`: the current project logic state, revised from the prior
-   published graph when one exists.
-2. `reflection_doc`: the concise scientific reading of what changed, what
+1. `reflection_doc`: the concise scientific reading of what changed, what
    remains uncertain, and why the direction follows.
-3. `change_spec`: the reviewed claim updates and the next wave — up to three
+2. `change_spec`: the reviewed claim updates and the next wave — up to three
    proposed experiments plus any number of tasks (lit review, data prep,
    harness work, memos), with `depends_on` edges between them. An experiment may sit downstream of tasks only, never of another proposed experiment (through tasks included) — sequential experiments are the next wave's proposal.
 
@@ -126,7 +123,7 @@ transitions), not the wave; read `reflection.get` for content.
 
 ## Coordinate independent review
 
-Once `reflection.get` reports the three synthesis artifacts ready, transition
+Once `reflection.get` reports the two synthesis artifacts ready, transition
 to reflection review and finish this assignment. Merv queues the review and
 auto-run dispatches a separate `project-reflection-review` agent. When managing
 an unassigned wave interactively, use `review.request` for a reviewer handoff.

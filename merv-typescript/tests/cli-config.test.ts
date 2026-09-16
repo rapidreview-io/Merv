@@ -216,7 +216,7 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
   });
   assert.equal(response.status, 200);
   const catalog = (await response.json()) as { tools: { name: string }[] };
-  assert.equal(catalog.tools.length, 66);
+  assert.equal(catalog.tools.length, 65);
   assert.ok(catalog.tools.some((tool) => tool.name === 'task.reissue_review'));
   assert.ok(catalog.tools.some((tool) => tool.name === 'ui.shell'));
   assert.ok(catalog.tools.some((tool) => tool.name === 'feed.post'));

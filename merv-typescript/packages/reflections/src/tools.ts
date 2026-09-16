@@ -54,12 +54,11 @@ export const reflectionToolsPlugin = {
       {
         name: 'reflection.submit',
         description:
-          'Submit your immutable synthesis report, project graph, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.',
+          'Submit your immutable synthesis report, change specification, and optional JSON paperChangesArtifactId for the same independent review. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.',
         inputSchema: z
           .object({
             reflectionId: id,
             reportArtifactId: id,
-            graphArtifactId: id,
             changeSpecArtifactId: id,
             paperChangesArtifactId: id.optional(),
             expectedRevision,
@@ -71,7 +70,6 @@ export const reflectionToolsPlugin = {
           input: {
             reflectionId: string;
             reportArtifactId: string;
-            graphArtifactId: string;
             changeSpecArtifactId: string;
             expectedRevision: number;
             requestId: string;

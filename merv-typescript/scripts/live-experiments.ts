@@ -75,9 +75,9 @@ Planner: write your own plan with nonempty Summary, Objective & hypothesis, Eval
 
 Design reviewer: call review.get for the exact claimed review and artifact.read for EVERY artifactId in its pinned manifest before deciding. Independently assess the real plan against every review criterion. Return an honest review.submit verdict with synopsis, verification notes and findings, not an automatic approval. Stop after handoff.
 
-Executor: first read the exact approved plan via artifact.read. Execute the specified comparison using a real local python3 command in your assigned workspace. Capture the actual source code and stdout, not a simulated run. Retain a single valid JSON result artifact containing train/test arrays, baseline prediction, fitted slope/intercept, both prediction vectors, absolute-error vectors, both MAEs, denominator, criterion outcome, code and actual stdout. For reproducible checking use these exact JSON fields: train:{x:[],y:[]}, test:{x:[],y:[]}, baseline:{prediction:number,predictions:[],absoluteErrors:[],mae:number}, candidate:{slope:number,intercept:number,predictions:[],absoluteErrors:[],mae:number}, denominator:number, criterion:{operator:"<",met:boolean}, code:string, stdout:string. Additional explanatory fields are allowed. Keep every retained plan/result/report/graph document below 16000 UTF-8 bytes. Attach resultFormat json at experiments/native-linear-check/results.json. Retain a version-1 DAG as role graph at experiments/native-linear-check/graph.json with 1–16 labeled nodes and edges {from,to}, representing hypothesis, evaluation and observed conclusion. Inspect experiment.exhibit after the result is attached. Author your own report with Summary, Results, Deviations from plan, Conclusion; reference and interpret the exact metrics_exhibit.json filename and distinguish the calculated result from the limits of this synthetic study. Attach it at experiments/native-linear-check/report.md. Submit results through actual experiment.transition; stop after handoff.
+Executor: first read the exact approved plan via artifact.read. Execute the specified comparison using a real local python3 command in your assigned workspace. Capture the actual source code and stdout, not a simulated run. Retain a single valid JSON result artifact containing train/test arrays, baseline prediction, fitted slope/intercept, both prediction vectors, absolute-error vectors, both MAEs, denominator, criterion outcome, code and actual stdout. For reproducible checking use these exact JSON fields: train:{x:[],y:[]}, test:{x:[],y:[]}, baseline:{prediction:number,predictions:[],absoluteErrors:[],mae:number}, candidate:{slope:number,intercept:number,predictions:[],absoluteErrors:[],mae:number}, denominator:number, criterion:{operator:"<",met:boolean}, code:string, stdout:string. Additional explanatory fields are allowed. Keep every retained plan/result/report document below 16000 UTF-8 bytes. Attach resultFormat json at experiments/native-linear-check/results.json. Inspect experiment.exhibit after the result is attached. Author your own report with Summary, Results, Deviations from plan, Conclusion; reference and interpret the exact metrics_exhibit.json filename and distinguish the calculated result from the limits of this synthetic study. Attach it at experiments/native-linear-check/report.md. Submit results through actual experiment.transition; stop after handoff.
 
-Attempt reviewer: call review.get and artifact.read for EVERY artifactId in the exact pinned manifest (approved plan, result, report, graph and system metrics exhibit) before verdict. Independently recompute slope/intercept, all predictions/errors, and both MAEs with a real read-only python3 shell command from the retained input arrays. Compare actual stdout and the pinned exhibit's source hash/data with the result, and the graph/report with the approved plan. Print one JSON object with checks:"all passed", training_count, held_out_count, slope, intercept, baseline, candidate, criterion, retained_stdout_matches_reexecution:true and exhibit_data_and_source_hash_match:true only after those independent checks actually pass. Do not write files or artifacts. Submit an honest verdict with substantive independent verification notes and one finding per criterion. Stop after handoff. A correct synthetic calculation does not justify a broader scientific claim.
+Attempt reviewer: call review.get and artifact.read for EVERY artifactId in the exact pinned manifest (approved plan, result, report and system metrics exhibit) before verdict. Independently recompute slope/intercept, all predictions/errors, and both MAEs with a real read-only python3 shell command from the retained input arrays. Compare actual stdout and the pinned exhibit's source hash/data with the result, and the report with the approved plan. Print one JSON object with checks:"all passed", training_count, held_out_count, slope, intercept, baseline, candidate, criterion, retained_stdout_matches_reexecution:true and exhibit_data_and_source_hash_match:true only after those independent checks actually pass. Do not write files or artifacts. Submit an honest verdict with substantive independent verification notes and one finding per criterion. Stop after handoff. A correct synthetic calculation does not justify a broader scientific claim.
 
 All workers: use only your current fixed Merv tool grants. Read current assignment metadata if necessary. Use stable requestIds on mutations and stop immediately when the node handoff succeeds. Review findings must reference the actual pinned artifact IDs. All scientific material is your responsibility; no evidence is preseeded.` +
   (gitMode
@@ -206,7 +206,6 @@ try {
   await runner.stop();
   const final = await app.ctx.experiments.get(source, created.id);
   const guidance = await app.ctx.workflows.evaluate(source, created.id);
-  const graph = await app.ctx.experiments.graph(source, created.id);
   const sessions = (await app.ctx.sessions.list(source)).sort(
     (a, b) => a.expectedRevision - b.expectedRevision,
   );
@@ -238,7 +237,6 @@ try {
   assert.equal(final.attempt.index, 1);
   assert.equal(final.attempts.length, 1);
   assert.ok(guidance.terminal);
-  assert.ok(graph);
   assert.equal(final.submissions.length, 2);
   const [design, results] = final.submissions;
   assert.equal(design.stage, 'design');
@@ -647,7 +645,6 @@ try {
     workStarts,
     experiment: final,
     guidance,
-    graph,
     reviews,
     artifacts,
     resultData,

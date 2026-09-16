@@ -44,7 +44,6 @@ export interface Reflection {
   workflow: WorkflowSnapshot;
   review: ReviewRequest | null;
   report: Artifact | null;
-  graph: Artifact | null;
   changeSpec: Artifact | null;
 }
 /** Exact reviewed bytes and provenance; terminally immutable and safe for downstream programs. */
@@ -57,7 +56,8 @@ export interface ApprovedReflection {
   experimentIds: string[];
   paper: Pick<PaperWorkspace, 'documents' | 'citations'> | null;
   report: Artifact;
-  graph: Artifact;
+  /** Legacy only: waves approved before the 2026-09-16 ruling pinned an authored project graph. Never written going forward. */
+  graph?: Artifact;
   changeSpec: Artifact;
   lenses: { id: string; perspective: string; artifact: Artifact; producerId: string }[];
   producerId: string;
@@ -79,7 +79,6 @@ export interface ReflectionSubmit {
   paperChangesArtifactId?: string;
   reflectionId: string;
   reportArtifactId: string;
-  graphArtifactId: string;
   changeSpecArtifactId: string;
   expectedRevision: number;
   requestId: string;

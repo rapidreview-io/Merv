@@ -47,7 +47,6 @@ const hash = (value: unknown) =>
   createHash('sha256').update(canonicalKnowledge(value)).digest('hex');
 const publication = (): KnowledgePublication => ({
   status: 'none',
-  graph: null,
   reflection: null,
   lenses: [],
 });
@@ -416,7 +415,7 @@ export class KnowledgeService implements Knowledge {
       ].find(([prefix]) => ref.startsWith(prefix))?.[1];
       if (ref.startsWith('published-')) kind = ref;
     }
-    if (kind && ['published-graph', 'published-reflection', 'published-lens'].includes(kind))
+    if (kind && ['published-reflection', 'published-lens'].includes(kind))
       return { ref, status: 'unpublished', kind: kind as KnowledgeReferenceKind, id: null };
     const missing = (known: KnowledgeReferenceKind | null): KnowledgeReference => ({
       ref,

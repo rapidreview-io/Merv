@@ -94,7 +94,7 @@ TypeScript requires omitted fields instead. Its desktop lacked a status/confiden
 editor; TypeScript supplies one. See the [source-backed reference](CLAIMS_PARITY_REFERENCE.md).
 
 This slice does not yet provide linked experiment evidence, a claim belief-history
-view, authoritative project graphs or reviewed statement changes. It retains the
+view or reviewed statement changes. It retains the
 records and events those integrations need. A completed experiment must not
 automatically mark its claims supported.
 

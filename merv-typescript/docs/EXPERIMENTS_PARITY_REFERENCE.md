@@ -59,7 +59,7 @@ lines 46–55 and 177–218.
 | `planned`             | Owner `submit_design`                                         | Validate and seal the plan; enter `design_review` and create its independent review.                                                                                      |
 | `design_review`       | Independent `pass`                                            | Enter `running`; freeze the exact approved plan submission/review. Approval does not start execution time.                                                                |
 | `design_review`       | `needs_changes` **or `fail`**                                 | Return to `planned`, increment attempt, retain feedback/history, clear approved plan and execution window. `return_to` may be omitted or `planned`; `running` is refused. |
-| `running`             | Owner `submit_results`                                        | Validate result/report/graph and dependencies; pin any exhibit, seal the exact selection, enter `experiment_review`, request independent review.                          |
+| `running`             | Owner `submit_results`                                        | Validate result/report and dependencies; pin any exhibit, seal the exact selection, enter `experiment_review`, request independent review.                                |
 | `running`             | Owner `retry_running`                                         | Stay `running`, advance workflow revision, preserve attempt/approved plan/first start; append recovery guidance.                                                          |
 | `experiment_review`   | Independent `pass`                                            | Enter terminal `complete`, record conclusion from the reviewed evidence.                                                                                                  |
 | `experiment_review`   | `needs_changes` **or `fail`**, explicit `return_to="running"` | Same attempt and approved plan; execution/conclusion repair with another results submission round.                                                                        |
@@ -110,12 +110,15 @@ lines 328–367.
 
 ## Evidence and immutable rounds
 
+Retired by the 2026-09-16 ruling: the agent-authored `graph` role is absent from
+the table below by decision, not as an unimplemented parity gap. A process graph
+is derived from records instead, so nothing here is owed.
+
 | Role      | Agent writable?                | Required shape / cap                                                                                                                                               |
 | --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `plan`    | Yes, for plan submission.      | UTF-8 Markdown, max **16,000 bytes**; nonempty Summary, Objective & hypothesis, Evaluation sections.                                                               |
 | `result`  | Yes, for results submission.   | At least one retained result; max **16,000 bytes per artifact**. Machine-readable JSON produces the exhibit; qualitative evidence is allowed.                      |
 | `report`  | Yes, for results submission.   | UTF-8 Markdown, max **16,000 bytes**; nonempty Summary, Results, Deviations from plan, Conclusion sections; reference the exhibit filename when pinned.            |
-| `graph`   | Yes, for results submission.   | UTF-8 JSON, max **16,000 bytes**; version 1 DAG, schema below.                                                                                                     |
 | `exhibit` | **No.** System-generated only. | Deterministic metrics document at `experiments/<name>/metrics_exhibit.json`. Python's submittable-role caps do not assign the generated exhibit a 16,000-byte cap. |
 
 Markdown checks normalize headings, match their expected prefixes, require a
@@ -124,15 +127,6 @@ review must determine scientific adequacy. Plan/report image references must
 have retained figure bytes and pass the figure-link policy. A filename mention
 outside comments satisfies Python's exhibit-reference check; that check does
 not prove numerical interpretation.
-
-Graph envelope: `{version:1, nodes:[{id,label,...}], edges:[{from,to,...}]}`.
-There must be 1–16 nodes with nonempty, unique IDs and labels. Edges default to
-empty, reference existing nodes, and have no self-loop or directed cycle.
-Python does not prescribe node `kind`, edge `label` or other prose fields; its
-gate ignores extra fields, while the read model returns the original parsed
-document. Typed graph `refs` are resolved separately and project-scoped.
-The graph read may show the latest historical graph after a new attempt opens,
-but labels it with the attempt that produced it.
 
 Attachment identity includes project, experiment, current attempt, role, lens
 and path. A new upload replaces the current logical slot; older content and
@@ -149,7 +143,7 @@ review atomically, never silently let a frozen review grade changed evidence.
 Keep the review's exact submission ID directly; Python's `_graded_round` finds
 the latest seal in the attempt, an inference the new domain need not repeat.
 
-`plan.md`, `report.md` and `graph.json` are recommended filenames, not enforced
+`plan.md` and `report.md` are recommended filenames, not enforced
 Python gate identities. `_clean_path` only trims, normalizes backslashes and
 removes leading slashes: it accepts `../plan.md` and paths outside the suggested
 experiment folder because the path is a provenance/display label. Requiring
@@ -163,8 +157,7 @@ lines 59–88, 225–298, 313–317, 382–397 and 621–653;
 lines 119–170, 361–412 and 492–548;
 [target closure](../../merv/src/merv/brain/research_core/association_targets.py)
 lines 53–115; [path cleaner](../../merv/src/merv/brain/artifacts/artifacts.py)
-lines 364–368; [graph presentation](../../merv/src/merv/brain/application/queries.py)
-lines 32–48 and 96–117; [review freshness and graded round](../../merv/src/merv/brain/research_core/reviews.py)
+lines 364–368; [review freshness and graded round](../../merv/src/merv/brain/research_core/reviews.py)
 lines 85–94 and 398–425.
 
 ## Metrics exhibit: observations with provenance
@@ -274,21 +267,17 @@ PYTHONPATH=src:. /opt/anaconda3/bin/python -m unittest -v \
   tests.research_core.test_experiment_runtime \
   tests.state.test_submission_attempts \
   tests.workflow.test_metrics_exhibit \
-  tests.workflow.test_experiment_graph \
-  tests.application.test_logic_graph \
   > /private/tmp/merv-experiments-reference-20260915.log 2>&1
 ```
 
 Coverage includes exact approved-plan retention, dependency/clock semantics,
 both attempt returns, immutable same-attempt result rounds, stale preparation,
-exhibit provenance and qualitative behavior, figure/document gates and graph
-selection/reference reads. Sources are the
+exhibit provenance and qualitative behavior, and figure/document gates. Sources
+are the
 [creation/review tests](../../merv/tests/research_core/test_experiments.py),
 [runtime tests](../../merv/tests/research_core/test_experiment_runtime.py),
-[submission-round tests](../../merv/tests/state/test_submission_attempts.py),
-[exhibit tests](../../merv/tests/workflow/test_metrics_exhibit.py),
-[graph gate tests](../../merv/tests/workflow/test_experiment_graph.py) and
-[graph read tests](../../merv/tests/application/test_logic_graph.py).
+[submission-round tests](../../merv/tests/state/test_submission_attempts.py) and
+[exhibit tests](../../merv/tests/workflow/test_metrics_exhibit.py).
 
 A supplemental local fixture/pure-function probe confirmed all 18 combinations
 of review role/verdict/return choice, permissive legacy path labels, pinning of

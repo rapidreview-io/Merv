@@ -25,7 +25,6 @@ const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nTest whether the intervention changes the measured outcome.\n# Evaluation\nUse matched controls and report the uncertainty.\n';
 const report =
   '# Summary\nA negative result.\n# Results\nmetrics_exhibit.json records the observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.\n';
-const graph = '{"version":1,"nodes":[{"id":"result","label":"No improvement"}],"edges":[]}';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiment-invariants-'));
@@ -83,7 +82,7 @@ async function fixture(t: TestContext) {
     const artifact = await artifacts.create(caller, {
       title: role,
       content,
-      mediaType: ['graph', 'result'].includes(role) ? 'application/json' : 'text/markdown',
+      mediaType: role === 'result' ? 'application/json' : 'text/markdown',
     });
     const evidence = await experiments.attach(caller, {
       experimentId: experiment.id,
@@ -91,7 +90,7 @@ async function fixture(t: TestContext) {
       attemptIndex: experiment.attempt.index,
       artifactId: artifact.id,
       role,
-      path: `${role}.${['graph', 'result'].includes(role) ? 'json' : 'md'}`,
+      path: `${role}.${role === 'result' ? 'json' : 'md'}`,
       requestId: request(),
     });
     return { artifact, evidence };
@@ -188,11 +187,15 @@ async function fixture(t: TestContext) {
   };
 }
 
-test('a successor can reattach exact frozen result/graph tuples and submit its own verified report', async (t) => {
+test('a successor can reattach exact frozen result tuples and submit its own verified report', async (t) => {
   const f = await fixture(t),
     experiment = await f.running();
   const result = await f.attach(experiment, 'result', '{"observations":[0,0],"improved":false}');
-  const predecessorGraph = await f.attach(experiment, 'graph', graph);
+  const predecessorReport = await f.attach(
+    experiment,
+    'report',
+    `${report}A predecessor drafted this.\n`,
+  );
   const { worker } = await f.offer(experiment);
   await assert.rejects(
     async () =>
@@ -211,14 +214,14 @@ test('a successor can reattach exact frozen result/graph tuples and submit its o
     role: 'result',
     path: result.evidence.path,
   });
-  const graphCopy = await f.workerAttach(worker, experiment, {
+  const reportCopy = await f.workerAttach(worker, experiment, {
     attemptIndex: 1,
-    artifactId: predecessorGraph.artifact.id,
-    role: 'graph',
-    path: predecessorGraph.evidence.path,
+    artifactId: predecessorReport.artifact.id,
+    role: 'report',
+    path: predecessorReport.evidence.path,
   });
   assert.notEqual(resultCopy.id, result.evidence.id);
-  assert.notEqual(graphCopy.id, predecessorGraph.evidence.id);
+  assert.notEqual(reportCopy.id, predecessorReport.evidence.id);
   const ownReport = await f.workerArtifact(worker, report);
   await f.workerAttach(worker, experiment, {
     attemptIndex: 1,

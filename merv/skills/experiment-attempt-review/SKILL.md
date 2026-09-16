@@ -2,7 +2,7 @@
 name: experiment-attempt-review
 description: >-
   Perform a read-only adversarial review of a completed Merv experiment
-  attempt. Verify execution, submitted results, metrics, graph, and conclusions
+  attempt. Verify execution, submitted results, metrics, and conclusions
   against the approved plan, then submit the verdict and correct return path.
 ---
 
@@ -23,11 +23,10 @@ For an interactive handoff, use its exact capability and your own stable
 `caller_session_id`, distinct from the producer's. The session binds to your
 `agent_id`: only this context window can submit its verdict. Begin with the
 returned project context, plan, report, and artifact references. Batch the
-listed result, graph, and exhibit ids through `artifact.read
-include_content=true` when their submitted evidence is needed; a read is
-16 KB per artifact, page with `offset=next_offset`. Inspect retained outputs and
-durable run receipts before reproducing work; a fresh review is not a reason to
-rerun completed jobs.
+listed result and exhibit ids through `artifact.read include_content=true`
+when their submitted evidence is needed; a read is 16 KB per artifact, page
+with `offset=next_offset`. Inspect retained outputs and durable run receipts
+before reproducing work; a fresh review is not a reason to rerun completed jobs.
 
 Operate read-only: auto-run credentials enforce it, a general project key
 relies on you. Only `review.start` and `review.submit` mutate anything; the
@@ -50,10 +49,9 @@ Check the attempt as one evidence chain:
    but scientifically false.
 4. **Deviations:** Are all departures from the approved plan disclosed and
    justified? Decide whether they invalidate execution or the design itself.
-5. **Logic graph:** Does it honestly capture the questions, decisions, pivots,
-   failures, and lessons? Reject a generated metrics diagram, pipeline,
-   provenance map, or story that hides known rework. Do not prescribe its
-   vocabulary or layout.
+5. **Honest report:** Does the report select what mattered—the questions,
+   decisions, pivots, failures, and lessons? Reject one generated from logs or
+   result files, or a story that hides known rework.
 6. **Conclusion:** Apply the registered decision rule to the observed record.
    Reject goalpost changes, cherry-picking, or claims broader than the tested
    scope.

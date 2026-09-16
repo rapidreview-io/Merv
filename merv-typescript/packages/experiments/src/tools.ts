@@ -7,7 +7,6 @@ import {
   experimentCreateSchema,
   experimentExhibitSchema,
   experimentGetSchema,
-  experimentGraphSchema,
   experimentListSchema,
   experimentTransitionSchema,
 } from './input.js';
@@ -46,7 +45,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.attach',
         description:
-          'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result, report or graph. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.',
+          'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.',
         inputSchema: experimentAttachSchema,
         handler: async (caller: Caller, input: ExperimentAttach) =>
           await experiments.attach(caller, input),
@@ -67,15 +66,6 @@ export const experimentsToolsPlugin = {
         readOnly: true,
         handler: async (caller: Caller, input: { experimentId: string }) =>
           await experiments.exhibit(caller, input.experimentId),
-      },
-      {
-        name: 'experiment.graph',
-        description:
-          "Read this experiment's retained version-1 logic graph and its exact evidence association. The result identifies the producing attempt; a historical graph is not relabeled as current-attempt work. Returns null when no graph is available.",
-        inputSchema: experimentGraphSchema,
-        readOnly: true,
-        handler: async (caller: Caller, input: { experimentId: string }) =>
-          await experiments.graph(caller, input.experimentId),
       },
     ])
       ctx.effect(() => ctx.tools.register(definition));

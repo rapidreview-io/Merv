@@ -1,7 +1,7 @@
 import { isUtf8 } from 'node:buffer';
 import { types } from 'node:util';
 import { z } from 'zod';
-import { check, type Data, type Json } from '@merv/contracts';
+import { check, type Json } from '@merv/contracts';
 import { copyExperimentJson, experimentIdSchema, experimentPathSchema } from './input.js';
 
 export const evidenceByteLimit = 16_000;
@@ -173,71 +173,6 @@ export function validateReport(
 
 export function reportConclusion(text: string): string | null {
   return section(text, 'Conclusion');
-}
-
-export type ExperimentGraphNode = Data & { id: string; label: string; refs?: string[] };
-export type ExperimentGraphEdge = Data & { from: string; to: string };
-export type ExperimentGraph = Data & {
-  version: 1;
-  nodes: ExperimentGraphNode[];
-  edges: ExperimentGraphEdge[];
-};
-const graphSchema = z
-  .object({
-    version: z.literal(1),
-    nodes: z
-      .array(
-        z
-          .object({
-            id: z
-              .string()
-              .min(1)
-              .max(200)
-              .refine((value) => !!value.trim()),
-            label: z
-              .string()
-              .min(1)
-              .refine((value) => !!value.trim()),
-            refs: z.array(experimentIdSchema).max(100).optional(),
-          })
-          .passthrough(),
-      )
-      .min(1)
-      .max(16),
-    edges: z
-      .array(z.object({ from: z.string().min(1), to: z.string().min(1) }).passthrough())
-      .default([]),
-  })
-  .passthrough();
-
-export function validateGraph(text: string): ExperimentGraph {
-  const original = parseJson(text) as ExperimentGraph;
-  const parsed = graphSchema.safeParse(original);
-  error(parsed.success, 'Graph must be version 1 with 1–16 labeled nodes and valid edges');
-  // Zod validates structure; return the detached original so passthrough JSON keys retain their data.
-  const graph = original;
-  if (!Object.hasOwn(graph, 'edges')) graph.edges = [];
-  const nodes = new Map(graph.nodes.map((node) => [node.id, [] as string[]]));
-  error(nodes.size === graph.nodes.length, 'Graph node IDs must be unique');
-  for (const edge of graph.edges) {
-    error(
-      nodes.has(edge.from) && nodes.has(edge.to) && edge.from !== edge.to,
-      'Graph edges must connect distinct existing nodes',
-    );
-    nodes.get(edge.from)!.push(edge.to);
-  }
-  const visiting = new Set<string>(),
-    visited = new Set<string>();
-  const visit = (id: string) => {
-    error(!visiting.has(id), 'Graph must not contain a cycle');
-    if (visited.has(id)) return;
-    visiting.add(id);
-    for (const target of nodes.get(id)!) visit(target);
-    visiting.delete(id);
-    visited.add(id);
-  };
-  for (const id of nodes.keys()) visit(id);
-  return graph;
 }
 
 export interface MetricsResultSource {

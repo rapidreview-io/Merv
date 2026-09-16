@@ -22,7 +22,7 @@ Unloading Research (including when Knowledge unloads) removes this resolver and 
 
 ## Completion
 
-Five different agent identities submit their own immutable lens reports, each with a nonempty Summary. The last submission opens synthesis. Synthesis submits its report, project graph, change specification and optional paper changes for independent review. Reports and verdicts remain immutable even though the research they analyze is live.
+Five different agent identities submit their own immutable lens reports, each with a nonempty Summary. The last submission opens synthesis. Synthesis submits its report, change specification and optional paper changes for independent review. Reports and verdicts remain immutable even though the research they analyze is live.
 
 Approval retains the exact submitted outputs, contributors and review. When Research advances to consolidation, it selects current research-linked evidence and terminal experiment IDs through Knowledge and passes them alongside the approved reflection outputs into Consolidation. Evidence added since reflection approval is input for Consolidation's own review, not retroactively part of that approval. New waves do not populate the legacy `experimentIds` field; legacy approvals retain their original experiment scope and corpus references.
 

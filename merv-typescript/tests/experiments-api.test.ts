@@ -124,6 +124,19 @@ test('Experiments strict transport keeps scoped records, replay, attempts and cu
         requestId: 'fake-exhibit',
       },
     ],
+    // The retired logic-graph role must stay unwritable at the transport schema.
+    [
+      'experiment.attach',
+      {
+        experimentId: e.id,
+        artifactId: 'art_missing',
+        role: 'graph',
+        path: 'graph.json',
+        attemptIndex: 1,
+        expectedRevision: 0,
+        requestId: 'retired-graph',
+      },
+    ],
   ] as const)
     assert.equal((await f.http(tool, args)).status, 400, tool);
   const other = await f.app.ctx.scope.bootstrap({
@@ -171,18 +184,21 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
   const f = await fixture(t),
     producer = await f.connect(f.producer.token),
     reviewer = await f.connect(f.reviewer.token);
-  const descriptions = (await producer.listTools()).tools.filter((tool) =>
-    tool.name.startsWith('experiment.'),
-  );
+  const catalog = (await producer.listTools()).tools;
+  const descriptions = catalog.filter((tool) => tool.name.startsWith('experiment.'));
   assert.deepEqual(descriptions.map((tool) => tool.name).sort(), [
     'experiment.attach',
     'experiment.create',
     'experiment.exhibit',
     'experiment.get_state',
-    'experiment.graph',
     'experiment.list',
     'experiment.transition',
   ]);
+  assert.deepEqual(
+    catalog.filter((tool) => tool.name.endsWith('.graph')).map((tool) => tool.name),
+    [],
+    'no tool authors or reads an agent-written graph',
+  );
   assert.equal(
     descriptions.find((tool) => tool.name === 'experiment.get_state')?.annotations?.readOnlyHint,
     true,
@@ -292,18 +308,6 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
     }),
     'json',
   );
-  await attach(
-    'graph',
-    'graph.json',
-    JSON.stringify({
-      version: 1,
-      nodes: [
-        { id: 'hypothesis', label: 'A improves held-out accuracy' },
-        { id: 'measurement', label: '80/100 versus 75/100' },
-      ],
-      edges: [{ from: 'measurement', to: 'hypothesis' }],
-    }),
-  );
   const preview = await f.call(producer, 'experiment.exhibit', { experimentId: e.id });
   assert.equal(preview.willPin, true);
   assert.ok(preview.startedAt);
@@ -330,10 +334,6 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
   );
   assert.equal(savedClaim.status, 'active');
   assert.equal(savedClaim.revision, 0);
-  assert.equal(
-    (await f.call(producer, 'experiment.graph', { experimentId: e.id })).attemptIndex,
-    1,
-  );
   const shell = (await f.http('ui.shell', {}, f.reader.token)).body.result;
   assert.equal(
     shell.rows.find((row: any) => row.id === 'experiments').status.count,

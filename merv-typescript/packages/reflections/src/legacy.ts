@@ -1,4 +1,5 @@
 // Versioned definitions retained for existing snapshot-based waves and assignment receipts.
+// The project-graph requirement below is historical: it is what these waves were actually asked for, and must never be copied into a new version.
 import type { TaskTypeDefinition, WorkflowDefinition } from '@merv/contracts';
 
 export const LENSES = [

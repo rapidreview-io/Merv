@@ -20,12 +20,6 @@ const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nThe change should improve validation accuracy.\n# Evaluation\nCompare two fixed seeds and matched controls.';
 const report =
   '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the retained observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
-const graph = JSON.stringify({
-  version: 1,
-  nodes: [{ id: 'observation', label: 'No improvement' }],
-  edges: [],
-  custom: { retained: true },
-});
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 async function fixture(t: TestContext) {
@@ -79,7 +73,7 @@ async function fixture(t: TestContext) {
     const artifact = await artifacts.create(producer, {
       title: role,
       content,
-      mediaType: role === 'result' || role === 'graph' ? 'application/json' : 'text/markdown',
+      mediaType: role === 'result' ? 'application/json' : 'text/markdown',
     });
     return await experiments.attach(producer, {
       experimentId: experiment.id,
@@ -87,7 +81,7 @@ async function fixture(t: TestContext) {
       expectedRevision: experiment.workflow.revision,
       artifactId: artifact.id,
       role,
-      path: `${role}.${role === 'graph' || role === 'result' ? 'json' : 'md'}`,
+      path: `${role}.${role === 'result' ? 'json' : 'md'}`,
       requestId: id(),
       ...extra,
     });
@@ -142,7 +136,6 @@ async function fixture(t: TestContext) {
   const results = async (e: Experiment) => {
     await attach(e, 'result', '{"accuracy":0.5,"nested":{"original":true}}');
     await attach(e, 'report', report);
-    await attach(e, 'graph', graph);
     return await transition(e, 'submit_results');
   };
   t.after(async () => {
@@ -237,7 +230,6 @@ test('Experiments run both independent gates, pin exact evidence/exhibit, and le
   assert.ok(e.attempt.startedAt);
   await f.attach(e, 'result', 'null');
   await f.attach(e, 'report', report);
-  await f.attach(e, 'graph', graph);
   const preview = await f.experiments.exhibit(f.producer, e.id);
   assert.equal(preview.willPin, true);
   assert.equal(preview.startedAt, e.attempt.startedAt);
@@ -253,9 +245,6 @@ test('Experiments run both independent gates, pin exact evidence/exhibit, and le
   assert.equal(e.conclusion, 'No improvement was observed.');
   assert.equal((await f.claims.get(f.producer, claim.id)).status, 'active');
   assert.equal((await f.claims.get(f.producer, claim.id)).revision, 0);
-  assert.deepEqual(((await f.experiments.graph(f.reader, e.id))!.document as any).custom, {
-    retained: true,
-  });
 });
 test('Attempt fail and needs_changes require explicit routes and distinguish new attempts from new rounds', async (t) => {
   const f = await fixture(t);
@@ -304,7 +293,6 @@ test('Design rejection starts a new attempt; invalid routes and self review cann
   e = (await f.reviews.apply(f.reviewer, input)) as Experiment;
   assert.equal(e.attempt.index, 2);
   assert.equal(e.workflow.state, 'planned');
-  assert.equal(await f.experiments.graph(f.reader, e.id), null);
 });
 test('Immutable role/path versions, strict attempt/revision and actual submitting author are enforced', async (t) => {
   const f = await fixture(t);
@@ -499,7 +487,7 @@ test('Source revocation is checked before replay and before a composed writer co
   assert.equal((await f.experiments.list(f.operator)).length, before);
   assert.ok(await f.scope.require(f.otherProducer, 'write'));
 });
-test('Workflow exit guidance checks the same plan, graph and exhibit gates without creating artifacts or events', async (t) => {
+test('Workflow exit guidance checks the same plan and exhibit gates without creating artifacts or events', async (t) => {
   const f = await fixture(t);
   let e = await f.create();
   await f.attach(e, 'plan', '# Summary\nDraft.\n# Objective & hypothesis\nA hypothesis.');
@@ -523,14 +511,10 @@ test('Workflow exit guidance checks the same plan, graph and exhibit gates witho
   e = await f.submitReview(await f.transition(e, 'submit_design'));
   await f.attach(e, 'result', '{"accuracy":0.5}');
   await f.attach(e, 'report', report.replace('metrics_exhibit.json', 'the local output'));
-  await f.attach(e, 'graph', '{"version":1,"nodes":[]}');
   unchanged = await before();
   assert.equal((await status('submit_results')).status, 'blocked');
-  assert.ok((await status('submit_results')).blockers.some((b) => b.message.includes('Graph')));
-  assert.deepEqual(await before(), unchanged);
-  await f.attach(e, 'graph', graph);
-  assert.equal((await status('submit_results')).status, 'blocked');
   assert.ok((await status('submit_results')).blockers.some((b) => b.message.includes('exhibit')));
+  assert.deepEqual(await before(), unchanged);
   await f.attach(e, 'report', report);
   unchanged = await before();
   assert.equal((await status('submit_results')).status, 'ready');
@@ -599,7 +583,6 @@ test('experiment results include reviewed paper edits without an extra assignmen
   const submit = async () => {
     await f.attach(e, 'result', '{"accuracy":0.5}');
     await f.attach(e, 'report', report);
-    await f.attach(e, 'graph', graph);
     const changes = await f.artifacts.create(f.producer, {
       title: 'Methods and results edits',
       mediaType: 'application/json',
