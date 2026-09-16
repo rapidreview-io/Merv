@@ -111,6 +111,16 @@ Data: Verified and entirely local. review.get supplies criteria, findings with c
 
 Why now: The verdict page is one of the four surfaces docs/UI_DESIGN.md says design effort belongs to, the exceptions line is four lines of derivation over data already on screen, and the two together make the cost of reviewing legible while it is being paid rather than only when it is finished.
 
+### process-track — How it got here: the derived process graph beside the gate, never inside the result (S)
+
+Sources: the 2026-09-16 founder ruling — every graph is derived from the record; Dagster — the run's own steps, drawn from the program rather than a drawing
+
+Surface: packages/ui/web/views/experiments.tsx — the What-happens-next section (the GateBox block), with the retired agent-authored renderer's old slot inside the scientific result left empty on purpose
+
+The retired logic graph sat inside the result and invited the reading that an arrow meant a claim had been accepted; the replacement is machinery and stands beside the gate, after What happens next and before the Record block. It draws the program's own states in reading order — each stamped with when the record first entered it and how many times it came back — then one lane per attempt over its revision interval, carrying the gates that were stepped through and the rounds sealed inside it, with `previousIndex` read aloud as `re-entered from attempt 1` so rework is a fact on the page rather than a gap in a sequence. Every sealed round names its verdict and, when a review returned it, the state it was returned to, which is the reverse edge the verdict labels. Carry one sentence at the foot, the inverse of the retired renderer's only good line: an edge shows the machinery stepped through a gate, and never that the science is right. The same derivation renders on the reflection and consolidation pages as rungs of text (views/research-programs.tsx, inside Guidance), because a ladder read as prose is still a process graph and is the right weight for that page. No canvas library, no minimap, nothing draggable, and nothing authored: if a state or an edge is not in the registered definition it cannot appear.
+
+Data: Verified. `workflow.process` (packages/workflows/src/process.ts, readOnly, `{ instanceId }`) supplies nodes, edges, traversals, the live outgoing-edge status and the dependency edges; `experiment.get_state` already supplies `attempts[]` with startedRevision, endedRevision and previousIndex and `submissions[]` with stage, round, subjectRevision and reviewId, and `review.list` the verdict and returnTo. No artifact, no `experiment.graph`, and nothing pinned — the graph is computed on every read because its sources are already immutable.
+
 ## Later
 
 ### split-pane — The queue stays mounted while you inspect a record (M)

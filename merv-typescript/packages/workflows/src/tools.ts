@@ -56,6 +56,17 @@ export const workflowToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.register({
+        name: 'workflow.process',
+        description:
+          "Read one instance's process graph, derived on read: the pinned definition's states and edges, which edges the record shows were actually taken and by whom, the live status and blockers of the current state's outgoing edges, and dependency edges to other instances. An edge means the machinery stepped through a gate; it never says a finding is correct. Per-record detail stays with the domain read.",
+        readOnly: true,
+        inputSchema: z.object({ instanceId: z.string().min(1) }).strict(),
+        handler: async (caller: Caller, input: { instanceId: string }) =>
+          await workflows.process(caller, input.instanceId),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'workflow.begin',
         description:
           'Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.',

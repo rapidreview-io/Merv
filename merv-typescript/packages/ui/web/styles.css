@@ -1921,3 +1921,89 @@ select.input,
   outline-offset: -2px;
   border-radius: var(--radius-sm);
 }
+
+/* Process view (derived, never authored). ---------------------------------
+   One row of the program's own states, then one lane per attempt. Plain DOM:
+   no canvas, no minimap, nothing draggable. A step says the machinery passed a
+   gate — colour here is the record kind's, never a judgement on the science. */
+.track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.track-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--kind, var(--line-strong));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--text-sm);
+}
+/* The states are a sequence, so the gap between them carries a mark. */
+.track-step + .track-step::before {
+  content: '→';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--faint);
+}
+.track-step--here {
+  border-color: var(--kind, var(--line-strong));
+  background: var(--bg-soft);
+}
+.track-step--unreached {
+  border-left-color: var(--line);
+  color: var(--muted);
+}
+.track-when {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.lane {
+  border-left: 2px solid var(--line);
+  padding-left: var(--space-4);
+}
+.lane-head {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.lane-step {
+  font-size: var(--text-sm);
+  margin: 2px 0;
+}
+.lane-rev {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--faint);
+  margin-right: 6px;
+}
+/* The same derivation read as prose: rungs, for a record whose shape is a ladder. */
+.ladder {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ladder-rung {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: var(--text-sm);
+  padding: 2px 0 2px var(--space-3);
+  border-left: 2px solid var(--line);
+}
+.ladder-rung--here {
+  border-left-color: var(--line-strong);
+}
+.ladder-rung--here > span:first-child {
+  font-weight: 600;
+}

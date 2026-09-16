@@ -55,7 +55,7 @@ import {
   validatePlan,
   validateReport,
 } from './evidence.js';
-import { ExperimentProgram } from './program.js';
+import { ExperimentProgram, programVersion, programWorkspace } from './program.js';
 import {
   attemptMetadata,
   migrateExperiments,
@@ -280,7 +280,7 @@ export class ExperimentService implements Experiments {
           503,
         );
         const workflow = await (
-          await this.program.handleFor(input.workspace === 'git' ? 2 : 1)
+          await this.program.handleFor(programVersion(input.workspace))
         ).start(
           caller,
           {
@@ -725,7 +725,7 @@ export class ExperimentService implements Experiments {
           p.revision === experiment.workflow.revision &&
           p.actorId === caller.actorId &&
           p.workflow.state === 'running' &&
-          p.workflow.version === 2 &&
+          programWorkspace(p.workflow.version) === 'git' &&
           !p.readOnly,
         'experiment_capture_provenance',
         'Submit from the exact attached running Git worker before final capture',

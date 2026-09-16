@@ -1,10 +1,20 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
-import { KV, LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
+import {
+  KV,
+  LoadState,
+  ObjId,
+  PageHeader,
+  StatusPill,
+  Table,
+  cx,
+  relativeTime,
+  words,
+} from '../components';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -108,6 +118,42 @@ function EvidenceLink({ artifact }: { artifact: Artifact }) {
   );
 }
 
+/**
+ * The ladder the program actually declares, as rungs of text: one rung per state in
+ * reading order, the rung it stands on named, a rung it came back to said plainly. A
+ * rung records that the machinery stepped through a gate, never that the work is right.
+ */
+function Ladder({ id }: { id: string }) {
+  const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 8000 });
+  if (!process.data || process.error) return null;
+  return (
+    <>
+      <ol className="ladder">
+        {process.data.nodes.map((node) => (
+          <li key={node.state} className={cx('ladder-rung', node.current && 'ladder-rung--here')}>
+            <span>{words(node.state)}</span>
+            <span className="muted">
+              {[
+                node.current ? 'where it stands now' : null,
+                node.entries > 1
+                  ? `entered ${node.entries} times`
+                  : node.firstEnteredAt
+                    ? `entered ${relativeTime(node.firstEnteredAt)}`
+                    : 'not entered',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="muted">
+        A rung shows the machinery stepped through a gate; it never says the work is right.
+      </p>
+    </>
+  );
+}
+
 function Guidance({ id }: { id: string }) {
   const guidance = useTool<WorkflowDecision>(
     'workflow.status_and_next',
@@ -130,6 +176,7 @@ function Guidance({ id }: { id: string }) {
           )}
         </>
       )}
+      <Ladder id={id} />
     </section>
   );
 }

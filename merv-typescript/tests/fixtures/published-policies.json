@@ -1,0 +1,371 @@
+{
+  "note": "Production truth as of 2026-09-16, plus the experiment@3/@4 rows this release publishes for the first time (published: false until it ships). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release.",
+  "definitions": [
+    {
+      "name": "consolidation",
+      "version": 1,
+      "fingerprint": "4f90ffce707af5a004cb61fb87b624c94bda62f8a9268a026c3a357cb21a55ad",
+      "published": true
+    },
+    {
+      "name": "consolidation",
+      "version": 2,
+      "fingerprint": "97f1a2bee981c7f52fdc97da3e73f62f2f7c3fbc9a2f6b8f5b7a09ee711e4fa3",
+      "published": true
+    },
+    {
+      "name": "experiment",
+      "version": 1,
+      "fingerprint": "1df619552febcdaa0d44beb5b06eb5973319629c4b6c46d06e088b38aac93a16",
+      "published": true
+    },
+    {
+      "name": "experiment",
+      "version": 2,
+      "fingerprint": "803522978c88c7c0d89aa450cf93155b5dae39bb06649ab96ef724c9d9ce58a6",
+      "published": true
+    },
+    {
+      "name": "reflection",
+      "version": 1,
+      "fingerprint": "1e676bc081355c3d915ab20784049ec8d62101159fcc17832936148cf484a3c7",
+      "published": true
+    },
+    {
+      "name": "reflection",
+      "version": 2,
+      "fingerprint": "696feae7210c1a3672f4d9508f08aae867126ff8d770272399368c4e625e9e62",
+      "published": true
+    },
+    {
+      "name": "reflection.lens",
+      "version": 1,
+      "fingerprint": "c25f7d0923d072dfa1ef3fa2d43c1adc3bd85732ca924202a944407802ea1e84",
+      "published": true
+    },
+    {
+      "name": "reflection.lens",
+      "version": 2,
+      "fingerprint": "d0fa31e08617ba348181ee951f9c0fe40c2e292116ded3d823b96af9fe526ee8",
+      "published": true
+    },
+    {
+      "name": "research",
+      "version": 2,
+      "fingerprint": "5788e88be748e0f60f9529e8e8307744eee40cb8bf85ac9f22730438d8cc4667",
+      "published": true
+    },
+    {
+      "name": "research",
+      "version": 3,
+      "fingerprint": "98b8d00fcd61aa5dacc762e44acd2fc43ff092a1583ef6b71203e7a05bde06c4",
+      "published": true
+    },
+    {
+      "name": "task",
+      "version": 1,
+      "fingerprint": "9900349a302eea82bc643a9ff747966aeda880b34a23667ca224aa2c2413a890",
+      "published": true
+    },
+    {
+      "name": "task",
+      "version": 2,
+      "fingerprint": "2d2e8d5e83a8fae2cd7ffcab5d8eb7c0703ed93911b626f75ad3d80d66f4ea00",
+      "published": true
+    },
+    {
+      "name": "experiment",
+      "version": 3,
+      "fingerprint": "785e5dd01afc81371c6ac71d34dfbdffc1add648d3f29d09ad0269bdf9689dc8",
+      "published": false
+    },
+    {
+      "name": "experiment",
+      "version": 4,
+      "fingerprint": "009e7b43302feb706520076d9605f795c3cb86872eecbe594f90b37e57a29eb4",
+      "published": false
+    }
+  ],
+  "policies": [
+    {
+      "workflow": "consolidation",
+      "version": 1,
+      "state": "consolidating",
+      "fingerprint": "76d6766b18810df1c748f687cf65eea2bff7df65e757eba7d46b90307bb485c6",
+      "published": true
+    },
+    {
+      "workflow": "consolidation",
+      "version": 1,
+      "state": "consolidation_review",
+      "fingerprint": "cbe56dab966b5fdf2904eb8fc4730c3794bb8641dff1aff0f1692349c7f6260f",
+      "published": true
+    },
+    {
+      "workflow": "consolidation",
+      "version": 2,
+      "state": "consolidating",
+      "fingerprint": "80c72399a432cb9352d862f988fa73bc2ba06df23f0a620fa00acdd6e37f334d",
+      "published": true
+    },
+    {
+      "workflow": "consolidation",
+      "version": 2,
+      "state": "consolidation_review",
+      "fingerprint": "02a8b001e3db56febe9db4e324db4356f05d2fb7ce0dd47bccab38ee819f7a19",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 1,
+      "state": "design_review",
+      "fingerprint": "a93ed496ffa6ae8958c3ad9abb7e21948265763a436c1e194a96d894697c17e2",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 1,
+      "state": "experiment_review",
+      "fingerprint": "a93ed496ffa6ae8958c3ad9abb7e21948265763a436c1e194a96d894697c17e2",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 1,
+      "state": "planned",
+      "fingerprint": "f9e2eb0891e32c0afff6917c515f4fbe976cec039fe117a4570904d2d90f2e77",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 1,
+      "state": "running",
+      "fingerprint": "1917ebb8b34502ecd1534797f817a4eef1f090946f369ae74e1fd124ea64ef81",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 2,
+      "state": "design_review",
+      "fingerprint": "a93ed496ffa6ae8958c3ad9abb7e21948265763a436c1e194a96d894697c17e2",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 2,
+      "state": "experiment_review",
+      "fingerprint": "dfe8d8474643abaac7dcb3714b0df1ca7b891120556954a7a05acff5e68cdad5",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 2,
+      "state": "planned",
+      "fingerprint": "f9e2eb0891e32c0afff6917c515f4fbe976cec039fe117a4570904d2d90f2e77",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 2,
+      "state": "running",
+      "fingerprint": "023f00b5179258f8a22705444ff7acf961bd606b3b954f4581832d9c4a746748",
+      "published": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 1,
+      "state": "in_review",
+      "fingerprint": "4a807a59b24a855388d9861e9d36af0e63aa1a7dfa07475b475571485aa54b64",
+      "published": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 1,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 1,
+      "state": "synthesizing",
+      "fingerprint": "fd06356d97e2a6db8c23ce5d8154a2de6f1ed19ea19bc0e7e294a0896f659cbf",
+      "published": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 2,
+      "state": "in_review",
+      "fingerprint": "765f26fc31dab023fbd7676c38ff38c7901c7ed318555ac0656f87a42389d1b6",
+      "published": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 2,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 2,
+      "state": "synthesizing",
+      "fingerprint": "dec725959810b5c636b232643f33bd0f2408d60c7312107b77659c7e0a0b359f",
+      "published": true
+    },
+    {
+      "workflow": "reflection.lens",
+      "version": 1,
+      "state": "reflecting",
+      "fingerprint": "0d8d9beae7ccf28ebad746b0e86834db4893b552e83671f57cd29559438e4195",
+      "published": true
+    },
+    {
+      "workflow": "reflection.lens",
+      "version": 2,
+      "state": "reflecting",
+      "fingerprint": "215ae15c87ea90885352b5223e4f8cb0c70bff57a5f60eeb7d51e4eadad50f8e",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 2,
+      "state": "consolidating",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 2,
+      "state": "defining",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 2,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 2,
+      "state": "researching",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 3,
+      "state": "consolidating",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 3,
+      "state": "defining",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 3,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 3,
+      "state": "researching",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": true
+    },
+    {
+      "workflow": "task",
+      "version": 1,
+      "state": "in_progress",
+      "fingerprint": "96fbd677734fdf5b121543a0a5c4dc560fc0c4309a4f87fbf6d1e96ec3ef8748",
+      "published": true
+    },
+    {
+      "workflow": "task",
+      "version": 1,
+      "state": "in_review",
+      "fingerprint": "aa05a6e3d358fb2db8c5aa613c0c3ca47083421f28c20c9623e6f0c0f73e60a8",
+      "published": true
+    },
+    {
+      "workflow": "task",
+      "version": 2,
+      "state": "in_progress",
+      "fingerprint": "96fbd677734fdf5b121543a0a5c4dc560fc0c4309a4f87fbf6d1e96ec3ef8748",
+      "published": true
+    },
+    {
+      "workflow": "task",
+      "version": 2,
+      "state": "in_review",
+      "fingerprint": "aa05a6e3d358fb2db8c5aa613c0c3ca47083421f28c20c9623e6f0c0f73e60a8",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 3,
+      "state": "design_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 3,
+      "state": "experiment_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 3,
+      "state": "planned",
+      "fingerprint": "e88702eb78f6ddcd2a051b26d30b5d38b41ba2900ab4c2154d4aa85beae39bf6",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 3,
+      "state": "running",
+      "fingerprint": "6d8e16fc603fc05c4a1a36a3c77e9c2a4c636973eeb4f209ce28376eaca5d30f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 4,
+      "state": "design_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 4,
+      "state": "experiment_review",
+      "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 4,
+      "state": "planned",
+      "fingerprint": "e88702eb78f6ddcd2a051b26d30b5d38b41ba2900ab4c2154d4aa85beae39bf6",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 4,
+      "state": "running",
+      "fingerprint": "6e698abc07bae5520280e25a3797f8bb1717f264e7222b42c1e50862c08d01d4",
+      "published": false
+    }
+  ]
+}

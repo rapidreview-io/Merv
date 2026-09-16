@@ -37,7 +37,7 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 63);
+    assert.equal(catalog.length, 64);
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     for (const name of [
@@ -52,7 +52,7 @@ test('assembled Cordis application completes MCP task review across two full res
       );
     assert.deepEqual(
       catalog.filter((tool) => tool.name.startsWith('workflow.')).map((tool) => tool.name),
-      ['workflow.assignment', 'workflow.begin', 'workflow.status_and_next'],
+      ['workflow.assignment', 'workflow.begin', 'workflow.process', 'workflow.status_and_next'],
     );
     for (const name of ['workflow.catalog', 'workflow.list', 'workflow.get', 'workflow.history']) {
       const result = await producer.callTool({ name, arguments: {} });

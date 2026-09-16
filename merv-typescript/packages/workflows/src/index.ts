@@ -43,7 +43,10 @@ import type {
   WorkflowReadReferences,
   WorkflowExecutionReferences,
   WorkflowCheckContext,
+  WorkflowHistoryEntry,
+  ProcessGraph,
 } from '@merv/contracts';
+import { processGraph } from './process.js';
 import { canonical, fingerprint, validateDefinition } from './definition.js';
 import {
   checkAssignment,
@@ -172,17 +175,7 @@ interface Registration {
   token: symbol;
   registrationId: string;
 }
-export interface WorkflowHistoryEntry {
-  instanceId: string;
-  revision: number;
-  action: string;
-  actorId: string;
-  requestId: string;
-  fromState: string | null;
-  toState: string;
-  data: Data;
-  createdAt: string;
-}
+export type { WorkflowHistoryEntry } from '@merv/contracts';
 
 /** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 export class WorkflowsService implements Workflows {
@@ -394,6 +387,26 @@ export class WorkflowsService implements Workflows {
     return [...this.registrations.values()]
       .map(({ definition }) => JSON.parse(canonical(definition)) as WorkflowDefinition)
       .sort((a, b) => a.name.localeCompare(b.name) || a.version - b.version);
+  }
+
+  /** Computed from records on every read; a stored copy could only drift from them. */
+  async process(caller: Caller, instanceId: string): Promise<ProcessGraph> {
+    this.assertOpen();
+    const decision = await this.evaluate(caller, instanceId);
+    const definition = this.catalog().find(
+      (item) => item.name === decision.workflow && item.version === decision.version,
+    );
+    check(definition, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+    const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
+    const { dependencies, dependents } = await this.dependencies(caller, instanceId);
+    return processGraph({
+      definition,
+      rules: registration?.policy?.actions ?? [],
+      history: await this.history(caller, instanceId),
+      decision,
+      dependencies,
+      dependents,
+    });
   }
 
   async evaluate(

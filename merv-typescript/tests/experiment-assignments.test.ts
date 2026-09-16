@@ -812,7 +812,7 @@ test('a lease freezes its project Introduction without changing the registered r
   assert.match(successor.session.assignment.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
 });
 
-test('Git Experiments preserve version 1 and wait for their exact late final capture before independent review', async (t) => {
+test('Git Experiments keep the scratch program version and wait for their exact late final capture before independent review', async (t) => {
   const f = await fixture(t);
   const oldInput = {
     name: 'legacy-workspace-input',
@@ -824,11 +824,11 @@ test('Git Experiments preserve version 1 and wait for their exact late final cap
     instanceId: old.id,
     expectedRevision: 0,
   });
-  assert.equal(old.workflow.version, 1);
+  assert.equal(old.workflow.version, 3);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
   const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 2);
+  assert.equal(experiment.workflow.version, 4);
   assert.equal(experiment.workspace, 'git');
   const pendingDesign = (await f.design(experiment)).experiment;
   assert.deepEqual(

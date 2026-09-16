@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Link, Route, Routes, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
-import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { ListFilters } from '../list-filters';
 import {
@@ -14,6 +14,7 @@ import {
   StatusPill,
   Table,
   cx,
+  kindStyle,
   relativeTime,
   shortId,
   useArtifacts,
@@ -216,15 +217,114 @@ function RoundsSpine({
   );
 }
 
+/**
+ * The machinery, kept out of the science: the program's own states in reading order,
+ * then one lane per attempt over its revision interval, carrying the gates the record
+ * stepped through and the rounds sealed inside it. Nothing here is authored — it is
+ * the definition and the record, derived on read.
+ */
+function ProcessTrack({
+  graph,
+  experiment: e,
+  reviews,
+}: {
+  graph: ProcessGraph;
+  experiment: Experiment;
+  reviews: Review[];
+}) {
+  const gates = graph.edges.flatMap((edge) =>
+    edge.traversals.map((crossing) => ({
+      key: `${edge.action}-${crossing.revision}`,
+      revision: crossing.revision,
+      line: `${words(edge.action)} · ${words(edge.from)} → ${words(edge.to)}`,
+      when: crossing.at,
+    })),
+  );
+  const sealed = (index: number) =>
+    e.submissions
+      .filter((item) => item.attemptIndex === index)
+      .map((item) => {
+        const review = reviews.find((entry) => entry.id === item.reviewId);
+        return {
+          key: item.id,
+          revision: item.subjectRevision,
+          line: `${STAGE[item.stage]} round ${item.round} sealed · ${words(
+            review?.verdict ?? review?.status ?? 'verdict not readable',
+          )}${review?.returnTo ? `, returned to ${words(review.returnTo)}` : ''}`,
+          when: item.createdAt,
+        };
+      });
+  return (
+    <section className="stack" aria-label="How this experiment moved through its gates">
+      <h2 className="section-title">How it got here</h2>
+      <ol className="track" style={kindStyle('experiments')}>
+        {graph.nodes.map((node) => (
+          <li
+            key={node.state}
+            className={cx(
+              'track-step',
+              node.current && 'track-step--here',
+              !node.firstEnteredAt && !node.current && 'track-step--unreached',
+            )}
+          >
+            <span>{words(node.state)}</span>
+            <span className="track-when">
+              {node.entries > 1
+                ? `entered ${node.entries} times`
+                : node.firstEnteredAt
+                  ? relativeTime(node.firstEnteredAt)
+                  : 'not entered'}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {e.attempts.map((attempt) => (
+        <div className="lane" key={attempt.index}>
+          <p className="lane-head">
+            Attempt {attempt.index} · revisions {attempt.startedRevision}–
+            {attempt.endedRevision ?? 'current'}
+            {attempt.previousIndex !== null &&
+              ` · re-entered from attempt ${attempt.previousIndex}`}
+          </p>
+          {[
+            // Attempt intervals are disjoint, so the gate that ended one attempt opens
+            // the lane of the attempt it created — which is what a re-entry looks like.
+            ...gates.filter(
+              (gate) =>
+                gate.revision >= attempt.startedRevision &&
+                gate.revision <= (attempt.endedRevision ?? graph.revision),
+            ),
+            ...sealed(attempt.index),
+          ]
+            .sort((a, b) => a.revision - b.revision)
+            .map((step) => (
+              <p className="lane-step" key={step.key}>
+                <span className="lane-rev tabular">r{step.revision}</span> {step.line}{' '}
+                <span className="muted" title={step.when}>
+                  {relativeTime(step.when)}
+                </span>
+              </p>
+            ))}
+        </div>
+      ))}
+      <p className="muted">
+        An edge shows the machinery stepped through a gate; it never says the science is right.
+      </p>
+    </section>
+  );
+}
+
 export function ExperimentRecord({
   experiment: e,
   guidance,
+  process,
   reviews,
   exhibit,
   nameOf,
 }: {
   experiment: Experiment;
   guidance?: WorkflowDecision;
+  process?: ProcessGraph;
   reviews?: Review[];
   exhibit?: ExperimentExhibit;
   nameOf(id: string | null | undefined): string | undefined;
@@ -310,6 +410,7 @@ export function ExperimentRecord({
           <GateBox decision={decision} />
         </section>
       )}
+      {process && <ProcessTrack graph={process} experiment={e} reviews={mine} />}
       <section className="stack" aria-label="Experiment record details">
         <h2 className="section-title">Record</h2>
         {e.details && <p className="record-prose">{e.details}</p>}
@@ -437,6 +538,7 @@ function ExperimentDetail({ row }: ViewProps) {
     { instanceId: id },
     { every: live },
   );
+  const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: live });
   const reviews = useTool<Review[]>('review.list', {}, { every: live });
   const exhibit = useTool<ExperimentExhibit>(
     state === 'running' ? 'experiment.exhibit' : null,
@@ -448,13 +550,16 @@ function ExperimentDetail({ row }: ViewProps) {
     <div className="page-stage stack stack--lg">
       <LoadState
         loading={experiment.loading}
-        error={experiment.error ?? guidance.error ?? reviews.error ?? exhibit.error}
+        error={
+          experiment.error ?? guidance.error ?? process.error ?? reviews.error ?? exhibit.error
+        }
         back={experiment.data ? undefined : { to: row.path, label: row.label }}
       />
       {experiment.data && (
         <ExperimentRecord
           experiment={experiment.data}
           guidance={guidance.data}
+          process={process.data}
           reviews={reviews.data}
           exhibit={exhibit.data}
           nameOf={nameOf}

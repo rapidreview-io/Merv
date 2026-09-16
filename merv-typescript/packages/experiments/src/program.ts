@@ -38,6 +38,17 @@ type ActiveState = (typeof activeStates)[number];
 const reviewing = (state: string) => state === 'design_review' || state === 'experiment_review';
 const producing = (state: string) => state === 'planned' || state === 'running';
 
+/**
+ * Registered program versions by workspace kind. A published execution policy is immutable, so
+ * versions 1 and 2 are frozen history — their policies stay byte-identical, retired grants
+ * included — and any policy change publishes a new version. New experiments start on 3 or 4.
+ */
+const workspaces: Record<number, 'none' | 'git'> = { 1: 'none', 2: 'git', 3: 'none', 4: 'git' };
+const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
+const frozenHistory = (version: number) => version <= 2;
+export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
+export const programVersion = (workspace?: string): number => (workspace === 'git' ? 4 : 3);
+
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
   name: 'experiment',
   version: 1,
@@ -168,10 +179,9 @@ const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
 
 /** One owned program: workflow, context and lease rules. It never launches or authenticates a session. */
 export class ExperimentProgram {
-  handle!: Awaited<ReturnType<Workflows['register']>>;
-  private gitHandle?: Awaited<ReturnType<Workflows['register']>>;
+  private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   handleFor(version: number) {
-    const handle = version === 1 ? this.handle : version === 2 ? this.gitHandle : undefined;
+    const handle = this.handles.get(version);
     check(
       handle,
       'experiment_version_unavailable',
@@ -240,14 +250,16 @@ DROP TABLE experiment_leases_backup;`,
               EXPERIMENT_RECIPES.find((recipe) => recipe.name === recipeNames[state])!,
             ),
           );
-        this.handle = await host.workflows.register(EXPERIMENT_WORKFLOW, this.policy(1));
-        this.gitHandle = await host.workflows.register(
-          { ...EXPERIMENT_WORKFLOW, version: 2 },
-          this.policy(2),
-        );
+        for (const version of PROGRAM_VERSIONS)
+          this.handles.set(
+            version,
+            await host.workflows.register(
+              { ...EXPERIMENT_WORKFLOW, version },
+              this.policy(version),
+            ),
+          );
       } catch (error) {
-        this.handle?.dispose();
-        this.gitHandle?.dispose();
+        for (const handle of this.handles.values()) handle.dispose();
         for (const context of this.contexts.values()) context.dispose();
         throw error;
       }
@@ -257,8 +269,8 @@ DROP TABLE experiment_leases_backup;`,
   dispose(): void {
     if (this.closed) return;
     this.closed = true;
-    this.handle.dispose();
-    this.gitHandle?.dispose();
+    for (const handle of this.handles.values()) handle.dispose();
+    this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();
     this.contexts.clear();
   }
@@ -434,7 +446,7 @@ DROP TABLE experiment_leases_backup;`,
         p.actorId === submission.producerId &&
         p.revision === submission.subjectRevision - 1 &&
         p.workflow.name === 'experiment' &&
-        p.workflow.version === 2 &&
+        programWorkspace(p.workflow.version) === 'git' &&
         p.workflow.state === 'running' &&
         !p.readOnly,
       'experiment_capture_provenance',
@@ -735,11 +747,20 @@ DROP TABLE experiment_leases_backup;`,
       state === 'planned'
         ? ['submit_design', 'abandon', 'mark_failed']
         : ['submit_results', 'retry_running', 'abandon', 'mark_failed'];
-    const roles = state === 'planned' ? ['plan'] : ['result', 'report'];
+    // Frozen history: versions 1 and 2 keep the retired experiment.graph grant and role, because a
+    // published execution policy can never change. No live session can call a retired tool.
+    const frozen = frozenHistory(version);
+    const roles =
+      state === 'planned'
+        ? ['plan']
+        : frozen
+          ? ['result', 'report', 'graph']
+          : ['result', 'report'];
+    const git = programWorkspace(version) === 'git';
     return {
       readOnly: reviewing(state),
       workspace:
-        version === 2 && state === 'running'
+        git && state === 'running'
           ? {
               mode: 'persistent',
               namespace: 'experiments',
@@ -748,7 +769,7 @@ DROP TABLE experiment_leases_backup;`,
               retain: true,
               advancesCentral: false,
             }
-          : version === 2 && state === 'experiment_review'
+          : git && state === 'experiment_review'
             ? {
                 mode: 'ephemeral',
                 namespace: 'experiment-reviews',
@@ -764,6 +785,7 @@ DROP TABLE experiment_leases_backup;`,
         ),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
+        ...(frozen ? [grant('experiment.graph', experiment)] : []),
         grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),

@@ -293,6 +293,7 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       list: f.workflows.list.bind(f.workflows),
       history: f.workflows.history.bind(f.workflows),
       catalog: f.workflows.catalog.bind(f.workflows),
+      process: f.workflows.process.bind(f.workflows),
       evaluate: f.workflows.evaluate.bind(f.workflows),
       overview: f.workflows.overview.bind(f.workflows),
       dependencies: f.workflows.dependencies.bind(f.workflows),

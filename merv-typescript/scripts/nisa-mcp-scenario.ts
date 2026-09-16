@@ -308,9 +308,9 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     const bobClient = await connect(apiUrl + '/mcp', identity.bob.token);
     const observer = await connect(apiUrl + '/mcp', identity.observer.token);
     const before = (await aliceClient.listTools()).tools;
-    assert.equal(before.length, 55);
+    assert.equal(before.length, 56);
     assert.ok(rawTools.every((name) => before.some((tool) => tool.name === mounted(name))));
-    assert.equal((await observer.listTools()).tools.length, 48);
+    assert.equal((await observer.listTools()).tools.length, 49);
     assert.equal((await call(observer, mounted('search'), { query: 'attention' })).isError, true);
     for (const tool of directCatalog)
       assert.deepEqual(
@@ -367,7 +367,7 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     checks.otherAccountCannotObserveOrCancel = true;
     await running.ctx.mounts.setEnabled('nisa', false);
     const during = (await aliceClient.listTools()).tools.map(({ name }) => name);
-    assert.equal(during.length, 49);
+    assert.equal(during.length, 50);
     assert.ok(during.every((name) => !name.startsWith('_nisa.')));
     assert.equal(
       errorCode(await call(aliceClient, mounted('qa.get'), { operationId: operation.operationId })),

@@ -1,9 +1,12 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers the production `experiment@1` program
-and explicit Git `experiment@2` program with Workflows, plus four context recipes
-with Context Builder. Creating an
+independent review gates. It registers four program versions with Workflows —
+scratch `experiment@3` and explicit Git `experiment@4` for new experiments, plus
+frozen `experiment@1` and `experiment@2` for instances pinned to them — and four
+context recipes with Context Builder. A published execution policy is immutable,
+so versions 1 and 2 stay byte-identical (retired grants included) and any policy
+change publishes a new version instead of editing an old one. Creating an
 experiment starts planning; it does not launch a process or decide whether a
 scientific claim is true.
 

@@ -107,10 +107,27 @@ mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && ch
 printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
 printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" > build-manifest.json
 (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
+H=starting; R=0
 for i in $(seq 1 60); do
   H=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
-  [ "$H" = healthy ] && break; sleep 5
+  R=$(docker inspect --format '{{.RestartCount}}' merv-typescript-control-1 2>/dev/null || echo 0)
+  [ "$H" = healthy ] && break
+  [ "$R" -ge 3 ] && break
+  sleep 5
 done
+if [ "$H" != healthy ]; then
+  # The new image never became healthy (or is restart-looping): put the previous image back before reporting.
+  LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
+  (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
+  P=starting
+  for i in $(seq 1 24); do
+    P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
+    [ "$P" = healthy ] && break; sleep 5
+  done
+  printf '{"release":"%s","image":"%s","imageId":"%s","rolledBack":true,"containerHealth":"%s","restarts":"%s","previousImage":"%s","previousHealth":"%s","log":"%s"}\\n' \\
+    "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$P" "$LOG" > deploy-status.json
+  exit 1
+fi
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 HEALTH=$(code http://127.0.0.1:3081/health)
 UI=$(code http://127.0.0.1:3081/ui/)
@@ -190,6 +207,19 @@ const release = resume ?? local.release;
 if (local) upload(local);
 const vm = waitForVm(release);
 console.log('\n' + JSON.stringify(vm));
+if (vm.rolledBack) {
+  // The VM already restored the previous image; record the failure and stop.
+  appendFileSync(
+    join(root, 'deploy/RELEASES.md'),
+    `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | — | FAILED | container ${vm.containerHealth} after ${vm.restarts} restarts, rolled back automatically (previous image ${vm.previousHealth}); log: ${vm.log.slice(0, 300)} | rollback \`${vm.previousImage}\` applied |\n`,
+  );
+  execFileSync('npx', ['prettier', '--write', 'deploy/RELEASES.md'], {
+    cwd: root,
+    stdio: 'ignore',
+  });
+  console.error(`release ${release} failed and was rolled back to ${vm.previousImage}`);
+  process.exit(1);
+}
 const pub = await publicChecks();
 console.log(JSON.stringify(pub));
 const ok =

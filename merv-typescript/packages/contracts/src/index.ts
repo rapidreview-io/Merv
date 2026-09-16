@@ -29,8 +29,8 @@ export type {
   CodeCommandCompletion,
 } from './code.js';
 import type { Data, Json } from './data.js';
-import type { WorkflowSnapshot } from './workflow-models.js';
-export type { WorkflowSnapshot } from './workflow-models.js';
+import type { WorkflowHistoryEntry, WorkflowSnapshot } from './workflow-models.js';
+export type { WorkflowHistoryEntry, WorkflowSnapshot } from './workflow-models.js';
 export type {
   WorkflowReference,
   WorkflowBlocker,
@@ -39,6 +39,11 @@ export type {
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
+  ProcessTraversal,
+  ProcessNode,
+  ProcessEdge,
+  ProcessDependencyEdge,
+  ProcessGraph,
 } from './workflow-guidance.js';
 import type {
   WorkflowReference,
@@ -46,6 +51,7 @@ import type {
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
+  ProcessGraph,
 } from './workflow-guidance.js';
 export class MervError extends Error {
   constructor(
@@ -757,8 +763,10 @@ export interface Workflows {
   ): Promise<WorkflowSnapshot>;
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
   list(caller: Caller): Promise<WorkflowSnapshot[]>;
-  history(caller: Caller, instanceId: string): Promise<unknown[]>;
+  history(caller: Caller, instanceId: string): Promise<WorkflowHistoryEntry[]>;
   catalog(): WorkflowDefinition[];
+  /** Derived on read from the definition and the record; never pinned, never authored. */
+  process(caller: Caller, instanceId: string): Promise<ProcessGraph>;
   evaluate(
     caller: Caller,
     instanceId: string,
