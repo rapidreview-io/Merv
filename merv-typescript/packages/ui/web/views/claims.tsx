@@ -1,8 +1,12 @@
 import { useId, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
+import type { Experiment } from '@merv/experiments/models';
 import { useScopeVersion, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, StatusPill, relativeTime } from '../components';
+import { LoadState, ObjId, StatusPill, relativeTime, words } from '../components';
 import { useSession } from '../session';
+import type { Row } from '../shell-types';
+import type { ViewProps } from './index';
 
 const statuses = ['draft', 'active', 'supported', 'weakened', 'contradicted', 'abandoned'] as const;
 const confidences = ['low', 'medium', 'high'] as const;
@@ -19,6 +23,37 @@ interface Claim {
   createdAt: string;
   updatedAt: string;
 }
+/** A review is joined to its subject alone: review.claimId is a reviewer's lease, not a claim. */
+interface SubjectReview {
+  subjectId: string;
+  subjectRevision: number;
+  verdict: 'pass' | 'needs_changes' | 'fail' | null;
+  createdAt: string;
+}
+/** The only standing history the server keeps is the before block on a claim.updated event. */
+interface StandingChange {
+  id: number;
+  type: string;
+  subjectId: string;
+  data: {
+    before?: { status?: string; confidence?: string } | null;
+    status?: string;
+    confidence?: string;
+  };
+  createdAt: string;
+}
+/** One experiment that names this claim, reduced to the sentence the book prints. */
+interface Testing {
+  id: string;
+  name: string;
+  state: string;
+  verdict: string | null;
+  href: string;
+}
+
+const stopped = new Set(['complete', 'abandoned', 'failed']);
+const standing = (status?: string, confidence?: string) =>
+  [status && words(status), confidence].filter(Boolean).join(', ');
 
 function useClaimMutation(
   tool: 'claim.create' | 'claim.update',
@@ -183,12 +218,20 @@ function EditClaim({
   );
 }
 
-function ClaimCard({
+/**
+ * One entry in the book: the statement, the standing a person set, and beneath it
+ * the machine evidence. The two are printed side by side and never reconciled here.
+ */
+function ClaimEntry({
   claim,
+  tests,
+  changes,
   writable,
   reload,
 }: {
   claim: Claim;
+  tests: Testing[];
+  changes: StandingChange[];
   writable: boolean;
   reload: () => void;
 }) {
@@ -197,76 +240,119 @@ function ClaimCard({
   const [conflictRevision, setConflictRevision] = useState<number>();
   const needsRefresh = conflictRevision !== undefined && claim.revision <= conflictRevision;
   return (
-    <article className="record stack" aria-labelledby={heading}>
-      <div className="cluster">
-        <h2 id={heading}>
-          <ObjId id={claim.id} />
-        </h2>
-        <StatusPill value={claim.status} />
-        <span className="muted">{claim.confidence} confidence</span>
-      </div>
-      <p className="claims-text">{claim.statement}</p>
-      {claim.scope && (
-        <div>
-          <h3 className="label">Scope</h3>
-          <p className="claims-text">{claim.scope}</p>
-        </div>
-      )}
-      <p className="faint">
-        Revision {claim.revision} · Updated {relativeTime(claim.updatedAt)}
+    <article className="claim" aria-labelledby={heading}>
+      <h2 className="claim-statement" id={heading}>
+        {claim.statement}
+      </h2>
+      <p className="claim-standing">
+        <StatusPill value={claim.status} /> · {claim.confidence} confidence
+        {claim.scope && ` · ${claim.scope}`} <ObjId id={claim.id} />
       </p>
+      {tests.map((test) => (
+        <p className="claim-line" key={test.id}>
+          <Link to={test.href}>{test.name}</Link> · {words(test.state)}
+          {test.verdict && ` · verdict ${words(test.verdict)}`}
+        </p>
+      ))}
+      {changes.map((change) => (
+        <p className="claim-line claim-line--quiet" key={change.id}>
+          {standing(change.data.before?.status, change.data.before?.confidence)} →{' '}
+          {standing(change.data.status ?? claim.status, change.data.confidence ?? claim.confidence)}{' '}
+          · <span title={change.createdAt}>{relativeTime(change.createdAt)}</span>
+        </p>
+      ))}
       {conflictRevision !== undefined && (
         <p className="error-message" role="alert">
-          This claim changed while you were editing. Your changes were not applied. Review the
-          latest values before starting a new edit.
+          This claim changed while you were editing. Your changes were not applied. Read the
+          standing again before starting a new edit.
         </p>
       )}
-      {needsRefresh && (
-        <div className="cluster">
-          <button className="btn btn--sm" onClick={reload}>
-            Load latest claim
-          </button>
-        </div>
-      )}
-      {writable &&
-        (editing ? (
-          <EditClaim
-            claim={claim}
-            onCancel={() => setEditing(false)}
-            onSaved={() => {
-              setEditing(false);
-              setConflictRevision(undefined);
-              reload();
-            }}
-            onConflict={(revision) => {
-              setEditing(false);
-              setConflictRevision(revision);
-              reload();
-            }}
-          />
-        ) : (
-          <div className="cluster">
+      {editing ? (
+        <EditClaim
+          claim={claim}
+          onCancel={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            setConflictRevision(undefined);
+            reload();
+          }}
+          onConflict={(revision) => {
+            setEditing(false);
+            setConflictRevision(revision);
+            reload();
+          }}
+        />
+      ) : (
+        writable && (
+          <p className="claim-edit">
             <button
-              className="btn btn--sm"
+              type="button"
+              className="btn-text"
               disabled={needsRefresh}
               onClick={() => {
                 setEditing(true);
                 setConflictRevision(undefined);
               }}
             >
-              Edit status and confidence
+              Edit standing
             </button>
-          </div>
-        ))}
+            {needsRefresh && (
+              <button type="button" className="btn-text" onClick={reload}>
+                Load latest claim
+              </button>
+            )}
+          </p>
+        )
+      )}
     </article>
   );
 }
 
-function ClaimsPage() {
+function ClaimsPage({ rows }: { rows: Row[] }) {
   const { actor } = useSession();
+  // Evidence is read once for the page and only while the row that owns it is registered;
+  // where a row is missing the sentence it would carry is absent, never a zero.
+  const experiments = rows.find((row) => row.view.kind === 'experiments');
   const claims = useTool<Claim[]>('claim.list', {}, { every: 10000 });
+  const tested = useTool<Experiment[]>(experiments ? 'experiment.list' : null);
+  const reviews = useTool<SubjectReview[]>(
+    rows.some((row) => row.view.kind === 'reviews') ? 'review.list' : null,
+  );
+  const activity = useTool<StandingChange[]>(
+    rows.some((row) => row.view.kind === 'feed') ? 'feed.activity' : null,
+  );
   const [creating, setCreating] = useState(false);
   const writable = actor.role === 'operator' || actor.role === 'producer';
+  const verdictOf = (experimentId: string) =>
+    (reviews.data ?? [])
+      .filter((review) => review.subjectId === experimentId && review.verdict)
+      .sort(
+        (a, b) => b.subjectRevision - a.subjectRevision || b.createdAt.localeCompare(a.createdAt),
+      )[0]?.verdict ?? null;
+  const testsOf = (claimId: string): Testing[] => {
+    const path = experiments?.path;
+    if (!path) return [];
+    return (
+      (tested.data ?? [])
+        .filter((experiment) => experiment.testedClaimIds.includes(claimId))
+        .map((experiment) => ({
+          id: experiment.id,
+          name: experiment.name,
+          state: experiment.workflow.state,
+          verdict: verdictOf(experiment.id),
+          href: `${path}/${experiment.id}`,
+        }))
+        // Work still in motion is read before work that has stopped.
+        .sort((a, b) => Number(stopped.has(a.state)) - Number(stopped.has(b.state)))
+    );
+  };
+  const changesOf = (claimId: string) =>
+    (activity.data ?? [])
+      .filter(
+        (event) =>
+          event.type === 'claim.updated' && event.subjectId === claimId && event.data?.before,
+      )
+      .reverse();
   return (
     <div className="page-stage stack stack--lg">
       {writable && (
@@ -294,17 +380,28 @@ function ClaimsPage() {
         error={claims.error}
         empty={claims.data?.length === 0}
         emptyTitle="No claims yet"
-        emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here."
+        emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here. A completed experiment does not change its standing automatically: that stays a person's call."
       />
-      {claims.data?.map((claim) => (
-        <ClaimCard key={claim.id} claim={claim} writable={writable} reload={claims.reload} />
-      ))}
+      {claims.data && claims.data.length > 0 && (
+        <div className="claim-book">
+          {claims.data.map((claim) => (
+            <ClaimEntry
+              key={claim.id}
+              claim={claim}
+              tests={testsOf(claim.id)}
+              changes={changesOf(claim.id)}
+              writable={writable}
+              reload={claims.reload}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-export function ClaimsView() {
+export function ClaimsView({ shell }: ViewProps) {
   const epoch = useScopeVersion();
   const { actor, project } = useSession();
-  return <ClaimsPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} />;
+  return <ClaimsPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} rows={shell.rows} />;
 }

@@ -15,16 +15,6 @@ export const feedUiPlugin = {
         view: { kind: 'feed' },
       }),
     );
-    ctx.effect(() =>
-      ctx.ui.register({
-        id: 'activity',
-        label: 'Activity',
-        group: 'activity',
-        order: 31,
-        path: '/activity',
-        view: { kind: 'activity' },
-      }),
-    );
   },
 };
 export default feedUiPlugin;

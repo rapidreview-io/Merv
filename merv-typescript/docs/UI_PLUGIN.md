@@ -12,7 +12,7 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 | `@merv/reviews/ui`   | `reviews-ui`   | `reviews`, `ui`   | Reviews (count of unclaimed and started reviews)                                    |
 | `@merv/artifacts/ui` | `artifacts-ui` | `artifacts`, `ui` | Artifacts                                                                           |
 | `@merv/sessions/ui`  | `sessions-ui`  | `sessions`, `ui`  | Sessions, runner presence and project dispatch controls                             |
-| `@merv/feed/ui`      | `feed-ui`      | `feed`, `ui`      | Feed, Activity                                                                      |
+| `@merv/feed/ui`      | `feed-ui`      | `feed`, `ui`      | Feed (posts and state changes as one column)                                        |
 | `@merv/mounts/ui`    | `mounts-ui`    | `mounts`, `ui`    | Connections (degraded when any mount is not ready; data via `ui.read`)              |
 
 Every entry is `required: false`. The default configuration lists all of them except `mounts-ui`, which belongs next to a `mounts` entry.
@@ -34,7 +34,7 @@ ctx.effect(() =>
 );
 ```
 
-The registration lives inside a Cordis effect, so Cordis disposes it when the adapter unloads. Disabling `feed` suspends `feed-ui`, and the next `ui.shell` call no longer lists Feed or Activity. The bundle polls `ui.shell` every four seconds, so the sidebar follows within that interval. A row whose `view.kind` the bundle does not know still renders a page that says so.
+The registration lives inside a Cordis effect, so Cordis disposes it when the adapter unloads. Disabling `feed` suspends `feed-ui`, and the next `ui.shell` call no longer lists Feed. The bundle polls `ui.shell` every four seconds, so the sidebar follows within that interval. A row whose `view.kind` the bundle does not know still renders a page that says so.
 
 Domain plugins never import the UI. Adapters import only the public `@merv/ui/types` contract, and the boundary test holds `ui.ts` adapters to the same rules as `tools.ts` adapters: inject the owner and the registry, nothing else.
 

@@ -5,7 +5,7 @@ import { ListFilters } from '../list-filters';
 import { KV, LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
 import { useActorNames } from './people';
 import { ArtifactBody } from './artifacts';
-import { ReviewCard, type Review } from './reviews';
+import { CriterionRows, type Review } from './reviews';
 import type { ViewProps } from './index';
 import type {
   WorkflowDecision,
@@ -266,7 +266,7 @@ function TaskDetail({ row }: ViewProps) {
         <h2 className="section-title">Review</h2>
         {!t.reviewId && <div className="empty">No review has been requested.</div>}
         {t.reviewId && !review.data && <LoadState loading={review.loading} error={review.error} />}
-        {review.data && <ReviewCard review={review.data} nameOf={nameOf} />}
+        {review.data && <CriterionRows review={review.data} head />}
       </section>
       <section className="stack">
         <h2 className="section-title">Brief</h2>

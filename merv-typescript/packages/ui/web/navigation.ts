@@ -30,7 +30,6 @@ const SECTION_OF_VIEW: Record<string, string> = {
   code: 'operations',
   artifacts: 'activity',
   feed: 'activity',
-  activity: 'activity',
   'legacy-history': 'research',
 };
 

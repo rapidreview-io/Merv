@@ -3,7 +3,7 @@ import type { Row, ShellData } from '../shell';
 import { TasksView } from './tasks';
 import { ReviewsView } from './reviews';
 import { ArtifactsView } from './artifacts';
-import { FeedView, ActivityView } from './feed';
+import { FeedView } from './feed';
 import { PeopleView } from './people';
 import { ConnectionsView } from './connections';
 import { SessionsView } from './sessions';
@@ -27,7 +27,6 @@ const views: Record<string, ComponentType<ViewProps>> = {
   reviews: ReviewsView,
   artifacts: ArtifactsView,
   feed: FeedView,
-  activity: ActivityView,
   people: PeopleView,
   connections: ConnectionsView,
   settings: SettingsView,

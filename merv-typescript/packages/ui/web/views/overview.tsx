@@ -4,66 +4,84 @@ import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError, type Loaded, type Project } from '../api';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
-import { ObjId, StatusPill, relativeTime } from '../components';
+import { ObjId, StatusPill, relativeTime, shortId } from '../components';
 import { useActorNames } from './people';
 
 /**
- * The morning page: what needs me, what is running, what has been recorded.
- * One column of plain rows under three headings. Every source is gated on its
- * owning ui.shell row, so it goes quiet with its plugin while the Hooks below
- * keep their order. An absent value is never rendered as zero and an error is
- * never rendered as empty.
+ * The morning page: what needs me, what is running, what has been recorded. One
+ * column of serif names under the server's own sentences, ordered by whose move
+ * each is (see `whose`). Every source is gated on its owning ui.shell row, so it
+ * goes quiet with its plugin while the Hooks keep their order. An absent value is
+ * never rendered as zero and an error is never rendered as empty.
  */
 
-interface TaskLite {
+type Flow = { state: string; updatedAt: string };
+type TaskLite = {
   id: string;
   title: string;
-  workflow: { state: string; updatedAt: string };
-}
-interface ExperimentLite {
-  id: string;
-  name: string;
-  attempt: { index: number };
-  workflow: { state: string; updatedAt: string };
-}
-interface ReviewLite {
+  producerId: string;
+  guidance: WorkflowDecision;
+  workflow: Flow;
+};
+/** A cycle, and — with its attempt — an experiment: what an open line needs. */
+type CycleLite = { id: string; name: string; ownerId: string; workflow: Flow };
+type ExperimentLite = CycleLite & { attempt: { index: number } };
+type ReviewLite = {
   id: string;
   subjectId: string;
   status: string;
   reviewerId: string | null;
   createdAt: string;
-}
-interface ClaimLite {
+};
+type ClaimLite = {
   id: string;
   statement: string;
   status: string;
   confidence: string;
   updatedAt: string;
-}
-interface PostLite {
-  id: string;
-  authorId: string;
-  body: string;
-  createdAt: string;
-}
-interface AgentLite {
+};
+type PostLite = { id: string; authorId: string; body: string; createdAt: string };
+type AgentLite = {
   id: string;
   name: string;
   status: string;
   currentExecutionId: string | null;
   currentAssignment: { label: string } | null;
+};
+type SessionsLite = { agents?: AgentLite[]; runners: { live: boolean }[]; queueTotal: number };
+/** The three lists the work blocks share, read once for the whole page. */
+type List<T> = { row?: Row; load: Loaded<T[]> };
+type Work = { experiments: List<ExperimentLite>; tasks: List<TaskLite>; cycles: List<CycleLite> };
+/** An open record, and once its guidance is in, the sentences it stands on. */
+interface Line {
+  id: string;
+  name: ReactNode;
+  to: string;
+  at: string;
+  mine: boolean;
+  state?: string;
+  meta?: ReactNode;
+  says?: string[];
 }
-interface SessionsLite {
-  agents?: AgentLite[];
-  runners: { live: boolean }[];
-  queueTotal: number;
-}
-/** The two lists the work blocks share, read once for the whole page. */
-interface Work {
-  experiments: { row?: Row; load: Loaded<ExperimentLite[]> };
-  tasks: { row?: Row; load: Loaded<TaskLite[]> };
+/** Whose move a record is. Anything still moving under its own power is `moving`. */
+type Whose = 'yours' | 'agent' | 'nobody' | 'unknown' | 'moving';
+type Lines = Record<Whose, Line[]>;
+interface Standing {
+  lines: Lines;
+  reviews?: Loaded<ReviewLite[]>;
+  loads: Loaded<unknown>[];
 }
 type Named = (id: string | null | undefined) => string | undefined;
+
+/** Guidance is asked for one record at a time, so the page asks for a few. */
+const CAP = 8;
+/** Codes meaning another role must act, as scope.require and the policies throw them. */
+const ROLE = ['forbidden', 'membership_required', 'stale_lease'];
+const ENDED = ['complete', 'abandoned', 'failed'];
+const KIND: Record<string, string> = {
+  design_review: 'Design review',
+  experiment_review: 'Results review',
+};
 
 const rowOf = (rows: Row[], kind: string) => rows.find((row) => row.view.kind === kind);
 const newest = <T,>(items: T[], at: (item: T) => string) =>
@@ -76,7 +94,34 @@ const when = (iso: string) => (
 const busy = (loads: { loading: boolean; error?: ApiError }[]) =>
   loads.some((load) => load.loading || !!load.error);
 
-/** One line: a title link, a quiet meta, a pill only where the state adds something. */
+/** The instruction, blockers that do not repeat it, then what it waits on by name. */
+const sentences = ({ instruction, blockers, dependencies }: WorkflowDecision) => {
+  // The dependency line only adds names the instruction does not already carry.
+  const waits = dependencies.filter((item) => !item.settled && !instruction.includes(item.name));
+  const on = waits.map((item) => `${item.name} (${item.state})`).join(', ');
+  return [instruction, ...blockers.map((item) => item.message)]
+    .concat(waits.length ? `Waiting on ${on}…` : [])
+    .filter((text, index, all) => !!text && all.indexOf(text) === index);
+};
+/** The facts every open record shares before its guidance arrives. */
+const alive = (item: { workflow: Flow }) => !ENDED.includes(item.workflow.state);
+const open = (
+  { id, workflow }: { id: string; workflow: Flow },
+  name: string,
+  owner: string,
+  me: string,
+  to: string,
+): Line => ({ id, name, to, at: workflow.updatedAt, mine: owner === me, state: workflow.state });
+/** The whole ordering policy: four codes, and no promotion of what it cannot read. */
+const whose = (decision: WorkflowDecision, mine: boolean): Whose | null => {
+  const codes = decision.blockers.map((blocker) => blocker.code);
+  if (!codes.length) return null;
+  if (mine && codes.includes('input_required')) return 'yours';
+  if (codes.some((code) => ROLE.includes(code))) return 'agent';
+  if (codes.includes('dependencies_pending')) return 'nobody';
+  return 'unknown';
+};
+/** One line: a serif name, a quiet meta, a pill only where the state adds something. */
 function Item({
   to,
   title,
@@ -88,7 +133,7 @@ function Item({
   title: ReactNode;
   meta?: ReactNode;
   state?: string;
-  say?: string;
+  say?: string[];
 }) {
   return (
     <li className="ov-row">
@@ -99,10 +144,26 @@ function Item({
         {state && <StatusPill value={state} />}
         {meta}
       </span>
-      {say && <p className="ov-say">{say}</p>}
+      {say?.map((text) => (
+        <p className="ov-say" key={text} title={text}>
+          {text}
+        </p>
+      ))}
     </li>
   );
 }
+
+/** Every open line reads the same way: the state pill gives way to a sentence. */
+const lineOf = (line: Line) => (
+  <Item
+    key={line.id}
+    to={line.to}
+    title={line.name}
+    state={line.says ? undefined : line.state}
+    meta={line.meta ?? when(line.at)}
+    say={line.says}
+  />
+);
 
 /** A source still arriving, or one that failed, says so in the same row grammar. */
 function Trouble({ what, load }: { what: string; load: { loading: boolean; error?: ApiError } }) {
@@ -126,164 +187,155 @@ function Block({ title, count, children }: { title: string; count?: number; chil
   );
 }
 
-/**
- * Block 1. Open reviews and unwell rows. Open work whose next action is a
- * person's would belong here too, but WorkflowDecision carries no field naming
- * who must act, so this page does not guess at one.
- */
-function NeedsYou({ rows, work, named }: { rows: Row[]; work: Work; named: Named }) {
-  const reviewsRow = rowOf(rows, 'reviews');
-  const list = useTool<ReviewLite[]>(reviewsRow ? 'review.list' : null);
-  const open = newest(
-    (list.data ?? []).filter(
-      (review) => review.status === 'requested' || review.status === 'started',
-    ),
-    (review) => review.createdAt,
+const useDecision = (instanceId: string | undefined) =>
+  useTool<WorkflowDecision>(
+    instanceId ? 'workflow.status_and_next' : null,
+    { instanceId: instanceId ?? '' },
+    { every: 10000 },
   );
+/** Hooks cannot be called in a loop, so the cap is eight fixed slots. */
+function useDecisions(ids: string[]): Loaded<WorkflowDecision>[] {
+  return [
+    useDecision(ids[0]),
+    useDecision(ids[1]),
+    useDecision(ids[2]),
+    useDecision(ids[3]),
+    useDecision(ids[4]),
+    useDecision(ids[5]),
+    useDecision(ids[6]),
+    useDecision(ids[7]),
+  ].slice(0, ids.length);
+}
+
+/** Sort every open record, and every open review, into whose move it is. */
+function useStanding(rows: Row[], work: Work, me: string, named: Named): Standing {
+  const reviewsRow = rowOf(rows, 'reviews');
+  const reviews = useTool<ReviewLite[]>(reviewsRow ? 'review.list' : null);
+  const { row: experimentsRow, load: experiments } = work.experiments;
+  const { row: tasksRow, load: tasks } = work.tasks;
+  const { row: cyclesRow, load: cycles } = work.cycles;
+  // Experiments and cycles carry no inline guidance; the newest few are asked for theirs.
+  const asked = newest(
+    [
+      ...(experimentsRow ? (experiments.data ?? []).filter(alive) : []).map((item) => ({
+        ...open(item, item.name, item.ownerId, me, `${experimentsRow!.path}/${item.id}`),
+        meta: (
+          <>
+            attempt {item.attempt.index} · {when(item.workflow.updatedAt)}
+          </>
+        ),
+      })),
+      ...(cyclesRow ? (cycles.data ?? []).filter(alive) : []).map((item) =>
+        open(item, item.name, item.ownerId, me, cyclesRow!.path),
+      ),
+    ],
+    (item) => item.at,
+  );
+  const decisions = useDecisions(asked.slice(0, CAP).map((item) => item.id));
+  const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [], moving: [] };
+  const add = (bucket: Whose, line: Line) => lines[bucket].push(line);
+  /** Without a readable blocker a record is simply moving, never promoted. */
+  const place = (item: Line, decision?: WorkflowDecision, failed?: ApiError) => {
+    const bucket = decision && whose(decision, item.mine);
+    if (failed) add('unknown', { ...item, says: [`Guidance is unavailable (${failed.code}).`] });
+    else if (bucket && decision) add(bucket, { ...item, says: sentences(decision) });
+    else add('moving', item);
+  };
+  if (tasksRow)
+    for (const task of (tasks.data ?? []).filter((item) => !item.guidance.terminal))
+      place(
+        open(task, task.title, task.producerId, me, `${tasksRow.path}/${task.id}`),
+        task.guidance,
+      );
+  asked.forEach((item, index) => place(item, decisions[index]?.data, decisions[index]?.error));
+  if (reviewsRow)
+    for (const review of (reviews.data ?? []).filter((item) =>
+      ['requested', 'started'].includes(item.status),
+    )) {
+      // A review names its subject through the lists the other blocks already read.
+      const subject = experiments.data?.find((item) => item.id === review.subjectId);
+      const name = subject?.name ?? tasks.data?.find((item) => item.id === review.subjectId)?.title;
+      const kind = KIND[subject?.workflow.state ?? ''] ?? 'Review';
+      const held = review.reviewerId;
+      const mine = review.status === 'requested' || held === me;
+      const how = !held
+        ? 'waiting for a reviewer to claim it'
+        : held === me
+          ? 'claimed by you and still open'
+          : `with ${named(held) ?? shortId(held)}`;
+      add(mine ? 'yours' : 'agent', {
+        id: review.id,
+        name: name ?? <ObjId id={review.subjectId} />,
+        to: `${reviewsRow.path}/${review.id}`,
+        at: review.createdAt,
+        mine,
+        says: [`${kind}, ${how}.`],
+      });
+    }
+  for (const bucket of Object.keys(lines) as Whose[])
+    lines[bucket] = newest(lines[bucket], (line) => line.at);
+  return { lines, reviews: reviewsRow && reviews, loads: [reviews, ...decisions] };
+}
+
+/** Block 1. What is yours to move, then any row that cannot speak for itself. */
+function NeedsYou({ rows, standing }: { rows: Row[]; standing: Standing }) {
+  const yours = standing.lines.yours;
   const unwell = rows.filter(
     (row) => row.status.state === 'degraded' || row.status.state === 'unavailable',
   );
-  /** Reviews name their subject through the lists the other blocks already read. */
-  const subject = (id: string) => {
-    const experiment = work.experiments.load.data?.find((item) => item.id === id);
-    return {
-      name: experiment?.name ?? work.tasks.load.data?.find((task) => task.id === id)?.title,
-      stage: experiment?.workflow.state,
-    };
-  };
   return (
-    <Block title="Needs you" count={open.length + unwell.length}>
-      {reviewsRow && <Trouble what="reviews" load={list} />}
-      {reviewsRow &&
-        open.map((review) => {
-          const { name, stage } = subject(review.subjectId);
-          return (
-            <Item
-              key={review.id}
-              to={`${reviewsRow.path}/${review.id}`}
-              title={
-                <>
-                  {stage === 'design_review'
-                    ? 'Design review'
-                    : stage === 'experiment_review'
-                      ? 'Results review'
-                      : 'Review'}{' '}
-                  · {name ?? <ObjId id={review.subjectId} />}
-                </>
-              }
-              meta={
-                <>
-                  {review.reviewerId ? (
-                    <>claimed by {named(review.reviewerId) ?? <ObjId id={review.reviewerId} />}</>
-                  ) : (
-                    'unclaimed'
-                  )}{' '}
-                  · {when(review.createdAt)}
-                </>
-              }
-            />
-          );
-        })}
+    <Block title="Needs you" count={yours.length + unwell.length}>
+      {standing.reviews && <Trouble what="reviews" load={standing.reviews} />}
+      {yours.map(lineOf)}
       {unwell.map((row) => (
         <Item
           key={row.id}
           to={row.path}
-          title={`${row.label} ${row.status.state}`}
+          title={row.label}
+          state={row.status.state}
           meta={row.status.detail}
         />
       ))}
-      {!open.length && !unwell.length && !busy([list]) && (
+      {!yours.length && !unwell.length && !busy(standing.loads) && (
         <li className="ov-none">Nothing needs you right now.</li>
       )}
     </Block>
   );
 }
 
-/** Block 2. The cycle in hand, then the work and the agents carrying it. */
-function InMotion({ rows, work }: { rows: Row[]; work: Work }) {
-  const researchRow = rowOf(rows, 'research');
+/** Block 2. What waits on an agent, then on nobody, then on an unreadable code,
+ * and last the work and the agents that are actually moving. */
+function InMotion({ rows, work, standing }: { rows: Row[]; work: Work; standing: Standing }) {
   const sessionsRow = rowOf(rows, 'sessions');
   const { row: experimentsRow, load: experiments } = work.experiments;
   const { row: tasksRow, load: tasks } = work.tasks;
-  const cycles = useTool<{ id: string; name: string; workflow: { state: string } }[]>(
-    researchRow ? 'research.list' : null,
-  );
-  const cycle = (cycles.data ?? []).filter((item) => item.workflow.state !== 'complete').at(-1);
-  const guidance = useTool<WorkflowDecision>(
-    cycle ? 'workflow.status_and_next' : null,
-    { instanceId: cycle?.id ?? '' },
-    { every: 10000 },
-  );
+  const { row: cyclesRow, load: cycles } = work.cycles;
+  const { agent, nobody, unknown, moving } = standing.lines;
   const live = useTool<SessionsLite>(
     sessionsRow?.readable ? 'ui.read' : null,
     { rowId: sessionsRow?.id ?? '' },
     { every: 10000 },
   );
-  const running = newest(
-    (experiments.data ?? []).filter((item) =>
-      ['running', 'executing'].includes(item.workflow.state),
-    ),
-    (item) => item.workflow.updatedAt,
-  );
-  const open = newest(
-    (tasks.data ?? []).filter((task) => !['done', 'failed'].includes(task.workflow.state)),
-    (task) => task.workflow.updatedAt,
-  );
-  const agents = (live.data?.agents ?? []).filter((agent) => agent.status !== 'retired');
-  const sayings = (guidance.data?.blockers ?? [])
-    .map((blocker) => blocker.message)
-    .filter((message) => message !== guidance.data?.instruction);
-  if (!researchRow && !experimentsRow && !tasksRow && !sessionsRow) return null;
+  const agents = (live.data?.agents ?? []).filter((item) => item.status !== 'retired');
+  if (!cyclesRow && !experimentsRow && !tasksRow && !sessionsRow) return null;
   return (
     <Block title="In motion">
-      {researchRow && <Trouble what="cycles" load={cycles} />}
-      {researchRow && cycle && (
-        <Item
-          to={researchRow.path}
-          title={cycle.name}
-          state={cycle.workflow.state}
-          say={
-            guidance.error
-              ? `Guidance is unavailable (${guidance.error.code}).`
-              : guidance.data && [guidance.data.instruction, ...sayings].join(' · ')
-          }
-        />
-      )}
+      {cyclesRow && <Trouble what="cycles" load={cycles} />}
       {experimentsRow && <Trouble what="experiments" load={experiments} />}
-      {experimentsRow &&
-        running.map((experiment) => (
-          <Item
-            key={experiment.id}
-            to={`${experimentsRow.path}/${experiment.id}`}
-            title={experiment.name}
-            state={experiment.workflow.state}
-            meta={
-              <>
-                attempt {experiment.attempt.index} · {when(experiment.workflow.updatedAt)}
-              </>
-            }
-          />
-        ))}
       {tasksRow && <Trouble what="tasks" load={tasks} />}
-      {tasksRow &&
-        open.map((task) => (
-          <Item
-            key={task.id}
-            to={`${tasksRow.path}/${task.id}`}
-            title={task.title}
-            state={task.workflow.state}
-            meta={when(task.workflow.updatedAt)}
-          />
-        ))}
       {sessionsRow && <Trouble what="agents" load={live} />}
+      {agent.map(lineOf)}
+      {nobody.map(lineOf)}
+      {unknown.map(lineOf)}
+      {moving.map(lineOf)}
       {sessionsRow &&
-        agents.map((agent) => (
+        agents.map((item) => (
           <Item
-            key={agent.id}
+            key={item.id}
             to={sessionsRow.path}
-            title={agent.name}
-            state={agent.currentExecutionId ? 'assigned' : 'unassigned'}
-            meta={agent.currentAssignment?.label}
+            title={item.name}
+            state={item.currentExecutionId ? 'assigned' : 'unassigned'}
+            meta={item.currentAssignment?.label}
           />
         ))}
       {live.data && (
@@ -292,11 +344,8 @@ function InMotion({ rows, work }: { rows: Row[]; work: Work }) {
           runners connected · {live.data.queueTotal} waiting
         </li>
       )}
-      {!cycle &&
-        !running.length &&
-        !open.length &&
-        !agents.length &&
-        !busy([cycles, experiments, tasks, live]) && (
+      {![agent, nobody, unknown, moving, agents].some((group) => group.length > 0) &&
+        !busy([...standing.loads, cycles, experiments, tasks, live]) && (
           <li className="ov-none">Nothing is running.</li>
         )}
     </Block>
@@ -409,17 +458,21 @@ export function OverviewView({ shell }: { shell: ShellData }) {
   const rows = shell.rows;
   const experimentsRow = rowOf(rows, 'experiments');
   const tasksRow = rowOf(rows, 'tasks');
+  const cyclesRow = rowOf(rows, 'research');
   const settings = rows.find((row) => row.group === 'settings');
   const read = useTool<Project>('project.get', {}, { every: 10000 });
   const experiments = useTool<ExperimentLite[]>(experimentsRow ? 'experiment.list' : null);
   const tasks = useTool<TaskLite[]>(tasksRow ? 'task.list' : null);
+  const cycles = useTool<CycleLite[]>(cyclesRow ? 'research.list' : null);
   const named = useActorNames();
   const project = read.data ?? session.project;
   const intro = project.summary?.trim().split(/\n\s*\n/)[0];
   const work: Work = {
     experiments: { row: experimentsRow, load: experiments },
     tasks: { row: tasksRow, load: tasks },
+    cycles: { row: cyclesRow, load: cycles },
   };
+  const standing = useStanding(rows, work, session.actor.id, named);
   return (
     <div className="page-stage overview">
       <h1 className="page-title">{project.name}</h1>
@@ -438,8 +491,8 @@ export function OverviewView({ shell }: { shell: ShellData }) {
         <p className="ov-none">This workspace is still starting.</p>
       ) : (
         <>
-          <NeedsYou rows={rows} work={work} named={named} />
-          <InMotion rows={rows} work={work} />
+          <NeedsYou rows={rows} standing={standing} />
+          <InMotion rows={rows} work={work} standing={standing} />
           <Recorded rows={rows} work={work} named={named} />
         </>
       )}

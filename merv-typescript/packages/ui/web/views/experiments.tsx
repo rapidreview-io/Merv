@@ -10,7 +10,7 @@ import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { ListFilters } from '../list-filters';
 import { KV, LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
-import { ReviewCard, type Review } from './reviews';
+import { CriterionRows, type Review } from './reviews';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -342,7 +342,7 @@ export function ExperimentRecord({
       {review && review.id === visibleReviewId(e) && (
         <section className="stack">
           <h2 className="section-title">{e.reviewId ? 'Current review' : 'Latest review'}</h2>
-          <ReviewCard review={review} nameOf={nameOf} />
+          <CriterionRows review={review} head />
         </section>
       )}
       {graph && <ExperimentGraph graph={graph} currentAttempt={e.attempt.index} />}

@@ -10,7 +10,7 @@ export const artifactUiPlugin = {
         id: 'artifacts',
         label: 'Artifacts',
         group: 'work',
-        order: 22,
+        order: 32,
         path: '/artifacts',
         view: { kind: 'artifacts' },
       }),

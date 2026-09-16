@@ -76,9 +76,9 @@ test('unknown views retain their declared group, path, status and deterministic 
 test('plugin removal removes only its rows and re-addition restores navigation without duplicates', () => {
   const research = row('research', 'research', 'work', 10);
   const feed = row('feed', 'feed', 'activity', 20);
-  const activity = row('activity', 'activity', 'activity', 21);
+  const artifacts = row('artifacts', 'artifacts', 'work', 21);
   const extension = row('custom', 'unrecognized', 'extensions', 30);
-  const all = [research, feed, activity, extension];
+  const all = [research, feed, artifacts, extension];
   const initial = buildNavigation(all);
   const removed = buildNavigation([research, extension]);
   assert.deepEqual(
@@ -86,7 +86,7 @@ test('plugin removal removes only its rows and re-addition restores navigation w
     [research, extension],
   );
   assert.ok(!removed.some((section) => section.id === 'activity'));
-  assert.deepEqual(buildNavigation([extension, activity, research, feed]), initial);
+  assert.deepEqual(buildNavigation([extension, artifacts, research, feed]), initial);
   assert.deepEqual(buildNavigation([]), []);
   assert.deepEqual(buildNavigation([row('settings', 'settings', 'settings', 100)]), []);
 });

@@ -8,6 +8,8 @@ export function useCommand<T>(options: {
   onSuccess: (value: T) => void;
   conflictCode?: string;
   onConflict?: () => void;
+  /** The tool rejects a requestId because retrying it is already safe by identity. */
+  idempotent?: boolean;
 }) {
   const epoch = useScopeVersion();
   const mounted = useRef(false);
@@ -17,6 +19,7 @@ export function useCommand<T>(options: {
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(false);
   const [error, setError] = useState<string>();
+  const [code, setCode] = useState<string>();
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -26,11 +29,16 @@ export function useCommand<T>(options: {
   const submit = async (input: Record<string, unknown>) => {
     if (inFlight.current || epoch !== scopeVersion()) return;
     const current = () => mounted.current && epoch === scopeVersion();
-    const command = pending.current ?? Object.freeze({ ...input, requestId: crypto.randomUUID() });
+    const command =
+      pending.current ??
+      Object.freeze(
+        options.idempotent ? { ...input } : { ...input, requestId: crypto.randomUUID() },
+      );
     pending.current = command;
     inFlight.current = true;
     setBusy(true);
     setError(undefined);
+    setCode(undefined);
     try {
       const result = await call<T>(options.tool, command);
       if (!options.validate(result))
@@ -57,6 +65,7 @@ export function useCommand<T>(options: {
         options.onConflict?.();
         return;
       }
+      setCode(failure instanceof ApiError ? failure.code : undefined);
       setError(
         uncertain.current
           ? `The original result is still unknown. ${failure instanceof Error ? failure.message : 'The request could not be confirmed.'} Retry the same request to confirm whether it was saved. Your submitted values are kept unchanged.`
@@ -69,5 +78,5 @@ export function useCommand<T>(options: {
       if (current()) setBusy(false);
     }
   };
-  return { submit, busy, retry, error, locked: busy || retry };
+  return { submit, busy, retry, error, code, locked: busy || retry };
 }
