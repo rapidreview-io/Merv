@@ -1054,6 +1054,23 @@ DROP TABLE task_leases_backup;`,
     };
   }
 
+  /** Text evidence is embedded while it leaves the review recipe room for the task and the
+   *  assessment; past that the artifacts are listed and the reviewer reads them itself, which
+   *  is what a large delivery needs rather than a context the builder refuses. */
+  private async evidenceMode(
+    caller: Caller,
+    ids: string[],
+    tx: Transaction,
+  ): Promise<'auto' | 'references'> {
+    let inline = 0;
+    for (const id of ids) {
+      const artifact = await this.artifacts.get(caller, id, tx);
+      if (artifact.mediaType.startsWith('text/') || artifact.mediaType === 'application/json')
+        inline += artifact.size;
+    }
+    return inline > 48_000 ? 'references' : 'auto';
+  }
+
   /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
   private async contextInputs(
     caller: Caller,
@@ -1087,7 +1104,9 @@ DROP TABLE task_leases_backup;`,
         assessment: { text: JSON.stringify(review) },
         evidence: {
           artifactIds: review.artifactIds,
-          ...(task.evidenceVersion === 2 ? { mode: 'auto' as const } : {}),
+          ...(task.evidenceVersion === 2
+            ? { mode: await this.evidenceMode(caller, review.artifactIds, tx) }
+            : {}),
         },
         taskBackground: Object.values(task.contextInputs).flat().length
           ? { artifactIds: [...new Set(Object.values(task.contextInputs).flat())] }
