@@ -10,10 +10,11 @@ import {
   Failure,
   Field,
   Fold,
+  GateBox,
   KV,
   Listing,
   LoadState,
-  PageHeader,
+  RecordPage,
   StatusPill,
   Table,
   col,
@@ -150,6 +151,7 @@ function Ladder({ id }: { id: string }) {
   if (!process.data || process.error) return null;
   return (
     <>
+      <h3 className="ev-role">How it got here</h3>
       <ol className="ladder">
         {process.data.nodes.map((node) => (
           <li key={node.state} className={cx('ladder-rung', node.current && 'ladder-rung--here')}>
@@ -183,23 +185,10 @@ function Guidance({ id }: { id: string }) {
     { every: 8000 },
   );
   return (
-    <section className="stack" aria-label="Workflow guidance">
-      <h2 className="section-title">What happens next</h2>
+    <>
       <LoadState {...guidance} />
-      {guidance.data && !guidance.error && (
-        <>
-          <p>{guidance.data.instruction}</p>
-          {guidance.data.blockers.length > 0 && (
-            <ul className="checks">
-              {guidance.data.blockers.map((blocker, i) => (
-                <li key={i}>{blocker.message}</li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-      <Ladder id={id} />
-    </section>
+      {guidance.data && !guidance.error && <GateBox decision={guidance.data} />}
+    </>
   );
 }
 
@@ -207,8 +196,8 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
   const { corpus, paper } = source;
   if (!corpus || !paper)
     return (
-      <section className="card stack" aria-label="Live research">
-        <h2 className="section-title">Live research</h2>
+      <>
+        <h3 className="ev-role">Live research</h3>
         <p>
           This wave reads current research. Existing tasks and experiments can continue; new ones
           are paused until the wave is approved.
@@ -221,17 +210,17 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
           <Link to="/knowledge">Browse research records</Link>
           <Link to="/paper">Read the living paper</Link>
         </div>
-      </section>
+      </>
     );
   return (
-    <section className="stack" aria-label="Frozen research sources">
-      <h2 className="section-title">Frozen sources</h2>
+    <>
+      <h3 className="ev-role">Frozen sources</h3>
       <p>
         {corpus.selection.experiments.length} experiments · {corpus.selection.tasks.length} tasks ·{' '}
         {corpus.selection.claims.length} claims. Captured {stamp(corpus.createdAt)}.
       </p>
       <p className="faint">Later project edits do not change the evidence used by this wave.</p>
-      <details className="card stack">
+      <details className="stack">
         <summary>Inspect the research snapshot</summary>
         <KV
           rows={[
@@ -281,7 +270,7 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
           ))}
         />
       </details>
-      <details className="card stack">
+      <details className="stack">
         <summary>Living paper at capture</summary>
         {Object.entries(paper.documents).map(([kind, document]) => (
           <section key={kind} className="stack">
@@ -315,7 +304,7 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
           </ul>
         )}
       </details>
-    </section>
+    </>
   );
 }
 
@@ -395,90 +384,96 @@ function ReflectionDetail({ row }: ViewProps) {
   const data = useTool<Reflection>('reflection.get', { reflectionId: id }, { every: 8000 });
   const nameOf = useActorNames();
   const wave = data.error ? undefined : data.data;
+  if (!wave)
+    return (
+      <div className="page-stage">
+        <LoadState {...data} back={{ to: row.path, label: row.label }} />
+      </div>
+    );
   return (
-    <div className="page-stage stack stack--lg">
-      <LoadState {...data} back={{ to: row.path, label: row.label }} />
-      {wave && (
+    <RecordPage
+      back={<Link to={row.path}>← {row.label}</Link>}
+      kind={row.view.kind}
+      name={wave.title}
+      standing={`Attempt ${wave.attempt} · workflow revision ${wave.workflow.revision}`}
+      state={<StatusPill value={wave.workflow.state} />}
+      act={<Guidance id={wave.id} />}
+      title="Synthesis"
+      content={
         <>
-          <PageHeader
-            eyebrow={<Link to={row.path}>← {row.label}</Link>}
-            kind={row.view.kind}
-            title={wave.title}
-            summary={`Attempt ${wave.attempt} · workflow revision ${wave.workflow.revision}`}
-            actions={<StatusPill value={wave.workflow.state} />}
+          <h3 className="ev-role">Independent perspectives</h3>
+          <Table
+            rows={wave.lenses}
+            keyOf={(lens) => lens.id}
+            columns={[
+              col<Lens>('lens', 'Perspective', (lens) => (
+                <details>
+                  <summary>{lens.perspective.replaceAll('_', ' ')}</summary>
+                  <p>{lens.instructions}</p>
+                </details>
+              )),
+              col<Lens>('state', 'State', (lens) => <StatusPill value={lens.workflow.state} />),
+              col<Lens>('producer', 'Contributor', (lens) =>
+                lens.producerId ? nameOf(lens.producerId) : 'Awaiting submission',
+              ),
+              col<Lens>('report', 'Pinned report', (lens) =>
+                lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : 'Not submitted',
+              ),
+            ]}
           />
-          <Guidance id={wave.id} />
-          <section className="stack">
-            <h2 className="section-title">Independent perspectives</h2>
-            <Table
-              rows={wave.lenses}
-              keyOf={(lens) => lens.id}
-              columns={[
-                col<Lens>('lens', 'Perspective', (lens) => (
-                  <details>
-                    <summary>{lens.perspective.replaceAll('_', ' ')}</summary>
-                    <p>{lens.instructions}</p>
-                  </details>
-                )),
-                col<Lens>('state', 'State', (lens) => <StatusPill value={lens.workflow.state} />),
-                col<Lens>('producer', 'Contributor', (lens) =>
-                  lens.producerId ? nameOf(lens.producerId) : 'Awaiting submission',
-                ),
-                col<Lens>('report', 'Pinned report', (lens) =>
-                  lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : 'Not submitted',
-                ),
+          <h3 className="ev-role">Synthesis</h3>
+          {wave.report ? (
+            <KV
+              rows={[
+                ['Report', <EvidenceLink artifact={wave.report} />],
+                [
+                  'Change specification',
+                  wave.changeSpec ? <EvidenceLink artifact={wave.changeSpec} /> : 'Not submitted',
+                ],
               ]}
             />
-          </section>
-          <section className="stack">
-            <h2 className="section-title">Synthesis and review</h2>
-            {wave.report ? (
-              <KV
-                rows={[
-                  ['Report', <EvidenceLink artifact={wave.report} />],
-                  [
-                    'Change specification',
-                    wave.changeSpec ? <EvidenceLink artifact={wave.changeSpec} /> : 'Not submitted',
-                  ],
-                ]}
-              />
-            ) : (
-              <p className="faint">Synthesis opens after all five lenses submit their reports.</p>
-            )}
-            {wave.review && (
-              <div className="card stack">
-                <div className="cluster">
-                  <Link to={`/reviews/${wave.review.id}`}>Open independent review</Link>
-                  <StatusPill value={wave.review.status} />
-                  <StatusPill value={wave.review.verdict} />
-                </div>
-                {wave.review.synopsis && <p>{wave.review.synopsis}</p>}
-                {nameOf(wave.review.reviewerId) && (
-                  <p className="faint">Reviewer: {nameOf(wave.review.reviewerId)}</p>
-                )}
-                {wave.review.returnTo && (
-                  <p>Return to: {wave.review.returnTo.replaceAll('_', ' ')}</p>
-                )}
+          ) : (
+            <p className="faint">Synthesis opens after all five lenses submit their reports.</p>
+          )}
+          {wave.workflow.state === 'approved' && (
+            <p>
+              Reflection approved. Code consolidation is optional.{' '}
+              <Link
+                to={`/consolidation?sources=${encodeURIComponent([wave.report!.id, wave.changeSpec!.id, ...wave.lenses.flatMap((l) => (l.artifact ? [l.artifact.id] : [])), ...(wave.corpus?.selection.artifacts ?? []).flatMap((a) => (a.status === 'retained' ? [a.id] : []))].join(' '))}&experiments=${encodeURIComponent((wave.experimentIds ?? wave.corpus?.selection.experiments.map((e) => e.id) ?? []).join(' '))}&dependsOn=${encodeURIComponent(wave.id)}`}
+              >
+                Configure consolidation from these outputs
+              </Link>
+              .
+              {!wave.corpus &&
+                ' In a research cycle, advance Research to complete the cycle or start its selected Git consolidation with current research evidence and completed experiments.'}
+            </p>
+          )}
+        </>
+      }
+      history={<Ladder id={wave.id} />}
+      related={
+        <>
+          {wave.review && (
+            <>
+              <h3 className="ev-role">Independent review</h3>
+              <div className="cluster">
+                <Link to={`/reviews/${wave.review.id}`}>Open independent review</Link>
+                <StatusPill value={wave.review.status} />
+                <StatusPill value={wave.review.verdict} />
               </div>
-            )}
-            {wave.workflow.state === 'approved' && (
-              <p>
-                Reflection approved. Code consolidation is optional.{' '}
-                <Link
-                  to={`/consolidation?sources=${encodeURIComponent([wave.report!.id, wave.changeSpec!.id, ...wave.lenses.flatMap((l) => (l.artifact ? [l.artifact.id] : [])), ...(wave.corpus?.selection.artifacts ?? []).flatMap((a) => (a.status === 'retained' ? [a.id] : []))].join(' '))}&experiments=${encodeURIComponent((wave.experimentIds ?? wave.corpus?.selection.experiments.map((e) => e.id) ?? []).join(' '))}&dependsOn=${encodeURIComponent(wave.id)}`}
-                >
-                  Configure consolidation from these outputs
-                </Link>
-                .
-                {!wave.corpus &&
-                  ' In a research cycle, advance Research to complete the cycle or start its selected Git consolidation with current research evidence and completed experiments.'}
-              </p>
-            )}
-          </section>
+              {wave.review.synopsis && <p>{wave.review.synopsis}</p>}
+              {nameOf(wave.review.reviewerId) && (
+                <p className="faint">Reviewer: {nameOf(wave.review.reviewerId)}</p>
+              )}
+              {wave.review.returnTo && (
+                <p>Return to: {wave.review.returnTo.replaceAll('_', ' ')}</p>
+              )}
+            </>
+          )}
           <FrozenSources source={wave} />
         </>
-      )}
-    </div>
+      }
+    />
   );
 }
 
@@ -667,8 +662,8 @@ function Submission({ submission }: { submission: ConsolidationSubmission }) {
         </ul>
       )}
       {submission.proposal && (
-        <div className="card stack">
-          <h3>Sealed code proposal</h3>
+        <div className="stack">
+          <h3 className="ev-role">Sealed code proposal</h3>
           <p>{submission.proposal.summary}</p>
           <KV
             rows={[
@@ -700,80 +695,91 @@ function ConsolidationDetail({ row }: ViewProps) {
   const centralGit =
     record?.completion?.centralGit ??
     (record?.workspace === 'none' ? 'not-applicable' : 'not-published');
+  if (!record)
+    return (
+      <div className="page-stage">
+        <LoadState {...data} back={{ to: row.path, label: row.label }} />
+      </div>
+    );
   return (
-    <div className="page-stage stack stack--lg">
-      <LoadState {...data} back={{ to: row.path, label: row.label }} />
-      {record && (
+    <RecordPage
+      back={<Link to={row.path}>← {row.label}</Link>}
+      kind={row.view.kind}
+      name={record.name}
+      standing={`Workflow revision ${record.workflow.revision} · ${record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}`}
+      state={<StatusPill value={record.workflow.state} />}
+      act={<Guidance id={record.id} />}
+      title="Synthesis"
+      content={
         <>
-          <PageHeader
-            eyebrow={<Link to={row.path}>← {row.label}</Link>}
-            kind={row.view.kind}
-            title={record.name}
-            summary={`Workflow revision ${record.workflow.revision} · ${record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}`}
-            actions={<StatusPill value={record.workflow.state} />}
-          />
-          <Guidance id={record.id} />
-          <section className="stack">
-            <h2 className="section-title">Retained source artifacts</h2>
-            <ul>
-              {record.sources.map((artifact) => (
-                <li key={artifact.id}>
-                  <EvidenceLink artifact={artifact} />
-                </li>
-              ))}
-            </ul>
-          </section>
-          <section className="stack">
-            <h2 className="section-title">Central Git status</h2>
-            <p>
-              {centralGit === 'not-applicable'
-                ? 'Not applicable — this workflow has no Git workspace.'
-                : 'Not published to central Git.'}
+          <h3 className="ev-role">
+            {record.completion
+              ? 'Approved decisions and evidence'
+              : 'Submitted decisions and evidence'}
+          </h3>
+          {latest ? (
+            <Submission submission={latest} />
+          ) : (
+            <p className="faint">
+              The assigned producer has not submitted a consolidation report yet.
             </p>
-            {record.workspace === 'git' && (
-              <p className="faint">
-                The workflow retains an exact reviewed code proposal. Completing its review does not
-                advance the central branch.
-              </p>
-            )}
-            {record.completion && (
-              <p>
-                Independent consolidation review completed {stamp(record.completion.completedAt)}.{' '}
-                <Link to={`/reviews/${record.completion.reviewId}`}>View approval</Link>.
-              </p>
-            )}
-          </section>
-          <section className="stack">
-            <h2 className="section-title">
-              {record.completion
-                ? 'Approved decisions and evidence'
-                : 'Submitted decisions and evidence'}
-            </h2>
-            {latest ? (
-              <Submission submission={latest} />
-            ) : (
-              <p className="faint">
-                The assigned producer has not submitted a consolidation report yet.
-              </p>
-            )}
-            {record.submissions.length > 1 && (
-              <details className="card stack">
-                <summary>Previous submissions ({record.submissions.length - 1})</summary>
-                {record.submissions
-                  .slice(0, -1)
-                  .reverse()
-                  .map((submission) => (
-                    <section className="stack" key={submission.id}>
-                      <h3>Revision {submission.revision}</h3>
-                      <Submission submission={submission} />
-                    </section>
-                  ))}
-              </details>
-            )}
-          </section>
+          )}
         </>
-      )}
-    </div>
+      }
+      history={
+        <>
+          <Ladder id={record.id} />
+          {record.submissions.length > 1 && (
+            <details className="stack">
+              <summary>Previous submissions ({record.submissions.length - 1})</summary>
+              {record.submissions
+                .slice(0, -1)
+                .reverse()
+                .map((submission) => (
+                  <div className="stack" key={submission.id}>
+                    <h3 className="ev-role">Revision {submission.revision}</h3>
+                    <Submission submission={submission} />
+                  </div>
+                ))}
+            </details>
+          )}
+        </>
+      }
+      related={
+        <>
+          <h3 className="ev-role">Retained source artifacts</h3>
+          <ul>
+            {record.sources.map((artifact) => (
+              <li key={artifact.id}>
+                <EvidenceLink artifact={artifact} />
+              </li>
+            ))}
+          </ul>
+          {record.completion && (
+            <p>
+              Independent consolidation review completed {stamp(record.completion.completedAt)}.{' '}
+              <Link to={`/reviews/${record.completion.reviewId}`}>View approval</Link>.
+            </p>
+          )}
+        </>
+      }
+      details={
+        <>
+          <h3 className="ev-role">Central Git status</h3>
+          <p>
+            {centralGit === 'not-applicable'
+              ? 'Not applicable — this workflow has no Git workspace.'
+              : 'Not published to central Git.'}
+          </p>
+          {record.workspace === 'git' && (
+            <p className="faint">
+              The workflow retains an exact reviewed code proposal. Completing its review does not
+              advance the central branch.
+            </p>
+          )}
+        </>
+      }
+    />
   );
 }
 

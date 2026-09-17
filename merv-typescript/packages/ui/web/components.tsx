@@ -331,8 +331,66 @@ export function PageHeader({
         <h1 className="page-title">{title}</h1>
         {actions && <div className="page-actions">{actions}</div>}
       </div>
-      {summary && <p className="page-summary">{summary}</p>}
+      {summary && <div className="page-summary">{summary}</div>}
     </header>
+  );
+}
+
+/**
+ * One section of a record, titled from the one vocabulary every kind uses. A
+ * section a kind cannot have is left out where it is written, never drawn empty;
+ * a block that needs naming inside one takes the quiet small-caps label, so the
+ * six titles keep their meaning down the page.
+ */
+export const Part = ({ title, children }: { title: string; children: ReactNode }) => (
+  <section className="stack" aria-label={title}>
+    <h2 className="section-title">{title}</h2>
+    {children}
+  </section>
+);
+
+/**
+ * One anatomy for every record, in one order: the way back and what this is, then
+ * What happens next — the only place on the page with controls, so the next move
+ * is always in the same spot — then the kind's own content, how it got here, what
+ * it relates to, and the details last. A slot this kind has nothing for is dropped
+ * rather than drawn empty, and `title` is the kind's word for its own content.
+ */
+export function RecordPage({
+  back,
+  kind,
+  name,
+  standing,
+  state,
+  title = '',
+  ...slots
+}: {
+  back: ReactNode;
+  kind?: string;
+  name: ReactNode;
+  /** Execution · review · outcome, in whatever words this kind already has for them. */
+  standing?: ReactNode;
+  state?: ReactNode;
+  title?: string;
+} & Partial<Record<'act' | 'content' | 'history' | 'related' | 'details', ReactNode>>) {
+  const order: [string, ReactNode][] = [
+    ['What happens next', slots.act],
+    [title, slots.content],
+    ['History', slots.history],
+    ['Related', slots.related],
+    ['Details', slots.details],
+  ];
+  return (
+    <div className="page-stage record-page stack stack--lg">
+      <PageHeader eyebrow={back} kind={kind} title={name} summary={standing} actions={state} />
+      {order.map(([label, body]) =>
+        label && body ? (
+          <Part title={label} key={label}>
+            {body}
+          </Part>
+        ) : null,
+      )}
+    </div>
   );
 }
 

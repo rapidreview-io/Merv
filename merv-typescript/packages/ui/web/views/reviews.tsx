@@ -9,7 +9,7 @@ import {
   Evidence,
   KindLabel,
   LoadState,
-  PageHeader,
+  RecordPage,
   StatusPill,
   col,
   cx,
@@ -364,77 +364,88 @@ function ReviewDetail({ row }: ViewProps) {
         ? { approvedIn: approved.attemptIndex, index: stages.data.attempt.index }
         : undefined,
   });
+  // Exceptions are stated where their cost is being paid: beside the control while
+  // a verdict is still being written, beside the verdict once it is recorded.
+  const stated = exceptions.length > 0 && (
+    <ul className="exceptions">
+      {exceptions.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
   return (
-    <div className="page-stage stack stack--lg">
-      <PageHeader
-        eyebrow={<Link to={row.path}>← {row.label}</Link>}
-        kind={row.view.kind}
-        title={[kind, experiment?.name ?? task?.title].filter(Boolean).join(' · ')}
-        actions={<StatusPill value={r.status} />}
-        summary={
+    <RecordPage
+      back={<Link to={row.path}>← {row.label}</Link>}
+      kind={row.view.kind}
+      name={[kind, experiment?.name ?? task?.title].filter(Boolean).join(' · ')}
+      state={<StatusPill value={r.status} />}
+      standing={
+        <>
+          Requested <Ago at={r.createdAt} /> ·{' '}
+          {!r.reviewerId
+            ? 'unclaimed'
+            : nameOf(r.reviewerId)
+              ? `claimed by ${nameOf(r.reviewerId)}`
+              : 'claimed'}{' '}
+          · revision {r.subjectRevision}
+        </>
+      }
+      act={
+        r.verdict ? undefined : (
           <>
-            Requested <Ago at={r.createdAt} /> ·{' '}
-            {!r.reviewerId
-              ? 'unclaimed'
-              : nameOf(r.reviewerId)
-                ? `claimed by ${nameOf(r.reviewerId)}`
-                : 'claimed'}{' '}
-            · revision {r.subjectRevision}
+            {stated}
+            <Controls review={r} guidance={guidance} values={values} onDone={review.reload} />
           </>
-        }
-      />
-      <CriterionRows
-        review={r}
-        confirmations={confirmations.data?.deliveryConfirmations}
-        draft={
-          submit && submit.status !== 'blocked'
-            ? {
-                values,
-                set: (number, value) => setValues((old) => ({ ...old, [number]: value })),
-              }
-            : undefined
-        }
-      />
-      {rest.length > 0 && (
-        <section className="card stack">
-          <h2 className="section-title">Pinned evidence</h2>
-          {rest.map((artifactId) => (
-            <Evidence
-              key={artifactId}
-              artifactId={artifactId}
-              artifact={artifacts.get(artifactId)}
-              meta
-            />
-          ))}
-        </section>
-      )}
-      <section className="card stack">
-        <h2 className="section-title">Verdict</h2>
-        {r.verdict && (
-          <>
-            <p className="verdict-said">{r.synopsis ?? r.notes}</p>
-            <p className="muted">
-              {[
-                r.returnTo ? `Returned to ${words(r.returnTo)}` : `Recorded as ${words(r.verdict)}`,
-                nameOf(r.reviewerId) && `by ${nameOf(r.reviewerId)}`,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </p>
-          </>
-        )}
-        {exceptions.length > 0 && (
-          <ul className="exceptions">
-            {exceptions.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        )}
-        {!r.verdict && (
-          <Controls review={r} guidance={guidance} values={values} onDone={review.reload} />
-        )}
-      </section>
-    </div>
+        )
+      }
+      title="Criteria"
+      content={
+        <>
+          <CriterionRows
+            review={r}
+            confirmations={confirmations.data?.deliveryConfirmations}
+            draft={
+              submit && submit.status !== 'blocked'
+                ? {
+                    values,
+                    set: (number, value) => setValues((old) => ({ ...old, [number]: value })),
+                  }
+                : undefined
+            }
+          />
+          {rest.length > 0 && (
+            <>
+              <h3 className="ev-role">Pinned evidence</h3>
+              {rest.map((artifactId) => (
+                <Evidence
+                  key={artifactId}
+                  artifactId={artifactId}
+                  artifact={artifacts.get(artifactId)}
+                  meta
+                />
+              ))}
+            </>
+          )}
+          {r.verdict && (
+            <>
+              <h3 className="ev-role">Verdict</h3>
+              <p className="verdict-said">{r.synopsis ?? r.notes}</p>
+              <p className="muted">
+                {[
+                  r.returnTo
+                    ? `Returned to ${words(r.returnTo)}`
+                    : `Recorded as ${words(r.verdict)}`,
+                  nameOf(r.reviewerId) && `by ${nameOf(r.reviewerId)}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              {stated}
+            </>
+          )}
+        </>
+      }
+    />
   );
 }
 
@@ -481,7 +492,7 @@ function exceptionsOf({
 }
 
 /** The one primary control, with its consequence, its blocker or its error beneath. */
-function Act({
+function Primary({
   label,
   help,
   error,
@@ -554,7 +565,7 @@ function Controls({
     );
   if (start?.status === 'ready')
     return (
-      <Act
+      <Primary
         label={
           claim.retry ? 'Retry the same claim' : claim.busy ? 'Claiming…' : 'Claim this review'
         }
@@ -566,7 +577,7 @@ function Controls({
       />
     );
   return (
-    <Act
+    <Primary
       label="Submit verdict"
       help={(submit ?? start)?.blockers[0]?.message ?? guidance.data.instruction}
       disabled
@@ -682,7 +693,7 @@ function Desk({
           ))}
         </div>
       )}
-      <Act
+      <Primary
         label={
           command.retry ? 'Retry the same verdict' : command.busy ? 'Submitting…' : 'Submit verdict'
         }

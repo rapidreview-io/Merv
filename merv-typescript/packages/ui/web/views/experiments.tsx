@@ -11,7 +11,7 @@ import {
   GateBox,
   KV,
   LoadState,
-  PageHeader,
+  RecordPage,
   StatusPill,
   col,
   cx,
@@ -164,8 +164,8 @@ function RoundsSpine({
     (note) => !rounds.some((round) => round.review?.notes === note),
   );
   return (
-    <section className="stack" aria-label="Rounds of submission and review">
-      <h2 className="section-title">Rounds</h2>
+    <>
+      <h3 className="ev-role">Rounds</h3>
       {carried.map((note) => (
         <p className="muted" key={note}>
           Carried into attempt {e.attempt.index}: {note}
@@ -215,7 +215,7 @@ function RoundsSpine({
           </div>
         );
       })}
-    </section>
+    </>
   );
 }
 
@@ -257,8 +257,8 @@ function ProcessTrack({
         };
       });
   return (
-    <section className="stack" aria-label="How this experiment moved through its gates">
-      <h2 className="section-title">How it got here</h2>
+    <>
+      <h3 className="ev-role">How it got here</h3>
       <ol className="track">
         {graph.nodes.map((node) => (
           <li
@@ -310,7 +310,7 @@ function ProcessTrack({
       <p className="muted">
         An edge shows the machinery stepped through a gate; it never says the science is right.
       </p>
-    </section>
+    </>
   );
 }
 
@@ -344,92 +344,99 @@ export function ExperimentRecord({
   const decision = guidance?.revision === e.workflow.revision ? guidance : undefined;
   const ended = ['failed', 'abandoned'].includes(e.workflow.state);
   return (
-    <div className="stack stack--lg">
-      <PageHeader
-        eyebrow={<Link to="/experiments">← Experiments</Link>}
-        kind="experiments"
-        title={e.name}
-        summary={
+    <RecordPage
+      back={<Link to="/experiments">← Experiments</Link>}
+      kind="experiments"
+      name={e.name}
+      standing={
+        <>
+          <span className="question">{e.intent}</span>
           <StandingLine
             experiment={e}
             review={newest}
             stage={stage ? STAGE[stage] : 'Review'}
             reviewer={newest?.reviewerId ? nameOf(newest.reviewerId) : null}
           />
-        }
-      />
-      <p className="question">{e.intent}</p>
-      <section className="stack" aria-label="What the experiment came to">
-        <h2 className="section-title">{ended ? 'Why this experiment ended' : 'Conclusion'}</h2>
-        {e.conclusion ? (
-          <p className="record-prose">{e.conclusion}</p>
-        ) : (
-          <p className="empty">No conclusion recorded yet.</p>
-        )}
-        {exhibit && exhibit.attemptIndex === e.attempt.index && (
-          <figure className="stack">
-            <pre className="doc doc--inline">{exhibit.content}</pre>
-            <figcaption className="muted">
-              {exhibit.path} ·{' '}
-              {exhibit.willPin
-                ? 'the result submission will retain this source-backed exhibit with its review round'
-                : 'the current evidence is qualitative, so no quantitative exhibit will be pinned'}
-              . This preview is not a review verdict.
-            </figcaption>
-          </figure>
-        )}
-      </section>
-      {!!e.testedClaimIds.length && (
-        <section className="stack">
-          <h2 className="section-title">Claims tested</h2>
-          {/* A claim is named by its statement; one the book cannot name is left out. */}
-          {e.testedClaimIds.map((id) => (
-            <p className="claim-line" key={id}>
-              <Link to="/claims">{claims.get(id)}</Link>
+        </>
+      }
+      act={decision && !decision.terminal ? <GateBox decision={decision} /> : undefined}
+      title="Evidence"
+      content={
+        <>
+          {approved ? (
+            <p className="muted">
+              Execution follows the sealed design from attempt {approved.attemptIndex}, read in{' '}
+              <Link to={`/reviews/${approved.reviewId}`}>its own round</Link>.
             </p>
-          ))}
-          <p className="muted">
-            A completed experiment does not automatically change a claim's status.
-          </p>
-        </section>
-      )}
-      <section className="stack" aria-label="Retained evidence">
-        <h2 className="section-title">Evidence</h2>
-        {approved ? (
-          <p className="muted">
-            Execution follows the sealed design from attempt {approved.attemptIndex}, read in{' '}
-            <Link to={`/reviews/${approved.reviewId}`}>its own round</Link>.
-          </p>
-        ) : (
-          <p className="muted">No plan has passed design review.</p>
-        )}
-        <EvidenceFiles evidence={currentEvidence} figures={e.submissions.at(-1)?.figureIds ?? []} />
-      </section>
-      <RoundsSpine experiment={e} reviews={mine} nameOf={nameOf} />
-      {decision && !decision.terminal && (
-        <section className="stack" aria-label="Experiment workflow guidance">
-          <h2 className="section-title">What happens next</h2>
-          <GateBox decision={decision} />
-        </section>
-      )}
-      {process && <ProcessTrack graph={process} experiment={e} reviews={mine} />}
-      <section className="stack" aria-label="Experiment record details">
-        <h2 className="section-title">Record</h2>
-        {e.details && <p className="record-prose">{e.details}</p>}
-        <KV
-          rows={[
-            ['Owner', nameOf(e.ownerId)],
-            ['Revision', String(e.workflow.revision)],
-            ['Created', stamp(e.createdAt)],
-            ...e.attempts.map((attempt): [string, ReactNode] => [
-              `Attempt ${attempt.index}`,
-              `revisions ${attempt.startedRevision}–${attempt.endedRevision ?? 'current'}, ` +
-                (attempt.startedAt ? `first execution ${stamp(attempt.startedAt)}` : 'not started'),
-            ]),
-          ]}
-        />
-      </section>
-    </div>
+          ) : (
+            <p className="muted">No plan has passed design review.</p>
+          )}
+          <EvidenceFiles
+            evidence={currentEvidence}
+            figures={e.submissions.at(-1)?.figureIds ?? []}
+          />
+          {exhibit && exhibit.attemptIndex === e.attempt.index && (
+            <figure className="stack">
+              <pre className="doc doc--inline">{exhibit.content}</pre>
+              <figcaption className="muted">
+                {exhibit.path} ·{' '}
+                {exhibit.willPin
+                  ? 'the result submission will retain this source-backed exhibit with its review round'
+                  : 'the current evidence is qualitative, so no quantitative exhibit will be pinned'}
+                . This preview is not a review verdict.
+              </figcaption>
+            </figure>
+          )}
+        </>
+      }
+      history={
+        <>
+          <h3 className="ev-role">{ended ? 'Why this experiment ended' : 'Conclusion'}</h3>
+          {e.conclusion ? (
+            <p className="record-prose">{e.conclusion}</p>
+          ) : (
+            <p className="empty">No conclusion recorded yet.</p>
+          )}
+          <RoundsSpine experiment={e} reviews={mine} nameOf={nameOf} />
+          {process && <ProcessTrack graph={process} experiment={e} reviews={mine} />}
+        </>
+      }
+      related={
+        e.testedClaimIds.length ? (
+          <>
+            <h3 className="ev-role">Claims tested</h3>
+            {/* A claim is named by its statement; one the book cannot name is left out. */}
+            {e.testedClaimIds.map((id) => (
+              <p className="claim-line" key={id}>
+                <Link to="/claims">{claims.get(id)}</Link>
+              </p>
+            ))}
+            <p className="muted">
+              A completed experiment does not automatically change a claim's status.
+            </p>
+          </>
+        ) : undefined
+      }
+      details={
+        <>
+          {e.details && <p className="record-prose">{e.details}</p>}
+          <KV
+            rows={[
+              ['Owner', nameOf(e.ownerId)],
+              ['Revision', String(e.workflow.revision)],
+              ['Created', stamp(e.createdAt)],
+              ...e.attempts.map((attempt): [string, ReactNode] => [
+                `Attempt ${attempt.index}`,
+                `revisions ${attempt.startedRevision}–${attempt.endedRevision ?? 'current'}, ` +
+                  (attempt.startedAt
+                    ? `first execution ${stamp(attempt.startedAt)}`
+                    : 'not started'),
+              ]),
+            ]}
+          />
+        </>
+      }
+    />
   );
 }
 
@@ -496,26 +503,27 @@ function ExperimentDetail({ row }: ViewProps) {
     { every: live },
   );
   const nameOf = useActorNames();
-  return (
-    <div className="page-stage stack stack--lg">
-      <LoadState
-        loading={experiment.loading}
-        error={
-          experiment.error ?? guidance.error ?? process.error ?? reviews.error ?? exhibit.error
-        }
-        back={experiment.data ? undefined : { to: row.path, label: row.label }}
-      />
-      {experiment.data && (
-        <ExperimentRecord
-          experiment={experiment.data}
-          guidance={guidance.data}
-          process={process.data}
-          reviews={reviews.data}
-          exhibit={exhibit.data}
-          nameOf={nameOf}
+  if (!experiment.data)
+    return (
+      <div className="page-stage">
+        <LoadState
+          loading={experiment.loading}
+          error={
+            experiment.error ?? guidance.error ?? process.error ?? reviews.error ?? exhibit.error
+          }
+          back={{ to: row.path, label: row.label }}
         />
-      )}
-    </div>
+      </div>
+    );
+  return (
+    <ExperimentRecord
+      experiment={experiment.data}
+      guidance={guidance.data}
+      process={process.data}
+      reviews={reviews.data}
+      exhibit={exhibit.data}
+      nameOf={nameOf}
+    />
   );
 }
 

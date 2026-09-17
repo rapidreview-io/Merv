@@ -624,8 +624,18 @@ time,
 .ov-list > li + li,
 .claim-book > .claim + .claim,
 .feed > * + *,
+.record-page > section + section,
 .stack > .record + .record {
   border-top: 1px solid var(--line);
+}
+/* A record's sections are divided by that hairline and nothing else: no box
+   around the act, no frame around the science. */
+.record-page > section + section {
+  padding-top: var(--space-4);
+}
+/* A panel this page is not showing stays hidden whatever layout it declares. */
+[hidden] {
+  display: none !important;
 }
 /* Small caps carry every label the eye skims past: a kind, a state, a column
    heading, a clause name. One rule states the type; each says only its colour. */
@@ -1804,8 +1814,12 @@ select.input,
   display: block;
   margin-bottom: var(--space-1);
 }
-/* The question the experiment was opened to answer, read before anything else. */
+/* The question the experiment was opened to answer, read before anything else:
+   the first line under the title, above the standing it shares the header with. */
 .question {
+  display: block;
+  color: var(--text);
+  margin-bottom: var(--space-2);
   font-size: var(--text-lg);
   font-weight: 600;
   line-height: 1.4;

@@ -4,9 +4,10 @@ import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import {
   Ago,
+  GateBox,
   KV,
   LoadState,
-  PageHeader,
+  RecordPage,
   StatusPill,
   Table,
   col,
@@ -141,107 +142,97 @@ function TaskDetail({ row }: ViewProps) {
     );
   const t = task.data;
   return (
-    <div className="page-stage stack stack--lg">
-      <PageHeader
-        eyebrow={<Link to={row.path}>← {row.label}</Link>}
-        kind={row.view.kind}
-        title={t.title}
-        summary={t.goal}
-        actions={<StatusPill value={t.workflow.state} />}
-      />
-      {t.failure && (
-        <section className="stack" aria-label="Task closure">
-          <h2 className="section-title">Why this task ended</h2>
-          <p style={{ whiteSpace: 'pre-wrap' }}>{t.failure.reason}</p>
-          <p className="muted">
-            Closed by {nameOf(t.failure.actorId)} on {stamp(t.failure.createdAt)}
-          </p>
-        </section>
-      )}
-      <section className="stack" aria-label="Workflow guidance">
-        <h2 className="section-title">What happens next</h2>
-        <p>{t.guidance.instruction}</p>
-        <KV
-          rows={[
-            ['Current gate', t.guidance.currentGate.replaceAll('_', ' ')],
-            [
-              'Next action',
-              t.guidance.nextAction?.action.replaceAll('_', ' ') ??
-                (t.guidance.terminal ? 'Finished' : 'Waiting'),
-            ],
-          ]}
-        />
-        {t.guidance.blockers.length > 0 && (
-          <ul className="checks">
-            {t.guidance.blockers.map((blocker, index) => (
-              <li key={index}>{blocker.message}</li>
+    <RecordPage
+      back={<Link to={row.path}>← {row.label}</Link>}
+      kind={row.view.kind}
+      name={t.title}
+      standing={t.goal}
+      state={<StatusPill value={t.workflow.state} />}
+      act={<GateBox decision={t.guidance} />}
+      title="Brief"
+      content={
+        <>
+          <ArtifactBody artifactId={t.briefId} />
+          <h3 className="ev-role">Acceptance checks</h3>
+          <ol className="checks">
+            {t.checks.map((check, i) => (
+              <li key={i}>{check}</li>
             ))}
-          </ul>
-        )}
-      </section>
-      <WorkRelations title="Waits on" items={t.dependencies ?? []} taskPath={row.path} />
-      <section className="stack">
-        <h2 className="section-title">Acceptance checks</h2>
-        <ol className="checks">
-          {t.checks.map((check, i) => (
-            <li key={i}>{check}</li>
+          </ol>
+          <h3 className="ev-role">Deliveries</h3>
+          {t.deliveryConfirmations?.length > 0 && (
+            <>
+              <p className="muted">
+                Producer claims for the latest delivery. The independent review determines whether
+                they are supported.
+              </p>
+              <Table
+                rows={t.deliveryConfirmations}
+                keyOf={(item) => String(item.checkNumber)}
+                columns={[
+                  col<Confirmation>(
+                    'check',
+                    'Check',
+                    (item) => `${item.checkNumber}. ${t.checks[item.checkNumber - 1]}`,
+                  ),
+                  col<Confirmation>('claim', 'Producer claim', (item) =>
+                    item.status === 'met' ? 'Met' : 'Not met',
+                  ),
+                  col<Confirmation>('notes', 'Verification / remaining work', (item) => (
+                    <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>
+                  )),
+                  // A file is named by its title; one this page cannot name is left out.
+                  col<Confirmation>('evidence', 'Evidence', (item) =>
+                    item.evidenceIds.length
+                      ? item.evidenceIds.map((id) => (
+                          <div key={id}>
+                            <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
+                          </div>
+                        ))
+                      : 'None supplied',
+                  ),
+                ]}
+              />
+            </>
+          )}
+          {t.deliveryIds.length === 0 && <div className="empty">Nothing delivered yet.</div>}
+          {t.deliveryIds.map((artifactId) => (
+            <ArtifactBody key={artifactId} artifactId={artifactId} />
           ))}
-        </ol>
-      </section>
-      <section className="stack">
-        <h2 className="section-title">Deliveries</h2>
-        {t.deliveryConfirmations?.length > 0 && (
-          <section className="stack" aria-label="Producer confirmations">
-            <p className="muted">
-              Producer claims for the latest delivery. The independent review determines whether
-              they are supported.
-            </p>
-            <Table
-              rows={t.deliveryConfirmations}
-              keyOf={(item) => String(item.checkNumber)}
-              columns={[
-                col<Confirmation>(
-                  'check',
-                  'Check',
-                  (item) => `${item.checkNumber}. ${t.checks[item.checkNumber - 1]}`,
-                ),
-                col<Confirmation>('claim', 'Producer claim', (item) =>
-                  item.status === 'met' ? 'Met' : 'Not met',
-                ),
-                col<Confirmation>('notes', 'Verification / remaining work', (item) => (
-                  <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>
-                )),
-                // A file is named by its title; one this page cannot name is left out.
-                col<Confirmation>('evidence', 'Evidence', (item) =>
-                  item.evidenceIds.length
-                    ? item.evidenceIds.map((id) => (
-                        <div key={id}>
-                          <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
-                        </div>
-                      ))
-                    : 'None supplied',
-                ),
-              ]}
-            />
-          </section>
-        )}
-        {t.deliveryIds.length === 0 && <div className="empty">Nothing delivered yet.</div>}
-        {t.deliveryIds.map((artifactId) => (
-          <ArtifactBody key={artifactId} artifactId={artifactId} />
-        ))}
-      </section>
-      <section className="stack">
-        <h2 className="section-title">Review</h2>
-        {!t.reviewId && <div className="empty">No review has been requested.</div>}
-        {t.reviewId && !review.data && <LoadState loading={review.loading} error={review.error} />}
-        {review.data && <CriterionRows review={review.data} head />}
-      </section>
-      <section className="stack">
-        <h2 className="section-title">Brief</h2>
-        <ArtifactBody artifactId={t.briefId} />
-      </section>
-      <section className="stack" aria-label="Task record details">
-        <h2 className="section-title">Record details</h2>
+        </>
+      }
+      history={
+        <>
+          {t.failure && (
+            <>
+              <h3 className="ev-role">Why this task ended</h3>
+              <p style={{ whiteSpace: 'pre-wrap' }}>{t.failure.reason}</p>
+              <p className="muted">
+                Closed by {nameOf(t.failure.actorId)} on {stamp(t.failure.createdAt)}
+              </p>
+            </>
+          )}
+          <WorkStarts
+            starts={t.workStarts ?? []}
+            current={t.guidance.workStart}
+            terminal={t.guidance.terminal}
+            nameOf={nameOf}
+          />
+        </>
+      }
+      related={
+        <>
+          <WorkRelations title="Waits on" items={t.dependencies ?? []} taskPath={row.path} />
+          <WorkRelations title="Unblocks" items={t.dependents ?? []} taskPath={row.path} />
+          <h3 className="ev-role">Review</h3>
+          {!t.reviewId && <div className="empty">No review has been requested.</div>}
+          {t.reviewId && !review.data && (
+            <LoadState loading={review.loading} error={review.error} />
+          )}
+          {review.data && <CriterionRows review={review.data} head />}
+        </>
+      }
+      details={
         <KV
           rows={[
             ['Producer', nameOf(t.producerId)],
@@ -250,15 +241,8 @@ function TaskDetail({ row }: ViewProps) {
             ['Updated', stamp(t.workflow.updatedAt)],
           ]}
         />
-      </section>
-      <WorkStarts
-        starts={t.workStarts ?? []}
-        current={t.guidance.workStart}
-        terminal={t.guidance.terminal}
-        nameOf={nameOf}
-      />
-      <WorkRelations title="Unblocks" items={t.dependents ?? []} taskPath={row.path} />
-    </div>
+      }
+    />
   );
 }
 
@@ -277,8 +261,8 @@ function WorkStarts({
   const describe = (start: WorkflowWorkStart) =>
     [stamp(start.startedAt), nameOf(start.actorId)].filter(Boolean).join(' by ');
   return (
-    <section className="stack" aria-label="Recorded work starts">
-      <h2 className="section-title">Work starts</h2>
+    <>
+      <h3 className="ev-role">Work starts</h3>
       <p className="muted">
         Each entry records who first began work at that revision. The producer and current review
         claim determine who can work now.
@@ -307,7 +291,7 @@ function WorkStarts({
           ]}
         />
       )}
-    </section>
+    </>
   );
 }
 
@@ -322,8 +306,8 @@ function WorkRelations({
 }) {
   if (!items.length) return null;
   return (
-    <section className="stack" aria-label={title}>
-      <h2 className="section-title">{title}</h2>
+    <>
+      <h3 className="ev-role">{title}</h3>
       <Table
         rows={items}
         keyOf={(item) => item.id}
@@ -346,7 +330,7 @@ function WorkRelations({
           ),
         ]}
       />
-    </section>
+    </>
   );
 }
 

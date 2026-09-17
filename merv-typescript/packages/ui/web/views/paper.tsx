@@ -10,7 +10,7 @@ import type {
 } from '@merv/paper/models';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Area, Failure, Field, LoadState, StatusPill } from '../components';
+import { Area, Failure, Field, LoadState, Part, StatusPill } from '../components';
 import { useScopeKey, useSession } from '../session';
 
 const labels: Record<PaperKind, string> = {
@@ -317,65 +317,112 @@ function CitationEditor({
   );
 }
 
+/**
+ * A paper document read the way every record is read: what can be written here
+ * first, in the one act, with each editor opening in place inside it; then the
+ * document itself; then, for Literature, the ledger of what it cites.
+ */
 function DocumentPanel({
   document,
+  citations,
   proposals,
   writable,
   reload,
 }: {
   document: PaperDocument;
+  citations: PaperCitation[];
   proposals: PaperProposal[];
   writable: boolean;
   reload: () => void;
 }) {
   const [editing, setEditing] = useState<PaperSection | 'new' | null>(null);
+  const [citing, setCiting] = useState<PaperCitation | 'new' | null>(null);
   const [published, setPublished] = useState(false);
   const kind = document.current.kind;
   const canEdit = writable && !published && (kind === 'problem' || kind === 'literature');
   const shown = published && document.published ? document.published.document : document.current;
+  const proposed = proposals.filter((p) => p.documents.some((d) => d.edit.kind === kind));
+  const said = kind === 'methods' || kind === 'results';
   return (
-    <section className="stack stack--lg">
-      <h2 className="section-title">{labels[kind]}</h2>
-      <div className="cluster">
+    <>
+      {(said || canEdit || !!document.published) && (
+        <Part title="What happens next">
+          {said && (
+            <p className="muted">
+              Updates are proposed with experiment results or reflection synthesis and accepted by
+              the same scientific review.
+            </p>
+          )}
+          {editing !== null ? (
+            <SectionEditor
+              document={document.current}
+              section={editing === 'new' ? undefined : editing}
+              onDone={() => setEditing(null)}
+              onSaved={reload}
+            />
+          ) : citing !== null ? (
+            <CitationEditor
+              citation={citing === 'new' ? undefined : citing}
+              sections={document.current.sections}
+              onDone={() => setCiting(null)}
+              onSaved={reload}
+            />
+          ) : (
+            <div className="action-row">
+              {canEdit &&
+                shown.sections.map((section) => (
+                  <button className="btn" key={section.id} onClick={() => setEditing(section)}>
+                    Edit {section.title}
+                  </button>
+                ))}
+              {canEdit &&
+                kind === 'literature' &&
+                citations.map((item) => (
+                  <button className="btn" key={item.id} onClick={() => setCiting(item)}>
+                    Edit {item.title}
+                  </button>
+                ))}
+              {canEdit && kind === 'literature' && (
+                <button className="btn" onClick={() => setCiting('new')}>
+                  Add citation
+                </button>
+              )}
+              {canEdit && kind !== 'problem' && (
+                <button className="btn btn--primary" onClick={() => setEditing('new')}>
+                  Add section
+                </button>
+              )}
+              {document.published && (
+                <button className="btn" onClick={() => setPublished((value) => !value)}>
+                  {published ? 'Show current draft' : 'Show published version'}
+                </button>
+              )}
+            </div>
+          )}
+        </Part>
+      )}
+      <Part title="Document">
         <span className="faint">Revision {shown.revision}</span>
         {document.published && (
-          <button
-            className="btn btn--sm"
-            disabled={editing !== null}
-            onClick={() => setPublished((value) => !value)}
-          >
-            {published ? 'Show current draft' : 'Show published version'}
-          </button>
-        )}
-      </div>
-      {document.published && (
-        <div className="record stack">
-          <div className="cluster">
-            <StatusPill
-              value={document.published.publication.reviewId ? 'approved' : 'published'}
-            />
-            <span>Published revision {document.published.document.revision}</span>
+          <div className="record stack">
+            <div className="cluster">
+              <StatusPill
+                value={document.published.publication.reviewId ? 'approved' : 'published'}
+              />
+              <span>Published revision {document.published.document.revision}</span>
+            </div>
+            <p>{document.published.publication.evidence.length} retained evidence artifacts.</p>
+            <p className="faint">
+              {document.published.publication.reviewId
+                ? `Accepted in the ${document.published.publication.source?.kind ?? 'scientific'} review.`
+                : 'Historical publication, retained from the earlier writing workflow.'}
+            </p>
           </div>
-          <p>{document.published.publication.evidence.length} retained evidence artifacts.</p>
-          <p className="faint">
-            {document.published.publication.reviewId
-              ? `Accepted in the ${document.published.publication.source?.kind ?? 'scientific'} review.`
-              : 'Historical publication, retained from the earlier writing workflow.'}
-          </p>
-        </div>
-      )}
-      {(kind === 'methods' || kind === 'results') && (
-        <p className="muted">
-          Updates are proposed with experiment results or reflection synthesis and accepted by the
-          same scientific review.
-        </p>
-      )}
-      {proposals.filter((p) => p.documents.some((d) => d.edit.kind === kind)).length > 0 && (
-        <details className="stack">
-          <summary>Proposed and reviewed updates</summary>
-          {proposals
-            .filter((p) => p.documents.some((d) => d.edit.kind === kind))
-            .map((proposal) => (
+        )}
+        {proposed.length > 0 && (
+          <details className="stack">
+            <summary>Proposed and reviewed updates</summary>
+            {proposed.map((proposal) => (
               <article className="stack" key={proposal.id}>
                 <div className="cluster">
                   <StatusPill value={proposal.acceptance ? 'approved' : 'submitted'} />
@@ -395,41 +442,54 @@ function DocumentPanel({
                 </p>
               </article>
             ))}
-        </details>
-      )}
-      {editing !== null ? (
-        <SectionEditor
-          document={document.current}
-          section={editing === 'new' ? undefined : editing}
-          onDone={() => setEditing(null)}
-          onSaved={reload}
-        />
-      ) : (
-        <>
-          {!shown.sections.length && <p className="empty">No sections yet.</p>}
-          {shown.sections.map((section) => (
-            <article className="record stack" key={section.id}>
-              <div className="cluster">
-                <h3>{section.title}</h3>
-                {canEdit && (
-                  <button className="btn btn--sm" onClick={() => setEditing(section)}>
-                    Edit {section.title}
-                  </button>
-                )}
-              </div>
-              <p className="prose">{section.content || 'Not defined yet.'}</p>
+          </details>
+        )}
+        {!shown.sections.length && <p className="empty">No sections yet.</p>}
+        {shown.sections.map((section) => (
+          <article className="record stack" key={section.id}>
+            <h3>{section.title}</h3>
+            <p className="prose">{section.content || 'Not defined yet.'}</p>
+          </article>
+        ))}
+      </Part>
+      {kind === 'literature' && (
+        <Part title="Related">
+          <h3 className="ev-role">Citation ledger</h3>
+          {!citations.length && <p className="empty">No citations yet.</p>}
+          {citations.map((item) => (
+            <article className="record stack" key={item.id}>
+              <h3>{item.title}</h3>
+              <p>
+                {item.authors.join(', ')}
+                {item.year ? ` · ${item.year}` : ''}
+              </p>
+              <p className="mono prose">{item.identifier}</p>
+              <p className="prose">{item.notes}</p>
+              {item.url && /^https?:\/\//i.test(item.url) && (
+                <a href={item.url} target="_blank" rel="noreferrer">
+                  Open source
+                </a>
+              )}
+              <p className="faint">
+                {item.sectionIds.length} linked sections · {item.refs.length} research references ·
+                Revision {item.revision}
+              </p>
+              {!!item.sectionIds.length && (
+                <p className="faint">
+                  Sections:{' '}
+                  {item.sectionIds
+                    .map(
+                      (id) =>
+                        document.current.sections.find((section) => section.id === id)?.title ?? id,
+                    )
+                    .join(', ')}
+                </p>
+              )}
             </article>
           ))}
-          {canEdit && kind !== 'problem' && (
-            <div>
-              <button className="btn" onClick={() => setEditing('new')}>
-                Add section
-              </button>
-            </div>
-          )}
-        </>
+        </Part>
       )}
-    </section>
+    </>
   );
 }
 
@@ -437,7 +497,6 @@ function PaperPage() {
   const { actor } = useSession();
   const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
   const [kind, setKind] = useState<PaperKind>('problem');
-  const [citation, setCitation] = useState<PaperCitation | 'new' | null>(null);
   const writable = actor.role === 'operator' || actor.role === 'producer';
   return (
     <div className="page-stage stack stack--lg">
@@ -467,77 +526,17 @@ function PaperPage() {
               aria-labelledby={`paper-tab-${value}`}
               key={value}
               hidden={kind !== value}
+              className="record-page stack stack--lg"
             >
               <DocumentPanel
                 document={workspace.data!.documents[value]}
+                citations={value === 'literature' ? workspace.data!.citations : []}
                 proposals={workspace.data!.proposals}
                 writable={writable}
                 reload={workspace.reload}
               />
             </div>
           ))}
-          <div hidden={kind !== 'literature'}>
-            <section className="stack">
-              <h2 className="section-title">Citation ledger</h2>
-              {citation !== null ? (
-                <CitationEditor
-                  citation={citation === 'new' ? undefined : citation}
-                  sections={workspace.data.documents.literature.current.sections}
-                  onDone={() => setCitation(null)}
-                  onSaved={workspace.reload}
-                />
-              ) : (
-                writable && (
-                  <div>
-                    <button className="btn" onClick={() => setCitation('new')}>
-                      Add citation
-                    </button>
-                  </div>
-                )
-              )}
-              {!workspace.data.citations.length && <p className="empty">No citations yet.</p>}
-              {workspace.data.citations.map((item) => (
-                <article className="record stack" key={item.id}>
-                  <h3>{item.title}</h3>
-                  <p>
-                    {item.authors.join(', ')}
-                    {item.year ? ` · ${item.year}` : ''}
-                  </p>
-                  <p className="mono prose">{item.identifier}</p>
-                  <p className="prose">{item.notes}</p>
-                  {item.url && /^https?:\/\//i.test(item.url) && (
-                    <a href={item.url} target="_blank" rel="noreferrer">
-                      Open source
-                    </a>
-                  )}
-                  <p className="faint">
-                    {item.sectionIds.length} linked sections · {item.refs.length} research
-                    references · Revision {item.revision}
-                  </p>
-                  {!!item.sectionIds.length && (
-                    <p className="faint">
-                      Sections:{' '}
-                      {item.sectionIds
-                        .map(
-                          (id) =>
-                            workspace.data!.documents.literature.current.sections.find(
-                              (section) => section.id === id,
-                            )?.title ?? id,
-                        )
-                        .join(', ')}
-                    </p>
-                  )}
-                  {writable && citation === null && (
-                    <div>
-                      <button className="btn btn--sm" onClick={() => setCitation(item)}>
-                        Edit citation
-                      </button>
-                    </div>
-                  )}
-                </article>
-              ))}
-            </section>
-          </div>
         </>
       )}
     </div>

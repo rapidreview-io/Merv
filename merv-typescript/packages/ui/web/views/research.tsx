@@ -4,7 +4,17 @@ import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Area, Failure, Field, Fold, KindLabel, LoadState, StatusPill } from '../components';
+import {
+  Area,
+  Failure,
+  Field,
+  Fold,
+  GateBox,
+  KindLabel,
+  LoadState,
+  Part,
+  StatusPill,
+} from '../components';
 import { useScopeKey, useSession } from '../session';
 import { ResearchCommand } from './paper';
 
@@ -97,12 +107,8 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
   );
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && record.ownerId === actor.id);
-  // The instruction already says it; a blocker that repeats it word for word is noise.
-  const blockers = (guidance.data?.blockers ?? []).filter(
-    (blocker) => blocker.message !== guidance.data?.instruction,
-  );
   return (
-    <article className="record stack">
+    <article className="record record-page stack">
       <KindLabel kind="research" />
       <div className="cluster">
         <h2>{record.name}</h2>
@@ -116,50 +122,31 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
             ? 'Report consolidation (legacy cycle)'
             : 'No code changes'}
       </p>
-      <LoadState {...guidance} />
-      {guidance.data && !guidance.error && (
-        <>
-          <p>{guidance.data.instruction}</p>
-          {!!blockers.length && (
-            <ul>
-              {blockers.map((blocker, index) => (
-                <li key={index}>{blocker.message}</li>
-              ))}
-            </ul>
-          )}
-          {!!guidance.data.dependencies.length && (
-            <details>
-              <summary>Work dependencies ({guidance.data.dependencies.length})</summary>
-              <ul>
-                {guidance.data.dependencies.map((item) => (
-                  <li key={item.id}>
-                    {item.name} <StatusPill value={item.state} />
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </>
-      )}
-      <div className="cluster">
-        <Link to="/paper">
-          Living paper{record.problem ? ` · problem revision ${record.problem.revision}` : ''}
-        </Link>
-        {record.reflectionId && <Link to="/reflections">Reflection</Link>}
-        {record.consolidationId && <Link to="/consolidation">Consolidation</Link>}
-      </div>
-      {writable && (
-        <ResearchCommand
-          disabled={record.workflow.state === 'complete'}
-          tool="research.advance"
-          input={{ researchId: record.id, expectedRevision: record.workflow.revision }}
-          label={record.workflow.state === 'complete' ? 'Cycle complete' : 'Advance when ready'}
-          onSaved={() => {
-            reload();
-            guidance.reload();
-          }}
-        />
-      )}
+      <Part title="What happens next">
+        <LoadState {...guidance} />
+        {guidance.data && !guidance.error && <GateBox decision={guidance.data} />}
+        {writable && (
+          <ResearchCommand
+            disabled={record.workflow.state === 'complete'}
+            tool="research.advance"
+            input={{ researchId: record.id, expectedRevision: record.workflow.revision }}
+            label={record.workflow.state === 'complete' ? 'Cycle complete' : 'Advance when ready'}
+            onSaved={() => {
+              reload();
+              guidance.reload();
+            }}
+          />
+        )}
+      </Part>
+      <Part title="Related">
+        <div className="cluster">
+          <Link to="/paper">
+            Living paper{record.problem ? ` · problem revision ${record.problem.revision}` : ''}
+          </Link>
+          {record.reflectionId && <Link to="/reflections">Reflection</Link>}
+          {record.consolidationId && <Link to="/consolidation">Consolidation</Link>}
+        </div>
+      </Part>
     </article>
   );
 }

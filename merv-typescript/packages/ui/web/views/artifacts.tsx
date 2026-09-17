@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { call, useScopeVersion, useTool } from '../api';
-import { Ago, KV, Listing, LoadState, PageHeader, col, recordRoutes, stamp } from '../components';
+import { Ago, KV, Listing, LoadState, RecordPage, col, recordRoutes, stamp } from '../components';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -101,13 +101,29 @@ function InlineArtifact({ artifactId }: { artifactId: string }) {
   );
 }
 
-/** Only small files enter the inline content path. Large files download directly from storage. */
+/** The one move a file offers: take a copy of it, or the reason storage cannot serve one. */
+function Take({ artifact }: { artifact: Artifact }) {
+  const scope = useScopeVersion();
+  if (artifact.downloadAvailable)
+    return <ArtifactDownload key={`${scope}:${artifact.id}`} artifactId={artifact.id} />;
+  return artifact.size > 2_000_000 ? (
+    <div className="empty">Direct downloads are unavailable with this storage provider.</div>
+  ) : null;
+}
+
+/**
+ * Only small files enter the inline content path. Large files download directly
+ * from storage — except on the file's own record, where taking a copy is the one
+ * thing a person does here and so belongs in that page's act, not in its content.
+ */
 export function ArtifactBody({
   artifactId,
   metadata,
+  download = true,
 }: {
   artifactId: string;
   metadata?: Artifact;
+  download?: boolean;
 }) {
   const scope = useScopeVersion();
   const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
@@ -126,13 +142,7 @@ export function ArtifactBody({
       ) : (
         <div className="empty">This file is too large for an inline preview.</div>
       )}
-      {artifact.downloadAvailable ? (
-        <ArtifactDownload key={`${scope}:${artifactId}`} artifactId={artifactId} />
-      ) : (
-        artifact.size > 2_000_000 && (
-          <div className="empty">Direct downloads are unavailable with this storage provider.</div>
-        )
-      )}
+      {download && <Take artifact={artifact} />}
     </div>
   );
 }
@@ -187,23 +197,26 @@ function ArtifactDetail({ row }: ViewProps) {
     );
   const a = meta.data;
   return (
-    <div className="page-stage">
-      <PageHeader
-        eyebrow={<Link to={row.path}>← {row.label}</Link>}
-        kind={row.view.kind}
-        title={a.title}
-      />
-      <KV
-        rows={[
-          ['Media type', <span className="mono">{a.mediaType}</span>],
-          ['Size', bytes(a.size)],
-          ['Hash', <span className="mono faint">{a.hash.slice(0, 16)}…</span>],
-          ['Created by', nameOf(a.createdBy)],
-          ['Created', stamp(a.createdAt)],
-        ]}
-      />
-      <ArtifactBody artifactId={a.id} metadata={a} />
-    </div>
+    <RecordPage
+      back={<Link to={row.path}>← {row.label}</Link>}
+      kind={row.view.kind}
+      name={a.title}
+      // A small file this storage cannot serve has no move to offer, so the slot goes.
+      act={a.downloadAvailable || a.size > 2_000_000 ? <Take artifact={a} /> : undefined}
+      title="Document"
+      content={<ArtifactBody artifactId={a.id} metadata={a} download={false} />}
+      details={
+        <KV
+          rows={[
+            ['Media type', <span className="mono">{a.mediaType}</span>],
+            ['Size', bytes(a.size)],
+            ['Hash', <span className="mono faint">{a.hash.slice(0, 16)}…</span>],
+            ['Created by', nameOf(a.createdBy)],
+            ['Created', stamp(a.createdAt)],
+          ]}
+        />
+      }
+    />
   );
 }
 
