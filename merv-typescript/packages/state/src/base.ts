@@ -206,7 +206,9 @@ export abstract class StateStore implements State {
    * scope it simply runs the function there.
    */
   async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
-    if (this.context.getStore()) return await fn();
+    // SQLite hands out one serialised connection, so a scope held across a handler would
+    // deadlock anything the handler waits on; the writer lock this avoids is Postgres's.
+    if (this.dialect !== 'postgres' || this.context.getStore()) return await fn();
     return this.operation(() =>
       this.connect(async (connection) => {
         const scope = this.scope(connection);

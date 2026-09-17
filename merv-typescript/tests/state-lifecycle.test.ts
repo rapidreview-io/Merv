@@ -106,7 +106,7 @@ test('failed Cordis State activation closes the database before publishing a ser
   }
 });
 
-test('a snapshot scope reads on one snapshot without the writer lock and refuses writes', async (t) => {
+test('a snapshot scope on SQLite is plain execution; the read-only scope is Postgres-only', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-read-scope-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const state = new SqliteState(join(directory, 'state.sqlite'));
@@ -126,28 +126,11 @@ test('a snapshot scope reads on one snapshot without the writer lock and refuses
     return [first.map((row) => row.name), second!.n];
   });
   assert.deepEqual(seen, [['one'], 1]);
-  await assert.rejects(
-    state.snapshot(() =>
-      state.transaction((tx) => tx.run('INSERT INTO things(name) VALUES (?)', 'two')),
-    ),
-    { code: 'read_only_scope' },
-  );
-  await assert.rejects(
-    state.snapshot(() =>
-      state.transaction((tx) =>
-        state.appendEvent(tx, {
-          projectId: 'p',
-          actorId: 'a',
-          type: 't',
-          subjectId: 's',
-          data: {},
-        }),
-      ),
-    ),
-    { code: 'read_only_scope' },
+  await state.snapshot(() =>
+    state.transaction((tx) => tx.run('INSERT INTO things(name) VALUES (?)', 'two')),
   );
   assert.equal(
     (await state.read((sql) => sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM things')))!.n,
-    1,
+    2,
   );
 });
