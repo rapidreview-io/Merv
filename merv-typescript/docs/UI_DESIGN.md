@@ -147,3 +147,7 @@ The founder ruled on docs/PLUGIN_UI_MAP.md: Cycles UI goes; Knowledge UI goes; T
 ## No explanatory text (founder ruling, 2026-09-17)
 
 The founder, on the Code sketch: "too much text on the code page. Get rid of the text that describes things. Anything that is not actually giving useful information about something needs to go." A sentence whose subject is the page, the visualisation or the mechanism is chrome: no legends, no captions explaining what a dot or a line means, no section ledes saying what the section is, no subtitles about where data comes from, no help text under controls, no empty-state hints that explain the system. What stays is information about the record: names, state words, counts, timestamps, the server's own gate sentence in Act, error lines, field labels. A mixed sentence keeps only the clause that is a fact about the record.
+
+## ⌘K removed (founder ruling, 2026-09-17)
+
+The founder: "remove the command K feature." The palette of wave 5 is gone: no ⌘K, no Search line in the rail, no Actions-here registry. Navigation is the rail, the lists, the records and Now; nothing else.

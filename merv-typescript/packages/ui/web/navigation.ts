@@ -27,7 +27,7 @@ const SECTION_OF_VIEW: Record<string, string> = {
 
 /**
  * Rows the rail does not show. Every one of them is still registered and still
- * serves its record routes, its ui.read and the palette: the wave of work is one
+ * serves its record routes and its ui.read: the wave of work is one
  * Work page now, consolidation is the last phase of a reflection, the reference
  * lookup is a control on Claims, and people and connections are Settings.
  */

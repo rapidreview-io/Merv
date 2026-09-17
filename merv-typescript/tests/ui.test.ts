@@ -336,6 +336,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       id: string;
       label: string;
       group: string;
+      order: number;
+      path: string;
       status: Record<string, unknown>;
       readable: boolean;
       view: { kind: string };

@@ -6,7 +6,6 @@ import { useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Area, Failure, Field, PageHeader, StatusPill, cx, words } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
-import { useHere } from '../palette';
 import { useSession } from '../session';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
@@ -293,7 +292,6 @@ export function WorkList({ shell }: { shell: ShellData }) {
 /** The cycle that frames the wave: what it is called, where it stands, its one move. */
 function CycleHead({ shell }: { shell: ShellData }) {
   const { actor } = useSession();
-  const act = useHere<HTMLDivElement>('act');
   const [chosen, setChosen] = useState<string>();
   const cyclesRow = shell.rows.find((row) => row.view.kind === 'research');
   const cycles = useTool<ResearchRecord[]>(
@@ -307,11 +305,7 @@ function CycleHead({ shell }: { shell: ShellData }) {
     return (
       <PageHeader
         title="Work"
-        summary={
-          cyclesRow
-            ? 'No research cycle yet: every task and experiment in the project is below.'
-            : undefined
-        }
+        summary={cyclesRow ? 'No research cycle yet' : undefined}
       />
     );
   const writable =
@@ -320,7 +314,7 @@ function CycleHead({ shell }: { shell: ShellData }) {
     <PageHeader
       title={<Link to={`${cyclesRow.path}/${cycle.id}`}>{cycle.name}</Link>}
       actions={
-        <div ref={act} className="cluster">
+        <div className="cluster">
           <StatusPill value={cycle.workflow.state} />
           {writable && (
             <ResearchCommand

@@ -9,7 +9,6 @@ import {
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import type { ApiError } from './api';
 import { KindLabel, LoadState, cx, words } from './components';
-import { useHere } from './palette';
 import { OPEN } from './states';
 import type { Row, ShellData } from './shell-types';
 
@@ -252,13 +251,10 @@ export function ListPage<T extends { id: string }>({
   const frame = useRef<HTMLDivElement>(null);
   // One control is open at a time, and its form opens under the row it sits in.
   const [open, setOpen] = useState<string | undefined>(create?.opened ? 'create' : undefined);
-  // The page's one creation control, registered so the palette can open the same fold.
-  const opener = useHere<HTMLButtonElement>('create');
-  const control = (key: string, item: Creation, ref?: typeof opener) =>
+  const control = (key: string, item: Creation) =>
     item.shown === false ? null : (
       <button
         type="button"
-        ref={ref}
         className={cx('btn', !item.plain && 'btn--primary', key === 'create' && 'action-end')}
         aria-expanded={open === key}
         onClick={() => setOpen((value) => (value === key ? undefined : key))}
@@ -323,7 +319,7 @@ export function ListPage<T extends { id: string }>({
             )}
             {aside && control('aside', aside)}
           </div>
-          {create && control('create', create, opener)}
+          {create && control('create', create)}
         </div>
         {open === 'aside' && aside?.form(() => setOpen(undefined))}
         {open === 'create' && create?.form(() => setOpen(undefined))}

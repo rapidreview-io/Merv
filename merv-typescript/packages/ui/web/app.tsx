@@ -3,7 +3,6 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, TitleLine, useShell } from './shell';
 import { LoadState } from './components';
-import { Palette } from './palette';
 import { viewFor } from './views';
 import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
@@ -25,7 +24,6 @@ function UnavailableRoute() {
 
 function Workspace() {
   const shell = useShell();
-  const [find, setFind] = useState(false);
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem('merv:sidebar') !== 'closed';
@@ -42,11 +40,10 @@ function Workspace() {
   }, [open]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const key = (event.metaKey || event.ctrlKey) && event.key.toLowerCase();
-      if (key !== 'b' && key !== 'k') return;
-      event.preventDefault();
-      if (key === 'b') setOpen((v) => !v);
-      else setFind(true);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        setOpen((v) => !v);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -57,9 +54,7 @@ function Workspace() {
       <ShellFrame
         open={open}
         onShow={() => setOpen(true)}
-        sidebar={
-          <Sidebar shell={shell.data} onHide={() => setOpen(false)} onFind={() => setFind(true)} />
-        }
+        sidebar={<Sidebar shell={shell.data} onHide={() => setOpen(false)} />}
       >
         {shell.data && shell.error && (
           <div className="page-stage" role="alert">
@@ -98,7 +93,6 @@ function Workspace() {
           </div>
         )}
       </ShellFrame>
-      <Palette rows={rows} open={find} onClose={() => setFind(false)} />
     </>
   );
 }
