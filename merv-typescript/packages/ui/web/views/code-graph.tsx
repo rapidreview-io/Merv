@@ -39,14 +39,17 @@ export interface GraphInput {
   baseBranch: string | null;
 }
 
-export interface Lane {
+/** What a branch is called, and how the record that owns it stands. */
+interface Named {
   key: string;
   kind: string;
   word: string;
   name: string;
   state: string;
-  tone: string;
   meta: string;
+}
+export interface Lane extends Named {
+  tone: string;
   y: number;
   path: string;
   merge: string | null;
@@ -98,17 +101,23 @@ function scaleOf(times: number[], x0: number, x1: number) {
 }
 
 /** Everything the drawing needs about one branch, before it has a place. */
-interface Raw {
-  key: string;
-  kind: string;
-  word: string;
-  name: string;
-  state: string;
-  meta: string;
+interface Raw extends Named {
   from: { lane: string; head: string } | { oid: string };
   events: { at: number; head: string; add: number; del: number; title: string }[];
   merged: { at: number; title: string } | null;
 }
+/** One checkpoint, from the receipt that reported it; a dot is never drawn without one. */
+const event = (
+  at: string,
+  message: string,
+  receipt: { headOid: string; stats: { insertions: number; deletions: number } },
+): Raw['events'][number] => ({
+  at: stamp(at),
+  head: receipt.headOid,
+  add: receipt.stats.insertions,
+  del: receipt.stats.deletions,
+  title: `${message} · ${receipt.headOid}`,
+});
 
 /**
  * The layout: pure, so what the graph says is exactly what some receipt says,
@@ -146,13 +155,9 @@ export function lanes(input: GraphInput, width: number) {
       state: named.state,
       meta: `${order.length} checkpoint${order.length === 1 ? '' : 's'}`,
       from: { oid: order[0]!.receipt!.baseOid },
-      events: order.map((record) => ({
-        at: stamp(record.command.createdAt),
-        head: record.receipt!.headOid,
-        add: record.receipt!.stats.insertions,
-        del: record.receipt!.stats.deletions,
-        title: `${record.command.message} · ${record.receipt!.headOid}`,
-      })),
+      events: order.map((record) =>
+        event(record.command.createdAt, record.command.message, record.receipt!),
+      ),
       merged: null,
     });
   }
@@ -173,15 +178,7 @@ export function lanes(input: GraphInput, width: number) {
         parent >= 0
           ? { lane: raws[parent]!.key, head: proposal.receipt.headOid }
           : { oid: proposal.receipt.baseOid },
-      events: [
-        {
-          at: stamp(proposal.createdAt),
-          head: proposal.receipt.headOid,
-          add: proposal.receipt.stats.insertions,
-          del: proposal.receipt.stats.deletions,
-          title: `${proposal.summary} · ${proposal.receipt.headOid}`,
-        },
-      ],
+      events: [event(proposal.createdAt, proposal.summary, proposal.receipt)],
       merged: commit
         ? {
             at: stamp(
@@ -194,19 +191,13 @@ export function lanes(input: GraphInput, width: number) {
   }
   if (!raws.length) return null;
 
-  const x = scaleOf(
-    raws.flatMap((raw) => [
-      ...raw.events.map((event) => event.at),
-      ...(raw.merged ? [raw.merged.at] : []),
-    ]),
-    x0,
-    x1,
-  );
+  const times = raws.flatMap((raw) => raw.events.map((point) => point.at));
+  const merges = raws.flatMap((raw) => (raw.merged ? [raw.merged.at] : []));
+  const x = scaleOf([...times, ...merges], x0, x1);
   const marks: { x: number; ring: boolean; title: string }[] = [];
   const cut = new Map<string, number>();
-  const placed: Lane[] = [];
   const points = new Map<string, { x: number; y: number }>();
-  raws.forEach((raw, index) => {
+  const placed: Lane[] = raws.map((raw, index) => {
     const y = TRUNK_Y + drop + index * row;
     const first = x(raw.events[0]!.at);
     const parent =
@@ -217,19 +208,12 @@ export function lanes(input: GraphInput, width: number) {
     // A lane starts clear of the point it was cut from, whatever the clock says.
     const shift = Math.max(0, parent.x + CUT - first);
     let printed = -Infinity;
-    const dots: Lane['dots'] = raw.events.map((event, at) => {
-      const place = x(event.at) + shift;
+    const dots: Lane['dots'] = raw.events.map(({ at, head, add, del, title }, index) => {
+      const place = x(at) + shift;
       const stat = place - printed >= STAT_GAP;
       if (stat) printed = place;
-      points.set(`${raw.key}:${event.head}`, { x: place, y });
-      return {
-        x: place,
-        add: event.add,
-        del: event.del,
-        stat,
-        tip: at === raw.events.length - 1,
-        title: event.title,
-      };
+      points.set(`${raw.key}:${head}`, { x: place, y });
+      return { x: place, add, del, stat, tip: index === raw.events.length - 1, title };
     });
     const tip = dots[dots.length - 1]!;
     points.set(`${raw.key}:tip`, { x: tip.x, y });
@@ -241,7 +225,7 @@ export function lanes(input: GraphInput, width: number) {
       merge = `M ${tip.x},${y} H ${at - 28} q28,0 28,-28 V ${TRUNK_Y}`;
       marks.push({ x: at, ring: true, title: raw.merged.title });
     }
-    placed.push({
+    return {
       key: raw.key,
       kind: raw.kind,
       word: raw.word.toUpperCase(),
@@ -253,11 +237,10 @@ export function lanes(input: GraphInput, width: number) {
       path: `M ${parent.x},${parent.y} V ${y - ELBOW} q0,${ELBOW} ${ELBOW},${ELBOW} H ${tip.x}`,
       merge,
       dots,
-    });
+    };
   });
   for (const [oid, place] of cut) marks.push({ x: place, ring: false, title: oid });
 
-  const times = raws.flatMap((raw) => raw.events.map((event) => event.at));
   const [start, end] = [Math.min(...times), Math.max(...times)];
   const days: number[] = [start];
   for (let day = new Date(start).setHours(24, 0, 0, 0); day <= end; day += DAY) days.push(day);

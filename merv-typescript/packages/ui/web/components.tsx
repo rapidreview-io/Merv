@@ -119,15 +119,14 @@ const TONE_OF = new Map(
 export const toneOf = (value: string) => TONE_OF.get(value) ?? 'neutral';
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
-export function StatusPill({ value }: { value: string | null | undefined }) {
-  if (!value) return null;
-  return (
-    <span className={cx('status', `status--${toneOf(value.toLowerCase())}`)}>
-      <span className="status-dot" aria-hidden="true" />
-      {words(value)}
-    </span>
-  );
-}
+const Word = ({ tone, value }: { tone: string; value: string }) => (
+  <span className={cx('status', `status--${tone}`)}>
+    <span className="status-dot" aria-hidden="true" />
+    {words(value)}
+  </span>
+);
+export const StatusPill = ({ value }: { value: string | null | undefined }) =>
+  value ? <Word tone={toneOf(value.toLowerCase())} value={value} /> : null;
 
 /**
  * The liveness line: one phrase from the one module that composes them, with
@@ -138,10 +137,7 @@ export function Live({ of }: { of: Liveness | null }) {
   if (!of) return null;
   return (
     <span className="cluster agent-help">
-      <span className={cx('status', `status--${of.tone}`)}>
-        <span className="status-dot" aria-hidden="true" />
-        {words(of.verdict)}
-      </span>
+      <Word tone={of.tone} value={of.verdict} />
       {of.rest && <span className="muted">{of.rest}</span>}
     </span>
   );

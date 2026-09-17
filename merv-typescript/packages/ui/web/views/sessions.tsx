@@ -19,7 +19,15 @@ import {
 } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
-import { clock, decisionLiveness, leaseLiveness, runnerLiveness, type Clock } from '../liveness';
+import {
+  clock,
+  decisionLiveness,
+  holding,
+  leaseLiveness,
+  runnerLiveness,
+  type Clock,
+  type Lease,
+} from '../liveness';
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
@@ -27,11 +35,9 @@ import { AgentDetail, activity, type AgentSummary } from './agent-sessions-panel
 
 interface Platform {
   name: string;
-  harness: string;
   model?: string;
   effort?: string;
   enabled?: boolean;
-  parallelism?: number;
 }
 interface Runner {
   id: string;
@@ -45,24 +51,11 @@ interface Runner {
   lastDecision: string | null;
   lastDecisionAt: string | null;
 }
-interface Session {
+/** The lease itself, and what this page says about it that liveness does not. */
+interface Session extends Lease {
   agentId?: string;
-  agentSessionId?: string;
-  id: string;
-  instanceId: string;
   expectedRevision: number;
-  label: string;
-  role: string;
-  status: string;
-  runnerRef: string | null;
-  hostRef: string | null;
   platform: Platform | null;
-  createdAt: string;
-  activatedAt: string | null;
-  expiresAt: string;
-  closedAt: string | null;
-  closeReason: string | null;
-  outcome?: string | null;
   workspaceMode: 'none' | 'ephemeral' | 'persistent';
   workspace?: {
     attachment: { baseOid: string; headOid: string; mode: string };
@@ -72,12 +65,9 @@ interface Session {
 interface Candidate {
   instanceId: string;
   expectedRevision: number;
-  workflow: string;
   state: string;
   label: string;
   role: string;
-  readOnly: boolean;
-  workspace: { mode: string };
 }
 interface Dispatch {
   enabled: boolean;
@@ -97,18 +87,16 @@ interface Status {
   queue: Candidate[];
   queueTotal: number;
 }
-/**
- * Whether the lease is still held, asked of the one module that composes the
- * verdict rather than of the lifecycle word beside it — so the countdown, the KV
- * label and the Halt control cannot disagree with the line that says `lapsed`.
- */
-const holds = (session: Session, now: Clock) => {
-  const verdict = leaseLiveness(session, now)?.verdict;
-  return verdict === 'offered' || verdict === 'active';
-};
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const platformPhrase = (platform: Platform) =>
   [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
+/** What a runner offers, in its own order; a platform it has paused says so. */
+const platformList = (platforms: Platform[]) =>
+  platforms
+    .map(
+      (one) => `${one.name}${one.model ? ` · ${one.model}` : ''}${one.enabled ? '' : ' (paused)'}`,
+    )
+    .join(', ') || 'None';
 const workspacePhrase = ({ workspace, workspaceMode }: Session) => {
   if (!workspace)
     return workspaceMode === 'none' ? 'none · scratch' : `${term(workspaceMode)} · not attached`;
@@ -145,20 +133,29 @@ function useHalt(path: string, reload: () => void, nothing: string) {
     },
   });
   return {
-    halted,
-    busy: command.busy ? 'Halting…' : undefined,
-    label: command.retry ? 'Retry halt' : undefined,
-    note:
-      command.error || halted === 0 ? (
-        <p className="error-message" role="alert">
-          {command.error ?? nothing}
-        </p>
-      ) : null,
-    async confirm() {
-      answer.current = undefined;
-      await command.submit({ reason: 'halted_by_operator' });
-      return (answer.current ?? 0) > 0;
-    },
+    /** The guard's own words, its busy label and what the command answered inside it. */
+    guard: (label: string) => ({
+      label,
+      confirm: command.retry ? 'Retry halt' : label,
+      busy: command.busy ? 'Halting…' : undefined,
+      note:
+        command.error || halted === 0 ? (
+          <p className="error-message" role="alert">
+            {command.error ?? nothing}
+          </p>
+        ) : null,
+      async onConfirm() {
+        answer.current = undefined;
+        await command.submit({ reason: 'halted_by_operator' });
+        return (answer.current ?? 0) > 0;
+      },
+    }),
+    /** What it closed, stated where it was asked. */
+    receipt: halted ? (
+      <p className="muted" role="status">
+        Halted {count(halted, 'lease', 'leases')}.
+      </p>
+    ) : null,
   };
 }
 
@@ -190,7 +187,7 @@ function LeaseRow({
   reload(): void;
 }) {
   const panelId = `lease-${session.id}`;
-  const holding = holds(session, now);
+  const held = holding(session, now);
   const halt = useHalt(
     `/sessions/${encodeURIComponent(session.id)}/halt`,
     reload,
@@ -200,7 +197,7 @@ function LeaseRow({
     ['Revision', session.expectedRevision],
     ['Offered', stamp(session.createdAt)],
     !!session.activatedAt && ['Taken up', stamp(session.activatedAt)],
-    [holding ? 'Lease expires' : 'Lease ran to', stamp(session.expiresAt)],
+    [held ? 'Lease expires' : 'Lease ran to', stamp(session.expiresAt)],
     !!session.closedAt && ['Closed', stamp(session.closedAt)],
     !!session.platform && ['Platform', platformPhrase(session.platform)],
     ['Workspace', <span className="wrap">{workspacePhrase(session)}</span>],
@@ -217,7 +214,7 @@ function LeaseRow({
         <span className="wrap">{name ?? term(null)}</span>
         <strong>{session.label}</strong>
         <span className="muted">{term(session.role)}</span>
-        <Countdown to={holding ? session.expiresAt : null} now={now} />
+        <Countdown to={held ? session.expiresAt : null} now={now} />
       </button>
       <div className="lease-live">
         <Live of={leaseLiveness(session, now)} />
@@ -231,15 +228,8 @@ function LeaseRow({
             </Link>
           )}
           <KV rows={rows} />
-          {canManage && holding && (
-            <ConfirmAction
-              label="Halt lease"
-              title="Halt this lease?"
-              confirm={halt.label ?? 'Halt lease'}
-              busy={halt.busy}
-              note={halt.note}
-              onConfirm={halt.confirm}
-            >
+          {canManage && held && (
+            <ConfirmAction {...halt.guard('Halt lease')} title="Halt this lease?">
               <p>
                 {name ?? 'An unnamed agent'} holds this lease on {session.label} as{' '}
                 {term(session.role)}. Halting closes it now; its runner must stop the worker itself.
@@ -250,11 +240,7 @@ function LeaseRow({
               </p>
             </ConfirmAction>
           )}
-          {halt.halted !== undefined && halt.halted > 0 && (
-            <p className="muted" role="status">
-              Halted {count(halt.halted, 'lease', 'leases')}.
-            </p>
-          )}
+          {halt.receipt}
         </div>
       )}
     </div>
@@ -320,7 +306,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
     ids: (agent) => [agent.id],
   });
   const offered = (status?.sessions ?? []).filter((session) => session.status === 'offered');
-  const live = (status?.sessions ?? []).filter((session) => holds(session, now));
+  const live = (status?.sessions ?? []).filter((session) => holding(session, now));
   const waiting = [
     status?.queueTotal &&
       `${count(status.queueTotal, 'assignment', 'assignments')} eligible for this identity`,
@@ -328,14 +314,44 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   ]
     .filter(Boolean)
     .join(' · ');
-  const assignmentLabels = new Map(
-    (status?.sessions ?? []).map((session) => [session.id, session]),
-  );
+  // What an agent is on, named by its own record or, failing that, by the lease.
+  const leases = new Map((status?.sessions ?? []).map((session) => [session.id, session]));
+  const assigned = (agent: AgentSummary) => {
+    const on = agent.currentAssignment ?? leases.get(agent.currentExecutionId ?? '');
+    return agent.currentExecutionId
+      ? `${on?.label ?? 'Assignment execution'} · ${on?.role ?? ''} · `
+      : '';
+  };
   const selectedAgent = agents.find((agent) => agent.id === selected);
   const close = () => {
     setSelected(undefined);
     opener.current?.focus();
   };
+  const machines = [
+    col<Runner>('machine', 'Machine', (runner) => (
+      <>
+        <strong>{runner.machine.hostname}</strong>
+        <div className="faint">
+          {runner.machine.system} · {runner.machine.architecture}
+        </div>
+      </>
+    )),
+    col<Runner>('live', 'Presence', (runner) => <Live of={runnerLiveness(runner, now)} />),
+    col<Runner>('decision', 'Last dispatch', (runner) => (
+      <Live of={decisionLiveness(runner, now)} />
+    )),
+    col<Runner>('platforms', 'Platforms', (runner) => platformList(runner.platforms)),
+    col<Runner>('capacity', 'Capacity', (runner) => runner.capacity),
+    col<Runner>('settings', 'Settings', (runner) =>
+      runner.desiredVersion > (runner.appliedVersion ?? 0) ? 'Pending acknowledgement' : 'Applied',
+    ),
+  ];
+  const eligible = [
+    col<Candidate>('label', 'Work', (candidate) => <strong>{candidate.label}</strong>),
+    col<Candidate>('gate', 'Gate', (candidate) => term(candidate.state)),
+    col<Candidate>('role', 'Role', (candidate) => term(candidate.role)),
+    col<Candidate>('revision', 'Revision', (candidate) => candidate.expectedRevision),
+  ];
   return (
     <>
       {/* The page's subject is the page: dispatch, the machines, the leases and the
@@ -370,12 +386,8 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     </button>
                     {live.length > 0 && (
                       <ConfirmAction
-                        label="Halt all leases"
+                        {...haltAll.guard('Halt all leases')}
                         title={`Halt ${count(liveCount, 'live lease', 'live leases')} and dispatch?`}
-                        confirm={haltAll.label ?? 'Halt all leases'}
-                        busy={haltAll.busy}
-                        note={haltAll.note}
-                        onConfirm={haltAll.confirm}
                       >
                         <ul className="guard-list">
                           {live.map((session) => (
@@ -410,11 +422,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                 {already}
               </p>
             )}
-            {!!haltAll.halted && (
-              <p className="muted" role="status">
-                Halted {count(haltAll.halted, 'lease', 'leases')}.
-              </p>
-            )}
+            {haltAll.receipt}
           </section>
           <section className="stack">
             <h2 className="section-title">Runners</h2>
@@ -428,43 +436,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     first
                   </p>
                 )}
-                <Table
-                  rows={status.runners}
-                  keyOf={(runner) => runner.id}
-                  columns={[
-                    col<Runner>('machine', 'Machine', (runner) => (
-                      <>
-                        <strong>{runner.machine.hostname}</strong>
-                        <div className="faint">
-                          {runner.machine.system} · {runner.machine.architecture}
-                        </div>
-                      </>
-                    )),
-                    col<Runner>('live', 'Presence', (runner) => (
-                      <Live of={runnerLiveness(runner, now)} />
-                    )),
-                    col<Runner>('decision', 'Last dispatch', (runner) => (
-                      <Live of={decisionLiveness(runner, now)} />
-                    )),
-                    col<Runner>(
-                      'platforms',
-                      'Platforms',
-                      (runner) =>
-                        runner.platforms
-                          .map(
-                            (platform) =>
-                              `${platform.name}${platform.model ? ` · ${platform.model}` : ''}${platform.enabled ? '' : ' (paused)'}`,
-                          )
-                          .join(', ') || 'None',
-                    ),
-                    col<Runner>('capacity', 'Capacity', (runner) => runner.capacity),
-                    col<Runner>('settings', 'Settings', (runner) =>
-                      runner.desiredVersion > (runner.appliedVersion ?? 0)
-                        ? 'Pending acknowledgement'
-                        : 'Applied',
-                    ),
-                  ]}
-                />
+                <Table rows={status.runners} keyOf={(runner) => runner.id} columns={machines} />
               </>
             )}
           </section>
@@ -518,14 +490,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
               <Table
                 rows={status.queue}
                 keyOf={(candidate) => `${candidate.instanceId}:${candidate.expectedRevision}`}
-                columns={[
-                  col<Candidate>('label', 'Work', (candidate) => (
-                    <strong>{candidate.label}</strong>
-                  )),
-                  col<Candidate>('gate', 'Gate', (candidate) => term(candidate.state)),
-                  col<Candidate>('role', 'Role', (candidate) => term(candidate.role)),
-                  col<Candidate>('revision', 'Revision', (candidate) => candidate.expectedRevision),
-                ]}
+                columns={eligible}
               />
             )}
           </section>
@@ -558,18 +523,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
               execution={activity(agent)}
               meta={
                 <>
-                  {agent.currentExecutionId
-                    ? `${
-                        agent.currentAssignment?.label ??
-                        assignmentLabels.get(agent.currentExecutionId)?.label ??
-                        'Assignment execution'
-                      } · ${
-                        agent.currentAssignment?.role ??
-                        assignmentLabels.get(agent.currentExecutionId)?.role ??
-                        ''
-                      } · `
-                    : ''}
-                  joined <Ago at={agent.createdAt} />
+                  {assigned(agent)}joined <Ago at={agent.createdAt} />
                 </>
               }
             />

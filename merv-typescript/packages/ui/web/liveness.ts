@@ -106,6 +106,19 @@ export interface LeaseFacts {
   closeReason?: string | null;
   outcome?: string | null;
 }
+/**
+ * A lease as both Agents surfaces read it: the behavioural fields above and the
+ * identity beside them, so a row and a panel cannot drift apart on one lease.
+ */
+export interface Lease extends LeaseFacts {
+  id: string;
+  instanceId: string;
+  label: string;
+  role: string;
+  status: string;
+  createdAt: string;
+  expiresAt: string;
+}
 /** A lease's behaviour: taken up or not, still inside its window or past it, how it ended. */
 export function leaseLiveness(lease: LeaseFacts, now: Now): Liveness | null {
   const { at, since: age } = clockOf(now);
@@ -129,6 +142,16 @@ export function leaseLiveness(lease: LeaseFacts, now: Now): Liveness | null {
       return null;
   }
 }
+
+/**
+ * Whether the lease is still held, asked of the verdict this module composes
+ * rather than of the lifecycle word beside it — so a row's countdown, its KV
+ * label and its Halt control cannot disagree with the line that says `lapsed`.
+ */
+export const holding = (lease: LeaseFacts, now: Now) => {
+  const verdict = leaseLiveness(lease, now)?.verdict;
+  return verdict === 'offered' || verdict === 'active';
+};
 
 /** The runner fields the same read sends. `live` is the server's own freshness call. */
 export interface RunnerFacts {

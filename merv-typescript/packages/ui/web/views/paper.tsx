@@ -78,6 +78,11 @@ const paragraphs = (content: string) =>
     .map((part) => part.trim())
     .filter(Boolean);
 const files = (n: number) => (n ? `${n} retained file${n > 1 ? 's' : ''}` : 'No retained file');
+/** The first limit a form has broken, in the tool's own words; null while it holds. */
+const complaint = (tests: [boolean, string][]) => tests.find(([broken]) => broken)?.[1] ?? null;
+/** How many sections one proposal changes, counted the same way wherever it is said. */
+const edits = (proposal: PaperProposal) =>
+  proposal.documents.reduce((count, item) => count + item.edit.changes.length, 0);
 
 interface Run {
   text: string;
@@ -95,13 +100,9 @@ function wordDiff(before: string, after: string): Run[] {
   const a = before.split(/(\s+)/);
   const b = after.split(/(\s+)/);
   let head = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
   let tail = 0;
-  while (
-    tail < a.length - head &&
-    tail < b.length - head &&
-    a[a.length - 1 - tail] === b[b.length - 1 - tail]
-  )
+  while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
+  while (tail < a.length - head && tail < b.length - head && a.at(-1 - tail) === b.at(-1 - tail))
     tail += 1;
   const x = a.slice(head, a.length - tail);
   const y = b.slice(head, b.length - tail);
@@ -134,21 +135,17 @@ function wordDiff(before: string, after: string): Run[] {
       else keep(y[j++], 'add');
   }
   if (tail) keep(a.slice(a.length - tail).join(''));
-  for (let at = 1; at < runs.length - 1; at += 1)
-    if (
-      !runs[at].mark &&
-      runs[at].text.trim().length < 12 &&
-      runs[at - 1].mark &&
-      runs[at + 1].mark
-    )
-      runs[at].mark = 'both';
+  /** Inside a change, a short scrap of shared text is part of it and not a third run. */
+  const glued = (at: number) =>
+    !!runs[at].mark ||
+    (at < runs.length - 1 && runs[at].text.trim().length < 12 && !!runs[at + 1].mark);
   const said: Run[] = [];
   for (let at = 0; at < runs.length;)
     if (!runs[at].mark) said.push(runs[at++]);
     else {
       let cut = '';
       let add = '';
-      while (at < runs.length && runs[at].mark) {
+      while (at < runs.length && glued(at)) {
         const run = runs[at++];
         if (run.mark !== 'add') cut += run.text;
         if (run.mark !== 'del') add += run.text;
@@ -194,26 +191,22 @@ function compose(workspace: PaperWorkspace): DocView[] {
   let figure = 0;
   return KINDS.map((kind, at) => {
     const held = workspace.documents[kind];
-    const rows: SectionRow[] = held.current.sections.map((section) => ({
+    // The address and the anchor are derived from the final order, once it is settled.
+    const rows: Omit<SectionRow, 'n' | 'anchor'>[] = held.current.sections.map((section) => ({
       section,
-      n: '',
-      anchor: '',
     }));
     for (const proposal of open)
       for (const edit of proposal.documents.filter((item) => item.edit.kind === kind))
         for (const change of edit.edit.changes) {
           const found = rows.findIndex((row) => row.section.id === change.id);
-          const before = edit.before.sections.find((item) => item.id === change.id);
-          const row: SectionRow = {
+          const row = {
             section: {
               id: change.id,
               title: change.title ?? rows[found]?.section.title ?? '',
               content: change.content ?? rows[found]?.section.content ?? '',
             },
-            n: '',
-            anchor: '',
             change,
-            before,
+            before: edit.before.sections.find((item) => item.id === change.id),
             proposal,
           };
           if (found >= 0) rows[found] = row;
@@ -366,15 +359,14 @@ function SectionEditor({
           changes: [{ id, title, content }],
         })
       }
-      validation={
-        !title.trim()
-          ? 'Enter a section title.'
-          : totalChars > 160_000
-            ? 'This document would exceed 160,000 characters.'
-            : !section && original.sections.length >= 100
-              ? 'A document can contain at most 100 sections.'
-              : null
-      }
+      validation={complaint([
+        [!title.trim(), 'Enter a section title.'],
+        [totalChars > 160_000, 'This document would exceed 160,000 characters.'],
+        [
+          !section && original.sections.length >= 100,
+          'A document can contain at most 100 sections.',
+        ],
+      ])}
     >
       <Field label="Section title" required maxLength={300} value={title} onChange={setTitle} />
       <Area
@@ -448,6 +440,9 @@ function CitationEditor({
     .map((name) => name.trim())
     .filter(Boolean);
   const refs = references.split(/\s+/).filter(Boolean);
+  /** A reference the tool takes: an artifact id, or one this entry already carries. */
+  const known = (ref: string) =>
+    /^artifact:[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(ref) || !!citation?.refs.includes(ref);
   return (
     <Editor
       label={original ? 'Edit citation' : 'New citation'}
@@ -466,21 +461,17 @@ function CitationEditor({
           refs,
         })
       }
-      validation={
-        !told.identifier.trim() || !told.title.trim()
-          ? 'Enter an identifier and title.'
-          : authorNames.length > 100 || authorNames.some((name) => name.length > 300)
-            ? 'Use up to 100 author names, each at most 300 characters.'
-            : refs.length > 200 ||
-                refs.some(
-                  (ref) =>
-                    (!/^artifact:[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(ref) &&
-                      !citation?.refs.includes(ref)) ||
-                    ref.length > 200,
-                )
-              ? 'Use up to 200 artifact: evidence references, each at most 200 characters.'
-              : null
-      }
+      validation={complaint([
+        [!told.identifier.trim() || !told.title.trim(), 'Enter an identifier and title.'],
+        [
+          authorNames.length > 100 || authorNames.some((name) => name.length > 300),
+          'Use up to 100 author names, each at most 300 characters.',
+        ],
+        [
+          refs.length > 200 || refs.some((ref) => !known(ref) || ref.length > 200),
+          'Use up to 200 artifact: evidence references, each at most 200 characters.',
+        ],
+      ])}
     >
       {original && (
         <label>
@@ -689,15 +680,7 @@ function Block({ row, from, markers }: { row: SectionRow; from: ReactNode; marke
   );
 }
 
-function Outline({
-  docs,
-  ledger,
-  here,
-}: {
-  docs: DocView[];
-  ledger: number;
-  here: string | undefined;
-}) {
+function Outline({ docs, ledger, here }: { docs: DocView[]; ledger: number; here?: string }) {
   return (
     <nav className="paper-outline" aria-label="Outline">
       <ol>
@@ -741,6 +724,13 @@ const Group = ({ label, children }: { label: string; children: ReactNode }) => (
     <span className="label">{label}</span>
     <ul className="rows">{children}</ul>
   </div>
+);
+/** The two-line row those groups and the history are made of: the name, then how it stands. */
+const Row = ({ name, stand }: { name: ReactNode; stand: ReactNode }) => (
+  <li className="row">
+    <span className="row-name">{name}</span>
+    <span className="ref-stand">{stand}</span>
+  </li>
 );
 
 /**
@@ -804,6 +794,16 @@ function PaperPage({ row, shell }: ViewProps) {
     const found = sourceOf(source);
     return found ? <Link to={found.to}>{found.name}</Link> : null;
   };
+  /** Every citation that named this section, in the ledger's own order. */
+  const Markers = ({ section }: { section: string }) => (
+    <span className="cites">
+      {citations.map((entry, at) =>
+        entry.sectionIds.includes(section) ? (
+          <Marker key={entry.id} at={at + 1} item={entry} />
+        ) : null,
+      )}
+    </span>
+  );
   const verdict = (reviewId: string) => {
     const who = nameOf(reviews.data?.find((review) => review.id === reviewId)?.reviewerId);
     return <Link to={`/reviews/${reviewId}`}>{who ? `${who}’s review` : 'the review'}</Link>;
@@ -849,29 +849,24 @@ function PaperPage({ row, shell }: ViewProps) {
 
   // The standing of the whole paper: what has passed review, and what has not.
   const published = KINDS.filter((kind) => workspace.data!.documents[kind].published);
-  const accepted = (kind: PaperKind) => workspace.data!.documents[kind].published!.publication;
-  const moved = KINDS.map((kind) => workspace.data!.documents[kind].current.updatedAt)
+  const accepted = (kind: PaperKind) => workspace.data!.documents[kind].published!;
+  const moved = docs
+    .map((doc) => doc.current.updatedAt)
     .filter(Boolean)
     .sort()
     .at(-1);
-  const changes = open.reduce(
-    (sum, proposal) =>
-      sum + proposal.documents.reduce((count, item) => count + item.edit.changes.length, 0),
-    0,
-  );
-  const sections = KINDS.reduce(
-    (sum, kind) => sum + workspace.data!.documents[kind].current.sections.length,
-    0,
-  );
-  const characters = KINDS.reduce(
-    (sum, kind) =>
-      sum +
-      workspace.data!.documents[kind].current.sections.reduce(
-        (size, item) => size + item.content.length,
-        0,
-      ),
-    0,
-  );
+  const changes = open.reduce((sum, proposal) => sum + edits(proposal), 0);
+  const written = docs.flatMap((doc) => doc.current.sections);
+  const characters = written.reduce((size, item) => size + item.content.length, 0);
+  // Every revision each document retained, once, newest first when they are read.
+  const revisions = new Map<string, { doc: DocView; revision: PaperRevision }>();
+  for (const doc of docs)
+    for (const revision of kept[doc.kind].data ??
+      [doc.current, doc.publication?.document].filter((item) => !!item))
+      if (revision.revision > 0) {
+        const key = `${doc.kind}-${revision.revision}`;
+        if (!revisions.has(key)) revisions.set(key, { doc, revision });
+      }
   const index = pathname === row.path;
   return (
     <RecordPage
@@ -883,14 +878,9 @@ function PaperPage({ row, shell }: ViewProps) {
         <ThreeStates
           execution={published.length ? 'published' : 'unpublished'}
           meta={dotted([
-            published.length
-              ? published
-                  .map(
-                    (kind) =>
-                      `${labels[kind]} at revision ${workspace.data!.documents[kind].published!.document.revision}`,
-                  )
-                  .join(', ')
-              : null,
+            published
+              .map((kind) => `${labels[kind]} at revision ${accepted(kind).document.revision}`)
+              .join(', '),
             changes ? `${changes} change${changes > 1 ? 's' : ''} waiting on review` : null,
             moved ? (
               <>
@@ -946,18 +936,14 @@ function PaperPage({ row, shell }: ViewProps) {
                   </button>
                 )}
               </div>
-              {open.map((proposal) => {
-                const n = proposal.documents.reduce(
-                  (count, item) => count + item.edit.changes.length,
-                  0,
-                );
-                return sourceOf(proposal.source) ? (
+              {open.map((proposal) =>
+                sourceOf(proposal.source) ? (
                   <p className="muted" key={proposal.id}>
-                    {n} change{n > 1 ? 's' : ''} waiting on the review of{' '}
-                    <Source source={proposal.source} />
+                    {edits(proposal)} change{edits(proposal) > 1 ? 's' : ''} waiting on the review
+                    of <Source source={proposal.source} />
                   </p>
-                ) : null;
-              })}
+                ) : null,
+              )}
             </>
           )
         ) : undefined
@@ -980,17 +966,7 @@ function PaperPage({ row, shell }: ViewProps) {
                     key={item.section.id}
                     row={item}
                     from={attribution(doc, item)}
-                    markers={
-                      doc.kind === 'literature' && (
-                        <span className="cites">
-                          {citations.map((entry, at) =>
-                            entry.sectionIds.includes(item.section.id) ? (
-                              <Marker key={entry.id} at={at + 1} item={entry} />
-                            ) : null,
-                          )}
-                        </span>
-                      )
-                    }
+                    markers={doc.kind === 'literature' && <Markers section={item.section.id} />}
                   />
                 ))}
                 {doc.figures.map((file) => (
@@ -1024,35 +1000,18 @@ function PaperPage({ row, shell }: ViewProps) {
       }
       history={
         <ul className="rows">
-          {docs
-            .flatMap((doc) =>
-              (
-                kept[doc.kind].data ?? [
-                  doc.current,
-                  ...(doc.publication ? [doc.publication.document] : []),
-                ]
-              )
-                .filter((revision) => revision.revision > 0)
-                .map((revision) => ({ doc, revision })),
-            )
-            .filter(
-              (line, at, all) =>
-                all.findIndex(
-                  (other) =>
-                    other.doc.kind === line.doc.kind &&
-                    other.revision.revision === line.revision.revision,
-                ) === at,
-            )
+          {[...revisions.values()]
             .sort((a, b) => (b.revision.updatedAt ?? '').localeCompare(a.revision.updatedAt ?? ''))
-            .map((line) => (
-              <li className="row" key={`${line.doc.kind}-${line.revision.revision}`}>
-                <span className="row-name">
+            .map(({ doc, revision }) => (
+              <Row
+                key={`${doc.kind}-${revision.revision}`}
+                name={
                   <strong>
-                    {labels[line.doc.kind]} · revision {line.revision.revision}
+                    {labels[doc.kind]} · revision {revision.revision}
                   </strong>
-                </span>
-                <span className="ref-stand">{said(line.revision)}</span>
-              </li>
+                }
+                stand={said(revision)}
+              />
             ))}
         </ul>
       }
@@ -1063,16 +1022,15 @@ function PaperPage({ row, shell }: ViewProps) {
               {proposals.map((proposal) => {
                 const found = sourceOf(proposal.source);
                 return found ? (
-                  <li className="row" key={proposal.id}>
-                    <span className="row-name">
+                  <Row
+                    key={proposal.id}
+                    name={
                       <Link to={found.to}>
                         <strong>{found.name}</strong>
                       </Link>
-                    </span>
-                    <span className="ref-stand">
-                      <StatusPill value={found.state} />
-                    </span>
-                  </li>
+                    }
+                    stand={<StatusPill value={found.state} />}
+                  />
                 ) : null;
               })}
             </Group>
@@ -1080,29 +1038,32 @@ function PaperPage({ row, shell }: ViewProps) {
           {published.length > 0 && (
             <Group label="Accepted it">
               {/* One review publishes every document it accepted, so it is one row. */}
-              {[...new Set(published.map((kind) => accepted(kind).reviewId))].map((reviewId) => {
-                const took = published.filter((kind) => accepted(kind).reviewId === reviewId);
-                const publication = accepted(took[0]);
-                const review = reviews.data?.find((item) => item.id === reviewId);
-                const subject = sourceOf(publication.source);
-                return subject ? (
-                  <li className="row" key={reviewId}>
-                    <span className="row-name">
-                      <Link to={`/reviews/${reviewId}`}>
-                        <strong>{subject.name} review</strong>
-                      </Link>
-                    </span>
-                    <span className="ref-stand">
-                      {dotted([
+              {[...new Set(published.map((kind) => accepted(kind).publication.reviewId))].map(
+                (reviewId) => {
+                  const took = published.filter(
+                    (kind) => accepted(kind).publication.reviewId === reviewId,
+                  );
+                  const publication = accepted(took[0]).publication;
+                  const review = reviews.data?.find((item) => item.id === reviewId);
+                  const subject = sourceOf(publication.source);
+                  return subject ? (
+                    <Row
+                      key={reviewId}
+                      name={
+                        <Link to={`/reviews/${reviewId}`}>
+                          <strong>{subject.name} review</strong>
+                        </Link>
+                      }
+                      stand={dotted([
                         <StatusPill value={review?.verdict ?? review?.status} />,
                         nameOf(review?.reviewerId),
                         `published ${took.map((kind) => labels[kind]).join(' and ')}`,
                         <Ago at={publication.createdAt} />,
                       ])}
-                    </span>
-                  </li>
-                ) : null;
-              })}
+                    />
+                  ) : null;
+                },
+              )}
             </Group>
           )}
           <Group label="Evidence retained with it">
@@ -1119,20 +1080,17 @@ function PaperPage({ row, shell }: ViewProps) {
       details={
         <KV
           rows={[
-            ['Sections', `${sections} of 100`],
+            ['Sections', `${written.length} of 100`],
             ['Citations', `${citations.length}`],
             ['Characters', `${characters.toLocaleString()} of 160,000`],
-            ...KINDS.map((kind): KVRow => {
-              const held = workspace.data!.documents[kind];
-              return [
-                labels[kind],
-                `revision ${held.current.revision} · ${
-                  held.published
-                    ? `published revision ${held.published.document.revision}`
-                    : 'never published'
-                }`,
-              ];
-            }),
+            ...docs.map((doc): KVRow => [
+              labels[doc.kind],
+              `revision ${doc.current.revision} · ${
+                doc.publication
+                  ? `published revision ${doc.publication.document.revision}`
+                  : 'never published'
+              }`,
+            ]),
             open.length > 0 && [
               'Proposed change artifact',
               <span className="mono faint">

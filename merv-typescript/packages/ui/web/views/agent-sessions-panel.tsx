@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion } from '../api';
 import { Ago, KV, Live, StatusPill, relativeTime, stamp, useNow, words } from '../components';
-import { clock, leaseLiveness, type Clock } from '../liveness';
+import { clock, holding, leaseLiveness, type Clock, type Lease } from '../liveness';
 
 export interface AgentSummary {
   id: string;
@@ -16,18 +16,8 @@ export interface AgentSummary {
   createdAt: string;
   runnerId: string;
 }
-interface Assignment {
-  id: string;
-  instanceId: string;
-  label: string;
-  role: string;
-  status: string;
-  createdAt: string;
-  activatedAt: string | null;
-  expiresAt: string;
-  closedAt: string | null;
-  closeReason: string | null;
-  outcome?: string | null;
+/** The same lease, as the agent's own observation sends it. */
+interface Assignment extends Lease {
   workflow: { name: string; state: string };
   revision: number;
   tools: string[];
@@ -60,12 +50,6 @@ const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
-
-/** One vocabulary on both surfaces: the row and the panel read the same verdict. */
-const holding = (assignment: Assignment, now: Clock) => {
-  const verdict = leaseLiveness(assignment, now)?.verdict;
-  return verdict === 'offered' || verdict === 'active';
-};
 
 function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: Clock }) {
   return (
