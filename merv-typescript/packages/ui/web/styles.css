@@ -53,8 +53,6 @@
   --sidebar-out: 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
   --sidebar-w: 224px;
   --topbar-h: 48px;
-  --content-w: 860px;
-  --content-w-wide: 1240px;
   --page-pad-x: 40px;
   --page-pad-top: 32px;
   --font-body:
@@ -500,16 +498,24 @@ time,
 }
 
 /* Page grammar. --------------------------------------------------------- */
+/* A page is the screen less one gutter that grows with it. Nothing stops at a
+   column, because what has to stay readable inside it says so itself, below. */
 .page-stage {
-  max-width: var(--content-w);
   padding: var(--page-pad-top) var(--page-pad-x) 60px;
 }
-.page-stage--wide {
-  max-width: var(--content-w-wide);
+/* The measure. A block read as sentences carries its own reading line wherever
+   it sits; a list, a table and the map take the width the page gives them. */
+p,
+.page-summary,
+.question,
+.exceptions,
+.standing,
+.kv dd,
+.ladder-rung {
+  max-width: 68ch;
 }
 /* The title line the shell renders above a row's index route. */
 .page-lede {
-  max-width: var(--content-w-wide);
   padding: var(--page-pad-top) var(--page-pad-x) 0;
 }
 .page-lede + .page-stage {
@@ -568,7 +574,6 @@ time,
   margin-top: 6px;
   color: var(--muted);
   font-size: var(--text-md);
-  max-width: 62ch;
   overflow-wrap: anywhere;
 }
 /* Section headings share the overview's grammar: one size, one weight. */
@@ -1006,6 +1011,8 @@ select.input,
   white-space: pre-wrap;
   word-break: break-word;
   padding: 14px 0;
+  /* Machine text gets a longer line than prose, and still stops before the page. */
+  max-width: 96ch;
   max-height: 480px;
   overflow: auto;
 }
@@ -1035,7 +1042,6 @@ select.input,
   margin-bottom: var(--space-2);
 }
 .empty-state p {
-  max-width: 62ch;
   margin: 0 auto;
 }
 .empty-state .btn {
@@ -1136,7 +1142,6 @@ select.input,
 /* The project name, then three headings, each over a stack of record cards. */
 .ov-intro {
   margin-top: 8px;
-  max-width: 62ch;
   color: var(--muted);
   font-size: var(--text-base);
   white-space: pre-wrap;
@@ -1345,6 +1350,10 @@ select.input,
 @media (min-width: 1100px) {
   .history-layout--selected {
     grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
+  }
+  /* Past the reading width the gutter takes the extra room, not a hard stop. */
+  :root {
+    --page-pad-x: clamp(40px, 5vw, 96px);
   }
 }
 
@@ -1616,13 +1625,11 @@ select.input,
 }
 .crit-text {
   font-size: var(--text-base);
-  max-width: 68ch;
 }
 .crit-said,
 .crit-found {
   font-size: var(--text-sm);
   color: var(--muted);
-  max-width: 68ch;
   white-space: pre-wrap;
 }
 .crit-said {
@@ -1684,13 +1691,11 @@ select.input,
 .verdict-said {
   font-size: var(--text-md);
   line-height: 1.55;
-  max-width: 60ch;
 }
 .verdict-help,
 .verdict-count {
   font-size: var(--text-sm);
   color: var(--muted);
-  max-width: 62ch;
 }
 .btn--on {
   color: var(--text);
@@ -1794,11 +1799,9 @@ select.input,
   font-size: var(--text-lg);
   font-weight: 600;
   line-height: 1.4;
-  max-width: 68ch;
 }
 .record-prose {
   white-space: pre-wrap;
-  max-width: 68ch;
 }
 /* One round of the spine, and one lane of the track: an indented block under
    the line that names it. */
@@ -1843,7 +1846,6 @@ select.input,
    a check that does not apply is doing the right thing. One sentence per line. */
 .exceptions {
   list-style: none;
-  max-width: 62ch;
   font-size: var(--text-sm);
   color: var(--muted);
 }
@@ -2193,7 +2195,7 @@ select.input,
    the open row is marked by the soft ground under it and nothing else. */
 .split {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  grid-template-columns: clamp(320px, 30%, 560px) minmax(0, 1fr);
   align-items: start;
 }
 .split-list {
@@ -2207,7 +2209,6 @@ select.input,
   border-left: 1px solid var(--line);
 }
 .split .page-stage {
-  max-width: none;
   padding-inline: var(--space-5);
 }
 /* The two controls sit on one line; which states the list holds is the line
@@ -2382,7 +2383,6 @@ select.input,
 }
 .remote-text {
   white-space: pre-wrap;
-  max-width: 68ch;
 }
 /* Beside an open record the list has a column's width, so its facts pair up
    rather than shredding five ways; none of them is dropped. */

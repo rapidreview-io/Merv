@@ -283,7 +283,7 @@ function History({ row }: ViewProps) {
     ids: (item) => [item.id],
   });
   return (
-    <div className="page-stage page-stage--wide stack stack--lg">
+    <div className="page-stage stack stack--lg">
       <LoadState
         loading={summary.loading}
         error={summary.error?.code === 'legacy_history_not_found' ? undefined : summary.error}

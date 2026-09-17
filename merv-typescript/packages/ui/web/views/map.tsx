@@ -431,7 +431,7 @@ export function MapView({ shell }: { shell: ShellData }) {
   const archive = Object.values(earlier.data?.counts ?? {}).reduce((sum, n) => sum + n, 0);
   const retained = (files.data ?? []).reduce((sum, file) => sum + file.size, 0);
   return (
-    <div className="page-stage page-stage--wide map">
+    <div className="page-stage map">
       <h1 className="page-title">
         {session.project.name} <span className="muted">· the map</span>
       </h1>
