@@ -52,9 +52,16 @@ test('assembled Cordis application completes MCP task review across two full res
       );
     assert.deepEqual(
       catalog.filter((tool) => tool.name.startsWith('workflow.')).map((tool) => tool.name),
-      ['workflow.assignment', 'workflow.begin', 'workflow.process', 'workflow.status_and_next'],
+      [
+        'workflow.assignment',
+        'workflow.begin',
+        'workflow.catalog',
+        'workflow.process',
+        'workflow.status_and_next',
+      ],
     );
-    for (const name of ['workflow.catalog', 'workflow.list', 'workflow.get', 'workflow.history']) {
+    // Record listings stay out of the catalog; workflow.catalog is the machine's shape only.
+    for (const name of ['workflow.list', 'workflow.get', 'workflow.history']) {
       const result = await producer.callTool({ name, arguments: {} });
       assert.equal(result.isError, true);
       assert.equal(
