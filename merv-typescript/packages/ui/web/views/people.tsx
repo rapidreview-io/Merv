@@ -203,7 +203,7 @@ export function PeopleView() {
         shown: canManage,
         form: (close) => (
           <form className="identity-form card" onSubmit={(event) => add(event, close)}>
-            <h3 className="label">Add a member</h3>
+            <h3 className="label">New member</h3>
             <p className="faint">
               Use the exact account ID from shared sign-in. This grants project access when that
               account signs in; it does not create a login account.
@@ -237,7 +237,7 @@ export function PeopleView() {
               </select>
             </label>
             <button className="btn btn--primary" disabled={busy} type="submit">
-              Add member
+              New member
             </button>
           </form>
         ),
@@ -277,7 +277,7 @@ export function PeopleView() {
                   void mutate('PATCH', member.subject, { role: draftRoles[member.id] })
                 }
               >
-                Save role
+                Edit role
               </button>
               <button
                 className="btn btn--sm"

@@ -116,7 +116,7 @@ function SectionEditor({
         });
       }}
     >
-      <h3>{section ? 'Edit section' : 'Add section'}</h3>
+      <h3>{section ? 'Edit section' : 'New section'}</h3>
       <fieldset disabled={command.locked}>
         <Field label="Section title" required maxLength={300} value={title} onChange={setTitle} />
         <Area
@@ -138,7 +138,7 @@ function SectionEditor({
           className="btn btn--primary"
           disabled={command.busy || (!!validation && !command.retry)}
         >
-          {command.retry ? 'Retry same request' : 'Save section'}
+          {command.retry ? 'Retry same request' : section ? 'Edit section' : 'New section'}
         </button>
         <button type="button" className="btn" disabled={command.locked} onClick={onDone}>
           Cancel
@@ -228,7 +228,7 @@ function CitationEditor({
         });
       }}
     >
-      <h3>{original ? 'Edit citation' : 'Add citation'}</h3>
+      <h3>{original ? 'Edit citation' : 'New citation'}</h3>
       <fieldset disabled={command.locked}>
         <Field
           label="Identifier"
@@ -311,7 +311,7 @@ function CitationEditor({
           className="btn btn--primary"
           disabled={command.busy || (!!validation && !command.retry)}
         >
-          {command.retry ? 'Retry same request' : 'Save citation'}
+          {command.retry ? 'Retry same request' : original ? 'Edit citation' : 'New citation'}
         </button>
         <button type="button" className="btn" disabled={command.locked} onClick={onDone}>
           Cancel
@@ -388,12 +388,12 @@ function DocumentPanel({
                 ))}
               {canEdit && kind === 'literature' && (
                 <button className="btn" onClick={() => setCiting('new')}>
-                  Add citation
+                  New citation
                 </button>
               )}
               {canEdit && kind !== 'problem' && (
                 <button className="btn btn--primary" onClick={() => setEditing('new')}>
-                  Add section
+                  New section
                 </button>
               )}
               {document.published && (

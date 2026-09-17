@@ -34,7 +34,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
             setDraft({ summary: project.summary ?? '', expectedSummary: project.summary ?? '' })
           }
         >
-          Edit Introduction
+          Edit introduction
         </button>
       </div>
     );
@@ -44,7 +44,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
   };
   return (
     <form className="card stack claims-form" aria-labelledby={heading} onSubmit={submit}>
-      <h3 id={heading}>Edit project Introduction</h3>
+      <h3 id={heading}>Edit introduction</h3>
       <fieldset disabled={mutation.locked}>
         <Area
           label="Project intent"
@@ -56,13 +56,13 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
         />
       </fieldset>
       <p className="faint">
-        Describe the goal and scope in your own words. An empty Introduction is allowed.
+        Describe the goal and scope in your own words. An empty introduction is allowed.
       </p>
       {conflict && (
         <div className="stack" role="alert">
           <p>
-            The Introduction changed while you were editing. Your draft is preserved. Compare it
-            with the current Introduction above before trying again.
+            The introduction changed while you were editing. Your draft is preserved. Compare it
+            with the current introduction above before trying again.
           </p>
           <button
             type="button"
@@ -73,7 +73,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
               setConflict(false);
             }}
           >
-            Keep my draft and use the current Introduction as its baseline
+            Keep my draft and use the current introduction as its baseline
           </button>
         </div>
       )}
@@ -83,7 +83,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
           className="btn btn--primary"
           disabled={mutation.busy || (conflict && !mutation.retry)}
         >
-          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Save Introduction'}
+          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Edit introduction'}
         </button>
         <button
           type="button"
@@ -106,11 +106,11 @@ export function ProjectIntroduction() {
   const project = useTool<Project>('project.get', {}, { every: 8000 });
   return (
     <section className="stack">
-      <h2 className="section-title">Project Introduction</h2>
+      <h2 className="section-title">Project introduction</h2>
       <LoadState {...project} />
       {project.data && (
         <>
-          <p className="prose">{project.data.summary || 'No Introduction has been set.'}</p>
+          <p className="prose">{project.data.summary || 'No introduction has been set.'}</p>
           <p className="faint">
             Revision {project.data.contextRevision ?? 0}. Newly assigned agents receive the project
             intent with their work.

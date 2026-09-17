@@ -549,9 +549,7 @@ function Controls({
   if (start?.status === 'ready')
     return (
       <Primary
-        label={
-          claim.retry ? 'Retry the same claim' : claim.busy ? 'Claiming…' : 'Claim this review'
-        }
+        label={claim.retry ? 'Retry same request' : claim.busy ? 'Claiming…' : 'Claim review'}
         help="You become its reviewer; only you can submit the verdict."
         error={claim.error}
         code={claim.code}
@@ -678,7 +676,7 @@ function Desk({
       )}
       <Primary
         label={
-          command.retry ? 'Retry the same verdict' : command.busy ? 'Submitting…' : 'Submit verdict'
+          command.retry ? 'Retry same request' : command.busy ? 'Submitting…' : 'Submit verdict'
         }
         help={
           unmet ? (

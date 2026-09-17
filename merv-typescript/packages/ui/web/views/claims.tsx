@@ -114,7 +114,7 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
   };
   return (
     <form className="card stack claims-form" aria-labelledby={heading} onSubmit={submit}>
-      <h2 id={heading}>Create claim</h2>
+      <h2 id={heading}>New claim</h2>
       <fieldset disabled={mutation.locked}>
         <Area
           label="Statement"
@@ -146,7 +146,7 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
       <Failure message={mutation.error} />
       <div className="cluster">
         <button className="btn btn--primary" disabled={mutation.busy || !statement.trim()}>
-          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Create claim'}
+          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'New claim'}
         </button>
       </div>
     </form>
@@ -197,7 +197,7 @@ function EditClaim({
       <Failure message={mutation.error} />
       <div className="cluster">
         <button className="btn btn--primary" disabled={mutation.busy || !changed}>
-          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Save changes'}
+          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Edit standing'}
         </button>
         <button type="button" className="btn" disabled={mutation.locked} onClick={onCancel}>
           Cancel

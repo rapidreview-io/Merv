@@ -8,7 +8,7 @@ export const artifactUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'artifacts',
-        label: 'Artifacts',
+        label: 'Files',
         group: 'work',
         order: 32,
         path: '/artifacts',

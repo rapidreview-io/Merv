@@ -182,7 +182,7 @@ export function KeysPanel({
       )}
       <Failure message={error} />
       <section className="card stack">
-        <h2 className="section-title">Create a key</h2>
+        <h2 className="section-title">New key</h2>
         {!keys ? (
           <p>Loading your projects and keys…</p>
         ) : projects.length === 0 ? (
@@ -245,7 +245,7 @@ export function KeysPanel({
               />
             </label>
             <button className="btn btn--primary" disabled={busy || !projectId}>
-              Create key
+              New key
             </button>
           </form>
         )}

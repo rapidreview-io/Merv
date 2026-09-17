@@ -73,7 +73,7 @@ function ArtifactDownload({ artifactId }: { artifactId: string }) {
   return (
     <div className="empty">
       <button className="btn btn--sm" disabled={busy} onClick={() => void prepare()}>
-        {busy ? 'Preparing…' : download ? 'Refresh download link' : 'Prepare download'}
+        {busy ? 'Preparing…' : download ? 'Refresh download link' : 'Download file'}
       </button>
       {download && (
         <p>
@@ -167,7 +167,7 @@ function ArtifactList() {
       filter={filter}
       rows={[...filter.rows].reverse()}
       opens
-      emptyTitle="No artifacts"
+      emptyTitle="No files"
       emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({

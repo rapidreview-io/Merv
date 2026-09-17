@@ -332,6 +332,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   const shell = ok.body.result as {
     rows: {
       id: string;
+      label: string;
       group: string;
       status: Record<string, unknown>;
       readable: boolean;
@@ -359,6 +360,9 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'settings',
     ],
   );
+  // One word per thing: the inventory is Knowledge, and retained artifacts are Files.
+  const named = (id: string) => shell.rows.find((entry) => entry.id === id)?.label;
+  assert.deepEqual([named('knowledge'), named('artifacts')], ['Knowledge', 'Files']);
   // Every count in the chrome means open work; rows that are inventories report none.
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
   for (const id of ['people', 'claims', 'knowledge'])

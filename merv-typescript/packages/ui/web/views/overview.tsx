@@ -510,7 +510,7 @@ export function OverviewView({ shell }: { shell: ShellData }) {
         </p>
       ) : read.loading || !settings ? null : (
         <p className="ov-intro">
-          <Link to={settings.path}>No introduction yet. Write one →</Link>
+          No introduction yet. <Link to={settings.path}>Edit introduction →</Link>
         </p>
       )}
       {rows.length === 0 ? (

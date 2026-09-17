@@ -28,7 +28,7 @@ const SECTION_OF_VIEW: Record<string, string> = {
   people: 'operations',
   connections: 'operations',
   code: 'operations',
-  artifacts: 'activity',
+  artifacts: 'research',
   feed: 'activity',
   'legacy-history': 'research',
 };

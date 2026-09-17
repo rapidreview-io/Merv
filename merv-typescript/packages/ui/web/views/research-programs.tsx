@@ -320,8 +320,8 @@ function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void
     void command.submit(title.trim() ? { title: title.trim() } : {});
   };
   return (
-    <form className="card stack claims-form" onSubmit={submit} aria-label="Start a reflection wave">
-      <h2 className="section-title">Start a reflection wave</h2>
+    <form className="card stack claims-form" onSubmit={submit} aria-label="New reflection">
+      <h2 className="section-title">New reflection</h2>
       <fieldset disabled={command.locked}>
         <Field
           label="Title (optional)"
@@ -339,7 +339,7 @@ function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void
       <Failure message={command.error} />
       <div>
         <button className="btn btn--primary" disabled={command.busy}>
-          {command.busy ? 'Starting…' : command.retry ? 'Retry same request' : 'Start reflection'}
+          {command.busy ? 'Starting…' : command.retry ? 'Retry same request' : 'New reflection'}
         </button>
       </div>
     </form>
@@ -506,7 +506,7 @@ function CreateConsolidation({ onCreated }: { onCreated: (record: ConsolidationR
   return (
     <form
       className="card stack claims-form"
-      aria-label="Start consolidation"
+      aria-label="New consolidation"
       onSubmit={(event) => {
         event.preventDefault();
         void command.submit({
@@ -518,7 +518,7 @@ function CreateConsolidation({ onCreated }: { onCreated: (record: ConsolidationR
         });
       }}
     >
-      <h2 className="section-title">Start consolidation</h2>
+      <h2 className="section-title">New consolidation</h2>
       <fieldset disabled={command.locked}>
         <Area
           label="Source artifact IDs"
@@ -575,11 +575,7 @@ function CreateConsolidation({ onCreated }: { onCreated: (record: ConsolidationR
           className="btn btn--primary"
           disabled={command.busy || !sources.trim() || !name.trim()}
         >
-          {command.busy
-            ? 'Starting…'
-            : command.retry
-              ? 'Retry same request'
-              : 'Start consolidation'}
+          {command.busy ? 'Starting…' : command.retry ? 'Retry same request' : 'New consolidation'}
         </button>
       </div>
     </form>

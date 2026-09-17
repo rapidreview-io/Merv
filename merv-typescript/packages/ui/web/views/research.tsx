@@ -42,7 +42,7 @@ function CreateResearch({ onSaved }: { onSaved: () => void }) {
         });
       }}
     >
-      <h2>Start a research cycle</h2>
+      <h2>New cycle</h2>
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
         <Area
@@ -84,7 +84,7 @@ function CreateResearch({ onSaved }: { onSaved: () => void }) {
       <Failure message={command.error} />
       <div>
         <button className="btn btn--primary" disabled={command.busy || !name.trim()}>
-          {command.retry ? 'Retry same request' : 'Create cycle'}
+          {command.retry ? 'Retry same request' : 'New cycle'}
         </button>
       </div>
     </form>
@@ -133,7 +133,7 @@ function CycleDetail({ row }: ViewProps) {
               disabled={record.workflow.state === 'complete'}
               tool="research.advance"
               input={{ researchId: record.id, expectedRevision: record.workflow.revision }}
-              label={record.workflow.state === 'complete' ? 'Cycle complete' : 'Advance when ready'}
+              label="Start next step"
               onSaved={() => {
                 cycle.reload();
                 guidance.reload();

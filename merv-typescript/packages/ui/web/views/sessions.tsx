@@ -314,13 +314,13 @@ function AgentsPage({ row, shell }: ViewProps) {
                             )
                           }
                         >
-                          {status.dispatch.enabled ? 'Pause dispatch' : 'Enable dispatch'}
+                          {status.dispatch.enabled ? 'Halt dispatch' : 'Start dispatch'}
                         </button>
                         {live.length > 0 && (
                           <ConfirmAction
-                            label="Halt every live lease"
-                            title={`Halt ${count(live.length, 'live lease', 'live leases')} and pause dispatch?`}
-                            confirm={`Halt ${live.length} and pause dispatch`}
+                            label="Halt all leases"
+                            title={`Halt ${count(live.length, 'live lease', 'live leases')} and dispatch?`}
+                            confirm="Halt all leases"
                             busy={busy === '/sessions/halt' ? 'Halting…' : undefined}
                             onConfirm={() =>
                               void mutate('/sessions/halt', { reason: 'halted_by_operator' })
@@ -336,7 +336,7 @@ function AgentsPage({ row, shell }: ViewProps) {
                             </ul>
                             <p className="muted">
                               Each lease closes now and automatic dispatch stops, so nothing new is
-                              offered until you enable it again; connected runners must stop their
+                              offered until you start it again; connected runners must stop their
                               own workers. Each assignment returns to the queue at its current
                               revision. No verdict, claim standing or review state changes.
                             </p>
@@ -356,7 +356,7 @@ function AgentsPage({ row, shell }: ViewProps) {
                 <h2 className="section-title">Runners</h2>
                 {status.runners.length === 0 ? (
                   <p className="faint">
-                    No runner has reported its presence. Enabling dispatch alone does not launch an
+                    No runner has reported its presence. Starting dispatch alone does not launch an
                     agent process.
                   </p>
                 ) : (
@@ -429,9 +429,9 @@ function AgentsPage({ row, shell }: ViewProps) {
                         control={
                           status.canManage && isLive(session) ? (
                             <ConfirmAction
-                              label="Halt this lease"
+                              label="Halt lease"
                               title="Halt this lease?"
-                              confirm="Halt the lease"
+                              confirm="Halt lease"
                               busy={
                                 busy === `/sessions/${session.id}/halt` ? 'Halting…' : undefined
                               }

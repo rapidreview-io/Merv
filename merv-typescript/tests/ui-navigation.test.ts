@@ -80,6 +80,8 @@ test('plugin removal removes only its rows and re-addition restores navigation w
   const extension = row('custom', 'unrecognized', 'extensions', 30);
   const all = [research, feed, artifacts, extension];
   const initial = buildNavigation(all);
+  // Files belong to Research, after the rows they evidence; Feed holds only the feed.
+  assert.deepEqual(initial[0].rows, [research, artifacts]);
   const removed = buildNavigation([research, extension]);
   assert.deepEqual(
     removed.flatMap((section) => section.rows),
