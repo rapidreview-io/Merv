@@ -31,7 +31,11 @@ All 54 configured plugins are active. VM and public HTTPS health/UI checks retur
 
 The application is deployed. Following the user's approval, the official Merv Research App and installation `162326306` were upgraded to Contents/Pull requests read-write and Checks/Commit statuses read, with Metadata read retained. GitHub confirmed acceptance for rapidreview-io; repository access remains limited to the existing selected repository. No organization, administration or Actions permissions were added.
 
-Live GitHub transport/PR/merge verification remains pending the App signing key: `MERV_GITHUB_PRIVATE_KEY_BASE64` was absent at preflight. The initial manifest registration retained OAuth credentials but did not retain the App private key; no matching download was found. Credential creation remains a browser handoff while the user is away. No production GitHub code writes are claimed. The existing OAuth connection remains available; automation stays off until explicitly configured.
+The App signing key was installed on 2026-09-17 at 05:00 UTC after the user generated and downloaded it. Its public key fingerprint is `lE5i6GCU4m1Xi7bUIL48wwLv3poZpYyira3ALmxDD9s=` (SHA-256, DER SPKI). GitHub verified the key against App `4971131`, slug `merv-research`. The key was transferred over SSH without appearing in command arguments or logs and stored in the root-only production environment as `MERV_GITHUB_PRIVATE_KEY_BASE64`. The previous environment is retained under `/var/backups/merv/github-key-activation/20260917T050001Z`.
+
+Activation preserved the newer UI release already deployed by the parallel session: `merv-typescript:20260917T025401Z-50222607-320155bb6ea2`. All 54 plugins were active after restarting that same image. The actual compiled production GitHub client then minted a token restricted to `rapidreview-io/research-breast-cancer` with Contents read, read `main` at `f9b1c2a0e79ea64cebd4d844ffe8011f237cbaf0`, and successfully revoked the temporary token.
+
+A separate private repository, `rapidreview-io/merv-github-smoke`, was created for live write verification. The user approved adding only this repository to the existing installation; the GitHub confirmation-of-access step remains pending. Live transport/PR/merge verification is therefore still pending, and no GitHub code writes through Merv are claimed. The existing OAuth connection remains available; automation stays off until explicitly configured.
 
 Full release acceptance is recorded in `deploy/RELEASES.md`.
 
