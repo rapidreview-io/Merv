@@ -41,6 +41,8 @@ flowchart BT
     merv_review_tools["merv-review-tools"]
     merv_review_ui["merv-review-ui"]
     reviews["reviews"]
+    sandboxes["sandboxes"]
+    merv_sandboxes_ui["merv-sandboxes-ui"]
     scope["scope"]
     merv_scope_tools["merv-scope-tools"]
     merv_scope_ui["merv-scope-ui"]
@@ -173,6 +175,8 @@ flowchart BT
   reviews --> scope
   reviews --> artifacts
   reviews --> domainEvents
+  merv_sandboxes_ui --> sandboxes
+  merv_sandboxes_ui --> ui
   scope --> state
   merv_scope_tools --> scope
   merv_scope_tools --> tools

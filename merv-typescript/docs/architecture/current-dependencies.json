@@ -1,16 +1,16 @@
 {
-  "snapshot": "2026-09-16",
+  "snapshot": "2026-09-17",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 56,
-  "serviceProviders": 25,
+  "pluginCount": 58,
+  "serviceProviders": 26,
   "toolAdapters": 14,
-  "uiAdapters": 15,
+  "uiAdapters": 16,
   "apiAdapters": 2,
   "defaultEntries": 53,
   "apiEntries": 38,
-  "serverPlugins": 55,
+  "serverPlugins": 57,
   "machinePlugins": 1,
-  "directDependencyCount": 144,
+  "directDependencyCount": 146,
   "optionalDependencyCount": 6,
   "directConsumers": {
     "api": 3,
@@ -31,12 +31,13 @@
     "research": 2,
     "reviews": 7,
     "runner": 0,
+    "sandboxes": 1,
     "scope": 20,
     "sessions": 3,
     "state": 17,
     "tasks": 3,
     "tools": 17,
-    "ui": 15,
+    "ui": 16,
     "workflows": 7
   },
   "plugins": [
@@ -650,6 +651,31 @@
       "optional": [],
       "kind": "service",
       "runtime": "machine",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-sandboxes",
+      "source": "packages/sandboxes/src/index.ts",
+      "provides": [
+        "sandboxes"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-sandboxes-ui",
+      "source": "packages/sandboxes/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "sandboxes",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
       "defaultConfiguration": false
     },
     {

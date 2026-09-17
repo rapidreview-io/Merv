@@ -16,6 +16,7 @@ import { PaperView } from './paper';
 import { ResearchView } from './research';
 import { ReflectionsView, ConsolidationView } from './research-programs';
 import { LegacyHistoryView } from './legacy-history';
+import { CollectionView, RecordView } from './remote';
 
 export interface ViewProps {
   row: Row;
@@ -40,6 +41,9 @@ const views: Record<string, ComponentType<ViewProps>> = {
   reflections: ReflectionsView,
   consolidation: ConsolidationView,
   'legacy-history': LegacyHistoryView,
+  // Two generic kinds: a row a remote service describes through its manifest.
+  collection: CollectionView,
+  record: RecordView,
 };
 
 /** A row whose view kind this bundle does not know still gets a page; it says so instead of breaking. */

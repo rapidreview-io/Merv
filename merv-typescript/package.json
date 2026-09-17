@@ -34,6 +34,8 @@
     "typecheck:ui": "npm run typecheck --workspace @merv/ui",
     "dev:ui": "npm run dev --workspace @merv/ui",
     "test:ui": "node --import tsx --test tests/ui.test.ts",
+    "test:sandboxes": "node --import tsx --test tests/sandboxes.test.ts",
+    "fake:sandboxes": "node --import tsx scripts/fake-sandboxes.ts",
     "demo:ui": "node --import tsx scripts/ui-demo.ts",
     "docs:architecture": "node --import tsx scripts/dependency-map.ts"
   },

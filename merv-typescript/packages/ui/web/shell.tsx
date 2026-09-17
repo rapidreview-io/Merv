@@ -41,6 +41,9 @@ const IconSwitch = () => (
   </Icon>
 );
 
+/** A row published by a remote service names its own glyph; every other row is its view kind. */
+const iconOf = (row: Row) => (typeof row.view.icon === 'string' ? row.view.icon : row.view.kind);
+
 const unwell = (row: Row) =>
   row.status.state === 'degraded' || row.status.state === 'unavailable' ? row : undefined;
 
@@ -241,7 +244,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
                 key={row.id}
                 to={row.path}
                 label={row.label}
-                icon={row.view.kind}
+                icon={iconOf(row)}
                 active={holds(row)}
                 sick={unwell(row)}
               />
@@ -257,7 +260,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
               key={row.id}
               to={row.path}
               label={row.label}
-              icon={row.view.kind}
+              icon={iconOf(row)}
               active={holds(row)}
               sick={unwell(row)}
             />

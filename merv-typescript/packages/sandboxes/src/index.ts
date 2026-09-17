@@ -1,0 +1,197 @@
+import { check, digest, type Caller, type Json } from '@merv/contracts';
+import type { Context } from 'cordis';
+import { z } from 'zod';
+import { SandboxClient, sandboxOrigin, sandboxRoute } from './client.js';
+import { parseManifest, type ManifestRow } from './manifest.js';
+import type {
+  Sandboxes,
+  SandboxConnection,
+  SandboxesConfig,
+  SandboxReadiness,
+  SandboxRow,
+} from './types.js';
+
+export type {
+  Sandboxes,
+  SandboxConnection,
+  SandboxesConfig,
+  SandboxReadiness,
+  SandboxRow,
+} from './types.js';
+
+const connection = z
+  .object({
+    projectId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    namespace: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
+    // Only the name of an environment variable: a secret never enters configuration.
+    tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+  })
+  .strict();
+const configuration = z
+  .object({
+    urlEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+    connections: z
+      .array(connection)
+      .min(1)
+      .max(32)
+      .refine(
+        (entries) => new Set(entries.map((entry) => entry.projectId)).size === entries.length,
+        'Each project has at most one sandbox connection',
+      ),
+    refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
+    timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
+  })
+  .strict();
+
+const secretNames = new Set(['token', 'secret', 'authorization', 'credential']);
+/** The service's own JSON, minus anything named like a credential, at any depth. */
+export function withoutSecrets(value: Json, depth = 0): Json {
+  if (depth > 64) return null;
+  if (Array.isArray(value)) return value.map((entry) => withoutSecrets(entry, depth + 1));
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !secretNames.has(key.toLowerCase()))
+      .map(([key, entry]) => [key, withoutSecrets(entry, depth + 1)]),
+  );
+}
+
+const toRow = (row: ManifestRow): SandboxRow => ({
+  id: `sandboxes-${row.id}`,
+  label: row.label,
+  group: row.group,
+  order: row.order,
+  path: `/${row.id}`,
+  view: {
+    kind: 'collection',
+    icon: row.icon ?? null,
+    spec: row.collection as Json,
+    record: (row.record ?? null) as Json,
+  },
+});
+
+/**
+ * Rows a service outside this process publishes. The manifest says what each row holds; this
+ * registers those rows and proxies their reads with the caller's own project credentials.
+ * Nothing is stored: the last accepted manifest is the whole state, and it survives an
+ * unreachable service so the row degrades instead of disappearing.
+ */
+export class SandboxService implements Sandboxes {
+  readonly #client: SandboxClient;
+  readonly #connections: SandboxConnection[];
+  readonly #refreshMs: number;
+  readonly #registered: (tool: string) => boolean;
+  readonly #listeners = new Set<() => void>();
+  #specs = new Map<string, ManifestRow>();
+  #rows: SandboxRow[] = [];
+  #digest = '';
+  #reachable = false;
+  #detail = 'The sandboxes manifest has not been read yet';
+  #reading?: Promise<void>;
+
+  /**
+   * `registered` reports whether a tool exists in this process. No sandbox tool does this
+   * wave, so every act control the manifest declares is dropped before registration.
+   */
+  constructor(config: SandboxesConfig, registered: (tool: string) => boolean = () => false) {
+    const parsed = configuration.safeParse(config);
+    check(parsed.success, 'invalid_sandboxes_config', 'The sandboxes configuration is invalid');
+    this.#connections = parsed.data.connections;
+    this.#refreshMs = parsed.data.refreshMs;
+    this.#registered = registered;
+    this.#client = new SandboxClient(
+      sandboxOrigin(process.env[parsed.data.urlEnv]),
+      parsed.data.timeoutMs,
+    );
+  }
+
+  /** Reads the manifest now and on a bounded cadence; the disposer stops the cadence. */
+  start(): () => void {
+    const timer = setInterval(() => void this.refresh().catch(() => undefined), this.#refreshMs);
+    timer.unref();
+    void this.refresh().catch(() => undefined);
+    return () => clearInterval(timer);
+  }
+
+  rows(): SandboxRow[] {
+    return this.#rows;
+  }
+
+  status(): SandboxReadiness {
+    return this.#reachable ? { state: 'ready' } : { state: 'degraded', detail: this.#detail };
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  /** The cadence and an on-demand caller share one attempt rather than stampeding. */
+  refresh(): Promise<void> {
+    this.#reading ??= this.#read().finally(() => (this.#reading = undefined));
+    return this.#reading;
+  }
+
+  async #read(): Promise<void> {
+    const collected = new Map<string, ManifestRow>();
+    let reached = false;
+    let detail = 'merv-sandboxes is unreachable';
+    for (const entry of this.#connections) {
+      try {
+        const manifest = await this.#client.read(entry, '/v1/ui/manifest');
+        // Every connection is the same service, so identical row ids describe one row.
+        for (const row of parseManifest(manifest, this.#registered))
+          if (!collected.has(row.id)) collected.set(row.id, row);
+        reached = true;
+      } catch (error) {
+        detail = error instanceof Error ? error.message : detail;
+      }
+    }
+    if (!reached) {
+      // Keep the last manifest: the row reports degraded rather than vanishing.
+      this.#reachable = false;
+      this.#detail = detail;
+      return;
+    }
+    this.#reachable = true;
+    const rows = [...collected.values()].map(toRow);
+    const fingerprint = digest(rows);
+    if (fingerprint === this.#digest) return;
+    this.#digest = fingerprint;
+    this.#rows = rows;
+    this.#specs = new Map([...collected].map(([id, row]) => [`sandboxes-${id}`, row]));
+    for (const listener of this.#listeners) listener();
+  }
+
+  async read(caller: Caller, rowId: string, params: Record<string, unknown> = {}): Promise<Json> {
+    const spec = this.#specs.get(rowId);
+    check(spec, 'row_unreadable', 'That row is not published by this service', 404);
+    // The namespace follows the caller's project; input never selects a connection.
+    const entry = this.#connections.find((candidate) => candidate.projectId === caller.projectId);
+    check(entry, 'sandbox_not_connected', 'This project has no sandbox connection', 403);
+    // ui.read hands a row its `params`; tolerate a caller that passes the whole tool input.
+    const id = params.id ?? (params.params as { id?: unknown } | undefined)?.id;
+    if (id === undefined || id === null || id === '')
+      return withoutSecrets(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
+    check(typeof id === 'string', 'invalid_sandbox_id', 'A sandbox identifier must be a string');
+    check(spec.record, 'sandbox_record_unavailable', 'This row publishes no record', 404);
+    const record = withoutSecrets(
+      await this.#client.read(entry, sandboxRoute(spec.record.read, id)),
+    );
+    // The manifest's console link may be a path on the service; say where that path lives.
+    return record !== null && typeof record === 'object' && !Array.isArray(record)
+      ? { ...record, console_origin: this.#client.origin }
+      : record;
+  }
+}
+
+export const sandboxesPlugin = {
+  name: 'merv-sandboxes',
+  Config: configuration,
+  apply(ctx: Context, config: SandboxesConfig) {
+    const service = new SandboxService(config);
+    ctx.effect(() => service.start());
+    ctx.provide('sandboxes', service);
+  },
+};
+export default sandboxesPlugin;

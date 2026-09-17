@@ -5,11 +5,19 @@ import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { createApp } from '../src/app.js';
 import { defaultConfigFile } from '../src/config.js';
+import { sandboxesPlugin } from '@merv/sandboxes';
+import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
  * two tasks (one reviewed and done, one awaiting delivery), a pinned review, and feed posts.
  * Type `disable feed`, `enable feed`, `disable ui`, `enable ui`, or `quit` on stdin.
+ *
+ * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
+ * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
+ * project, which publishes its own sidebar rows from the service's manifest;
+ * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. `npm run fake:sandboxes` serves
+ * all of it on port 3210. Without MERV_SANDBOXES_URL the demo composes exactly as before.
  */
 async function main() {
   const directory = process.env.MERV_DEMO_DIR ?? mkdtempSync(join(tmpdir(), 'merv-ui-demo-'));
@@ -221,6 +229,25 @@ async function main() {
     title: 'Demo sweep checkpoint',
     content: 'The four weight-decay settings and output locations are recorded for the demo.',
   });
+  // Rows published by a service outside this process, read with this project's own grant.
+  const sandboxes: string[] = [];
+  if (process.env.MERV_SANDBOXES_URL) {
+    const fiber = app.ctx.plugin(sandboxesPlugin, {
+      urlEnv: 'MERV_SANDBOXES_URL',
+      connections: [
+        {
+          projectId: boot.project.id,
+          namespace: process.env.MERV_SANDBOXES_NAMESPACE ?? 'demo',
+          tokenEnv: 'MERV_SANDBOXES_TOKEN',
+        },
+      ],
+    });
+    app.ctx.plugin(sandboxesUiPlugin);
+    await fiber.await();
+    await app.ctx.sandboxes.refresh();
+    sandboxes.push(...app.ctx.sandboxes.rows().map((row) => `${url}/ui${row.path}`));
+  }
+
   const heartbeat = setInterval(async () => {
     try {
       await app.ctx.sessions.heartbeat(owner, { sessionId: execution.id, runnerId: 'local-demo' });
@@ -236,6 +263,7 @@ async function main() {
         status: 'ready',
         ui: `${url}/ui/`,
         directory,
+        ...(sandboxes.length ? { sandboxes } : {}),
         tokens: {
           operator: boot.token,
           producer: producer.token,

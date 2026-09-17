@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-16",
+  "snapshot": "2026-09-17",
   "groups": [
     {
       "id": "front",
@@ -96,6 +96,15 @@
         "runner"
       ],
       "description": "Runner has its own Cordis context. It talks to the server over authenticated HTTP and launches scoped agents in scratch or Git workspaces. It has no injected server-plugin dependencies."
+    },
+    {
+      "id": "other",
+      "label": "New providers",
+      "caption": "Discovered in source",
+      "members": [
+        "sandboxes"
+      ],
+      "description": "These providers were discovered automatically and await a visual grouping in notes.json."
     }
   ],
   "nodes": [
@@ -1406,6 +1415,43 @@
       "exposedTools": []
     },
     {
+      "plugin": "merv-sandboxes",
+      "source": "packages/sandboxes/src/index.ts",
+      "provides": [
+        "sandboxes"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "sandboxes",
+      "group": "other",
+      "owner": "sandboxes",
+      "label": "sandboxes",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-sandboxes-ui",
+      "source": "packages/sandboxes/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "sandboxes",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-sandboxes-ui",
+      "group": "front",
+      "owner": "sandboxes",
+      "label": "sandboxes · ui adapter",
+      "purpose": "Connects sandboxes to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-scope",
       "source": "packages/scope/src/index.ts",
       "provides": [
@@ -1870,6 +1916,11 @@
           "readOnly": false
         },
         {
+          "name": "workflow.process",
+          "description": "Read one instance's process graph, derived on read: the pinned definition's states and edges, which edges the record shows were actually taken and by whom, the live status and blockers of the current state's outgoing edges, and dependency edges to other instances. An edge means the machinery stepped through a gate; it never says a finding is correct. Per-record detail stays with the domain read.",
+          "readOnly": true
+        },
+        {
           "name": "workflow.status_and_next",
           "description": "Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. Omit instanceId for a project overview of all workflow instances. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
           "readOnly": true
@@ -1905,6 +1956,11 @@
           "name": "workflow.begin",
           "description": "Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.",
           "readOnly": false
+        },
+        {
+          "name": "workflow.process",
+          "description": "Read one instance's process graph, derived on read: the pinned definition's states and edges, which edges the record shows were actually taken and by whom, the live status and blockers of the current state's outgoing edges, and dependency edges to other instances. An edge means the machinery stepped through a gate; it never says a finding is correct. Per-record detail stays with the domain read.",
+          "readOnly": true
         },
         {
           "name": "workflow.status_and_next",
@@ -2486,6 +2542,16 @@
       "optional": false
     },
     {
+      "from": "merv-sandboxes-ui",
+      "to": "sandboxes",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
       "from": "scope",
       "to": "state",
       "optional": false
@@ -2637,10 +2703,10 @@
     }
   ],
   "counts": {
-    "plugins": 56,
-    "providers": 25,
-    "adapters": 31,
-    "dependencies": 144
+    "plugins": 58,
+    "providers": 26,
+    "adapters": 32,
+    "dependencies": 146
   },
   "network": [
     {

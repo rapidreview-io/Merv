@@ -49,7 +49,7 @@ export interface Liveness {
   /** The whole line, for any surface that states liveness as one string. */
   phrase: string;
 }
-const say = (verdict: string, tone: Tone, ...clauses: (string | null)[]): Liveness => {
+export const say = (verdict: string, tone: Tone, ...clauses: (string | null)[]): Liveness => {
   const rest = clauses.filter(Boolean).join(' · ');
   return { verdict, tone, rest, phrase: [words(verdict), rest].filter(Boolean).join(' · ') };
 };

@@ -2347,3 +2347,66 @@ select.input,
     grid-column: 1;
   }
 }
+
+/* Remote rows ------------------------------------------------------------- */
+/* A row a service outside this process published reads in the same anatomy as
+   every other collection: the manifest's columns on one grid, so a fact keeps
+   its x-position down the list, the liveness phrase under them, and what needs
+   a person stated at the end of that line as a clause, never as a badge. */
+.remote-cols {
+  display: grid;
+  grid-template-columns: var(--remote-cols);
+  gap: var(--space-4);
+  align-items: baseline;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.remote-cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.remote-cell--end {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.remote-standing {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+.remote-attn {
+  margin-left: auto;
+  color: var(--refutes);
+  text-align: right;
+}
+/* Only what is live breathes; an open row that is not moving holds its dot still. */
+.remote-pulse {
+  animation: map-breathe 1.8s ease-in-out infinite;
+}
+.remote-text {
+  white-space: pre-wrap;
+  max-width: 68ch;
+}
+/* Beside an open record the list has a column's width, so its facts pair up
+   rather than shredding five ways; none of them is dropped. */
+.split-list .remote-cols {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px var(--space-3);
+}
+.split-list .remote-cell--end {
+  text-align: left;
+}
+/* Narrow: the columns stack into the row rather than shredding into a scroller. */
+@media (max-width: 720px) {
+  .remote-cols {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .remote-cell--end {
+    text-align: left;
+  }
+  .remote-attn {
+    margin-left: 0;
+  }
+}

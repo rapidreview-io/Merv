@@ -22,8 +22,9 @@ export const cx = (...names: (string | false | null | undefined)[]) =>
  * One colour and one icon per record kind, keyed by the view kind a row
  * declares. The rail dot, a card's left edge, the title line's icon and every
  * uppercase kind label read from this table and nowhere else. Kinds that share
- * a subject share a colour; a kind this build does not know stays gray and
- * wears no icon.
+ * a subject share a colour; a kind this build does not know — a row a service
+ * outside this process published — falls back to the slate the agents wear, and
+ * is named by its own noun rather than by an entry of its own.
  */
 export const KIND: Record<string, { color: string; icon: string; label: string }> = {
   research: { color: '#6d28d9', icon: '🔍', label: 'Research' },
@@ -44,7 +45,7 @@ export const KIND: Record<string, { color: string; icon: string; label: string }
   settings: { color: '#6b7280', icon: '⚙️', label: 'Settings' },
   'legacy-history': { color: '#6b7280', icon: '🗄️', label: 'Archive' },
 };
-const UNKNOWN = { color: '#6b7280', icon: '', label: '' };
+const UNKNOWN = { color: '#475569', icon: '', label: '' };
 export const kindOf = (kind: string | undefined) =>
   (kind && KIND[kind]) || { ...UNKNOWN, label: words(kind ?? '') };
 /** The kind's colour reaches the CSS as --kind, so a card and its label agree. */
@@ -113,16 +114,17 @@ const TONES: [Tone, string][] = [
     'warn',
     'degraded pending waiting requested started in_progress in-progress review reviewing ' +
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
-      'attempting planning',
+      'attempting planning provisioning starting deleting cancelling',
   ],
   [
     'bad',
-    'unavailable failed fail error rejected blocked denied dead offline disconnected ' +
+    'unavailable unreachable failed fail error rejected blocked denied dead offline disconnected ' +
       'timed_out timeout invalid broken abandoned refuted contradicted',
   ],
   [
     'dim',
-    'archived inactive disabled skipped ignored observer reader retired unassigned paused ' +
+    'archived inactive disabled skipped ignored observer reader retired unassigned paused idle ' +
+      'stopped ' +
       'draft none unpublished unverified cancelled closed expired not-published not-applicable ' +
       'metadata-only',
   ],
@@ -130,7 +132,7 @@ const TONES: [Tone, string][] = [
 const TONE_OF = new Map(
   TONES.flatMap(([tone, words]) => words.split(' ').map((word) => [word, tone] as const)),
 );
-const toneOf = (value: string) => TONE_OF.get(value) ?? 'neutral';
+export const toneOf = (value: string) => TONE_OF.get(value) ?? 'neutral';
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
 export function StatusPill({ value }: { value: string | null | undefined }) {

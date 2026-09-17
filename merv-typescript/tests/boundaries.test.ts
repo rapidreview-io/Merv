@@ -96,6 +96,8 @@ const capabilities: Record<string, readonly string[]> = {
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   code: ['state', 'scope', 'sessions', 'artifacts'],
   runner: [],
+  // A proxy for rows a service outside this process publishes: no Merv capability at all.
+  sandboxes: [],
   tools: ['scope'],
   api: ['scope', 'tools', 'identity'],
   mounts: ['tools', 'scope'],
@@ -571,6 +573,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'reflections',
       'research',
       'reviews',
+      'sandboxes',
       'scope',
       'sessions',
       'tasks',

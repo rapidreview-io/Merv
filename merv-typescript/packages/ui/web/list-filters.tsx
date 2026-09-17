@@ -220,6 +220,7 @@ export function ListPage<T extends { id: string }>({
   cards,
   emptyTitle,
   emptyHint,
+  columns = 2,
   after,
 }: {
   load: { loading: boolean; error?: ApiError; data?: unknown; loadedAt?: string };
@@ -236,6 +237,8 @@ export function ListPage<T extends { id: string }>({
   cards?: { className: string; render(item: T): ReactNode };
   emptyTitle: string;
   emptyHint: string;
+  /** How many columns the skeleton draws while the read is in flight; two lines by default. */
+  columns?: number;
   /** What a page states after its rows, where it holds a second list of another kind. */
   after?: ReactNode;
 }) {
@@ -314,7 +317,7 @@ export function ListPage<T extends { id: string }>({
         empty={total === 0}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        columns={2}
+        columns={columns}
       />
       {total > 0 && !load.loading && rows.length === 0 && (
         <LoadState
