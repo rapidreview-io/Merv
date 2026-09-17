@@ -50,10 +50,10 @@ set('state', {
   schema: deploymentSchema(),
   maxConnections: 10,
   connectionTimeoutMs: 5000,
-  statementTimeoutMs: 30000,
+  statementTimeoutMs: 60000,
   // Every transaction takes one advisory lock per schema; two scenario runs with their
   // runners overran 5 s of waiting.
-  lockTimeoutMs: 20000,
+  lockTimeoutMs: 45000,
 });
 set('blobs', {
   backend: 's3',

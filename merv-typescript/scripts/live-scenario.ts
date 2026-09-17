@@ -822,7 +822,7 @@ async function main(options: Options) {
       projectId,
       credentialEnv: options.tokenEnv,
       capacity: 2,
-      pollIntervalMs: 3000,
+      pollIntervalMs: 8000,
       profiles: [
         {
           name: 'scenario-codex',
@@ -968,7 +968,8 @@ async function main(options: Options) {
         lastLine = line;
       }
       assert.ok(Date.now() < deadline, `Scenario run exceeded ${options.timeoutMinutes} minutes`);
-      await delay(2000);
+      // Three runs polling every two seconds were a real share of the server's load.
+      await delay(8000);
     }
     await setDispatch(false);
 
