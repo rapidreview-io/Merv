@@ -752,7 +752,7 @@ async function main(options: Options) {
           .map((name) => observed.get(name)?.id)
           .filter((id): id is string => !!id),
         consolidationWorkspace: brief.project.cycle.consolidationWorkspace ?? 'none',
-        requestId: `scenario:cycle:${brief.project.cycle.name}`,
+        requestId: `scenario:cycle:${brief.project.cycle.name.replace(/[^A-Za-z0-9_.:-]+/g, '-')}`,
       });
       cycleId = cycle.id;
       log({ cycle: cycle.id });
