@@ -675,8 +675,19 @@ async function main(options: Options) {
     );
     if (!options.local) secrets.push(token);
 
+    // Every write carries a request id and replays identically, so a request that
+    // never reached the server (a reset connection, a DNS blip) is retried a few times.
+    const send = async (path: string, init: RequestInit, attempt = 1): Promise<Response> => {
+      try {
+        return await fetch(`${baseUrl}${path}`, init);
+      } catch (error) {
+        if (attempt >= 4 || !(error instanceof TypeError)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1500 * 2 ** (attempt - 1)));
+        return await send(path, init, attempt + 1);
+      }
+    };
     const request = async (path: string, body: unknown, method = 'POST'): Promise<any> => {
-      const response = await fetch(`${baseUrl}${path}`, {
+      const response = await send(path, {
         method,
         headers: {
           authorization: `Bearer ${token}`,
