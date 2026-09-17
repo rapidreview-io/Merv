@@ -940,8 +940,14 @@ async function main(options: Options) {
       for (const entry of blocking) {
         const state = entry.states.at(-1)!;
         if (pauses.get(entry.brief.name)!.get(state) !== 'harness') continue;
-        // How many times this record has entered this state: the producing round.
-        const round = entry.states.filter((seen) => seen === state).length;
+        // The producing round: how many times the record has entered this state, read
+        // from the server's process graph so a restarted harness never repeats round 1
+        // (and its planted defect) on what is really round 2.
+        const graph = await call('workflow.process', { instanceId: entry.id });
+        const node = graph.nodes?.find((n: any) => n.state === state);
+        const round = node
+          ? node.entries + (node.initial ? 1 : 0)
+          : entry.states.filter((seen) => seen === state).length;
         const stage = `${state}@${round}`;
         if (entry.launchedStages.includes(stage)) continue;
         entry.launchedStages.push(stage);
