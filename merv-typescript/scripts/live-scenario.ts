@@ -208,6 +208,13 @@ const ticked = (value: string | undefined): string[] =>
 /** Every "…" string in order, including the ones the brief wraps across lines. */
 const quotedStrings = (value: string): string[] =>
   [...value.matchAll(/"([^"]+)"/g)].map((match) => match[1].replace(/\s+/g, ' ').trim());
+/** The first "…" string of each numbered item; a note after the list is not a check. */
+const numberedQuoted = (value: string): string[] =>
+  value
+    .split(/\n(?=\s*\d+\. )/)
+    .filter((item) => /^\s*\d+\. /.test(item))
+    .map((item) => quotedStrings(item)[0])
+    .filter((check): check is string => !!check);
 
 /**
  * `**PLANTED DEFECT — producer stdin prompt only, round 1 plan author …**` blocks.
@@ -355,7 +362,7 @@ export function parseBrief(markdown: string): Brief {
         const region = labelledRegion(body, /\*\*Numbered acceptance checks/);
         assert.ok(goal, `Task ${key} needs a **Goal:** blockquote`);
         assert.ok(region, `Task ${key} needs a **Numbered acceptance checks** list`);
-        const checks = quotedStrings(region);
+        const checks = numberedQuoted(region);
         assert.ok(checks.length, `Task ${key} lists no quoted acceptance checks`);
         return {
           ...common,
@@ -710,8 +717,37 @@ async function main(options: Options) {
       );
       return value;
     };
-    const call = async (tool: string, input: unknown): Promise<any> =>
-      (await request(`/tools/${tool}`, input)).result;
+    const call = async (tool: string, input: any): Promise<any> => {
+      try {
+        return (await request(`/tools/${tool}`, input)).result;
+      } catch (error) {
+        // A record an earlier run created from a brief edited since: reuse it by name.
+        if (!(error instanceof Error) || !error.message.includes('request_conflict')) throw error;
+        const existing: Record<string, () => Promise<any>> = {
+          'task.create': async () => {
+            const found = (await call('task.list', {})).find((t: any) => t.title === input.title);
+            return found && (await call('task.get', { taskId: found.id }));
+          },
+          'experiment.create': async () => {
+            const found = (await call('experiment.list', {})).find(
+              (e: any) => e.name === input.name,
+            );
+            return (
+              found && {
+                ...found,
+                ...(await call('experiment.get_state', { experimentId: found.id })),
+              }
+            );
+          },
+          'claim.create': async () =>
+            (await call('claim.list', {})).find((c: any) => c.statement === input.statement),
+        };
+        const found = existing[tool] ? await existing[tool]() : undefined;
+        assert.ok(found, `${tool} replayed with different input and no existing record matched`);
+        log({ tool, reused: found.id });
+        return found;
+      }
+    };
     const control = async (path: string, body: unknown, method = 'POST') =>
       await request(path, body, method);
 
@@ -807,6 +843,8 @@ async function main(options: Options) {
     const pauses = new Map(selected.map((record) => [record.name, pauseStates(record)]));
     const recordRevision = new Map<string, number>();
     const terminalState = (entry: Observed) => options.stopAfter ?? entry.brief.trajectory.at(-1)!;
+    const TERMINAL = new Set(['done', 'complete', 'failed', 'abandoned', 'cancelled']);
+    let divergenceLogged = false;
     let dispatch: boolean | undefined;
     const setDispatch = async (enabled: boolean) => {
       if (dispatch === enabled) return;
@@ -835,6 +873,7 @@ async function main(options: Options) {
         // --max-rounds stops a record after that many verdicts: "design round only".
         if (
           state === terminalState(entry) ||
+          TERMINAL.has(state) ||
           (options.maxRounds !== undefined && entry.reviews.length >= options.maxRounds)
         )
           entry.finished = true;
@@ -872,7 +911,12 @@ async function main(options: Options) {
         if (entry.brief.reviewRounds)
           divergence ??= matchVerdicts(entry.brief.name, entry.brief.reviewRounds, entry.reviews);
       }
-      if (divergence) break;
+      // A divergence is a finding, not a stop: the run keeps driving every record to a
+      // terminal state (or --max-rounds), and the report carries the first divergence.
+      if (divergence && !divergenceLogged) {
+        log({ divergence: divergence.detail });
+        divergenceLogged = true;
+      }
 
       // Pause dispatch before a live record can step into a network stage. A predecessor
       // state only pauses once its own offline work is already leased, so the runner
