@@ -79,18 +79,18 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   };
   const readerMcp = await connect(reader.token),
     otherMcp = await connect(b.token);
-  assert.equal((await httpList(reader.token)).body.tools.length, 65);
-  assert.equal((await readerMcp.listTools()).tools.length, 65);
+  assert.equal((await httpList(reader.token)).body.tools.length, 66);
+  assert.equal((await readerMcp.listTools()).tools.length, 66);
   assert.equal(
     (await httpList(producer.token)).body.tools.filter((tool: { name: string }) =>
       tool.name.startsWith('_'),
     )[0].name,
     '_bridge.write',
   );
-  assert.equal((await otherMcp.listTools()).tools.length, 64);
+  assert.equal((await otherMcp.listTools()).tools.length, 65);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
-    64,
+    65,
     'Operator role is not a remote grant',
   );
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 200);
@@ -125,8 +125,8 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     403,
   );
   app.ctx.scope.toolPolicy.replace([]);
-  assert.equal((await readerMcp.listTools()).tools.length, 64);
-  assert.equal((await httpList(reader.token)).body.tools.length, 64);
+  assert.equal((await readerMcp.listTools()).tools.length, 65);
+  assert.equal((await httpList(reader.token)).body.tools.length, 65);
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 403);
   assert.equal(
     (await readerMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError,
@@ -134,7 +134,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   );
   assert.equal(admitted.length, count);
   app.ctx.scope.toolPolicy.replace([grant]);
-  assert.equal((await readerMcp.listTools()).tools.length, 65);
+  assert.equal((await readerMcp.listTools()).tools.length, 66);
   await app.ctx.scope.revokeActor(callerA, reader.actor.id);
   assert.equal((await httpList(reader.token)).status, 401);
   await assert.rejects(readerMcp.listTools());

@@ -109,12 +109,18 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     const toolsBefore = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(
       toolsBefore.filter((name) => name.startsWith('workflow.')),
-      ['workflow.assignment', 'workflow.begin', 'workflow.process', 'workflow.status_and_next'],
+      [
+        'workflow.assignment',
+        'workflow.begin',
+        'workflow.catalog',
+        'workflow.process',
+        'workflow.status_and_next',
+      ],
     );
     const taskNames = toolsBefore.filter(
       (name) => name.startsWith('task.') || name.startsWith('workflow.'),
     );
-    assert.equal(taskNames.length, 12);
+    assert.equal(taskNames.length, 13);
     assert.ok(taskNames.includes('task.mark_failed'));
 
     // Hold an admitted task response while Cordis suspends the engine's consumers.

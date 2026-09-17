@@ -122,7 +122,6 @@ a:hover,
 .btn-text:hover,
 .row-link:hover strong,
 .ov-name:hover,
-.ov-all a:hover,
 .ov-note a:hover,
 .history-record-link:hover,
 .history-record-link[aria-expanded='true'],
@@ -507,8 +506,7 @@ p,
 .page-summary,
 .question,
 .exceptions,
-.kv dd,
-.ladder-rung {
+.kv dd {
   max-width: 68ch;
 }
 /* The title line the shell renders above a row's index route. */
@@ -666,7 +664,6 @@ p,
 .label,
 .status,
 .ev-role,
-.rung-mark,
 .table th,
 .rail-group-head,
 .flag,
@@ -1122,14 +1119,6 @@ select.input,
 }
 
 /* Overview composition. -------------------------------------------------- */
-/* The project name, then three headings, each over a stack of record cards. */
-.ov-intro {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: var(--text-base);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 /* One block meets the next at a hairline; nothing around either of them. */
 .ov-block {
   margin-top: var(--space-5);
@@ -1165,8 +1154,7 @@ select.input,
   text-overflow: ellipsis;
 }
 .ov-meta,
-.ov-note,
-.ov-all {
+.ov-note {
   color: var(--muted);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
@@ -1192,7 +1180,6 @@ select.input,
 }
 /* A note, a link onward or an empty line is not a record: it carries no edge. */
 .ov-row.ov-note,
-.ov-row.ov-all,
 .ov-none {
   display: block;
   padding: var(--space-2) 2px var(--space-2) 3px;
@@ -2075,65 +2062,75 @@ select.input,
 .plane-value.changed {
   animation: map-roll 380ms ease-out;
 }
-/* Process view (derived, never authored). ---------------------------------
-   One row of the program's own states, then one lane per attempt. Plain DOM:
-   no canvas, no minimap, nothing draggable. A step says the machinery passed a
-   gate — colour here is the record kind's, never a judgement on the science. */
-.track {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  list-style: none;
-}
-.track-step {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
-  font-size: var(--text-sm);
-}
-/* The states are a sequence, so the gap between them carries a mark. */
-.track-step + .track-step::before {
-  content: '→';
-  position: absolute;
-  left: -14px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--faint);
-}
-/* Where the program stands now is a state, so it keeps its quiet fill. */
-.track-step--here {
-  background: var(--bg-soft);
-  border-radius: var(--radius-sm);
-}
-.track-step--unreached {
-  color: var(--muted);
-}
-/* The workflow, drawn. States left to right, arrows for the actions between them,
-   a curve beneath for every way back. Where the record stands is the filled node in
-   its kind's colour and the one thing on the page that moves; what it has passed is
-   a muted fill, what it has not reached is an outline, and an end is capped. */
+/* The workflow, drawn. Working states left to right on one track, then one capped end;
+   an arc over the track for every way back, tinted once the record has taken it. Where
+   the record stands is the filled node in its kind's colour and the one thing on the
+   page that moves; what is behind it is tinted, a state it left and may reach again is
+   ringed, what it never reached is an outline, and an end it reached by a way out is
+   grey and carries that way's name. */
 .pd {
+  display: block;
   max-width: 100%;
   height: auto;
   overflow: visible;
+  --pd-tint: color-mix(in srgb, var(--kind, var(--active)) 45%, var(--line-strong));
 }
-.pd-edge {
+.pd-track,
+.pd-arc {
   fill: none;
-  stroke: var(--line);
+  stroke: var(--line-strong);
   stroke-width: 1.5;
+  stroke-linecap: round;
 }
-.pd-edge--back {
-  stroke-dasharray: 3 3;
+.pd-arc {
+  stroke-width: 1.25;
+  stroke-linejoin: round;
 }
-.pd marker path {
-  fill: var(--line);
+.pd-tip {
+  fill: var(--line-strong);
+}
+.pd-track--behind,
+.pd-arc--taken {
+  stroke: var(--pd-tint);
+}
+.pd-tip--taken {
+  fill: var(--pd-tint);
+}
+/* A node is two colours, and each mark of the record sets them. On a row a node is a
+   dot of its own ink, and the end is a ring until the record reaches it. */
+:where(.pd-node) {
+  --ink: var(--line-strong);
+  --fill: var(--bg);
+}
+:where(.pd--compact .pd-node) {
+  --fill: var(--ink);
+}
+:where(.pd--compact .pd-node:last-child) {
+  --fill: none;
+}
+.pd-node--left {
+  --ink: var(--pd-tint);
+}
+.pd-node--behind {
+  --ink: var(--pd-tint);
+  --fill: var(--ink);
+}
+.pd-node--here {
+  --ink: var(--kind, var(--active));
+  --fill: var(--ink);
+}
+.pd-node--stopped {
+  --ink: var(--muted);
+  --fill: var(--ink);
 }
 .pd-node circle {
-  fill: var(--bg);
-  stroke: var(--line);
+  fill: var(--fill);
+  stroke: var(--ink);
   stroke-width: 1.5;
+}
+.pd-node .pd-cap {
+  fill: none;
+  stroke-width: 1.25;
 }
 .pd-node text {
   fill: var(--muted);
@@ -2142,38 +2139,38 @@ select.input,
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.pd-node--passed circle {
-  fill: var(--line);
-}
-.pd-node--here circle {
-  fill: var(--kind, var(--active));
-  stroke: var(--kind, var(--active));
-  animation: pd-pulse 2.4s ease-in-out infinite;
-}
-.pd-node--here .pd-cap,
-.pd-cap {
-  fill: none;
-}
-.pd-node--here text {
+.pd-node--here text,
+.pd-node--stopped text {
   fill: var(--text);
-  font-weight: 600;
 }
-@keyframes pd-pulse {
-  0%,
-  100% {
-    opacity: 1;
+/* Work is under way where the record stands: one slow ring leaves the node. An end is
+   at rest, and so is every row of a list. */
+.pd-node .pd-halo {
+  fill: var(--kind, var(--active));
+  stroke: none;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pd-ping 2.6s ease-out infinite;
+}
+@keyframes pd-ping {
+  0% {
+    opacity: 0.32;
+    transform: scale(0.55);
   }
-  50% {
-    opacity: 0.45;
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pd-node--here circle {
+  .pd-node .pd-halo {
     animation: none;
   }
 }
-/* On a row the same machine is dots on a line, beside the state word it belongs to. */
 .pd--compact {
+  display: inline-block;
   vertical-align: middle;
 }
 /* A section's own control sits beside its heading, in the quiet size. */

@@ -292,6 +292,8 @@ export class ExperimentService implements Experiments {
             workflow: 'experiment',
             requestId: `experiment:create:${caller.actorId}:${input.requestId}`,
             dependsOn: input.dependsOn,
+            // What waits on this experiment names it, so the instance carries the name.
+            data: { name: input.name },
           },
           tx,
         );

@@ -30,6 +30,7 @@ import {
 import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { elapsed, say, type Liveness } from '../liveness';
 import { useCommand } from '../mutations';
+import { ProcessDiagram } from '../process';
 import { firstSentence } from '../states';
 import type { ViewProps } from './index';
 import { at, list, money, num, phrase, records, str, unit, type Json } from './remote-fields';
@@ -57,7 +58,6 @@ interface Facts {
 }
 
 const ATTENTION = 'attention';
-const STEP: Record<string, string> = { here: 'track-step--here', next: 'track-step--unreached' };
 
 /** The state word with the dot vocabulary: colour reaches what failed and nothing else. */
 function StateWord({ value, states }: { value: string; states: States }) {
@@ -303,15 +303,18 @@ function Section({ section, ...facts }: { section: UiSection } & Facts) {
         )}
       />
     );
-  // A ladder is the process track read as steps: where it has been, where it is, what is next.
+  // A ladder is a process read as steps, so it is drawn as one: each step to the next.
   return (
-    <ol className="track">
-      {items.map((step, index) => (
-        <li className={cx('track-step', STEP[str(at(step, section.state))])} key={index}>
-          {str(at(step, section.step))}
-        </li>
-      ))}
-    </ol>
+    <ProcessDiagram
+      steps={items.map((step, index) => ({
+        state: str(at(step, section.step)),
+        end: index === items.length - 1,
+        stopped: false,
+        current: str(at(step, section.state)) === 'here',
+        entered: str(at(step, section.state)) !== 'next',
+      }))}
+      ways={items.slice(1).map((_, index) => ({ from: index, to: index + 1, taken: false }))}
+    />
   );
 }
 

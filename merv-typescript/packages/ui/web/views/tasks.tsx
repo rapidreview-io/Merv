@@ -71,7 +71,7 @@ function TaskDetail({ row }: ViewProps) {
       name={t.title}
       standing={t.goal}
       state={<StatusPill value={t.workflow.state} />}
-      act={process && !process.terminal ? <Gate graph={process} kind={row.view.kind} /> : undefined}
+      act={process && <Gate graph={process} kind={row.view.kind} />}
       title="Brief"
       content={
         <>

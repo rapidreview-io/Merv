@@ -173,7 +173,7 @@ function ExperimentRecord({
           />
         </>
       }
-      act={process && !process.terminal ? <Gate graph={process} kind="experiments" /> : undefined}
+      act={process && <Gate graph={process} kind="experiments" />}
       title="Evidence"
       content={
         currentEvidence.length || figures.length || shown ? (

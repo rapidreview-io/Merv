@@ -78,7 +78,10 @@ function classify(
     id,
     workflow: node?.workflow ?? workflow,
     version: node?.version ?? version,
-    name: typeof data.title === 'string' ? data.title : (node?.workflow ?? workflow),
+    name:
+      [data.title, data.name].find((item) => typeof item === 'string') ??
+      node?.workflow ??
+      workflow,
     state: node?.state ?? 'missing',
     settled,
     failed: !!node && successJson !== undefined && terminal.includes(node.state) && !settled,

@@ -371,6 +371,8 @@ test('Command receipts replay exact results across reload and rollback all compo
     events = (await f.state.events(f.operator.projectId)).length;
   assert.deepEqual(await f.experiments.create(f.producer, input), e);
   assert.equal((await f.state.events(f.operator.projectId)).length, events);
+  // What waits on an experiment names it, so the instance carries the name.
+  assert.equal((await f.workflows.get(f.producer, e.id)).data.name, 'Replay');
   await assert.rejects(
     async () => await f.experiments.create(f.producer, { ...input, intent: 'Different' }),
     code('request_conflict'),
