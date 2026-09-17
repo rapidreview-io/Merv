@@ -95,6 +95,7 @@ The founder pointed at Thinking Machines' Tinker console: "There is no chrome wh
 
 - Surfaces lose their borders. A 1px hairline in the border colour is the only divider, and only where two things meet; a list is rows separated by hairlines, not a stack of boxes.
 - A box is drawn only where the box is the object: the property card on the map, a guard that names what it is about to change, a criterion beside its evidence. Everything else sits directly on the ground.
-- The kind colour and icon stay: the 3px kind edge on a record, the kind dot on a rail row, the uppercase kind label. They are what keeps the page from reading sterile.
+- The kind colour and icon stay in the kind label, the kind icon, the kind dot on a rail row and the state word. They are what keeps the page from reading sterile.
+- No left-edge accent anywhere (founder, 2026-09-17): no kind edge on records or map cards, no left rule on rounds, ladders, lanes, track steps or quoted blocks, no inset bar on the rail's active row or the split pane's open row. A hairline between two panes is a divider, not this pattern.
 - While loading, a list shows grey skeleton rows in its own grid; a total not yet known renders as an em dash, never a zero and never a spinner.
 - Density comes from the type scale and the hairlines, never from borders, shadows or filled backgrounds.
