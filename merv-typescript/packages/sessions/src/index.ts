@@ -1263,11 +1263,22 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       return await this.decode(await this.row(tx, caller.session.id), tx);
     });
   }
+  /** Tool names per session, read once: a policy is frozen at offer, and the tool listing
+   *  asks about every registered tool, which under load meant one locked transaction each. */
+  private readonly toolNames = new Map<string, { names: Set<string>; at: number }>();
   async allowsTool(caller: Caller, name: string): Promise<boolean> {
-    return await this.transaction(async (tx) => {
+    const id = caller.session?.id;
+    const cached = id ? this.toolNames.get(id) : undefined;
+    if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
+    const names = await this.transaction(async (tx) => {
       const session = await this.session(caller, tx);
-      return session.execution.policy.tools.some((tool) => tool.name === name);
+      return new Set(session.execution.policy.tools.map((tool) => tool.name));
     });
+    if (id) {
+      if (this.toolNames.size >= 1000) this.toolNames.clear();
+      this.toolNames.set(id, { names, at: this.clock() });
+    }
+    return names.has(name);
   }
   private async session(caller: Caller, tx: Transaction): Promise<Session> {
     await this.scope.require(caller, 'read', tx);
