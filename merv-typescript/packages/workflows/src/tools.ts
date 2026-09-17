@@ -45,6 +45,16 @@ export const workflowToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.register({
+        name: 'workflow.catalog',
+        description:
+          "Read the deployed workflow definitions: each program's states, its initial and terminal states, and the actions that connect them. This is the shape of the machine, never any record's place in it.",
+        readOnly: true,
+        inputSchema: z.object({}).strict(),
+        handler: async () => workflows.catalog(),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'workflow.assignment',
         description:
           'Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.',

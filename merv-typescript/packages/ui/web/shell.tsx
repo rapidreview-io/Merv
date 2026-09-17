@@ -11,7 +11,7 @@ import { standingOf } from './views/overview';
 import { useHome } from './views/map-data';
 
 import type { Row, ShellData } from './shell-types';
-export type { RowStatus, Row, PluginState, ShellData } from './shell-types';
+export type { RowStatus, Row, PluginState, ShellData, WorkflowShape } from './shell-types';
 
 export const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
 

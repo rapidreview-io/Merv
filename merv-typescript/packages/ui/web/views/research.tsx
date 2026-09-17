@@ -2,7 +2,8 @@ import { Link, useParams } from 'react-router-dom';
 import type { ResearchRecord } from '@merv/research/models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { Gate, LoadState, RecordPage, StatusPill } from '../components';
+import { LoadState, RecordPage, StatusPill } from '../components';
+import { Gate } from '../process';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import { useSession } from '../session';
@@ -40,7 +41,7 @@ function CycleDetail({ row }: ViewProps) {
       standing={consolidation(record)}
       state={<StatusPill value={record.workflow.state} />}
       act={
-        <Gate graph={process.data}>
+        <Gate graph={process.data} kind={row.view.kind}>
           {writable && (
             <ResearchCommand
               disabled={record.workflow.state === 'complete'}

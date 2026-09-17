@@ -2110,29 +2110,71 @@ select.input,
 .track-step--unreached {
   color: var(--muted);
 }
-/* The same derivation read as prose: rungs, for a record whose shape is a ladder. */
-.ladder {
-  list-style: none;
+/* The workflow, drawn. States left to right, arrows for the actions between them,
+   a curve beneath for every way back. Where the record stands is the filled node in
+   its kind's colour and the one thing on the page that moves; what it has passed is
+   a muted fill, what it has not reached is an outline, and an end is capped. */
+.pd {
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
 }
-.ladder-rung {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: baseline;
-  font-size: var(--text-sm);
-  padding: 2px 0 2px var(--space-3);
+.pd-edge {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.5;
 }
-/* The rung it stands on is named in its own words and set in the heavier weight. */
-.ladder-rung--here > span:first-child {
+.pd-edge--back {
+  stroke-dasharray: 3 3;
+}
+.pd marker path {
+  fill: var(--line);
+}
+.pd-node circle {
+  fill: var(--bg);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.pd-node text {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pd-node--passed circle {
+  fill: var(--line);
+}
+.pd-node--here circle {
+  fill: var(--kind, var(--active));
+  stroke: var(--kind, var(--active));
+  animation: pd-pulse 2.4s ease-in-out infinite;
+}
+.pd-node--here .pd-cap,
+.pd-cap {
+  fill: none;
+}
+.pd-node--here text {
+  fill: var(--text);
   font-weight: 600;
 }
-/* Done, here, next: the mark is the structure, so it wears the label type and the
-   quiet colour, and only the rung the record stands on takes the ink. */
-.rung-mark {
-  color: var(--faint);
+@keyframes pd-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
-.ladder-rung--here .rung-mark {
-  color: var(--text);
+@media (prefers-reduced-motion: reduce) {
+  .pd-node--here circle {
+    animation: none;
+  }
+}
+/* On a row the same machine is dots on a line, beside the state word it belongs to. */
+.pd--compact {
+  vertical-align: middle;
 }
 /* A section's own control sits beside its heading, in the quiet size. */
 .doc-h .btn-text,

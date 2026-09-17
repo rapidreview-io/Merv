@@ -8,7 +8,6 @@ import { WORK } from '../navigation';
 import {
   Ago,
   Evidence,
-  Gate,
   KV,
   LoadState,
   RecordPage,
@@ -18,6 +17,7 @@ import {
   useArtifacts,
   words,
 } from '../components';
+import { Gate } from '../process';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
@@ -173,7 +173,7 @@ function ExperimentRecord({
           />
         </>
       }
-      act={process && !process.terminal ? <Gate graph={process} /> : undefined}
+      act={process && !process.terminal ? <Gate graph={process} kind="experiments" /> : undefined}
       title="Evidence"
       content={
         currentEvidence.length || figures.length || shown ? (

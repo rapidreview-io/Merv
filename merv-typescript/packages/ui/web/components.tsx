@@ -8,7 +8,6 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import { Link } from 'react-router-dom';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError } from './api';
 import { useCommand } from './mutations';
 import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
@@ -615,69 +614,5 @@ export function Evidence({
       </summary>
       {open && <ArtifactBody artifactId={artifactId} metadata={artifact} />}
     </details>
-  );
-}
-
-/**
- * The gate as structure: the program's own states in order, what the record has
- * passed, where it stands, what it is on its way to, and the control that moves
- * it. The states and their marks are derived from the record (workflow.process),
- * a terminal state is drawn only once a record is in one, a blocker earns one
- * line only where the person can answer it, and an unsettled prerequisite is
- * named in the server's own words.
- */
-export function Gate({ graph, children }: { graph?: ProcessGraph; children?: ReactNode }) {
-  const next = new Set(
-    (graph?.edges ?? [])
-      .filter((edge) => edge.status && edge.status !== 'blocked')
-      .map((edge) => edge.to),
-  );
-  const asks = graph?.nodes
-    .find((node) => node.current)
-    ?.blockers.find((blocker) => blocker.code === 'input_required');
-  return (
-    <div className="stack">
-      {graph && (
-        <ol className="ladder">
-          {graph.nodes
-            .filter((node) => !node.terminal || node.current)
-            .map((node) => {
-              const mark = node.current
-                ? 'here'
-                : next.has(node.state)
-                  ? 'next'
-                  : node.firstEnteredAt
-                    ? 'done'
-                    : null;
-              return (
-                <li
-                  key={node.state}
-                  className={cx('ladder-rung', node.current && 'ladder-rung--here')}
-                >
-                  <span>{words(node.state)}</span>
-                  {mark && <span className="rung-mark">{mark}</span>}
-                  {node.firstEnteredAt && <Ago at={node.firstEnteredAt} className="faint" />}
-                </li>
-              );
-            })}
-        </ol>
-      )}
-      {asks && <p className="muted">{asks.message}</p>}
-      {graph?.dependencies
-        .filter((item) => item.direction === 'depends_on' && (!item.settled || item.failed))
-        .map((item) => (
-          <p className="muted" key={item.id}>
-            {['task', 'experiment'].includes(item.workflow) ? (
-              <Link to={`/${item.workflow === 'task' ? 'tasks' : 'experiments'}/${item.id}`}>
-                {item.name}
-              </Link>
-            ) : (
-              item.name
-            )}{' '}
-            <StatusPill value={item.state} />
-          </p>
-        ))}
-      {children}
-    </div>
   );
 }

@@ -3,7 +3,6 @@ import { useTool } from '../api';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
-  Gate,
   KV,
   LoadState,
   RecordPage,
@@ -13,6 +12,7 @@ import {
   stamp,
   useArtifacts,
 } from '../components';
+import { Gate } from '../process';
 import { useActorNames } from './people';
 import { ArtifactBody } from './artifacts';
 import { CriterionRows, type Review } from './reviews';
@@ -71,7 +71,7 @@ function TaskDetail({ row }: ViewProps) {
       name={t.title}
       standing={t.goal}
       state={<StatusPill value={t.workflow.state} />}
-      act={process && !process.terminal ? <Gate graph={process} /> : undefined}
+      act={process && !process.terminal ? <Gate graph={process} kind={row.view.kind} /> : undefined}
       title="Brief"
       content={
         <>

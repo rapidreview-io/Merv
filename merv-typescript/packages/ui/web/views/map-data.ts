@@ -12,7 +12,7 @@ import { relativeTime, words } from '../components';
  * record says.
  */
 
-export type Flow = { state: string; updatedAt: string };
+export type Flow = { state: string; updatedAt: string; workflow?: string; version?: number };
 export type MapExperiment = {
   id: string;
   name: string;
@@ -101,6 +101,8 @@ export interface MapNode {
   at: string;
   col: number;
   state: string;
+  /** The program this record stands in, where it has one, so a row can draw it. */
+  flow?: Flow;
   /** The record's own state says work is happening now — not merely that it is unfinished. */
   live: boolean;
   props: [string, ReactNode][];
@@ -166,6 +168,7 @@ export function graphOf(
     to: string,
     state: string,
     props: [string, ReactNode][],
+    flow?: Flow,
   ) =>
     pool.push({
       id,
@@ -175,6 +178,7 @@ export function graphOf(
       at: at ?? '',
       to,
       state,
+      flow,
       live: MOVING[kind] === state,
       props,
     });
@@ -191,10 +195,20 @@ export function graphOf(
     for (const item of d.experiments) {
       const { id, workflow } = item;
       const to = `${experiments}/${id}`;
-      object(1, 'experiments', id, item.name, workflow.updatedAt, to, workflow.state, [
-        ['Intent', item.intent],
-        ['Owner', who(item.ownerId)],
-      ]);
+      object(
+        1,
+        'experiments',
+        id,
+        item.name,
+        workflow.updatedAt,
+        to,
+        workflow.state,
+        [
+          ['Intent', item.intent],
+          ['Owner', who(item.ownerId)],
+        ],
+        workflow,
+      );
       for (const claimId of item.testedClaimIds)
         edges.push({ from: id, to: claimId, verb: 'tests' });
     }
@@ -202,12 +216,22 @@ export function graphOf(
   if (tasks)
     for (const item of d.tasks) {
       const { id, workflow } = item;
-      object(1, 'tasks', id, item.title, workflow.updatedAt, `${tasks}/${id}`, workflow.state, [
-        ['Goal', item.goal],
-        ['Acceptance checks', item.acceptanceChecks.length],
-        ['Delivered files', item.deliveryIds.length],
-        ['Producer', who(item.producerId)],
-      ]);
+      object(
+        1,
+        'tasks',
+        id,
+        item.title,
+        workflow.updatedAt,
+        `${tasks}/${id}`,
+        workflow.state,
+        [
+          ['Goal', item.goal],
+          ['Acceptance checks', item.acceptanceChecks.length],
+          ['Delivered files', item.deliveryIds.length],
+          ['Producer', who(item.producerId)],
+        ],
+        workflow,
+      );
       for (const on of item.dependencies) edges.push({ from: id, to: on.id, verb: 'depends on' });
     }
   const reviews = pathOf('reviews');
@@ -227,10 +251,20 @@ export function graphOf(
     for (const item of d.reflections) {
       const { id, workflow } = item;
       const to = `${reflections}/${id}`;
-      object(3, 'reflections', id, item.title, workflow.updatedAt, to, workflow.state, [
-        ['Owner', who(item.ownerId)],
-        ['Updated', when(workflow.updatedAt)],
-      ]);
+      object(
+        3,
+        'reflections',
+        id,
+        item.title,
+        workflow.updatedAt,
+        to,
+        workflow.state,
+        [
+          ['Owner', who(item.ownerId)],
+          ['Updated', when(workflow.updatedAt)],
+        ],
+        workflow,
+      );
       for (const on of item.experimentIds) edges.push({ from: id, to: on, verb: 'reflects on' });
     }
   const paper = pathOf('paper');

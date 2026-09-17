@@ -9,7 +9,8 @@ import { ListPage, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
-import { newest } from './map-data';
+import { RowDiagram } from '../process';
+import { newest, type Flow } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
 import type { Review } from './reviews';
@@ -35,6 +36,7 @@ interface Item {
   name: string;
   to: string;
   state: string;
+  flow: Flow;
   at: string;
   mine: boolean;
   outcome: string | null;
@@ -158,6 +160,7 @@ export function WorkList({ shell }: { shell: ShellData }) {
         name: task.title,
         to: `${tasksRow!.path}/${task.id}`,
         state: task.workflow.state,
+        flow: task.workflow,
         at: task.workflow.updatedAt,
         mine: task.producerId === actor.id,
         outcome: task.failure?.reason ?? null,
@@ -171,6 +174,7 @@ export function WorkList({ shell }: { shell: ShellData }) {
         name: item.name,
         to: `${experimentsRow!.path}/${item.id}`,
         state: item.workflow.state,
+        flow: item.workflow,
         at: item.workflow.updatedAt,
         mine: item.ownerId === actor.id,
         outcome: item.conclusion,
@@ -262,6 +266,9 @@ export function WorkList({ shell }: { shell: ShellData }) {
           standing: (
             <ThreeStates
               execution={item.state}
+              diagram={
+                <RowDiagram shapes={shell.workflows} workflow={item.flow} kind={item.kind} />
+              }
               // A review is a record of its own, so the clause is the way to its verdict.
               review={
                 said && review && reviewsPath

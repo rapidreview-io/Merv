@@ -25,14 +25,25 @@ const READS: [string, string, Record<string, unknown>?][] = [
   ['archive', 'legacy-history', { action: 'summary' }],
 ];
 
+/** A part whose tool is absent, or whose answer this caller may not read, is null. */
+const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
+  try {
+    return ((await fn()) ?? null) as Json;
+  } catch {
+    return null;
+  }
+};
+
 /**
- * Who is asking, and where: the shell answers both with its rows, so opening the
- * app is one read rather than three.
+ * Who is asking, where, and the shape of every deployed program — the states a
+ * record can stand in, which a list draws beside its state word. The shell answers
+ * all of it with its rows, so opening the app is one read rather than three.
  */
 export async function identityOf(tools: Tools, caller: Caller): Promise<Record<string, Json>> {
   return {
     actor: (await tools.call('actor.whoami', caller, {})) as Json,
     project: (await tools.call('project.get', caller, {})) as Json,
+    workflows: (await answer(async () => await tools.call('workflow.catalog', caller, {}))) ?? [],
   };
 }
 
@@ -48,13 +59,6 @@ export async function homeRead(
   read: (caller: Caller, rowId: string, params?: Record<string, unknown>) => Promise<Json>,
   caller: Caller,
 ): Promise<Json> {
-  const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
-    try {
-      return ((await fn()) ?? null) as Json;
-    } catch {
-      return null;
-    }
-  };
   const parts = await mapAsync(PARTS, async ([key, tool]) => [
     key,
     await answer(async () => await tools.call(tool, caller, {})),

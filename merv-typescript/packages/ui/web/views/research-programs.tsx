@@ -9,7 +9,6 @@ import {
   Area,
   Failure,
   Field,
-  Gate,
   KV,
   LoadState,
   RecordPage,
@@ -19,6 +18,7 @@ import {
   cx,
   stamp,
 } from '../components';
+import { Gate, RowDiagram } from '../process';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { WORK } from '../navigation';
 import { ThreeStates } from '../states';
@@ -144,9 +144,13 @@ function EvidenceLink({ artifact }: { artifact: Artifact }) {
 }
 
 /** The gate this wave stands at, derived from its own record. */
-function WaveGate({ id, children }: { id: string; children?: ReactNode }) {
+function WaveGate({ id, kind, children }: { id: string; kind: string; children?: ReactNode }) {
   const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 8000 });
-  return <Gate graph={process.error ? undefined : process.data}>{children}</Gate>;
+  return (
+    <Gate graph={process.error ? undefined : process.data} kind={kind}>
+      {children}
+    </Gate>
+  );
 }
 
 function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'> }) {
@@ -292,6 +296,7 @@ interface Phase {
   kind: 'reflections' | 'consolidation';
   name: string;
   state: string;
+  flow: Workflow;
   to: string;
   meta: ReactNode;
 }
@@ -317,6 +322,7 @@ function ReflectionList({ shell }: { shell: ShellData }) {
     kind: 'consolidation',
     name: record.name,
     state: record.workflow.state,
+    flow: record.workflow,
     to: `${consolidationRow!.path}/${record.id}`,
     meta: (
       <>
@@ -341,6 +347,7 @@ function ReflectionList({ shell }: { shell: ShellData }) {
         kind: 'reflections' as const,
         name: wave.title,
         state: wave.workflow.state,
+        flow: wave.workflow,
         to: `${waves}/${wave.id}`,
         meta: (
           <>
@@ -377,7 +384,13 @@ function ReflectionList({ shell }: { shell: ShellData }) {
             <strong>{item.name}</strong>
           </Link>
         ),
-        standing: <ThreeStates execution={item.state} meta={item.meta} />,
+        standing: (
+          <ThreeStates
+            execution={item.state}
+            diagram={<RowDiagram shapes={shell.workflows} workflow={item.flow} kind={item.kind} />}
+            meta={item.meta}
+          />
+        ),
       })}
     />
   );
@@ -403,7 +416,7 @@ function ReflectionDetail({ row, shell }: ViewProps) {
       name={wave.title}
       state={<StatusPill value={wave.workflow.state} />}
       act={
-        <WaveGate id={wave.id}>
+        <WaveGate id={wave.id} kind={row.view.kind}>
           {wave.workflow.state === 'approved' &&
             consolidationRow &&
             (actor.role === 'operator' || actor.role === 'producer') && (
@@ -700,7 +713,7 @@ function ConsolidationDetail({ shell }: ViewProps) {
       name={record.name}
       standing={record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}
       state={<StatusPill value={record.workflow.state} />}
-      act={<WaveGate id={record.id} />}
+      act={<WaveGate id={record.id} kind="consolidation" />}
       title="Synthesis"
       content={
         latest ? (

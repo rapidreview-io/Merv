@@ -3,9 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, useScopeVersion } from '../api';
 import { useSession } from '../session';
-import type { ShellData } from '../shell';
+import type { ShellData, WorkflowShape } from '../shell';
 import { KV, KindLabel, StatusPill, cx, kindStyle, words } from '../components';
 import { WORK } from '../navigation';
+import { RowDiagram } from '../process';
 import { bytes } from './artifacts';
 import { namesOf } from './people';
 import { standingOf, type Lines } from './overview';
@@ -308,7 +309,7 @@ function useGitHub(enabled: boolean) {
  * Everything in flight, first: one line per live record and the gate it stands
  * at, which is the rung its own ladder marks. The record's state and nothing else.
  */
-function Running({ nodes }: { nodes: MapNode[] }) {
+function Running({ nodes, shapes }: { nodes: MapNode[]; shapes?: WorkflowShape[] }) {
   if (!nodes.length) return null;
   return (
     <ul className="rows map-running">
@@ -319,7 +320,10 @@ function Running({ nodes }: { nodes: MapNode[] }) {
               <KindLabel kind={node.kind} />
               <strong>{node.name}</strong>
             </span>
-            <StatusPill value={node.state} />
+            <span className="cluster">
+              <StatusPill value={node.state} />
+              {node.flow && <RowDiagram shapes={shapes} workflow={node.flow} kind={node.kind} />}
+            </span>
           </Link>
         </li>
       ))}
@@ -433,7 +437,7 @@ export function MapView({ shell }: { shell: ShellData }) {
           <span className="mono">({home.error.code})</span>
         </p>
       )}
-      <Running nodes={newest(pool.filter(running), (node) => node.at)} />
+      <Running nodes={newest(pool.filter(running), (node) => node.at)} shapes={shell.workflows} />
       <Now lines={lines} />
       <div className="map-band">
         <Plane
