@@ -1,50 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import type { AgentObservation as Observation, AgentSummary } from '@merv/contracts/types';
 import { accountRequest, scopeVersion } from '../api';
 import { Ago, KV, Live, StatusPill, relativeTime, stamp, useNow, words } from '../components';
-import { clock, holding, leaseLiveness, type Clock, type Lease } from '../liveness';
+import { clock, holding, leaseLiveness, type Clock } from '../liveness';
 
-export interface AgentSummary {
-  id: string;
-  sessionId: string;
-  actorId: string;
-  name: string;
-  status: string;
-  contextEpoch: number;
-  persistent: boolean;
-  currentExecutionId: string | null;
-  currentAssignment: { label: string; role: string } | null;
-  createdAt: string;
-  runnerId: string;
-}
 /** The same lease, as the agent's own observation sends it. */
-interface Assignment extends Lease {
-  workflow: { name: string; state: string };
-  revision: number;
-  tools: string[];
-}
-interface ToolCall {
-  id: string;
-  executionId: string;
-  tool: string;
-  status: 'running' | 'succeeded' | 'failed' | 'interrupted';
-  startedAt: string;
-  finishedAt: string | null;
-  durationMs: number | null;
-  inputTokens: number;
-  outputTokens: number | null;
-}
-interface Observation {
-  agent: AgentSummary;
-  assignments: Assignment[];
-  toolCalls: ToolCall[];
-  toolCallTotal: number;
-  tokenStats: {
-    inputTokens: number;
-    outputTokens: number;
-    completedCalls: number;
-    totalCalls: number;
-  };
-}
+type Assignment = Observation['assignments'][number];
 const count = (value: number) => value.toLocaleString();
 const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;

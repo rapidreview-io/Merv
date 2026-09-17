@@ -1,21 +1,6 @@
 import { z } from 'zod';
 
-/** Source-authenticated runner observations; the server does not verify Git objects. */
-export interface SessionWorkspace {
-  repositoryId: string;
-  workspaceId: string;
-  mode: 'ephemeral' | 'persistent';
-  branch: string | null;
-  baseOid: string;
-  headOid: string;
-  /** Observed Git tree; absent on older reports, never inferred by the server. */
-  treeOid?: string;
-  stats: { commitCount: number; filesChanged: number; insertions: number; deletions: number };
-}
-export interface SessionWorkspaceRecord {
-  attachment: SessionWorkspace;
-  result: SessionWorkspace | null;
-}
+export type { SessionWorkspace, SessionWorkspaceRecord } from './sessions-models.js';
 
 const label = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);

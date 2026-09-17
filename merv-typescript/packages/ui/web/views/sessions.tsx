@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import type {
+  AgentSummary,
+  DispatchState,
+  RunnerPlatform,
+  RunnerPresence,
+  SessionSummary,
+  SessionsProjectStatus,
+  WorkflowDispatchCandidate,
+} from '@merv/contracts/types';
 import { accountRequest, useTool } from '../api';
 import {
   ActorSplit,
@@ -26,78 +35,23 @@ import {
   leaseLiveness,
   runnerLiveness,
   type Clock,
-  type Lease,
 } from '../liveness';
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
-import { AgentDetail, activity, type AgentSummary } from './agent-sessions-panel';
+import { AgentDetail, activity } from './agent-sessions-panel';
 
-interface Platform {
-  name: string;
-  model?: string;
-  effort?: string;
-  enabled?: boolean;
-}
-interface Runner {
-  id: string;
-  lastSeenAt: string;
-  live: boolean;
-  capacity: number;
-  machine: { hostname: string; system: string; architecture: string };
-  platforms: Platform[];
-  desiredVersion: number;
-  appliedVersion?: number;
-  lastDecision: string | null;
-  lastDecisionAt: string | null;
-}
-/** The lease itself, and what this page says about it that liveness does not. */
-interface Session extends Lease {
-  agentId?: string;
-  expectedRevision: number;
-  platform: Platform | null;
-  workspaceMode: 'none' | 'ephemeral' | 'persistent';
-  workspace?: {
-    attachment: { baseOid: string; headOid: string; mode: string };
-    result: { headOid: string; stats: { filesChanged: number; commitCount: number } } | null;
-  };
-}
-interface Candidate {
-  instanceId: string;
-  expectedRevision: number;
-  state: string;
-  label: string;
-  role: string;
-}
-interface Dispatch {
-  enabled: boolean;
-  updatedAt: string | null;
-  updatedBy: string | null;
-}
-interface Status {
-  agents?: AgentSummary[];
-  observedAt: string;
-  canManage: boolean;
-  liveSessionCount: number;
-  sessionTotal: number;
-  runnerTotal: number;
-  dispatch: Dispatch;
-  runners: Runner[];
-  sessions: Session[];
-  queue: Candidate[];
-  queueTotal: number;
-}
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-const platformPhrase = (platform: Platform) =>
+const platformPhrase = (platform: NonNullable<SessionSummary['platform']>) =>
   [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
 /** What a runner offers, in its own order; a platform it has paused says so. */
-const platformList = (platforms: Platform[]) =>
+const platformList = (platforms: RunnerPlatform[]) =>
   platforms
     .map(
       (one) => `${one.name}${one.model ? ` · ${one.model}` : ''}${one.enabled ? '' : ' (paused)'}`,
     )
     .join(', ') || 'None';
-const workspacePhrase = ({ workspace, workspaceMode }: Session) => {
+const workspacePhrase = ({ workspace, workspaceMode }: SessionSummary) => {
   if (!workspace)
     return workspaceMode === 'none' ? 'none · scratch' : `${term(workspaceMode)} · not attached`;
   const result = workspace.result;
@@ -177,7 +131,7 @@ function LeaseRow({
   canManage,
   reload,
 }: {
-  session: Session;
+  session: SessionSummary;
   name?: string;
   route?: { to: string; kind: string };
   now: Clock;
@@ -249,7 +203,7 @@ function LeaseRow({
 
 export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   const [cadence, setCadence] = useState(4000);
-  const state = useTool<Status>('ui.read', { rowId: row.id }, { every: cadence });
+  const state = useTool<SessionsProjectStatus>('ui.read', { rowId: row.id }, { every: cadence });
   const [selected, setSelected] = useState<string>();
   const [open, setOpen] = useState<string>();
   const [already, setAlready] = useState<string>();
@@ -274,7 +228,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   );
   // The button sends the state it means, never a flip of what it last read, and the
   // answer names the case where someone else had already set it.
-  const dispatch = useCommand<{ dispatch: Dispatch }>({
+  const dispatch = useCommand<{ dispatch: DispatchState }>({
     tool: '/sessions/dispatch',
     send: (body) => accountRequest('/sessions/dispatch', { method: 'PUT', body, scoped: true }),
     validate: (result) => typeof result.dispatch?.enabled === 'boolean',
@@ -328,7 +282,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
     opener.current?.focus();
   };
   const machines = [
-    col<Runner>('machine', 'Machine', (runner) => (
+    col<RunnerPresence>('machine', 'Machine', (runner) => (
       <>
         <strong>{runner.machine.hostname}</strong>
         <div className="faint">
@@ -336,21 +290,27 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
         </div>
       </>
     )),
-    col<Runner>('live', 'Presence', (runner) => <Live of={runnerLiveness(runner, now)} />),
-    col<Runner>('decision', 'Last dispatch', (runner) => (
+    col<RunnerPresence>('live', 'Presence', (runner) => <Live of={runnerLiveness(runner, now)} />),
+    col<RunnerPresence>('decision', 'Last dispatch', (runner) => (
       <Live of={decisionLiveness(runner, now)} />
     )),
-    col<Runner>('platforms', 'Platforms', (runner) => platformList(runner.platforms)),
-    col<Runner>('capacity', 'Capacity', (runner) => runner.capacity),
-    col<Runner>('settings', 'Settings', (runner) =>
+    col<RunnerPresence>('platforms', 'Platforms', (runner) => platformList(runner.platforms)),
+    col<RunnerPresence>('capacity', 'Capacity', (runner) => runner.capacity),
+    col<RunnerPresence>('settings', 'Settings', (runner) =>
       runner.desiredVersion > (runner.appliedVersion ?? 0) ? 'Pending acknowledgement' : 'Applied',
     ),
   ];
   const eligible = [
-    col<Candidate>('label', 'Work', (candidate) => <strong>{candidate.label}</strong>),
-    col<Candidate>('gate', 'Gate', (candidate) => term(candidate.state)),
-    col<Candidate>('role', 'Role', (candidate) => term(candidate.role)),
-    col<Candidate>('revision', 'Revision', (candidate) => candidate.expectedRevision),
+    col<WorkflowDispatchCandidate>('label', 'Work', (candidate) => (
+      <strong>{candidate.label}</strong>
+    )),
+    col<WorkflowDispatchCandidate>('gate', 'Gate', (candidate) => term(candidate.state)),
+    col<WorkflowDispatchCandidate>('role', 'Role', (candidate) => term(candidate.role)),
+    col<WorkflowDispatchCandidate>(
+      'revision',
+      'Revision',
+      (candidate) => candidate.expectedRevision,
+    ),
   ];
   return (
     <>

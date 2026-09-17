@@ -1,16 +1,44 @@
 import type {
+  AgentObservation,
   Caller,
   Data,
   DelegationSource,
+  DispatchState,
+  RunnerHeartbeat,
+  RunnerPresence,
+  RunnerSettings,
+  SessionOutcome,
+  SessionStatus,
+  SessionsProjectStatus,
   WorkflowAssignment,
   WorkflowExecution,
   WorkflowLease,
+  SessionPlatform,
+  SessionRole,
   SessionWorkspace,
   SessionWorkspaceRecord,
   Transaction,
 } from '@merv/contracts';
 import type {} from 'cordis';
-export type { SessionWorkspace, SessionWorkspaceRecord } from '@merv/contracts';
+export type {
+  AgentObservation,
+  AgentSummary,
+  AgentToolCall,
+  DispatchDecision,
+  DispatchState,
+  RunnerHeartbeat,
+  RunnerPlatform,
+  RunnerPresence,
+  RunnerSettings,
+  SessionOutcome,
+  SessionPlatform,
+  SessionRole,
+  SessionStatus,
+  SessionSummary,
+  SessionWorkspace,
+  SessionWorkspaceRecord,
+  SessionsProjectStatus,
+} from '@merv/contracts';
 
 /** A continuing agent instance and its authenticated session, independent of assignments. */
 export interface Agent {
@@ -45,16 +73,6 @@ export interface AgentAssignment {
   hardDeadlineSeconds?: number;
 }
 
-export type SessionOutcome =
-  | 'released'
-  | 'expired'
-  | 'halted'
-  | 'completed'
-  | 'host_failed'
-  | 'launch_failed'
-  | 'workspace_failed'
-  | 'crash_loop';
-export type SessionStatus = 'offered' | 'active' | 'released' | 'expired';
 /** A durable lease's public metadata. The bearer secret is never retained or returned. */
 /** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
 export interface Session {
@@ -67,7 +85,7 @@ export interface Session {
   source: DelegationSource;
   instanceId: string;
   expectedRevision: number;
-  role: 'producer' | 'reviewer' | 'reader';
+  role: SessionRole;
   status: SessionStatus;
   runnerId: string;
   hostRef: string | null;
@@ -207,161 +225,10 @@ declare module 'cordis' {
   }
 }
 
-export interface DispatchState {
-  enabled: boolean;
-  updatedAt: string | null;
-  updatedBy: string | null;
-}
-export interface RunnerPlatform {
-  name: string;
-  harness:
-    | 'codex'
-    | 'claude'
-    | 'gemini'
-    | 'cursor'
-    | 'opencode'
-    | 'copilot'
-    | 'qwen'
-    | 'hermes'
-    | 'command';
-  model?: string;
-  effort?: string;
-  enabled: boolean;
-  parallelism: number;
-}
-export interface RunnerSettings {
-  platforms: {
-    name: string;
-    enabled: boolean;
-    model?: string;
-    effort?: string;
-    parallelism: number;
-  }[];
-}
-export interface RunnerHeartbeat {
-  runnerId: string;
-  machine: { hostname: string; system: string; architecture: string };
-  platforms: RunnerPlatform[];
-  capacity: number;
-  appliedVersion?: number;
-}
-/** Every answer an automatic lease request can receive, and the whole stored vocabulary. */
-export type DispatchDecision =
-  | 'offered'
-  | 'replayed'
-  | 'dispatch_disabled'
-  | 'runner_offline'
-  | 'platform_disabled'
-  | 'settings_pending'
-  | 'capacity_full'
-  | 'retry_backoff'
-  | 'no_candidates';
-export interface RunnerPresence extends RunnerHeartbeat {
-  id: string;
-  lastSeenAt: string;
-  live: boolean;
-  desiredVersion: number;
-  desiredSettings: RunnerSettings;
-  /** What the runner's last lease request decided; one row per runner, never a log. */
-  lastDecision: DispatchDecision | null;
-  lastDecisionAt: string | null;
-}
 export interface AutomaticLease {
   runnerId: string;
   requestId: string;
   secret: string;
-  platform: Pick<RunnerPlatform, 'name' | 'harness' | 'model' | 'effort'>;
+  platform: SessionPlatform;
   hardDeadlineSeconds?: number;
-}
-export interface SessionSummary {
-  agentId?: string;
-  agentSessionId?: string;
-  actorId?: string;
-  id: string;
-  instanceId: string;
-  expectedRevision: number;
-  role: Session['role'];
-  status: SessionStatus;
-  label: string;
-  runnerRef: string | null;
-  hostRef: string | null;
-  platform: AutomaticLease['platform'] | null;
-  createdAt: string;
-  activatedAt: string | null;
-  expiresAt: string;
-  closedAt: string | null;
-  closeReason: string | null;
-  outcome?: SessionOutcome | null;
-  /** Frozen execution intent remains known before preparation or after a preparation failure. */
-  workspaceMode: 'none' | 'ephemeral' | 'persistent';
-  workspace?: SessionWorkspaceRecord;
-}
-export interface AgentSummary {
-  id: string;
-  sessionId: string;
-  actorId: string;
-  name: string;
-  status: Agent['status'];
-  contextEpoch: number;
-  persistent: boolean;
-  currentExecutionId: string | null;
-  currentAssignment: { label: string; role: Session['role'] } | null;
-  createdAt: string;
-  runnerId: string;
-}
-export interface AgentToolCall {
-  id: string;
-  executionId: string;
-  tool: string;
-  status: 'running' | 'succeeded' | 'failed' | 'interrupted';
-  startedAt: string;
-  finishedAt: string | null;
-  durationMs: number | null;
-  inputTokens: number;
-  outputTokens: number | null;
-}
-export interface AgentObservation {
-  agent: AgentSummary;
-  assignments: {
-    id: string;
-    instanceId: string;
-    label: string;
-    role: Session['role'];
-    status: SessionStatus;
-    createdAt: string;
-    activatedAt: string | null;
-    expiresAt: string;
-    closedAt: string | null;
-    closeReason: string | null;
-    outcome?: SessionOutcome | null;
-    workflow: { name: string; state: string };
-    revision: number;
-    tools: string[];
-  }[];
-  /** Up to 100 executed Merv calls, with in-flight calls first. */
-  toolCalls: AgentToolCall[];
-  toolCallTotal: number;
-  tokenStats: {
-    inputTokens: number;
-    outputTokens: number;
-    completedCalls: number;
-    totalCalls: number;
-  };
-  tokenAccounting: { kind: 'estimate'; method: string };
-}
-export interface SessionsProjectStatus {
-  agents?: AgentSummary[];
-  /** The server's own clock when this payload was measured; every duration anchors here. */
-  observedAt: string;
-  liveSessionCount: number;
-  sessionTotal: number;
-  /** Registered runners, of which `runners` carries the most recently seen. */
-  runnerTotal: number;
-  canManage: boolean;
-  dispatch: DispatchState;
-  runners: RunnerPresence[];
-  sessions: SessionSummary[];
-  /** Candidates currently admissible for the authenticated caller. */
-  queue: import('@merv/contracts').WorkflowDispatchCandidate[];
-  queueTotal: number;
 }

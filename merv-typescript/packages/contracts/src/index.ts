@@ -32,7 +32,7 @@ export type {
   UiSection,
   UiDetail,
 } from './ui-manifest.js';
-export type { SessionWorkspace, SessionWorkspaceRecord } from './workspace.js';
+export type * from './sessions-models.js';
 export {
   codeCommitInputSchema,
   codeCommandControlSchema,
@@ -50,8 +50,23 @@ export type {
   CodeCommandCompletion,
 } from './code.js';
 import type { Data, Json } from './data.js';
-import type { WorkflowHistoryEntry, WorkflowSnapshot } from './workflow-models.js';
-export type { WorkflowHistoryEntry, WorkflowSnapshot } from './workflow-models.js';
+import type {
+  Role,
+  WorkflowDispatchCandidate,
+  WorkflowExecutionTarget,
+  WorkflowHistoryEntry,
+  WorkflowSnapshot,
+  WorkflowWorkspacePolicy,
+} from './workflow-models.js';
+export type {
+  Role,
+  WorkflowDispatchCandidate,
+  WorkflowExecutionTarget,
+  WorkflowHistoryEntry,
+  WorkflowSnapshot,
+  WorkflowWorkspaceBase,
+  WorkflowWorkspacePolicy,
+} from './workflow-models.js';
 export type {
   WorkflowReference,
   WorkflowBlocker,
@@ -194,7 +209,6 @@ export interface Blobs {
     expectedSize: number,
   ): Promise<{ url: string; expiresAt: string }>;
 }
-export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
 export type Permission = 'read' | 'write' | 'review' | 'admin';
 export interface Caller {
   actorId: string;
@@ -585,24 +599,6 @@ export type WorkflowExecutionBinding =
   | { kind: 'oneOf'; name: string }
   | { kind: 'subset'; name: string };
 export type WorkflowExecutionReferences = Record<string, string | string[]>;
-export type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
-/** Checkout intent only. References are resolved and Git facts verified by workspace preparation. */
-export type WorkflowWorkspacePolicy =
-  | { mode: 'none' }
-  | {
-      mode: 'ephemeral';
-      namespace: string;
-      base: WorkflowWorkspaceBase;
-      retain: boolean;
-    }
-  | {
-      mode: 'persistent';
-      namespace: string;
-      base: WorkflowWorkspaceBase;
-      perBase: boolean;
-      retain: boolean;
-      advancesCentral: boolean;
-    };
 /** JSON declarations, separate from guidance and deployed callback implementations. */
 export interface WorkflowExecutionPolicy {
   /** Describes the work environment; explicit protocol/checkpoint writes remain permitted. */
@@ -618,23 +614,6 @@ export interface WorkflowExecutionPolicy {
 /** Do not materialize this compatibility default into a persisted execution manifest. */
 export function effectiveWorkspace(policy: WorkflowExecutionPolicy): WorkflowWorkspacePolicy {
   return structuredClone(policy.workspace ?? { mode: 'none' });
-}
-export interface WorkflowExecutionTarget {
-  instanceId: string;
-  expectedRevision: number;
-}
-/** Source-authorized scheduling hint; selecting it still requires an atomic offerLease. */
-export interface WorkflowDispatchCandidate extends WorkflowExecutionTarget {
-  projectId: string;
-  workflow: string;
-  version: number;
-  state: string;
-  role: Role;
-  readOnly: boolean;
-  label: string;
-  policyHash: string;
-  registrationId: string;
-  workspace: WorkflowWorkspacePolicy;
 }
 export interface WorkflowLease extends WorkflowExecutionTarget {
   leaseId: string;

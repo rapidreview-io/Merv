@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import type { GitHubStatus } from '@merv/contracts/github-models';
+import type { GitHubStatus, SessionsProjectStatus } from '@merv/contracts/types';
 import { accountRequest, useScopeVersion, useTool } from '../api';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
@@ -14,7 +14,6 @@ import {
   graphOf,
   newest,
   tally,
-  type Live,
   type MapClaim,
   type MapCycle,
   type MapEdge,
@@ -367,7 +366,11 @@ export function MapView({ shell }: { shell: ShellData }) {
     LIVE,
   );
   const paper = useTool<MapPaper>(paperRow ? 'ui.read' : null, rowId(paperRow));
-  const live = useTool<Live>(sessionsRow ? 'ui.read' : null, rowId(sessionsRow), LIVE);
+  const live = useTool<SessionsProjectStatus>(
+    sessionsRow ? 'ui.read' : null,
+    rowId(sessionsRow),
+    LIVE,
+  );
   const mounts = useTool<{ state: string }[]>(mountsRow ? 'ui.read' : null, rowId(mountsRow), LIVE);
   const files = useTool<{ size: number }[]>(filesRow ? 'artifact.list' : null);
   const posts = useTool<unknown[]>(feedRow ? 'feed.list' : null);

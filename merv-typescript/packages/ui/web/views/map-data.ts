@@ -64,13 +64,6 @@ export type MapPaper = {
     }
   >;
 };
-export type Live = {
-  agents?: { status: string }[];
-  liveSessionCount: number;
-  sessionTotal: number;
-  runners: { live: boolean }[];
-  queueTotal: number;
-};
 
 /** One object on the map: a record, the fields it carries, and where it lives. */
 export interface MapNode {

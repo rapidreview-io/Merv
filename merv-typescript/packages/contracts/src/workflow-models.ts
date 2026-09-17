@@ -25,3 +25,40 @@ export interface WorkflowHistoryEntry {
   data: Data;
   createdAt: string;
 }
+
+export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
+export type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
+/** Checkout intent only. References are resolved and Git facts verified by workspace preparation. */
+export type WorkflowWorkspacePolicy =
+  | { mode: 'none' }
+  | {
+      mode: 'ephemeral';
+      namespace: string;
+      base: WorkflowWorkspaceBase;
+      retain: boolean;
+    }
+  | {
+      mode: 'persistent';
+      namespace: string;
+      base: WorkflowWorkspaceBase;
+      perBase: boolean;
+      retain: boolean;
+      advancesCentral: boolean;
+    };
+export interface WorkflowExecutionTarget {
+  instanceId: string;
+  expectedRevision: number;
+}
+/** Source-authorized scheduling hint; selecting it still requires an atomic offerLease. */
+export interface WorkflowDispatchCandidate extends WorkflowExecutionTarget {
+  projectId: string;
+  workflow: string;
+  version: number;
+  state: string;
+  role: Role;
+  readOnly: boolean;
+  label: string;
+  policyHash: string;
+  registrationId: string;
+  workspace: WorkflowWorkspacePolicy;
+}

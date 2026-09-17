@@ -106,19 +106,6 @@ export interface LeaseFacts {
   closeReason?: string | null;
   outcome?: string | null;
 }
-/**
- * A lease as both Agents surfaces read it: the behavioural fields above and the
- * identity beside them, so a row and a panel cannot drift apart on one lease.
- */
-export interface Lease extends LeaseFacts {
-  id: string;
-  instanceId: string;
-  label: string;
-  role: string;
-  status: string;
-  createdAt: string;
-  expiresAt: string;
-}
 /** A lease's behaviour: taken up or not, still inside its window or past it, how it ended. */
 export function leaseLiveness(lease: LeaseFacts, now: Now): Liveness | null {
   const { at, since: age } = clockOf(now);
