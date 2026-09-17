@@ -758,7 +758,8 @@ async function main(options: Options) {
       await call('project.context.update', {
         summary: brief.project.introduction,
         expectedSummary: project.summary ?? '',
-        requestId: `scenario:${brief.project.name}:introduction`,
+        // An edited introduction is a new request, never a replay of the last one.
+        requestId: `scenario:${brief.project.name}:introduction:${createHash('sha256').update(brief.project.introduction).digest('hex').slice(0, 12)}`,
       });
     for (const claim of brief.claims) {
       const created = await call('claim.create', {
