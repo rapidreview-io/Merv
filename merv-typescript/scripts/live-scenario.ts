@@ -8,6 +8,9 @@ import { pathToFileURL } from 'node:url';
 import { MachineRunner } from '@merv/runner';
 import type { RunnerSnapshot } from '@merv/runner';
 
+/** One id per harness process; session offers carry it so reruns never replay a stale offer. */
+const RUN_ID = randomBytes(4).toString('hex');
+
 /**
  * Drive one scenario brief through a real Merv server: create its records, let the
  * runner dispatch the offline stages, launch the execution stages under an explicit
@@ -942,7 +945,9 @@ async function main(options: Options) {
         }
       const secret = `ms_${randomBytes(32).toString('base64url')}`;
       secrets.push(secret);
-      const requestId = `scenario:${entry.brief.name}:${state}:${revision}`;
+      // The offer carries a fresh secret, so a rerun after a failed launch must not
+      // replay an earlier run's request id: each harness process has its own run id.
+      const requestId = `scenario:${entry.brief.name}:${state}:${revision}:${RUN_ID}`;
       const { session } = await control('/sessions/offer', {
         instanceId: entry.id,
         expectedRevision: revision,
