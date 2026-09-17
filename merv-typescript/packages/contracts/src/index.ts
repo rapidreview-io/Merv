@@ -11,6 +11,14 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { sessionWorkspaceSchema } from './workspace.js';
+export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
+export type {
+  CodePublication,
+  CodePublicationMerge,
+  CodePublicationApi,
+} from './code-publications.js';
+export { codeTransportInputSchema, codeTransportGrantSchema } from './code-transport.js';
+export type { CodeTransportInput, CodeTransportGrant } from './code-transport.js';
 export type { SessionWorkspace, SessionWorkspaceRecord } from './workspace.js';
 export {
   codeCommitInputSchema,
@@ -1075,7 +1083,12 @@ declare module 'cordis' {
   }
 }
 
-export { githubRevisionSchema, githubRepositoryInputSchema } from './code-github.js';
+export {
+  githubRevisionSchema,
+  githubRepositoryInputSchema,
+  githubAutomationSchema,
+  githubBranchSchema,
+} from './code-github.js';
 export type {
   CodeGitHub,
   GitHubRepository,
@@ -1090,4 +1103,5 @@ export type {
   GitHubCheck,
   GitHubReview,
   GitHubPullDetails,
+  GitHubAutomationInput,
 } from './github-models.js';

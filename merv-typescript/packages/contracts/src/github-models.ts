@@ -20,6 +20,15 @@ export interface GitHubStatus {
   canManage: boolean;
   canBrowse: boolean;
   installUrl: string | null;
+  automationConfigured: boolean;
+  automation: 'off' | 'read' | 'write';
+  baseBranch: string | null;
+}
+
+export interface GitHubAutomationInput {
+  expectedRevision: number;
+  mode: 'off' | 'read' | 'write';
+  baseBranch: string | null;
 }
 
 export interface GitHubBranch {

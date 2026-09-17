@@ -22,6 +22,7 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '../packages/code/src/service.js';
+import { githubFixture, config as githubConfig } from './github-fixture.js';
 import { ConsolidationService } from '../packages/consolidation/src/index.js';
 import type { ApprovedReflection } from '@merv/reflections/types';
 import type {
@@ -30,12 +31,14 @@ import type {
 } from '../packages/consolidation/src/types.js';
 
 const oid = (digit: string) => digit.repeat(40);
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, github = false) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-consolidation-'));
   const state = new SqliteState(join(dir, 'state.sqlite'));
   const scope = await createService(new ProjectScope(state));
+  const gh = github ? await githubFixture(t, state) : undefined;
+  if (gh) await gh.enable();
   const boot = await scope.bootstrap({ projectName: 'Consolidation', actorName: 'Owner' });
-  const owner: Caller = {
+  const owner: Caller = gh?.caller ?? {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
@@ -61,7 +64,9 @@ async function fixture(t: TestContext) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60000 }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts));
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, gh ? githubConfig : undefined, gh?.fetcher),
+  );
   const prior = await workflows.register(
     {
       name: 'approved-reflection-fixture',
@@ -249,6 +254,7 @@ async function fixture(t: TestContext) {
     rmSync(dir, { recursive: true, force: true });
   });
   return {
+    gh,
     state,
     scope,
     owner,
@@ -513,116 +519,138 @@ test('leased workers receive frozen context, bounded artifact tools, and recover
   assert.equal(next.session.execution.policy.readOnly, true);
 });
 
-test('Git consolidation seals this worker commit and gives review the exact proposal head', async (t) => {
-  const f = await fixture(t),
-    record = await f.create('git');
-  const worker = await f.offer(record);
-  const control = { sessionId: worker.session.id, runnerId: 'test', hostRef: 'launch' };
-  const workspace: SessionWorkspace = {
-    repositoryId: 'repo',
-    workspaceId: 'workspace',
-    mode: 'persistent',
-    branch: 'codex/consolidation',
-    baseOid: oid('a'),
-    headOid: oid('a'),
-    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
-  };
-  await f.sessions.attach(f.producer, { ...control, workspace });
-  const operation = await f.run(
-    worker.caller,
-    'code.commit',
-    { expectedHead: oid('a'), message: 'Combine verified work', requestId: f.id() },
-    async (caller, input) =>
-      await f.code.commit(
-        caller,
-        input as unknown as { expectedHead: string; message: string; requestId: string },
-      ),
-  );
-  const command = (await f.code.nextCommand(f.producer, control))!;
-  assert.equal(command.id, operation.command.id);
-  await f.code.completeCommand(f.producer, {
-    ...control,
-    commandId: command.id,
-    receipt: {
-      commandId: command.id,
-      repositoryId: 'repo',
+for (const github of [false, true])
+  test(`Git consolidation seals this worker commit and gives review the exact proposal head (${github ? 'GitHub' : 'local'})`, async (t) => {
+    const f = await fixture(t, github),
+      record = await f.create('git');
+    const worker = await f.offer(record);
+    const control = { sessionId: worker.session.id, runnerId: 'test', hostRef: 'launch' };
+    if (f.gh) await f.code.transportGrant(f.producer, { ...control, operation: 'fetch' });
+    const workspace: SessionWorkspace = {
+      repositoryId: github ? 'github:101' : 'repo',
       workspaceId: 'workspace',
+      mode: 'persistent',
+      branch: 'codex/consolidation',
       baseOid: oid('a'),
-      parentOid: oid('a'),
-      headOid: oid('b'),
-      treeOid: oid('c'),
-      stats: { commitCount: 1, filesChanged: 1, insertions: 2, deletions: 0 },
-    },
-  });
-  const report = await f.run(
-    worker.caller,
-    'artifact.create',
-    { title: 'Tests', content: 'Combined tests passed; verified each decision.' },
-    async (caller, input) =>
-      await f.artifacts.create(caller, input as unknown as { title: string; content: string }),
-  );
-  const submitted = await f.run(
-    worker.caller,
-    'consolidation.submit',
-    {
-      consolidationId: record.id,
-      expectedRevision: 0,
-      reportArtifactId: report.id,
-      evidenceArtifactIds: [],
+      headOid: oid('a'),
+      stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+    };
+    await f.sessions.attach(f.producer, { ...control, workspace });
+    const operation = await f.run(
+      worker.caller,
+      'code.commit',
+      { expectedHead: oid('a'), message: 'Combine verified work', requestId: f.id() },
+      async (caller, input) =>
+        await f.code.commit(
+          caller,
+          input as unknown as { expectedHead: string; message: string; requestId: string },
+        ),
+    );
+    const command = (await f.code.nextCommand(f.producer, control))!;
+    assert.equal(command.id, operation.command.id);
+    const completion = {
+      ...control,
       commandId: command.id,
-      decisions: [
-        {
-          experimentId: 'experiment-1',
-          decision: 'adapt',
-          rationale: 'Keep only the supported behavior.',
-        },
-      ],
-      requestId: f.id(),
-    },
-    async (caller, input) =>
-      await f.consolidation.submit(caller, input as unknown as ConsolidationSubmit),
-  );
-  const proposal = submitted.submissions[0].proposal!;
-  assert.equal(proposal.receipt.headOid, oid('b'));
-  assert.deepEqual(
-    proposal.provenance.sources,
-    record.sources.map((a) => ({ id: a.id, hash: a.hash })),
-  );
-  assert.deepEqual(proposal.provenance.decisions, submitted.submissions[0].decisions);
-  await f.sessions.release(f.producer, { sessionId: worker.session.id, runnerId: 'test' });
-  await f.events.drain();
-  const review = await f.offer(submitted, f.reviewer);
-  assert.equal(review.session.execution.references.code, oid('b'));
-  assert.equal(review.session.execution.policy.readOnly, true);
-  const reviewWorkspace = review.session.execution.policy.workspace;
-  assert.ok(reviewWorkspace && reviewWorkspace.mode !== 'none');
-  assert.equal(reviewWorkspace.base, 'reference:code');
-  const claim = await f.reviews.get(f.owner, submitted.reviewId!);
-  const completed = await f.run(
-    review.caller,
-    'review.submit',
-    {
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      expectedRevision: submitted.workflow.revision,
-      verdict: 'pass',
-      notes: 'Verified the exact proposed commit and retained tests against the frozen reflection.',
-      synopsis:
-        'The proposed code and experiment decisions match the approved reflection and passed independent verification.',
-      findings: claim.criteria.map((_, index) => ({
-        criterionNumber: index + 1,
-        status: 'met',
-        evidenceIds: [report.id],
-        notes: 'Verified against the exact retained evidence and code proposal.',
-      })),
-      requestId: f.id(),
-    },
-    async (caller, input) =>
-      (await f.reviews.apply(caller, input as unknown as ReviewApplication)) as ConsolidationRecord,
-  );
-  assert.equal(completed.completion?.centralGit, 'not-published');
-  assert.equal(completed.completion?.submissionId, submitted.submissions[0].id);
-});
+      receipt: {
+        commandId: command.id,
+        repositoryId: workspace.repositoryId,
+        workspaceId: 'workspace',
+        baseOid: oid('a'),
+        parentOid: oid('a'),
+        headOid: oid('b'),
+        treeOid: oid('c'),
+        stats: { commitCount: 1, filesChanged: 1, insertions: 2, deletions: 0 },
+      },
+    };
+    if (f.gh) {
+      const input = { ...control, operation: 'checkpoint' as const, receipt: completion.receipt };
+      const grant = await f.code.transportGrant(f.producer, input);
+      f.gh.branches.set(grant.target!.branch, completion.receipt.headOid);
+      await f.code.verifyTransport(f.producer, input);
+    }
+    await f.code.completeCommand(f.producer, completion);
+    const report = await f.run(
+      worker.caller,
+      'artifact.create',
+      { title: 'Tests', content: 'Combined tests passed; verified each decision.' },
+      async (caller, input) =>
+        await f.artifacts.create(caller, input as unknown as { title: string; content: string }),
+    );
+    const submitted = await f.run(
+      worker.caller,
+      'consolidation.submit',
+      {
+        consolidationId: record.id,
+        expectedRevision: 0,
+        reportArtifactId: report.id,
+        evidenceArtifactIds: [],
+        commandId: command.id,
+        decisions: [
+          {
+            experimentId: 'experiment-1',
+            decision: 'adapt',
+            rationale: 'Keep only the supported behavior.',
+          },
+        ],
+        requestId: f.id(),
+      },
+      async (caller, input) =>
+        await f.consolidation.submit(caller, input as unknown as ConsolidationSubmit),
+    );
+    const proposal = submitted.submissions[0].proposal!;
+    assert.equal(proposal.receipt.headOid, oid('b'));
+    assert.deepEqual(
+      proposal.provenance.sources,
+      record.sources.map((a) => ({ id: a.id, hash: a.hash })),
+    );
+    assert.deepEqual(proposal.provenance.decisions, submitted.submissions[0].decisions);
+    await f.sessions.release(f.producer, { sessionId: worker.session.id, runnerId: 'test' });
+    await f.events.drain();
+    const review = await f.offer(submitted, f.reviewer);
+    assert.equal(review.session.execution.references.code, oid('b'));
+    assert.equal(review.session.execution.policy.readOnly, true);
+    const reviewWorkspace = review.session.execution.policy.workspace;
+    assert.ok(reviewWorkspace && reviewWorkspace.mode !== 'none');
+    assert.equal(reviewWorkspace.base, 'reference:code');
+    const claim = await f.reviews.get(f.owner, submitted.reviewId!);
+    const completed = await f.run(
+      review.caller,
+      'review.submit',
+      {
+        reviewId: claim.id,
+        claimId: claim.claimId!,
+        expectedRevision: submitted.workflow.revision,
+        verdict: 'pass',
+        notes:
+          'Verified the exact proposed commit and retained tests against the frozen reflection.',
+        synopsis:
+          'The proposed code and experiment decisions match the approved reflection and passed independent verification.',
+        findings: claim.criteria.map((_, index) => ({
+          criterionNumber: index + 1,
+          status: 'met',
+          evidenceIds: [report.id],
+          notes: 'Verified against the exact retained evidence and code proposal.',
+        })),
+        requestId: f.id(),
+      },
+      async (caller, input) =>
+        (await f.reviews.apply(
+          caller,
+          input as unknown as ReviewApplication,
+        )) as ConsolidationRecord,
+    );
+    assert.equal(completed.completion?.centralGit, 'not-published');
+    assert.equal(completed.completion?.submissionId, submitted.submissions[0].id);
+    if (f.gh) {
+      const publication = (await f.code.syncPublications(f.owner))[0];
+      assert.equal(publication.review?.id, claim.id);
+      assert.equal(publication.review?.actorId, review.caller.actorId);
+      assert.equal(publication.review?.verdict, 'pass');
+      assert.equal(publication.pull?.head.sha, proposal.receipt.headOid);
+      assert.equal(publication.pull?.draft, false);
+      assert.equal(publication.lastError, null);
+    }
+  });
 
 test('creation composes in the caller transaction and project scopes and producer independence hold', async (t) => {
   const f = await fixture(t);

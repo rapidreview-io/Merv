@@ -373,3 +373,84 @@ test(
     assert.equal(f.calls.length, 0);
   },
 );
+
+test('GitHub publication and transport HTTP routes enforce authentication, project scope, closed inputs and adapter withdrawal', async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  f.provider.publications = async (caller) => {
+    assert.equal(caller.projectId, f.caller.projectId);
+    calls++;
+    return [];
+  };
+  f.provider.syncPublications = async () => {
+    calls++;
+    return [];
+  };
+  f.provider.publicationDetails = async () => {
+    throw new Error('unused');
+  };
+  f.provider.mergePublication = async () => {
+    throw new Error('unused');
+  };
+  f.provider.transportGrant = async () => {
+    throw new Error('unused');
+  };
+  f.provider.verifyTransport = async () => {
+    throw new Error('unused');
+  };
+  const dispose = f.api.registerCode(f.provider);
+  t.after(dispose);
+  const headers = { authorization: `Bearer ${f.boot.token}`, 'content-type': 'application/json' };
+  assert.equal((await fetch(`${f.url}/code/publications`)).status, 401);
+  assert.equal((await fetch(`${f.url}/code/publications`, { headers })).status, 200);
+  assert.equal(
+    (
+      await fetch(`${f.url}/code/publications`, {
+        headers: { ...headers, 'x-merv-project-id': 'other' },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await fetch(`${f.url}/code/publications/sync`, { method: 'POST', headers, body: '{}' }))
+      .status,
+    200,
+  );
+  assert.equal(
+    (
+      await fetch(`${f.url}/code/publications/sync`, {
+        method: 'POST',
+        headers,
+        body: '{"repository":"evil/other"}',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await fetch(`${f.url}/code/publications/merge`, { method: 'POST', headers, body: '{}' }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (await fetch(`${f.url}/code/transport/grant`, { method: 'POST', headers, body: '{}' })).status,
+    400,
+  );
+  assert.equal(
+    (await fetch(`${f.url}/code/transport/grant`, { method: 'POST', body: '{}' })).status,
+    401,
+  );
+  assert.equal(calls, 2);
+  dispose();
+  assert.equal((await fetch(`${f.url}/code/publications`, { headers })).status, 503);
+  assert.equal(
+    (
+      await fetch(`${f.url}/code/transport/grant`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ...control, operation: 'fetch' }),
+      })
+    ).status,
+    503,
+  );
+  assert.equal(calls, 2);
+});

@@ -143,7 +143,19 @@ export interface SessionApiProvider {
 }
 /** Optional authenticated machine controls; no Code implementation is imported by the API. */
 export interface CodeApiProvider {
+  publications?: import('@merv/contracts').CodePublicationApi['publications'];
+  syncPublications?: import('@merv/contracts').CodePublicationApi['syncPublications'];
+  publicationDetails?: import('@merv/contracts').CodePublicationApi['publicationDetails'];
+  mergePublication?: import('@merv/contracts').CodePublicationApi['mergePublication'];
   readonly github?: import('@merv/contracts').CodeGitHub;
+  transportGrant?(
+    caller: Caller,
+    input: import('@merv/contracts').CodeTransportInput,
+  ): Promise<import('@merv/contracts').CodeTransportGrant>;
+  verifyTransport?(
+    caller: Caller,
+    input: import('@merv/contracts').CodeTransportInput,
+  ): Promise<{ verified: boolean }>;
   nextCommand(caller: Caller, input: CodeCommandControl): Promise<CodeCommitCommand | null>;
   completeCommand(caller: Caller, input: CodeCommandCompletion): Promise<CodeCommandRecord>;
 }

@@ -691,6 +691,14 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       const { expectedRevision: _revision, ...verdict } = input;
       await this.reviews.submit(caller, verdict, tx);
       const submission = record.submissions.find((s) => s.reviewId === review.id)!;
+      if (submission.proposal)
+        await this.code.recordPublicationReview(
+          caller,
+          submission.proposal,
+          review.id,
+          input.verdict,
+          tx,
+        );
       if (action === 'approve')
         await tx.run(
           'UPDATE consolidations SET completion=? WHERE id=?',

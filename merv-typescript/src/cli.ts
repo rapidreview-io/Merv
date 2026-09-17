@@ -56,7 +56,7 @@ async function runMachine(configPath: string) {
   const config = {
     ...parsed,
     directory: resolve(base, parsed.directory),
-    ...(parsed.workspace
+    ...(parsed.workspace && 'repository' in parsed.workspace
       ? {
           workspace: {
             ...parsed.workspace,

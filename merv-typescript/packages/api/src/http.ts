@@ -17,6 +17,7 @@ import {
   MervError,
   codeCommandCompletionSchema,
   codeCommandControlSchema,
+  codeTransportInputSchema,
   sessionWorkspaceSchema,
   type Caller,
   type Principal,
@@ -33,6 +34,7 @@ import type {
 import { ApiError, isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { githubCallback, githubRequest } from './code-github.js';
+import { publicationRequest } from './code-publications.js';
 
 export { describeTool } from './registry.js';
 
@@ -576,6 +578,21 @@ export class ApiServer {
       throw new ApiError('not_found', 'Unknown agent control route', 404);
     }
     const principal = await this.authenticate(req);
+    if (path === '/code/publications' || path.startsWith('/code/publications/')) {
+      const caller = await this.selectedCaller(
+        principal,
+        projectSelection(req.headers['x-merv-project-id']),
+      );
+      await this.scope.require(caller, 'read');
+      const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
+      await this.scope.require(caller, 'read');
+      json(
+        res,
+        200,
+        await publicationRequest(req, caller, this.codeProvider(), () => Promise.resolve(body)),
+      );
+      return;
+    }
     if (path === '/code/github' || path.startsWith('/code/github/')) {
       const caller = await this.selectedCaller(
         principal,
@@ -590,6 +607,28 @@ export class ApiServer {
       return;
     }
     if (principal.kind !== 'session') {
+      if (path === '/code/transport/grant' || path === '/code/transport/verify') {
+        if (req.method !== 'POST' || url.search)
+          throw new ApiError('invalid_input', 'Use POST without query parameters');
+        const caller = await this.scope.caller(
+          principal,
+          projectSelection(req.headers['x-merv-project-id']),
+        );
+        await this.scope.require(caller, 'read');
+        const input = parseInput(codeTransportInputSchema, await readJson(req, 8192));
+        await this.scope.require(caller, 'read');
+        const provider = this.codeProvider();
+        if (!provider.transportGrant || !provider.verifyTransport)
+          throw new ApiError('github_unavailable', 'Git transport is unavailable', 503);
+        json(
+          res,
+          200,
+          path.endsWith('/grant')
+            ? await provider.transportGrant(caller, input)
+            : await provider.verifyTransport(caller, input),
+        );
+        return;
+      }
       if (path === '/code/commands/next' || path === '/code/commands/complete') {
         if ([...url.searchParams].length)
           throw new ApiError('invalid_input', 'Code routes do not accept query parameters');

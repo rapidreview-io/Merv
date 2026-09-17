@@ -18,7 +18,7 @@ export interface RunnerConfig {
   credentialEnv: string;
   profiles: RunnerProfile[];
   /** A local source repository; the runner creates and owns its private Git copy. */
-  workspace?: { repository: string; baseRef: string };
+  workspace?: { repository: string; baseRef: string } | { github: true };
   capacity?: number;
   pollIntervalMs?: number;
   requestTimeoutMs?: number;

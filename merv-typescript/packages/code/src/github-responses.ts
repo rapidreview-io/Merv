@@ -3,10 +3,14 @@ import { check, type GitHubCommit, type GitHubPullRequest } from '@merv/contract
 
 export const githubOid = z.string().regex(/^[0-9a-f]{40}$/);
 export const githubId = z.number().int().positive().safe();
-export const githubUrl = z.string().url().max(4096).refine((value) => {
-  const url = new URL(value);
-  return url.protocol === 'https:' && !url.username && !url.password;
-});
+export const githubUrl = z
+  .string()
+  .url()
+  .max(4096)
+  .refine((value) => {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  });
 const ref = z.object({ ref: z.string().min(1).max(1024), sha: githubOid });
 export const githubPullSchema = z.object({
   id: githubId,
@@ -64,21 +68,40 @@ export function githubResponse<T>(schema: z.ZodType<T>, value: unknown): T {
 export function githubPull(value: unknown): GitHubPullRequest {
   const p = githubResponse(githubPullSchema, value);
   return {
-    id: p.id, number: p.number, nodeId: p.node_id, url: p.html_url,
-    title: p.title, body: p.body ?? '', state: p.state, draft: p.draft,
+    id: p.id,
+    number: p.number,
+    nodeId: p.node_id,
+    url: p.html_url,
+    title: p.title,
+    body: p.body ?? '',
+    state: p.state,
+    draft: p.draft,
     head: { ref: p.head.ref, sha: p.head.sha, repositoryId: p.head.repo?.id ?? null },
     base: { ref: p.base.ref, sha: p.base.sha, repositoryId: p.base.repo.id },
-    merged: p.merged ?? false, mergeCommitSha: p.merge_commit_sha,
-    mergeable: p.mergeable ?? null, mergeState: p.mergeable_state ?? 'unknown',
+    merged: p.merged ?? false,
+    mergeCommitSha: p.merge_commit_sha,
+    mergeable: p.mergeable ?? null,
+    mergeState: p.mergeable_state ?? 'unknown',
     updatedAt: p.updated_at,
   };
 }
 export function githubCommit(value: unknown): GitHubCommit {
   const c = githubResponse(githubCommitSchema, value);
-  return { sha: c.sha, tree: c.commit.tree.sha, parents: c.parents.map(p => p.sha), message: c.commit.message, url: c.html_url };
+  return {
+    sha: c.sha,
+    tree: c.commit.tree.sha,
+    parents: c.parents.map((p) => p.sha),
+    message: c.commit.message,
+    url: c.html_url,
+  };
 }
 /** Do not let repository/ref input choose a host or escape the fixed REST route. */
 export function repositoryPath(fullName: string): string {
-  check(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(fullName) && !fullName.split('/').some(p => p === '.' || p === '..'), 'invalid_github_repository', 'Invalid GitHub repository');
+  check(
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(fullName) &&
+      !fullName.split('/').some((p) => p === '.' || p === '..'),
+    'invalid_github_repository',
+    'Invalid GitHub repository',
+  );
   return `/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`;
 }

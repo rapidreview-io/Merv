@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import type { Caller } from './index.js';
-import type { GitHubRepository, GitHubRepositoryInput, GitHubStatus } from './github-models.js';
+import type {
+  GitHubRepository,
+  GitHubRepositoryInput,
+  GitHubStatus,
+  GitHubAutomationInput,
+  GitHubBranch,
+  GitHubPullRequest,
+  GitHubPullDetails,
+} from './github-models.js';
 export type { GitHubRepository, GitHubRepositoryInput, GitHubStatus } from './github-models.js';
 
 export const githubRevisionSchema = z
@@ -13,7 +21,30 @@ export const githubRepositoryInputSchema = githubRevisionSchema
   })
   .strict()
   .refine((v) => (v.installationId === null) === (v.repositoryId === null));
-/** Code owns the connection; transports never receive its GitHub credentials. */
+export const githubBranchSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine(
+    (value) =>
+      !/[\x00-\x20\x7f~^:?*\[\\]/.test(value) &&
+      !value.includes('..') &&
+      !value.includes('@{') &&
+      value !== '@' &&
+      !value.startsWith('-') &&
+      !value.endsWith('.') &&
+      value
+        .split('/')
+        .every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock')),
+  );
+export const githubAutomationSchema = githubRevisionSchema
+  .extend({
+    mode: z.enum(['off', 'read', 'write']),
+    baseBranch: githubBranchSchema.nullable(),
+  })
+  .strict()
+  .refine((value) => value.mode === 'off' || value.baseBranch !== null);
+/** Code owns the connection; user OAuth credentials never leave the server. */
 export interface CodeGitHub {
   status(caller: Caller): Promise<GitHubStatus>;
   begin(
@@ -30,4 +61,8 @@ export interface CodeGitHub {
   repositories(caller: Caller): Promise<GitHubRepository[]>;
   link(caller: Caller, input: GitHubRepositoryInput): Promise<GitHubStatus>;
   disconnect(caller: Caller, input: { expectedRevision: number }): Promise<GitHubStatus>;
+  configureAutomation(caller: Caller, input: GitHubAutomationInput): Promise<GitHubStatus>;
+  branches(caller: Caller): Promise<GitHubBranch[]>;
+  pulls(caller: Caller): Promise<GitHubPullRequest[]>;
+  pullDetails(caller: Caller, number: number): Promise<GitHubPullDetails>;
 }

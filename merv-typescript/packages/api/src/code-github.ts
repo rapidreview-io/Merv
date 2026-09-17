@@ -3,6 +3,7 @@ import { check, MervError, type Caller } from '@merv/contracts';
 import {
   githubRepositoryInputSchema,
   githubRevisionSchema,
+  githubAutomationSchema,
   type CodeGitHub,
 } from '@merv/contracts';
 
@@ -61,8 +62,22 @@ export async function githubRequest(
   if (req.method === 'GET' && action === '') return provider.status(caller);
   if (req.method === 'GET' && action === '/repositories')
     return { repositories: await provider.repositories(caller) };
+  if (req.method === 'GET' && action === '/branches')
+    return { branches: await provider.branches(caller) };
+  if (req.method === 'GET' && action === '/pulls') return { pulls: await provider.pulls(caller) };
+  if (req.method === 'GET' && /^\/pulls\/[1-9][0-9]*$/.test(action))
+    return provider.pullDetails(caller, Number(action.split('/')[2]));
   if (req.method === 'POST') {
     const body = await read();
+    if (action === '/automation') {
+      const parsed = githubAutomationSchema.safeParse(body);
+      check(
+        parsed.success,
+        'invalid_input',
+        'A valid automation mode, base branch and expectedRevision are required',
+      );
+      return provider.configureAutomation(caller, parsed.data);
+    }
     if (action === '/begin' || action === '/disconnect') {
       const parsed = githubRevisionSchema.safeParse(body);
       check(parsed.success, 'invalid_input', 'A valid expectedRevision is required');

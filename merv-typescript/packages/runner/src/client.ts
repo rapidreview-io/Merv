@@ -7,6 +7,9 @@ import {
   type CodeCommitCommand,
   type CodeCommandCompletion,
   type CodeCommandRecord,
+  codeTransportGrantSchema,
+  type CodeTransportInput,
+  type CodeTransportGrant,
 } from '@merv/contracts';
 import type {
   AutomaticLease,
@@ -350,5 +353,46 @@ export class RunnerClient {
       )?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
+  }
+  async transportGrant(input: CodeTransportInput): Promise<CodeTransportGrant> {
+    const parsed = codeTransportGrantSchema.safeParse(
+      await this.request('/code/transport/grant', input),
+    );
+    if (
+      !parsed.success ||
+      parsed.data.repository.split('/').some((p) => p === '.' || p === '..') ||
+      (input.operation === 'fetch'
+        ? parsed.data.target !== null
+        : parsed.data.target?.headOid !==
+          (input.operation === 'checkpoint' ? input.receipt.headOid : input.workspace.headOid))
+    )
+      throw new RunnerControlError('invalid_control_response', 0);
+    return parsed.data;
+  }
+  async verifyTransport(input: CodeTransportInput): Promise<void> {
+    if ((await this.request('/code/transport/verify', input))?.verified !== true)
+      throw new RunnerControlError('invalid_control_response', 0);
+  }
+  async revokeGrant(grant: CodeTransportGrant): Promise<void> {
+    // Revoke this short-lived, one-repository token even when Git failed. Expiry bounds a failed revocation.
+    try {
+      const response = await this.fetcher('https://api.github.com/installation/token', {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${grant.token}`,
+          accept: 'application/vnd.github+json',
+          'x-github-api-version': '2026-03-10',
+        },
+        redirect: 'error',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(5000),
+      });
+      await response.body?.cancel();
+    } catch {
+      /* Never log a secret or obscure the result of the fixed Git operation. */
+    }
+  }
+  async syncPublications(): Promise<void> {
+    await this.request('/code/publications/sync', {});
   }
 }

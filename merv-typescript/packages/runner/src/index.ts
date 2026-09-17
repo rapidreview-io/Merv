@@ -3,7 +3,7 @@ import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check } from '@merv/contracts';
+import { check, effectiveWorkspace } from '@merv/contracts';
 import type { RunnerPlatform, Session } from '@merv/sessions/types';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
@@ -49,18 +49,22 @@ const configSchema = z
       ),
     profiles: z.array(z.unknown()).max(32),
     workspace: z
-      .object({
-        repository: z
-          .string()
-          .min(1)
-          .refine((value) => !/[\0\r\n]/.test(value)),
-        baseRef: z
-          .string()
-          .min(1)
-          .max(200)
-          .refine((value) => !value.startsWith('-') && !/[\0\r\n]/.test(value)),
-      })
-      .strict()
+      .union([
+        z.object({ github: z.literal(true) }).strict(),
+        z
+          .object({
+            repository: z
+              .string()
+              .min(1)
+              .refine((value) => !/[\0\r\n]/.test(value)),
+            baseRef: z
+              .string()
+              .min(1)
+              .max(200)
+              .refine((value) => !value.startsWith('-') && !/[\0\r\n]/.test(value)),
+          })
+          .strict(),
+      ])
       .optional(),
     capacity: z.number().int().min(0).max(256).optional(),
     pollIntervalMs: z.number().int().min(100).max(30_000).optional(),
@@ -307,6 +311,10 @@ export class MachineRunner implements Runner {
       await this.acquire(pending);
     }
     const records = this.ledger.list();
+    if (this.config.workspace && 'github' in this.config.workspace) {
+      // External publication is recoverable and must not stop local worker supervision.
+      await this.client.syncPublications().catch(() => {});
+    }
     this.state =
       this.lastError || records.some((r) => r.status === 'uncertain')
         ? 'degraded'
@@ -420,6 +428,26 @@ export class MachineRunner implements Runner {
       const profile = validateProfile(record.metadata.profile);
       let workspace;
       try {
+        if (
+          this.config.workspace &&
+          'github' in this.config.workspace &&
+          effectiveWorkspace(session.execution.policy).mode !== 'none'
+        ) {
+          const grant = await this.client.transportGrant({
+            sessionId: session.id,
+            runnerId: session.runnerId,
+            hostRef: record.id,
+            operation: 'fetch',
+          });
+          try {
+            const references = Object.values(session.execution.references)
+              .flat()
+              .filter((v): v is string => typeof v === 'string' && /^[0-9a-f]{40}$/.test(v));
+            await this.workspaces.syncGitHub(grant, references);
+          } finally {
+            await this.client.revokeGrant(grant);
+          }
+        }
         workspace = await this.workspaces.prepare(record, session);
       } catch (error) {
         record = await this.host.stop(record.id);
@@ -494,6 +522,15 @@ export class MachineRunner implements Runner {
       }
       const outcome = this.workspaces.commitOutcome(command.id);
       check(outcome, 'code_operation_uncertain', 'Git operation has no proven outcome', 503);
+      if ('receipt' in outcome && outcome.receipt.repositoryId.startsWith('github:')) {
+        await this.publishGit({
+          sessionId: command.sessionId,
+          runnerId: command.runnerId,
+          hostRef: command.hostRef,
+          operation: 'checkpoint',
+          receipt: outcome.receipt,
+        });
+      }
       await this.client.completeCodeCommand(command, outcome);
       this.workspaces.acknowledgeCommit(command.id);
     };
@@ -599,6 +636,15 @@ export class MachineRunner implements Runner {
     }
     // A capture from an unstarted/unattached checkout has no remote attachment to finalize.
     if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
+      if (result.repositoryId.startsWith('github:') && !workspace.readOnly) {
+        await this.publishGit({
+          sessionId: record.sessionId,
+          runnerId: this.ledger.runnerId,
+          hostRef: record.id,
+          operation: 'capture',
+          workspace: result,
+        });
+      }
       const session = await this.client.workspaceResult(
         record.sessionId,
         this.ledger.runnerId,
@@ -608,6 +654,15 @@ export class MachineRunner implements Runner {
       this.save(record.id, { session, workspaceReported: true });
     }
     await this.workspaces.close(record);
+  }
+  private async publishGit(input: import('@merv/contracts').CodeTransportInput) {
+    const grant = await this.client.transportGrant(input);
+    try {
+      await this.workspaces.pushGitHub(grant);
+      await this.client.verifyTransport(input);
+    } finally {
+      await this.client.revokeGrant(grant);
+    }
   }
   private finalLaunches: RunnerSnapshot['launches'] = [];
   private summaries(): RunnerSnapshot['launches'] {

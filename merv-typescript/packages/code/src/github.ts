@@ -6,10 +6,13 @@ import {
   type State,
   type Scope,
   type Transaction,
+  type DelegationSource,
 } from '@merv/contracts';
 import {
   githubRepositoryInputSchema,
   githubRevisionSchema,
+  githubAutomationSchema,
+  type GitHubAutomationInput,
   type CodeGitHub,
   type GitHubRepository,
   type GitHubRepositoryInput,
@@ -58,6 +61,15 @@ interface Connection {
   credentials: string | null;
   refresh_id: string | null;
   refresh_until: string | null;
+  owner_source: string | null;
+  automation: 'off' | 'read' | 'write';
+  base_branch: string | null;
+}
+type Access = 'owner' | 'read' | 'write';
+export interface GitHubBinding {
+  revision: number;
+  repository: GitHubRepository;
+  baseBranch: string;
 }
 interface Flow {
   id: string;
@@ -81,6 +93,9 @@ const empty = (projectId: string): Connection => ({
   credentials: null,
   refresh_id: null,
   refresh_until: null,
+  owner_source: null,
+  automation: 'off',
+  base_branch: null,
 });
 
 /** One optional connection per project. User tokens preserve GitHub's current user permissions. */
@@ -97,7 +112,13 @@ export class CodeGitHubService implements CodeGitHub {
     if (config) this.#client = new GitHubClient(config, fetcher);
   }
   async initialize() {
-    await this.state.migrate('code_github', [{ version: 1, sql: schema, postgres: schema }]);
+    const automation = `ALTER TABLE code_github ADD COLUMN owner_source TEXT;
+ALTER TABLE code_github ADD COLUMN automation TEXT NOT NULL DEFAULT 'off' CHECK (automation IN ('off','read','write'));
+ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
+    await this.state.migrate('code_github', [
+      { version: 1, sql: schema, postgres: schema },
+      { version: 2, sql: automation, postgres: automation },
+    ]);
     await this.state.transaction((tx) =>
       tx.run('DELETE FROM code_github_flows WHERE expires_at<=?', timestamp()),
     );
@@ -192,6 +213,9 @@ export class CodeGitHubService implements CodeGitHub {
       canManage,
       canBrowse: canManage && row.owner === owner(caller) && !!row.credentials,
       installUrl: canManage ? (this.#client?.installUrl ?? null) : null,
+      automationConfigured: this.#client?.automationConfigured ?? false,
+      automation: row.automation,
+      baseBranch: row.base_branch,
     };
   }
   status(caller: Caller) {
@@ -334,7 +358,7 @@ export class CodeGitHubService implements CodeGitHub {
           const current = await this.row(tx, caller.projectId);
           this.revision(current, flow.revision);
           const result = await tx.run(
-            `UPDATE code_github SET revision=revision+1,owner=?,user_json=?,repository_json=NULL,
+            `UPDATE code_github SET revision=revision+1,owner=?,user_json=?,repository_json=NULL,owner_source=NULL,automation='off',base_branch=NULL,
           token_version=token_version+1,credentials=?,refresh_id=NULL,refresh_until=NULL WHERE project_id=? AND revision=?`,
             owner(caller),
             JSON.stringify(user),
@@ -358,15 +382,40 @@ export class CodeGitHubService implements CodeGitHub {
       }
     });
   }
-  private async connection(caller: Caller, tx: Transaction) {
-    await this.authorize(caller, tx, true);
+  private async authority(caller: Caller, tx: Transaction, row: Connection, access: Access) {
+    await this.authorize(caller, tx, access === 'owner');
+    if (access === 'owner')
+      check(
+        row.owner === owner(caller),
+        'github_owner',
+        'Connect your GitHub account to manage repositories for this project',
+        403,
+      );
+    else {
+      check(
+        row.owner_source &&
+          row.automation !== 'off' &&
+          (access === 'read' || row.automation === 'write'),
+        'github_automation_disabled',
+        'The repository owner must enable the required GitHub automation',
+        403,
+      );
+      const source = JSON.parse(row.owner_source) as DelegationSource;
+      check(
+        source.kind === 'human' &&
+          source.projectId === caller.projectId &&
+          row.owner === JSON.stringify([source.issuer, source.subject]),
+        'github_owner',
+        'GitHub owner binding is invalid',
+        403,
+      );
+      await this.scope.requireDelegation(source, 'admin', tx);
+    }
+  }
+  private async connection(caller: Caller, tx: Transaction, access: Access = 'owner') {
+    if (access === 'write') await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller.projectId);
-    check(
-      row.owner === owner(caller),
-      'github_owner',
-      'Connect your GitHub account to manage repositories for this project',
-      403,
-    );
+    await this.authority(caller, tx, row, access);
     if (row.refresh_id && row.refresh_until! > timestamp())
       throw new MervError(
         'github_busy',
@@ -376,11 +425,11 @@ export class CodeGitHubService implements CodeGitHub {
     check(row.credentials, 'github_reconnect', 'Reconnect GitHub to restore access', 409);
     return row;
   }
-  private async token(caller: Caller) {
+  private async token(caller: Caller, access: Access) {
     const client = this.client();
     const claim = randomSecret();
     const pending = await this.state.transaction(async (tx) => {
-      const row = await this.connection(caller, tx);
+      const row = await this.connection(caller, tx, access);
       const tokens = client.open<GitHubTokens>(
         row.credentials!,
         `tokens:${caller.projectId}:${row.token_version}`,
@@ -417,16 +466,16 @@ export class CodeGitHubService implements CodeGitHub {
       tokens = await client.refresh(pending.tokens.refreshToken);
       const refreshed = tokens;
       return await this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, true);
         const row = await this.row(tx, caller.projectId);
         check(
           row.refresh_id === claim &&
-            row.owner === owner(caller) &&
+            row.owner === pending.row.owner &&
             row.revision === pending.row.revision,
           'github_conflict',
           'GitHub connection changed while refreshing',
           409,
         );
+        await this.authority(caller, tx, row, access);
         const result = await tx.run(
           `UPDATE code_github SET credentials=?,token_version=token_version+1,refresh_id=NULL,refresh_until=NULL
           WHERE project_id=? AND refresh_id=? AND revision=?`,
@@ -457,8 +506,12 @@ export class CodeGitHubService implements CodeGitHub {
       throw error;
     }
   }
-  private async withToken<T>(caller: Caller, fn: (token: string, row: Connection) => Promise<T>) {
-    const { token, row } = await this.token(caller);
+  private async withToken<T>(
+    caller: Caller,
+    fn: (token: string, row: Connection) => Promise<T>,
+    access: Access = 'owner',
+  ) {
+    const { token, row } = await this.token(caller, access);
     try {
       return await fn(token, row);
     } catch (error) {
@@ -474,8 +527,13 @@ export class CodeGitHubService implements CodeGitHub {
       throw error;
     }
   }
-  private async unchanged(caller: Caller, tx: Transaction, previous: Connection) {
-    const row = await this.connection(caller, tx);
+  private async unchanged(
+    caller: Caller,
+    tx: Transaction,
+    previous: Connection,
+    access: Access = 'owner',
+  ) {
+    const row = await this.connection(caller, tx, access);
     this.revision(row, previous.revision);
     check(
       row.token_version === previous.token_version,
@@ -491,6 +549,129 @@ export class CodeGitHubService implements CodeGitHub {
         await this.state.transaction((tx) => this.unchanged(caller, tx, row));
         return repositories;
       }),
+    );
+  }
+  private repository(row: Connection): GitHubRepository {
+    check(row.repository_json, 'github_repository_required', 'Link a GitHub repository first', 409);
+    return JSON.parse(row.repository_json) as GitHubRepository;
+  }
+  async assertBinding(
+    caller: Caller,
+    binding: GitHubBinding,
+    tx: Transaction,
+    access: 'read' | 'write',
+  ) {
+    const row = await this.connection(caller, tx, access);
+    this.revision(row, binding.revision);
+    check(
+      this.repository(row).id === binding.repository.id && row.base_branch === binding.baseBranch,
+      'github_conflict',
+      'GitHub repository binding changed',
+      409,
+    );
+  }
+  configureAutomation(caller: Caller, value: GitHubAutomationInput) {
+    return this.run(async () => {
+      const input = parseCodeInput(githubAutomationSchema, value);
+      if (input.mode !== 'off') {
+        check(
+          this.client().automationConfigured,
+          'github_automation_unconfigured',
+          'GitHub repository automation is not configured',
+          503,
+        );
+        await this.withToken(caller, async (token, row) => {
+          this.revision(row, input.expectedRevision);
+          const repository = this.repository(row);
+          await this.client().repositoryPermission(token, repository, input.mode === 'write');
+          await this.client().branch(token, repository.fullName, input.baseBranch!);
+          await this.state.transaction((tx) => this.unchanged(caller, tx, row));
+        });
+      }
+      return this.state.transaction(async (tx) => {
+        await this.authorize(caller, tx, true);
+        const row = await this.row(tx, caller.projectId);
+        this.revision(row, input.expectedRevision);
+        // Any project operator may disable automation; only the connection owner may enable it.
+        if (input.mode !== 'off') await this.connection(caller, tx);
+        await this.ensure(tx, caller.projectId);
+        const source =
+          input.mode === 'off'
+            ? null
+            : JSON.stringify(await this.scope.delegationSource(caller, tx));
+        await tx.run(
+          'UPDATE code_github SET automation=?,base_branch=?,owner_source=?,revision=revision+1 WHERE project_id=?',
+          input.mode,
+          input.mode === 'off' ? null : input.baseBranch,
+          source,
+          caller.projectId,
+        );
+        await this.event(tx, caller, 'automation_changed', {
+          mode: input.mode,
+          baseBranch: input.baseBranch,
+        });
+        return this.describe(caller, tx);
+      });
+    });
+  }
+  private repositoryRead<T>(
+    caller: Caller,
+    fn: (client: GitHubClient, token: string, repo: GitHubRepository) => Promise<T>,
+  ) {
+    return this.run(() =>
+      this.withToken(caller, async (token, row) => {
+        const result = await fn(this.client(), token, this.repository(row));
+        await this.state.transaction((tx) => this.unchanged(caller, tx, row));
+        return result;
+      }),
+    );
+  }
+  branches(caller: Caller) {
+    return this.repositoryRead(caller, (client, token, repo) =>
+      client.branches(token, repo.fullName),
+    );
+  }
+  pulls(caller: Caller) {
+    return this.repositoryRead(caller, (client, token, repo) => client.pulls(token, repo.fullName));
+  }
+  pullDetails(caller: Caller, number: number) {
+    return this.repositoryRead(caller, (client, token, repo) =>
+      client.pullDetails(token, repo.fullName, number),
+    );
+  }
+  /** Internal Code capability. The caller and original human owner's live authority are both required. */
+  automation<T>(
+    caller: Caller,
+    access: 'read' | 'write',
+    binding: GitHubBinding | undefined,
+    fn: (client: GitHubClient, token: string, binding: GitHubBinding) => Promise<T>,
+  ) {
+    return this.run(() =>
+      this.withToken(
+        caller,
+        async (token, row) => {
+          if (binding) this.revision(row, binding.revision);
+          const repository = this.repository(row);
+          check(row.base_branch, 'github_automation_disabled', 'Choose a GitHub base branch', 409);
+          const current = { revision: row.revision, repository, baseBranch: row.base_branch };
+          if (binding)
+            check(
+              binding.repository.id === repository.id &&
+                binding.repository.fullName === repository.fullName &&
+                binding.repository.installationId === repository.installationId &&
+                binding.baseBranch === current.baseBranch,
+              'github_conflict',
+              'GitHub repository binding changed',
+              409,
+            );
+          await this.client().repositoryPermission(token, repository, access === 'write');
+          await this.state.transaction((tx) => this.unchanged(caller, tx, row, access));
+          const result = await fn(this.client(), token, current);
+          await this.state.transaction((tx) => this.unchanged(caller, tx, row, access));
+          return result;
+        },
+        access,
+      ),
     );
   }
   link(caller: Caller, value: GitHubRepositoryInput) {
@@ -520,7 +701,7 @@ export class CodeGitHubService implements CodeGitHub {
         this.revision(await this.row(tx, caller.projectId), input.expectedRevision);
         if (observed) await this.unchanged(caller, tx, observed);
         const result = await tx.run(
-          'UPDATE code_github SET repository_json=?,revision=revision+1 WHERE project_id=? AND revision=?',
+          "UPDATE code_github SET repository_json=?,revision=revision+1,owner_source=NULL,automation='off',base_branch=NULL WHERE project_id=? AND revision=?",
           repository ? JSON.stringify(repository) : null,
           caller.projectId,
           input.expectedRevision,
@@ -546,7 +727,7 @@ export class CodeGitHubService implements CodeGitHub {
         await this.ensure(tx, caller.projectId);
         this.revision(await this.row(tx, caller.projectId), input.expectedRevision);
         const result = await tx.run(
-          `UPDATE code_github SET owner=NULL,user_json=NULL,credentials=NULL,refresh_id=NULL,refresh_until=NULL,
+          `UPDATE code_github SET owner=NULL,user_json=NULL,credentials=NULL,refresh_id=NULL,refresh_until=NULL,owner_source=NULL,automation='off',base_branch=NULL,
         token_version=token_version+1,revision=revision+1 WHERE project_id=? AND revision=?`,
           caller.projectId,
           input.expectedRevision,

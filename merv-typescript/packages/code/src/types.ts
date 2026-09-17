@@ -12,6 +12,7 @@ import type {
   WorkflowDispatchAdmission,
   CodeCommitReceipt,
   SessionWorkspace,
+  CodePublicationApi,
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
@@ -90,8 +91,24 @@ export interface CodeCaptures {
   /** Historical, project-scoped immutable facts; never renders context or admits a new command. */
   capture(caller: Caller, ref: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture>;
 }
-export interface Code extends CodeCommands, CodeProposals, CodeCaptures {
+export interface Code extends CodeCommands, CodeProposals, CodeCaptures, CodePublicationApi {
   readonly github: import('@merv/contracts').CodeGitHub;
+  transportGrant(
+    caller: Caller,
+    input: import('@merv/contracts').CodeTransportInput,
+  ): Promise<import('@merv/contracts').CodeTransportGrant>;
+  verifyTransport(
+    caller: Caller,
+    input: import('@merv/contracts').CodeTransportInput,
+  ): Promise<{ verified: boolean }>;
+  /** Domain-only hook; no HTTP or MCP route can create an independent-review verdict. */
+  recordPublicationReview(
+    caller: Caller,
+    proposal: CodeProposal,
+    reviewId: string,
+    verdict: 'pass' | 'needs_changes' | 'fail',
+    tx: Transaction,
+  ): Promise<void>;
 }
 declare module 'cordis' {
   interface Context {

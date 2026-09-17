@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import { useSession } from '../session';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
+import { GitHubAutomation } from './github-automation';
 
 const request = <T,>(action = '', body?: unknown) =>
   accountRequest<T>(`/code/github${action}`, {
@@ -288,6 +289,17 @@ export function GitHubConnection() {
             </>
           )}
         </>
+      )}
+      {status && (
+        <GitHubAutomation
+          status={status}
+          onChanged={() =>
+            void act(async () => {
+              const value = await request<GitHubStatus>();
+              if (current()) setStatus(value);
+            })
+          }
+        />
       )}
     </section>
   );
