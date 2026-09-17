@@ -15,23 +15,41 @@ export interface NavSection {
 
 /** Known views map to user jobs; unknown views keep their declared group. */
 const SECTION_OF_VIEW: Record<string, string> = {
-  research: 'research',
-  knowledge: 'research',
   claims: 'research',
   paper: 'research',
-  tasks: 'work',
-  experiments: 'work',
-  reviews: 'work',
-  reflections: 'work',
-  consolidation: 'work',
-  sessions: 'operations',
-  people: 'operations',
-  connections: 'operations',
-  code: 'operations',
   artifacts: 'research',
+  reflections: 'work',
+  sessions: 'operations',
+  code: 'operations',
   feed: 'activity',
   'legacy-history': 'research',
 };
+
+/**
+ * Rows the rail does not show. Every one of them is still registered and still
+ * serves its record routes, its ui.read and the palette: the wave of work is one
+ * Work page now, consolidation is the last phase of a reflection, the reference
+ * lookup is a control on Claims, and people and connections are Settings.
+ */
+const HIDDEN = new Set(
+  'research tasks experiments reviews consolidation knowledge people connections'.split(' '),
+);
+
+/** The one row the shell owns: the current wave of work, framed by its cycle. */
+export const WORK: Row = {
+  id: 'work',
+  label: 'Work',
+  group: 'work',
+  order: 14,
+  path: '/work',
+  view: { kind: 'work' },
+  status: {},
+  readable: false,
+};
+
+/** An archive with nothing in it is not a place; one that reports records is. */
+const shows = (row: Row) =>
+  row.view.kind === 'legacy-history' ? !!row.status.count : !HIDDEN.has(row.view.kind);
 
 const SECTION_LABELS: Record<string, string> = {
   research: 'Research',
@@ -53,11 +71,13 @@ export const humanizeGroup = (group: string) =>
  * Build sections from registered rows. Deterministic: rows sort by the
  * server-declared order (id as tiebreaker), known sections keep a fixed
  * order, and unknown sections follow in the order their first row appears.
- * Every non-settings row lands in exactly one section.
+ * Every non-settings row the rail shows lands in exactly one section, and the
+ * shell's own Work row joins them wherever the work it opens is registered.
  */
 export function buildNavigation(rows: Row[]): NavSection[] {
-  const sorted = rows
-    .filter((row) => row.group !== 'settings')
+  const working = rows.some((row) => ['tasks', 'experiments'].includes(row.view.kind));
+  const sorted = [...(working ? [WORK] : []), ...rows]
+    .filter((row) => row.group !== 'settings' && shows(row))
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sections = new Map<string, NavSection>();
   for (const row of sorted) {

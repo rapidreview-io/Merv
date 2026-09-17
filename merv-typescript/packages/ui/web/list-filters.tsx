@@ -6,12 +6,12 @@ import {
   type ComponentType,
   type ReactNode,
 } from 'react';
-import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import type { ApiError } from './api';
 import { KindLabel, LoadState, cx, words } from './components';
 import { useHere } from './palette';
 import { OPEN } from './states';
-import type { Row } from './shell-types';
+import type { Row, ShellData } from './shell-types';
 
 /** Identity-based narrowing, the only axis beside the search box. */
 export type Scope = 'mine' | 'everyone';
@@ -217,7 +217,9 @@ export function ListPage<T extends { id: string }>({
   rows = filter.rows,
   line,
   opens,
+  narrow,
   create,
+  aside,
   cards,
   emptyTitle,
   emptyHint,
@@ -233,20 +235,37 @@ export function ListPage<T extends { id: string }>({
   line?(item: T): Line;
   /** True where a row is the way into a record of its own. */
   opens?: boolean;
+  /** Where a list holds more than one kind: the narrowing that comes before the search. */
+  narrow?: ReactNode;
   create?: Creation;
+  /** A second control on the same row that opens something other than a record. */
+  aside?: Creation;
   /** Where the row is a designed card of its own: the class its stack takes. */
   cards?: { className: string; render(item: T): ReactNode };
   emptyTitle: string;
-  emptyHint: string;
+  emptyHint?: string;
   /** How many columns the skeleton draws while the read is in flight; two lines by default. */
   columns?: number;
   /** What a page states after its rows, where it holds a second list of another kind. */
   after?: ReactNode;
 }) {
   const frame = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(!!create?.opened);
+  // One control is open at a time, and its form opens under the row it sits in.
+  const [open, setOpen] = useState<string | undefined>(create?.opened ? 'create' : undefined);
   // The page's one creation control, registered so the palette can open the same fold.
   const opener = useHere<HTMLButtonElement>('create');
+  const control = (key: string, item: Creation, ref?: typeof opener) =>
+    item.shown === false ? null : (
+      <button
+        type="button"
+        ref={ref}
+        className={cx('btn', !item.plain && 'btn--primary', key === 'create' && 'action-end')}
+        aria-expanded={open === key}
+        onClick={() => setOpen((value) => (value === key ? undefined : key))}
+      >
+        {item.label}
+      </button>
+    );
   useRowKeys(frame);
   const total = filter.items.length;
   // Filtered to nothing has a screen per cause, and the scope states its meaning there.
@@ -261,6 +280,7 @@ export function ListPage<T extends { id: string }>({
           {/* The filters wrap among themselves, so the one control at the end of the
               row keeps the same place however many states a list turns out to hold. */}
           <div className="action-filters">
+            {narrow}
             {total > 0 && (
               <input
                 className="input"
@@ -301,20 +321,12 @@ export function ListPage<T extends { id: string }>({
                 ))}
               </span>
             )}
+            {aside && control('aside', aside)}
           </div>
-          {create && create.shown !== false && (
-            <button
-              type="button"
-              ref={opener}
-              className={cx('btn', !create.plain && 'btn--primary', 'action-end')}
-              aria-expanded={open}
-              onClick={() => setOpen((value) => !value)}
-            >
-              {create.label}
-            </button>
-          )}
+          {create && control('create', create, opener)}
         </div>
-        {open && create && create.form(() => setOpen(false))}
+        {open === 'aside' && aside?.form(() => setOpen(undefined))}
+        {open === 'create' && create?.form(() => setOpen(undefined))}
       </div>
       <LoadState
         {...load}
@@ -388,7 +400,7 @@ const useWide = () =>
     () => WIDE.matches,
   );
 
-function Split({ list, record, row }: { list: ReactNode; record: ReactNode; row: Row }) {
+function Split({ list, record, back }: { list: ReactNode; record: ReactNode; back: string }) {
   const wide = useWide();
   const navigate = useNavigate();
   // Escape leaves the record for the list at either width; j/k move within the list.
@@ -396,11 +408,11 @@ function Split({ list, record, row }: { list: ReactNode; record: ReactNode; row:
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || typing(event.target)) return;
       event.preventDefault();
-      navigate(row.path);
+      navigate(back);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [navigate, row.path]);
+  }, [navigate, back]);
   if (!wide) return <>{record}</>;
   return (
     <div className="split">
@@ -411,22 +423,32 @@ function Split({ list, record, row }: { list: ReactNode; record: ReactNode; row:
 }
 
 /**
- * A work row's two routes. On a wide screen the list stays mounted beside the
- * record it sent you to, under that record's own URL and divided by one hairline;
- * narrower than that the record replaces the list, which is today's behaviour.
+ * A record's two routes. On a wide screen the list stays mounted beside the record
+ * it sent you to, under that record's own URL and divided by one hairline; narrower
+ * than that the record replaces the list. A kind that shares one page with others
+ * names that page as `elsewhere`: its record route stays exactly where it was, so
+ * every link and pasted URL still lands, and its index and its Escape go there.
  */
-export function splitRoutes<P extends { row: Row }>(
+export function splitRoutes<P extends { row: Row; shell: ShellData }>(
   Index: ComponentType<P>,
   Detail: ComponentType<P>,
+  elsewhere?: string,
 ) {
   return function Routed(props: P) {
     return (
       <Routes>
-        <Route index element={<Index {...props} />} />
+        <Route
+          index
+          element={elsewhere ? <Navigate to={elsewhere} replace /> : <Index {...props} />}
+        />
         <Route
           path=":id"
           element={
-            <Split list={<Index {...props} />} record={<Detail {...props} />} row={props.row} />
+            <Split
+              list={<Index {...props} />}
+              record={<Detail {...props} />}
+              back={elsewhere ?? props.row.path}
+            />
           }
         />
       </Routes>

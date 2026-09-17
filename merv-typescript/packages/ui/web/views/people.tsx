@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useSession, type Actor } from '../session';
-import { LoadState, term } from '../components';
+import { term } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 
@@ -52,17 +52,11 @@ export function PeopleView() {
   );
   const isOperator = (human ? currentMember?.role : actor.role) === 'operator';
   const canManage = human && isOperator;
-  const actors = useTool<Actor[]>(isOperator ? 'actor.list' : null);
   const path = `/projects/${encodeURIComponent(project.id)}/members`;
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
     labels: (member) => [member.subject],
     ids: (member) => [member.id, member.actorId],
-  });
-  const actorFilter = useListFilter(actors.data, {
-    stateOf: (worker) => worker.role,
-    labels: (worker) => [worker.name],
-    ids: (worker) => [worker.id],
   });
 
   useEffect(() => {
@@ -129,7 +123,6 @@ export function PeopleView() {
       setMembers(result.memberships.filter((member) => member.active));
       setDraftRoles({});
       setLoadError(undefined);
-      actors.reload();
     } catch (error) {
       if (current()) setMutationError(mutationMessage(error));
     } finally {
@@ -145,51 +138,17 @@ export function PeopleView() {
     void mutate('POST', undefined, { subject: newSubject, role: newRole }, close);
   };
 
-  // One row for an actor, wherever this page lists them.
-  const actorLine = (worker: Actor) => ({
-    name: <strong>{worker.name}</strong>,
-    standing: <ThreeStates execution={worker.role} meta={worker.active ? 'active' : 'revoked'} />,
-  });
-  const noActors =
-    'The identities that own work and reviews appear here as agents are issued credentials.';
-  // An account with no sign-in of its own has no memberships to manage: the
-  // identities are then the page's one list, under the same control row.
+  // An account with no sign-in of its own has no memberships to manage; the
+  // identities that own work are the Sessions page's own directory.
   if (!human)
     return (
-      <ListPage
-        load={actors}
-        noun="actors"
-        placeholder="Name"
-        filter={actorFilter}
-        line={actorLine}
-        emptyTitle="No actors"
-        emptyHint={noActors}
-      />
+      <div className="page-stage">
+        <div className="empty-state">
+          <h2>No memberships to manage</h2>
+        </div>
+      </div>
     );
-  // The identities that own work: a second list of another kind, under the members.
-  const workers = isOperator && (
-    <section className="stack">
-      <h2 className="section-title">Project actors</h2>
-      <LoadState
-        {...actors}
-        empty={actors.data?.length === 0}
-        columns={2}
-        emptyTitle="No actors"
-        emptyHint={noActors}
-      />
-      <ul className="rows">
-        {(actors.data ?? []).map((worker) => {
-          const { name, standing } = actorLine(worker);
-          return (
-            <li className="row" key={worker.id}>
-              <span className="row-name">{name}</span>
-              {standing}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
+
   return (
     <ListPage
       load={{ loading, error: loadError, data: members }}
@@ -197,17 +156,12 @@ export function PeopleView() {
       placeholder="Account ID"
       filter={filter}
       emptyTitle="No active memberships"
-      emptyHint={`Everyone who can open ${project.name} is listed here; an operator adds them by account ID.`}
       create={{
         label: 'New member',
         shown: canManage,
         form: (close) => (
           <form className="identity-form card" onSubmit={(event) => add(event, close)}>
             <h3 className="label">New member</h3>
-            <p className="faint">
-              Use the exact account ID from shared sign-in. This grants project access when that
-              account signs in; it does not create a login account.
-            </p>
             <label>
               Account ID
               <input
@@ -295,14 +249,11 @@ export function PeopleView() {
           ),
       })}
       after={
-        <>
-          {mutationError && (
-            <div className="error-message" role="alert">
-              {mutationError}
-            </div>
-          )}
-          {workers}
-        </>
+        mutationError && (
+          <div className="error-message" role="alert">
+            {mutationError}
+          </div>
+        )
       }
     />
   );

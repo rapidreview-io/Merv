@@ -64,6 +64,8 @@ const LISTS: Record<string, Omit<Fields, 'id'> & { tool: string }> = {
   claims: { tool: 'claim.list', name: 'statement', state: 'status' },
   research: { tool: 'research.list', name: 'name', state: 'workflow.state', opens: true },
   artifacts: { tool: 'artifact.list', name: 'title', opens: true },
+  reflections: { tool: 'reflection.list', name: 'title', state: 'workflow.state', opens: true },
+  consolidation: { tool: 'consolidation.list', name: 'name', state: 'workflow.state', opens: true },
 };
 
 /** Every collection the shell lists that can name its records from a list it already reads. */

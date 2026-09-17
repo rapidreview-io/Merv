@@ -133,7 +133,7 @@ const initials = (name: string) =>
     .join('') || '·';
 
 function AccountFoot() {
-  const { actor, account, signOut, manageKeys } = useSession();
+  const { actor, signOut } = useSession();
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -163,11 +163,7 @@ function AccountFoot() {
             Theme · {theme}
           </button>
           <div className="account-menu-sep" />
-          {account.kind === 'user' && (
-            <button type="button" className="account-menu-item" onClick={manageKeys}>
-              Manage machine keys
-            </button>
-          )}
+          {/* Keys are a setting, and live under Settings › Keys with the rest. */}
           <button type="button" className="account-menu-item" onClick={signOut}>
             Sign out
           </button>

@@ -1,9 +1,8 @@
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { useSession } from '../session';
+import { splitRoutes } from '../list-filters';
+import { WORK } from '../navigation';
 import {
-  Ago,
   GateBox,
   KV,
   LoadState,
@@ -14,10 +13,10 @@ import {
   stamp,
   useArtifacts,
 } from '../components';
-import { ThreeStates, firstSentence, isOpenTask, newestReview, reviewClause } from '../states';
 import { useActorNames } from './people';
 import { ArtifactBody } from './artifacts';
 import { CriterionRows, type Review } from './reviews';
+import { WorkList } from './work';
 import type { ViewProps } from './index';
 import type {
   WorkflowDecision,
@@ -31,7 +30,7 @@ interface Confirmation {
   evidenceIds: string[];
   notes: string;
 }
-interface Task {
+export interface Task {
   id: string;
   title: string;
   goal: string;
@@ -50,65 +49,6 @@ interface Task {
   createdAt: string;
 }
 
-function TaskList() {
-  const list = useTool<Task[]>('task.list', {}, { every: 8000 });
-  // The judgement of a task is a record of its own, so the list joins the
-  // project's reviews once rather than fetching one per row.
-  const reviews = useTool<Review[]>('review.list');
-  const nameOf = useActorNames();
-  const { actor } = useSession();
-  const filter = useListFilter(list.data, {
-    stateOf: (t) => t.workflow.state,
-    isOpen: isOpenTask,
-    mine: (t) => t.producerId === actor.id,
-    labels: (t) => [t.title, t.goal, nameOf(t.producerId)],
-    ids: (t) => [t.id, t.producerId],
-  });
-  return (
-    <ListPage
-      load={list}
-      noun="tasks"
-      placeholder="Name, goal or person"
-      filter={filter}
-      rows={[...filter.rows].reverse()}
-      opens
-      emptyTitle="No tasks yet"
-      emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
-      line={(t) => {
-        const review = newestReview(reviews.data, t.id);
-        return {
-          name: <strong>{t.title}</strong>,
-          standing: (
-            <ThreeStates
-              execution={t.workflow.state}
-              review={
-                reviewClause(review, nameOf(review?.reviewerId)) ?? {
-                  word: 'not reviewed',
-                  absent: true,
-                }
-              }
-              outcome={
-                t.failure
-                  ? { detail: firstSentence(t.failure.reason) }
-                  : { word: 'no outcome recorded', absent: true }
-              }
-              meta={
-                <>
-                  {nameOf(t.producerId)}
-                  {t.dependencies?.length
-                    ? ` · ${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} prerequisites succeeded`
-                    : ''}{' '}
-                  · <Ago at={t.workflow.updatedAt} />
-                </>
-              }
-            />
-          ),
-        };
-      }}
-    />
-  );
-}
-
 function TaskDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
   const task = useTool<Task>('task.get', { taskId: id }, { every: 8000 });
@@ -120,13 +60,13 @@ function TaskDetail({ row }: ViewProps) {
   if (!task.data)
     return (
       <div className="page-stage">
-        <LoadState {...task} back={{ to: row.path, label: row.label }} />
+        <LoadState {...task} back={{ to: WORK.path, label: 'Work' }} />
       </div>
     );
   const t = task.data;
   return (
     <RecordPage
-      back={<Link to={row.path}>← {row.label}</Link>}
+      back={<Link to={WORK.path}>← Work</Link>}
       kind={row.view.kind}
       name={t.title}
       standing={t.goal}
@@ -144,39 +84,33 @@ function TaskDetail({ row }: ViewProps) {
           </ol>
           <h3 className="ev-role">Deliveries</h3>
           {t.deliveryConfirmations?.length > 0 && (
-            <>
-              <p className="muted">
-                Producer claims for the latest delivery. The independent review determines whether
-                they are supported.
-              </p>
-              <Table
-                rows={t.deliveryConfirmations}
-                keyOf={(item) => String(item.checkNumber)}
-                columns={[
-                  col<Confirmation>(
-                    'check',
-                    'Check',
-                    (item) => `${item.checkNumber}. ${t.checks[item.checkNumber - 1]}`,
-                  ),
-                  col<Confirmation>('claim', 'Producer claim', (item) =>
-                    item.status === 'met' ? 'Met' : 'Not met',
-                  ),
-                  col<Confirmation>('notes', 'Verification / remaining work', (item) => (
-                    <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>
-                  )),
-                  // A file is named by its title; one this page cannot name is left out.
-                  col<Confirmation>('evidence', 'Evidence', (item) =>
-                    item.evidenceIds.length
-                      ? item.evidenceIds.map((id) => (
-                          <div key={id}>
-                            <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
-                          </div>
-                        ))
-                      : 'None supplied',
-                  ),
-                ]}
-              />
-            </>
+            <Table
+              rows={t.deliveryConfirmations}
+              keyOf={(item) => String(item.checkNumber)}
+              columns={[
+                col<Confirmation>(
+                  'check',
+                  'Check',
+                  (item) => `${item.checkNumber}. ${t.checks[item.checkNumber - 1]}`,
+                ),
+                col<Confirmation>('claim', 'Producer claim', (item) =>
+                  item.status === 'met' ? 'Met' : 'Not met',
+                ),
+                col<Confirmation>('notes', 'Verification / remaining work', (item) => (
+                  <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>
+                )),
+                // A file is named by its title; one this page cannot name is left out.
+                col<Confirmation>('evidence', 'Evidence', (item) =>
+                  item.evidenceIds.length
+                    ? item.evidenceIds.map((id) => (
+                        <div key={id}>
+                          <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
+                        </div>
+                      ))
+                    : 'None supplied',
+                ),
+              ]}
+            />
           )}
           {t.deliveryIds.length === 0 && <div className="empty">Nothing delivered yet.</div>}
           {t.deliveryIds.map((artifactId) => (
@@ -246,10 +180,6 @@ function WorkStarts({
   return (
     <>
       <h3 className="ev-role">Work starts</h3>
-      <p className="muted">
-        Each entry records who first began work at that revision. The producer and current review
-        claim determine who can work now.
-      </p>
       <KV
         rows={[
           ['First recorded start', ordered[0] ? describe(ordered[0]) : 'No start recorded'],
@@ -317,4 +247,4 @@ function WorkRelations({
   );
 }
 
-export const TasksView = splitRoutes(TaskList, TaskDetail);
+export const TasksView = splitRoutes(WorkList, TaskDetail, WORK.path);

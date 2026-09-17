@@ -14,39 +14,52 @@ const row = (id: string, kind: string, group: string, order: number, path = `/${
   readable: false,
 });
 
-test('navigation groups actual view kinds without changing server routes or inventing rows', () => {
+test('the rail lists places, hides the rows other pages absorbed, and owns the Work row', () => {
   const rows = [
     row('connections', 'connections', 'system', 40, '/external-connections'),
     row('settings', 'settings', 'settings', 100),
     row('people', 'people', 'project', 2, '/members'),
     row('research-provider', 'research', 'work', 8, '/cycles'),
     row('jobs', 'tasks', 'work', 12, '/task-browser'),
+    row('trials', 'experiments', 'work', 13),
+    row('verdicts', 'reviews', 'work', 14),
+    row('claims', 'claims', 'work', 15),
+    row('reflections', 'reflections', 'work', 35),
     row('feed', 'feed', 'activity', 30),
   ];
   const before = structuredClone(rows);
   const sections = buildNavigation(rows);
   assert.deepEqual(
     sections.map((section) => section.id),
-    ['research', 'work', 'operations', 'activity'],
+    ['research', 'work', 'activity'],
   );
+  // The wave of work is one row the shell owns; the kinds inside it are not places.
   assert.deepEqual(
-    sections.find((section) => section.id === 'operations')!.rows.map((entry) => entry.id),
-    ['people', 'connections'],
+    sections.find((section) => section.id === 'work')!.rows.map((entry) => entry.id),
+    ['work', 'reflections'],
   );
-  const shown = sections.flatMap((section) => section.rows);
-  assert.deepEqual(
-    shown.map((entry) => entry.id).sort(),
-    rows
-      .filter((entry) => entry.group !== 'settings')
-      .map((entry) => entry.id)
-      .sort(),
-  );
-  for (const entry of shown)
-    assert.equal(
-      entry,
-      rows.find((original) => original.id === entry.id),
-    );
+  const shown = sections.flatMap((section) => section.rows.map((entry) => entry.id));
+  for (const hidden of ['research-provider', 'jobs', 'trials', 'verdicts', 'people', 'connections'])
+    assert.ok(!shown.includes(hidden), `${hidden} is registered but not a place`);
+  // Every row the rail does show is the registration itself, untouched.
+  for (const entry of sections.flatMap((section) => section.rows))
+    if (entry.id !== 'work')
+      assert.equal(
+        entry,
+        rows.find((original) => original.id === entry.id),
+      );
+  const work = sections.find((section) => section.id === 'work')!.rows[0];
+  assert.deepEqual({ path: work.path, kind: work.view.kind }, { path: '/work', kind: 'work' });
+  assert.ok(!rows.includes(work), 'no plugin registered the Work row');
   assert.deepEqual(rows, before);
+  // Work appears only with the work it opens; the archive only when it holds records.
+  const listed = (entries: Row[]) =>
+    buildNavigation(entries).flatMap((section) => section.rows.map((entry) => entry.id));
+  assert.deepEqual(listed([row('reflections', 'reflections', 'work', 35)]), ['reflections']);
+  const archive = row('legacy-history', 'legacy-history', 'work', 19);
+  assert.deepEqual(listed([archive]), []);
+  archive.status = { count: 412 };
+  assert.deepEqual(listed([archive]), ['legacy-history']);
 });
 
 test('unknown views retain their declared group, path, status and deterministic ordering', () => {
@@ -74,21 +87,25 @@ test('unknown views retain their declared group, path, status and deterministic 
 });
 
 test('plugin removal removes only its rows and re-addition restores navigation without duplicates', () => {
-  const research = row('research', 'research', 'work', 10);
+  const tasks = row('tasks', 'tasks', 'work', 10);
   const feed = row('feed', 'feed', 'activity', 20);
   const artifacts = row('artifacts', 'artifacts', 'work', 21);
   const extension = row('custom', 'unrecognized', 'extensions', 30);
-  const all = [research, feed, artifacts, extension];
+  const all = [tasks, feed, artifacts, extension];
   const initial = buildNavigation(all);
-  // Files belong to Research, after the rows they evidence; Feed holds only the feed.
-  assert.deepEqual(initial[0].rows, [research, artifacts]);
-  const removed = buildNavigation([research, extension]);
+  // Files belong to Research; the tasks row is not a place, but Work opens on it.
+  assert.deepEqual(initial[0].rows, [artifacts]);
   assert.deepEqual(
-    removed.flatMap((section) => section.rows),
-    [research, extension],
+    initial.map((section) => section.id),
+    ['research', 'work', 'activity', 'extensions'],
+  );
+  const removed = buildNavigation([tasks, extension]);
+  assert.deepEqual(
+    removed.flatMap((section) => section.rows.map((entry) => entry.id)),
+    ['work', 'custom'],
   );
   assert.ok(!removed.some((section) => section.id === 'activity'));
-  assert.deepEqual(buildNavigation([extension, artifacts, research, feed]), initial);
+  assert.deepEqual(buildNavigation([extension, artifacts, tasks, feed]), initial);
   assert.deepEqual(buildNavigation([]), []);
   assert.deepEqual(buildNavigation([row('settings', 'settings', 'settings', 100)]), []);
 });

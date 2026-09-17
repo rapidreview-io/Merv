@@ -55,9 +55,6 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
           onChange={(summary) => setDraft({ ...draft, summary })}
         />
       </fieldset>
-      <p className="faint">
-        Describe the goal and scope in your own words. An empty introduction is allowed.
-      </p>
       {conflict && (
         <div className="stack" role="alert">
           <p>
@@ -111,10 +108,7 @@ export function ProjectIntroduction() {
       {project.data && (
         <>
           <p className="prose">{project.data.summary || 'No introduction has been set.'}</p>
-          <p className="faint">
-            Revision {project.data.contextRevision ?? 0}. Newly assigned agents receive the project
-            intent with their work.
-          </p>
+          <p className="faint">Revision {project.data.contextRevision ?? 0}</p>
           {(actor.role === 'operator' || actor.role === 'producer') && (
             <IntroductionEditor
               key={project.data.id}

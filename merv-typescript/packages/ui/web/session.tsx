@@ -447,11 +447,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const manageKeys = () => setKeysEpoch(scopeVersion());
   if (keysEpoch === epoch && state.account.kind === 'user')
     return (
-      <KeysPanel
-        account={state.account}
-        initialProjectId={state.phase === 'ready' ? state.project.id : undefined}
-        onClose={() => setKeysEpoch(undefined)}
-      />
+      <main>
+        <KeysPanel
+          account={state.account}
+          initialProjectId={state.phase === 'ready' ? state.project.id : undefined}
+          onClose={() => setKeysEpoch(undefined)}
+        />
+      </main>
     );
   if (state.phase === 'projects')
     return (

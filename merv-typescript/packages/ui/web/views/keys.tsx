@@ -8,7 +8,8 @@ import {
   type Project,
   type UserKey,
 } from '../api';
-import { Failure, PageHeader } from '../components';
+import { Failure, PageHeader, stamp } from '../components';
+import { ThreeStates } from '../states';
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : 'The request could not be completed.';
@@ -20,7 +21,11 @@ const expiration = (value: string): string | null => {
   return date.toISOString();
 };
 
-/** This account screen can open without a selected project, including after membership loss. */
+/**
+ * Keys are a setting, and open as one under Settings › Keys. The same panel still
+ * stands alone for an account with no project selected — after membership loss,
+ * or from the project chooser — which is when it carries a way back.
+ */
 export function KeysPanel({
   account,
   initialProjectId,
@@ -28,7 +33,7 @@ export function KeysPanel({
 }: {
   account: Extract<Account, { kind: 'user' }>;
   initialProjectId?: string;
-  onClose(): void;
+  onClose?(): void;
 }) {
   const [keys, setKeys] = useState<UserKey[]>();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -136,31 +141,29 @@ export function KeysPanel({
   };
 
   return (
-    <main className="page-stage stack stack--lg">
+    <section className="page-stage stack stack--lg">
       <PageHeader
         title="Machine keys"
-        summary="Keys let your agents use your project access. They follow your current role and lose project access when your membership is removed."
         actions={
-          <button
-            className="btn"
-            onClick={() => {
-              forgetSecret();
-              onClose();
-            }}
-          >
-            Close
-          </button>
+          onClose && (
+            <button
+              className="btn"
+              onClick={() => {
+                forgetSecret();
+                onClose();
+              }}
+            >
+              Close
+            </button>
+          )
         }
       />
       <p className="faint">
-        Account: <code>{subject}</code>. You can list and revoke your keys after leaving their
-        issuance project. Creation and project-key rotation need membership there. Account-key
-        rotation needs at least one current project membership.
+        Account: <code>{subject}</code>
       </p>
       {secret && (
         <section className="card stack" aria-label="New machine key">
           <h2 className="section-title">Copy this key now</h2>
-          <p>It is shown once and forgotten when you hide it or close this screen.</p>
           <textarea
             className="textarea mono"
             aria-label="New machine key secret"
@@ -186,7 +189,7 @@ export function KeysPanel({
         {!keys ? (
           <p>Loading your projects and keys…</p>
         ) : projects.length === 0 ? (
-          <p>Join or create a project before issuing a new key. Your existing keys are below.</p>
+          <p>No project to issue a key in.</p>
         ) : (
           <form className="identity-form" onSubmit={create}>
             <label>
@@ -218,12 +221,6 @@ export function KeysPanel({
                 <option value="account">All current and future project memberships</option>
               </select>
             </label>
-            {grantScope === 'account' && (
-              <p>
-                This key can access every project you belong to now and every project you join
-                later. Its issuance project is only where the key was created.
-              </p>
-            )}
             <label>
               Label (optional)
               <input
@@ -252,30 +249,29 @@ export function KeysPanel({
       </section>
       <section className="stack">
         <h2 className="section-title">Your keys</h2>
-        <p className="faint">
-          Revoke also stops every replacement descended from the selected key. Rotation replaces
-          only the selected key and stops its old bearer immediately.
-        </p>
         {keys?.length === 0 && <p>No keys have been issued by this account.</p>}
         {keys?.map((key) => {
           const expired = !!key.expiresAt && Date.parse(key.expiresAt) <= Date.now();
           const project = projects.find((project) => project.id === key.projectId);
           const canRotate = key.grantScope === 'account' ? projects.length > 0 : !!project;
           return (
-            <section className="record stack" key={key.id}>
-              <h3>{key.label || 'Unnamed key'}</h3>
-              <p>
-                {key.grantScope === 'account'
-                  ? 'All current and future memberships'
-                  : 'One project'}
-                {project && ` · Issued in ${project.name}`}
-              </p>
-              <p>
-                {key.revokedAt ? `Revoked ${key.revokedAt}` : expired ? 'Expired' : 'Active'} ·
-                Created {key.createdAt} ·{' '}
-                {key.expiresAt ? `Expires ${key.expiresAt}` : 'No expiration'}
-              </p>
-              {key.previousId && <p>Replaces an earlier key</p>}
+            <section className="stack" key={key.id}>
+              <span className="row-name">
+                <strong>{key.label || 'Unnamed key'}</strong>
+              </span>
+              <ThreeStates
+                execution={key.revokedAt ? 'revoked' : expired ? 'expired' : 'active'}
+                meta={[
+                  key.grantScope === 'account'
+                    ? 'All current and future memberships'
+                    : project?.name,
+                  `created ${stamp(key.createdAt)}`,
+                  key.expiresAt ? `expires ${stamp(key.expiresAt)}` : 'no expiration',
+                  key.previousId && 'replaces an earlier key',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              />
               <div className="signin-actions">
                 {!key.revokedAt && canRotate && (
                   <button
@@ -301,10 +297,6 @@ export function KeysPanel({
               </div>
               {rotating === key.id && (
                 <form className="identity-form" onSubmit={(event) => rotate(event, key.id)}>
-                  <p>
-                    Replacing this key stops the old bearer immediately. Update your agent with the
-                    replacement shown next.
-                  </p>
                   <label>
                     <span>
                       <input
@@ -328,9 +320,7 @@ export function KeysPanel({
                         onChange={(e) => setRotationExpiry(e.target.value)}
                       />
                     </label>
-                  ) : (
-                    <p>The existing expiration is preserved.</p>
-                  )}
+                  ) : null}
                   <div className="signin-actions">
                     <button
                       className="btn"
@@ -353,6 +343,6 @@ export function KeysPanel({
           );
         })}
       </section>
-    </main>
+    </section>
   );
 }

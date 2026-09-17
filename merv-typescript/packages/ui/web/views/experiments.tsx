@@ -3,8 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { useSession } from '../session';
+import { splitRoutes } from '../list-filters';
+import { WORK } from '../navigation';
 import {
   Ago,
   Evidence,
@@ -22,7 +22,7 @@ import {
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import { CriterionRows, type Review } from './reviews';
 import { useActorNames } from './people';
-import type { ViewProps } from './index';
+import { WorkList } from './work';
 
 /** The domain's own order. A role with nothing in it is a fact, so it keeps its line. */
 const ROLES = ['plan', 'result', 'report', 'exhibit'] as const;
@@ -78,10 +78,10 @@ function EvidenceFiles({
 }
 
 /**
- * Three facts under the title, each its own clause and none derived from another:
- * what the machinery did, what an independent reader decided, and what the science
- * came to. A passing verdict is not an outcome, and where the reviewed revision is
- * behind the record the line states the drift instead of letting the two read as one.
+ * The same three facts a row of the wave states, in the same grammar: what the
+ * machinery did, what an independent reader decided, what the science came to.
+ * None is derived from another — a passing verdict is not an outcome — and where
+ * the reviewed revision is behind the record the line states the drift.
  */
 function StandingLine({
   experiment: e,
@@ -96,35 +96,23 @@ function StandingLine({
 }) {
   const said = reviewClause(review, reviewer);
   return (
-    <span className="standing">
-      <span className="clause">
-        <span className="clause-k">Execution</span>
-        <StatusPill value={e.workflow.state} />
-      </span>
-      <span className="clause">
-        <span className="clause-k">Review</span>
-        {said?.word ? (
-          <>
-            {stage}{' '}
-            <span className={cx('crit-word', said.verdict && `crit-word--${said.word}`)}>
-              {words(said.word)}
-            </span>
-            {said.detail}
-          </>
-        ) : (
-          'none requested yet'
-        )}
-      </span>
-      <span className="clause">
-        <span className="clause-k">Outcome</span>
-        {firstSentence(e.conclusion) ?? 'no conclusion yet'}
-      </span>
-      {review && review.subjectRevision !== e.workflow.revision && (
-        <span className="clause">
-          Reviewed at revision {review.subjectRevision}; now revision {e.workflow.revision}
-        </span>
-      )}
-    </span>
+    <ThreeStates
+      execution={e.workflow.state}
+      review={said ?? { word: 'none requested yet', absent: true }}
+      outcome={
+        firstSentence(e.conclusion)
+          ? { detail: firstSentence(e.conclusion) }
+          : { word: 'no conclusion yet', absent: true }
+      }
+      meta={[
+        said && stage,
+        review &&
+          review.subjectRevision !== e.workflow.revision &&
+          `reviewed at revision ${review.subjectRevision}; now revision ${e.workflow.revision}`,
+      ]
+        .filter(Boolean)
+        .join(' · ')}
+    />
   );
 }
 
@@ -306,9 +294,6 @@ function ProcessTrack({
             ))}
         </div>
       ))}
-      <p className="muted">
-        An edge shows the machinery stepped through a gate; it never says the science is right.
-      </p>
     </>
   );
 }
@@ -344,7 +329,7 @@ export function ExperimentRecord({
   const ended = ['failed', 'abandoned'].includes(e.workflow.state);
   return (
     <RecordPage
-      back={<Link to="/experiments">← Experiments</Link>}
+      back={<Link to={WORK.path}>← Work</Link>}
       kind="experiments"
       name={e.name}
       standing={
@@ -382,7 +367,6 @@ export function ExperimentRecord({
                 {exhibit.willPin
                   ? 'the result submission will retain this source-backed exhibit with its review round'
                   : 'the current evidence is qualitative, so no quantitative exhibit will be pinned'}
-                . This preview is not a review verdict.
               </figcaption>
             </figure>
           )}
@@ -410,9 +394,6 @@ export function ExperimentRecord({
                 <Link to="/claims">{claims.get(id)}</Link>
               </p>
             ))}
-            <p className="muted">
-              A completed experiment does not automatically change a claim's status.
-            </p>
           </>
         ) : undefined
       }
@@ -439,56 +420,7 @@ export function ExperimentRecord({
   );
 }
 
-function ExperimentList() {
-  const list = useTool<Experiment[]>('experiment.list', {}, { every: 8000 });
-  const reviews = useTool<Review[]>('review.list');
-  const nameOf = useActorNames();
-  const { actor } = useSession();
-  const filter = useListFilter(list.data, {
-    stateOf: (e) => e.workflow.state,
-    mine: (e) => e.ownerId === actor.id,
-    labels: (e) => [e.name, e.intent, nameOf(e.ownerId)],
-    ids: (e) => [e.id, e.ownerId],
-  });
-  return (
-    <ListPage
-      load={list}
-      noun="experiments"
-      placeholder="Name, question or person"
-      filter={filter}
-      rows={[...filter.rows].reverse()}
-      opens
-      emptyTitle="No experiments yet"
-      emptyHint="Experiments appear here once a producer opens one to test a claim."
-      line={(e) => ({
-        name: <strong>{e.name}</strong>,
-        standing: (
-          <ThreeStates
-            execution={e.workflow.state}
-            review={
-              reviewClause(newestReview(reviews.data, e.id)) ?? {
-                word: 'not reviewed',
-                absent: true,
-              }
-            }
-            outcome={
-              firstSentence(e.conclusion)
-                ? { detail: firstSentence(e.conclusion) }
-                : { word: 'no conclusion yet', absent: true }
-            }
-            meta={
-              <>
-                attempt {e.attempt.index} · {nameOf(e.ownerId)} · <Ago at={e.workflow.updatedAt} />
-              </>
-            }
-          />
-        ),
-      })}
-    />
-  );
-}
-
-function ExperimentDetail({ row }: ViewProps) {
+function ExperimentDetail() {
   const { id = '' } = useParams();
   // Whether the record can still change arrives with the record itself, so the
   // first read polls and every read stops once a settled state has come back.
@@ -522,7 +454,7 @@ function ExperimentDetail({ row }: ViewProps) {
           error={
             experiment.error ?? guidance.error ?? process.error ?? reviews.error ?? exhibit.error
           }
-          back={{ to: row.path, label: row.label }}
+          back={{ to: WORK.path, label: 'Work' }}
         />
       </div>
     );
@@ -538,4 +470,4 @@ function ExperimentDetail({ row }: ViewProps) {
   );
 }
 
-export const ExperimentsView = splitRoutes(ExperimentList, ExperimentDetail);
+export const ExperimentsView = splitRoutes(WorkList, ExperimentDetail, WORK.path);

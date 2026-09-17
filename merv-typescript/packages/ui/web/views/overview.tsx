@@ -234,7 +234,7 @@ export function useStanding(rows: Row[], work: Work, me: string, named: Named): 
         ),
       })),
       ...(cyclesRow ? (cycles.data ?? []).filter(alive) : []).map((item) =>
-        open(item, 'research', item.name, item.ownerId, me, cyclesRow!.path),
+        open(item, 'research', item.name, item.ownerId, me, `${cyclesRow!.path}/${item.id}`),
       ),
     ],
     (item) => item.at,

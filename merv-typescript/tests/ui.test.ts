@@ -8,6 +8,8 @@ import { SignJWT } from 'jose';
 import { MervError } from '@merv/contracts';
 import { UiRegistry } from '@merv/ui';
 import { createApp } from '../src/app.js';
+import { buildNavigation } from '../packages/ui/web/navigation.js';
+import type { Row } from '../packages/ui/web/shell-types.js';
 import { RemoteFixture } from './fixtures/remote-server.js';
 
 const caller = { actorId: 'actor_test', projectId: 'project_test' };
@@ -363,6 +365,20 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // One word per thing: the inventory is Knowledge, and retained artifacts are Files.
   const named = (id: string) => shell.rows.find((entry) => entry.id === id)?.label;
   assert.deepEqual([named('knowledge'), named('artifacts')], ['Knowledge', 'Files']);
+  // Every row above keeps its registration, its record routes and its ui.read; the
+  // rail is a separate table of kinds, and these are the places it lists.
+  assert.deepEqual(
+    buildNavigation(shell.rows as Row[]).map((section) => [
+      section.label,
+      section.rows.map((entry) => entry.label),
+    ]),
+    [
+      ['Research', ['Claims', 'Paper', 'Files']],
+      ['Work', ['Work', 'Reflections']],
+      ['Agents', ['Sessions', 'Code']],
+      ['Feed', ['Feed']],
+    ],
+  );
   // Every count in the chrome means open work; rows that are inventories report none.
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
   for (const id of ['people', 'claims', 'knowledge'])

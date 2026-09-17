@@ -2,8 +2,8 @@ import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
-import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { useSession } from '../session';
+import { splitRoutes } from '../list-filters';
+import { WORK } from '../navigation';
 import {
   Ago,
   Evidence,
@@ -14,9 +14,8 @@ import {
   useArtifacts,
   words,
 } from '../components';
-import { ThreeStates, firstSentence, isOpenReview, reviewClause } from '../states';
 import { useActorNames } from './people';
-import type { ViewProps } from './index';
+import { WorkList } from './work';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 
 /** review.submit enumerates exactly these finding words and these verdicts. */
@@ -188,90 +187,6 @@ export function CriterionRows({
   );
 }
 
-/** What a review is about, named: the id is the fallback, never the first answer. */
-interface Subject {
-  kind: 'experiments' | 'tasks';
-  name: string;
-  state: string;
-  outcome: string | null;
-}
-function useSubjects() {
-  const experiments = useTool<SubjectExperiment[]>('experiment.list');
-  const tasks = useTool<SubjectTask[]>('task.list');
-  return (id: string | undefined): Subject | undefined => {
-    const experiment = experiments.data?.find((item) => item.id === id);
-    const task = experiment ? undefined : tasks.data?.find((item) => item.id === id);
-    const record = experiment ?? task;
-    const name = experiment?.name ?? task?.title;
-    if (!record || !name) return undefined;
-    return {
-      kind: experiment ? 'experiments' : 'tasks',
-      name,
-      state: record.workflow.state,
-      outcome: experiment?.conclusion ?? task?.failure?.reason ?? null,
-    };
-  };
-}
-
-function ReviewList() {
-  const list = useTool<Review[]>('review.list', {}, { every: 10000 });
-  const nameOf = useActorNames();
-  const subjectOf = useSubjects();
-  const { actor } = useSession();
-  const filter = useListFilter(list.data, {
-    stateOf: (r) => r.status,
-    isOpen: isOpenReview,
-    // A review is yours when you hold it or you asked for it.
-    mine: (r) => r.reviewerId === actor.id || r.producerId === actor.id,
-    labels: (r) => [
-      subjectOf(r.subjectId)?.name,
-      r.synopsis,
-      ...r.criteria,
-      nameOf(r.producerId),
-      nameOf(r.reviewerId),
-    ],
-    ids: (r) => [r.id, r.subjectId, r.producerId, r.reviewerId],
-  });
-  return (
-    <ListPage
-      load={list}
-      noun="reviews"
-      placeholder="Summary, work item or person"
-      filter={filter}
-      rows={[...filter.rows].reverse()}
-      opens
-      emptyTitle="No reviews"
-      emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
-      line={(r) => {
-        const subject = subjectOf(r.subjectId);
-        return {
-          // A review is named by what it judges, and the kind label says which kind that is.
-          kind: subject?.kind,
-          name: <strong>{subject?.name}</strong>,
-          standing: (
-            <ThreeStates
-              execution={subject?.state ?? null}
-              review={reviewClause(r)}
-              outcome={
-                firstSentence(subject?.outcome)
-                  ? { detail: firstSentence(subject?.outcome) }
-                  : { word: 'no outcome recorded', absent: true }
-              }
-              // Who holds it; that nobody does is the standing clause's to say.
-              meta={
-                <>
-                  {r.reviewerId ? `${nameOf(r.reviewerId)} · ` : ''}
-                  <Ago at={r.createdAt} />
-                </>
-              }
-            />
-          ),
-        };
-      }}
-    />
-  );
-}
-
 interface SubjectExperiment {
   id: string;
   name: string;
@@ -287,7 +202,7 @@ interface SubjectTask {
 }
 
 /** The record read straight down: what was asked, what was found, what was decided. */
-function ReviewDetail({ row }: ViewProps) {
+function ReviewDetail() {
   const { id = '' } = useParams();
   const review = useTool<Review>('review.get', { reviewId: id }, { every: 8000 });
   const nameOf = useActorNames();
@@ -311,7 +226,7 @@ function ReviewDetail({ row }: ViewProps) {
   if (!review.data)
     return (
       <div className="page-stage">
-        <LoadState {...review} back={{ to: row.path, label: row.label }} />
+        <LoadState {...review} back={{ to: WORK.path, label: 'Work' }} />
       </div>
     );
   const r = review.data;
@@ -358,8 +273,8 @@ function ReviewDetail({ row }: ViewProps) {
   );
   return (
     <RecordPage
-      back={<Link to={row.path}>← {row.label}</Link>}
-      kind={row.view.kind}
+      back={<Link to={WORK.path}>← Work</Link>}
+      kind="reviews"
       name={[kind, experiment?.name ?? task?.title].filter(Boolean).join(' · ')}
       state={<StatusPill value={r.status} />}
       standing={
@@ -484,7 +399,7 @@ function Primary({
   onClick,
 }: {
   label: string;
-  help: ReactNode;
+  help?: ReactNode;
   error?: string;
   code?: string;
   disabled?: boolean;
@@ -497,7 +412,7 @@ function Primary({
           {label}
         </button>
       </div>
-      <p className="verdict-help">{help}</p>
+      {help && <p className="verdict-help">{help}</p>}
       {error && (
         <p className="error-message" role="alert">
           {error} {code && <span className="mono faint">({code})</span>}
@@ -550,7 +465,6 @@ function Controls({
     return (
       <Primary
         label={claim.retry ? 'Retry same request' : claim.busy ? 'Claiming…' : 'Claim review'}
-        help="You become its reviewer; only you can submit the verdict."
         error={claim.error}
         code={claim.code}
         disabled={claim.busy}
@@ -678,13 +592,7 @@ function Desk({
         label={
           command.retry ? 'Retry same request' : command.busy ? 'Submitting…' : 'Submit verdict'
         }
-        help={
-          unmet ? (
-            <Unmet {...unmet} />
-          ) : (
-            'The verdict is recorded once, with your findings, and cannot be changed.'
-          )
-        }
+        help={unmet && <Unmet {...unmet} />}
         error={command.error}
         code={command.code}
         disabled={!!unmet || command.busy}
@@ -734,4 +642,4 @@ function Unmet({ text, at }: { text: string; at?: number }) {
   );
 }
 
-export const ReviewsView = splitRoutes(ReviewList, ReviewDetail);
+export const ReviewsView = splitRoutes(WorkList, ReviewDetail, WORK.path);

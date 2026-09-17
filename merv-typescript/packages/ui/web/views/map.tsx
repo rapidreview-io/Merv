@@ -5,6 +5,7 @@ import { accountRequest, useScopeVersion, useTool } from '../api';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
 import { KV, KindLabel, StatusPill, cx, kindStyle } from '../components';
+import { WORK } from '../navigation';
 import { bytes } from './artifacts';
 import { useActorNames } from './people';
 import { useStanding, type Standing, type Work } from './overview';
@@ -425,6 +426,11 @@ export function MapView({ shell }: { shell: ShellData }) {
     return row && tile(row.label, row.status.count ?? EM, row.path);
   };
   const cycle = newest(cycles.data ?? [], (item) => item.workflow.updatedAt)[0];
+  // One number for the wave: the two rows' own open counts, and the dash if either is silent.
+  const counts = [tasksRow, experimentsRow].flatMap((row) => (row ? [row.status.count] : []));
+  const openWork = counts.some((count) => count === undefined)
+    ? EM
+    : counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
   const ready = (mounts.data ?? []).filter((mount) => mount.state === 'ready').length;
   const agents = (live.data?.agents ?? []).filter((agent) => agent.status !== 'retired').length;
   const runners = (live.data?.runners ?? []).filter((runner) => runner.live).length;
@@ -435,9 +441,6 @@ export function MapView({ shell }: { shell: ShellData }) {
       <h1 className="page-title">
         {session.project.name} <span className="muted">· the map</span>
       </h1>
-      <p className="map-lede">
-        Everything here is derived from the record. Nothing on the map is written by an agent.
-      </p>
       {broken?.error && (
         <p className="map-stale" role="alert" title={broken.error.message}>
           {broken.data
@@ -451,15 +454,16 @@ export function MapView({ shell }: { shell: ShellData }) {
         <Plane
           title="Workflows"
           index={0}
+          // The plane says what the rail says: one wave of work, and the reflections on it.
           tiles={tiles(
-            ...['research', 'experiments', 'tasks', 'reviews', 'reflections', 'consolidation'].map(
-              counted,
-            ),
+            (tasksRow || experimentsRow) && tile('Work', openWork, WORK.path),
+            counted('reflections'),
           )}
           note={
             cycle && (
               <>
-                Cycle <Link to={cyclesRow!.path}>{cycle.name}</Link> · {cycle.workflow.state}
+                Cycle <Link to={`${cyclesRow!.path}/${cycle.id}`}>{cycle.name}</Link> ·{' '}
+                {cycle.workflow.state}
               </>
             )
           }

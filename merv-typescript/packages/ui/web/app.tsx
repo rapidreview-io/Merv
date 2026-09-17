@@ -7,6 +7,7 @@ import { Palette } from './palette';
 import { viewFor } from './views';
 import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
+import { WorkView } from './views/work';
 
 function UnavailableRoute() {
   const location = useLocation();
@@ -71,6 +72,8 @@ function Workspace() {
             {/* The map is the home; the standing line it summarises stays one click away. */}
             <Route path="/" element={<MapView shell={shell.data} />} />
             <Route path="/now" element={<OverviewView shell={shell.data} />} />
+            {/* The wave of work is the shell's own page: no one plugin owns it. */}
+            <Route path="/work" element={<WorkView shell={shell.data} />} />
             {rows.map((row) => {
               const View = viewFor(row.view.kind);
               return (

@@ -3,11 +3,103 @@ import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Area, Failure, KindLabel, StatusPill, relativeTime, words } from '../components';
+import {
+  Area,
+  Failure,
+  KindLabel,
+  LoadState,
+  StatusPill,
+  relativeTime,
+  words,
+} from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { useScopeKey, useSession } from '../session';
 import type { Row } from '../shell-types';
 import type { ViewProps } from './index';
+
+/**
+ * What `project.references` answers about one reference: what it names, whether
+ * this project holds it, and the exact capture behind it where there is one.
+ */
+interface Reference {
+  ref: string;
+  status: 'resolved' | 'missing' | 'unsupported' | 'unpublished';
+  label?: string;
+  revision?: number;
+  state?: string;
+  hash?: string;
+  capture?: {
+    provenance: { revision: number };
+    workspace: { headOid?: string; treeOid?: string } | null;
+  };
+}
+
+/**
+ * The one thing the retired Knowledge page did that nothing else does: read the
+ * metadata behind references an agent quoted. It is a lookup, not a collection,
+ * so it is a quiet control beside the claims rather than a place of its own.
+ */
+function ReferenceLookup() {
+  const [text, setText] = useState('');
+  const [refs, setRefs] = useState<string[] | null>(null);
+  const [error, setError] = useState<string>();
+  const lookup = useTool<Reference[]>(refs ? 'project.references' : null, { refs: refs ?? [] });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const next = text.split(/\s+/).filter(Boolean);
+    if (!next.length || next.length > 200) {
+      setError('Enter between 1 and 200 references, separated by spaces or new lines.');
+      return;
+    }
+    setError(undefined);
+    setRefs(next);
+    lookup.reload();
+  };
+  return (
+    <section className="stack">
+      <form className="card stack claims-form" onSubmit={submit}>
+        <Area
+          label="Record IDs or references"
+          className="textarea mono"
+          rows={3}
+          maxLength={40200}
+          value={text}
+          onChange={setText}
+          placeholder="claim:claim_… artifact:art_… task:task_…"
+        />
+        <Failure message={error} />
+        <div>
+          <button className="btn" disabled={lookup.loading || !text.trim()}>
+            Check references
+          </button>
+        </div>
+      </form>
+      <LoadState {...lookup} />
+      {lookup.data && !lookup.error && (
+        <ul className="rows">
+          {lookup.data.map((item, index) => (
+            <li className="row" key={`${index}:${item.ref}`}>
+              <span className="row-name">
+                <strong>{item.label ?? item.ref}</strong>
+                <StatusPill value={item.status} />
+              </span>
+              <span className="states-detail">
+                {item.status === 'unpublished' && 'No published Reflection is available. '}
+                {item.status === 'missing' && 'Not available in this project. '}
+                {item.status === 'unsupported' && 'This reference kind is not supported. '}
+                {item.state ? `${words(item.state)} · ` : ''}
+                {item.revision !== undefined ? `revision ${item.revision}` : ''}
+                {item.capture
+                  ? ` · exact capture at revision ${item.capture.provenance.revision}`
+                  : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 const statuses = ['draft', 'active', 'supported', 'weakened', 'contradicted', 'abandoned'] as const;
 const confidences = ['low', 'medium', 'high'] as const;
@@ -140,9 +232,6 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
           onChange={setConfidence}
         />
       </fieldset>
-      <p className="faint">
-        New claims are active. The statement and scope stay fixed after creation.
-      </p>
       <Failure message={mutation.error} />
       <div className="cluster">
         <button className="btn btn--primary" disabled={mutation.busy || !statement.trim()}>
@@ -353,7 +442,6 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
       placeholder="Statement or scope"
       filter={filter}
       emptyTitle="No claims yet"
-      emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here. A completed experiment does not change its standing automatically: that stays a person's call."
       create={{
         label: 'New claim',
         shown: writable,
@@ -366,6 +454,8 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
           />
         ),
       }}
+      // Not an action: it reads metadata for references someone already wrote.
+      aside={{ label: 'Check references', plain: true, form: () => <ReferenceLookup /> }}
       // The book is a designed surface: its rows stay the cards it was drawn as.
       cards={{
         className: 'claim-book',

@@ -509,7 +509,6 @@ p,
 .page-summary,
 .question,
 .exceptions,
-.standing,
 .kv dd,
 .ladder-rung {
   max-width: 68ch;
@@ -665,7 +664,6 @@ p,
 .kind,
 .label,
 .status,
-.clause-k,
 .ev-role,
 .table th {
   font-size: var(--text-xs);
@@ -684,18 +682,12 @@ p,
 html[data-theme='dark'] .kind {
   color: color-mix(in srgb, var(--kind, var(--muted)) 55%, #ffffff);
 }
-/* Configuration stays possible, folded behind one control; every disclosure
-   summary on every page is written the same way. */
-.fold > summary,
+/* Every disclosure summary on every page is written the same way. */
 .agent-detail summary,
 .crit-file > summary {
   cursor: pointer;
   color: var(--muted);
   font-size: var(--text-sm);
-}
-.fold[open] > summary {
-  margin-bottom: var(--space-3);
-  color: var(--text);
 }
 .stack,
 .map {
@@ -722,7 +714,6 @@ html[data-theme='dark'] .kind {
 /* Faint carries what the eye is meant to skip: a separator, a key, a clause name. */
 .faint,
 .kv dt,
-.clause-k,
 .ev-role {
   color: var(--faint);
 }
@@ -1770,22 +1761,6 @@ select.input,
 }
 
 /* Experiment record. ------------------------------------------------------ */
-/* The record opens with the science and states three facts under its title:
-   execution, review and outcome, each its own clause, none of them a box. */
-.standing {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--space-3);
-  font-size: var(--text-sm);
-}
-.clause:not(:last-child)::after {
-  content: '·';
-  color: var(--line-strong);
-  margin-left: var(--space-3);
-}
-.clause-k {
-  margin-right: 6px;
-}
 .ev-role {
   display: block;
   margin-bottom: var(--space-1);
@@ -1871,13 +1846,9 @@ select.input,
    the middle as an object graph. A plane is a labelled band under a hairline
    and a card is its kind label and its words; the only accent is the one way
    out of the map, and the only frame is the property card. */
-.map-lede,
-.map-stale {
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
 .map-stale {
   color: var(--qualifies);
+  font-size: var(--text-sm);
 }
 .map-now {
   display: flex;
@@ -2481,5 +2452,42 @@ select.input,
     margin-top: var(--topbar-h);
     border-inline: 0;
     border-radius: 0;
+  }
+}
+
+/* Cleanup: Work page and Settings ---------------------------------------- */
+/* The wave of work is one page, so its rows carry a second destination — the
+   verdict on the review clause — and the name is the link rather than the row.
+   The row still lights up as one thing under the pointer and while it is open. */
+.row:has(> .row-name > .row-link):hover,
+.row:has(> .row-name > .row-open) {
+  background: var(--bg-soft);
+}
+/* The cycle frames the work where every other page's title line stands. */
+.page-lede .page-header {
+  margin-bottom: 0;
+}
+/* Settings is a place with rooms: the same two panes as a record beside its list,
+   with the sub-navigation in the narrow one, and a row of links when narrow. */
+.settings {
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+}
+.settings .split-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--page-pad-top) var(--space-3) 60px var(--space-3);
+}
+@media (max-width: 880px) {
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings .split-list {
+    position: static;
+    flex-flow: row wrap;
+    padding-bottom: 0;
+  }
+  .settings .split-record {
+    border-left: 0;
   }
 }

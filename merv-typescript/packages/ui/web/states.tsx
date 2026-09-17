@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { StatusPill, cx, words } from './components';
 
 /**
@@ -16,13 +17,16 @@ export interface Clause {
   absent?: boolean;
   /** The quieter rest of the clause: a name, a revision, a recorded sentence. */
   detail?: ReactNode;
+  /** Where the fact itself is a record: the clause is then the way to it. */
+  to?: string;
 }
 
 function Say({ clause }: { clause: Clause | null }) {
   if (!clause || (!clause.word && !clause.detail))
     return <span className="states-clause states-absent">—</span>;
-  return (
-    <span className={cx('states-clause', clause.absent && 'states-absent')}>
+  const className = cx('states-clause', clause.absent && 'states-absent');
+  const said = (
+    <>
       {clause.word && (
         <span
           className={cx(
@@ -35,7 +39,14 @@ function Say({ clause }: { clause: Clause | null }) {
         </span>
       )}
       {clause.detail && <span className="states-detail">{clause.detail}</span>}
-    </span>
+    </>
+  );
+  return clause.to ? (
+    <Link className={className} to={clause.to}>
+      {said}
+    </Link>
+  ) : (
+    <span className={className}>{said}</span>
   );
 }
 
@@ -131,11 +142,5 @@ export function firstSentence(text: string | null | undefined, limit = 140): str
   return first.length > limit ? `${first.slice(0, limit - 1)}…` : first;
 }
 
-/**
- * What the number beside a row label counts, mirrored from the row adapters
- * (packages/tasks/src/ui.ts, packages/reviews/src/ui.ts) so that arriving from
- * the count lands on exactly the work it counted. `All states` is one click away.
- */
+/** What the count beside a row label means, so arriving from it lands on that work. */
 export const OPEN = 'open';
-export const isOpenTask = (state: string) => !['done', 'failed'].includes(state);
-export const isOpenReview = (status: string) => status === 'requested' || status === 'started';
