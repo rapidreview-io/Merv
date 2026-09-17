@@ -99,3 +99,7 @@ The founder pointed at Thinking Machines' Tinker console: "There is no chrome wh
 - No left-edge accent anywhere (founder, 2026-09-17): no kind edge on records or map cards, no left rule on rounds, ladders, lanes, track steps or quoted blocks, no inset bar on the rail's active row or the split pane's open row. A hairline between two panes is a divider, not this pattern.
 - While loading, a list shows grey skeleton rows in its own grid; a total not yet known renders as an em dash, never a zero and never a spinner.
 - Density comes from the type scale and the hairlines, never from borders, shadows or filled backgrounds.
+
+## No identifiers in the UI (founder ruling, 2026-09-17)
+
+The founder: "stop putting id's in UI, that is useless." No record, row, panel, card, feed line or evidence reference shows an identifier as text: no `Id` rows, no id chips, no `wf_`, `art_`, `review_` or `claim_` strings, no installation or repository numbers. A thing is named by its title, name or filename, and linked where a route exists; a thing the page cannot name is omitted, never shown as its id. Identifiers still live in routes, keys, hover titles and prefix search, where a person who pastes one is served without ever reading one.
