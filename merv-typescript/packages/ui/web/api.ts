@@ -282,7 +282,11 @@ export interface Loaded<T> {
   reload(): void;
 }
 
-/** Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on screen. */
+/**
+ * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
+ * screen. The cadence stops entirely while the tab is hidden and catches up once on return,
+ * so a backgrounded page costs nothing; the rule lives here rather than in any view.
+ */
 export function useTool<T>(
   name: string | null,
   input: Record<string, unknown> = {},
@@ -300,6 +304,17 @@ export function useTool<T>(
     if (!key || !name) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let waiting = false;
+    const hidden = () => document.visibilityState === 'hidden';
+    const schedule = () => {
+      if (hidden()) waiting = true;
+      else timer = setTimeout(() => void refresh(), options.every);
+    };
+    const resume = () => {
+      if (!waiting || hidden()) return;
+      waiting = false;
+      void refresh();
+    };
     const refresh = async () => {
       try {
         const data = await call<T>(name, input);
@@ -313,13 +328,15 @@ export function useTool<T>(
           }));
       } finally {
         // Wait for a response before polling again, including on slow remote storage.
-        if (!cancelled && options.every) timer = setTimeout(() => void refresh(), options.every);
+        if (!cancelled && options.every) schedule();
       }
     };
     void refresh();
+    if (options.every) document.addEventListener('visibilitychange', resume);
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', resume);
     };
     // The serialized key captures the input object.
     // eslint-disable-next-line react-hooks/exhaustive-deps

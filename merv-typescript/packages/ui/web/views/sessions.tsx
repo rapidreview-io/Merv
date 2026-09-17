@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion, useTool } from '../api';
-import { LoadState, ObjId, StatusPill, Table, relativeTime } from '../components';
+import { Ago, LoadState, ObjId, StatusPill, Table, col } from '../components';
 import { ThreeStates } from '../states';
 import type { ViewProps } from './index';
 import { AgentSessionsPanel, type AgentSummary } from './agent-sessions-panel';
@@ -187,50 +187,35 @@ export function SessionsView({ row }: ViewProps) {
                     rows={status.runners}
                     keyOf={(runner) => runner.id}
                     columns={[
-                      {
-                        key: 'machine',
-                        label: 'Machine',
-                        render: (runner) => (
-                          <>
-                            <strong>{runner.machine.hostname}</strong>
-                            <div className="faint">
-                              {runner.machine.system} · {runner.machine.architecture}
-                            </div>
-                          </>
-                        ),
-                      },
-                      {
-                        key: 'live',
-                        label: 'Presence',
-                        render: (runner) => <StatusPill value={runner.live ? 'live' : 'offline'} />,
-                      },
-                      {
-                        key: 'platforms',
-                        label: 'Platforms',
-                        render: (runner) =>
+                      col<Runner>('machine', 'Machine', (runner) => (
+                        <>
+                          <strong>{runner.machine.hostname}</strong>
+                          <div className="faint">
+                            {runner.machine.system} · {runner.machine.architecture}
+                          </div>
+                        </>
+                      )),
+                      col<Runner>('live', 'Presence', (runner) => (
+                        <StatusPill value={runner.live ? 'live' : 'offline'} />
+                      )),
+                      col<Runner>(
+                        'platforms',
+                        'Platforms',
+                        (runner) =>
                           runner.platforms
                             .map(
                               (platform) =>
                                 `${platform.name}${platform.model ? ` · ${platform.model}` : ''}${platform.enabled ? '' : ' (paused)'}`,
                             )
                             .join(', ') || 'None',
-                      },
-                      { key: 'capacity', label: 'Capacity', render: (runner) => runner.capacity },
-                      {
-                        key: 'settings',
-                        label: 'Settings',
-                        render: (runner) =>
-                          runner.desiredVersion > (runner.appliedVersion ?? 0)
-                            ? 'Pending acknowledgement'
-                            : 'Applied',
-                      },
-                      {
-                        key: 'seen',
-                        label: 'Last seen',
-                        render: (runner) => (
-                          <span title={runner.lastSeenAt}>{relativeTime(runner.lastSeenAt)}</span>
-                        ),
-                      },
+                      ),
+                      col<Runner>('capacity', 'Capacity', (runner) => runner.capacity),
+                      col<Runner>('settings', 'Settings', (runner) =>
+                        runner.desiredVersion > (runner.appliedVersion ?? 0)
+                          ? 'Pending acknowledgement'
+                          : 'Applied',
+                      ),
+                      col<Runner>('seen', 'Last seen', (runner) => <Ago at={runner.lastSeenAt} />),
                     ]}
                   />
                 )}
@@ -250,106 +235,88 @@ export function SessionsView({ row }: ViewProps) {
                     rows={status.sessions}
                     keyOf={(session) => session.id}
                     columns={[
-                      {
-                        key: 'agent',
-                        label: 'Agent',
-                        render: (session) =>
+                      col<Session>(
+                        'agent',
+                        'Agent',
+                        (session) =>
                           agentName.get(session.agentId ?? '') ?? (
                             <ObjId id={session.agentId ?? session.id} />
                           ),
-                      },
-                      {
-                        key: 'work',
-                        label: 'Work',
-                        render: (session) => (
+                      ),
+                      col<Session>('work', 'Work', (session) => (
+                        <>
+                          <strong>{session.label || <ObjId id={session.instanceId} />}</strong>
+                          <div className="faint">revision {session.expectedRevision}</div>
+                        </>
+                      )),
+                      col<Session>('role', 'Role', (session) => session.role),
+                      // A lease is executed and closed but never reviewed, so the
+                      // middle clause is a fact this record cannot have.
+                      col<Session>('standing', 'Standing', (session) => {
+                        const closed = session.outcome ?? session.closeReason;
+                        return (
+                          <ThreeStates
+                            execution={session.status}
+                            outcome={
+                              closed
+                                ? { word: closed }
+                                : { word: 'no outcome recorded', absent: true }
+                            }
+                          />
+                        );
+                      }),
+                      col<Session>(
+                        'platform',
+                        'Platform',
+                        (session) => session.platform?.name ?? 'Manual offer',
+                      ),
+                      col<Session>('workspace', 'Workspace', (session) =>
+                        session.workspace ? (
                           <>
-                            <strong>{session.label || <ObjId id={session.instanceId} />}</strong>
-                            <div className="faint">revision {session.expectedRevision}</div>
-                          </>
-                        ),
-                      },
-                      { key: 'role', label: 'Role', render: (session) => session.role },
-                      {
-                        // A lease is executed and closed but never reviewed, so the
-                        // middle clause is a fact this record cannot have.
-                        key: 'standing',
-                        label: 'Standing',
-                        render: (session) => {
-                          const closed = session.outcome ?? session.closeReason;
-                          return (
-                            <ThreeStates
-                              execution={session.status}
-                              outcome={
-                                closed
-                                  ? { word: closed }
-                                  : { word: 'no outcome recorded', absent: true }
-                              }
-                            />
-                          );
-                        },
-                      },
-                      {
-                        key: 'platform',
-                        label: 'Platform',
-                        render: (session) => session.platform?.name ?? 'Manual offer',
-                      },
-                      {
-                        key: 'workspace',
-                        label: 'Workspace',
-                        render: (session) =>
-                          session.workspace ? (
-                            <>
-                              <div>
-                                {session.workspace.attachment.mode} ·{' '}
-                                {session.workspace.result ? 'Captured' : 'Attached'}
-                              </div>
-                              <code
-                                title={
-                                  (session.workspace.result ?? session.workspace.attachment).headOid
-                                }
-                              >
-                                {(
-                                  session.workspace.result ?? session.workspace.attachment
-                                ).headOid.slice(0, 12)}
-                              </code>
-                              {session.workspace.result && (
-                                <div className="faint">
-                                  {session.workspace.result.stats.filesChanged} changed files ·{' '}
-                                  {session.workspace.result.stats.commitCount} commits
-                                </div>
-                              )}
-                            </>
-                          ) : session.workspaceMode === 'none' ? (
-                            'Scratch'
-                          ) : (
-                            `${session.workspaceMode} · Not attached`
-                          ),
-                      },
-                      {
-                        key: 'created',
-                        label: 'Offered',
-                        render: (session) => (
-                          <span title={session.createdAt}>{relativeTime(session.createdAt)}</span>
-                        ),
-                      },
-                      {
-                        key: 'control',
-                        label: '',
-                        render: (session) =>
-                          status.canManage && isLive(session) ? (
-                            <button
-                              className="btn btn--sm"
-                              disabled={!!busy}
-                              onClick={() =>
-                                void mutate(`/sessions/${encodeURIComponent(session.id)}/halt`, {
-                                  reason: 'halted_by_operator',
-                                })
+                            <div>
+                              {session.workspace.attachment.mode} ·{' '}
+                              {session.workspace.result ? 'Captured' : 'Attached'}
+                            </div>
+                            <code
+                              title={
+                                (session.workspace.result ?? session.workspace.attachment).headOid
                               }
                             >
-                              Halt
-                            </button>
-                          ) : null,
-                      },
+                              {(
+                                session.workspace.result ?? session.workspace.attachment
+                              ).headOid.slice(0, 12)}
+                            </code>
+                            {session.workspace.result && (
+                              <div className="faint">
+                                {session.workspace.result.stats.filesChanged} changed files ·{' '}
+                                {session.workspace.result.stats.commitCount} commits
+                              </div>
+                            )}
+                          </>
+                        ) : session.workspaceMode === 'none' ? (
+                          'Scratch'
+                        ) : (
+                          `${session.workspaceMode} · Not attached`
+                        ),
+                      ),
+                      col<Session>('created', 'Offered', (session) => (
+                        <Ago at={session.createdAt} />
+                      )),
+                      col<Session>('control', '', (session) =>
+                        status.canManage && isLive(session) ? (
+                          <button
+                            className="btn btn--sm"
+                            disabled={!!busy}
+                            onClick={() =>
+                              void mutate(`/sessions/${encodeURIComponent(session.id)}/halt`, {
+                                reason: 'halted_by_operator',
+                              })
+                            }
+                          >
+                            Halt
+                          </button>
+                        ) : null,
+                      ),
                     ]}
                   />
                 )}
@@ -368,20 +335,16 @@ export function SessionsView({ row }: ViewProps) {
                     rows={status.queue}
                     keyOf={(candidate) => `${candidate.instanceId}:${candidate.expectedRevision}`}
                     columns={[
-                      {
-                        key: 'label',
-                        label: 'Work',
-                        render: (candidate) => (
-                          <strong>{candidate.label || <ObjId id={candidate.instanceId} />}</strong>
-                        ),
-                      },
-                      { key: 'gate', label: 'Gate', render: (candidate) => candidate.state },
-                      { key: 'role', label: 'Role', render: (candidate) => candidate.role },
-                      {
-                        key: 'revision',
-                        label: 'Revision',
-                        render: (candidate) => candidate.expectedRevision,
-                      },
+                      col<Candidate>('label', 'Work', (candidate) => (
+                        <strong>{candidate.label || <ObjId id={candidate.instanceId} />}</strong>
+                      )),
+                      col<Candidate>('gate', 'Gate', (candidate) => candidate.state),
+                      col<Candidate>('role', 'Role', (candidate) => candidate.role),
+                      col<Candidate>(
+                        'revision',
+                        'Revision',
+                        (candidate) => candidate.expectedRevision,
+                      ),
                     ]}
                   />
                 )}

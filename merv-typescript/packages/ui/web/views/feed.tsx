@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { KindLabel, LoadState, ObjId, kindStyle, relativeTime, words } from '../components';
+import { Ago, KindLabel, LoadState, ObjId, kindStyle, words } from '../components';
 import type { Row } from '../shell';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
@@ -124,9 +124,7 @@ function Line({
         )}
         {said}
       </span>
-      <span className="feed-when" title={event.createdAt}>
-        {relativeTime(event.createdAt)}
-      </span>
+      <Ago at={event.createdAt} className="feed-when" />
     </p>
   );
 }
@@ -147,9 +145,7 @@ function Entry({
           <KindLabel kind="feed" />
           <span className="feed-author">{author ?? <ObjId id={post.authorId} />}</span>
         </span>
-        <span className="feed-when" title={post.createdAt}>
-          {relativeTime(post.createdAt)}
-        </span>
+        <Ago at={post.createdAt} className="feed-when" />
       </p>
       {post.body.split(/\n{2,}/).map((paragraph, index) => (
         <p className="feed-body" key={index}>

@@ -9,7 +9,7 @@ import { relativeTime, shortId } from '../components';
  * map may say about a record is exactly what some field of that record says.
  */
 
-type Flow = { state: string; updatedAt: string };
+export type Flow = { state: string; updatedAt: string };
 export type MapExperiment = {
   id: string;
   name: string;

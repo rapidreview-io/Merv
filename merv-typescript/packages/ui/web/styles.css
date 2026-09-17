@@ -472,10 +472,6 @@ html[data-theme='dark'] .rail-kind {
   padding-top: 18px;
 }
 .lede-eyebrow {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--muted);
   margin-bottom: 4px;
 }
@@ -584,7 +580,11 @@ html[data-theme='dark'] .rail-kind {
    the kind label, the name, its meta lines, then the state it is in. Panels
    that hold ruled rows (a table, a criterion list) are the same surface. */
 .record,
-.card {
+.card,
+.plane,
+.map-now,
+.table-wrap,
+.crits {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -597,15 +597,25 @@ html[data-theme='dark'] .rail-kind {
 .card {
   padding: var(--space-4);
 }
+/* Small caps carry every label the eye skims past: a kind, a state, a column
+   heading, a clause name. One rule states the type; each says only its colour. */
+.lede-eyebrow,
+.kind,
+.label,
+.status,
+.clause-k,
+.ev-role,
+.table th {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 /* The kind's own line: its icon, then its name in small caps in its colour. */
 .kind {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--kind, var(--muted));
 }
 /* The kind colours are chosen for white; on the dark ground they are lifted. */
@@ -658,6 +668,15 @@ html[data-theme='dark'] .record {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+/* Machine text breaks anywhere rather than pushing its column; recorded prose also
+   keeps the line breaks it was written with. */
+.wrap {
+  overflow-wrap: anywhere;
+}
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .obj-id {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -670,10 +689,6 @@ html[data-theme='dark'] .record {
 }
 .label {
   display: block;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--faint);
   margin-bottom: var(--space-1);
 }
@@ -775,10 +790,6 @@ select.input,
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   white-space: nowrap;
   color: var(--muted);
 }
@@ -828,10 +839,6 @@ select.input,
 /* A table is one white surface holding plain ruled rows. */
 .table-wrap {
   overflow-x: auto;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
 }
 /* Inside a panel the rows are already on a surface; one border is enough. */
 .card .table-wrap {
@@ -849,10 +856,6 @@ select.input,
 }
 .table th {
   text-align: left;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--faint);
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
@@ -1620,10 +1623,6 @@ select.input,
    control that decides is filled with the accent. */
 .crits {
   list-style: none;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
   padding: 0 var(--space-4);
 }
 .crit {
@@ -1821,10 +1820,6 @@ select.input,
    small caps: neither is a column header the record is missing. */
 .clause-k,
 .ev-role {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--faint);
 }
 .clause-k {
@@ -1948,10 +1943,6 @@ select.input,
   gap: var(--space-2) var(--space-4);
   flex-wrap: wrap;
   padding: 10px 14px;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
   font-size: var(--text-sm);
 }
 .map-now-count {
@@ -1974,10 +1965,6 @@ select.input,
   gap: var(--space-3);
 }
 .plane {
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
   padding: 12px 14px;
   min-width: 0;
 }
@@ -2040,6 +2027,7 @@ select.input,
   paint-order: stroke;
   stroke: var(--bg-elev);
   stroke-width: 4px;
+  opacity: 0.55;
 }
 .map-edge.on path {
   stroke: var(--active);
@@ -2087,6 +2075,7 @@ select.input,
   align-items: flex-start;
   gap: 6px;
   border-color: var(--text);
+  animation: map-slide 200ms ease-out both;
 }
 .map-props-name {
   font-size: var(--text-lg);
@@ -2182,29 +2171,14 @@ select.input,
   stroke: transparent;
   stroke-width: 12;
 }
-.map-edge text {
-  opacity: 0.55;
-}
 .map-edge.on text,
 .map-edge:hover text {
   opacity: 1;
   fill: var(--active);
 }
-.map-props {
-  animation: map-slide 200ms ease-out both;
-}
 .plane-value.changed {
   animation: map-roll 380ms ease-out;
 }
-@media (prefers-reduced-motion: reduce) {
-  .map *,
-  .map *::before,
-  .map *::after {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
 /* Process view (derived, never authored). ---------------------------------
    One row of the program's own states, then one lane per attempt. Plain DOM:
    no canvas, no minimap, nothing draggable. A step says the machinery passed a

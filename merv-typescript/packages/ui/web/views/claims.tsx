@@ -1,9 +1,11 @@
 import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
-import { useScopeVersion, useTool } from '../api';
+import { useTool } from '../api';
 import { useCommand } from '../mutations';
 import {
+  Area,
+  Failure,
   KindLabel,
   LoadState,
   ObjId,
@@ -12,7 +14,7 @@ import {
   relativeTime,
   words,
 } from '../components';
-import { useSession } from '../session';
+import { useScopeKey, useSession } from '../session';
 import type { Row } from '../shell-types';
 import type { ViewProps } from './index';
 
@@ -78,23 +80,25 @@ function useClaimMutation(
   });
 }
 
-function ConfidenceSelect({
+/** A closed vocabulary is chosen the same way wherever the book offers it. */
+function Choose<T extends string>({
+  label,
+  values,
   value,
   onChange,
 }: {
-  value: Claim['confidence'];
-  onChange: (value: Claim['confidence']) => void;
+  label: string;
+  values: readonly T[];
+  value: T;
+  onChange: (value: T) => void;
 }) {
   return (
     <label>
-      Confidence
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as Claim['confidence'])}
-      >
-        {confidences.map((confidence) => (
-          <option key={confidence} value={confidence}>
-            {confidence}
+      {label}
+      <select value={value} onChange={(event) => onChange(event.target.value as T)}>
+        {values.map((option) => (
+          <option key={option} value={option}>
+            {option}
           </option>
         ))}
       </select>
@@ -121,37 +125,34 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
     <form className="card stack claims-form" aria-labelledby={heading} onSubmit={submit}>
       <h2 id={heading}>Create claim</h2>
       <fieldset disabled={mutation.locked}>
-        <label>
-          Statement
-          <textarea
-            className="textarea"
-            required
-            maxLength={16000}
-            rows={3}
-            value={statement}
-            onChange={(event) => setStatement(event.target.value)}
-          />
-        </label>
-        <label>
-          Scope (optional)
-          <textarea
-            className="textarea"
-            maxLength={16000}
-            rows={2}
-            value={scope}
-            onChange={(event) => setScope(event.target.value)}
-          />
-        </label>
-        <ConfidenceSelect value={confidence} onChange={setConfidence} />
+        <Area
+          label="Statement"
+          className="textarea"
+          required
+          maxLength={16000}
+          rows={3}
+          value={statement}
+          onChange={setStatement}
+        />
+        <Area
+          label="Scope (optional)"
+          className="textarea"
+          maxLength={16000}
+          rows={2}
+          value={scope}
+          onChange={setScope}
+        />
+        <Choose
+          label="Confidence"
+          values={confidences}
+          value={confidence}
+          onChange={setConfidence}
+        />
       </fieldset>
       <p className="faint">
         New claims are active. The statement and scope stay fixed after creation.
       </p>
-      {mutation.error && (
-        <p className="error-message" role="alert">
-          {mutation.error}
-        </p>
-      )}
+      <Failure message={mutation.error} />
       <div className="cluster">
         <button className="btn btn--primary" disabled={mutation.busy || !statement.trim()}>
           {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Create claim'}
@@ -193,27 +194,16 @@ function EditClaim({
       }}
     >
       <fieldset disabled={mutation.locked}>
-        <label>
-          Status
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value as Claim['status'])}
-          >
-            {statuses.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-        <ConfidenceSelect value={confidence} onChange={setConfidence} />
+        <Choose label="Status" values={statuses} value={status} onChange={setStatus} />
+        <Choose
+          label="Confidence"
+          values={confidences}
+          value={confidence}
+          onChange={setConfidence}
+        />
       </fieldset>
       <p className="faint">Editing revision {original.revision}.</p>
-      {mutation.error && (
-        <p className="error-message" role="alert">
-          {mutation.error}
-        </p>
-      )}
+      <Failure message={mutation.error} />
       <div className="cluster">
         <button className="btn btn--primary" disabled={mutation.busy || !changed}>
           {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Save changes'}
@@ -385,8 +375,7 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
         />
       )}
       <LoadState
-        loading={claims.loading}
-        error={claims.error}
+        {...claims}
         empty={claims.data?.length === 0}
         emptyTitle="No claims yet"
         emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here. A completed experiment does not change its standing automatically: that stays a person's call."
@@ -409,8 +398,6 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
   );
 }
 
-export function ClaimsView({ shell }: ViewProps) {
-  const epoch = useScopeVersion();
-  const { actor, project } = useSession();
-  return <ClaimsPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} rows={shell.rows} />;
-}
+export const ClaimsView = ({ shell }: ViewProps) => (
+  <ClaimsPage key={useScopeKey()} rows={shell.rows} />
+);

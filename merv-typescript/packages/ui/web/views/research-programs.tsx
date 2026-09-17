@@ -1,17 +1,23 @@
 import { useState, type FormEvent } from 'react';
-import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
-import { useScopeVersion, useTool } from '../api';
+import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { useSession } from '../session';
+import { useScopeKey, useSession } from '../session';
 import {
+  Ago,
+  Area,
+  Failure,
+  Field,
   KV,
   LoadState,
   ObjId,
   PageHeader,
   StatusPill,
   Table,
+  col,
   cx,
+  recordRoutes,
   relativeTime,
   words,
 } from '../components';
@@ -109,6 +115,9 @@ interface ConsolidationRecord {
     centralGit: 'not-published' | 'not-applicable';
   } | null;
 }
+
+type Lens = Reflection['lenses'][number];
+type Decision = ConsolidationSubmission['decisions'][number];
 
 function EvidenceLink({ artifact }: { artifact: Artifact }) {
   return (
@@ -215,12 +224,7 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
         <KV
           rows={[
             ['Snapshot', <ObjId id={corpus.id} />],
-            [
-              'Source hash',
-              <span className="mono" style={{ overflowWrap: 'anywhere' }}>
-                {corpus.manifestHash}
-              </span>,
-            ],
+            ['Source hash', <span className="mono wrap">{corpus.manifestHash}</span>],
             ['Project', corpus.selection.project.name],
           ]}
         />
@@ -296,9 +300,7 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
               document.current.sections.map((section) => (
                 <div key={section.id}>
                   <strong>{section.title}</strong>
-                  <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                    {section.content || 'No content at capture.'}
-                  </p>
+                  <p className="prose">{section.content || 'No content at capture.'}</p>
                 </div>
               ))
             ) : (
@@ -340,26 +342,20 @@ function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void
     <form className="card stack claims-form" onSubmit={submit} aria-label="Start a reflection wave">
       <h2 className="section-title">Start a reflection wave</h2>
       <fieldset disabled={command.locked}>
-        <label>
-          Title (optional)
-          <input
-            className="input"
-            value={title}
-            maxLength={300}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Project reflection"
-          />
-        </label>
+        <Field
+          label="Title (optional)"
+          className="input"
+          maxLength={300}
+          value={title}
+          onChange={setTitle}
+          placeholder="Project reflection"
+        />
       </fieldset>
       <p className="faint">
         Open five independent lens assignments over live research. New task and experiment creation
         pauses until approval; existing work continues. One unfinished wave is allowed at a time.
       </p>
-      {command.error && (
-        <p role="alert" className="error-message">
-          {command.error}
-        </p>
-      )}
+      <Failure message={command.error} />
       <div>
         <button className="btn btn--primary" disabled={command.busy}>
           {command.busy ? 'Starting…' : command.retry ? 'Retry same request' : 'Start reflection'}
@@ -401,24 +397,16 @@ function ReflectionList({ row }: ViewProps) {
           keyOf={(wave) => wave.id}
           onRow={(wave) => wave.id}
           columns={[
-            { key: 'title', label: 'Reflection', render: (wave) => <strong>{wave.title}</strong> },
-            {
-              key: 'state',
-              label: 'Stage',
-              render: (wave) => <StatusPill value={wave.workflow.state} />,
-            },
-            {
-              key: 'lenses',
-              label: 'Lenses',
-              render: (wave) =>
+            col<Reflection>('title', 'Reflection', (wave) => <strong>{wave.title}</strong>),
+            col<Reflection>('state', 'Stage', (wave) => <StatusPill value={wave.workflow.state} />),
+            col<Reflection>(
+              'lenses',
+              'Lenses',
+              (wave) =>
                 `${wave.lenses.filter((lens) => lens.artifact).length} / ${wave.lenses.length}`,
-            },
-            { key: 'attempt', label: 'Attempt', render: (wave) => wave.attempt },
-            {
-              key: 'created',
-              label: 'Started',
-              render: (wave) => <span title={wave.createdAt}>{relativeTime(wave.createdAt)}</span>,
-            },
+            ),
+            col<Reflection>('attempt', 'Attempt', (wave) => wave.attempt),
+            col<Reflection>('created', 'Started', (wave) => <Ago at={wave.createdAt} />),
           ]}
         />
       )}
@@ -450,36 +438,22 @@ function ReflectionDetail({ row }: ViewProps) {
               rows={wave.lenses}
               keyOf={(lens) => lens.id}
               columns={[
-                {
-                  key: 'lens',
-                  label: 'Perspective',
-                  render: (lens) => (
-                    <details>
-                      <summary>{lens.perspective.replaceAll('_', ' ')}</summary>
-                      <p>{lens.instructions}</p>
-                      <ObjId id={lens.id} />
-                    </details>
-                  ),
-                },
-                {
-                  key: 'state',
-                  label: 'State',
-                  render: (lens) => <StatusPill value={lens.workflow.state} />,
-                },
-                {
-                  key: 'producer',
-                  label: 'Contributor',
-                  render: (lens) =>
-                    lens.producerId
-                      ? (nameOf(lens.producerId) ?? <ObjId id={lens.producerId} />)
-                      : 'Awaiting submission',
-                },
-                {
-                  key: 'report',
-                  label: 'Pinned report',
-                  render: (lens) =>
-                    lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : 'Not submitted',
-                },
+                col<Lens>('lens', 'Perspective', (lens) => (
+                  <details>
+                    <summary>{lens.perspective.replaceAll('_', ' ')}</summary>
+                    <p>{lens.instructions}</p>
+                    <ObjId id={lens.id} />
+                  </details>
+                )),
+                col<Lens>('state', 'State', (lens) => <StatusPill value={lens.workflow.state} />),
+                col<Lens>('producer', 'Contributor', (lens) =>
+                  lens.producerId
+                    ? (nameOf(lens.producerId) ?? <ObjId id={lens.producerId} />)
+                    : 'Awaiting submission',
+                ),
+                col<Lens>('report', 'Pinned report', (lens) =>
+                  lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : 'Not submitted',
+                ),
               ]}
             />
           </section>
@@ -573,37 +547,31 @@ function CreateConsolidation({ onCreated }: { onCreated: (record: ConsolidationR
     >
       <h2 className="section-title">Start consolidation</h2>
       <fieldset disabled={command.locked}>
-        <label>
-          Source artifact IDs
-          <textarea
-            required
-            className="textarea mono"
-            rows={3}
-            value={sources}
-            onChange={(event) => setSources(event.target.value)}
-            placeholder="One retained artifact ID per line"
-          />
-        </label>
-        <label>
-          Experiment IDs requiring a decision
-          <textarea
-            className="textarea mono"
-            rows={2}
-            value={experiments}
-            onChange={(event) => setExperiments(event.target.value)}
-          />
-        </label>
-        <label>
-          Name
-          <input
-            className="input"
-            required
-            maxLength={200}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Consolidate the approved findings"
-          />
-        </label>
+        <Area
+          label="Source artifact IDs"
+          required
+          className="textarea mono"
+          rows={3}
+          value={sources}
+          onChange={setSources}
+          placeholder="One retained artifact ID per line"
+        />
+        <Area
+          label="Experiment IDs requiring a decision"
+          className="textarea mono"
+          rows={2}
+          value={experiments}
+          onChange={setExperiments}
+        />
+        <Field
+          label="Name"
+          className="input"
+          required
+          maxLength={200}
+          value={name}
+          onChange={setName}
+          placeholder="Consolidate the approved findings"
+        />
         <label>
           Work environment
           <select
@@ -614,27 +582,21 @@ function CreateConsolidation({ onCreated }: { onCreated: (record: ConsolidationR
             <option value="git">Git workspace for code changes</option>
           </select>
         </label>
-        <label>
-          Additional prerequisite workflow IDs (optional)
-          <textarea
-            className="textarea mono"
-            rows={2}
-            value={dependsOn}
-            maxLength={20000}
-            onChange={(event) => setDependsOn(event.target.value)}
-            placeholder="One ID per line"
-          />
-        </label>
+        <Area
+          label="Additional prerequisite workflow IDs (optional)"
+          className="textarea mono"
+          rows={2}
+          maxLength={20000}
+          value={dependsOn}
+          onChange={setDependsOn}
+          placeholder="One ID per line"
+        />
       </fieldset>
       <p className="faint">
         Pins the selected source artifacts and requires a decision for every listed experiment.
         Additional prerequisites must finish successfully before work starts.
       </p>
-      {command.error && (
-        <p role="alert" className="error-message">
-          {command.error}
-        </p>
-      )}
+      <Failure message={command.error} />
       <div>
         <button
           className="btn btn--primary"
@@ -688,33 +650,19 @@ function ConsolidationList({ row }: ViewProps) {
           keyOf={(record) => record.id}
           onRow={(record) => record.id}
           columns={[
-            {
-              key: 'name',
-              label: 'Consolidation',
-              render: (record) => <strong>{record.name}</strong>,
-            },
-            {
-              key: 'state',
-              label: 'Stage',
-              render: (record) => <StatusPill value={record.workflow.state} />,
-            },
-            {
-              key: 'work',
-              label: 'Environment',
-              render: (record) => (record.workspace === 'git' ? 'Git' : 'Research'),
-            },
-            {
-              key: 'coverage',
-              label: 'Corpus',
-              render: (record) => `${record.experimentIds.length} experiments`,
-            },
-            {
-              key: 'created',
-              label: 'Started',
-              render: (record) => (
-                <span title={record.createdAt}>{relativeTime(record.createdAt)}</span>
-              ),
-            },
+            col<ConsolidationRecord>('name', 'Consolidation', (r) => <strong>{r.name}</strong>),
+            col<ConsolidationRecord>('state', 'Stage', (r) => (
+              <StatusPill value={r.workflow.state} />
+            )),
+            col<ConsolidationRecord>('work', 'Environment', (r) =>
+              r.workspace === 'git' ? 'Git' : 'Research',
+            ),
+            col<ConsolidationRecord>(
+              'coverage',
+              'Corpus',
+              (r) => `${r.experimentIds.length} experiments`,
+            ),
+            col<ConsolidationRecord>('created', 'Started', (r) => <Ago at={r.createdAt} />),
           ]}
         />
       )}
@@ -722,13 +670,7 @@ function ConsolidationList({ row }: ViewProps) {
   );
 }
 
-function Submission({
-  submission,
-  record,
-}: {
-  submission: ConsolidationSubmission;
-  record: ConsolidationRecord;
-}) {
+function Submission({ submission }: { submission: ConsolidationSubmission }) {
   return (
     <div className="stack">
       <KV
@@ -748,27 +690,15 @@ function Submission({
           rows={submission.decisions}
           keyOf={(decision) => decision.experimentId}
           columns={[
-            {
-              key: 'experiment',
-              label: 'Experiment',
-              render: (decision) => (
-                <Link to={`/experiments/${decision.experimentId}`}>{decision.experimentId}</Link>
-              ),
-            },
-            {
-              key: 'decision',
-              label: 'Decision',
-              render: (decision) => decision.decision.replaceAll('_', ' '),
-            },
-            {
-              key: 'rationale',
-              label: 'Rationale',
-              render: (decision) => (
-                <span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                  {decision.rationale}
-                </span>
-              ),
-            },
+            col<Decision>('experiment', 'Experiment', (decision) => (
+              <Link to={`/experiments/${decision.experimentId}`}>{decision.experimentId}</Link>
+            )),
+            col<Decision>('decision', 'Decision', (decision) =>
+              decision.decision.replaceAll('_', ' '),
+            ),
+            col<Decision>('rationale', 'Rationale', (decision) => (
+              <span className="prose">{decision.rationale}</span>
+            )),
           ]}
         />
       ) : (
@@ -792,16 +722,9 @@ function Submission({
               ['Proposal', <ObjId id={submission.proposal.id} />],
               [
                 'Exact head',
-                <span className="mono" style={{ overflowWrap: 'anywhere' }}>
-                  {submission.proposal.receipt.headOid}
-                </span>,
+                <span className="mono wrap">{submission.proposal.receipt.headOid}</span>,
               ],
-              [
-                'Base',
-                <span className="mono" style={{ overflowWrap: 'anywhere' }}>
-                  {submission.proposal.receipt.baseOid}
-                </span>,
-              ],
+              ['Base', <span className="mono wrap">{submission.proposal.receipt.baseOid}</span>],
               ['Manifest', <EvidenceLink artifact={submission.proposal.manifestArtifact} />],
             ]}
           />
@@ -876,7 +799,7 @@ function ConsolidationDetail({ row }: ViewProps) {
                 : 'Submitted decisions and evidence'}
             </h2>
             {latest ? (
-              <Submission submission={latest} record={record} />
+              <Submission submission={latest} />
             ) : (
               <p className="faint">
                 The assigned producer has not submitted a consolidation report yet.
@@ -891,7 +814,7 @@ function ConsolidationDetail({ row }: ViewProps) {
                   .map((submission) => (
                     <section className="stack" key={submission.id}>
                       <h3>Revision {submission.revision}</h3>
-                      <Submission submission={submission} record={record} />
+                      <Submission submission={submission} />
                     </section>
                   ))}
               </details>
@@ -903,31 +826,11 @@ function ConsolidationDetail({ row }: ViewProps) {
   );
 }
 
-function ReflectionRoutes(props: ViewProps) {
-  return (
-    <Routes>
-      <Route index element={<ReflectionList {...props} />} />
-      <Route path=":id" element={<ReflectionDetail {...props} />} />
-    </Routes>
-  );
-}
-function ConsolidationRoutes(props: ViewProps) {
-  return (
-    <Routes>
-      <Route index element={<ConsolidationList {...props} />} />
-      <Route path=":id" element={<ConsolidationDetail {...props} />} />
-    </Routes>
-  );
-}
-export function ReflectionsView(props: ViewProps) {
-  const epoch = useScopeVersion();
-  const { actor, project } = useSession();
-  return <ReflectionRoutes key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} {...props} />;
-}
-export function ConsolidationView(props: ViewProps) {
-  const epoch = useScopeVersion();
-  const { actor, project } = useSession();
-  return (
-    <ConsolidationRoutes key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} {...props} />
-  );
-}
+const ReflectionRoutes = recordRoutes(ReflectionList, ReflectionDetail);
+const ConsolidationRoutes = recordRoutes(ConsolidationList, ConsolidationDetail);
+export const ReflectionsView = (props: ViewProps) => (
+  <ReflectionRoutes key={useScopeKey()} {...props} />
+);
+export const ConsolidationView = (props: ViewProps) => (
+  <ConsolidationRoutes key={useScopeKey()} {...props} />
+);

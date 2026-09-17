@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Route, Routes, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { call, useScopeVersion, useTool } from '../api';
-import { KV, LoadState, ObjId, PageHeader, Table, relativeTime } from '../components';
+import { Ago, KV, LoadState, ObjId, PageHeader, Table, col, recordRoutes } from '../components';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -143,8 +143,7 @@ function ArtifactList() {
   return (
     <div className="page-stage">
       <LoadState
-        loading={list.loading}
-        error={list.error}
+        {...list}
         empty={list.data?.length === 0}
         emptyTitle="No artifacts"
         emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
@@ -155,25 +154,20 @@ function ArtifactList() {
           keyOf={(a) => a.id}
           onRow={(a) => a.id}
           columns={[
-            { key: 'title', label: 'Title', render: (a) => <strong>{a.title}</strong> },
-            {
-              key: 'type',
-              label: 'Type',
-              render: (a) => <span className="mono faint">{a.mediaType}</span>,
-              width: '150px',
-            },
-            { key: 'size', label: 'Size', render: (a) => bytes(a.size), width: '90px' },
-            {
-              key: 'by',
-              label: 'Created by',
-              render: (a) => nameOf(a.createdBy) ?? <ObjId id={a.createdBy} />,
-            },
-            {
-              key: 'when',
-              label: 'When',
-              render: (a) => <span title={a.createdAt}>{relativeTime(a.createdAt)}</span>,
-              width: '90px',
-            },
+            col<Artifact>('title', 'Title', (a) => <strong>{a.title}</strong>),
+            col<Artifact>(
+              'type',
+              'Type',
+              (a) => <span className="mono faint">{a.mediaType}</span>,
+              '150px',
+            ),
+            col<Artifact>('size', 'Size', (a) => bytes(a.size), '90px'),
+            col<Artifact>(
+              'by',
+              'Created by',
+              (a) => nameOf(a.createdBy) ?? <ObjId id={a.createdBy} />,
+            ),
+            col<Artifact>('when', 'When', (a) => <Ago at={a.createdAt} />, '90px'),
           ]}
         />
       )}
@@ -188,11 +182,7 @@ function ArtifactDetail({ row }: ViewProps) {
   if (!meta.data)
     return (
       <div className="page-stage">
-        <LoadState
-          loading={meta.loading}
-          error={meta.error}
-          back={{ to: row.path, label: row.label }}
-        />
+        <LoadState {...meta} back={{ to: row.path, label: row.label }} />
       </div>
     );
   const a = meta.data;
@@ -218,11 +208,4 @@ function ArtifactDetail({ row }: ViewProps) {
   );
 }
 
-export function ArtifactsView(props: ViewProps) {
-  return (
-    <Routes>
-      <Route index element={<ArtifactList />} />
-      <Route path=":id" element={<ArtifactDetail {...props} />} />
-    </Routes>
-  );
-}
+export const ArtifactsView = recordRoutes(ArtifactList, ArtifactDetail);

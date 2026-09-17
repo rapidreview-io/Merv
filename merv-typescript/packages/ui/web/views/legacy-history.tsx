@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
-import { KV, LoadState, StatusPill, Table, words } from '../components';
+import { KV, LoadState, StatusPill, Table, col, words } from '../components';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
 
@@ -342,48 +342,36 @@ function History({ row }: ViewProps) {
                   rows={records.data.records}
                   keyOf={(item) => item.id}
                   columns={[
-                    {
-                      key: 'label',
-                      label: 'Record',
-                      render: (item) => (
-                        <div className="stack">
-                          <button
-                            className="history-record-link"
-                            ref={selected?.id === item.id ? opener : undefined}
-                            aria-expanded={selected?.id === item.id}
-                            aria-controls={selected?.id === item.id ? 'history-detail' : undefined}
-                            onClick={() => update({ type, pages, selected: { type, id: item.id } })}
-                          >
-                            {item.label || item.id}
-                          </button>
-                        </div>
-                      ),
-                    },
-                    {
-                      key: 'status',
-                      label: 'Status',
-                      render: (item) => <StatusPill value={item.status} />,
-                    },
+                    col<RecordSummary>('label', 'Record', (item) => (
+                      <div className="stack">
+                        <button
+                          className="history-record-link"
+                          ref={selected?.id === item.id ? opener : undefined}
+                          aria-expanded={selected?.id === item.id}
+                          aria-controls={selected?.id === item.id ? 'history-detail' : undefined}
+                          onClick={() => update({ type, pages, selected: { type, id: item.id } })}
+                        >
+                          {item.label || item.id}
+                        </button>
+                      </div>
+                    )),
+                    col<RecordSummary>('status', 'Status', (item) => (
+                      <StatusPill value={item.status} />
+                    )),
                     ...(type === 'artifacts'
                       ? [
-                          {
-                            key: 'retention',
-                            label: 'File',
-                            render: (item: RecordSummary) =>
-                              item.fileRetention?.status === 'verified'
-                                ? 'Available'
-                                : item.fileRetention?.status === 'metadata-only'
-                                  ? 'Metadata only'
-                                  : 'Not verified',
-                          },
+                          col<RecordSummary>('retention', 'File', (item) =>
+                            item.fileRetention?.status === 'verified'
+                              ? 'Available'
+                              : item.fileRetention?.status === 'metadata-only'
+                                ? 'Metadata only'
+                                : 'Not verified',
+                          ),
                         ]
                       : []),
-                    {
-                      key: 'date',
-                      label: 'Created',
-                      render: (item) =>
-                        item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—',
-                    },
+                    col<RecordSummary>('date', 'Created', (item) =>
+                      item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—',
+                    ),
                   ]}
                 />
               )}
@@ -433,7 +421,6 @@ function History({ row }: ViewProps) {
   );
 }
 
-export function LegacyHistoryView(props: ViewProps) {
-  const scope = useScopeVersion();
-  return <History key={scope} {...props} />;
-}
+export const LegacyHistoryView = (props: ViewProps) => (
+  <History key={useScopeVersion()} {...props} />
+);

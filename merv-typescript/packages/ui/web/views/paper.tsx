@@ -8,10 +8,10 @@ import type {
   PaperSection,
   PaperWorkspace,
 } from '@merv/paper/models';
-import { useScopeVersion, useTool } from '../api';
+import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { LoadState, ObjId, StatusPill, kindStyle } from '../components';
-import { useSession } from '../session';
+import { Area, Failure, Field, LoadState, ObjId, StatusPill, kindStyle } from '../components';
+import { useScopeKey, useSession } from '../session';
 
 const labels: Record<PaperKind, string> = {
   problem: 'Problem & scope',
@@ -19,7 +19,6 @@ const labels: Record<PaperKind, string> = {
   methods: 'Methods',
   results: 'Results',
 };
-const prose = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const;
 
 /** Keep a pending receipt even if a refresh already observes the created assignment. */
 export function ResearchCommand({
@@ -48,11 +47,7 @@ export function ResearchCommand({
   if (!available && !command.locked) return null;
   return (
     <div className="stack">
-      {command.error && (
-        <p className="error-message" role="alert">
-          {command.error}
-        </p>
-      )}
+      <Failure message={command.error} />
       <div>
         <button
           className="btn"
@@ -119,35 +114,21 @@ function SectionEditor({
     >
       <h3>{section ? 'Edit section' : 'Add section'}</h3>
       <fieldset disabled={command.locked}>
-        <label>
-          Section title
-          <input
-            required
-            maxLength={300}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        <label>
-          Content
-          <textarea
-            className="textarea"
-            rows={8}
-            value={content}
-            maxLength={100000}
-            onChange={(event) => setContent(event.target.value)}
-          />
-        </label>
+        <Field label="Section title" required maxLength={300} value={title} onChange={setTitle} />
+        <Area
+          label="Content"
+          className="textarea"
+          rows={8}
+          maxLength={100000}
+          value={content}
+          onChange={setContent}
+        />
       </fieldset>
       <p className="faint">
         Editing revision {original.revision}. Concurrent changes require a fresh edit.
       </p>
       {validation && <p className="faint">{validation}</p>}
-      {command.error && (
-        <p className="error-message" role="alert">
-          {command.error}
-        </p>
-      )}
+      <Failure message={command.error} />
       <div className="cluster">
         <button
           className="btn btn--primary"
@@ -245,64 +226,46 @@ function CitationEditor({
     >
       <h3>{original ? 'Edit citation' : 'Add citation'}</h3>
       <fieldset disabled={command.locked}>
-        <label>
-          Identifier
-          <input
-            required
-            maxLength={500}
-            value={identifier}
-            onChange={(event) => setIdentifier(event.target.value)}
-            placeholder="doi:… or arxiv:…"
-          />
-        </label>
-        <label>
-          Title
-          <input
-            required
-            maxLength={1000}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        <label>
-          Authors, separated by semicolons
-          <input
-            maxLength={30198}
-            value={authors}
-            onChange={(event) => setAuthors(event.target.value)}
-          />
-        </label>
-        <label>
-          Year
-          <input
-            type="number"
-            min="1000"
-            max="9999"
-            step="1"
-            value={year}
-            onChange={(event) => setYear(event.target.value)}
-          />
-        </label>
-        <label>
-          Source URL
-          <input
-            type="url"
-            pattern="https?://.*"
-            maxLength={2000}
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-          />
-        </label>
-        <label>
-          Notes
-          <textarea
-            className="textarea"
-            rows={3}
-            maxLength={16000}
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-          />
-        </label>
+        <Field
+          label="Identifier"
+          required
+          maxLength={500}
+          value={identifier}
+          onChange={setIdentifier}
+          placeholder="doi:… or arxiv:…"
+        />
+        <Field label="Title" required maxLength={1000} value={title} onChange={setTitle} />
+        <Field
+          label="Authors, separated by semicolons"
+          maxLength={30198}
+          value={authors}
+          onChange={setAuthors}
+        />
+        <Field
+          label="Year"
+          type="number"
+          min="1000"
+          max="9999"
+          step="1"
+          value={year}
+          onChange={setYear}
+        />
+        <Field
+          label="Source URL"
+          type="url"
+          pattern="https?://.*"
+          maxLength={2000}
+          value={url}
+          onChange={setUrl}
+        />
+        <Area
+          label="Notes"
+          className="textarea"
+          rows={3}
+          maxLength={16000}
+          value={notes}
+          onChange={setNotes}
+        />
         <div className="stack">
           <span>Linked literature sections</span>
           {!choices.length && <p className="faint">Add a literature section to link it here.</p>}
@@ -323,28 +286,22 @@ function CitationEditor({
             </label>
           ))}
         </div>
-        <label>
-          Evidence references, one per line
-          <textarea
-            className="textarea mono"
-            rows={3}
-            maxLength={40199}
-            value={references}
-            onChange={(event) => setReferences(event.target.value)}
-            placeholder={'artifact:art_…'}
-          />
-        </label>
+        <Area
+          label="Evidence references, one per line"
+          className="textarea mono"
+          rows={3}
+          maxLength={40199}
+          value={references}
+          onChange={setReferences}
+          placeholder={'artifact:art_…'}
+        />
         <p className="faint">
           Link retained evidence artifacts in this project. Existing links stay selected until you
           change them.
         </p>
       </fieldset>
       {validation && <p className="faint">{validation}</p>}
-      {command.error && (
-        <p className="error-message" role="alert">
-          {command.error}
-        </p>
-      )}
+      <Failure message={command.error} />
       <div className="cluster">
         <button
           className="btn btn--primary"
@@ -432,7 +389,7 @@ function DocumentPanel({
                 {proposal.documents
                   .filter((d) => d.edit.kind === kind)
                   .map((d) => (
-                    <pre key={d.edit.kind} style={prose}>
+                    <pre key={d.edit.kind} className="prose">
                       {JSON.stringify(d.edit.changes, null, 2)}
                     </pre>
                   ))}
@@ -465,7 +422,7 @@ function DocumentPanel({
                   </button>
                 )}
               </div>
-              <p style={prose}>{section.content || 'Not defined yet.'}</p>
+              <p className="prose">{section.content || 'Not defined yet.'}</p>
             </article>
           ))}
           {canEdit && kind !== 'problem' && (
@@ -551,10 +508,8 @@ function PaperPage() {
                     {item.authors.join(', ')}
                     {item.year ? ` · ${item.year}` : ''}
                   </p>
-                  <p className="mono" style={prose}>
-                    {item.identifier}
-                  </p>
-                  <p style={prose}>{item.notes}</p>
+                  <p className="mono prose">{item.identifier}</p>
+                  <p className="prose">{item.notes}</p>
                   {item.url && /^https?:\/\//i.test(item.url) && (
                     <a href={item.url} target="_blank" rel="noreferrer">
                       Open source
@@ -577,11 +532,7 @@ function PaperPage() {
                         .join(', ')}
                     </p>
                   )}
-                  {!!item.refs.length && (
-                    <p className="mono faint" style={prose}>
-                      {item.refs.join('\n')}
-                    </p>
-                  )}
+                  {!!item.refs.length && <p className="mono faint prose">{item.refs.join('\n')}</p>}
                   {writable && citation === null && (
                     <div>
                       <button className="btn btn--sm" onClick={() => setCitation(item)}>
@@ -599,8 +550,4 @@ function PaperPage() {
   );
 }
 
-export function PaperView() {
-  const epoch = useScopeVersion();
-  const { actor, project } = useSession();
-  return <PaperPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} />;
-}
+export const PaperView = () => <PaperPage key={useScopeKey()} />;

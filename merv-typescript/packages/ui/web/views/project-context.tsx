@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useTool, type Project } from '../api';
-import { LoadState } from '../components';
+import { Area, Failure, LoadState } from '../components';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
 
@@ -46,16 +46,14 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
     <form className="card stack claims-form" aria-labelledby={heading} onSubmit={submit}>
       <h3 id={heading}>Edit project Introduction</h3>
       <fieldset disabled={mutation.locked}>
-        <label>
-          Project intent
-          <textarea
-            className="textarea"
-            rows={6}
-            maxLength={16000}
-            value={draft.summary}
-            onChange={(event) => setDraft({ ...draft, summary: event.target.value })}
-          />
-        </label>
+        <Area
+          label="Project intent"
+          className="textarea"
+          rows={6}
+          maxLength={16000}
+          value={draft.summary}
+          onChange={(summary) => setDraft({ ...draft, summary })}
+        />
       </fieldset>
       <p className="faint">
         Describe the goal and scope in your own words. An empty Introduction is allowed.
@@ -79,11 +77,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
           </button>
         </div>
       )}
-      {mutation.error && (
-        <p className="error-message" role="alert">
-          {mutation.error}
-        </p>
-      )}
+      <Failure message={mutation.error} />
       <div className="cluster">
         <button
           className="btn btn--primary"
@@ -116,9 +110,7 @@ export function ProjectIntroduction() {
       <LoadState {...project} />
       {project.data && (
         <>
-          <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-            {project.data.summary || 'No Introduction has been set.'}
-          </p>
+          <p className="prose">{project.data.summary || 'No Introduction has been set.'}</p>
           <p className="faint">
             Revision {project.data.contextRevision ?? 0}. Newly assigned agents receive the project
             intent with their work.

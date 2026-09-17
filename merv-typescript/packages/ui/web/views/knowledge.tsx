@@ -1,7 +1,17 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { KindLabel, LoadState, ObjId, StatusPill, Table, kindStyle } from '../components';
+import {
+  Area,
+  Failure,
+  KindLabel,
+  LoadState,
+  ObjId,
+  StatusPill,
+  Table,
+  col,
+  kindStyle,
+} from '../components';
 
 interface Records {
   claims: { id: string; statement: string; status: string; revision: number }[];
@@ -43,26 +53,20 @@ function ReferenceLookup() {
   return (
     <section className="stack">
       <form className="card stack claims-form" onSubmit={submit}>
-        <label>
-          Record IDs or references
-          <textarea
-            className="textarea mono"
-            rows={3}
-            value={text}
-            maxLength={40200}
-            onChange={(event) => setText(event.target.value)}
-            placeholder="claim:claim_… artifact:art_… task:task_…"
-          />
-        </label>
+        <Area
+          label="Record IDs or references"
+          className="textarea mono"
+          rows={3}
+          maxLength={40200}
+          value={text}
+          onChange={setText}
+          placeholder="claim:claim_… artifact:art_… task:task_…"
+        />
         <p className="faint">
           Use record IDs or a kind followed by an ID, such as task: or session-final:. This reads
           metadata for the selected project.
         </p>
-        {error && (
-          <p className="error-message" role="alert">
-            {error}
-          </p>
-        )}
+        <Failure message={error} />
         <div>
           <button className="btn" disabled={lookup.loading || !text.trim()}>
             Check references
@@ -80,23 +84,17 @@ function ReferenceLookup() {
             >
               <KindLabel kind="knowledge" />
               <div className="cluster">
-                <strong className="mono" style={{ overflowWrap: 'anywhere' }}>
-                  {item.ref}
-                </strong>
+                <strong className="mono wrap">{item.ref}</strong>
                 <StatusPill value={item.status} />
               </div>
-              {item.label && <p style={{ overflowWrap: 'anywhere' }}>{item.label}</p>}
+              {item.label && <p className="wrap">{item.label}</p>}
               {item.state && (
                 <p>
                   State: <StatusPill value={item.state} />
                   {item.revision !== undefined && ` · revision ${item.revision}`}
                 </p>
               )}
-              {item.hash && (
-                <p className="mono faint" style={{ overflowWrap: 'anywhere' }}>
-                  {item.hash}
-                </p>
-              )}
+              {item.hash && <p className="mono faint wrap">{item.hash}</p>}
               {item.status === 'unpublished' && <p>No published Reflection is available.</p>}
               {item.status === 'missing' && (
                 <p>This record is not available in the selected project.</p>
@@ -110,14 +108,10 @@ function ReferenceLookup() {
                     {item.capture.provenance.revision}.
                   </p>
                   {item.capture.workspace?.headOid && (
-                    <p className="mono" style={{ overflowWrap: 'anywhere' }}>
-                      Commit: {item.capture.workspace.headOid}
-                    </p>
+                    <p className="mono wrap">Commit: {item.capture.workspace.headOid}</p>
                   )}
                   {item.capture.workspace?.treeOid && (
-                    <p className="mono" style={{ overflowWrap: 'anywhere' }}>
-                      Tree: {item.capture.workspace.treeOid}
-                    </p>
+                    <p className="mono wrap">Tree: {item.capture.workspace.treeOid}</p>
                   )}
                 </>
               )}
@@ -160,6 +154,7 @@ export function KnowledgeView() {
         })),
       ]
     : [];
+  type Listed = (typeof inventory)[number];
   return (
     <div className="page-stage stack stack--lg">
       <div className="action-row">
@@ -180,8 +175,7 @@ export function KnowledgeView() {
       </div>
       {checking && <ReferenceLookup />}
       <LoadState
-        loading={records.loading}
-        error={records.error}
+        {...records}
         empty={!!records.data && inventory.length === 0}
         emptyTitle="No research records yet"
         emptyHint="Every claim, task and experiment anyone opens in this project is listed here, closed work included."
@@ -191,23 +185,15 @@ export function KnowledgeView() {
           rows={inventory}
           keyOf={(item) => item.id}
           columns={[
-            { key: 'kind', label: 'Kind', render: (item) => item.kind },
-            {
-              key: 'name',
-              label: 'Record',
-              render: (item) => (
-                <div className="stack">
-                  <Link to={item.path}>{item.name}</Link>
-                  <ObjId id={item.id} />
-                </div>
-              ),
-            },
-            {
-              key: 'state',
-              label: 'State',
-              render: (item) => <StatusPill value={item.state} />,
-            },
-            { key: 'revision', label: 'Revision', render: (item) => item.revision },
+            col<Listed>('kind', 'Kind', (item) => item.kind),
+            col<Listed>('name', 'Record', (item) => (
+              <div className="stack">
+                <Link to={item.path}>{item.name}</Link>
+                <ObjId id={item.id} />
+              </div>
+            )),
+            col<Listed>('state', 'State', (item) => <StatusPill value={item.state} />),
+            col<Listed>('revision', 'Revision', (item) => item.revision),
           ]}
         />
       )}

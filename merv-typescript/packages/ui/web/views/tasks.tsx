@@ -1,8 +1,18 @@
 import { useState } from 'react';
-import { Link, Route, Routes, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { ListFilters } from '../list-filters';
-import { KV, LoadState, ObjId, PageHeader, StatusPill, Table, relativeTime } from '../components';
+import { ListPage } from '../list-filters';
+import {
+  Ago,
+  KV,
+  LoadState,
+  ObjId,
+  PageHeader,
+  StatusPill,
+  Table,
+  col,
+  recordRoutes,
+} from '../components';
 import {
   OPEN,
   ThreeStates,
@@ -21,17 +31,18 @@ import type {
   WorkflowWorkStart,
 } from '@merv/contracts/workflow-guidance';
 
+interface Confirmation {
+  checkNumber: number;
+  status: 'met' | 'not_met';
+  evidenceIds: string[];
+  notes: string;
+}
 interface Task {
   id: string;
   title: string;
   goal: string;
   checks: string[];
-  deliveryConfirmations: {
-    checkNumber: number;
-    status: 'met' | 'not_met';
-    evidenceIds: string[];
-    notes: string;
-  }[];
+  deliveryConfirmations: Confirmation[];
   producerId: string;
   briefId: string;
   deliveryIds: string[];
@@ -73,94 +84,58 @@ function TaskList() {
         )),
   );
   return (
-    <div className="page-stage stack">
-      {list.data && list.data.length > 0 && !list.error && (
-        <ListFilters
-          noun="tasks"
-          placeholder="Name, goal or person"
-          query={query}
-          onQueryChange={setQuery}
-          state={state}
-          onStateChange={setChosen}
-          states={states}
-          shown={visible.length}
-          total={list.data.length}
-        />
-      )}
-      <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
-        emptyTitle="No tasks yet"
-        emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
+    <ListPage
+      list={list}
+      noun="tasks"
+      placeholder="Name, goal or person"
+      query={query}
+      onQueryChange={setQuery}
+      state={state}
+      onStateChange={setChosen}
+      states={states}
+      visible={visible.length}
+      emptyTitle="No tasks yet"
+      emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
+    >
+      <Table
+        rows={[...visible].reverse()}
+        keyOf={(t) => t.id}
+        onRow={(t) => t.id}
+        columns={[
+          col<Task>('title', 'Task', (t) => <strong>{t.title}</strong>),
+          col<Task>('standing', 'Standing', (t) => {
+            const review = newestReview(reviews.data, t.id);
+            return (
+              <ThreeStates
+                execution={t.workflow.state}
+                review={
+                  reviewClause(review, nameOf(review?.reviewerId)) ?? {
+                    word: 'not reviewed',
+                    absent: true,
+                  }
+                }
+                outcome={
+                  t.failure
+                    ? { detail: firstSentence(t.failure.reason) }
+                    : { word: 'no outcome recorded', absent: true }
+                }
+              />
+            );
+          }),
+          col<Task>(
+            'producer',
+            'Producer',
+            (t) => nameOf(t.producerId) ?? <ObjId id={t.producerId} />,
+          ),
+          col<Task>('dependencies', 'Prerequisites', (t) =>
+            t.dependencies?.length
+              ? `${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} succeeded`
+              : 'None',
+          ),
+          col<Task>('when', 'Updated', (t) => <Ago at={t.workflow.updatedAt} />, '90px'),
+        ]}
       />
-      {list.data &&
-        list.data.length > 0 &&
-        !list.error &&
-        !list.loading &&
-        visible.length === 0 && (
-          <LoadState
-            loading={false}
-            empty
-            emptyTitle="No tasks match these filters"
-            emptyHint="Try another search or clear the filters."
-          />
-        )}
-      {visible.length > 0 && !list.error && (
-        <Table
-          rows={[...visible].reverse()}
-          keyOf={(t) => t.id}
-          onRow={(t) => t.id}
-          columns={[
-            { key: 'title', label: 'Task', render: (t) => <strong>{t.title}</strong> },
-            {
-              key: 'standing',
-              label: 'Standing',
-              render: (t) => {
-                const review = newestReview(reviews.data, t.id);
-                return (
-                  <ThreeStates
-                    execution={t.workflow.state}
-                    review={
-                      reviewClause(review, nameOf(review?.reviewerId)) ?? {
-                        word: 'not reviewed',
-                        absent: true,
-                      }
-                    }
-                    outcome={
-                      t.failure
-                        ? { detail: firstSentence(t.failure.reason) }
-                        : { word: 'no outcome recorded', absent: true }
-                    }
-                  />
-                );
-              },
-            },
-            {
-              key: 'producer',
-              label: 'Producer',
-              render: (t) => nameOf(t.producerId) ?? <ObjId id={t.producerId} />,
-            },
-            {
-              key: 'dependencies',
-              label: 'Prerequisites',
-              render: (t) =>
-                t.dependencies?.length
-                  ? `${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} succeeded`
-                  : 'None',
-            },
-            {
-              key: 'when',
-              label: 'Updated',
-              render: (t) => (
-                <span title={t.workflow.updatedAt}>{relativeTime(t.workflow.updatedAt)}</span>
-              ),
-              width: '90px',
-            },
-          ]}
-        />
-      )}
-    </div>
+    </ListPage>
   );
 }
 
@@ -174,11 +149,7 @@ function TaskDetail({ row }: ViewProps) {
   if (!task.data)
     return (
       <div className="page-stage">
-        <LoadState
-          loading={task.loading}
-          error={task.error}
-          back={{ to: row.path, label: row.label }}
-        />
+        <LoadState {...task} back={{ to: row.path, label: row.label }} />
       </div>
     );
   const t = task.data;
@@ -243,35 +214,28 @@ function TaskDetail({ row }: ViewProps) {
               rows={t.deliveryConfirmations}
               keyOf={(item) => String(item.checkNumber)}
               columns={[
-                {
-                  key: 'check',
-                  label: 'Check',
-                  render: (item) => `${item.checkNumber}. ${t.checks[item.checkNumber - 1]}`,
-                },
-                {
-                  key: 'claim',
-                  label: 'Producer claim',
-                  render: (item) => (item.status === 'met' ? 'Met' : 'Not met'),
-                },
-                {
-                  key: 'notes',
-                  label: 'Verification / remaining work',
-                  render: (item) => <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>,
-                },
-                {
-                  key: 'evidence',
-                  label: 'Evidence',
-                  render: (item) =>
-                    item.evidenceIds.length
-                      ? item.evidenceIds.map((id) => (
-                          <div key={id}>
-                            <Link to={`/artifacts/${id}`}>
-                              <ObjId id={id} />
-                            </Link>
-                          </div>
-                        ))
-                      : 'None supplied',
-                },
+                col<Confirmation>(
+                  'check',
+                  'Check',
+                  (item) => `${item.checkNumber}. ${t.checks[item.checkNumber - 1]}`,
+                ),
+                col<Confirmation>('claim', 'Producer claim', (item) =>
+                  item.status === 'met' ? 'Met' : 'Not met',
+                ),
+                col<Confirmation>('notes', 'Verification / remaining work', (item) => (
+                  <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>
+                )),
+                col<Confirmation>('evidence', 'Evidence', (item) =>
+                  item.evidenceIds.length
+                    ? item.evidenceIds.map((id) => (
+                        <div key={id}>
+                          <Link to={`/artifacts/${id}`}>
+                            <ObjId id={id} />
+                          </Link>
+                        </div>
+                      ))
+                    : 'None supplied',
+                ),
               ]}
             />
           </section>
@@ -357,9 +321,9 @@ function WorkStarts({
           rows={ordered}
           keyOf={(start) => String(start.revision)}
           columns={[
-            { key: 'revision', label: 'Revision', render: (start) => start.revision },
-            { key: 'state', label: 'Stage', render: (start) => <StatusPill value={start.state} /> },
-            { key: 'started', label: 'First began work', render: describe },
+            col<WorkflowWorkStart>('revision', 'Revision', (start) => start.revision),
+            col<WorkflowWorkStart>('state', 'Stage', (start) => <StatusPill value={start.state} />),
+            col<WorkflowWorkStart>('started', 'First began work', describe),
           ]}
         />
       )}
@@ -384,41 +348,28 @@ function WorkRelations({
         rows={items}
         keyOf={(item) => item.id}
         columns={[
-          {
-            key: 'name',
-            label: 'Work item',
-            render: (item) =>
-              item.workflow === 'task' ? (
-                <Link to={`${taskPath}/${item.id}`}>{item.name || item.id}</Link>
-              ) : (
-                <span>
-                  {item.name || item.id} <ObjId id={item.id} />
-                </span>
-              ),
-          },
-          { key: 'workflow', label: 'Type', render: (item) => item.workflow },
-          { key: 'state', label: 'State', render: (item) => <StatusPill value={item.state} /> },
-          {
-            key: 'settled',
-            label: 'Outcome',
-            render: (item) =>
-              item.settled
-                ? 'Succeeded'
-                : item.failed
-                  ? 'Ended without success'
-                  : 'Not yet satisfied',
-          },
+          col<WorkflowDependency>('name', 'Work item', (item) =>
+            item.workflow === 'task' ? (
+              <Link to={`${taskPath}/${item.id}`}>{item.name || item.id}</Link>
+            ) : (
+              <span>
+                {item.name || item.id} <ObjId id={item.id} />
+              </span>
+            ),
+          ),
+          col<WorkflowDependency>('workflow', 'Type', (item) => item.workflow),
+          col<WorkflowDependency>('state', 'State', (item) => <StatusPill value={item.state} />),
+          col<WorkflowDependency>('settled', 'Outcome', (item) =>
+            item.settled
+              ? 'Succeeded'
+              : item.failed
+                ? 'Ended without success'
+                : 'Not yet satisfied',
+          ),
         ]}
       />
     </section>
   );
 }
 
-export function TasksView(props: ViewProps) {
-  return (
-    <Routes>
-      <Route index element={<TaskList />} />
-      <Route path=":id" element={<TaskDetail {...props} />} />
-    </Routes>
-  );
-}
+export const TasksView = recordRoutes(TaskList, TaskDetail);

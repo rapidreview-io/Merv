@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useSession, type Actor } from '../session';
-import { LoadState, ObjId, StatusPill, Table } from '../components';
+import { LoadState, ObjId, StatusPill, Table, col } from '../components';
 
 /** Actor names for ids; operators get names, everyone else gets short ids. */
 export function useActorNames() {
@@ -159,78 +159,68 @@ export function PeopleView() {
               rows={members}
               keyOf={(member) => member.id}
               columns={[
-                {
-                  key: 'subject',
-                  label: 'Account ID',
-                  render: (member) => (
-                    <>
-                      <code>{member.subject}</code>
-                      {member.subject === subject && member.issuer === issuer ? ' (you)' : ''}
-                    </>
+                col<Membership>('subject', 'Account ID', (member) => (
+                  <>
+                    <code>{member.subject}</code>
+                    {member.subject === subject && member.issuer === issuer ? ' (you)' : ''}
+                  </>
+                )),
+                col<Membership>('role', 'Project role', (member) =>
+                  canManage && member.issuer === issuer ? (
+                    <select
+                      className="input"
+                      aria-label={`Role for ${member.subject}`}
+                      value={draftRoles[member.id] ?? member.role}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraftRoles((previous) => ({
+                          ...previous,
+                          [member.id]: event.target.value as Role,
+                        }))
+                      }
+                    >
+                      {roles.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <StatusPill value={member.role} />
                   ),
-                },
-                {
-                  key: 'role',
-                  label: 'Project role',
-                  render: (member) =>
-                    canManage && member.issuer === issuer ? (
-                      <select
-                        className="input"
-                        aria-label={`Role for ${member.subject}`}
-                        value={draftRoles[member.id] ?? member.role}
-                        disabled={busy}
-                        onChange={(event) =>
-                          setDraftRoles((previous) => ({
-                            ...previous,
-                            [member.id]: event.target.value as Role,
-                          }))
-                        }
-                      >
-                        {roles.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <StatusPill value={member.role} />
-                    ),
-                },
+                ),
                 ...(canManage
                   ? [
-                      {
-                        key: 'actions',
-                        label: 'Actions',
-                        render: (member: Membership) =>
-                          member.issuer !== issuer ? (
-                            <span className="faint">Different sign-in provider</span>
-                          ) : (
-                            <div className="signin-actions">
-                              <button
-                                className="btn btn--sm"
-                                disabled={
-                                  busy ||
-                                  !draftRoles[member.id] ||
-                                  draftRoles[member.id] === member.role
-                                }
-                                onClick={() =>
-                                  void mutate('PATCH', member.subject, {
-                                    role: draftRoles[member.id],
-                                  })
-                                }
-                              >
-                                Save role
-                              </button>
-                              <button
-                                className="btn btn--sm"
-                                disabled={busy}
-                                onClick={() => void mutate('DELETE', member.subject)}
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          ),
-                      },
+                      col<Membership>('actions', 'Actions', (member) =>
+                        member.issuer !== issuer ? (
+                          <span className="faint">Different sign-in provider</span>
+                        ) : (
+                          <div className="signin-actions">
+                            <button
+                              className="btn btn--sm"
+                              disabled={
+                                busy ||
+                                !draftRoles[member.id] ||
+                                draftRoles[member.id] === member.role
+                              }
+                              onClick={() =>
+                                void mutate('PATCH', member.subject, {
+                                  role: draftRoles[member.id],
+                                })
+                              }
+                            >
+                              Save role
+                            </button>
+                            <button
+                              className="btn btn--sm"
+                              disabled={busy}
+                              onClick={() => void mutate('DELETE', member.subject)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ),
+                      ),
                     ]
                   : []),
               ]}
@@ -287,8 +277,7 @@ export function PeopleView() {
         <section className="stack">
           <h2 className="section-title">Project actors</h2>
           <LoadState
-            loading={actors.loading}
-            error={actors.error}
+            {...actors}
             empty={actors.data?.length === 0}
             emptyTitle="No actors"
             emptyHint="The identities that own work and reviews appear here as agents are issued credentials."
@@ -298,23 +287,10 @@ export function PeopleView() {
               rows={actors.data}
               keyOf={(actor) => actor.id}
               columns={[
-                { key: 'name', label: 'Name', render: (actor) => <strong>{actor.name}</strong> },
-                {
-                  key: 'role',
-                  label: 'Role',
-                  render: (actor) => <StatusPill value={actor.role} />,
-                },
-                {
-                  key: 'active',
-                  label: 'Status',
-                  render: (actor) => (actor.active ? 'active' : 'revoked'),
-                },
-                {
-                  key: 'id',
-                  label: 'Id',
-                  render: (actor) => <ObjId id={actor.id} />,
-                  width: '160px',
-                },
+                col<Actor>('name', 'Name', (actor) => <strong>{actor.name}</strong>),
+                col<Actor>('role', 'Role', (actor) => <StatusPill value={actor.role} />),
+                col<Actor>('active', 'Status', (actor) => (actor.active ? 'active' : 'revoked')),
+                col<Actor>('id', 'Id', (actor) => <ObjId id={actor.id} />, '160px'),
               ]}
             />
           )}

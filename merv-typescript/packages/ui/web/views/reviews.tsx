@@ -1,9 +1,10 @@
-import { Link, Route, Routes, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
-import { ListFilters } from '../list-filters';
+import { ListPage } from '../list-filters';
 import {
+  Ago,
   Evidence,
   KindLabel,
   LoadState,
@@ -11,8 +12,9 @@ import {
   PageHeader,
   StatusPill,
   Table,
+  col,
   cx,
-  relativeTime,
+  recordRoutes,
   shortId,
   useArtifacts,
   words,
@@ -245,104 +247,66 @@ function ReviewList() {
         ].some((value) => value?.toLowerCase().includes(search))),
   );
   return (
-    <div className="page-stage stack">
-      {list.data && list.data.length > 0 && !list.error && (
-        <ListFilters
-          noun="reviews"
-          placeholder="Summary, work item or person"
-          query={query}
-          onQueryChange={setQuery}
-          state={state}
-          onStateChange={setChosen}
-          states={states}
-          stateLabel="Status"
-          shown={visible.length}
-          total={list.data.length}
-        />
-      )}
-      <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
-        emptyTitle="No reviews"
-        emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
+    <ListPage
+      list={list}
+      noun="reviews"
+      placeholder="Summary, work item or person"
+      query={query}
+      onQueryChange={setQuery}
+      state={state}
+      onStateChange={setChosen}
+      states={states}
+      stateLabel="Status"
+      visible={visible.length}
+      emptyTitle="No reviews"
+      emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
+    >
+      <Table
+        rows={[...visible].reverse()}
+        keyOf={(r) => r.id}
+        onRow={(r) => r.id}
+        columns={[
+          col<Review>('subject', 'Work item', (r) => {
+            const subject = subjectOf(r.subjectId);
+            const summary = r.synopsis || r.criteria[0] || 'Independent review';
+            return (
+              <div className="row-name">
+                <KindLabel kind={subject?.kind} />
+                <strong title={summary}>
+                  {subject?.name ?? <ObjId id={r.subjectId} strong />}
+                </strong>
+                <div className="faint" title={summary}>
+                  {summary.length > 110 ? `${summary.slice(0, 107)}…` : summary}
+                </div>
+              </div>
+            );
+          }),
+          col<Review>('standing', 'Standing', (r) => {
+            const subject = subjectOf(r.subjectId);
+            return (
+              <ThreeStates
+                execution={subject?.state ?? null}
+                review={reviewClause(r)}
+                outcome={
+                  firstSentence(subject?.outcome)
+                    ? { detail: firstSentence(subject?.outcome) }
+                    : { word: 'no outcome recorded', absent: true }
+                }
+              />
+            );
+          }),
+          // Who holds it; that nobody does is the standing clause's to say.
+          col<Review>('reviewer', 'Reviewer', (r) =>
+            r.reviewerId ? (
+              (nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId} />)
+            ) : (
+              <span className="faint">—</span>
+            ),
+          ),
+          col<Review>('when', 'When', (r) => <Ago at={r.createdAt} />, '90px'),
+        ]}
       />
-      {list.data &&
-        list.data.length > 0 &&
-        !list.error &&
-        !list.loading &&
-        visible.length === 0 && (
-          <LoadState
-            loading={false}
-            empty
-            emptyTitle="No reviews match these filters"
-            emptyHint="Try another search or clear the filters."
-          />
-        )}
-      {visible.length > 0 && !list.error && (
-        <Table
-          rows={[...visible].reverse()}
-          keyOf={(r) => r.id}
-          onRow={(r) => r.id}
-          columns={[
-            {
-              key: 'subject',
-              label: 'Work item',
-              render: (r) => {
-                const subject = subjectOf(r.subjectId);
-                const summary = r.synopsis || r.criteria[0] || 'Independent review';
-                return (
-                  <div className="row-name">
-                    <KindLabel kind={subject?.kind} />
-                    <strong title={summary}>
-                      {subject?.name ?? <ObjId id={r.subjectId} strong />}
-                    </strong>
-                    <div className="faint" title={summary}>
-                      {summary.length > 110 ? `${summary.slice(0, 107)}…` : summary}
-                    </div>
-                  </div>
-                );
-              },
-            },
-            {
-              key: 'standing',
-              label: 'Standing',
-              render: (r) => {
-                const subject = subjectOf(r.subjectId);
-                return (
-                  <ThreeStates
-                    execution={subject?.state ?? null}
-                    review={reviewClause(r)}
-                    outcome={
-                      firstSentence(subject?.outcome)
-                        ? { detail: firstSentence(subject?.outcome) }
-                        : { word: 'no outcome recorded', absent: true }
-                    }
-                  />
-                );
-              },
-            },
-            {
-              // Who holds it; that nobody does is the standing clause's to say.
-              key: 'reviewer',
-              label: 'Reviewer',
-              render: (r) =>
-                r.reviewerId ? (
-                  (nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId} />)
-                ) : (
-                  <span className="faint">—</span>
-                ),
-            },
-            {
-              key: 'when',
-              label: 'When',
-              render: (r) => <span title={r.createdAt}>{relativeTime(r.createdAt)}</span>,
-              width: '90px',
-            },
-          ]}
-        />
-      )}
-    </div>
+    </ListPage>
   );
 }
 
@@ -385,11 +349,7 @@ function ReviewDetail({ row }: ViewProps) {
   if (!review.data)
     return (
       <div className="page-stage">
-        <LoadState
-          loading={review.loading}
-          error={review.error}
-          back={{ to: row.path, label: row.label }}
-        />
+        <LoadState {...review} back={{ to: row.path, label: row.label }} />
       </div>
     );
   const r = review.data;
@@ -438,7 +398,7 @@ function ReviewDetail({ row }: ViewProps) {
         actions={<StatusPill value={r.status} />}
         summary={
           <>
-            Requested <span title={r.createdAt}>{relativeTime(r.createdAt)}</span> ·{' '}
+            Requested <Ago at={r.createdAt} /> ·{' '}
             {r.reviewerId ? (
               <>claimed by {nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId} />}</>
             ) : (
@@ -803,11 +763,4 @@ function Unmet({ text, at }: { text: string; at?: number }) {
   );
 }
 
-export function ReviewsView(props: ViewProps) {
-  return (
-    <Routes>
-      <Route index element={<ReviewList />} />
-      <Route path=":id" element={<ReviewDetail {...props} />} />
-    </Routes>
-  );
-}
+export const ReviewsView = recordRoutes(ReviewList, ReviewDetail);

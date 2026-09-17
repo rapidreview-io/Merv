@@ -43,6 +43,13 @@ export const useSession = (): Session => {
   if (!session) throw new Error('useSession outside SessionProvider');
   return session;
 };
+/** The identity a page's own state belongs to: when it changes, the page starts again. */
+export const useScopeKey = () => {
+  const epoch = useScopeVersion();
+  const { actor, project } = useSession();
+  return `${epoch}:${project.id}:${actor.id}:${actor.role}`;
+};
+
 function extractToken(text: string): string {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{')) return trimmed;

@@ -2,10 +2,19 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
-import { useScopeVersion, useTool } from '../api';
+import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { KindLabel, LoadState, ObjId, StatusPill, kindStyle } from '../components';
-import { useSession } from '../session';
+import {
+  Area,
+  Failure,
+  Field,
+  KindLabel,
+  LoadState,
+  ObjId,
+  StatusPill,
+  kindStyle,
+} from '../components';
+import { useScopeKey, useSession } from '../session';
 import { ResearchCommand } from './paper';
 
 const ids = (value: string) => value.split(/\s+/).filter(Boolean);
@@ -41,25 +50,15 @@ function CreateResearch({ onSaved }: { onSaved: () => void }) {
     >
       <h2>Start a research cycle</h2>
       <fieldset disabled={command.locked}>
-        <label>
-          Name
-          <input
-            required
-            maxLength={200}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label>
-          Research prerequisites
-          <textarea
-            className="textarea mono"
-            rows={2}
-            value={dependencies}
-            onChange={(event) => setDependencies(event.target.value)}
-            placeholder="Workflow IDs, separated by spaces"
-          />
-        </label>
+        <Field label="Name" required maxLength={200} value={name} onChange={setName} />
+        <Area
+          label="Research prerequisites"
+          className="textarea mono"
+          rows={2}
+          value={dependencies}
+          onChange={setDependencies}
+          placeholder="Workflow IDs, separated by spaces"
+        />
         <label>
           Code changes
           <select
@@ -74,15 +73,13 @@ function CreateResearch({ onSaved }: { onSaved: () => void }) {
           </select>
         </label>
         {workspace === 'git' && (
-          <label>
-            Additional consolidation prerequisites
-            <textarea
-              className="textarea mono"
-              rows={2}
-              value={consolidationDependencies}
-              onChange={(event) => setConsolidationDependencies(event.target.value)}
-            />
-          </label>
+          <Area
+            label="Additional consolidation prerequisites"
+            className="textarea mono"
+            rows={2}
+            value={consolidationDependencies}
+            onChange={setConsolidationDependencies}
+          />
         )}
       </fieldset>
       <p className="faint">
@@ -90,11 +87,7 @@ function CreateResearch({ onSaved }: { onSaved: () => void }) {
         continues through Git consolidation when code changes are selected. Paper edits are part of
         the scientific reviews.
       </p>
-      {command.error && (
-        <p className="error-message" role="alert">
-          {command.error}
-        </p>
-      )}
+      <Failure message={command.error} />
       <div>
         <button className="btn btn--primary" disabled={command.busy || !name.trim()}>
           {command.retry ? 'Retry same request' : 'Create cycle'}
@@ -228,8 +221,4 @@ function ResearchPage() {
   );
 }
 
-export function ResearchView() {
-  const epoch = useScopeVersion();
-  const { actor, project } = useSession();
-  return <ResearchPage key={`${epoch}:${project.id}:${actor.id}:${actor.role}`} />;
-}
+export const ResearchView = () => <ResearchPage key={useScopeKey()} />;

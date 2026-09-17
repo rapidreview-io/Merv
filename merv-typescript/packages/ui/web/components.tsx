@@ -1,5 +1,12 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import {
+  useState,
+  type ComponentType,
+  type CSSProperties,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from 'react';
+import { Link, Route, Routes } from 'react-router-dom';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError } from './api';
 import { ArtifactBody, bytes, type Artifact } from './views/artifacts';
@@ -58,6 +65,13 @@ export const shortId = (id: string) => {
 };
 export const words = (value: string) => value.replaceAll('_', ' ');
 
+/** A relative time in a row, with the exact stamp kept in its title and nowhere else. */
+export const Ago = ({ at, className }: { at: string; className?: string }) => (
+  <span className={className} title={at}>
+    {relativeTime(at)}
+  </span>
+);
+
 export function relativeTime(iso: string): string {
   const delta = Date.now() - new Date(iso).getTime();
   const minutes = Math.round(delta / 60_000);
@@ -74,108 +88,34 @@ export function relativeTime(iso: string): string {
  * classes in the stylesheet; any status this table does not know stays neutral.
  */
 type Tone = 'ok' | 'warn' | 'bad' | 'dim';
-const TONES: [Tone, Set<string>][] = [
+const TONES: [Tone, string][] = [
   [
     'ok',
-    new Set([
-      'ready',
-      'done',
-      'complete',
-      'completed',
-      'approved',
-      'passed',
-      'pass',
-      'success',
-      'succeeded',
-      'active',
-      'live',
-      'online',
-      'running',
-      'healthy',
-      'verified',
-      'published',
-      'accepted',
-      'merged',
-      'enabled',
-      'connected',
-      'open',
-      'supported',
-    ]),
+    'ready done complete completed approved passed pass success succeeded active live online ' +
+      'running healthy verified published accepted merged enabled connected open supported',
   ],
   [
     'warn',
-    new Set([
-      'degraded',
-      'pending',
-      'waiting',
-      'requested',
-      'started',
-      'in_progress',
-      'in-progress',
-      'review',
-      'reviewing',
-      'claimed',
-      'assigned',
-      'queued',
-      'stale',
-      'retrying',
-      'partial',
-      'needs_changes',
-      'needs_review',
-      'deprecated',
-      'attempting',
-      'planning',
-    ]),
+    'degraded pending waiting requested started in_progress in-progress review reviewing ' +
+      'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
+      'attempting planning',
   ],
   [
     'bad',
-    new Set([
-      'unavailable',
-      'failed',
-      'fail',
-      'error',
-      'rejected',
-      'blocked',
-      'denied',
-      'dead',
-      'offline',
-      'disconnected',
-      'timed_out',
-      'timeout',
-      'invalid',
-      'broken',
-      'abandoned',
-      'refuted',
-      'contradicted',
-    ]),
+    'unavailable failed fail error rejected blocked denied dead offline disconnected ' +
+      'timed_out timeout invalid broken abandoned refuted contradicted',
   ],
   [
     'dim',
-    new Set([
-      'archived',
-      'inactive',
-      'disabled',
-      'skipped',
-      'ignored',
-      'observer',
-      'reader',
-      'retired',
-      'unassigned',
-      'paused',
-      'draft',
-      'none',
-      'unpublished',
-      'unverified',
-      'cancelled',
-      'closed',
-      'expired',
-      'not-published',
-      'not-applicable',
+    'archived inactive disabled skipped ignored observer reader retired unassigned paused ' +
+      'draft none unpublished unverified cancelled closed expired not-published not-applicable ' +
       'metadata-only',
-    ]),
   ],
 ];
-const toneOf = (value: string) => TONES.find(([, set]) => set.has(value))?.[0] ?? 'neutral';
+const TONE_OF = new Map(
+  TONES.flatMap(([tone, words]) => words.split(' ').map((word) => [word, tone] as const)),
+);
+const toneOf = (value: string) => TONE_OF.get(value) ?? 'neutral';
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
 export function StatusPill({ value }: { value: string | null | undefined }) {
@@ -278,6 +218,43 @@ export function LoadState({
   return null;
 }
 
+/**
+ * One labelled control, written the same way on every form: the label above it and
+ * the limits the tool itself enforces passed straight through to the element.
+ */
+type Asked = { label: ReactNode; value: string; onChange(value: string): void };
+export const Field = ({
+  label,
+  value,
+  onChange,
+  ...rest
+}: Asked & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (
+  <label>
+    {label}
+    <input {...rest} value={value} onChange={(event) => onChange(event.target.value)} />
+  </label>
+);
+/** The same, where the answer runs longer than a line. */
+export const Area = ({
+  label,
+  value,
+  onChange,
+  ...rest
+}: Asked & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
+  <label>
+    {label}
+    <textarea {...rest} value={value} onChange={(event) => onChange(event.target.value)} />
+  </label>
+);
+
+/** A refused command says so in one line, in the same place on every form. */
+export const Failure = ({ message }: { message?: string }) =>
+  message ? (
+    <p className="error-message" role="alert">
+      {message}
+    </p>
+  ) : null;
+
 export function KV({ rows }: { rows: [string, ReactNode][] }) {
   return (
     <dl className="kv">
@@ -290,6 +267,14 @@ export function KV({ rows }: { rows: [string, ReactNode][] }) {
     </dl>
   );
 }
+
+/** One column declared once: its key, its heading, and what a row says in it. */
+export const col = <T,>(
+  key: string,
+  label: string,
+  render: (row: T) => ReactNode,
+  width?: string,
+) => ({ key, label, render, width });
 
 export function Table<T>({
   columns,
@@ -338,6 +323,22 @@ export function Table<T>({
       </table>
     </div>
   );
+}
+
+/**
+ * A row's two routes, declared once: the list it opens on, and the record behind a
+ * line. A declaration, not a const: views call it while this module is still being
+ * initialised through the artifact reader it imports.
+ */
+export function recordRoutes<P extends object>(Index: ComponentType<P>, Detail: ComponentType<P>) {
+  return function Routed(props: P) {
+    return (
+      <Routes>
+        <Route index element={<Index {...props} />} />
+        <Route path=":id" element={<Detail {...props} />} />
+      </Routes>
+    );
+  };
 }
 
 /** One list serves every pinned title, so a record does not fetch each file to name it. */

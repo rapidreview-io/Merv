@@ -40,7 +40,8 @@ interface Tile {
   value: ReactNode;
   to: string;
 }
-const LIVE = 10_000;
+/** The cadence of everything live on the map; useTool stops it while the tab is hidden. */
+const LIVE = { every: 10_000 };
 const PER_COLUMN = 4;
 const CARD_H = 90;
 const ROW_H = 108;
@@ -292,17 +293,6 @@ function Plane({
   );
 }
 
-/** Polling follows the fetch layer's own cadence helper and stops while the tab is hidden. */
-function useVisible() {
-  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
-  useEffect(() => {
-    const change = () => setVisible(document.visibilityState !== 'hidden');
-    document.addEventListener('visibilitychange', change);
-    return () => document.removeEventListener('visibilitychange', change);
-  }, []);
-  return visible;
-}
-
 /** The GitHub connection is read where views/github.tsx reads it, once per account scope. */
 function useGitHub(enabled: boolean) {
   const epoch = useScopeVersion();
@@ -326,15 +316,13 @@ function Now({ standing }: { standing: Standing }) {
   return (
     <div className="map-now">
       <h2 className="plane-title">Now</h2>
-      {(
-        [
-          ['need you', yours.length],
-          ['with an agent', agent.length],
-          ['waiting on a dependency', nobody.length],
-        ] as [string, number][]
-      ).map(([label, count]) => (
+      {Object.entries({
+        'need you': yours,
+        'with an agent': agent,
+        'waiting on a dependency': nobody,
+      }).map(([label, lines]) => (
         <Link className="map-now-count" key={label} to="/now">
-          <b>{count}</b> {label}
+          <b>{lines.length}</b> {label}
         </Link>
       ))}
       <Link className="map-now-all" to="/now">
@@ -355,7 +343,6 @@ export function MapView({ shell }: { shell: ShellData }) {
     return row?.readable ? row : undefined;
   };
   const rowId = (row?: Row) => ({ rowId: row?.id ?? '' });
-  const every = useVisible() ? LIVE : undefined;
   const experimentsRow = rowOf('experiments');
   const tasksRow = rowOf('tasks');
   const cyclesRow = rowOf('research');
@@ -367,25 +354,19 @@ export function MapView({ shell }: { shell: ShellData }) {
   const feedRow = rowOf('feed');
   const archiveRow = read('legacy-history');
   const codeRow = rowOf('code');
-  const experiments = useTool<MapExperiment[]>(
-    experimentsRow ? 'experiment.list' : null,
-    {},
-    { every },
-  );
-  const tasks = useTool<MapTask[]>(tasksRow ? 'task.list' : null, {}, { every });
-  const cycles = useTool<MapCycle[]>(cyclesRow ? 'research.list' : null, {}, { every });
-  const claims = useTool<MapClaim[]>(rowOf('claims') ? 'claim.list' : null, {}, { every });
-  const reviews = useTool<MapReview[]>(rowOf('reviews') ? 'review.list' : null, {}, { every });
+  const experiments = useTool<MapExperiment[]>(experimentsRow ? 'experiment.list' : null, {}, LIVE);
+  const tasks = useTool<MapTask[]>(tasksRow ? 'task.list' : null, {}, LIVE);
+  const cycles = useTool<MapCycle[]>(cyclesRow ? 'research.list' : null, {}, LIVE);
+  const claims = useTool<MapClaim[]>(rowOf('claims') ? 'claim.list' : null, {}, LIVE);
+  const reviews = useTool<MapReview[]>(rowOf('reviews') ? 'review.list' : null, {}, LIVE);
   const reflections = useTool<MapReflection[]>(
     reflectionsRow ? 'ui.read' : null,
     rowId(reflectionsRow),
-    { every },
+    LIVE,
   );
   const paper = useTool<MapPaper>(paperRow ? 'ui.read' : null, rowId(paperRow));
-  const live = useTool<Live>(sessionsRow ? 'ui.read' : null, rowId(sessionsRow), { every });
-  const mounts = useTool<{ state: string }[]>(mountsRow ? 'ui.read' : null, rowId(mountsRow), {
-    every,
-  });
+  const live = useTool<Live>(sessionsRow ? 'ui.read' : null, rowId(sessionsRow), LIVE);
+  const mounts = useTool<{ state: string }[]>(mountsRow ? 'ui.read' : null, rowId(mountsRow), LIVE);
   const files = useTool<unknown[]>(filesRow ? 'artifact.list' : null);
   const posts = useTool<unknown[]>(feedRow ? 'feed.list' : null);
   const earlier = useTool<{ counts: Record<string, number> }>(archiveRow ? 'ui.read' : null, {

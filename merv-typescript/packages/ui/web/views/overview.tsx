@@ -6,6 +6,16 @@ import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
 import { KindLabel, ObjId, StatusPill, kindStyle, relativeTime, shortId } from '../components';
 import { useActorNames } from './people';
+// The record shapes the home pages read are declared once, beside the graph they feed.
+import {
+  newest,
+  type Flow,
+  type MapClaim,
+  type MapCycle,
+  type MapExperiment,
+  type MapReview,
+  type MapTask,
+} from './map-data';
 
 /**
  * The morning page: what needs me, what is running, what has been recorded. One
@@ -15,31 +25,6 @@ import { useActorNames } from './people';
  * value is never rendered as zero and an error is never rendered as empty.
  */
 
-type Flow = { state: string; updatedAt: string };
-type TaskLite = {
-  id: string;
-  title: string;
-  producerId: string;
-  guidance: WorkflowDecision;
-  workflow: Flow;
-};
-/** A cycle, and — with its attempt — an experiment: what an open line needs. */
-type CycleLite = { id: string; name: string; ownerId: string; workflow: Flow };
-type ExperimentLite = CycleLite & { attempt: { index: number } };
-type ReviewLite = {
-  id: string;
-  subjectId: string;
-  status: string;
-  reviewerId: string | null;
-  createdAt: string;
-};
-type ClaimLite = {
-  id: string;
-  statement: string;
-  status: string;
-  confidence: string;
-  updatedAt: string;
-};
 type PostLite = { id: string; authorId: string; body: string; createdAt: string };
 type AgentLite = {
   id: string;
@@ -52,9 +37,9 @@ type SessionsLite = { agents?: AgentLite[]; runners: { live: boolean }[]; queueT
 /** The three lists the work blocks share, read once for the whole page. */
 type List<T> = { row?: Row; load: Loaded<T[]> };
 export type Work = {
-  experiments: List<ExperimentLite>;
-  tasks: List<TaskLite>;
-  cycles: List<CycleLite>;
+  experiments: List<MapExperiment>;
+  tasks: List<MapTask>;
+  cycles: List<MapCycle>;
 };
 /** An open record, and once its guidance is in, the sentences it stands on. */
 interface Line {
@@ -73,7 +58,7 @@ type Whose = 'yours' | 'agent' | 'nobody' | 'unknown' | 'moving';
 type Lines = Record<Whose, Line[]>;
 export interface Standing {
   lines: Lines;
-  reviews?: Loaded<ReviewLite[]>;
+  reviews?: Loaded<MapReview[]>;
   loads: Loaded<unknown>[];
 }
 type Named = (id: string | null | undefined) => string | undefined;
@@ -89,8 +74,6 @@ const KIND: Record<string, string> = {
 };
 
 const rowOf = (rows: Row[], kind: string) => rows.find((row) => row.view.kind === kind);
-const newest = <T,>(items: T[], at: (item: T) => string) =>
-  [...items].sort((a, b) => at(b).localeCompare(at(a)));
 const when = (iso: string) => (
   <time dateTime={iso} title={iso}>
     {relativeTime(iso)}
@@ -226,7 +209,7 @@ function useDecisions(ids: string[]): Loaded<WorkflowDecision>[] {
 /** Sort every open record, and every open review, into whose move it is. */
 export function useStanding(rows: Row[], work: Work, me: string, named: Named): Standing {
   const reviewsRow = rowOf(rows, 'reviews');
-  const reviews = useTool<ReviewLite[]>(reviewsRow ? 'review.list' : null);
+  const reviews = useTool<MapReview[]>(reviewsRow ? 'review.list' : null);
   const { row: experimentsRow, load: experiments } = work.experiments;
   const { row: tasksRow, load: tasks } = work.tasks;
   const { row: cyclesRow, load: cycles } = work.cycles;
@@ -403,7 +386,7 @@ function Recorded({ rows, work, named }: { rows: Row[]; work: Work; named: Named
   const feedRow = rowOf(rows, 'feed');
   const archiveRow = rowOf(rows, 'legacy-history');
   const { row: experimentsRow, load: experiments } = work.experiments;
-  const claims = useTool<ClaimLite[]>(claimsRow ? 'claim.list' : null);
+  const claims = useTool<MapClaim[]>(claimsRow ? 'claim.list' : null);
   const posts = useTool<PostLite[]>(feedRow ? 'feed.list' : null);
   const latestClaims = newest(claims.data ?? [], (claim) => claim.updatedAt).slice(0, 3);
   const latestPosts = newest(posts.data ?? [], (post) => post.createdAt).slice(0, 3);
@@ -490,9 +473,9 @@ export function OverviewView({ shell }: { shell: ShellData }) {
   const cyclesRow = rowOf(rows, 'research');
   const settings = rows.find((row) => row.group === 'settings');
   const read = useTool<Project>('project.get', {}, { every: 10000 });
-  const experiments = useTool<ExperimentLite[]>(experimentsRow ? 'experiment.list' : null);
-  const tasks = useTool<TaskLite[]>(tasksRow ? 'task.list' : null);
-  const cycles = useTool<CycleLite[]>(cyclesRow ? 'research.list' : null);
+  const experiments = useTool<MapExperiment[]>(experimentsRow ? 'experiment.list' : null);
+  const tasks = useTool<MapTask[]>(tasksRow ? 'task.list' : null);
+  const cycles = useTool<MapCycle[]>(cyclesRow ? 'research.list' : null);
   const named = useActorNames();
   const project = read.data ?? session.project;
   const intro = project.summary?.trim().split(/\n\s*\n/)[0];

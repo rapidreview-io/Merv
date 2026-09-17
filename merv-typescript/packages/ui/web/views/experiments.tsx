@@ -1,10 +1,11 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Link, Route, Routes, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { ListFilters } from '../list-filters';
+import { ListPage } from '../list-filters';
 import {
+  Ago,
   Evidence,
   GateBox,
   KV,
@@ -13,8 +14,10 @@ import {
   PageHeader,
   StatusPill,
   Table,
+  col,
   cx,
   kindStyle,
+  recordRoutes,
   relativeTime,
   shortId,
   useArtifacts,
@@ -300,9 +303,7 @@ function ProcessTrack({
             .map((step) => (
               <p className="lane-step" key={step.key}>
                 <span className="lane-rev tabular">r{step.revision}</span> {step.line}{' '}
-                <span className="muted" title={step.when}>
-                  {relativeTime(step.when)}
-                </span>
+                <Ago at={step.when} className="muted" />
               </p>
             ))}
         </div>
@@ -455,68 +456,32 @@ function ExperimentList() {
         )),
   );
   return (
-    <div className="page-stage stack">
-      {list.data && list.data.length > 0 && !list.error && (
-        <ListFilters
-          noun="experiments"
-          placeholder="Name, question or person"
-          query={query}
-          onQueryChange={setQuery}
-          state={state}
-          onStateChange={setState}
-          states={states}
-          shown={visible.length}
-          total={list.data.length}
-        />
-      )}
-      <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
-        emptyTitle="No experiments yet"
-        emptyHint="Experiments appear here once a producer opens one to test a claim."
+    <ListPage
+      list={list}
+      noun="experiments"
+      placeholder="Name, question or person"
+      query={query}
+      onQueryChange={setQuery}
+      state={state}
+      onStateChange={setState}
+      states={states}
+      visible={visible.length}
+      emptyTitle="No experiments yet"
+      emptyHint="Experiments appear here once a producer opens one to test a claim."
+    >
+      <Table
+        rows={[...visible].reverse()}
+        keyOf={(e) => e.id}
+        onRow={(e) => e.id}
+        columns={[
+          col<Experiment>('name', 'Experiment', (e) => <strong>{e.name}</strong>),
+          col<Experiment>('state', 'State', (e) => <StatusPill value={e.workflow.state} />),
+          col<Experiment>('attempt', 'Attempt', (e) => String(e.attempt.index)),
+          col<Experiment>('owner', 'Owner', (e) => nameOf(e.ownerId) ?? <ObjId id={e.ownerId} />),
+          col<Experiment>('updated', 'Updated', (e) => <Ago at={e.workflow.updatedAt} />),
+        ]}
       />
-      {list.data &&
-        list.data.length > 0 &&
-        !list.error &&
-        !list.loading &&
-        visible.length === 0 && (
-          <LoadState
-            loading={false}
-            empty
-            emptyTitle="No experiments match these filters"
-            emptyHint="Try another search or clear the filters."
-          />
-        )}
-      {visible.length > 0 && !list.error && (
-        <Table
-          rows={[...visible].reverse()}
-          keyOf={(e) => e.id}
-          onRow={(e) => e.id}
-          columns={[
-            { key: 'name', label: 'Experiment', render: (e) => <strong>{e.name}</strong> },
-            {
-              key: 'state',
-              label: 'State',
-              render: (e) => <StatusPill value={e.workflow.state} />,
-            },
-            { key: 'attempt', label: 'Attempt', render: (e) => String(e.attempt.index) },
-            {
-              key: 'owner',
-              label: 'Owner',
-              render: (e) => nameOf(e.ownerId) ?? <ObjId id={e.ownerId} />,
-            },
-            {
-              key: 'updated',
-              label: 'Updated',
-              render: (e) => (
-                <span title={e.workflow.updatedAt}>{relativeTime(e.workflow.updatedAt)}</span>
-              ),
-            },
-          ]}
-        />
-      )}
-    </div>
+    </ListPage>
   );
 }
 
@@ -569,11 +534,4 @@ function ExperimentDetail({ row }: ViewProps) {
   );
 }
 
-export function ExperimentsView(props: ViewProps) {
-  return (
-    <Routes>
-      <Route index element={<ExperimentList />} />
-      <Route path=":id" element={<ExperimentDetail {...props} />} />
-    </Routes>
-  );
-}
+export const ExperimentsView = recordRoutes(ExperimentList, ExperimentDetail);

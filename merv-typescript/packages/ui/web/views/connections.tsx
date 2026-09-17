@@ -1,5 +1,5 @@
 import { useTool } from '../api';
-import { LoadState, StatusPill, Table } from '../components';
+import { LoadState, StatusPill, Table, col } from '../components';
 import type { ViewProps } from './index';
 
 interface Mount {
@@ -15,8 +15,7 @@ export function ConnectionsView({ row }: ViewProps) {
   return (
     <div className="page-stage">
       <LoadState
-        loading={mounts.loading}
-        error={mounts.error}
+        {...mounts}
         empty={mounts.data?.length === 0}
         emptyTitle="No mounts configured"
         emptyHint="External services an operator mounts into this server appear here with their connection health."
@@ -26,29 +25,22 @@ export function ConnectionsView({ row }: ViewProps) {
           rows={mounts.data}
           keyOf={(m) => m.id}
           columns={[
-            { key: 'id', label: 'Mount', render: (m) => <strong className="mono">_{m.id}</strong> },
-            { key: 'state', label: 'State', render: (m) => <StatusPill value={m.state} /> },
-            {
-              key: 'origin',
-              label: 'Origin',
-              render: (m) => <span className="mono faint">{m.origin}</span>,
-            },
-            {
-              key: 'tools',
-              label: 'Tools',
-              render: (m) => <span className="tabular">{m.toolCount}</span>,
-              width: '70px',
-            },
-            {
-              key: 'error',
-              label: 'Error',
-              render: (m) =>
-                m.errorCode ? (
-                  <span className="mono">{m.errorCode}</span>
-                ) : (
-                  <span className="faint">—</span>
-                ),
-            },
+            col<Mount>('id', 'Mount', (m) => <strong className="mono">_{m.id}</strong>),
+            col<Mount>('state', 'State', (m) => <StatusPill value={m.state} />),
+            col<Mount>('origin', 'Origin', (m) => <span className="mono faint">{m.origin}</span>),
+            col<Mount>(
+              'tools',
+              'Tools',
+              (m) => <span className="tabular">{m.toolCount}</span>,
+              '70px',
+            ),
+            col<Mount>('error', 'Error', (m) =>
+              m.errorCode ? (
+                <span className="mono">{m.errorCode}</span>
+              ) : (
+                <span className="faint">—</span>
+              ),
+            ),
           ]}
         />
       )}
