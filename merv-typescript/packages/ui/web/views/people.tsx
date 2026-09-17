@@ -7,15 +7,17 @@ import { ThreeStates } from '../states';
 
 /** A directory entry whose name is an identifier names nobody, so the page says nothing. */
 const IDENTIFIER = /[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/;
-/** Actor names for ids; a name nobody wrote is not one. */
+/** A name nobody wrote is not one: an identifier names nobody. */
+export const personName = (name: string | undefined) =>
+  name && !IDENTIFIER.test(name) ? name : undefined;
+export const namesOf = (actors: Actor[] | null | undefined) => {
+  const names = new Map((actors ?? []).map((actor) => [actor.id, actor.name]));
+  return (id: string | null | undefined) => personName(id ? names.get(id) : undefined);
+};
+/** The same names, for a page that has no directory of its own. */
 export function useActorNames() {
   const { actor } = useSession();
-  const { data } = useTool<Actor[]>(actor.role === 'operator' ? 'actor.list' : null);
-  const names = new Map((data ?? []).map((actor) => [actor.id, actor.name]));
-  return (id: string | null | undefined) => {
-    const name = id ? names.get(id) : undefined;
-    return name && !IDENTIFIER.test(name) ? name : undefined;
-  };
+  return namesOf(useTool<Actor[]>(actor.role === 'operator' ? 'actor.list' : null).data);
 }
 
 type Role = Actor['role'];

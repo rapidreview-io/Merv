@@ -162,3 +162,13 @@ The founder, on the Work page and an experiment record: "we have workflows, so w
 - **One line per round.** A review round reads as the gate it was read at, the word it came back with, and when — and is the link to its own verdict.
 - **The paper is sections, not a toolbar.** The paper has no Act block: each section's `Edit <section name>` sits beside its own heading, `New section` beside its document's, and the citation controls in the References block. The skeleton of four documents renders whether or not anything is written yet, Problem & scope first. A file record likewise has no Act: `Download file` sits with the file it copies.
 - **Home leads with what is running.** The map opens on one line per live experiment, task and reflection — name and the state it stands at — above the Now strip and the planes. The paper stands with Home and Now in the rail, above the section groups.
+
+## One read a page (founder ruling, 2026-09-17, on load time)
+
+Home took twenty-odd requests and five to ten seconds. A page is now one read.
+
+- **`ui.home`** composes everything both home pages draw — the project, its records, the actors who own them, the gate of every workflow instance, and the rows whose own read has a place on the page — by calling read-only tools inside one snapshot scope (`packages/ui/src/home.ts`). A part whose plugin is absent, or whose answer this caller may not read, is null: the page draws what it has, and a row that cannot load renders nothing rather than an error with a code in it.
+- **`ui.shell`** answers who is asking and which project is open alongside its rows, so opening the app is `/auth/config`, `/account` and one scoped read instead of five sequential requests.
+- **The browser asks once.** `useTool` shares one in-flight request per answer, so the rail and the page it frames never ask the same question twice; a reload always asks again. The rail's needs-you count, the map and the standing line all read `ui.home`.
+- **Now** is the standing line and three lists — needs you, with an agent, waiting — and nothing else: the Introduction belongs to the paper, and what is merely running is on Home.
+- **The Act slot carries no heading**: the ladder and its one control are their own sentence. A claim is its statement, its state word and how many experiments test it; its scope, evidence and history open with it. Nobody is named by an identifier: a directory name that is an id names nobody, and the rail's account row falls back to the signed-in address, then to initials.

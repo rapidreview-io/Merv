@@ -281,8 +281,9 @@ function EditClaim({
 }
 
 /**
- * One entry in the book: the statement, the standing a person set, and beneath it
- * the machine evidence. The two are printed side by side and never reconciled here.
+ * One entry in the book: the statement, the standing a person set, and how many
+ * experiments test it. Its scope, its evidence and its history open with the claim,
+ * so the book reads as claims rather than as a wall of everything about them.
  */
 function ClaimEntry({
   claim,
@@ -303,51 +304,60 @@ function ClaimEntry({
   const needsRefresh = conflictRevision !== undefined && claim.revision <= conflictRevision;
   return (
     <article className="record claim" aria-labelledby={heading}>
-      <KindLabel kind="claims" />
-      <h2 className="claim-statement" id={heading}>
-        {claim.statement}
-      </h2>
-      <p className="claim-standing">
-        <StatusPill value={claim.status} /> · {claim.confidence} confidence
-        {claim.scope && ` · ${claim.scope}`}
-        {/* The one quiet action a card carries, at the end of its standing and nowhere else. */}
-        {writable && !editing && (
-          <button
-            type="button"
-            className="btn-text claim-edit"
-            disabled={needsRefresh}
-            onClick={() => {
-              setEditing(true);
-              setConflictRevision(undefined);
-            }}
-          >
-            Edit standing
-          </button>
+      <details>
+        <summary className="claim-line">
+          <KindLabel kind="claims" />
+          <h2 className="claim-statement" id={heading}>
+            {claim.statement}
+          </h2>
+          <StatusPill value={claim.status} />
+          {tests.length > 0 && <span className="faint">{tests.length} experiments</span>}
+        </summary>
+        <p className="claim-standing">
+          {claim.confidence} confidence
+          {claim.scope && ` · ${claim.scope}`}
+          {/* The one quiet action a card carries, at the end of its standing and nowhere else. */}
+          {writable && !editing && (
+            <button
+              type="button"
+              className="btn-text claim-edit"
+              disabled={needsRefresh}
+              onClick={() => {
+                setEditing(true);
+                setConflictRevision(undefined);
+              }}
+            >
+              Edit standing
+            </button>
+          )}
+          {writable && needsRefresh && (
+            <button type="button" className="btn-text claim-edit" onClick={reload}>
+              Load latest claim
+            </button>
+          )}
+        </p>
+        {tests.map((test) => (
+          <p className="claim-line" key={test.id}>
+            <Link to={test.href}>{test.name}</Link> · {words(test.state)}
+            {test.verdict && ` · ${words(test.verdict)}`}
+          </p>
+        ))}
+        {changes.map((change) => (
+          <p className="claim-line claim-line--quiet" key={change.id}>
+            {standing(change.data.before?.status, change.data.before?.confidence)} →{' '}
+            {standing(
+              change.data.status ?? claim.status,
+              change.data.confidence ?? claim.confidence,
+            )}{' '}
+            · <span title={change.createdAt}>{relativeTime(change.createdAt)}</span>
+          </p>
+        ))}
+        {conflictRevision !== undefined && (
+          <p className="error-message" role="alert">
+            This claim changed while you were editing. Your changes were not applied.
+          </p>
         )}
-        {writable && needsRefresh && (
-          <button type="button" className="btn-text claim-edit" onClick={reload}>
-            Load latest claim
-          </button>
-        )}
-      </p>
-      {tests.map((test) => (
-        <p className="claim-line" key={test.id}>
-          <Link to={test.href}>{test.name}</Link> · {words(test.state)}
-          {test.verdict && ` · verdict ${words(test.verdict)}`}
-        </p>
-      ))}
-      {changes.map((change) => (
-        <p className="claim-line claim-line--quiet" key={change.id}>
-          {standing(change.data.before?.status, change.data.before?.confidence)} →{' '}
-          {standing(change.data.status ?? claim.status, change.data.confidence ?? claim.confidence)}{' '}
-          · <span title={change.createdAt}>{relativeTime(change.createdAt)}</span>
-        </p>
-      ))}
-      {conflictRevision !== undefined && (
-        <p className="error-message" role="alert">
-          This claim changed while you were editing. Your changes were not applied.
-        </p>
-      )}
+      </details>
       {editing && (
         <EditClaim
           claim={claim}

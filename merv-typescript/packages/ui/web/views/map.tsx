@@ -1,29 +1,23 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import type { GitHubStatus, SessionsProjectStatus } from '@merv/contracts/types';
-import { accountRequest, useScopeVersion, useTool } from '../api';
+import type { GitHubStatus } from '@merv/contracts/types';
+import { accountRequest, useScopeVersion } from '../api';
 import { useSession } from '../session';
-import type { Row, ShellData } from '../shell';
-import { KV, KindLabel, StatusPill, cx, kindStyle } from '../components';
+import type { ShellData } from '../shell';
+import { KV, KindLabel, StatusPill, cx, kindStyle, words } from '../components';
 import { WORK } from '../navigation';
 import { bytes } from './artifacts';
-import { useActorNames } from './people';
-import { useStanding, type Standing, type Work } from './overview';
+import { namesOf } from './people';
+import { standingOf, type Lines } from './overview';
 import {
   EM,
   graphOf,
   newest,
   running,
   tally,
-  type MapClaim,
-  type MapCycle,
+  useHome,
   type MapEdge,
-  type MapExperiment,
   type MapNode,
-  type MapPaper,
-  type MapReflection,
-  type MapReview,
-  type MapTask,
 } from './map-data';
 
 /**
@@ -42,8 +36,6 @@ interface Tile {
   value: ReactNode;
   to: string;
 }
-/** The cadence of everything live on the map; useTool stops it while the tab is hidden. */
-const LIVE = { every: 10_000 };
 const PER_COLUMN = 4;
 const CARD_H = 90;
 const ROW_H = 108;
@@ -336,8 +328,8 @@ function Running({ nodes }: { nodes: MapNode[] }) {
 }
 
 /** Whose move the open work is, in three numbers, one click from the line itself. */
-function Now({ standing }: { standing: Standing }) {
-  const { yours, agent, nobody } = standing.lines;
+function Now({ lines }: { lines: Lines }) {
+  const { yours, agent, nobody } = lines;
   return (
     <div className="map-now">
       <h2 className="plane-title">Now</h2>
@@ -359,56 +351,24 @@ function Now({ standing }: { standing: Standing }) {
 
 export function MapView({ shell }: { shell: ShellData }) {
   const session = useSession();
-  const named = useActorNames();
   const [params, setParams] = useSearchParams();
   const rows = shell.rows;
   const rowOf = (kind: string) => rows.find((row) => row.view.kind === kind);
-  const read = (kind: string) => {
-    const row = rowOf(kind);
-    return row?.readable ? row : undefined;
-  };
-  const rowId = (row?: Row) => ({ rowId: row?.id ?? '' });
   const experimentsRow = rowOf('experiments');
   const tasksRow = rowOf('tasks');
   const cyclesRow = rowOf('research');
-  const reflectionsRow = read('reflections');
-  const paperRow = read('paper');
-  const sessionsRow = read('sessions');
-  const mountsRow = read('connections');
+  const sessionsRow = rowOf('sessions');
+  const mountsRow = rowOf('connections');
   const filesRow = rowOf('artifacts');
   const feedRow = rowOf('feed');
-  const archiveRow = read('legacy-history');
+  const archiveRow = rowOf('legacy-history');
   const codeRow = rowOf('code');
-  const experiments = useTool<MapExperiment[]>(experimentsRow ? 'experiment.list' : null, {}, LIVE);
-  const tasks = useTool<MapTask[]>(tasksRow ? 'task.list' : null, {}, LIVE);
-  const cycles = useTool<MapCycle[]>(cyclesRow ? 'research.list' : null, {}, LIVE);
-  const claims = useTool<MapClaim[]>(rowOf('claims') ? 'claim.list' : null, {}, LIVE);
-  const reviews = useTool<MapReview[]>(rowOf('reviews') ? 'review.list' : null, {}, LIVE);
-  const reflections = useTool<MapReflection[]>(
-    reflectionsRow ? 'ui.read' : null,
-    rowId(reflectionsRow),
-    LIVE,
-  );
-  const paper = useTool<MapPaper>(paperRow ? 'ui.read' : null, rowId(paperRow));
-  const live = useTool<SessionsProjectStatus>(
-    sessionsRow ? 'ui.read' : null,
-    rowId(sessionsRow),
-    LIVE,
-  );
-  const mounts = useTool<{ state: string }[]>(mountsRow ? 'ui.read' : null, rowId(mountsRow), LIVE);
-  const files = useTool<{ size: number }[]>(filesRow ? 'artifact.list' : null);
-  const posts = useTool<unknown[]>(feedRow ? 'feed.list' : null);
-  const earlier = useTool<{ counts: Record<string, number> }>(archiveRow ? 'ui.read' : null, {
-    ...rowId(archiveRow),
-    params: { action: 'summary' },
-  });
+  // The whole page in one answer; the rail asks for the same one and joins this request.
+  const home = useHome();
+  const data = home.data;
+  const named = namesOf(data?.actors);
   const github = useGitHub(!!codeRow);
-  const work: Work = {
-    experiments: { row: experimentsRow, load: experiments },
-    tasks: { row: tasksRow, load: tasks },
-    cycles: { row: cyclesRow, load: cycles },
-  };
-  const standing = useStanding(rows, work, session.actor.id, named);
+  const lines = standingOf(rows, data, session.actor.id, named);
 
   const selected = params.get('object');
   const select = (id: string) => {
@@ -420,12 +380,12 @@ export function MapView({ shell }: { shell: ShellData }) {
   const { pool, edges } = graphOf(
     rows,
     {
-      claims: claims.data ?? [],
-      experiments: experiments.data ?? [],
-      tasks: tasks.data ?? [],
-      reviews: reviews.data ?? [],
-      reflections: reflections.data ?? [],
-      paper: paper.data,
+      claims: data?.claims ?? [],
+      experiments: data?.experiments ?? [],
+      tasks: data?.tasks ?? [],
+      reviews: data?.reviews ?? [],
+      reflections: data?.reflections ?? [],
+      paper: data?.paper ?? undefined,
     },
     named,
   );
@@ -443,41 +403,38 @@ export function MapView({ shell }: { shell: ShellData }) {
   });
   const visible = new Set(shown.map((node) => node.id));
   const node = pool.find((item) => item.id === selected);
-  // One line at the top says a read failed, whichever read it was.
-  const record = [experiments, tasks, cycles, claims, reviews, reflections, paper];
-  const broken = [...record, live, mounts, files, posts, earlier].find((load) => load.error);
   // A registered row always states its own weight: a total not yet known is the
   // em dash the console uses, never a zero and never a tile that quietly vanishes.
   const counted = (kind: string) => {
     const row = rowOf(kind);
     return row && tile(row.label, row.status.count ?? EM, row.path);
   };
-  const cycle = newest(cycles.data ?? [], (item) => item.workflow.updatedAt)[0];
+  const cycle = newest(data?.cycles ?? [], (item) => item.workflow.updatedAt)[0];
   // One number for the wave: the two rows' own open counts, and the dash if either is silent.
   const counts = [tasksRow, experimentsRow].flatMap((row) => (row ? [row.status.count] : []));
   const openWork = counts.some((count) => count === undefined)
     ? EM
     : counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
-  const ready = (mounts.data ?? []).filter((mount) => mount.state === 'ready').length;
-  const agents = (live.data?.agents ?? []).filter((agent) => agent.status !== 'retired').length;
-  const runners = (live.data?.runners ?? []).filter((runner) => runner.live).length;
-  const archive = Object.values(earlier.data?.counts ?? {}).reduce((sum, n) => sum + n, 0);
-  const retained = (files.data ?? []).reduce((sum, file) => sum + file.size, 0);
+  const live = data?.sessions;
+  const mounts = data?.connections;
+  const ready = (mounts ?? []).filter((mount) => mount.state === 'ready').length;
+  const agents = (live?.agents ?? []).filter((agent) => agent.status !== 'retired').length;
+  const runners = (live?.runners ?? []).filter((runner) => runner.live).length;
+  const archive = Object.values(data?.archive?.counts ?? {}).reduce((sum, n) => sum + n, 0);
+  const retained = (data?.files ?? []).reduce((sum, file) => sum + file.size, 0);
   return (
     <div className="page-stage map">
       <h1 className="page-title">
         {session.project.name} <span className="muted">· the map</span>
       </h1>
-      {broken?.error && (
-        <p className="map-stale" role="alert" title={broken.error.message}>
-          {broken.data
-            ? 'Some of this could not refresh — showing the last loaded state'
-            : 'Some of this could not load'}{' '}
-          <span className="mono">({broken.error.code})</span>
+      {home.error && (
+        <p className="map-stale" role="alert" title={home.error.message}>
+          {data ? 'Could not refresh' : 'Could not load'}{' '}
+          <span className="mono">({home.error.code})</span>
         </p>
       )}
       <Running nodes={newest(pool.filter(running), (node) => node.at)} />
-      <Now standing={standing} />
+      <Now lines={lines} />
       <div className="map-band">
         <Plane
           title="Workflows"
@@ -491,7 +448,7 @@ export function MapView({ shell }: { shell: ShellData }) {
             cycle && (
               <>
                 Cycle <Link to={`${cyclesRow!.path}/${cycle.id}`}>{cycle.name}</Link> ·{' '}
-                {cycle.workflow.state}
+                {words(cycle.workflow.state)}
               </>
             )
           }
@@ -500,11 +457,11 @@ export function MapView({ shell }: { shell: ShellData }) {
           title="Analytics"
           index={1}
           tiles={tiles(
-            ...tally(claims.data ?? [], (claim) => claim.status).map(([label, count]) =>
-              tile(`claims ${label}`, count, rowOf('claims')!.path),
+            ...tally(data?.claims ?? [], (claim) => claim.status).map(([label, count]) =>
+              tile(`claims ${words(label)}`, count, rowOf('claims')!.path),
             ),
-            ...tally(reviews.data ?? [], (review) => review.verdict).map(([label, count]) =>
-              tile(`verdicts ${label}`, count, rowOf('reviews')!.path),
+            ...tally(data?.reviews ?? [], (review) => review.verdict).map(([label, count]) =>
+              tile(`verdicts ${words(label)}`, count, rowOf('reviews')!.path),
             ),
           )}
         />
@@ -519,11 +476,7 @@ export function MapView({ shell }: { shell: ShellData }) {
                 '/settings/integrations',
               ),
             mountsRow &&
-              tile(
-                'connections ready',
-                mounts.data ? `${ready}/${mounts.data.length}` : EM,
-                mountsRow.path,
-              ),
+              tile('connections ready', mounts ? `${ready}/${mounts.length}` : EM, mountsRow.path),
           )}
         />
       </div>
@@ -533,7 +486,7 @@ export function MapView({ shell }: { shell: ShellData }) {
           nodes={shown}
           edges={edges.filter((edge) => visible.has(edge.from) && visible.has(edge.to))}
           selected={selected}
-          pulse={standing.lines.yours[0]?.id}
+          pulse={lines.yours[0]?.id}
           onSelect={select}
         />
       )}
@@ -543,9 +496,9 @@ export function MapView({ shell }: { shell: ShellData }) {
           title="Data"
           index={3}
           tiles={tiles(
-            filesRow && tile('files', files.data?.length ?? EM, filesRow.path),
-            filesRow && tile('retained', files.data ? bytes(retained) : EM, filesRow.path),
-            feedRow && tile('posts', posts.data?.length ?? EM, feedRow.path),
+            filesRow && tile('files', data?.files?.length ?? EM, filesRow.path),
+            filesRow && tile('retained', data?.files ? bytes(retained) : EM, filesRow.path),
+            feedRow && tile('posts', data?.posts?.length ?? EM, feedRow.path),
             archiveRow && !!archive && tile('earlier records', archive, archiveRow.path),
           )}
         />
@@ -553,20 +506,20 @@ export function MapView({ shell }: { shell: ShellData }) {
           title="Agents & compute"
           index={4}
           tiles={tiles(
-            sessionsRow && tile('agents', live.data ? agents : EM, sessionsRow.path),
+            sessionsRow && tile('agents', live ? agents : EM, sessionsRow.path),
             sessionsRow &&
               tile(
                 'leases live',
-                live.data ? `${live.data.liveSessionCount}/${live.data.sessionTotal}` : EM,
+                live ? `${live.liveSessionCount}/${live.sessionTotal}` : EM,
                 sessionsRow.path,
               ),
             sessionsRow &&
               tile(
                 'runners connected',
-                live.data ? `${runners}/${live.data.runners.length}` : EM,
+                live ? `${runners}/${live.runners.length}` : EM,
                 sessionsRow.path,
               ),
-            sessionsRow && tile('queued', live.data?.queueTotal ?? EM, sessionsRow.path),
+            sessionsRow && tile('queued', live?.queueTotal ?? EM, sessionsRow.path),
           )}
         />
       </div>

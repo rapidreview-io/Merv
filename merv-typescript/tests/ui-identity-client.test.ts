@@ -402,16 +402,19 @@ test('zero-project onboarding discovers the account before any scoped call and o
       return Response.json({ project });
     }
     assert.equal(headers.get('x-merv-project-id'), project.id);
+    const actor = {
+      id: 'human-project-actor',
+      projectId: project.id,
+      name: 'User A',
+      role: 'operator',
+      active: true,
+    };
     return Response.json({
-      result: path.endsWith('actor.whoami')
-        ? {
-            id: 'human-project-actor',
-            projectId: project.id,
-            name: 'User A',
-            role: 'operator',
-            active: true,
-          }
-        : project,
+      result: path.endsWith('ui.shell')
+        ? { actor, project, rows: [], plugins: [] }
+        : path.endsWith('actor.whoami')
+          ? actor
+          : project,
     });
   });
   const empty = await resolveAccountSession();
@@ -425,7 +428,13 @@ test('zero-project onboarding discovers the account before any scoped call and o
   setProject(result.project.id);
   const ready = await resolveAccountSession();
   assert.equal(ready.phase, 'ready');
+  if (ready.phase === 'ready') assert.equal(ready.actor.id, 'human-project-actor');
   if (ready.phase === 'ready') assert.equal(ready.project.id, project.id);
+  // Opening a project is one scoped read: the shell answers who and where with the rows.
+  assert.deepEqual(
+    paths.filter((path) => path.startsWith('/tools/')),
+    ['/tools/ui.shell'],
+  );
 });
 
 test('membership loss refreshes project selection without treating it as a failed login', async (t) => {

@@ -308,10 +308,10 @@ export const Part = ({ title, children }: { title: string; children: ReactNode }
 
 /**
  * One anatomy for every record, in one order: the way back and what this is, then
- * What happens next — the only place on the page with controls, so the next move
- * is always in the same spot — then the kind's own content, how it got here, what
- * it relates to, and the details last. A slot this kind has nothing for is dropped
- * rather than drawn empty, and `title` is the kind's word for its own content.
+ * the gate it stands at with the one control that moves it — no heading over it,
+ * because the ladder is its own sentence — then the kind's own content, how it got
+ * here, what it relates to, and the details last. A slot this kind has nothing for
+ * is dropped rather than drawn empty, and `title` is the kind's word for its content.
  */
 export function RecordPage({
   back,
@@ -331,7 +331,6 @@ export function RecordPage({
   title?: string;
 } & Partial<Record<'act' | 'content' | 'history' | 'related' | 'details', ReactNode>>) {
   const order: [string, ReactNode][] = [
-    ['What happens next', slots.act],
     [title, slots.content],
     ['History', slots.history],
     ['Related', slots.related],
@@ -340,6 +339,7 @@ export function RecordPage({
   return (
     <div className="page-stage record-page stack stack--lg">
       <PageHeader eyebrow={back} kind={kind} title={name} summary={standing} actions={state} />
+      {slots.act}
       {order.map(([label, body]) =>
         label && body ? (
           <Part title={label} key={label}>

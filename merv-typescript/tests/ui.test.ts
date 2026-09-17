@@ -416,6 +416,29 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'row_unreadable',
   );
   assert.equal((await tool('ui.read', operator, { rowId: 'absent' })).status, 404);
+  // The home page is one read, and a part this caller may not read is null rather
+  // than a failure that would take the page with it.
+  const home = (await tool('ui.home', operator)).body.result as Record<string, unknown>;
+  assert.deepEqual(Object.keys(home).sort(), [
+    'actors',
+    'archive',
+    'claims',
+    'connections',
+    'cycles',
+    'experiments',
+    'files',
+    'paper',
+    'posts',
+    'project',
+    'reflections',
+    'reviews',
+    'sessions',
+    'tasks',
+    'workflows',
+  ]);
+  assert.ok(Array.isArray(home.experiments) && Array.isArray(home.tasks));
+  assert.equal((home.project as { id: string }).id, credentials.project.id);
+  assert.deepEqual((await tool('ui.home', reader)).body.result.actors, null);
 
   // Feed removal drops exactly the feed rows; everything else keeps working; restoration adds no duplicates.
   await app.setEnabled('feed', false);

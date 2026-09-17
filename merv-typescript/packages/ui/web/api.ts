@@ -247,10 +247,14 @@ export async function resolveAccountSession(): Promise<AccountSession> {
   }
   setProject(selected);
   const selectedEpoch = scopeEpoch;
-  const [actor, project] = await Promise.all([
-    call<Actor>('actor.whoami'),
-    call<Project>('project.get'),
-  ]);
+  // The shell answers who and where with the rows the page needs anyway; a
+  // composition without it still answers those two questions on their own tools.
+  const shell = await call<{ actor?: Actor; project?: Project }>('ui.shell').catch(() => null);
+  if (shell) remember('ui.shell', shell);
+  const [actor, project] =
+    shell?.actor && shell.project
+      ? [shell.actor, shell.project]
+      : await Promise.all([call<Actor>('actor.whoami'), call<Project>('project.get')]);
   requireScope(selectedEpoch);
   return { phase: 'ready', account, actor, project, epoch: selectedEpoch };
 }
@@ -292,6 +296,35 @@ export interface Loaded<T> {
  * for the missing flash.
  */
 const LAST = new Map<string, { data: unknown; loadedAt: string }>();
+/** An answer the boot already holds, kept so the page that needs it does not ask again. */
+export const remember = (name: string, data: unknown) =>
+  LAST.set(`${scopeEpoch}:${name}:{}`, { data, loadedAt: new Date().toISOString() });
+
+/**
+ * One request per answer in flight. Two places on a page ask the same question —
+ * the rail and the page it frames read the same home, a record opens beside its
+ * list — and the second one joins the first request instead of making another.
+ * A reload always asks again, so a command's own refresh never joins a read that
+ * started before it.
+ */
+const FLIGHT = new Map<string, Promise<unknown>>();
+async function shared<T>(
+  key: string,
+  name: string,
+  input: Record<string, unknown>,
+  fresh: boolean,
+): Promise<T> {
+  const joined = fresh ? undefined : (FLIGHT.get(key) as Promise<T> | undefined);
+  if (joined) return await joined;
+  const pending = call<T>(name, input);
+  FLIGHT.set(key, pending);
+  void pending
+    .catch(() => undefined)
+    .finally(() => {
+      if (FLIGHT.get(key) === pending) FLIGHT.delete(key);
+    });
+  return await pending;
+}
 
 /**
  * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
@@ -319,6 +352,7 @@ export function useTool<T>(
   useEffect(() => {
     if (!key || !name) return;
     let cancelled = false;
+    let asked = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let waiting = false;
     const hidden = () => document.visibilityState === 'hidden';
@@ -332,8 +366,11 @@ export function useTool<T>(
       void refresh();
     };
     const refresh = async () => {
+      // A reload asks again; every other read joins one already in flight.
+      const fresh = tick > 0 && !asked;
+      asked = true;
       try {
-        const data = await call<T>(name, input);
+        const data = await shared<T>(key, name, input, fresh);
         const loadedAt = new Date().toISOString();
         if (LAST.size > 64) LAST.clear();
         LAST.set(key, { data, loadedAt });

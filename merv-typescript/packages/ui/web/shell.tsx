@@ -4,9 +4,11 @@ import { useTool } from './api';
 import { useSession } from './session';
 import { cx, kindOf } from './components';
 import { RowIcon } from './icons';
+import { signedInEmail } from './auth';
+import { personName } from './views/people';
 import { buildNavigation, topRows } from './navigation';
-import { useStanding, type Work } from './views/overview';
-import type { MapCycle, MapExperiment, MapTask } from './views/map-data';
+import { standingOf } from './views/overview';
+import { useHome } from './views/map-data';
 
 import type { Row, ShellData } from './shell-types';
 export type { RowStatus, Row, PluginState, ShellData } from './shell-types';
@@ -85,25 +87,13 @@ function RailRow({
 
 /**
  * The rail's one number: how many open records are the signed-in actor's move,
- * read exactly as the map's Now strip reads it. Nothing here is counted twice
- * or invented — the policy lives in useStanding, and the rail only asks for it.
- * Reviewer names are not needed for a count, so the actor list is not read.
+ * read exactly as the pages read it, from the one home the whole page shares.
+ * Reviewer names are not needed for a count, so none are looked up.
  */
 function useNeedsYou(rows: Row[]): number {
   const { actor } = useSession();
-  const rowOf = (kind: string) => rows.find((row) => row.view.kind === kind);
-  const experimentsRow = rowOf('experiments');
-  const tasksRow = rowOf('tasks');
-  const cyclesRow = rowOf('research');
-  const work: Work = {
-    experiments: {
-      row: experimentsRow,
-      load: useTool<MapExperiment[]>(experimentsRow ? 'experiment.list' : null),
-    },
-    tasks: { row: tasksRow, load: useTool<MapTask[]>(tasksRow ? 'task.list' : null) },
-    cycles: { row: cyclesRow, load: useTool<MapCycle[]>(cyclesRow ? 'research.list' : null) },
-  };
-  return useStanding(rows, work, actor.id, () => undefined).lines.yours.length;
+  const home = useHome();
+  return standingOf(rows, home.data, actor.id, () => undefined).yours.length;
 }
 
 function useTheme() {
@@ -133,6 +123,8 @@ const initials = (name: string) =>
 
 function AccountFoot() {
   const { actor, signOut } = useSession();
+  // A person is named, never identified: a directory name that is an id names nobody.
+  const who = personName(actor.name) ?? signedInEmail();
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -155,9 +147,7 @@ function AccountFoot() {
     <div className="account-foot" ref={ref}>
       {open && (
         <div className="account-menu" role="menu">
-          <div className="account-menu-head">
-            {actor.name} · {actor.role}
-          </div>
+          <div className="account-menu-head">{[who, actor.role].filter(Boolean).join(' · ')}</div>
           <button type="button" className="account-menu-item" onClick={toggle}>
             Theme · {theme}
           </button>
@@ -175,10 +165,10 @@ function AccountFoot() {
         aria-expanded={open}
       >
         <span className="account-avatar" aria-hidden="true">
-          {initials(actor.name)}
+          {initials(who ?? '')}
         </span>
-        <span className="account-who" title={`${actor.name} (${actor.role})`}>
-          <span className="account-name">{actor.name}</span>
+        <span className="account-who" title={[who, actor.role].filter(Boolean).join(' · ')}>
+          {who && <span className="account-name">{who}</span>}
           <span className="account-role">{actor.role}</span>
         </span>
         <span className="account-caret" aria-hidden="true">
@@ -301,7 +291,7 @@ export function TitleLine({ rows }: { rows: Row[] }) {
 
 /** The shell polls its rows so a plugin appearing or disappearing shows within a few seconds. */
 export function useShell() {
-  return useTool<ShellData>('ui.shell', {}, { every: 4000 });
+  return useTool<ShellData>('ui.shell', {}, { every: 30000 });
 }
 
 export function ShellFrame({

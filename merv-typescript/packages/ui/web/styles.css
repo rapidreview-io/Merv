@@ -1524,6 +1524,16 @@ select.input,
 .claim > * + * {
   margin-top: var(--space-2);
 }
+/* A claim reads as its statement; what tests it and where it applies open with it. */
+.claim > details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+.claim > details > * + * {
+  margin-top: var(--space-2);
+}
 .claim-statement {
   font-size: var(--text-lg);
   font-weight: 600;

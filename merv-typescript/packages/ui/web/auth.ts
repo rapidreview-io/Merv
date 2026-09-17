@@ -33,6 +33,9 @@ const storage = {
     }
   },
 };
+/** The address the signed-in session already carries; never read from the server. */
+let address: string | undefined;
+export const signedInEmail = () => address;
 let mode: 'local' | 'shared' = storage.getItem(MODE_KEY) === 'shared' ? 'shared' : 'local';
 let modeVersion = 0;
 let modeChanged: (() => void) | undefined;
@@ -92,6 +95,7 @@ async function initialize(options: AuthOptions): Promise<Runtime> {
   };
   const accountKey = (session: Session) => `${configuration.login!.url}\n${session.user.id}`;
   const applySession = (session: Session): boolean => {
+    address = session.user.email ?? undefined;
     const key = accountKey(session);
     const sameAccount = lastAccount === key;
     lastAccount = key;
@@ -156,6 +160,7 @@ async function initialize(options: AuthOptions): Promise<Runtime> {
       if (!sameAccount || event !== 'TOKEN_REFRESHED') publish();
     } else if (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION') {
       allowRefresh = false;
+      address = undefined;
       lastAccount = null;
       storage.removeItem(USER_KEY);
       setToken(null);

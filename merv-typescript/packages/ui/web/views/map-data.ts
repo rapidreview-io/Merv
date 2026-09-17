@@ -1,12 +1,15 @@
 import type { ReactNode } from 'react';
+import type { SessionsProjectStatus } from '@merv/contracts/types';
 import type { WorkflowDecision, WorkflowDependency } from '@merv/contracts/workflow-guidance';
+import { useTool, type Actor, type Project } from '../api';
 import type { Row } from '../shell';
-import { relativeTime } from '../components';
+import { relativeTime, words } from '../components';
 
 /**
- * The map's data layer: the shapes the map reads from the list tools, and the
- * one function that turns them into objects and verbs. It is pure, so what the
- * map may say about a record is exactly what some field of that record says.
+ * The map's data layer: the shapes the home pages read, the one read that serves
+ * all of them, and the function that turns records into objects and verbs. It is
+ * pure, so what the map may say about a record is exactly what some field of that
+ * record says.
  */
 
 export type Flow = { state: string; updatedAt: string };
@@ -26,7 +29,6 @@ export type MapTask = {
   acceptanceChecks: unknown[];
   deliveryIds: string[];
   dependencies: WorkflowDependency[];
-  guidance: WorkflowDecision;
   workflow: Flow;
 };
 export type MapCycle = { id: string; name: string; ownerId: string; workflow: Flow };
@@ -62,6 +64,33 @@ export type MapPaper = {
     }
   >;
 };
+
+export type MapPost = { id: string; authorId: string; body: string; createdAt: string };
+
+/**
+ * The whole of both home pages, as the server composes it (`ui.home`): every list
+ * the map draws, the gate of every workflow in the project, and the rows whose own
+ * read has a place on the page. A part the server could not answer for is null.
+ */
+export interface HomeData {
+  project: Project | null;
+  actors: Actor[] | null;
+  claims: MapClaim[] | null;
+  experiments: MapExperiment[] | null;
+  tasks: MapTask[] | null;
+  reviews: MapReview[] | null;
+  cycles: MapCycle[] | null;
+  files: { size: number }[] | null;
+  posts: MapPost[] | null;
+  workflows: { workflows: WorkflowDecision[] } | null;
+  reflections: MapReflection[] | null;
+  paper: MapPaper | null;
+  sessions: SessionsProjectStatus | null;
+  connections: { state: string }[] | null;
+  archive: { counts: Record<string, number> } | null;
+}
+/** One read for the rail, the map and the standing line; asking twice joins one request. */
+export const useHome = () => useTool<HomeData>('ui.home', {}, { every: 10000 });
 
 /** One object on the map: a record, the fields it carries, and where it lives. */
 export interface MapNode {
@@ -187,7 +216,7 @@ export function graphOf(
       const subject = pool.find((node) => node.id === item.subjectId);
       const name = subject ? `Review · ${subject.name}` : 'Review';
       object(2, 'reviews', item.id, name, item.createdAt, `${reviews}/${item.id}`, item.status, [
-        ['Verdict', item.verdict ?? EM],
+        ['Verdict', item.verdict ? words(item.verdict) : EM],
         ['Reviewer', item.reviewerId ? who(item.reviewerId) : EM],
         ['Requested', when(item.createdAt)],
       ]);

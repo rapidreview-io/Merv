@@ -27,7 +27,6 @@ import {
 } from './api';
 import { Failure, Field } from './components';
 import { browserAuth, setAuthMode, type AuthConfiguration } from './auth';
-import { KeysPanel } from './views/keys';
 
 export type { Actor, Project, Account } from './api';
 interface Session {
@@ -35,7 +34,6 @@ interface Session {
   project: Project;
   account: Account;
   chooseProject(): void;
-  manageKeys(): void;
   signOut(): void;
 }
 const SessionContext = createContext<Session | null>(null);
@@ -212,14 +210,12 @@ function Projects({
   choose,
   reload,
   signOut,
-  manageKeys,
 }: {
   account: Account;
   error?: string;
   choose(id: string): void;
   reload(): void;
   signOut(): void;
-  manageKeys(): void;
 }) {
   const [name, setName] = useState('');
   const [search, setSearch] = useState('');
@@ -253,9 +249,6 @@ function Projects({
       <section className="signin-card card">
         <div className="signin-wordmark">merv</div>
         <h1 className="signin-title">Choose a project</h1>
-        {account.projects.length > 0 && (
-          <p className="signin-help">Open a project to see its research and current work.</p>
-        )}
         {account.projects.length === 0 && (
           <p>
             {account.kind === 'user'
@@ -311,11 +304,6 @@ function Projects({
         )}
         <Failure message={error} />
         <div className="signin-actions">
-          {account.kind === 'user' && (
-            <button className="btn" onClick={manageKeys}>
-              Manage machine keys
-            </button>
-          )}
           <button className="btn" onClick={reload}>
             Refresh projects
           </button>
@@ -347,7 +335,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     | (AccountSession & { error?: string })
   >(hasToken() ? { phase: 'checking' } : { phase: 'anonymous' });
   const [attempt, setAttempt] = useState(0);
-  const [keysEpoch, setKeysEpoch] = useState<number>();
   const epoch = useScopeVersion();
   const accountVersion = useRef(identityVersion());
   const reload = () => setAttempt((n) => n + 1);
@@ -444,17 +431,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     navigate('/', { replace: true });
     reload();
   };
-  const manageKeys = () => setKeysEpoch(scopeVersion());
-  if (keysEpoch === epoch && state.account.kind === 'user')
-    return (
-      <main>
-        <KeysPanel
-          account={state.account}
-          initialProjectId={state.phase === 'ready' ? state.project.id : undefined}
-          onClose={() => setKeysEpoch(undefined)}
-        />
-      </main>
-    );
   if (state.phase === 'projects')
     return (
       <Projects
@@ -463,7 +439,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         choose={choose}
         reload={reload}
         signOut={signOut}
-        manageKeys={manageKeys}
       />
     );
   const session: Session = {
@@ -471,7 +446,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     project: state.project,
     account: state.account,
     signOut,
-    manageKeys,
     chooseProject: () => {
       setProject(null);
       navigate('/', { replace: true });

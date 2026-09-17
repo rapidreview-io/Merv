@@ -6,6 +6,7 @@ import { check, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type {} from '@cordisjs/plugin-loader';
 import type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
+import { homeRead, identityOf } from './home.js';
 import { serveBundle } from './static.js';
 
 export type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
@@ -117,13 +118,30 @@ export const uiPlugin = {
       ctx.tools.register({
         name: 'ui.shell',
         description:
-          'Read the sidebar rows currently registered by active plugins, with live row status, and the plugin lifecycle table.',
+          'Read your actor identity and selected project, the sidebar rows currently registered by active plugins with live row status, and the plugin lifecycle table.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller: Caller) => ({
+          ...(await identityOf(ctx.tools, caller)),
           rows: await ui.describe(caller),
           plugins: plugins(),
         }),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'ui.home',
+        description:
+          'Read everything the home page draws in one answer: the project, its records, the people who own them, and the gate every unfinished workflow stands at.',
+        inputSchema: z.object({}).strict(),
+        readOnly: true,
+        handler: async (caller: Caller) =>
+          await homeRead(
+            ctx.tools,
+            ui.rows(),
+            async (as, rowId, params) => await ui.read(as, rowId, params),
+            caller,
+          ),
       }),
     );
     ctx.effect(() =>
