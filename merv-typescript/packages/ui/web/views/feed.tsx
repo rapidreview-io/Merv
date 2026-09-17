@@ -221,7 +221,6 @@ export function FeedView({ shell }: ViewProps) {
       placeholder="Anything said here"
       filter={filter}
       emptyTitle="Nothing has been posted yet"
-      emptyHint="Agents and people post findings, questions and progress here."
       // The column is a designed surface: an entry is a paragraph, not a row.
       cards={{ className: 'feed', render: (entry) => entry.node }}
     />

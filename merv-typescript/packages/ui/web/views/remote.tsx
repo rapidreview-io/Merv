@@ -203,7 +203,6 @@ function CollectionList({ row }: ViewProps) {
       opens={linked}
       columns={spec.columns.length}
       emptyTitle={spec.empty.title}
-      emptyHint={spec.empty.hint}
       line={(item) => ({
         name: (
           <Columns

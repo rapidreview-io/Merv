@@ -349,8 +349,8 @@ export function ExperimentRecord({
         <>
           {approved ? (
             <p className="muted">
-              Execution follows the sealed design from attempt {approved.attemptIndex}, read in{' '}
-              <Link to={`/reviews/${approved.reviewId}`}>its own round</Link>.
+              Sealed design, attempt {approved.attemptIndex} ·{' '}
+              <Link to={`/reviews/${approved.reviewId}`}>its round</Link>
             </p>
           ) : (
             <p className="muted">No plan has passed design review.</p>
@@ -362,12 +362,7 @@ export function ExperimentRecord({
           {exhibit && exhibit.attemptIndex === e.attempt.index && (
             <figure className="stack">
               <pre className="doc doc--inline">{exhibit.content}</pre>
-              <figcaption className="muted">
-                {exhibit.path} ·{' '}
-                {exhibit.willPin
-                  ? 'the result submission will retain this source-backed exhibit with its review round'
-                  : 'the current evidence is qualitative, so no quantitative exhibit will be pinned'}
-              </figcaption>
+              <figcaption className="muted">{exhibit.path}</figcaption>
             </figure>
           )}
         </>

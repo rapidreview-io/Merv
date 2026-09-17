@@ -302,12 +302,7 @@ function CycleHead({ shell }: { shell: ShellData }) {
   const all = newest(cycles.data ?? [], (cycle) => cycle.workflow.updatedAt);
   const cycle = all.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
   if (!cycle || !cyclesRow)
-    return (
-      <PageHeader
-        title="Work"
-        summary={cyclesRow ? 'No research cycle yet' : undefined}
-      />
-    );
+    return <PageHeader title="Work" summary={cyclesRow ? 'No research cycle yet' : undefined} />;
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && cycle.ownerId === actor.id);
   return (

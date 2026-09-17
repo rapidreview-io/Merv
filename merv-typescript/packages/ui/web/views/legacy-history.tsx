@@ -68,8 +68,7 @@ const READING_FIELDS: Record<string, string[]> = {
 
 function ResearchContent({ value, depth = 0 }: { value: unknown; depth?: number }) {
   if (value === null || value === undefined || value === '') return null;
-  if (depth >= 4 && typeof value === 'object')
-    return <p className="faint">More detail is available in the original record below.</p>;
+  if (depth >= 4 && typeof value === 'object') return null;
   if (Array.isArray(value))
     return (
       <ul className="history-content-list">
@@ -78,9 +77,7 @@ function ResearchContent({ value, depth = 0 }: { value: unknown; depth?: number 
             <ResearchContent value={item} depth={depth + 1} />
           </li>
         ))}
-        {value.length > 100 && (
-          <li>Remaining entries are available in the original record below.</li>
-        )}
+        {value.length > 100 && <li className="faint">and {value.length - 100} more</li>}
       </ul>
     );
   if (typeof value === 'object')
@@ -212,10 +209,7 @@ function Detail({
             </Link>
           )}
           {detail.data.fileRetention?.status === 'metadata-only' && (
-            <p>
-              This legacy record tracks file lineage; its contents were not retained in Merv. The
-              original metadata is preserved below.
-            </p>
+            <p>Contents were not retained in Merv.</p>
           )}
           {detail.data.type === 'artifacts' &&
             detail.data.data.status === 'complete' &&
@@ -289,7 +283,6 @@ function History({ row }: ViewProps) {
         error={summary.error?.code === 'legacy_history_not_found' ? undefined : summary.error}
         empty={summary.error?.code === 'legacy_history_not_found'}
         emptyTitle="No previous research in this project"
-        emptyHint="Research created in this backend appears in the other project pages."
       />
       {summary.data && !summary.error && (
         <>
@@ -337,7 +330,6 @@ function History({ row }: ViewProps) {
                 placeholder="Record"
                 filter={filter}
                 emptyTitle="No records of this type"
-                emptyHint="Records imported from the previous backend are read-only; choose another category above."
                 line={(item) => ({
                   name: (
                     <button
@@ -400,10 +392,6 @@ function History({ row }: ViewProps) {
           <details className="faint">
             <summary>Import provenance</summary>
             <p className="history-hash mono">{summary.data.fingerprint}</p>
-            <p>
-              Sandbox-owned objects retain their original references and availability status. A
-              historical reference does not guarantee the object is still available.
-            </p>
           </details>
         </>
       )}

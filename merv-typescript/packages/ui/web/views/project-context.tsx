@@ -57,10 +57,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
       </fieldset>
       {conflict && (
         <div className="stack" role="alert">
-          <p>
-            The introduction changed while you were editing. Your draft is preserved. Compare it
-            with the current introduction above before trying again.
-          </p>
+          <p>The introduction changed while you were editing. Your draft is preserved.</p>
           <button
             type="button"
             className="btn btn--sm"

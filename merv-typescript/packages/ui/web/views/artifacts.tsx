@@ -104,14 +104,11 @@ function InlineArtifact({ artifactId }: { artifactId: string }) {
   );
 }
 
-/** The one move a file offers: take a copy of it, or the reason storage cannot serve one. */
+/** The one move a file offers: take a copy of it, where storage can serve one. */
 function Take({ artifact }: { artifact: Artifact }) {
   const scope = useScopeVersion();
-  if (artifact.downloadAvailable)
-    return <ArtifactDownload key={`${scope}:${artifact.id}`} artifactId={artifact.id} />;
-  return artifact.size > 2_000_000 ? (
-    <div className="empty">Direct downloads are unavailable with this storage provider.</div>
-  ) : null;
+  if (!artifact.downloadAvailable) return null;
+  return <ArtifactDownload key={`${scope}:${artifact.id}`} artifactId={artifact.id} />;
 }
 
 /**
@@ -140,10 +137,8 @@ export function ArtifactBody({
           {artifact.mediaType} · {bytes(artifact.size)}
         </span>
       </div>
-      {artifact.size <= 2_000_000 ? (
+      {artifact.size <= 2_000_000 && (
         <InlineArtifact key={`${scope}:${artifactId}`} artifactId={artifactId} />
-      ) : (
-        <div className="empty">This file is too large for an inline preview.</div>
       )}
       {download && <Take artifact={artifact} />}
     </div>
@@ -168,7 +163,6 @@ function ArtifactList() {
       rows={[...filter.rows].reverse()}
       opens
       emptyTitle="No files"
-      emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({
         name: <strong>{a.title}</strong>,
@@ -203,8 +197,8 @@ function ArtifactDetail({ row }: ViewProps) {
       back={<Link to={row.path}>← {row.label}</Link>}
       kind={row.view.kind}
       name={a.title}
-      // A small file this storage cannot serve has no move to offer, so the slot goes.
-      act={a.downloadAvailable || a.size > 2_000_000 ? <Take artifact={a} /> : undefined}
+      // A file this storage cannot serve has no move to offer, so the slot goes.
+      act={a.downloadAvailable ? <Take artifact={a} /> : undefined}
       title="Document"
       content={<ArtifactBody artifactId={a.id} metadata={a} download={false} />}
       details={

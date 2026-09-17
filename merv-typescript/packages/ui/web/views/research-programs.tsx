@@ -808,11 +808,7 @@ function ConsolidationDetail({ shell }: ViewProps) {
       details={
         <>
           <h3 className="ev-role">Central Git status</h3>
-          <p>
-            {centralGit === 'not-applicable'
-              ? 'Not applicable — this workflow has no Git workspace.'
-              : 'Not published to central Git.'}
-          </p>
+          <p>{centralGit === 'not-applicable' ? 'Not applicable' : 'Not published'}</p>
         </>
       }
     />

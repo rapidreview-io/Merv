@@ -149,7 +149,7 @@ export function CriterionRows({
                           className="textarea"
                           rows={2}
                           aria-label={`Notes on criterion ${number}`}
-                          placeholder="What you verified, what must change, or why this check is unnecessary"
+                          placeholder="Notes"
                           value={value.notes}
                           onChange={(event) =>
                             draft.set(number, { ...value, notes: event.target.value })
@@ -380,8 +380,7 @@ function exceptionsOf({
     lines.push(
       `This review pins revision ${review.subjectRevision}; the work is now at revision ${revision}.`,
     );
-  if (review.status === 'superseded')
-    lines.push('This review was superseded: it was set aside before a verdict was recorded.');
+  if (review.status === 'superseded') lines.push('This review was superseded.');
   if (attempt)
     lines.push(
       `The plan under review was approved in attempt ${attempt.approvedIn}; the work is now on attempt ${attempt.index}.`,
@@ -554,7 +553,7 @@ function Desk({
         className="textarea"
         rows={3}
         aria-label="Synopsis"
-        placeholder="One plain paragraph saying what you found and why this verdict follows."
+        placeholder="Synopsis"
         value={synopsis}
         onChange={(event) => setSynopsis(event.target.value)}
       />

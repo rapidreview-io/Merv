@@ -84,9 +84,6 @@ function ReferenceLookup() {
                 <StatusPill value={item.status} />
               </span>
               <span className="states-detail">
-                {item.status === 'unpublished' && 'No published Reflection is available. '}
-                {item.status === 'missing' && 'Not available in this project. '}
-                {item.status === 'unsupported' && 'This reference kind is not supported. '}
                 {item.state ? `${words(item.state)} · ` : ''}
                 {item.revision !== undefined ? `revision ${item.revision}` : ''}
                 {item.capture
@@ -361,8 +358,7 @@ function ClaimEntry({
       ))}
       {conflictRevision !== undefined && (
         <p className="error-message" role="alert">
-          This claim changed while you were editing. Your changes were not applied. Read the
-          standing again before starting a new edit.
+          This claim changed while you were editing. Your changes were not applied.
         </p>
       )}
       {editing && (

@@ -151,7 +151,7 @@ function Graph({
       onKeyDown={onKeyDown}
       style={wide ? { height, animationDelay: '180ms' } : { animationDelay: '180ms' }}
     >
-      <h2 className="plane-title">The record · objects and what they did to each other</h2>
+      <h2 className="plane-title">The record</h2>
       {wide && (
         <svg className="map-edges" width={width} height={height} aria-hidden="true">
           {edges.map((edge) => {
