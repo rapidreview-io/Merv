@@ -5,6 +5,7 @@ import { KV, LoadState, StatusPill, Table, col, cx } from '../components';
 import { ThreeStates } from '../states';
 import type { PluginState, Row } from '../shell-types';
 import { useSession } from '../session';
+import { GitHubConnection } from './github';
 import { KeysPanel } from './keys';
 import { PeopleView } from './people';
 import { ProjectIntroduction } from './project-context';
@@ -30,6 +31,7 @@ interface Mount {
 const SECTIONS = [
   ['', 'Introduction'],
   ['members', 'Members'],
+  ['integrations', 'Integrations'],
   ['keys', 'Keys'],
   ['connections', 'Connections'],
   ['plugins', 'Plugins'],
@@ -120,6 +122,21 @@ function Keys() {
 }
 
 /**
+ * What this project works with outside Merv: today the one GitHub repository,
+ * its connection and the access its agents have in it. The Code page draws what
+ * that connection produced; everything that configures it is here.
+ */
+function Integrations({ shell }: ViewProps) {
+  if (!shell.rows.some((row) => row.view.kind === 'code'))
+    return <Nothing said="No integrations" />;
+  return (
+    <div className="page-stage stack stack--lg">
+      <GitHubConnection />
+    </div>
+  );
+}
+
+/**
  * What this server is connected to: the mounts an operator configured, each with
  * the health its own row reports. A mount that is still connecting is the only
  * thing here that moves, so the read slows down once they have all settled.
@@ -192,6 +209,7 @@ export function SettingsView(props: ViewProps) {
             }
           />
           <Route path="members" element={<PeopleView />} />
+          <Route path="integrations" element={<Integrations {...props} />} />
           <Route path="keys" element={<Keys />} />
           <Route path="connections" element={<Connections {...props} />} />
           <Route path="plugins" element={<Plugins {...props} />} />

@@ -65,20 +65,6 @@ export function KindLabel({ kind }: { kind: string | undefined }) {
 /** The absolute time, where a record states one exactly. */
 export const stamp = (at: string) => new Date(at).toLocaleString();
 
-/**
- * An identifier printed as text. No page of this UI does that any more; the two
- * Codex-owned views (views/code.tsx, views/settings.tsx) still do, and this
- * exists for them alone until their own pass removes it.
- */
-export function ObjId({ id }: { id: string }) {
-  const [prefix, rest] = id.split('_', 2);
-  return (
-    <span className="obj-id mono" title={id}>
-      {rest ? `${prefix}_${rest.slice(0, 6)}` : id.slice(0, 10)}
-    </span>
-  );
-}
-
 /** A relative time in a row, with the exact stamp kept in its title and nowhere else. */
 export const Ago = ({ at, className }: { at: string; className?: string }) => (
   <span className={className} title={at}>

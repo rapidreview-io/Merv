@@ -485,7 +485,11 @@ export function MapView({ shell }: { shell: ShellData }) {
           index={2}
           tiles={tiles(
             codeRow &&
-              tile(github?.repository?.fullName ?? 'GitHub', github?.status ?? EM, codeRow.path),
+              tile(
+                github?.repository?.fullName ?? 'GitHub',
+                github?.status ?? EM,
+                '/settings/integrations',
+              ),
             mountsRow &&
               tile(
                 'connections ready',

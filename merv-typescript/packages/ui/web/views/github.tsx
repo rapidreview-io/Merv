@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
-import { useSession } from '../session';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
 import { GitHubAutomation } from './github-automation';
 
@@ -12,7 +11,6 @@ const request = <T,>(action = '', body?: unknown) =>
   });
 
 export function GitHubConnection() {
-  const { project } = useSession();
   const epoch = useScopeVersion();
   const [status, setStatus] = useState<GitHubStatus>();
   const [repositories, setRepositories] = useState<GitHubRepository[]>();
@@ -104,13 +102,10 @@ export function GitHubConnection() {
   }
   const selected = repositories?.find((repo) => `${repo.installationId}:${repo.id}` === selection);
   return (
-    <section className="card stack" aria-label="GitHub repository">
-      <div>
-        <h2 className="section-title">GitHub repository</h2>
-        <p className="faint">Connect a repository to {project.name}.</p>
-      </div>
+    <section className="stack" aria-label="GitHub repository">
+      <h2 className="section-title">GitHub repository</h2>
       {error && <p role="alert">{error}</p>}
-      {!status && !error && <p className="faint">Loading GitHub connection…</p>}
+      {!status && !error && <p className="faint">Loading…</p>}
       {!status && error && (
         <button
           className="btn"
@@ -139,7 +134,7 @@ export function GitHubConnection() {
               </p>
             </div>
           ) : (
-            <p>No repository linked.</p>
+            <p className="muted">No repository linked</p>
           )}
           {!status.configured ? (
             <p className="faint">GitHub connections are not configured on this server.</p>
@@ -155,13 +150,8 @@ export function GitHubConnection() {
                       : ''}
                 </p>
               )}
-              {status.status === 'disconnected' && status.repository && (
-                <p className="faint">
-                  The saved repository reference remains. Live GitHub access is disconnected.
-                </p>
-              )}
               {status.canManage && (
-                <div className="action-row">
+                <div className="cluster">
                   <button
                     className="btn btn--primary"
                     disabled={busy}
@@ -230,13 +220,6 @@ export function GitHubConnection() {
                   )}
                 </div>
               )}
-              {status.canManage && (
-                <p className="faint">
-                  Repository choices follow your GitHub access and the App’s installation.
-                  Reconnecting replaces this project’s connection and clears its repository
-                  selection. Disconnecting does not uninstall the GitHub App.
-                </p>
-              )}
               {repositories && (
                 <div className="stack">
                   {repositories.length ? (
@@ -279,10 +262,7 @@ export function GitHubConnection() {
                       </button>
                     </>
                   ) : (
-                    <p>
-                      No accessible repositories. Choose repositories on GitHub, then select a
-                      repository here again.
-                    </p>
+                    <p className="muted">No accessible repositories</p>
                   )}
                 </div>
               )}

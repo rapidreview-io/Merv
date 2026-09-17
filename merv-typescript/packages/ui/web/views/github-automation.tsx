@@ -115,11 +115,6 @@ export function GitHubAutomation({
               )}
             </label>
           )}
-          <p className="muted">
-            Read and publish lets trusted runners push checkpoints and open consolidation PRs in
-            this repository. An operator must explicitly merge an independently approved proposal.
-            Changing this setting invalidates outstanding publication authority.
-          </p>
           <div>
             <button
               className="btn"

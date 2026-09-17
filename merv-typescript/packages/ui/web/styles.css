@@ -684,6 +684,7 @@ html[data-theme='dark'] .kind {
 }
 /* Every disclosure summary on every page is written the same way. */
 .agent-detail summary,
+.pr-details > summary,
 .crit-file > summary {
   cursor: pointer;
   color: var(--muted);
@@ -734,13 +735,6 @@ html[data-theme='dark'] .kind {
 .prose {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-/* The one identifier still printed as text, in the two Codex-owned views. */
-.obj-id {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--faint);
-  letter-spacing: 0.02em;
 }
 .label {
   display: block;
@@ -2415,6 +2409,31 @@ select.input,
   }
 }
 
+/* Sessions ---------------------------------------------------------------- */
+/* The page's subject is the page. Dispatch, the machines, the leases and the
+   queue stand on the ground above the agent directory, which keeps the list
+   anatomy every other collection has; the two stages read as one column, so the
+   heading that names the directory sits at the foot of the first. */
+.sessions-ops {
+  padding-bottom: 0;
+}
+.sessions-ops + .page-stage {
+  padding-top: var(--space-3);
+}
+.sessions-ops .section-title:last-child {
+  margin-bottom: 0;
+}
+/* A halt answers where it was asked: the count it closed, or the reason it could
+   not, reads inside the guard rather than at the top of the page. */
+.guard .error-message {
+  margin: 0;
+}
+/* A lease past its expiry drops its countdown; the age of the read takes its
+   place, at the quiet weight, so a stale number never reads as a live one. */
+.countdown .faint {
+  font-size: var(--text-sm);
+}
+
 /* Paper ------------------------------------------------------------------ */
 /* The one page read for minutes rather than scanned: a single reading column
    on the page ground at the app's own measure, an arXiv/Distill outline in the
@@ -2701,27 +2720,186 @@ del.cut {
   }
 }
 
-/* Sessions ---------------------------------------------------------------- */
-/* The page's subject is the page. Dispatch, the machines, the leases and the
-   queue stand on the ground above the agent directory, which keeps the list
-   anatomy every other collection has; the two stages read as one column, so the
-   heading that names the directory sits at the foot of the first. */
-.sessions-ops {
-  padding-bottom: 0;
+/* Code ------------------------------------------------------------------ */
+/* The branch graph: the base branch as a trunk, one lane per branch Merv made,
+   one dot per checkpoint with its diffstat above it, and a ring on the trunk
+   where a reviewed proposal merged. Plain SVG placed from one measured width.
+   Every word in it takes its colour through currentcolor, so the state tones
+   and the diffstat's two colours are the page's own and not a second set. */
+.branch-graph {
+  display: block;
+  width: 100%;
+  height: auto;
 }
-.sessions-ops + .page-stage {
-  padding-top: var(--space-3);
+/* Where a lane's riser passes behind a label, the ground is painted first, so a
+   line never runs through a word. */
+.branch-graph text {
+  fill: currentcolor;
+  color: var(--muted);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
-.sessions-ops .section-title:last-child {
+.bg-date,
+.bg-ref,
+.bg-stat {
+  text-anchor: middle;
+}
+.bg-date {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.bg-tick {
+  stroke: var(--line);
+}
+.bg-trunk {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+/* Past the last commit Merv can name the trunk is a dash: the base branch has
+   history this process never read, and the drawing says so instead of inventing it. */
+.bg-trunk--beyond {
+  stroke: var(--line);
+  stroke-dasharray: 2 4;
+}
+.bg-lane {
+  fill: none;
+  stroke: var(--line-strong);
+}
+.bg-dot {
+  fill: var(--bg);
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+.bg-dot--tip,
+.bg-dot--trunk {
+  fill: var(--text);
+  stroke: var(--text);
+}
+.bg-ring {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.25;
+}
+.bg-pill {
+  fill: none;
+  stroke: var(--line-strong);
+}
+.bg-ref {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.bg-kind {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--kind, var(--muted));
+}
+html[data-theme='dark'] .bg-kind {
+  color: color-mix(in srgb, var(--kind, var(--muted)) 55%, #ffffff);
+}
+.bg-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+}
+.bg-meta {
+  font-size: var(--text-sm);
+}
+.bg-word {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.bg-stat {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+/* Borrowed verbatim: nothing reads a change better than +n −m. */
+.diff {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.diff .add,
+.branch-graph .add {
+  color: var(--supports);
+}
+.diff .del,
+.branch-graph .del {
+  color: var(--refutes);
+}
+/* The one box a branch graph draws, because the box is the object: the pill is
+   what says this text names a branch. Mono for a ref a person chose, sans for
+   the record a generated ref belongs to. */
+.branch {
+  display: inline-block;
+  max-width: 34ch;
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.branch--ref {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+/* A pull request reads as lines, and its checks as two columns of hairlines. */
+.pr-row {
+  gap: 6px;
+  padding: 14px 0;
+}
+.pr-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: none;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.pr-out {
+  color: var(--active);
+}
+.pr-checks {
+  margin-top: 2px;
+  max-width: 880px;
+  border-top: 1px solid var(--line-soft);
+}
+.pr-check {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.pr-check .label {
   margin-bottom: 0;
 }
-/* A halt answers where it was asked: the count it closed, or the reason it could
-   not, reads inside the guard rather than at the top of the page. */
-.guard .error-message {
-  margin: 0;
+/* A guard that names what it is about to change is a box, and the only one here. */
+.pr-guard {
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
 }
-/* A lease past its expiry drops its countdown; the age of the read takes its
-   place, at the quiet weight, so a stale number never reads as a live one. */
-.countdown .faint {
-  font-size: var(--text-sm);
+@media (max-width: 720px) {
+  .pr-check {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* One column leaves two headings with nothing to head. */
+  .pr-checks .pr-check:first-child {
+    display: none;
+  }
 }
