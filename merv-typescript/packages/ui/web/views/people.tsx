@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useSession, type Actor } from '../session';
-import { LoadState, ObjId, StatusPill, Table, col } from '../components';
+import { LoadState, ObjId, StatusPill, Table, col, term } from '../components';
 
 /** Actor names for ids; operators get names, everyone else gets short ids. */
 export function useActorNames() {
@@ -150,6 +150,7 @@ export function PeopleView() {
           <LoadState
             loading={loading}
             error={loadError}
+            data={members}
             empty={members?.length === 0}
             columns={3}
             emptyTitle="No active memberships"
@@ -182,7 +183,7 @@ export function PeopleView() {
                     >
                       {roles.map((role) => (
                         <option key={role} value={role}>
-                          {role}
+                          {term(role)}
                         </option>
                       ))}
                     </select>
@@ -257,7 +258,7 @@ export function PeopleView() {
                 >
                   {roles.map((role) => (
                     <option key={role} value={role}>
-                      {role}
+                      {term(role)}
                     </option>
                   ))}
                 </select>

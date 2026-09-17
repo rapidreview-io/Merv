@@ -2322,3 +2322,117 @@ select.input,
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
+
+/* Agents pages: liveness, countdown, guard -------------------------------- */
+/* One grid for the lease list: the head and both lines of every row read the
+   same template, so a fact keeps its x-position down the whole list, and the
+   liveness line leaves the clock's column empty because no fact sits on both. */
+.lease-list {
+  --lease-cols: minmax(110px, 1fr) minmax(180px, 2.2fr) 104px 88px;
+}
+.lease-head,
+.lease-row,
+.lease-live {
+  display: grid;
+  grid-template-columns: var(--lease-cols);
+  gap: var(--space-4);
+  align-items: baseline;
+  text-align: left;
+}
+.lease-head {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.lease {
+  border-bottom: 1px solid var(--line);
+}
+/* The row body is a toggle and nothing else: no frame, no chevron, and the open
+   row's own ground is the whole affordance beside aria-expanded. */
+.lease-row {
+  width: 100%;
+  padding: 11px 0 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.lease-row:hover {
+  background: var(--hover);
+}
+.lease--open {
+  background: var(--bg-soft);
+}
+.lease-live {
+  padding-bottom: 11px;
+}
+.lease-live > * {
+  grid-column: 1 / 4;
+}
+/* Time a person acts on reads at the row's own size in the text colour. */
+.countdown {
+  font-size: var(--text-base);
+  color: var(--text);
+}
+.countdown--soon {
+  color: var(--qualifies);
+}
+.countdown--now {
+  color: var(--refutes);
+}
+.lease-panel {
+  align-items: flex-start;
+  padding-bottom: var(--space-4);
+}
+/* A guard is a box because there the box is the object: it names the records it
+   is about to change, and it is the only box on these pages. */
+.guard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 64ch;
+  padding: var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+.guard-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--text-sm);
+}
+.btn--danger {
+  border-color: var(--refutes);
+  color: var(--refutes);
+}
+.btn--danger:hover:not(:disabled) {
+  background: rgba(var(--refutes-rgb), 0.08);
+}
+/* Whose move it is: two labelled rows on the ground, never a pair of boxes. */
+.moves {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.move {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+/* Narrow: the second line stacks under the first as a card, never a scroller. */
+@media (max-width: 720px) {
+  .lease-head {
+    display: none;
+  }
+  .lease-row,
+  .lease-live {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .lease-live > * {
+    grid-column: 1;
+  }
+}

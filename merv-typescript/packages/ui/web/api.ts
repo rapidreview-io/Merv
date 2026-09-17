@@ -278,14 +278,18 @@ export const keyClient = {
 export interface Loaded<T> {
   data: T | undefined;
   error: ApiError | undefined;
+  /** When the data on screen arrived, so a failed refresh can say how old it is. */
+  loadedAt: string | undefined;
   loading: boolean;
   reload(): void;
 }
 
 /**
  * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
- * screen. The cadence stops entirely while the tab is hidden and catches up once on return,
- * so a backgrounded page costs nothing; the rule lives here rather than in any view.
+ * screen. A failed refresh keeps that data and its arrival time beside the error, so a view
+ * degrades to one stale line rather than blanking a list that is still correct. The cadence
+ * stops entirely while the tab is hidden and catches up once on return, so a backgrounded
+ * page costs nothing; both rules live here rather than in any view.
  */
 export function useTool<T>(
   name: string | null,
@@ -294,9 +298,12 @@ export function useTool<T>(
 ): Loaded<T> {
   const epoch = useScopeVersion();
   const key = name ? `${epoch}:${name}:${JSON.stringify(input)}` : null;
-  const [state, setState] = useState<{ key: string | null; data?: T; error?: ApiError }>({
-    key: null,
-  });
+  const [state, setState] = useState<{
+    key: string | null;
+    data?: T;
+    loadedAt?: string;
+    error?: ApiError;
+  }>({ key: null });
   const [tick, setTick] = useState(0);
   const latest = useRef(key);
   latest.current = key;
@@ -318,12 +325,13 @@ export function useTool<T>(
     const refresh = async () => {
       try {
         const data = await call<T>(name, input);
-        if (!cancelled && latest.current === key) setState({ key, data });
+        if (!cancelled && latest.current === key)
+          setState({ key, data, loadedAt: new Date().toISOString() });
       } catch (error) {
         if (!cancelled && latest.current === key)
           setState((old) => ({
             key,
-            data: old.key === key ? old.data : undefined,
+            ...(old.key === key ? { data: old.data, loadedAt: old.loadedAt } : {}),
             error: error as ApiError,
           }));
       } finally {
@@ -346,6 +354,7 @@ export function useTool<T>(
   return {
     data: current ? state.data : undefined,
     error: current ? state.error : undefined,
+    loadedAt: current ? state.loadedAt : undefined,
     loading: !!key && !current,
     reload,
   };

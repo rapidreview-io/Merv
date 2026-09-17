@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useTool } from '../api';
 import { LoadState, StatusPill, Table, col } from '../components';
 import type { ViewProps } from './index';
@@ -11,7 +12,11 @@ interface Mount {
 }
 
 export function ConnectionsView({ row }: ViewProps) {
-  const mounts = useTool<Mount[]>('ui.read', { rowId: row.id }, { every: 4000 });
+  // A mount that is still connecting is the only thing here that moves.
+  const [cadence, setCadence] = useState(4000);
+  const mounts = useTool<Mount[]>('ui.read', { rowId: row.id }, { every: cadence });
+  const connecting = (mounts.data ?? []).some((mount) => mount.state === 'connecting');
+  useEffect(() => setCadence(connecting ? 4000 : 15000), [connecting]);
   return (
     <div className="page-stage">
       <LoadState

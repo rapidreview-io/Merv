@@ -1,7 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { accountRequest, scopeVersion, useScopeVersion, useTool } from '../api';
-import { Ago, LoadState, ObjId, StatusPill, Table, col } from '../components';
-import { ThreeStates } from '../states';
+import {
+  ActorSplit,
+  Ago,
+  ConfirmAction,
+  Countdown,
+  KV,
+  KindLabel,
+  Live,
+  LoadState,
+  ObjId,
+  StatusPill,
+  Table,
+  col,
+  term,
+  useNow,
+} from '../components';
+import { leaseLiveness, runnerLiveness } from '../liveness';
 import type { ViewProps } from './index';
 import { AgentSessionsPanel, type AgentSummary } from './agent-sessions-panel';
 
@@ -33,6 +49,7 @@ interface Session {
   role: string;
   status: string;
   runnerRef: string | null;
+  hostRef: string | null;
   platform: Platform | null;
   createdAt: string;
   activatedAt: string | null;
@@ -68,19 +85,108 @@ interface Status {
   queueTotal: number;
 }
 const isLive = (session: Session) => session.status === 'offered' || session.status === 'active';
+const stamp = (at: string) => new Date(at).toLocaleString();
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const platformPhrase = (platform: Platform) =>
+  [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
+const workspacePhrase = ({ workspace, workspaceMode }: Session) => {
+  if (!workspace)
+    return workspaceMode === 'none' ? 'none · scratch' : `${term(workspaceMode)} · not attached`;
+  const result = workspace.result;
+  return [
+    `${term(workspace.attachment.mode)} · ${result ? 'captured' : 'attached'}`,
+    (result ?? workspace.attachment).headOid,
+    result && `${result.stats.filesChanged} changed files · ${result.stats.commitCount} commits`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+};
 
-export function SessionsView({ row }: ViewProps) {
-  const state = useTool<Status>('ui.read', { rowId: row.id }, { every: 4000 });
+/**
+ * One lease, two lines on one grid: identity above, liveness below, and no fact
+ * on both. The body is a toggle and nothing else, so what a person scans stays
+ * on the row and everything they copy — ids, refs, the absolute lease stamp —
+ * waits in the panel, whose first line is the link back to the work.
+ */
+function LeaseRow({
+  session,
+  agent,
+  route,
+  now,
+  open,
+  onToggle,
+  control,
+}: {
+  session: Session;
+  agent: ReactNode;
+  route?: { to: string; kind: string };
+  now: number;
+  open: boolean;
+  onToggle(): void;
+  control: ReactNode;
+}) {
+  const panelId = `lease-${session.id}`;
+  const rows: [string, ReactNode][] = [
+    ['Work item', <span className="mono wrap">{session.instanceId}</span>],
+    ['Execution', <span className="mono wrap">{session.id}</span>],
+    ['Revision', session.expectedRevision],
+    ['Offered', stamp(session.createdAt)],
+  ];
+  if (session.activatedAt) rows.push(['Taken up', stamp(session.activatedAt)]);
+  rows.push([isLive(session) ? 'Lease expires' : 'Lease ran to', stamp(session.expiresAt)]);
+  if (session.closedAt) rows.push(['Closed', stamp(session.closedAt)]);
+  if (session.platform) rows.push(['Platform', platformPhrase(session.platform)]);
+  if (session.runnerRef) rows.push(['Runner', <span className="mono">{session.runnerRef}</span>]);
+  if (session.hostRef) rows.push(['Host', <span className="mono">{session.hostRef}</span>]);
+  rows.push(['Workspace', <span className="wrap">{workspacePhrase(session)}</span>]);
+  return (
+    <div className={`lease${open ? ' lease--open' : ''}`}>
+      <button
+        type="button"
+        className="lease-row"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={onToggle}
+      >
+        <span className="wrap">{agent}</span>
+        <strong>{session.label || <ObjId id={session.instanceId} />}</strong>
+        <span className="muted">{term(session.role)}</span>
+        <Countdown to={isLive(session) ? session.expiresAt : null} now={now} />
+      </button>
+      <div className="lease-live">
+        <Live of={leaseLiveness(session, now)} />
+      </div>
+      {open && (
+        <div className="lease-panel stack" id={panelId}>
+          {route && (
+            <Link className="cluster agent-help" to={route.to}>
+              <KindLabel kind={route.kind} />
+              <span>Open the record →</span>
+            </Link>
+          )}
+          <KV rows={rows} />
+          {control}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SessionsView({ row, shell }: ViewProps) {
+  const [cadence, setCadence] = useState(4000);
+  const state = useTool<Status>('ui.read', { rowId: row.id }, { every: cadence });
   const epoch = useScopeVersion();
   const generation = useRef(0);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [view, setView] = useState<'agents' | 'operations'>('agents');
+  const [open, setOpen] = useState<string>();
   useEffect(() => {
     generation.current++;
     setBusy(undefined);
     setError(undefined);
     setView('agents');
+    setOpen(undefined);
     return () => {
       generation.current++;
     };
@@ -106,9 +212,33 @@ export function SessionsView({ row }: ViewProps) {
   const liveCount = status?.liveSessionCount ?? 0;
   // An agent is named where it worked; the id stays as the fallback.
   const agentName = new Map((status?.agents ?? []).map((agent) => [agent.id, agent.name]));
+  // The page's one clock ticks only while a lease or a runner is actually live,
+  // and the read slows to match, so an idle Agents page costs nothing.
+  const anyLive = liveCount > 0 || (status?.runners ?? []).some((runner) => runner.live);
+  const now = useNow(anyLive ? 1000 : 0);
+  useEffect(() => setCadence(anyLive ? 4000 : 15000), [anyLive]);
+  // The lease's work item is named by the lists the page's siblings already own.
+  const taskRow = shell.rows.find((entry) => entry.view.kind === 'tasks');
+  const experimentRow = shell.rows.find((entry) => entry.view.kind === 'experiments');
+  const tasks = useTool<{ id: string }[]>(taskRow ? 'task.list' : null);
+  const experiments = useTool<{ id: string }[]>(experimentRow ? 'experiment.list' : null);
+  const routeOf = (instanceId: string) =>
+    tasks.data?.some((task) => task.id === instanceId)
+      ? { to: `${taskRow!.path}/${instanceId}`, kind: 'tasks' }
+      : experiments.data?.some((experiment) => experiment.id === instanceId)
+        ? { to: `${experimentRow!.path}/${instanceId}`, kind: 'experiments' }
+        : undefined;
+  const offered = (status?.sessions ?? []).filter((session) => session.status === 'offered');
+  const live = (status?.sessions ?? []).filter(isLive);
+  const waiting = [
+    status?.queueTotal && `${count(status.queueTotal, 'assignment', 'assignments')} to be leased`,
+    offered.length && `${count(offered.length, 'lease', 'leases')} offered and not taken up`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <div className="page-stage sessions-page stack stack--lg">
-      <LoadState loading={state.loading} error={state.error} />
+      <LoadState {...state} />
       {status && (
         <>
           <div className="action-row" role="group" aria-label="Agent page views">
@@ -142,38 +272,65 @@ export function SessionsView({ row }: ViewProps) {
                 <div className="cluster">
                   <strong>Automatic dispatch</strong>
                   <StatusPill value={status.dispatch.enabled ? 'enabled' : 'paused'} />
-                  {status.canManage && (
-                    <>
-                      <button
-                        className="btn btn--sm"
-                        disabled={!!busy}
-                        onClick={() =>
-                          void mutate(
-                            '/sessions/dispatch',
-                            { enabled: !status.dispatch.enabled },
-                            'PUT',
-                          )
-                        }
-                      >
-                        {status.dispatch.enabled ? 'Pause dispatch' : 'Enable dispatch'}
-                      </button>
-                      <button
-                        className="btn btn--sm"
-                        disabled={!!busy || (!status.dispatch.enabled && liveCount === 0)}
-                        onClick={() =>
-                          void mutate('/sessions/halt', { reason: 'halted_by_operator' })
-                        }
-                      >
-                        Halt all sessions
-                      </button>
-                    </>
+                  {status.dispatch.updatedAt && (
+                    <span className="faint">
+                      set <Ago at={status.dispatch.updatedAt} />
+                    </span>
                   )}
                 </div>
-                <p className="faint">
-                  Pausing prevents new automatic leases. Halting also closes current sessions;
-                  connected runners must stop their workers.
-                </p>
-                {error && <p role="alert">{error}</p>}
+                <ActorSplit
+                  agent={waiting ? <p>{waiting}.</p> : null}
+                  you={
+                    status.canManage ? (
+                      <div className="cluster">
+                        <button
+                          className="btn"
+                          disabled={!!busy}
+                          onClick={() =>
+                            void mutate(
+                              '/sessions/dispatch',
+                              { enabled: !status.dispatch.enabled },
+                              'PUT',
+                            )
+                          }
+                        >
+                          {status.dispatch.enabled ? 'Pause dispatch' : 'Enable dispatch'}
+                        </button>
+                        {live.length > 0 && (
+                          <ConfirmAction
+                            label="Halt every live lease"
+                            title={`Halt ${count(live.length, 'live lease', 'live leases')} and pause dispatch?`}
+                            confirm={`Halt ${live.length} and pause dispatch`}
+                            busy={busy === '/sessions/halt' ? 'Halting…' : undefined}
+                            onConfirm={() =>
+                              void mutate('/sessions/halt', { reason: 'halted_by_operator' })
+                            }
+                          >
+                            <ul className="guard-list">
+                              {live.map((session) => (
+                                <li key={session.id}>
+                                  {session.label} · {term(session.role)} ·{' '}
+                                  {agentName.get(session.agentId ?? '') ?? 'no agent yet'}
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="muted">
+                              Each lease closes now and automatic dispatch stops, so nothing new is
+                              offered until you enable it again; connected runners must stop their
+                              own workers. Each assignment returns to the queue at its current
+                              revision. No verdict, claim standing or review state changes.
+                            </p>
+                          </ConfirmAction>
+                        )}
+                      </div>
+                    ) : null
+                  }
+                />
+                {error && (
+                  <p className="error-message" role="alert">
+                    {error}
+                  </p>
+                )}
               </section>
               <section className="stack">
                 <h2 className="section-title">Runners</h2>
@@ -196,7 +353,7 @@ export function SessionsView({ row }: ViewProps) {
                         </>
                       )),
                       col<Runner>('live', 'Presence', (runner) => (
-                        <StatusPill value={runner.live ? 'live' : 'offline'} />
+                        <Live of={runnerLiveness(runner, now)} />
                       )),
                       col<Runner>(
                         'platforms',
@@ -215,110 +372,74 @@ export function SessionsView({ row }: ViewProps) {
                           ? 'Pending acknowledgement'
                           : 'Applied',
                       ),
-                      col<Runner>('seen', 'Last seen', (runner) => <Ago at={runner.lastSeenAt} />),
                     ]}
                   />
                 )}
               </section>
               <section className="stack">
-                <h2 className="section-title">Assignment executions · {liveCount} live</h2>
-                {status.sessionTotal > status.sessions.length && (
-                  <p className="faint">
-                    Showing {status.sessions.length} of {status.sessionTotal} sessions, with live
-                    sessions first.
-                  </p>
-                )}
+                <h2 className="section-title">Leases</h2>
+                <p className="list-totals muted">
+                  {status.sessionTotal > status.sessions.length
+                    ? `${status.sessions.length} of ${status.sessionTotal} leases this project has offered, live first`
+                    : `${count(status.sessionTotal, 'lease', 'leases')} this project has offered`}{' '}
+                  · {liveCount} live now
+                </p>
                 {status.sessions.length === 0 ? (
                   <p className="faint">No sessions have been offered in this project.</p>
                 ) : (
-                  <Table
-                    rows={status.sessions}
-                    keyOf={(session) => session.id}
-                    columns={[
-                      col<Session>(
-                        'agent',
-                        'Agent',
-                        (session) =>
-                          agentName.get(session.agentId ?? '') ?? (
-                            <ObjId id={session.agentId ?? session.id} />
-                          ),
-                      ),
-                      col<Session>('work', 'Work', (session) => (
-                        <>
-                          <strong>{session.label || <ObjId id={session.instanceId} />}</strong>
-                          <div className="faint">revision {session.expectedRevision}</div>
-                        </>
-                      )),
-                      col<Session>('role', 'Role', (session) => session.role),
-                      // A lease is executed and closed but never reviewed, so the
-                      // middle clause is a fact this record cannot have.
-                      col<Session>('standing', 'Standing', (session) => {
-                        const closed = session.outcome ?? session.closeReason;
-                        return (
-                          <ThreeStates
-                            execution={session.status}
-                            outcome={
-                              closed
-                                ? { word: closed }
-                                : { word: 'no outcome recorded', absent: true }
-                            }
-                          />
-                        );
-                      }),
-                      col<Session>(
-                        'platform',
-                        'Platform',
-                        (session) => session.platform?.name ?? 'Manual offer',
-                      ),
-                      col<Session>('workspace', 'Workspace', (session) =>
-                        session.workspace ? (
-                          <>
-                            <div>
-                              {session.workspace.attachment.mode} ·{' '}
-                              {session.workspace.result ? 'Captured' : 'Attached'}
-                            </div>
-                            <code
-                              title={
-                                (session.workspace.result ?? session.workspace.attachment).headOid
+                  <div className="lease-list">
+                    <div className="lease-head">
+                      {['Agent', 'Work', 'Role', 'Expires'].map((head) => (
+                        <span className="label" key={head}>
+                          {head}
+                        </span>
+                      ))}
+                    </div>
+                    {status.sessions.map((session) => (
+                      <LeaseRow
+                        key={session.id}
+                        session={session}
+                        now={now}
+                        route={routeOf(session.instanceId)}
+                        agent={
+                          agentName.get(session.agentId ?? '') ??
+                          (session.agentId ? <ObjId id={session.agentId} /> : term(null))
+                        }
+                        open={open === session.id}
+                        onToggle={() =>
+                          setOpen((current) => (current === session.id ? undefined : session.id))
+                        }
+                        control={
+                          status.canManage && isLive(session) ? (
+                            <ConfirmAction
+                              label="Halt this lease"
+                              title="Halt this lease?"
+                              confirm="Halt the lease"
+                              busy={
+                                busy === `/sessions/${session.id}/halt` ? 'Halting…' : undefined
+                              }
+                              onConfirm={() =>
+                                void mutate(`/sessions/${encodeURIComponent(session.id)}/halt`, {
+                                  reason: 'halted_by_operator',
+                                })
                               }
                             >
-                              {(
-                                session.workspace.result ?? session.workspace.attachment
-                              ).headOid.slice(0, 12)}
-                            </code>
-                            {session.workspace.result && (
-                              <div className="faint">
-                                {session.workspace.result.stats.filesChanged} changed files ·{' '}
-                                {session.workspace.result.stats.commitCount} commits
-                              </div>
-                            )}
-                          </>
-                        ) : session.workspaceMode === 'none' ? (
-                          'Scratch'
-                        ) : (
-                          `${session.workspaceMode} · Not attached`
-                        ),
-                      ),
-                      col<Session>('created', 'Offered', (session) => (
-                        <Ago at={session.createdAt} />
-                      )),
-                      col<Session>('control', '', (session) =>
-                        status.canManage && isLive(session) ? (
-                          <button
-                            className="btn btn--sm"
-                            disabled={!!busy}
-                            onClick={() =>
-                              void mutate(`/sessions/${encodeURIComponent(session.id)}/halt`, {
-                                reason: 'halted_by_operator',
-                              })
-                            }
-                          >
-                            Halt
-                          </button>
-                        ) : null,
-                      ),
-                    ]}
-                  />
+                              <p>
+                                {agentName.get(session.agentId ?? '') ?? 'An unnamed agent'} holds
+                                this lease on {session.label} as {term(session.role)}. Halting
+                                closes it now; its runner must stop the worker itself.
+                              </p>
+                              <p className="muted">
+                                The assignment returns to the queue at revision{' '}
+                                {session.expectedRevision}. No verdict, claim standing or review
+                                state changes.
+                              </p>
+                            </ConfirmAction>
+                          ) : null
+                        }
+                      />
+                    ))}
+                  </div>
                 )}
               </section>
               <section className="stack">
@@ -338,8 +459,8 @@ export function SessionsView({ row }: ViewProps) {
                       col<Candidate>('label', 'Work', (candidate) => (
                         <strong>{candidate.label || <ObjId id={candidate.instanceId} />}</strong>
                       )),
-                      col<Candidate>('gate', 'Gate', (candidate) => candidate.state),
-                      col<Candidate>('role', 'Role', (candidate) => candidate.role),
+                      col<Candidate>('gate', 'Gate', (candidate) => term(candidate.state)),
+                      col<Candidate>('role', 'Role', (candidate) => term(candidate.role)),
                       col<Candidate>(
                         'revision',
                         'Revision',

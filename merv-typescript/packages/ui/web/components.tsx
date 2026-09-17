@@ -1,4 +1,6 @@
 import {
+  useEffect,
+  useRef,
   useState,
   type ComponentType,
   type CSSProperties,
@@ -9,7 +11,10 @@ import {
 import { Link, Route, Routes } from 'react-router-dom';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError } from './api';
+import { duration, term, words, type Liveness } from './liveness';
 import { ArtifactBody, bytes, type Artifact } from './views/artifacts';
+
+export { term, words };
 
 export const cx = (...names: (string | false | null | undefined)[]) =>
   names.filter(Boolean).join(' ');
@@ -63,7 +68,6 @@ export const shortId = (id: string) => {
   const [prefix, rest] = id.split('_', 2);
   return rest ? `${prefix}_${rest.slice(0, 6)}` : id.slice(0, 10);
 };
-export const words = (value: string) => value.replaceAll('_', ' ');
 
 /** A relative time in a row, with the exact stamp kept in its title and nowhere else. */
 export const Ago = ({ at, className }: { at: string; className?: string }) => (
@@ -128,6 +132,124 @@ export function StatusPill({ value }: { value: string | null | undefined }) {
   );
 }
 
+/**
+ * The liveness line: one phrase from the one module that composes them, with
+ * colour reaching the verdict word alone. A record the server cannot speak for
+ * renders no line at all.
+ */
+export function Live({ of }: { of: Liveness | null }) {
+  if (!of) return null;
+  return (
+    <span className="cluster agent-help">
+      <span className={cx('status', `status--${of.tone}`)}>
+        <span className="status-dot" aria-hidden="true" />
+        {words(of.verdict)}
+      </span>
+      {of.rest && <span className="muted">{of.rest}</span>}
+    </span>
+  );
+}
+
+/** One clock for a page, ticking only while something on the page is actually live. */
+export function useNow(every: number): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!every) return;
+    const timer = setInterval(() => setNow(Date.now()), every);
+    return () => clearInterval(timer);
+  }, [every]);
+  return now;
+}
+
+/**
+ * Time a person acts on, at the row's own size in the text colour: amber under
+ * ten minutes, red under two, counting down to 0s rather than to a euphemism. A
+ * row that cannot have the fact keeps the em dash; the absolute stamp lives in
+ * the panel.
+ */
+export function Countdown({ to, now }: { to: string | null | undefined; now: number }) {
+  const at = to ? Date.parse(to) : Number.NaN;
+  if (!Number.isFinite(at)) return <span className="faint">—</span>;
+  const left = at - now;
+  const near = left < 120_000 ? ' countdown--now' : left < 600_000 ? ' countdown--soon' : '';
+  return <span className={`countdown tabular${near}`}>{duration(left)}</span>;
+}
+
+/**
+ * A destructive control guarded in proportion to its consequence. The guard is
+ * the one box on these pages, because there the box is the object: it names the
+ * records under the click, and what will not change, before it acts. Ordinary
+ * forward actions stay one click, and there is one path per mutation.
+ */
+export function ConfirmAction({
+  label,
+  title,
+  confirm,
+  busy,
+  onConfirm,
+  children,
+}: {
+  label: string;
+  title: string;
+  confirm: string;
+  /** The label while the request is in flight; absent means not in flight. */
+  busy?: string;
+  onConfirm(): void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) box.current?.querySelector('button')?.focus();
+  }, [open]);
+  if (!open)
+    return (
+      <button className="btn" onClick={() => setOpen(true)}>
+        {label}
+      </button>
+    );
+  return (
+    <div
+      className="guard"
+      role="alertdialog"
+      aria-label={title}
+      ref={box}
+      onKeyDown={(event) => event.key === 'Escape' && setOpen(false)}
+    >
+      <strong>{title}</strong>
+      {children}
+      <div className="cluster">
+        <button className="btn btn--danger" disabled={!!busy} onClick={onConfirm}>
+          {busy ?? confirm}
+        </button>
+        <button className="btn" disabled={!!busy} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every waiting state names whose move it is. An empty row is not a statement,
+ * so a side with nothing on it says so in words; the browser adds the two labels
+ * and nothing else.
+ */
+export function ActorSplit({ agent, you }: { agent?: ReactNode; you?: ReactNode }) {
+  return (
+    <div className="moves">
+      <div className="move">
+        <span className="label">Agent’s move</span>
+        {agent || <p className="muted">Nothing until an agent moves.</p>}
+      </div>
+      <div className="move">
+        <span className="label">Your move</span>
+        {you || <p className="muted">Nothing is waiting on you.</p>}
+      </div>
+    </div>
+  );
+}
+
 export function ObjId({ id, strong }: { id: string; strong?: boolean }) {
   return (
     <span className={cx('obj-id', 'mono', strong && 'obj-id--strong')} title={id}>
@@ -169,11 +291,16 @@ export function PageHeader({
 /**
  * Loading, error, and empty states share one calm voice; errors name the code
  * the server sent. While the read is in flight the list keeps its own shape:
- * grey rows in the same grid, in as many columns as the list will have.
+ * grey rows in the same grid, in as many columns as the list will have. A failed
+ * refresh with good data still on screen is a different case from a failed load:
+ * it degrades to one line naming when the data last arrived, and never blanks a
+ * list that is still correct. Pass the loaded result through and it is handled.
  */
 export function LoadState({
   loading,
   error,
+  data,
+  loadedAt,
   empty,
   emptyTitle = 'Nothing here yet',
   emptyHint,
@@ -182,12 +309,21 @@ export function LoadState({
 }: {
   loading: boolean;
   error?: ApiError;
+  data?: unknown;
+  loadedAt?: string;
   empty?: boolean;
   emptyTitle?: string;
   emptyHint?: ReactNode;
   back?: { to: string; label: string };
   columns?: number;
 }) {
+  if (error && data !== undefined)
+    return (
+      <p className="muted agent-help" role="status" title={`${error.message} (${error.code})`}>
+        Could not refresh. Showing the state that loaded {loadedAt ? <Ago at={loadedAt} /> : 'last'}
+        .
+      </p>
+    );
   if (error)
     return (
       <div className="empty-state empty-state--error" role="alert">
