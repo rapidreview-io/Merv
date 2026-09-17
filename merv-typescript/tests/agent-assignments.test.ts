@@ -74,7 +74,8 @@ test('one agent can produce successive tasks and review other work, but cannot r
   const callerB = await app.ctx.sessions.authenticate(token);
   assert.equal(callerB.actorId, callerA.actorId);
   assert.equal(b.agentId, agent.id);
-  await assert.rejects(app.ctx.tools.call('artifact.read', callerB, { artifactId: proof.id }));
+  // It reads the earlier proof like anything else in the project; it did not author it.
+  assert.ok(await app.ctx.tools.call('artifact.read', callerB, { artifactId: proof.id }));
   assert.deepEqual(
     await app.ctx.artifacts.authored(callerB),
     [],

@@ -206,14 +206,15 @@ test('metadata admission avoids rendering and does not grant an assisting operat
           ),
         { code: 'execution_reference_unavailable' },
       );
-    // A reviewer reads whatever the project holds; a worker reads what its assignment names.
-    const outside = () =>
-      app.ctx.workflows.authorizeDispatch(
-        caller,
-        dispatch(execution, 'artifact.read', { artifactId: 'art_outside_the_packet' }),
-      );
-    if (caller === reviewer)
-      assert.equal((await outside()).input.artifactId, 'art_outside_the_packet');
-    else await assert.rejects(outside, { code: 'execution_arguments_forbidden' });
+    // Every session reads whatever the project holds; only a read marked as one opens.
+    const outside = dispatch(execution, 'artifact.read', { artifactId: 'art_outside_the_packet' });
+    assert.equal(
+      (await app.ctx.workflows.authorizeDispatch(caller, { ...outside, read: true })).input
+        .artifactId,
+      'art_outside_the_packet',
+    );
+    await assert.rejects(async () => await app.ctx.workflows.authorizeDispatch(caller, outside), {
+      code: 'execution_arguments_forbidden',
+    });
   }
 });

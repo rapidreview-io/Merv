@@ -310,13 +310,18 @@ export class ToolRegistry implements Tools {
     return access as Pick<ToolPolicy, 'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'>;
   }
 
+  /** A native tool that only reads; a session may call every one of them. */
+  private reads(entry: Entry): boolean {
+    return !entry.remote && 'readOnly' in entry.definition && !!entry.definition.readOnly;
+  }
+
   private async visible(caller?: Caller): Promise<Entry[]> {
     if (caller) await this.scope.require(caller, 'read');
     const policy = caller?.session ? this.sessionAccess() : undefined;
     return await filterAsync(
       [...this.entries.values()],
       async (entry) =>
-        (!caller || !policy || (await policy.allowsTool(caller, entry.name))) &&
+        (!caller || !policy || (await policy.allowsTool(caller, entry.name, this.reads(entry)))) &&
         (!caller ||
           !entry.remote ||
           (await this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName)) ===
@@ -357,7 +362,7 @@ export class ToolRegistry implements Tools {
         await this.access.require(caller, entry.remote.mountId, entry.remote.toolName);
       }
       const policy = caller.session ? this.sessionAccess() : undefined;
-      const prepared = await policy?.prepare(caller, name, input as Data);
+      const prepared = await policy?.prepare(caller, name, input as Data, this.reads(entry));
       try {
         const dispatchCaller = prepared?.caller ?? caller;
         const parsed = await entry.parse(prepared ? prepared.input : input);
@@ -370,12 +375,7 @@ export class ToolRegistry implements Tools {
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
           const run = async () => await entry.definition.handler(activeCaller, parsed);
           const result =
-            this.readScope &&
-            !entry.remote &&
-            'readOnly' in entry.definition &&
-            entry.definition.readOnly
-              ? await this.readScope(run)
-              : await run();
+            this.readScope && this.reads(entry) ? await this.readScope(run) : await run();
           completed = entry.complete(result);
           return result;
         };

@@ -190,7 +190,9 @@ async function reviewFlow(t: TestContext, postgres = false) {
   const worker = await f.connect(work.secret);
   const catalog = (await worker.listTools()).tools.map((tool) => tool.name);
   assert.ok(catalog.includes('artifact.create'));
-  for (const name of ['actor.create', 'task.create', 'task.list', 'workflow.begin'])
+  // Reads are open to every session; writes are only what the policy grants.
+  assert.ok(catalog.includes('task.list'));
+  for (const name of ['actor.create', 'task.create', 'workflow.begin'])
     assert.ok(!catalog.includes(name), name);
   const artifact = await f.call<Artifact>(worker, 'artifact.create', {
     title: 'Worker result',
@@ -359,11 +361,13 @@ test('ordinary checkpoint attachments after offer cannot enlarge a running worke
     artifactIds: [unrelated.id],
     requestId: 'ordinary-checkpoint',
   });
-  const denied = await worker.callTool({
+  // The worker may read it, as it may read anything in the project; its context stays
+  // what the offer froze.
+  const read = await worker.callTool({
     name: 'artifact.read',
     arguments: { artifactId: unrelated.id },
   });
-  assert.equal(denied.isError, true);
+  assert.equal(read.isError, undefined, JSON.stringify(read));
   const context = await f.call<ContextPackage>(worker, 'task.context', {
     requestId: 'bounded-context',
   });

@@ -82,6 +82,8 @@ interface InvocationState {
   used: boolean;
   input: Data;
   validated: boolean;
+  /** The tool only reads, so the project is its bound rather than the policy. */
+  read: boolean;
 }
 
 /** Durable step credentials. Domain reservations and all lifecycle mutations share State transactions. */
@@ -1266,7 +1268,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   /** Tool names per session, read once: a policy is frozen at offer, and the tool listing
    *  asks about every registered tool, which under load meant one locked transaction each. */
   private readonly toolNames = new Map<string, { names: Set<string>; at: number }>();
-  async allowsTool(caller: Caller, name: string): Promise<boolean> {
+  async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
+    if (read) return true;
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
     if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
@@ -1291,6 +1294,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     input: Data,
     tx: Transaction,
     registrationId?: string,
+    read?: boolean,
   ) {
     const session = await this.session(caller, tx);
     const current = await this.valid(session, tx);
@@ -1305,14 +1309,19 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       caller,
       session.lease,
       { ...session.execution, registrationId: registrationId ?? current.registrationId },
-      { tool, input },
+      { tool, input, ...(read ? { read } : {}) },
       tx,
     );
     return { admission, registrationId: current.registrationId, session };
   }
-  async prepare(caller: Caller, tool: string, input: Data): Promise<SessionInvocation> {
+  async prepare(
+    caller: Caller,
+    tool: string,
+    input: Data,
+    read?: boolean,
+  ): Promise<SessionInvocation> {
     const prepared = await this.transaction(
-      async (tx) => await this.admit(caller, tool, clone(input), tx),
+      async (tx) => await this.admit(caller, tool, clone(input), tx, undefined, read),
     );
     this.ensureOpen();
     const invocationId = newId('invocation');
@@ -1339,6 +1348,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       used: false,
       input: clone(prepared.admission.input),
       validated: false,
+      read: !!read,
     };
     this.invocations.set(invocation, state);
     this.invocationIds.set(invocationId, state);
@@ -1362,7 +1372,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           'Session invocation arguments changed',
           403,
         );
-      const admitted = await this.admit(caller, tool, input, tx, state.registrationId);
+      const admitted = await this.admit(caller, tool, input, tx, state.registrationId, state.read);
       this.ensureOpen();
       check(!state.used, 'session_invocation', 'Session invocation is unavailable', 403);
       check(

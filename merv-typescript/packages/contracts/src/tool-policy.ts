@@ -14,10 +14,19 @@ export interface SessionToolInvocation {
   readonly tool: string;
   readonly input: Data;
 }
-/** Consumer contract; Scope has no dependency on the Sessions implementation. */
+/**
+ * Consumer contract; Scope has no dependency on the Sessions implementation. `read` marks
+ * a tool that only reads: a session may call any such tool with any arguments, because a
+ * session reads whatever its project holds (founder, 2026-09-17: no read constraints).
+ */
 export interface SessionToolPolicy {
-  allowsTool(caller: Caller, name: string): Promise<boolean>;
-  prepare(caller: Caller, name: string, input: Data): Promise<SessionToolInvocation>;
+  allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean>;
+  prepare(
+    caller: Caller,
+    name: string,
+    input: Data,
+    read?: boolean,
+  ): Promise<SessionToolInvocation>;
   validate(caller: Caller, name: string, input: Data): Promise<void>;
   cancel(invocation: SessionToolInvocation): void | Promise<void>;
   run<T>(

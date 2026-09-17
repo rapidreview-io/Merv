@@ -312,10 +312,14 @@ test('real leased workers receive only fixed Claims tools, preserve worker prove
     secret,
   });
   const client = await f.connect(secret);
-  assert.deepEqual((await client.listTools()).tools.map((t) => t.name).sort(), [
-    'claim.list',
-    'claim.update',
-  ]);
+  // Its own tools are fixed; every native tool that only reads is listed beside them.
+  assert.deepEqual(
+    (await client.listTools()).tools
+      .filter((t) => !t.annotations?.readOnlyHint || t.name === 'claim.list')
+      .map((t) => t.name)
+      .sort(),
+    ['claim.list', 'claim.update'],
+  );
   const changed = await f.mcp(client, 'claim.update', {
     status: 'weakened',
     expectedRevision: 0,

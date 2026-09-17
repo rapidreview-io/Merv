@@ -268,10 +268,8 @@ test('leased lens calls use exact execution evidence, retain context through rel
   const caller = await f.app.ctx.sessions.authenticate(secret);
   assert.equal(execution.role, 'producer');
   assert.match(execution.assignment.context!.prompt, /live research access/i);
-  await assert.rejects(
-    f.app.ctx.tools.call('reflection.get', caller, { reflectionId: wave.id }),
-    /allowed|grant|tool|execution|dispatch|bound|assignment/i,
-  );
+  // The lens may read the wave it belongs to, as it may read anything in the project.
+  assert.ok(await f.app.ctx.tools.call('reflection.get', caller, { reflectionId: wave.id }));
   const artifact = (await f.app.ctx.tools.call('artifact.create', caller, {
     title: 'Lens evidence',
     content:
@@ -672,9 +670,8 @@ test('a leased lens reads research added after assignment through existing tools
   const call = async (name: string, input: Record<string, unknown>) =>
     f.app.ctx.tools.call(name, caller, input);
   const evidence = await f.create(f.owner, 'New evidence after the lens started');
-  await assert.rejects(call('artifact.read', { artifactId: evidence.id }), {
-    code: 'execution_arguments_forbidden',
-  });
+  // A session reads whatever its project holds, before and after its assignment.
+  assert.ok(await call('artifact.read', { artifactId: evidence.id }));
   await f.app.ctx.experiments.attach(f.owner, {
     experimentId: experiment.id,
     artifactId: evidence.id,
@@ -745,9 +742,9 @@ test('a leased lens reads research added after assignment through existing tools
     expectedRevision: 0,
     requestId: 'peer-report',
   });
-  await assert.rejects(call('artifact.read', { artifactId: peerReport.id }), {
-    code: 'execution_arguments_forbidden',
-  });
+  // A peer's report is readable too (no read constraints); lens independence is asked of
+  // the agent, not enforced here.
+  assert.ok(await call('artifact.read', { artifactId: peerReport.id }));
   await assert.rejects(
     call('claim.update', {
       claimId: claim.id,
@@ -773,7 +770,7 @@ test('a leased lens reads research added after assignment through existing tools
   await assert.rejects(call('task.get', { taskId: foreignTask.id }), { code: 'not_found' });
   const foreignArtifact = await f.create(other, 'Other project evidence');
   await assert.rejects(call('artifact.read', { artifactId: foreignArtifact.id }), {
-    code: 'execution_arguments_forbidden',
+    code: 'not_found',
   });
   assert.equal(
     (await f.app.ctx.tasks.create(f.owner, taskInput)).id,
@@ -793,7 +790,7 @@ test('a leased lens reads research added after assignment through existing tools
     ['artifact.get', { artifactId: delivery.id }],
     ['review.get', { reviewId: submitted.reviewId! }],
   ] as const)
-    await assert.rejects(call(name, input), { code: 'execution_arguments_forbidden' });
+    assert.ok(await call(name, input), name);
   const ownReport = (await call('artifact.create', {
     title: 'Independent report while research access is unavailable',
     content:
@@ -824,9 +821,7 @@ test('a leased lens reads research added after assignment through existing tools
     /New evidence/,
   );
   assert.ok(await call('review.get', { reviewId: submitted.reviewId! }));
-  await assert.rejects(call('artifact.read', { artifactId: peerReport.id }), {
-    code: 'execution_arguments_forbidden',
-  });
+  assert.ok(await call('artifact.read', { artifactId: peerReport.id }));
 
   const blocked = async () =>
     await f.app.ctx.experiments.create(f.owner, {

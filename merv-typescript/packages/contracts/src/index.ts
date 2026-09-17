@@ -653,6 +653,8 @@ export interface WorkflowExecutionDispatch extends WorkflowExecutionTarget {
   registrationId: string;
   tool: string;
   input: Data;
+  /** The tool only reads, so the project is its bound rather than the policy. */
+  read?: boolean;
 }
 export interface WorkflowDispatchAdmission {
   tool: string;
@@ -717,7 +719,7 @@ export interface Workflows {
     worker: Caller,
     lease: WorkflowLease,
     frozen: WorkflowExecution,
-    input: { tool: string; input: Data },
+    input: { tool: string; input: Data; read?: boolean },
     tx?: Transaction,
   ): Promise<WorkflowDispatchAdmission>;
   activateLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowWorkStart>;

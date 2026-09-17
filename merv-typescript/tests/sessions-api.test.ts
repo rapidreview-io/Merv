@@ -216,9 +216,25 @@ test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and 
       .status,
     200,
   );
+  // The policy's own tools, and every native tool that only reads: a session reads
+  // whatever its project holds.
+  const listed = (await client.listTools()).tools;
   assert.deepEqual(
-    (await client.listTools()).tools.map((tool) => tool.name),
+    listed.filter((tool) => !tool.annotations?.readOnlyHint).map((tool) => tool.name),
     ['checked.default', 'checked.echo', 'checked.transform'],
+  );
+  assert.ok(listed.some((tool) => tool.name === 'artifact.list'));
+  // A read the policy never named runs as given; a write it never named does not.
+  const browsed = await client.callTool({ name: 'artifact.list', arguments: {} });
+  assert.equal(browsed.isError, undefined, JSON.stringify(browsed));
+  assert.equal(
+    errorCode(
+      await client.callTool({
+        name: 'artifact.create',
+        arguments: { title: 'x', content: 'x', mediaType: 'text/plain' },
+      }),
+    ),
+    'execution_tool_forbidden',
   );
   const defaulted = await client.callTool({
     name: 'checked.default',
@@ -397,7 +413,7 @@ test('leased mounted calls require source grants and keep upstream project argum
   const issued = await f.offer();
   const client = await f.connect(issued.secret);
   assert.deepEqual(
-    (await client.listTools()).tools,
+    (await client.listTools()).tools.filter((tool) => !tool.annotations?.readOnlyHint),
     [],
     'Lease manifest does not replace the exact source grant',
   );

@@ -157,7 +157,12 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     assert.equal(text.type, 'text');
     return JSON.parse(text.text) as T;
   };
-  const catalog = async () => (await client.listTools()).tools.map((tool) => tool.name).sort();
+  // Every native read is listed for a session; the catalog here is what this policy grants.
+  const catalog = async () =>
+    (await client.listTools()).tools
+      .filter((tool) => !tool.annotations?.readOnlyHint || tool.name === 'code.operation')
+      .map((tool) => tool.name)
+      .sort();
   const rows = async () => (await ok('/tools/ui.shell', {})).result.rows as { id: string }[];
   const operations = async () =>
     (await ok('/tools/ui.read', { rowId: 'code' })).result.operations as CodeCommandRecord[];

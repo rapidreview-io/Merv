@@ -220,6 +220,7 @@ export class WorkflowsService implements Workflows {
     tool: string,
     input: Data,
     tx: Transaction,
+    read?: boolean,
   ): Promise<WorkflowDispatchAdmission> {
     const registration = this.definition(execution.workflow, execution.version);
     check(
@@ -231,25 +232,25 @@ export class WorkflowsService implements Workflows {
     try {
       return admitDispatch(execution, tool, input);
     } catch (error) {
+      if (!(error instanceof MervError)) throw error;
+      // A session reads whatever its project holds (founder, 2026-09-17: no read
+      // constraints). The policy still fills in what it names, so a read called as declared
+      // is admitted as declared; one it does not name, or names differently, is admitted as
+      // given, bounded by the project alone. Every write holds as published.
+      if (
+        read &&
+        ['execution_tool_forbidden', 'execution_arguments_forbidden'].includes(error.code)
+      ) {
+        await this.scope.require(caller, 'read', tx);
+        return { tool, input: structuredClone(input) };
+      }
       // The fixed policy remains authoritative. A coordinator may supplement only
       // a denied resource read, never a tool grant, scalar binding or write.
       if (
-        !(error instanceof MervError) ||
         error.code !== 'execution_arguments_forbidden' ||
         !['artifact.get', 'artifact.read', 'review.get'].includes(tool)
       )
         throw error;
-      // A reviewer reads whatever the project holds (founder, 2026-09-17): a verdict is only
-      // as good as what it could check. The project boundary stays the caller's own, and
-      // nothing but these reads opens: every other grant and binding holds as published.
-      // It opens which record is read, never whether one is named.
-      const named = execution.policy.tools
-        .find((entry) => entry.name === tool)!
-        .alternatives.flatMap((entry) => Object.keys(entry));
-      if (execution.policy.readOnly && named.every((field) => typeof input[field] === 'string')) {
-        await this.scope.require(caller, 'read', tx);
-        return { tool, input: structuredClone(input) };
-      }
       const fields = new Set(
         execution.policy.tools
           .find((entry) => entry.name === tool)!
@@ -765,7 +766,7 @@ export class WorkflowsService implements Workflows {
     worker: Caller,
     lease: WorkflowLease,
     frozen: WorkflowExecution,
-    input: { tool: string; input: Data },
+    input: { tool: string; input: Data; read?: boolean },
     transaction?: Transaction,
   ): Promise<WorkflowDispatchAdmission> {
     return await inTransaction(this.state, transaction, async (tx) => {
@@ -819,7 +820,14 @@ export class WorkflowsService implements Workflows {
         'Lease output callbacks must not change the workflow instance',
       );
       this.requireActive(registration);
-      return await this.admitRead(worker, { ...frozen, references }, input.tool, input.input, tx);
+      return await this.admitRead(
+        worker,
+        { ...frozen, references },
+        input.tool,
+        input.input,
+        tx,
+        input.read,
+      );
     });
   }
 
@@ -874,7 +882,14 @@ export class WorkflowsService implements Workflows {
     );
     return await inTransaction(this.state, transaction, async (tx) => {
       const execution = await this.executionInternal(caller, dispatch, tx);
-      return await this.admitRead(caller, execution, dispatch.tool, dispatch.input, tx);
+      return await this.admitRead(
+        caller,
+        execution,
+        dispatch.tool,
+        dispatch.input,
+        tx,
+        dispatch.read,
+      );
     });
   }
 

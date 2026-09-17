@@ -85,15 +85,20 @@ export class ExactToolPolicy implements ToolPolicy {
     return this.sessions;
   }
 
-  async allowsTool(caller: Caller, name: string): Promise<boolean> {
+  async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     await this.scope.require(caller, 'read');
-    return !caller.session || (await this.sessionPolicy().allowsTool(caller, name));
+    return !caller.session || (await this.sessionPolicy().allowsTool(caller, name, read));
   }
 
-  async prepare(caller: Caller, name: string, input: Data): Promise<SessionToolInvocation> {
+  async prepare(
+    caller: Caller,
+    name: string,
+    input: Data,
+    read?: boolean,
+  ): Promise<SessionToolInvocation> {
     await this.scope.require(caller, 'read');
     return caller.session
-      ? await this.sessionPolicy().prepare(caller, name, input)
+      ? await this.sessionPolicy().prepare(caller, name, input, read)
       : { caller, tool: name, input };
   }
 
