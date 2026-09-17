@@ -53,6 +53,10 @@ This used the real GitHub App and the actual GitHub client, Runner workspace man
 
 After the compatibility fix, backend typechecking passed. The GitHub client/automation/OAuth, publication, and architecture regression suite passed 50 tests with zero failures; its two opt-in PostgreSQL cases were skipped (the earlier separate PostgreSQL acceptance is recorded above).
 
+The fix was deployed as `20260917T054918Z-72171e36-b74436b87cad`, image `sha256:568786d1fd24e37a3ce9fed669d6c95d4f114abcdd2dd209daa23c5cd52b4cd2`. All 54 plugins were active; VM/public health, UI and assets passed, with anonymous requests rejected (401) and unapproved origins rejected (403). Rollback image: `merv-typescript:20260917T025401Z-50222607-320155bb6ea2`.
+
+The newly deployed compiled GitHub client independently read smoke PR #3 as merged, recovered the exact merge receipt above, and confirmed that the test repository's `main` matched it. A temporary token restricted to that repository with Contents/Pull requests read was revoked afterward. An initial probe using a Contents-only runner token received 403 for PR access and was also revoked; runner token scope was not expanded. The signed-in production UI still displayed the existing Breast Cancer Research GitHub connection and its Off automation setting.
+
 Full release acceptance is recorded in `deploy/RELEASES.md`.
 
 ## Review provenance
