@@ -171,13 +171,18 @@ echo started
 function waitForVm(release) {
   const rel = `/opt/merv-typescript/releases/${release}`;
   const deadline = Date.now() + 9 * 60_000;
+  // A job that is between two commands, or not yet spawned, can be missed by one process
+  // check; only two consecutive misses without a status file mean the job died.
+  let misses = 0;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_000);
   while (Date.now() < deadline) {
     const r = ssh(
       `if [ -f ${rel}/deploy-status.json ]; then cat ${rel}/deploy-status.json; elif pgrep -f ${rel}/release-job.sh >/dev/null; then echo RUNNING; else echo FAILED; tail -n 20 ${rel}/release-job.log ${rel}/build.log 2>/dev/null; fi`,
     );
     const out = r.stdout.trim();
     if (out.startsWith('{')) return JSON.parse(out);
-    if (out.startsWith('FAILED')) throw new Error(`remote job failed:\n${out}`);
+    if (out.startsWith('FAILED') && ++misses >= 2) throw new Error(`remote job failed:\n${out}`);
+    if (!out.startsWith('FAILED')) misses = 0;
     process.stdout.write('.');
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
   }
