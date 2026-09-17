@@ -60,7 +60,19 @@ export const apiPlugin = {
   inject: ['scope', 'tools', 'identity'],
   async apply(ctx: Context, config: HttpOptions = {}) {
     await ctx.effect(async function* () {
-      const api = new ApiServer(ctx.scope, ctx.tools, config, ctx.identity);
+      // GET routes are reads; with a state store present they run in a snapshot scope.
+      const api = new ApiServer(
+        ctx.scope,
+        ctx.tools,
+        {
+          ...config,
+          snapshot: (fn) => {
+            const state = ctx.get('state');
+            return state ? state.snapshot(fn) : fn();
+          },
+        },
+        ctx.identity,
+      );
       yield () => api.stop();
       await api.start();
       yield ctx.provide('api', api);

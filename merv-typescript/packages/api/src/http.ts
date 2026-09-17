@@ -43,6 +43,8 @@ export interface HttpOptions {
   port?: number;
   maxBodyBytes?: number;
   allowedOrigins?: string[];
+  /** Runs a read-only GET route in a snapshot scope: no writer lock, writes refused. */
+  snapshot?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 function errorBody(error: unknown): {
@@ -529,6 +531,19 @@ export class ApiServer {
       json(res, 200, this.identity?.configuration() ?? { enabled: false });
       return;
     }
+    // Every other GET is a read (the GitHub callback above is the one that writes; an
+    // agent's own routes may activate its lease), so it runs in a snapshot scope.
+    if (req.method === 'GET' && this.options.snapshot && !path.startsWith('/sessions/self'))
+      return await this.options.snapshot(() => this.route(req, res, url, path));
+    return await this.route(req, res, url, path);
+  }
+
+  private async route(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    path: string,
+  ): Promise<void> {
     for (const [prefix, handler] of this.mounts)
       if (path === prefix || path.startsWith(`${prefix}/`)) {
         await handler(req, res);
