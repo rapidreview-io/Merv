@@ -293,15 +293,9 @@ export function TitleLine({ rows }: { rows: Row[] }) {
   const { pathname } = useLocation();
   const current = pathname === '/' ? undefined : rows.find((row) => row.path === pathname);
   if (!current) return null;
-  const { icon } = kindOf(current.view.kind);
   return (
     <header className="page-lede">
       <h1 className="lede-line">
-        {icon && (
-          <span className="lede-icon" aria-hidden="true">
-            {icon}
-          </span>
-        )}
         <span className="lede-here">{current.label}</span>
         {/* A counted row says its total, a measured zero included; a row that
             reports none says nothing rather than drawing a slot it cannot fill. */}

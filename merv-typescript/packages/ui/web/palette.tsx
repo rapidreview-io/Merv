@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import { useNavigate } from 'react-router-dom';
 import { useTool } from './api';
 import { KindLabel, cx, words } from './components';
-import { RowIcon } from './icons';
 import { matches } from './list-filters';
 import { buildNavigation } from './navigation';
 import type { Row } from './shell-types';
@@ -50,7 +49,7 @@ function offered(): Item[] {
 }
 
 /** One line: a place, a record or a move, and the quiet word that qualifies it. */
-type Item = { key: string; name: string; kind?: string; icon?: string; note?: string; run(): void };
+type Item = { key: string; name: string; kind?: string; note?: string; run(): void };
 
 /** Where a collection's list lives, and the fields that name and place a record in it. */
 type Source = { key: string; kind: string; path: string; tool: string; input: Json } & Fields;
@@ -126,13 +125,12 @@ export function Palette({ rows, open, onClose }: { rows: Row[]; open: boolean; o
   const place = (row: Row, note?: string): Item => ({
     key: row.id,
     name: row.label,
-    icon: typeof row.view.icon === 'string' ? row.view.icon : row.view.kind,
     note,
     run: () => navigate(row.path),
   });
   const places = (): Item[] => [
-    { key: 'home', name: 'Home', icon: 'home', run: () => navigate('/') },
-    { key: 'now', name: 'Now', icon: 'now', run: () => navigate('/now') },
+    { key: 'home', name: 'Home', run: () => navigate('/') },
+    { key: 'now', name: 'Now', run: () => navigate('/now') },
     ...buildNavigation(rows).flatMap((part) => part.rows.map((row) => place(row, part.label))),
     ...rows.filter((row) => row.group === 'settings').map((row) => place(row)),
   ];
@@ -219,7 +217,6 @@ export function Palette({ rows, open, onClose }: { rows: Row[]; open: boolean; o
                   onClick={() => choose(item)}
                   onMouseMove={() => setCursor(flat.indexOf(item))}
                 >
-                  {item.icon && <RowIcon name={item.icon} />}
                   {item.kind && <KindLabel kind={item.kind} />}
                   <span className="rail-row-label">{item.name}</span>
                   {item.note && <span className="rail-count">{item.note}</span>}

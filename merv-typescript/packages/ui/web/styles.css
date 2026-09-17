@@ -527,10 +527,6 @@ time,
   color: var(--text);
   font-weight: 600;
 }
-.lede-icon {
-  font-size: 18px;
-  margin-right: 8px;
-}
 .lede-count {
   font-size: var(--text-sm);
   font-weight: 400;

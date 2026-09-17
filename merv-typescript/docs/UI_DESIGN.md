@@ -135,3 +135,7 @@ A service outside this process can own rows in the sidebar. It publishes a manif
 ## Navigation remake, wave 5 (2026-09-17): the palette
 
 ⌘K (Ctrl-K), or the quiet "Search ⌘K" line under the project name, opens one palette with three sections: Go to (Home, Now, every collection in the rail with its group as a muted suffix, Settings), Records (by name across the collections, read only once two characters are typed, shown as kind label · name · standing word, never an id, though a pasted id still matches by prefix), and Actions here (the controls the open page's Act slot or creation slot is rendering right now, with their verb-table labels, selected by triggering that very control, so the palette can never offer what the page does not). Arrows or j/k move, Enter selects, Esc closes; the palette is the one hairline box allowed over a dimmed ground. It is a second door to every room, never a new room.
+
+## Icons only in the rail (founder ruling, 2026-09-17)
+
+The founder: "Get rid of all the icons that are not in the sidebar." The rail's thin line glyphs (icons.tsx) are the only icons in the UI. The kind table carries a colour and a name, nothing else: kind labels, page titles, map cards, palette rows and record headers show the kind's word in its colour and no glyph. State dots, hairlines and typographic arrows are not icons and stay.
