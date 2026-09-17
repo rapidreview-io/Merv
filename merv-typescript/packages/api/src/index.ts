@@ -17,7 +17,11 @@ export const toolsPlugin = {
   inject: ['scope'],
   apply(ctx: Context) {
     ctx.effect(function* () {
-      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy);
+      // Read-only tools run in a snapshot scope when a state store is present.
+      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, (fn) => {
+        const state = ctx.get('state');
+        return state ? state.snapshot(fn) : fn();
+      });
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.
       yield ctx.provide('tools', tools);

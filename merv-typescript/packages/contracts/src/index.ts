@@ -161,6 +161,8 @@ export interface State {
   readonly dialect: 'sqlite' | 'postgres';
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T>;
+  /** A read-only snapshot scope: nested component transactions never take the writer lock. */
+  snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
   assertTransaction(tx: Transaction): void;
   migrate(component: string, migrations: Migration[]): Promise<void>;
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;
@@ -1054,6 +1056,8 @@ export interface Tasks {
   create(caller: Caller, input: TaskCreate): Promise<Task>;
   get(caller: Caller, taskId: string): Promise<Task>;
   list(caller: Caller): Promise<Task[]>;
+  /** The derived process graph, so a record page reads its gate with the record. */
+  process(caller: Caller, taskId: string): Promise<ProcessGraph>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;

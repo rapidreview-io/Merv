@@ -52,6 +52,9 @@ CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events BEGIN SELE
   protected async begin(connection: Connection): Promise<void> {
     await connection.exec('BEGIN IMMEDIATE');
   }
+  protected async beginRead(connection: Connection): Promise<void> {
+    await connection.exec('BEGIN');
+  }
   protected async shutdown(): Promise<void> {
     this.db.close();
   }

@@ -94,6 +94,8 @@ export class ToolRegistry implements Tools {
     private readonly scope: Pick<Scope, 'require'>,
     private readonly access?: Pick<ToolPolicy, 'allows' | 'require'> &
       Partial<Pick<ToolPolicy, 'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'>>,
+    /** Runs a read-only tool's handler in a snapshot scope: no writer lock, writes refused. */
+    private readonly readScope?: <T>(fn: () => Promise<T>) => Promise<T>,
   ) {}
 
   private open(): void {
@@ -366,7 +368,14 @@ export class ToolRegistry implements Tools {
           await policy?.validate(activeCaller, name, parsed as Data);
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
-          const result = await entry.definition.handler(activeCaller, parsed);
+          const run = async () => await entry.definition.handler(activeCaller, parsed);
+          const result =
+            this.readScope &&
+            !entry.remote &&
+            'readOnly' in entry.definition &&
+            entry.definition.readOnly
+              ? await this.readScope(run)
+              : await run();
           completed = entry.complete(result);
           return result;
         };

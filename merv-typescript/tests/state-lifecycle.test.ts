@@ -105,3 +105,49 @@ test('failed Cordis State activation closes the database before publishing a ser
     await ctx.fiber.dispose();
   }
 });
+
+test('a snapshot scope reads on one snapshot without the writer lock and refuses writes', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-read-scope-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const state = new SqliteState(join(directory, 'state.sqlite'));
+  t.after(() => state.close());
+  await state.transaction(async (tx) => {
+    await tx.run('CREATE TABLE things(id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
+    await tx.run('INSERT INTO things(name) VALUES (?)', 'one');
+  });
+  // A service's transaction() inside a snapshot scope reads; two of them share the scope.
+  const seen = await state.snapshot(async () => {
+    const first = await state.transaction(
+      async (tx) => await tx.all<{ name: string }>('SELECT name FROM things'),
+    );
+    const second = await state.transaction(
+      async (tx) => await tx.get<{ n: number }>('SELECT COUNT(*) AS n FROM things'),
+    );
+    return [first.map((row) => row.name), second!.n];
+  });
+  assert.deepEqual(seen, [['one'], 1]);
+  await assert.rejects(
+    state.snapshot(() =>
+      state.transaction((tx) => tx.run('INSERT INTO things(name) VALUES (?)', 'two')),
+    ),
+    { code: 'read_only_scope' },
+  );
+  await assert.rejects(
+    state.snapshot(() =>
+      state.transaction((tx) =>
+        state.appendEvent(tx, {
+          projectId: 'p',
+          actorId: 'a',
+          type: 't',
+          subjectId: 's',
+          data: {},
+        }),
+      ),
+    ),
+    { code: 'read_only_scope' },
+  );
+  assert.equal(
+    (await state.read((sql) => sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM things')))!.n,
+    1,
+  );
+});

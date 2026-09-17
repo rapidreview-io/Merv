@@ -212,6 +212,10 @@ END $merv$;`);
     );
   }
 
+  protected async beginRead(connection: Connection): Promise<void> {
+    await connection.exec('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  }
+
   protected async shutdown(): Promise<void> {
     await this.pool.end();
   }

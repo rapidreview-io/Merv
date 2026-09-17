@@ -26,6 +26,8 @@ interface Context {
   transaction?: Transaction;
   eventWritten: boolean;
   childTransaction?: boolean;
+  /** A read scope: nested "transactions" read on the same snapshot and refuse writes. */
+  readOnly?: boolean;
 }
 
 /** Explicit transactions stay on one connection; async context never crosses requests. */
@@ -39,6 +41,8 @@ export abstract class StateStore implements State {
 
   protected abstract connect<T>(fn: (connection: Connection) => Promise<T>): Promise<T>;
   protected abstract begin(connection: Connection): Promise<void>;
+  /** A read-only transaction: a consistent snapshot that takes no writer lock. */
+  protected abstract beginRead(connection: Connection): Promise<void>;
   protected abstract shutdown(): Promise<void>;
 
   protected operation<T>(fn: () => Promise<T>): Promise<T> {
@@ -130,6 +134,29 @@ export abstract class StateStore implements State {
       'nested_transaction',
       'Pass the existing transaction to component operations',
     );
+    if (current?.readOnly) {
+      // Every read-only tool runs in a snapshot scope, so the reads behind a page never
+      // wait on the writer lock; a write attempted there is a bug and is refused.
+      check(
+        current.live && !this.closed,
+        'transaction_closed',
+        'Database scope is no longer active',
+      );
+      const tx: Transaction = {
+        ...current.sql,
+        run: async (sql: string) => {
+          check(false, 'read_only_scope', `A read scope cannot write: ${sql.slice(0, 60)}`, 409);
+          throw new Error('unreachable');
+        },
+        transactionId: Symbol('read'),
+      };
+      current.transaction = tx;
+      try {
+        return await fn(tx);
+      } finally {
+        current.transaction = undefined;
+      }
+    }
     if (current) {
       check(
         current.live && !this.closed,
@@ -166,6 +193,38 @@ export abstract class StateStore implements State {
         const scope = this.scope(connection);
         try {
           return await this.context.run(scope, () => fn(scope.sql));
+        } finally {
+          scope.live = false;
+        }
+      }),
+    );
+  }
+
+  /**
+   * A read-only snapshot scope: component transactions opened inside it read on one
+   * snapshot, take no writer lock, and are refused if they write. Inside an existing
+   * scope it simply runs the function there.
+   */
+  async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
+    if (this.context.getStore()) return await fn();
+    return this.operation(() =>
+      this.connect(async (connection) => {
+        const scope = this.scope(connection);
+        scope.readOnly = true;
+        try {
+          await this.beginRead(connection);
+          const value = await this.context.run(scope, fn);
+          scope.live = false;
+          await connection.exec('COMMIT');
+          return value;
+        } catch (error) {
+          scope.live = false;
+          try {
+            await connection.exec('ROLLBACK');
+          } catch {
+            connection.discard?.();
+          }
+          throw error;
         } finally {
           scope.live = false;
         }
@@ -270,6 +329,7 @@ export abstract class StateStore implements State {
     event: Omit<StoredEvent, 'id' | 'createdAt'>,
   ): Promise<StoredEvent> {
     this.assertTransaction(tx);
+    check(!this.context.getStore()?.readOnly, 'read_only_scope', 'A read scope cannot write', 409);
     const createdAt = now();
     const row = await tx.get<{ id: number }>(
       'INSERT INTO events(project_id,actor_id,type,subject_id,data_json,created_at) VALUES(?,?,?,?,?,?) RETURNING id',
