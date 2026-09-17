@@ -7,17 +7,30 @@ import type {
   Sandboxes,
   SandboxConnection,
   SandboxesConfig,
+  SandboxExtend,
   SandboxReadiness,
   SandboxRow,
+  SandboxTarget,
 } from './types.js';
 
 export type {
   Sandboxes,
   SandboxConnection,
   SandboxesConfig,
+  SandboxExtend,
   SandboxReadiness,
   SandboxRow,
+  SandboxTarget,
 } from './types.js';
+
+/**
+ * The tools this package ships. A control the manifest binds to anything else is dropped
+ * before the row reaches the registry: the browser never renders what it cannot dispatch.
+ */
+export const sandboxTools = ['sandbox.extend', 'sandbox.release'];
+/** The service's own lifecycle routes, the only ones a tool ever calls. */
+const sandboxRecord = '/v1/sandboxes/{id}';
+const renewRoute = '/v1/sandboxes/{id}/renew';
 
 const connection = z
   .object({
@@ -90,8 +103,8 @@ export class SandboxService implements Sandboxes {
   #reading?: Promise<void>;
 
   /**
-   * `registered` reports whether a tool exists in this process. No sandbox tool does this
-   * wave, so every act control the manifest declares is dropped before registration.
+   * `registered` reports whether a tool exists in this process; the plugin answers for the two
+   * tools this package registers, and every other act control the manifest declares is dropped.
    */
   constructor(config: SandboxesConfig, registered: (tool: string) => boolean = () => false) {
     const parsed = configuration.safeParse(config);
@@ -163,12 +176,44 @@ export class SandboxService implements Sandboxes {
     for (const listener of this.#listeners) listener();
   }
 
+  /** The namespace follows the caller's own project; input never selects a connection. */
+  #connectionOf(caller: Caller): SandboxConnection {
+    const entry = this.#connections.find((candidate) => candidate.projectId === caller.projectId);
+    check(entry, 'sandbox_not_connected', 'This project has no sandbox connection', 403);
+    return entry;
+  }
+
+  async extend(caller: Caller, input: SandboxExtend): Promise<Json> {
+    const entry = this.#connectionOf(caller);
+    // A renewal is a total, not an increment: the service sets the lease to now + lease_seconds.
+    // So what is left is read and carried, and extending a machine can only lengthen its life.
+    // The service publishes no maximum, so an over-long total is its refusal to give, not ours.
+    const record = (await this.#client.read(entry, sandboxRoute(sandboxRecord, input.id))) as {
+      lease_expires_at?: unknown;
+    } | null;
+    const expires = Date.parse(String(record?.lease_expires_at ?? ''));
+    const left = Number.isNaN(expires) ? 0 : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
+    return withoutSecrets(
+      await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), {
+        lease_seconds: left + input.seconds,
+      }),
+    );
+  }
+
+  async release(caller: Caller, input: SandboxTarget): Promise<Json> {
+    const entry = this.#connectionOf(caller);
+    const path = sandboxRoute(sandboxRecord, input.id);
+    // The guard the browser shows is the retention confirmation the legacy tool asked for in a
+    // second call. Deleting an already-stopped sandbox deletes nothing twice, so the answer is
+    // the record either way: releasing twice is the same as releasing once.
+    await this.#client.write(entry, 'DELETE', path, { confirm_retained: true });
+    return withoutSecrets(await this.#client.read(entry, path));
+  }
+
   async read(caller: Caller, rowId: string, params: Record<string, unknown> = {}): Promise<Json> {
     const spec = this.#specs.get(rowId);
     check(spec, 'row_unreadable', 'That row is not published by this service', 404);
-    // The namespace follows the caller's project; input never selects a connection.
-    const entry = this.#connections.find((candidate) => candidate.projectId === caller.projectId);
-    check(entry, 'sandbox_not_connected', 'This project has no sandbox connection', 403);
+    const entry = this.#connectionOf(caller);
     // ui.read hands a row its `params`; tolerate a caller that passes the whole tool input.
     const id = params.id ?? (params.params as { id?: unknown } | undefined)?.id;
     if (id === undefined || id === null || id === '')
@@ -189,7 +234,7 @@ export const sandboxesPlugin = {
   name: 'merv-sandboxes',
   Config: configuration,
   apply(ctx: Context, config: SandboxesConfig) {
-    const service = new SandboxService(config);
+    const service = new SandboxService(config, (tool) => sandboxTools.includes(tool));
     ctx.effect(() => service.start());
     ctx.provide('sandboxes', service);
   },

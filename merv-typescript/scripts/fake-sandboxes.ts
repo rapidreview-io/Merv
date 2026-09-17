@@ -1,18 +1,20 @@
 /**
  * Fake merv-sandboxes control plane for the browser demo and the plugin tests. No
- * dependencies and no state: every instant is computed per request, so leases tick.
+ * dependencies and almost no state: every instant is computed per request, so leases tick,
+ * and the only thing remembered is what the two lifecycle calls changed.
  *
  *   PORT=3210 node --import tsx scripts/fake-sandboxes.ts
  *
- * Routes: GET /v1/auth/me, /v1/ui/manifest, /v1/sandboxes and /v1/sandboxes/{id}. Every
- * request needs `authorization: Bearer sbxt_...` and a matching `x-sandbox-namespace`
+ * Routes: GET /v1/auth/me, /v1/ui/manifest, /v1/sandboxes and /v1/sandboxes/{id}, plus
+ * POST /v1/sandboxes/{id}/renew and DELETE /v1/sandboxes/{id}. Every request needs
+ * `authorization: Bearer sbxt_...` and a matching `x-sandbox-namespace`
  * (`demo`, or FAKE_SANDBOXES_NAMESPACE); anything else gets the service's error envelope.
  * The list answers `{ sandboxes: [...] }`, keyed by the plural noun; the record answers one
  * object, to which the plugin adds `console_origin`. Money is a { currency, amount } pair
  * whose amount is a decimal string, an unavailable value is null rather than an absent key,
  * and `endpoint.token` is bait: the plugin strips it.
  */
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 const port = Number(process.env.PORT ?? 3210);
 const namespace = process.env.FAKE_SANDBOXES_NAMESPACE ?? 'demo';
@@ -219,8 +221,19 @@ function record(seed: Seed): Json {
     ],
   };
 }
+/**
+ * What the two lifecycle calls changed; everything else is still derived from the seed.
+ * Deletion is asynchronous at a provider, so a released machine reads `deleting` once and
+ * `stopped` from the next read on, exactly as the real service settles it.
+ */
+const changed = new Map<string, Json>();
+const current = (seed: Seed): Json => ({ ...record(seed), ...changed.get(idOf(seed)) });
+const settle = (id: string) => {
+  const change = changed.get(id);
+  if (change?.state === 'deleting') changed.set(id, { ...change, state: 'stopped' });
+};
 const listRow = (seed: Seed) =>
-  Object.fromEntries(Object.entries(record(seed)).filter(([key]) => !recordOnly.includes(key)));
+  Object.fromEntries(Object.entries(current(seed)).filter(([key]) => !recordOnly.includes(key)));
 
 const send = (response: ServerResponse, status: number, body: unknown) => {
   response.writeHead(status, { 'content-type': 'application/json' });
@@ -229,21 +242,80 @@ const send = (response: ServerResponse, status: number, body: unknown) => {
 const fail = (response: ServerResponse, status: number, code: string, message: string) =>
   send(response, status, { error: { code, message } });
 
+const read = async (request: IncomingMessage): Promise<Json> => {
+  let text = '';
+  for await (const chunk of request) text += String(chunk);
+  return text ? (JSON.parse(text) as Json) : {};
+};
+/** The states the real service will renew a lease in; anything else is a refusal. */
+const renewable = ['provisioning', 'ready', 'unknown'];
+const seedOf = (path: string, suffix = '') =>
+  seeds.find((candidate) => `/v1/sandboxes/${idOf(candidate)}${suffix}` === path);
+const missing = (response: ServerResponse, path: string) =>
+  fail(
+    response,
+    404,
+    'not_found',
+    /^\/v1\/sandboxes\/./.test(path) ? 'No such sandbox' : 'No such route',
+  );
+
+/** The two lifecycle calls: a renewed lease and a requested deletion, and nothing else. */
+async function change(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: 'POST' | 'DELETE',
+  path: string,
+): Promise<void> {
+  const renewing = method === 'POST';
+  const seed = seedOf(path, renewing ? '/renew' : '');
+  if (!seed) return missing(response, path);
+  const id = idOf(seed);
+  const state = (current(seed) as { state: string }).state;
+  if (!renewing) {
+    // Deleting a machine that is already gone deletes nothing twice, so the record is the answer.
+    if (!['deleting', 'stopped'].includes(state))
+      changed.set(id, { ...changed.get(id), state: 'deleting' });
+    return send(response, 202, current(seed));
+  }
+  const body = (await read(request).catch(() => ({}))) as { lease_seconds?: unknown };
+  const seconds = body.lease_seconds;
+  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < 60)
+    return fail(response, 400, 'validation', 'lease_seconds out of range');
+  if (!renewable.includes(state))
+    return fail(
+      response,
+      409,
+      'operation_state',
+      'sandbox lease can only be renewed while it is live',
+    );
+  // The service renews to now + lease_seconds; it never adds to what is left.
+  changed.set(id, {
+    ...changed.get(id),
+    lease_expires_at: at(seconds / 60),
+    lease_seconds: seconds,
+  });
+  return send(response, 200, current(seed));
+}
+
 createServer((request, response) => {
+  const method = request.method ?? 'GET';
   const path = new URL(request.url ?? '/', `http://127.0.0.1:${port}`).pathname;
-  if (request.method !== 'GET') return fail(response, 405, 'validation', 'This fake only reads');
   if (!(request.headers.authorization ?? '').startsWith('Bearer sbxt_'))
     return fail(response, 401, 'authentication', 'A consumer grant is required');
   if (request.headers['x-sandbox-namespace'] !== namespace)
     return fail(response, 403, 'authorization', 'The namespace selector does not match the grant');
+  if (method === 'POST' || method === 'DELETE') return void change(request, response, method, path);
+  if (method !== 'GET') return fail(response, 405, 'validation', 'No such method');
   if (path === '/v1/auth/me')
     return send(response, 200, { role: 'consumer', namespace, member_id: 'mem_demo' });
   if (path === '/v1/ui/manifest') return send(response, 200, manifest);
   if (path === '/v1/sandboxes') return send(response, 200, { sandboxes: seeds.map(listRow) });
-  const wanted = /^\/v1\/sandboxes\/([A-Za-z0-9_-]+)$/.exec(path)?.[1];
-  const seed = seeds.find((candidate) => idOf(candidate) === wanted);
-  if (seed) return send(response, 200, record(seed));
-  return fail(response, 404, 'not_found', wanted ? 'No such sandbox' : 'No such route');
+  const seed = seedOf(path);
+  if (seed) {
+    settle(idOf(seed));
+    return send(response, 200, current(seed));
+  }
+  return missing(response, path);
 }).listen(port, '127.0.0.1', () =>
   console.log(JSON.stringify({ status: 'ready', url: `http://127.0.0.1:${port}`, namespace })),
 );

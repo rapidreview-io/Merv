@@ -4,6 +4,8 @@ import type { SandboxConnection } from './types.js';
 const grant = /^sbxt_[A-Za-z0-9_-]{4,512}$/;
 const route = /^\/v1\/[A-Za-z0-9._~/-]*$/;
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+/** The service's published error vocabulary: a lowercase token, never free text. */
+const errorCode = /^[a-z][a-z_]{0,39}$/;
 const bodyLimit = 4_000_000;
 
 /** The one origin this plugin may call, taken from the operator's environment. */
@@ -49,9 +51,10 @@ export function sandboxRoute(path: string, id?: string): string {
 }
 
 /**
- * Authenticated, namespace-scoped, read-only transport to merv-sandboxes. Budget policy,
- * accounting and administration stay in the service; this reads published JSON and nothing
- * else. Each connection proves a consumer grant once, before its first resource request.
+ * Authenticated, namespace-scoped transport to merv-sandboxes. Budget policy, accounting and
+ * administration stay in the service; this reads published JSON and changes one named sandbox's
+ * lease or life, nothing else. Each connection proves a consumer grant once, before its first
+ * resource request.
  */
 export class SandboxClient {
   readonly #origin: string;
@@ -69,8 +72,27 @@ export class SandboxClient {
 
   /** GET one route for one connection, after the connection's identity is established. */
   async read(connection: SandboxConnection, path: string): Promise<Json> {
+    await this.#prove(connection);
+    return await this.#send(connection, 'GET', path);
+  }
+
+  /** Change one sandbox, under the same proved grant. The body is the service's own request. */
+  async write(
+    connection: SandboxConnection,
+    method: 'POST' | 'DELETE',
+    path: string,
+    body: Json,
+  ): Promise<Json> {
+    await this.#prove(connection);
+    return await this.#send(connection, method, path, body);
+  }
+
+  async #prove(connection: SandboxConnection): Promise<void> {
     if (!this.#consumers.has(connection.projectId)) {
-      const identity = (await this.#get(connection, '/v1/auth/me')) as Record<string, unknown>;
+      const identity = (await this.#send(connection, 'GET', '/v1/auth/me')) as Record<
+        string,
+        unknown
+      >;
       // An administrator sees every namespace; Merv reads only its own.
       check(
         identity?.role === 'consumer',
@@ -86,10 +108,14 @@ export class SandboxClient {
       );
       this.#consumers.add(connection.projectId);
     }
-    return await this.#get(connection, path);
   }
 
-  async #get(connection: SandboxConnection, path: string): Promise<Json> {
+  async #send(
+    connection: SandboxConnection,
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    body?: Json,
+  ): Promise<Json> {
     const secret = process.env[connection.tokenEnv];
     check(
       typeof secret === 'string' && grant.test(secret),
@@ -107,14 +133,16 @@ export class SandboxClient {
     let response: Response;
     try {
       response = await fetch(url, {
-        method: 'GET',
+        method,
         // No redirects: a redirect would send this grant somewhere nobody authorized.
         redirect: 'manual',
         headers: {
           authorization: `Bearer ${secret}`,
           'x-sandbox-namespace': connection.namespace,
           accept: 'application/json',
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
     } catch {
@@ -123,17 +151,7 @@ export class SandboxClient {
     const status = response.status;
     if (status === 0 || (status >= 300 && status < 400))
       throw new MervError('sandbox_redirect_refused', 'merv-sandboxes answered a redirect', 502);
-    // Upstream bodies can carry signed URLs and policy detail: report the shape only.
-    if (status >= 400)
-      throw new MervError(
-        status === 404
-          ? 'sandbox_not_found'
-          : status < 500
-            ? 'sandbox_forbidden'
-            : 'sandbox_unavailable',
-        `merv-sandboxes refused the request (HTTP ${status})`,
-        status === 404 ? 404 : status < 500 ? 403 : 503,
-      );
+    if (status >= 400) throw await this.#refusal(status, response, body !== undefined);
     const type = (response.headers.get('content-type') ?? '').split(';')[0].trim();
     const length = Number(response.headers.get('content-length') ?? 0);
     check(
@@ -149,6 +167,47 @@ export class SandboxClient {
     } catch (error) {
       if (error instanceof MervError) throw error;
       throw new MervError('sandbox_unavailable', 'merv-sandboxes answered invalid JSON', 502);
+    }
+  }
+
+  /**
+   * A read's failure body can carry signed URLs and policy detail, so a read reports the shape
+   * only. A write is the caller's own act on one sandbox it named, and why the service refused
+   * it — a lease that cannot be renewed, a budget that is spent — is the answer: the service's
+   * own error code and message are reported, and nothing else from the body.
+   */
+  async #refusal(status: number, response: Response, disclose: boolean): Promise<MervError> {
+    const envelope = disclose ? await this.#envelope(response) : undefined;
+    return new MervError(
+      envelope
+        ? `sandbox_${envelope.code}`
+        : status === 404
+          ? 'sandbox_not_found'
+          : status < 500
+            ? 'sandbox_forbidden'
+            : 'sandbox_unavailable',
+      envelope?.message ?? `merv-sandboxes refused the request (HTTP ${status})`,
+      envelope ? status : status === 404 ? 404 : status < 500 ? 403 : 503,
+    );
+  }
+
+  async #envelope(response: Response): Promise<{ code: string; message: string } | undefined> {
+    try {
+      const text = await response.text();
+      if (text.length > 4096) return undefined;
+      const error = (JSON.parse(text) as { error?: { code?: unknown; message?: unknown } }).error;
+      const code = error?.code;
+      return typeof code === 'string' && errorCode.test(code)
+        ? {
+            code,
+            message:
+              typeof error?.message === 'string' && error.message
+                ? error.message.slice(0, 200)
+                : code,
+          }
+        : undefined;
+    } catch {
+      return undefined;
     }
   }
 }

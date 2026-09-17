@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { deploymentSchema } from './schema.mjs';
+import { deploymentSchema, sandboxConnections } from './schema.mjs';
 
 const required = (name) => {
   const value = process.env[name];
@@ -74,6 +74,22 @@ set('api', {
   allowedOrigins: [httpsOrigin('MERV_TS_PUBLIC_ORIGIN')],
 });
 set('ui', {});
+// Rows and acts published by merv-sandboxes. Absent until the operator names the service, so
+// a deployment that has not connected one composes exactly the plugins it composed before.
+if (process.env.MERV_SANDBOXES_URL !== undefined) {
+  httpsOrigin('MERV_SANDBOXES_URL');
+  const connections = sandboxConnections();
+  config.plugins.push(
+    { id: 'sandboxes-tools', name: '@merv/sandboxes/tools' },
+    { id: 'sandboxes-ui', name: '@merv/sandboxes/ui', required: false },
+    {
+      id: 'sandboxes',
+      name: '@merv/sandboxes',
+      // Only names: the origin and each project's consumer grant stay in the environment.
+      config: { urlEnv: 'MERV_SANDBOXES_URL', connections },
+    },
+  );
+}
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(legacySourceId)) {

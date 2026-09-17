@@ -556,6 +556,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'reflections',
       'research',
       'reviews',
+      'sandboxes',
       'scope',
       'tasks',
       'workflows',

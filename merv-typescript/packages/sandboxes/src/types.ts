@@ -32,6 +32,15 @@ export type SandboxRow = {
   view: { kind: 'collection'; icon: string | null; spec: Json; record: Json };
 };
 
+/** One sandbox, named by the id the collection publishes as its key. */
+export interface SandboxTarget {
+  id: string;
+}
+export interface SandboxExtend extends SandboxTarget {
+  /** Extra lifetime, added to whatever is left of the lease when the service renews it. */
+  seconds: number;
+}
+
 /** Readiness only. A count beside a row means open work, and a proxy cannot know that. */
 export interface SandboxReadiness {
   state: 'ready' | 'degraded';
@@ -46,6 +55,10 @@ export interface Sandboxes {
   refresh(): Promise<void>;
   /** The collection, or one record when `id` is given, read as the caller's own project. */
   read(caller: Caller, rowId: string, params?: Record<string, unknown>): Promise<Json>;
+  /** Add `seconds` to what is left of one sandbox's lease; the service refuses a dead one. */
+  extend(caller: Caller, input: SandboxExtend): Promise<Json>;
+  /** Ask the provider to delete one sandbox, then answer the record as it now reads. */
+  release(caller: Caller, input: SandboxTarget): Promise<Json>;
   /** Fires after the published row set changes. */
   subscribe(listener: () => void): () => void;
 }

@@ -5,17 +5,24 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Context } from 'cordis';
-import { MervError, type Json } from '@merv/contracts';
+import { check, MervError, type Caller, type Json } from '@merv/contracts';
 import { UiRegistry } from '@merv/ui';
-import { SandboxService, sandboxesPlugin } from '../packages/sandboxes/src/index.js';
+import { SandboxService, sandboxesPlugin, sandboxTools } from '../packages/sandboxes/src/index.js';
 import { SandboxClient } from '../packages/sandboxes/src/client.js';
 import { sandboxesUiPlugin } from '../packages/sandboxes/src/ui.js';
+import { sandboxesToolsPlugin } from '../packages/sandboxes/src/tools.js';
 import { parseManifest } from '../packages/sandboxes/src/manifest.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const caller = { actorId: 'actor_demo', projectId: 'project_demo' };
+const reader = { actorId: 'actor_reader', projectId: 'project_demo' };
 const stranger = { actorId: 'actor_other', projectId: 'project_other' };
+const proved = { namespace: 'demo', authorization: 'Bearer sbxt_test_consumer_grant' };
 const tokenEnv = 'MERV_SANDBOXES_TEST_TOKEN';
 const urlEnv = 'MERV_SANDBOXES_TEST_URL';
 const column = (type: string, rest: Json = {}) => ({ label: type, type, ...(rest as object) });
@@ -41,8 +48,9 @@ const manifest = (rest: Json = {}) => ({
         read: '/v1/sandboxes/{id}',
         title: 'name',
         act: [
-          { id: 'release', label: 'Release', verb: 'release', tool: 'sandbox.delete' },
-          { id: 'extend', label: 'Extend', verb: 'extend', tool: 'sandbox.renew' },
+          { id: 'release', label: 'Release', verb: 'release', tool: 'sandbox.release' },
+          { id: 'extend', label: 'Extend', verb: 'extend', tool: 'sandbox.extend' },
+          { id: 'attach', label: 'Attach', verb: 'claim', tool: 'sandbox.attach' },
         ],
       },
       ...(rest as object),
@@ -64,13 +72,25 @@ interface Options {
   manifest?: unknown;
   redirect?: boolean;
 }
+interface Seen {
+  path: string;
+  method: string;
+  sent?: Json;
+  namespace?: string;
+  authorization?: string;
+}
 /** A steerable stand-in for merv-sandboxes that records what actually reached it. */
 async function fixture(t: TestContext, options: Options = {}) {
-  const seen: { path: string; namespace?: string; authorization?: string }[] = [];
-  const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+  const seen: Seen[] = [];
+  const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    const method = request.method ?? 'GET';
+    let text = '';
+    for await (const chunk of request) text += String(chunk);
     seen.push({
       path,
+      method,
+      ...(text ? { sent: JSON.parse(text) as Json } : {}),
       namespace: request.headers['x-sandbox-namespace'] as string | undefined,
       authorization: request.headers.authorization,
     });
@@ -85,9 +105,14 @@ async function fixture(t: TestContext, options: Options = {}) {
           ? (options.manifest ?? manifest())
           : path === '/v1/sandboxes'
             ? listBody
-            : path === '/v1/sandboxes/sbx_one'
-              ? recordBody
-              : undefined;
+            : path === '/v1/sandboxes/sbx_one/renew'
+              ? {
+                  ...recordBody,
+                  lease_seconds: (seen.at(-1)?.sent as { lease_seconds?: number })?.lease_seconds,
+                }
+              : path === '/v1/sandboxes/sbx_one'
+                ? recordBody
+                : undefined;
     if (body === undefined) {
       response.writeHead(404, { 'content-type': 'application/json' });
       return response.end(JSON.stringify({ error: { code: 'not_found' } }));
@@ -125,6 +150,64 @@ async function composed(t: TestContext) {
   await ctx.sandboxes.refresh();
   return { ctx, ui };
 }
+/** The tools as this process registers them, over a scope that records what they demanded. */
+async function armed(t: TestContext) {
+  const demanded: string[] = [];
+  const defined = new Map<string, { inputSchema: Schema; handler: Handler }>();
+  const ctx = new Context();
+  ctx.provide('tools', {
+    register: (definition: { name: string; inputSchema: Schema; handler: Handler }) => {
+      defined.set(definition.name, definition);
+      return () => defined.delete(definition.name);
+    },
+  } as never);
+  ctx.provide('scope', {
+    require: async (actor: Caller, permission: string) => {
+      demanded.push(permission);
+      check(
+        permission === 'read' || actor.actorId !== reader.actorId,
+        'forbidden',
+        'A reader may not change a sandbox',
+        403,
+      );
+    },
+  } as never);
+  const fiber = ctx.plugin(sandboxesPlugin, configuration);
+  await ctx.plugin(sandboxesToolsPlugin).await();
+  t.after(() => ctx.fiber.dispose());
+  await fiber.await();
+  /** Exactly what a transport does: refuse the input the schema refuses, then dispatch. */
+  const call = async (name: string, actor: Caller, input: Json) => {
+    const definition = defined.get(name);
+    check(definition, 'unknown_tool', `${name} is not registered`);
+    const parsed = definition.inputSchema.safeParse(input);
+    check(parsed.success, 'invalid_input', 'The tool refused its input');
+    return await definition.handler(actor, parsed.data as Json);
+  };
+  return { call, defined, demanded, ctx };
+}
+type Schema = { safeParse(value: unknown): { success: boolean; data: unknown } };
+type Handler = (actor: Caller, input: Json) => Promise<Json>;
+
+/** The shipped fake control plane on its own port, answering as the real service does. */
+async function plane(t: TestContext) {
+  const port = 3210 + Math.floor(Math.random() * 500) + 1;
+  const child = spawn('node', ['--import', 'tsx', 'scripts/fake-sandboxes.ts'], {
+    cwd: root,
+    env: { ...process.env, PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  t.after(() => void child.kill());
+  const [ready] = (await once(child.stdout, 'data')) as [Buffer];
+  assert.equal(JSON.parse(ready.toString()).url, `http://127.0.0.1:${port}`);
+  process.env[urlEnv] = `http://127.0.0.1:${port}`;
+  process.env[tokenEnv] = 'sbxt_demo_consumer';
+  t.after(() => {
+    delete process.env[urlEnv];
+    delete process.env[tokenEnv];
+  });
+}
+
 const failure = (code: string) => (error: unknown) => {
   assert.ok(error instanceof MervError, `${String(error)} is not a MervError`);
   assert.equal(error.code, code);
@@ -134,11 +217,12 @@ const failure = (code: string) => (error: unknown) => {
 test('a manifest is accepted only in the published shape, and unusable controls never register', () => {
   const rows = parseManifest(manifest(), () => false);
   assert.equal(rows.length, 1);
-  assert.deepEqual(rows[0].record?.act, [], 'no sandbox tool is registered, so nothing may act');
-  const kept = parseManifest(manifest(), (tool) => tool === 'sandbox.renew');
+  assert.deepEqual(rows[0].record?.act, [], 'a process with no sandbox tool may not act at all');
+  const kept = parseManifest(manifest(), (tool) => sandboxTools.includes(tool));
   assert.deepEqual(
     kept[0].record?.act?.map((entry) => entry.tool),
-    ['sandbox.renew'],
+    ['sandbox.release', 'sandbox.extend'],
+    'the two tools this package ships survive; sandbox.attach is not one of them',
   );
   const relaxed = parseManifest(
     manifest({
@@ -181,7 +265,11 @@ test('published rows register with the manifest identity, route and view', async
   assert.equal(row.view.kind, 'collection');
   assert.equal(row.view.icon, 'code');
   assert.equal((row.view.spec as { read: string }).read, '/v1/sandboxes');
-  assert.deepEqual((row.view.record as { act: [] }).act, []);
+  assert.deepEqual(
+    (row.view.record as { act: { tool: string }[] }).act.map((entry) => entry.tool),
+    ['sandbox.release', 'sandbox.extend'],
+    'the plugin answers for its own tools, so the browser renders controls it can dispatch',
+  );
   const described = await ui.describe(caller);
   assert.deepEqual(described[0].status, { state: 'ready' });
   assert.ok(!('count' in described[0].status), 'a proxied row cannot know what is open work');
@@ -302,21 +390,7 @@ test('an unreachable service degrades the row and keeps the last manifest', asyn
 });
 
 test('the fake control plane publishes a manifest and a fleet this build accepts', async (t) => {
-  const port = 3210 + Math.floor(Math.random() * 500) + 1;
-  const child = spawn('node', ['--import', 'tsx', 'scripts/fake-sandboxes.ts'], {
-    cwd: root,
-    env: { ...process.env, PORT: String(port) },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
-  t.after(() => void child.kill());
-  const [ready] = (await once(child.stdout, 'data')) as [Buffer];
-  assert.equal(JSON.parse(ready.toString()).url, `http://127.0.0.1:${port}`);
-  process.env[urlEnv] = `http://127.0.0.1:${port}`;
-  process.env[tokenEnv] = 'sbxt_demo_consumer';
-  t.after(() => {
-    delete process.env[urlEnv];
-    delete process.env[tokenEnv];
-  });
+  await plane(t);
   const sandboxes = new SandboxService(configuration);
   await sandboxes.refresh();
   assert.equal(sandboxes.status().state, 'ready');
@@ -338,4 +412,152 @@ test('the fake control plane publishes a manifest and a fleet this build accepts
   };
   assert.equal(record.ladder.length, 5);
   assert.ok(!('token' in record.endpoint), 'the endpoint grant never reaches the browser');
+});
+
+test('the two tools send the service exactly one change, under a write grant', async (t) => {
+  const service = await fixture(t);
+  const { call, defined, demanded } = await armed(t);
+  assert.deepEqual([...defined.keys()], sandboxTools);
+  const renewed = await call('sandbox.extend', caller, { id: 'sbx_one', seconds: 3600 });
+  assert.deepEqual(demanded, ['write'], 'changing a machine is a write, like every other change');
+  assert.equal((renewed as { lease_seconds: number }).lease_seconds, 3600);
+  const released = await call('sandbox.release', caller, { id: 'sbx_one' });
+  assert.deepEqual(released, { id: 'sbx_one', name: 'one', endpoint: { host: 'one.invalid' } });
+  // The browser's guard is the retention confirmation the legacy tool asked for in a second call.
+  assert.deepEqual(
+    service.seen.filter((entry) => entry.method !== 'GET'),
+    [
+      {
+        path: '/v1/sandboxes/sbx_one/renew',
+        method: 'POST',
+        sent: { lease_seconds: 3600 },
+        ...proved,
+      },
+      {
+        path: '/v1/sandboxes/sbx_one',
+        method: 'DELETE',
+        sent: { confirm_retained: true },
+        ...proved,
+      },
+    ],
+  );
+  assert.match(
+    service.seen.map((entry) => entry.method).join(' '),
+    /GET POST DELETE GET$/,
+    'a lease is read before it is renewed, and a release answers the record as it then reads',
+  );
+  const refused: [string, Caller, Json, string][] = [
+    ['sandbox.extend', reader, { id: 'sbx_one', seconds: 3600 }, 'forbidden'],
+    ['sandbox.release', stranger, { id: 'sbx_one' }, 'sandbox_not_connected'],
+    ['sandbox.extend', caller, { id: 'sbx_one', seconds: 30 }, 'invalid_input'],
+    ['sandbox.extend', caller, { id: 'sbx_one', seconds: 90_000 }, 'invalid_input'],
+    ['sandbox.extend', caller, { id: 'sbx_one', seconds: 3600.5 }, 'invalid_input'],
+    ['sandbox.release', caller, {}, 'invalid_input'],
+    ['sandbox.release', caller, { id: 'sbx_one', force: true }, 'invalid_input'],
+    ['sandbox.release', caller, { id: 'sbx one' }, 'invalid_sandbox_id'],
+  ];
+  for (const [name, actor, input, code] of refused)
+    await assert.rejects(call(name, actor, input), failure(code), JSON.stringify(input));
+});
+
+test('the service refuses what it may not do, and a released machine releases once', async (t) => {
+  await plane(t);
+  const { call } = await armed(t);
+  // flint is stopped: the refusal is the service's own, not a guess this process makes.
+  await assert.rejects(
+    call('sandbox.extend', caller, { id: 'sbx_flint', seconds: 1800 }),
+    (error) => {
+      assert.ok(error instanceof MervError);
+      assert.deepEqual(
+        [error.code, error.message, error.status],
+        ['sandbox_operation_state', 'sandbox lease can only be renewed while it is live', 409],
+      );
+      return true;
+    },
+  );
+  const gone = call('sandbox.extend', caller, { id: 'sbx_absent', seconds: 1800 });
+  await assert.rejects(gone, failure('sandbox_not_found'));
+  // basalt has about three hours left; adding one leaves about four, never one.
+  const extended = (await call('sandbox.extend', caller, { id: 'sbx_basalt', seconds: 3600 })) as {
+    lease_seconds: number;
+    lease_expires_at: string;
+  };
+  const asked = 181 * 60 + 3600;
+  assert.ok(Math.abs(extended.lease_seconds - asked) <= 2, String(extended.lease_seconds));
+  const left = (Date.parse(extended.lease_expires_at) - Date.now()) / 1000;
+  assert.ok(left > asked - 10 && left <= asked, `${left} seconds left, not about four hours`);
+  const states: string[] = [];
+  for (const _ of [0, 1])
+    states.push(
+      ((await call('sandbox.release', caller, { id: 'sbx_dunes' })) as Record<string, string>)
+        .state,
+    );
+  assert.deepEqual(states, ['stopped', 'stopped'], 'releasing twice is releasing once');
+  await assert.rejects(
+    call('sandbox.extend', caller, { id: 'sbx_dunes', seconds: 1800 }),
+    failure('sandbox_operation_state'),
+  );
+});
+
+test('a deployment composes the sandboxes plugins only when the service is named', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-sandboxes-config-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, 'dist/config'), { recursive: true });
+  mkdirSync(join(directory, 'deploy'));
+  for (const name of ['render-config.mjs', 'schema.mjs'])
+    copyFileSync(join(root, 'deploy', name), join(directory, 'deploy', name));
+  writeFileSync(
+    join(directory, 'dist/config/default.json'),
+    JSON.stringify({
+      plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui'].map((id) => ({ id, name: id })),
+    }),
+  );
+  const output = join(directory, 'rendered.json');
+  const env = Object.fromEntries(
+    `MERV_TS_AUTH_MODE=hs256 MERV_BLOB_PREFIX=merv-ts MERV_DB_URL=postgresql://unused
+     MERV_BLOB_BUCKET=x MERV_BLOB_ENDPOINT_URL=https://storage.example MERV_BLOB_ACCESS_KEY_ID=x
+     MERV_BLOB_SECRET_ACCESS_KEY=x SUPABASE_ANON_KEY=x SUPABASE_JWT_SECRET=x
+     SUPABASE_URL=https://identity.example MERV_TS_PUBLIC_ORIGIN=https://merv.example`
+      .split(/\s+/)
+      .map((pair): [string, string] => [
+        pair.slice(0, pair.indexOf('=')),
+        pair.slice(pair.indexOf('=') + 1),
+      ]),
+  );
+  const run = (extra: Record<string, string | undefined>) =>
+    spawnSync(process.execPath, [join(directory, 'deploy/render-config.mjs'), output], {
+      env: { ...env, ...extra },
+      encoding: 'utf8',
+    }).status;
+  const rendered = () =>
+    (JSON.parse(readFileSync(output, 'utf8')) as { plugins: { name: string; config?: Json }[] })
+      .plugins;
+  assert.equal(run({}), 0);
+  assert.equal(rendered().length, 6, 'a deployment that has named no service composes none of it');
+  const connections = [
+    { projectId: 'project_one', namespace: 'research', tokenEnv: 'MERV_SANDBOXES_TOKEN' },
+  ];
+  const named = {
+    MERV_SANDBOXES_URL: 'https://sandboxes.example',
+    MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections),
+  };
+  assert.equal(run(named), 0);
+  assert.deepEqual(
+    rendered()
+      .slice(6)
+      .map((entry) => entry.name),
+    ['@merv/sandboxes/tools', '@merv/sandboxes/ui', '@merv/sandboxes'],
+  );
+  assert.deepEqual(rendered().at(-1)?.config, { urlEnv: 'MERV_SANDBOXES_URL', connections });
+  for (const broken of [
+    { MERV_SANDBOXES_CONNECTIONS: undefined },
+    { MERV_SANDBOXES_CONNECTIONS: '[]' },
+    { MERV_SANDBOXES_URL: 'https://sandboxes.example/v1' },
+    // A literal grant can never be configured: only the name of a variable holding one.
+    {
+      MERV_SANDBOXES_CONNECTIONS: '[{"projectId":"p","namespace":"n","tokenEnv":"T","token":"s"}]',
+    },
+    { MERV_SANDBOXES_CONNECTIONS: '[{"projectId":"p","namespace":"N","tokenEnv":"T"}]' },
+  ])
+    assert.notEqual(run({ ...named, ...broken }), 0, JSON.stringify(broken));
 });

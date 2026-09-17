@@ -7,6 +7,7 @@ import { createApp } from '../src/app.js';
 import { defaultConfigFile } from '../src/config.js';
 import { sandboxesPlugin } from '@merv/sandboxes';
 import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
+import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
@@ -15,7 +16,7 @@ import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
  *
  * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
  * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
- * project, which publishes its own sidebar rows from the service's manifest;
+ * project, which publishes its own sidebar rows and its two tools from the service's manifest;
  * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. `npm run fake:sandboxes` serves
  * all of it on port 3210. Without MERV_SANDBOXES_URL the demo composes exactly as before.
  */
@@ -242,6 +243,7 @@ async function main() {
         },
       ],
     });
+    app.ctx.plugin(sandboxesToolsPlugin);
     app.ctx.plugin(sandboxesUiPlugin);
     await fiber.await();
     await app.ctx.sandboxes.refresh();
