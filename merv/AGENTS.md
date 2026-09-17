@@ -43,6 +43,19 @@ by the user in the UI or by an interactive agent through
 separate brief and no completeness gate. Automatically deployed sessions read
 the Introduction but cannot edit it or interview the user.
 
+## Problem and scope
+
+Every project's paper carries a Problem document with four fixed keys: problem,
+scope, goals, constraints. It exists from the moment the project does, and it is
+the first thing a reader sees. When any of those keys is empty, an interactive
+agent does not start other work: it interviews the user, a few pointed questions
+at a time, until it can write all four honestly, then writes them with
+`paper.patch` (kind `problem`) and, if the Introduction is empty, the
+Introduction. This is not a workflow and there is no gate; it is what an agent
+does on seeing an empty Problem section. Automatically deployed sessions cannot
+interview anyone: they read the Problem document as it stands, never invent its
+content, and say in their delivery when it was empty.
+
 ## Living Methods and Results
 
 Joining briefs include the current project document: Introduction, the existing
