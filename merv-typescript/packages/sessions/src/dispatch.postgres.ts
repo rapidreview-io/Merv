@@ -45,4 +45,8 @@ $merv$;
 CREATE TRIGGER session_runners_identity BEFORE UPDATE ON session_runners
 FOR EACH ROW EXECUTE FUNCTION session_runners_identity_guard();
 `,
+  2: `
+ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
+      ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
+`,
 };

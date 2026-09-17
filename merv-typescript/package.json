@@ -33,7 +33,7 @@
     "build:ui": "npm run build --workspace @merv/ui",
     "typecheck:ui": "npm run typecheck --workspace @merv/ui",
     "dev:ui": "npm run dev --workspace @merv/ui",
-    "test:ui": "node --import tsx --test tests/ui.test.ts",
+    "test:ui": "node --import tsx --test tests/ui*.test.ts",
     "test:sandboxes": "node --import tsx --test tests/sandboxes.test.ts",
     "fake:sandboxes": "node --import tsx scripts/fake-sandboxes.ts",
     "demo:ui": "node --import tsx scripts/ui-demo.ts",
@@ -46,8 +46,10 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^22.13.0",
     "@types/pg": "^8.23.1",
+    "jsdom": "^29.1.1",
     "prettier": "3.9.6",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"

@@ -12,5 +12,7 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["packages/*/src/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+  "//": "The render harness and the views it mounts are browser code, compiled by the test runner against @merv/ui's own tsconfig; this server project has neither its DOM lib nor its JSX setting.",
+  "exclude": ["tests/ui-render.ts", "tests/ui-sessions.test.ts"]
 }

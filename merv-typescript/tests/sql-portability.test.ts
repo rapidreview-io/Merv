@@ -33,7 +33,7 @@ import ts from 'typescript';
 import pg from 'pg';
 
 type DomainMigration = { owner: string; version: number; sqlite: string; postgres: string };
-const nativeMigrations: Record<string, Record<number,string>> = {
+const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/artifacts/src/index.ts': migrations0,
   'packages/claims/src/index.ts': migrations1,
   'packages/code/src/commands.ts': migrations2,
@@ -119,7 +119,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 49);
+  assert.equal(all.length, 50);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

@@ -3,7 +3,10 @@ import { ApiError, call, scopeVersion, useScopeVersion } from './api';
 
 /** Keep the original command through an uncertain response, including refused retries. */
 export function useCommand<T>(options: {
+  /** The command, named by the tool it calls or by the route `send` posts it to. */
   tool: string;
+  /** Where the command is a route rather than a tool, how this page sends it. */
+  send?: (command: Record<string, unknown>) => Promise<T>;
   validate: (value: T) => boolean;
   onSuccess: (value: T) => void;
   conflictCode?: string;
@@ -40,7 +43,7 @@ export function useCommand<T>(options: {
     setError(undefined);
     setCode(undefined);
     try {
-      const result = await call<T>(options.tool, command);
+      const result = await (options.send ? options.send(command) : call<T>(options.tool, command));
       if (!options.validate(result))
         throw new ApiError('invalid_response', 'The server did not confirm the saved change.', 200);
       if (!current()) return;

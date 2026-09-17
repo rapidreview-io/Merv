@@ -148,6 +148,8 @@ export interface Sessions {
     tx?: Transaction,
   ): Promise<SessionWorkspaceObservation>;
   projectStatus(caller: Caller): Promise<SessionsProjectStatus>;
+  /** The rail's one number, read on its own rather than by computing a whole status. */
+  liveSessionCount(caller: Caller): Promise<number>;
   agentObservation(caller: Caller, agentId: string): Promise<AgentObservation>;
   setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState>;
   halt(
@@ -243,12 +245,26 @@ export interface RunnerHeartbeat {
   capacity: number;
   appliedVersion?: number;
 }
+/** Every answer an automatic lease request can receive, and the whole stored vocabulary. */
+export type DispatchDecision =
+  | 'offered'
+  | 'replayed'
+  | 'dispatch_disabled'
+  | 'runner_offline'
+  | 'platform_disabled'
+  | 'settings_pending'
+  | 'capacity_full'
+  | 'retry_backoff'
+  | 'no_candidates';
 export interface RunnerPresence extends RunnerHeartbeat {
   id: string;
   lastSeenAt: string;
   live: boolean;
   desiredVersion: number;
   desiredSettings: RunnerSettings;
+  /** What the runner's last lease request decided; one row per runner, never a log. */
+  lastDecision: DispatchDecision | null;
+  lastDecisionAt: string | null;
 }
 export interface AutomaticLease {
   runnerId: string;
@@ -335,8 +351,12 @@ export interface AgentObservation {
 }
 export interface SessionsProjectStatus {
   agents?: AgentSummary[];
+  /** The server's own clock when this payload was measured; every duration anchors here. */
+  observedAt: string;
   liveSessionCount: number;
   sessionTotal: number;
+  /** Registered runners, of which `runners` carries the most recently seen. */
+  runnerTotal: number;
   canManage: boolean;
   dispatch: DispatchState;
   runners: RunnerPresence[];

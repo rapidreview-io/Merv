@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  clock,
+  decisionLiveness,
   duration,
   elapsed,
   leaseLiveness,
@@ -61,6 +63,41 @@ test('a lease states its behaviour, and says nothing where the server did not', 
   assert.equal(tone({ status: 'active', expiresAt: at(60) }), 'bad');
   assert.equal(tone({ status: 'released', closedAt: at(60) }), 'dim');
   assert.equal(tone({ status: 'offered', createdAt: at(60) }), 'warn');
+});
+
+test('a verdict cannot outrun the payload it was drawn from', () => {
+  const observedAt = new Date(now - 240_000).toISOString();
+  // The page has been open four minutes on a payload that is four minutes old.
+  const stale = clock(observedAt, observedAt, now, 8_000);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.since, 240_000);
+  // Anchored to the server's own clock, so a browser 10 minutes fast changes nothing.
+  assert.equal(clock(observedAt, observedAt, now + 600_000, 8_000).at - now, 600_000);
+  // A lease that had 60s left when the payload was read is still active: no
+  // heartbeat since then has been seen, and absence of news is not an expiry.
+  const lease: LeaseFacts = {
+    status: 'active',
+    activatedAt: new Date(now - 900_000).toISOString(),
+    expiresAt: new Date(now - 180_000).toISOString(),
+  };
+  assert.equal(leaseLiveness(lease, stale)?.verdict, 'active');
+  // The same lease read by a payload young enough to have seen the window close.
+  const fresh = clock(new Date(now).toISOString(), new Date(now).toISOString(), now, 8_000);
+  assert.equal(leaseLiveness(lease, fresh)?.phrase, 'lapsed · lease ran out · for 3m');
+  // A bare millisecond reading is its own moment, so the old table still holds.
+  assert.equal(leaseLiveness(lease, now)?.verdict, 'lapsed');
+});
+
+test('a runner states the answer its last lease request received, or nothing', () => {
+  const phrase = (runner: Parameters<typeof decisionLiveness>[0]) =>
+    decisionLiveness(runner, now)?.phrase ?? null;
+  assert.equal(
+    phrase({ lastDecision: 'capacity_full', lastDecisionAt: at(120) }),
+    'declined · capacity full · 2m ago',
+  );
+  assert.equal(phrase({ lastDecision: 'offered', lastDecisionAt: at(5) }), 'dispatched · 5s ago');
+  assert.equal(phrase({ lastDecision: 'settings_pending' }), 'declined · settings pending');
+  assert.equal(phrase({}), null);
 });
 
 test('a runner is present or quiet, and silent where presence was not reported', () => {

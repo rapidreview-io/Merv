@@ -116,7 +116,7 @@ const TONES: [Tone, string][] = [
   ],
   [
     'bad',
-    'unavailable unreachable failed fail error rejected blocked denied dead offline disconnected ' +
+    'unavailable unreachable failed failure fail error rejected blocked denied dead offline disconnected ' +
       'timed_out timeout invalid broken abandoned refuted contradicted',
   ],
   [
@@ -176,12 +176,21 @@ export function useNow(every: number): number {
  * Time a person acts on, at the row's own size in the text colour: amber under
  * ten minutes, red under two, counting down to 0s rather than to a euphemism. A
  * row that cannot have the fact keeps the em dash; the absolute stamp lives in
- * the panel.
+ * the panel. The clock cannot outrun its data: once the payload is older than the
+ * cadence it was read at, the cell states the value that read saw and its age,
+ * rather than counting a browser timer down against a fact nobody has refreshed.
  */
-export function Countdown({ to, now }: { to: string | null | undefined; now: number }) {
-  const at = to ? Date.parse(to) : Number.NaN;
-  if (!Number.isFinite(at)) return <span className="faint">—</span>;
-  const left = at - now;
+export function Countdown({ to, now }: { to: string | null | undefined; now: Now }) {
+  const { at, since, stale } = clockOf(now);
+  const on = to ? Date.parse(to) : Number.NaN;
+  if (!Number.isFinite(on)) return <span className="faint">—</span>;
+  if (stale)
+    return (
+      <span className="countdown tabular">
+        {duration(on - (at - since))} <span className="faint">as of {elapsed(since)} ago</span>
+      </span>
+    );
+  const left = on - at;
   const near = left < 120_000 ? ' countdown--now' : left < 600_000 ? ' countdown--soon' : '';
   return <span className={`countdown tabular${near}`}>{duration(left)}</span>;
 }
@@ -190,13 +199,17 @@ export function Countdown({ to, now }: { to: string | null | undefined; now: num
  * A destructive control guarded in proportion to its consequence. The guard is
  * the one box on these pages, because there the box is the object: it names the
  * records under the click, and what will not change, before it acts. Ordinary
- * forward actions stay one click, and there is one path per mutation.
+ * forward actions stay one click, and there is one path per mutation. What the
+ * command answered is stated here, where the click was: the guard closes only on
+ * a confirmed change, so a refusal, an unknown result and a request that changed
+ * nothing all stay in front of the person who asked for them.
  */
 export function ConfirmAction({
   label,
   title,
   confirm,
   busy,
+  note,
   onConfirm,
   children,
 }: {
@@ -205,7 +218,9 @@ export function ConfirmAction({
   confirm: string;
   /** The label while the request is in flight; absent means not in flight. */
   busy?: string;
-  onConfirm(): void;
+  /** What the command answered, rendered under the guard that asked it. */
+  note?: ReactNode;
+  onConfirm(): void | Promise<boolean | void>;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -229,8 +244,13 @@ export function ConfirmAction({
     >
       <strong>{title}</strong>
       {children}
+      {note}
       <div className="cluster">
-        <button className="btn btn--danger" disabled={!!busy} onClick={onConfirm}>
+        <button
+          className="btn btn--danger"
+          disabled={!!busy}
+          onClick={() => void Promise.resolve(onConfirm()).then((done) => done && setOpen(false))}
+        >
           {busy ?? confirm}
         </button>
         <button className="btn" disabled={!!busy} onClick={() => setOpen(false)}>

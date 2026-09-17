@@ -39,6 +39,35 @@ export function elapsed(ms: number): string {
   return `${Math.floor(total / 86400)}d`;
 }
 
+/**
+ * The clock a page reads its payload by. `at` is now in the server's own terms —
+ * the payload's `observedAt` plus the time since it arrived — so every duration is
+ * one server stamp minus another and browser skew never reaches it. `since` is how
+ * long ago that payload arrived, and it is the age no verdict may outrun: a fact
+ * the read did not see cannot be asserted from a browser timer.
+ */
+export interface Clock {
+  at: number;
+  since: number;
+  /** True once the payload is older than the cadence it was read at. */
+  stale: boolean;
+}
+export type Now = number | Clock;
+/** A bare millisecond reading is a payload of its own moment, and never stale. */
+export const clockOf = (now: Now): Clock =>
+  typeof now === 'number' ? { at: now, since: 0, stale: false } : now;
+export function clock(
+  observedAt: string | null | undefined,
+  loadedAt: string | null | undefined,
+  now: number,
+  freshFor: number,
+): Clock {
+  const arrived = loadedAt ? Date.parse(loadedAt) : Number.NaN;
+  const since = Number.isFinite(arrived) ? Math.max(0, now - arrived) : 0;
+  const observed = observedAt ? Date.parse(observedAt) : Number.NaN;
+  return { at: Number.isFinite(observed) ? observed + since : now, since, stale: since > freshFor };
+}
+
 export type Tone = 'ok' | 'warn' | 'bad' | 'dim';
 export interface Liveness {
   /** The behavioural state word; the only word on the line that takes colour. */
@@ -78,21 +107,24 @@ export interface LeaseFacts {
   outcome?: string | null;
 }
 /** A lease's behaviour: taken up or not, still inside its window or past it, how it ended. */
-export function leaseLiveness(lease: LeaseFacts, now: number): Liveness | null {
+export function leaseLiveness(lease: LeaseFacts, now: Now): Liveness | null {
+  const { at, since: age } = clockOf(now);
   // How it ended is a clause only where it says more than the state word already does.
   const end = lease.outcome || lease.closeReason;
   const ending = end && end !== lease.status ? words(end) : null;
   switch (lease.status) {
     case 'offered':
-      return say('offered', 'warn', 'not taken up', held(lease.createdAt, now));
+      return say('offered', 'warn', 'not taken up', held(lease.createdAt, at));
     case 'active':
-      return (since(lease.expiresAt, now) ?? -1) >= 0
-        ? say('lapsed', 'bad', 'lease ran out', held(lease.expiresAt, now))
-        : say('active', 'ok', held(lease.activatedAt ?? lease.createdAt, now));
+      // A heartbeat extends an active lease server-side, so only a read that itself
+      // saw the window close may call it lapsed; `at - age` is that read's moment.
+      return (since(lease.expiresAt, at - age) ?? -1) >= 0
+        ? say('lapsed', 'bad', 'lease ran out', held(lease.expiresAt, at))
+        : say('active', 'ok', held(lease.activatedAt ?? lease.createdAt, at));
     case 'released':
-      return say('released', 'dim', ending, ago(lease.closedAt, now));
+      return say('released', 'dim', ending, ago(lease.closedAt, at));
     case 'expired':
-      return say('expired', 'warn', ending, ago(lease.closedAt, now));
+      return say('expired', 'warn', ending, ago(lease.closedAt, at));
     default:
       return null;
   }
@@ -102,11 +134,23 @@ export function leaseLiveness(lease: LeaseFacts, now: number): Liveness | null {
 export interface RunnerFacts {
   live?: boolean | null;
   lastSeenAt?: string | null;
+  lastDecision?: string | null;
+  lastDecisionAt?: string | null;
 }
 /** A runner's behaviour: present, or quiet since its last heartbeat. */
-export function runnerLiveness(runner: RunnerFacts, now: number): Liveness | null {
+export function runnerLiveness(runner: RunnerFacts, now: Now): Liveness | null {
   if (typeof runner.live !== 'boolean') return null;
+  const { at } = clockOf(now);
   return runner.live
-    ? say('live', 'ok', ago(runner.lastSeenAt, now, 'seen '))
-    : say('quiet', 'warn', ago(runner.lastSeenAt, now, 'last seen '));
+    ? say('live', 'ok', ago(runner.lastSeenAt, at, 'seen '))
+    : say('quiet', 'warn', ago(runner.lastSeenAt, at, 'last seen '));
+}
+/** Leases the runner took, and a closed reason where the last cycle gave it none. */
+const TAKEN = new Set(['offered', 'replayed']);
+export function decisionLiveness(runner: RunnerFacts, now: Now): Liveness | null {
+  if (!runner.lastDecision) return null;
+  const { at } = clockOf(now);
+  return TAKEN.has(runner.lastDecision)
+    ? say('dispatched', 'ok', ago(runner.lastDecisionAt, at))
+    : say('declined', 'warn', words(runner.lastDecision), ago(runner.lastDecisionAt, at));
 }

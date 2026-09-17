@@ -15,9 +15,8 @@ export const sessionsUiPlugin = {
         order: 24,
         path: '/sessions',
         view: { kind: 'sessions' },
-        status: async (caller) => ({
-          count: (await ctx.sessions.projectStatus(caller)).liveSessionCount,
-        }),
+        // The rail asks for one integer on every shell poll, so it is read as one.
+        status: async (caller) => ({ count: await ctx.sessions.liveSessionCount(caller) }),
         read: async (caller) => (await ctx.sessions.projectStatus(caller)) as unknown as Json,
       }),
     );

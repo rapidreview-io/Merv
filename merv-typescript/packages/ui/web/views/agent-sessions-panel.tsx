@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion } from '../api';
-import { KV, StatusPill, relativeTime, stamp, words } from '../components';
+import { Ago, KV, Live, StatusPill, relativeTime, stamp, useNow, words } from '../components';
+import { clock, leaseLiveness, type Clock } from '../liveness';
 
 export interface AgentSummary {
   id: string;
@@ -53,7 +54,6 @@ interface Observation {
     completedCalls: number;
     totalCalls: number;
   };
-  tokenAccounting: { kind: 'estimate'; method: string };
 }
 const count = (value: number) => value.toLocaleString();
 const duration = (ms: number | null) =>
@@ -61,12 +61,18 @@ const duration = (ms: number | null) =>
 export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
 
-function AssignmentDetails({ assignment }: { assignment: Assignment }) {
+/** One vocabulary on both surfaces: the row and the panel read the same verdict. */
+const holding = (assignment: Assignment, now: Clock) => {
+  const verdict = leaseLiveness(assignment, now)?.verdict;
+  return verdict === 'offered' || verdict === 'active';
+};
+
+function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: Clock }) {
   return (
     <div className="stack agent-assignment">
       <div className="cluster cluster--between">
         <strong>{assignment.label}</strong>
-        <StatusPill value={assignment.status} />
+        <Live of={leaseLiveness(assignment, now)} />
       </div>
       <p className="muted agent-help">
         {assignment.role} · {assignment.workflow.name} / {words(assignment.workflow.state)}
@@ -78,7 +84,10 @@ function AssignmentDetails({ assignment }: { assignment: Assignment }) {
             rows={[
               ['Revision', assignment.revision],
               ['Joined assignment', stamp(assignment.createdAt)],
-              ['Lease expires', stamp(assignment.expiresAt)],
+              [
+                holding(assignment, now) ? 'Lease expires' : 'Lease ran to',
+                stamp(assignment.expiresAt),
+              ],
               !!assignment.closedAt && ['Closed', stamp(assignment.closedAt)],
               !!(assignment.outcome || assignment.closeReason) && [
                 'Outcome',
@@ -104,7 +113,7 @@ function AssignmentDetails({ assignment }: { assignment: Assignment }) {
   );
 }
 
-function AgentObservation({ observation }: { observation: Observation }) {
+function AgentObservation({ observation, now }: { observation: Observation; now: Clock }) {
   const current = observation.assignments.find(
     (assignment) => assignment.id === observation.agent.currentExecutionId,
   );
@@ -134,11 +143,9 @@ function AgentObservation({ observation }: { observation: Observation }) {
       <section className="stack">
         <h3>Current assignment</h3>
         {current ? (
-          <AssignmentDetails assignment={current} />
+          <AssignmentDetails assignment={current} now={now} />
         ) : (
-          <p className="muted">
-            No live assignment. This does not indicate whether the agent process is connected.
-          </p>
+          <p className="muted">No live assignment.</p>
         )}
       </section>
       <section className="stack">
@@ -174,18 +181,11 @@ function AgentObservation({ observation }: { observation: Observation }) {
             <span>Output tokens shown</span>
           </div>
         </div>
-        <p className="muted agent-help">
-          {callScope === 'current'
-            ? `Showing ${calls.length} calls for the current assignment from the returned activity.`
-            : `Showing ${calls.length} of ${count(observation.toolCallTotal)} lifetime calls.`}{' '}
-          {truncated &&
-            `The server returned ${observation.toolCalls.length} calls; earlier calls may not be shown. `}
-          In-flight calls first, then newest. Refreshes every 4 seconds.
-        </p>
-        <p className="muted agent-help">
-          Token counts estimate the displayed tool payloads, not model usage or billing. Outputs
-          include recorded results only.
-        </p>
+        {truncated && (
+          <p className="muted agent-help">
+            {calls.length} of {count(observation.toolCallTotal)} calls
+          </p>
+        )}
         {calls.length === 0 ? (
           <p className="muted">
             {callScope === 'current'
@@ -241,9 +241,6 @@ function AgentObservation({ observation }: { observation: Observation }) {
                 ['Lifetime output estimate', `≈ ${count(stats.outputTokens)} tokens`],
               ]}
             />
-            <p className="muted agent-help">
-              {observation.tokenAccounting.method} Output totals include recorded results only.
-            </p>
           </div>
         </details>
       </section>
@@ -263,9 +260,9 @@ function AgentObservation({ observation }: { observation: Observation }) {
           history.map((assignment) => (
             <details className="agent-history" key={assignment.id}>
               <summary>
-                {assignment.label} · {assignment.status}
+                {assignment.label} · {words(assignment.status)}
               </summary>
-              <AssignmentDetails assignment={assignment} />
+              <AssignmentDetails assignment={assignment} now={now} />
             </details>
           ))
         ) : (
@@ -282,40 +279,58 @@ function AgentObservation({ observation }: { observation: Observation }) {
  */
 export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): void }) {
   const [observation, setObservation] = useState<Observation>();
+  const [loadedAt, setLoadedAt] = useState<string>();
   const [error, setError] = useState<string>();
   const heading = useRef<HTMLHeadingElement>(null);
   const selected = agent.id;
+  // The panel reads its own payload, so it keeps its own clock: durations are
+  // measured from when this observation arrived, and a verdict stops short of
+  // what that read did not see.
+  const now = clock(undefined, loadedAt, useNow(1000), 12_000);
   useEffect(() => {
     setObservation(undefined);
     setError(undefined);
     heading.current?.focus();
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let waiting = false;
     const version = scopeVersion();
+    const live = () => !cancelled && version === scopeVersion();
+    const hidden = () => document.visibilityState === 'hidden';
     const refresh = async () => {
       try {
         const result = await accountRequest<Observation>(
           `/sessions/agents/${encodeURIComponent(selected)}/observation`,
           { scoped: true },
         );
-        if (!cancelled && version === scopeVersion()) {
+        if (live()) {
           setObservation(result);
+          setLoadedAt(new Date().toISOString());
           setError(undefined);
         }
       } catch (failure) {
-        if (!cancelled && version === scopeVersion()) {
+        // A failed poll degrades to one line beside the activity that is still
+        // correct; it never wipes what the last good read returned.
+        if (live())
           setError(failure instanceof Error ? failure.message : 'Could not load agent activity.');
-          setObservation(undefined);
-        }
       } finally {
-        if (!cancelled && version === scopeVersion())
-          timer = setTimeout(() => void refresh(), 4000);
+        if (live()) {
+          if (hidden()) waiting = true;
+          else timer = setTimeout(() => void refresh(), 4000);
+        }
       }
     };
+    const resume = () => {
+      if (!waiting || hidden()) return;
+      waiting = false;
+      void refresh();
+    };
     void refresh();
+    document.addEventListener('visibilitychange', resume);
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', resume);
     };
   }, [selected]);
   return (
@@ -341,10 +356,18 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
           Close ×
         </button>
       </div>
-      {error ? (
+      {observation?.agent.id === selected ? (
+        <>
+          {error && (
+            <p className="muted agent-help" role="status" title={error}>
+              Could not refresh. Showing the state that loaded{' '}
+              {loadedAt ? <Ago at={loadedAt} /> : 'last'}.
+            </p>
+          )}
+          <AgentObservation key={observation.agent.id} observation={observation} now={now} />
+        </>
+      ) : error ? (
         <p role="alert">{error}</p>
-      ) : observation?.agent.id === selected ? (
-        <AgentObservation key={observation.agent.id} observation={observation} />
       ) : (
         <p role="status" className="muted">
           Loading agent activity…

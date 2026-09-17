@@ -16,7 +16,9 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type {
+  AgentSummary,
   AutomaticLease,
+  DispatchDecision,
   DispatchState,
   RunnerHeartbeat,
   RunnerPlatform,
@@ -101,6 +103,8 @@ interface RunnerRow {
   desired_version: number;
   settings_json: string;
   last_seen_at: string;
+  last_decision: DispatchDecision | null;
+  last_decision_at: string | null;
 }
 interface ReceiptRow {
   fingerprint: string;
@@ -121,6 +125,8 @@ interface Hooks {
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
   close(session: Session, reason: string, tx: Transaction): Promise<Session>;
+  /** Read inside the status transaction, so agents and leases are one snapshot. */
+  agents(caller: Caller, tx: Transaction): Promise<AgentSummary[]>;
 }
 
 /** Scheduling controls are metadata only; Sessions alone reserves and authenticates a selected step. */
@@ -164,6 +170,15 @@ export class SessionDispatch {
         WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.owner_hash IS NOT OLD.owner_hash OR
           NEW.runner_id IS NOT OLD.runner_id OR NEW.source_json IS NOT OLD.source_json
         BEGIN SELECT RAISE(ABORT,'Runner delegation is immutable'); END;
+    `,
+        },
+        {
+          // The last decision, not a log: one row per runner, so storage is constant.
+          version: 2,
+          postgres: postgresMigrations[2],
+          sql: `
+      ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
+      ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
     `,
         },
       ]);
@@ -281,7 +296,24 @@ export class SessionDispatch {
       live: authorized && Date.parse(row.last_seen_at) + freshForMs > this.clock(),
       desiredVersion: row.desired_version,
       desiredSettings: JSON.parse(row.settings_json),
+      lastDecision: row.last_decision ?? null,
+      lastDecisionAt: row.last_decision_at ?? null,
     };
+  }
+  /** The answer this runner's last lease request received, kept where the runner is. */
+  private async decided(
+    ownerHash: string,
+    runnerId: string,
+    decision: DispatchDecision,
+    tx: Transaction,
+  ): Promise<void> {
+    await tx.run(
+      'UPDATE session_runners SET last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
+      decision,
+      this.time(),
+      ownerHash,
+      runnerId,
+    );
   }
   async heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence> {
     const parsed = heartbeatSchema.safeParse(input);
@@ -474,10 +506,18 @@ export class SessionDispatch {
         "SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN status IN ('offered','active') THEN 1 ELSE 0 END),0) AS live FROM worker_sessions WHERE project_id=?",
         caller.projectId,
       ))!;
+      const runnerTotal = (await tx.get<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=?',
+        caller.projectId,
+      ))!.n;
       const queue = await this.candidates(caller, tx);
       return {
+        // One transaction, one moment: agents cannot report a lease the leases do not.
+        agents: await this.hooks.agents(caller, tx),
+        observedAt: this.time(),
         liveSessionCount: counts.live,
         sessionTotal: counts.total,
+        runnerTotal,
         canManage: actor.role === 'operator',
         dispatch: await this.dispatch(caller.projectId, tx),
         runners,
@@ -493,7 +533,8 @@ export class SessionDispatch {
     tx: Transaction,
     excludeSessionId?: string,
   ): Promise<
-    { ok: true; runner: RunnerRow; platform: RunnerPlatform } | { ok: false; reason: string }
+    | { ok: true; runner: RunnerRow; platform: RunnerPlatform }
+    | { ok: false; reason: DispatchDecision }
   > {
     const runner = await tx.get<RunnerRow>(
       'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
@@ -574,6 +615,12 @@ export class SessionDispatch {
         input.runnerId,
         input.requestId,
       );
+      // Every ending of this request is recorded against the runner that asked, so a
+      // queue that never drains names its cause instead of leaving none anywhere.
+      const decided = async (decision: DispatchDecision) => {
+        await this.decided(owner.hash, input.runnerId, decision, tx);
+        return decision;
+      };
       if (old) {
         check(
           old.fingerprint === fingerprint,
@@ -588,7 +635,7 @@ export class SessionDispatch {
               old.session_id,
             ))!.session_json,
           ),
-          reason: 'replayed',
+          reason: await decided('replayed'),
         };
       }
       check(
@@ -603,9 +650,9 @@ export class SessionDispatch {
         409,
       );
       if (!(await this.dispatch(caller.projectId, tx)).enabled)
-        return { session: null, reason: 'dispatch_disabled' };
+        return { session: null, reason: await decided('dispatch_disabled') };
       const admission = await this.admitRunner(owner.hash, input, tx);
-      if (!admission.ok) return { session: null, reason: admission.reason };
+      if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
       const failures = (
         await tx.all<SessionRow>(
@@ -630,7 +677,10 @@ export class SessionDispatch {
           ),
       );
       if (!candidate)
-        return { session: null, reason: candidates.length ? 'retry_backoff' : 'no_candidates' };
+        return {
+          session: null,
+          reason: await decided(candidates.length ? 'retry_backoff' : 'no_candidates'),
+        };
       // Admission callbacks cannot disable dispatch or change source permission and
       // then still create an automatic lease within this transaction.
       await this.scope.requireDelegation(owner.source, 'read', tx);
@@ -695,7 +745,7 @@ export class SessionDispatch {
           ...eventSource(caller),
         },
       });
-      return { session, reason: 'offered' };
+      return { session, reason: await decided('offered') };
     });
   }
 }

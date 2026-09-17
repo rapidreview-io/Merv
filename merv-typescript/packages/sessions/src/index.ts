@@ -223,6 +223,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
             offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx),
             close: async (session, reason, tx) =>
               await this.closeSession(session, reason, tx, 'released', 'halted'),
+            agents: async (caller, tx) => await this.agentSummaries(caller, tx),
           },
           this.clock,
         ),
@@ -817,33 +818,45 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       return await this.directory.reset(agent, reason, tx);
     });
   }
+  /** Read inside the status transaction: one payload is one consistent snapshot. */
+  private async agentSummaries(caller: Caller, sql: Transaction) {
+    await this.scope.require(caller, 'read', sql);
+    return (
+      await sql.all<{
+        agent_json: string;
+        execution_id: string | null;
+        execution_label: string;
+        execution_role: Session['role'];
+      }>(
+        sql.dialect === 'postgres'
+          ? `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`
+          : `SELECT a.agent_json, w.id AS execution_id, json_extract(w.session_json,'$.assignment.label') AS execution_label, json_extract(w.session_json,'$.role') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY json_extract(a.agent_json,'$.createdAt') DESC,a.rowid DESC`,
+        caller.projectId,
+      )
+    ).map((row) => {
+      const agent: Agent = JSON.parse(row.agent_json);
+      return summarizeAgent(
+        agent,
+        row.execution_id,
+        row.execution_id ? { label: row.execution_label, role: row.execution_role } : null,
+      );
+    });
+  }
   async projectStatus(caller: Caller): Promise<SessionsProjectStatus> {
     this.ensureOpen();
-    const status = await this.dispatcher.projectStatus(caller);
-    const agents = await this.transaction(async (sql) => {
-      await this.scope.require(caller, 'read', sql);
-      return (
-        await sql.all<{
-          agent_json: string;
-          execution_id: string | null;
-          execution_label: string;
-          execution_role: Session['role'];
-        }>(
-          sql.dialect === 'postgres'
-            ? `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`
-            : `SELECT a.agent_json, w.id AS execution_id, json_extract(w.session_json,'$.assignment.label') AS execution_label, json_extract(w.session_json,'$.role') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY json_extract(a.agent_json,'$.createdAt') DESC,a.rowid DESC`,
-          caller.projectId,
-        )
-      ).map((row) => {
-        const agent: Agent = JSON.parse(row.agent_json);
-        return summarizeAgent(
-          agent,
-          row.execution_id,
-          row.execution_id ? { label: row.execution_label, role: row.execution_role } : null,
-        );
-      });
+    return await this.dispatcher.projectStatus(caller);
+  }
+  /** The rail's number on its own: no runner scan, no candidate enumeration, no blobs. */
+  async liveSessionCount(caller: Caller): Promise<number> {
+    this.ensureOpen();
+    return await this.transaction(async (tx) => {
+      check(!caller.session, 'forbidden', 'Leased workers cannot read project dispatch', 403);
+      await this.scope.require(caller, 'read', tx);
+      return (await tx.get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
+        caller.projectId,
+      ))!.n;
     });
-    return { ...status, agents };
   }
   async agentObservation(caller: Caller, agentId: string) {
     this.ensureOpen();

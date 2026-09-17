@@ -264,11 +264,9 @@ export function ListPage<T extends { id: string }>({
     );
   useRowKeys(frame);
   const total = filter.items.length;
-  // Filtered to nothing has a screen per cause, and the scope states its meaning there.
+  // Filtered to nothing has a screen per cause; the way out of it is the one control.
   const nothing =
-    filter.scope === 'mine'
-      ? [`None of these ${noun} are yours`, 'Everyone shows the whole project.']
-      : [`No ${noun} match these filters`, 'Try another search or clear the filters.'];
+    filter.scope === 'mine' ? `None of these ${noun} are yours` : `No ${noun} match these filters`;
   return (
     <div className="page-stage stack" ref={frame}>
       <div className="stack">
@@ -335,19 +333,17 @@ export function ListPage<T extends { id: string }>({
         <LoadState
           loading={false}
           empty
-          emptyTitle={nothing[0]}
+          emptyTitle={nothing}
           emptyHint={
-            <>
-              {nothing[1]}{' '}
-              <button type="button" className="btn-text" onClick={filter.clear}>
-                Clear filters
-              </button>
-            </>
+            <button type="button" className="btn-text" onClick={filter.clear}>
+              Clear filters
+            </button>
           }
         />
       )}
+      {/* A failed refresh degrades to the one stale line LoadState renders above; it
+          never blanks rows that are still correct. */}
       {rows.length > 0 &&
-        !load.error &&
         (cards ? (
           <div className={cards.className}>{rows.map((item) => cards.render(item))}</div>
         ) : (

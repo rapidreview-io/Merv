@@ -426,3 +426,94 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
     'UI adapter unloading leaves Sessions controls available',
   );
 });
+
+test('status states its own clock and its own limits, and the rail costs one count', async (t) => {
+  const f = await fixture(t);
+  await f.http('/sessions/runners/heartbeat', f.key.token, f.heartbeat, f.project.id);
+  const before = Date.now();
+  const status = await f.http('/sessions/status', f.operator, undefined, f.project.id);
+  assert.equal(status.status, 200, JSON.stringify(status));
+  const observed = Date.parse(status.body.observedAt);
+  assert.ok(
+    observed >= before - 5_000 && observed <= Date.now() + 5_000,
+    `observedAt must be the server's own clock, got ${status.body.observedAt}`,
+  );
+  assert.equal(status.body.runnerTotal, status.body.runners.length);
+  // The agents array is read inside the dispatcher's transaction, so one payload
+  // cannot report an agent on a lease the same payload's sessions do not hold.
+  const ui = await f.http('/tools/ui.read', f.operator, { rowId: 'sessions' }, f.project.id);
+  const held = new Set(ui.body.result.sessions.map((row: { id: string }) => row.id));
+  for (const agent of ui.body.result.agents)
+    if (agent.currentExecutionId) assert.ok(held.has(agent.currentExecutionId), agent.id);
+  assert.equal(typeof ui.body.result.observedAt, 'string');
+  assert.equal(typeof ui.body.result.runnerTotal, 'number');
+
+  // The rail's integer must not pay for a whole status: no candidate enumeration.
+  const workflows = f.app.ctx.workflows as unknown as {
+    dispatchCandidates: (...args: unknown[]) => Promise<unknown>;
+  };
+  const enumerate = workflows.dispatchCandidates.bind(workflows);
+  let enumerations = 0;
+  workflows.dispatchCandidates = async (...args: unknown[]) => {
+    enumerations++;
+    return await enumerate(...args);
+  };
+  t.after(() => {
+    workflows.dispatchCandidates = enumerate;
+  });
+  const shell = await f.http('/tools/ui.shell', f.operator, {}, f.project.id);
+  assert.equal(
+    shell.body.result.rows.find((entry: { id: string }) => entry.id === 'sessions').status.count,
+    0,
+  );
+  assert.equal(enumerations, 0, 'ui.shell must not enumerate dispatch candidates for a count');
+  await f.http('/tools/ui.read', f.operator, { rowId: 'sessions' }, f.project.id);
+  assert.ok(enumerations >= 1, 'the page itself still reads the queue');
+});
+
+test('a runner reports the answer its last lease request received', async (t) => {
+  const f = await fixture(t);
+  await f.http('/sessions/runners/heartbeat', f.key.token, f.heartbeat, f.project.id);
+  const runnerRow = async () =>
+    (await f.http('/sessions/status', f.operator, undefined, f.project.id)).body.runners[0];
+  assert.equal((await runnerRow()).lastDecision, null, 'a runner that never asked decides nothing');
+
+  await f.http('/sessions/lease', f.key.token, f.leaseInput(), f.project.id);
+  let runner = await runnerRow();
+  assert.equal(runner.lastDecision, 'dispatch_disabled');
+  assert.ok(Date.parse(runner.lastDecisionAt) <= Date.now() + 5_000);
+
+  await f.http('/sessions/dispatch', f.operator, { enabled: true }, f.project.id, 'PUT');
+  const offered = await f.http('/sessions/lease', f.key.token, f.leaseInput(), f.project.id);
+  assert.ok(offered.body.session, JSON.stringify(offered));
+  assert.equal((await runnerRow()).lastDecision, 'offered');
+
+  // The runner's own settings were re-published and not yet acknowledged: every
+  // further lease is refused, and the page can now say which refusal it was.
+  const settings = await f.http(
+    `/sessions/runners/${(await runnerRow()).id}/settings`,
+    f.operator,
+    { settings: { platforms: [{ name: 'codex', enabled: true, parallelism: 2 }] } },
+    f.project.id,
+    'PUT',
+  );
+  assert.equal(settings.status, 200, JSON.stringify(settings));
+  const pending = await f.http('/sessions/lease', f.key.token, f.leaseInput(), f.project.id);
+  assert.equal(pending.body.session, null);
+  assert.equal(pending.body.reason, 'settings_pending');
+  runner = await runnerRow();
+  assert.equal(runner.lastDecision, 'settings_pending');
+  assert.equal(runner.desiredVersion > (runner.appliedVersion ?? 0), true);
+
+  // Acknowledged, with the one seat this runner has already taken: capacity.
+  await f.http(
+    '/sessions/runners/heartbeat',
+    f.key.token,
+    { ...f.heartbeat, capacity: 1, appliedVersion: runner.desiredVersion },
+    f.project.id,
+  );
+  const full = await f.http('/sessions/lease', f.key.token, f.leaseInput(), f.project.id);
+  assert.equal(full.body.session, null);
+  assert.equal(full.body.reason, 'capacity_full');
+  assert.equal((await runnerRow()).lastDecision, 'capacity_full');
+});
