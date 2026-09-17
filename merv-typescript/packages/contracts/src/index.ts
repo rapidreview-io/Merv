@@ -19,6 +19,19 @@ export type {
 } from './code-publications.js';
 export { codeTransportInputSchema, codeTransportGrantSchema } from './code-transport.js';
 export type { CodeTransportInput, CodeTransportGrant } from './code-transport.js';
+export type {
+  UiManifest,
+  UiManifestRow,
+  UiManifestGroup,
+  UiCollectionSpec,
+  UiColumn,
+  UiPhrasePart,
+  UiLivenessSpec,
+  UiRecordSpec,
+  UiAction,
+  UiSection,
+  UiDetail,
+} from './ui-manifest.js';
 export type { SessionWorkspace, SessionWorkspaceRecord } from './workspace.js';
 export {
   codeCommitInputSchema,
