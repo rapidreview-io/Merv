@@ -285,6 +285,15 @@ export interface Loaded<T> {
 }
 
 /**
+ * The last good answer to each call, for the life of the page. A record opened beside its
+ * list remounts the list, and without this the list would blank and read itself again for
+ * data it already had; served from here it keeps its rows and refreshes underneath them.
+ * Nothing is served that a live read is not already replacing, so this is invisible except
+ * for the missing flash.
+ */
+const LAST = new Map<string, { data: unknown; loadedAt: string }>();
+
+/**
  * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
  * screen. A failed refresh keeps that data and its arrival time beside the error, so a view
  * degrades to one stale line rather than blanking a list that is still correct. The cadence
@@ -325,13 +334,15 @@ export function useTool<T>(
     const refresh = async () => {
       try {
         const data = await call<T>(name, input);
-        if (!cancelled && latest.current === key)
-          setState({ key, data, loadedAt: new Date().toISOString() });
+        const loadedAt = new Date().toISOString();
+        if (LAST.size > 64) LAST.clear();
+        LAST.set(key, { data, loadedAt });
+        if (!cancelled && latest.current === key) setState({ key, data, loadedAt });
       } catch (error) {
         if (!cancelled && latest.current === key)
           setState((old) => ({
             key,
-            ...(old.key === key ? { data: old.data, loadedAt: old.loadedAt } : {}),
+            ...((old.key === key ? old : LAST.get(key)) as { data?: T; loadedAt?: string }),
             error: error as ApiError,
           }));
       } finally {
@@ -351,11 +362,13 @@ export function useTool<T>(
   }, [key, tick, options.every]);
   const reload = useCallback(() => setTick((n) => n + 1), []);
   const current = state.key === key;
+  // Before this mount's own read lands, the page shows what the last one saw.
+  const kept = current || !key ? undefined : LAST.get(key);
   return {
-    data: current ? state.data : undefined,
+    data: current ? state.data : (kept?.data as T | undefined),
     error: current ? state.error : undefined,
-    loadedAt: current ? state.loadedAt : undefined,
-    loading: !!key && !current,
+    loadedAt: current ? state.loadedAt : kept?.loadedAt,
+    loading: !!key && !current && !kept,
     reload,
   };
 }

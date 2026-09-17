@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
-import { KV, LoadState, StatusPill, Table, col, words } from '../components';
+import { KV, Listing, LoadState, StatusPill, col, stamp, words } from '../components';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
 
@@ -232,12 +232,7 @@ function Detail({
           )}
           <details className="history-technical">
             <summary>Original record and import details</summary>
-            <KV
-              rows={[
-                ['Original ID', <span className="mono">{detail.data.id}</span>],
-                ['Preservation hash', <span className="mono">{detail.data.hash}</span>],
-              ]}
-            />
+            <KV rows={[['Preservation hash', <span className="mono">{detail.data.hash}</span>]]} />
             <pre className="doc">{JSON.stringify(detail.data.data, null, 2)}</pre>
           </details>
         </>
@@ -324,57 +319,49 @@ function History({ row }: ViewProps) {
                   ))}
                 </select>
               </label>
-              <span className="faint">
-                Imported {new Date(summary.data.importedAt).toLocaleString()}
-              </span>
+              <span className="faint">Imported {stamp(summary.data.importedAt)}</span>
             </div>
           </details>
           <div className={`history-layout${selected ? ' history-layout--selected' : ''}`}>
             <section className="stack" aria-label="Historical records">
-              <LoadState
-                {...records}
-                empty={records.data?.records.length === 0}
+              <Listing
+                load={records}
+                rows={records.data?.records ?? []}
                 emptyTitle="No records of this type"
                 emptyHint="Records imported from the previous backend are read-only; choose another category above."
+                columns={[
+                  col<RecordSummary>('label', 'Record', (item) => (
+                    <div className="stack">
+                      <button
+                        className="history-record-link"
+                        ref={selected?.id === item.id ? opener : undefined}
+                        aria-expanded={selected?.id === item.id}
+                        aria-controls={selected?.id === item.id ? 'history-detail' : undefined}
+                        onClick={() => update({ type, pages, selected: { type, id: item.id } })}
+                      >
+                        {item.label}
+                      </button>
+                    </div>
+                  )),
+                  col<RecordSummary>('status', 'Status', (item) => (
+                    <StatusPill value={item.status} />
+                  )),
+                  ...(type === 'artifacts'
+                    ? [
+                        col<RecordSummary>('retention', 'File', (item) =>
+                          item.fileRetention?.status === 'verified'
+                            ? 'Available'
+                            : item.fileRetention?.status === 'metadata-only'
+                              ? 'Metadata only'
+                              : 'Not verified',
+                        ),
+                      ]
+                    : []),
+                  col<RecordSummary>('date', 'Created', (item) =>
+                    item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—',
+                  ),
+                ]}
               />
-              {!!records.data?.records.length && !records.error && (
-                <Table
-                  rows={records.data.records}
-                  keyOf={(item) => item.id}
-                  columns={[
-                    col<RecordSummary>('label', 'Record', (item) => (
-                      <div className="stack">
-                        <button
-                          className="history-record-link"
-                          ref={selected?.id === item.id ? opener : undefined}
-                          aria-expanded={selected?.id === item.id}
-                          aria-controls={selected?.id === item.id ? 'history-detail' : undefined}
-                          onClick={() => update({ type, pages, selected: { type, id: item.id } })}
-                        >
-                          {item.label || item.id}
-                        </button>
-                      </div>
-                    )),
-                    col<RecordSummary>('status', 'Status', (item) => (
-                      <StatusPill value={item.status} />
-                    )),
-                    ...(type === 'artifacts'
-                      ? [
-                          col<RecordSummary>('retention', 'File', (item) =>
-                            item.fileRetention?.status === 'verified'
-                              ? 'Available'
-                              : item.fileRetention?.status === 'metadata-only'
-                                ? 'Metadata only'
-                                : 'Not verified',
-                          ),
-                        ]
-                      : []),
-                    col<RecordSummary>('date', 'Created', (item) =>
-                      item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—',
-                    ),
-                  ]}
-                />
-              )}
               <div className="cluster">
                 <button
                   className="btn btn--sm"
@@ -406,9 +393,6 @@ function History({ row }: ViewProps) {
           </div>
           <details className="faint">
             <summary>Import provenance</summary>
-            <p>
-              Source: <span className="mono">{summary.data.sourceId}</span>
-            </p>
             <p className="history-hash mono">{summary.data.fingerprint}</p>
             <p>
               Sandbox-owned objects retain their original references and availability status. A

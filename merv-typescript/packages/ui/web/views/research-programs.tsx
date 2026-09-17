@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
@@ -9,9 +9,10 @@ import {
   Area,
   Failure,
   Field,
+  Fold,
   KV,
+  Listing,
   LoadState,
-  ObjId,
   PageHeader,
   StatusPill,
   Table,
@@ -19,6 +20,7 @@ import {
   cx,
   recordRoutes,
   relativeTime,
+  stamp,
   words,
 } from '../components';
 import { useActorNames } from './people';
@@ -119,6 +121,17 @@ interface ConsolidationRecord {
 type Lens = Reflection['lenses'][number];
 type Decision = ConsolidationSubmission['decisions'][number];
 
+/** One band of the frozen snapshot: a heading over its list, or nothing at all. */
+function Band({ title, items }: { title: string; items: ReactNode[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="stack">
+      <h3>{title}</h3>
+      <ul>{items}</ul>
+    </div>
+  );
+}
+
 function EvidenceLink({ artifact }: { artifact: Artifact }) {
   return (
     <Link to={`/artifacts/${artifact.id}`} title={`${artifact.id}\nSHA-256 ${artifact.hash}`}>
@@ -215,78 +228,58 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
       <h2 className="section-title">Frozen sources</h2>
       <p>
         {corpus.selection.experiments.length} experiments · {corpus.selection.tasks.length} tasks ·{' '}
-        {corpus.selection.claims.length} claims. Captured{' '}
-        {new Date(corpus.createdAt).toLocaleString()}.
+        {corpus.selection.claims.length} claims. Captured {stamp(corpus.createdAt)}.
       </p>
       <p className="faint">Later project edits do not change the evidence used by this wave.</p>
       <details className="card stack">
         <summary>Inspect the research snapshot</summary>
         <KV
           rows={[
-            ['Snapshot', <ObjId id={corpus.id} />],
             ['Source hash', <span className="mono wrap">{corpus.manifestHash}</span>],
             ['Project', corpus.selection.project.name],
           ]}
         />
-        {corpus.selection.experiments.length > 0 && (
-          <div className="stack">
-            <h3>Experiments</h3>
-            <ul>
-              {corpus.selection.experiments.map((experiment) => (
-                <li key={experiment.id}>
-                  <Link to={`/experiments/${experiment.id}`}>{experiment.name}</Link> ·{' '}
-                  {experiment.workflow.state}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {corpus.selection.tasks.length > 0 && (
-          <div className="stack">
-            <h3>Tasks</h3>
-            <ul>
-              {corpus.selection.tasks.map((task) => (
-                <li key={task.id}>
-                  <Link to={`/tasks/${task.id}`}>{task.title}</Link> · {task.workflow.state}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {corpus.selection.claims.length > 0 && (
-          <div className="stack">
-            <h3>Claims at capture</h3>
-            <ul>
-              {corpus.selection.claims.map((claim) => (
-                <li key={claim.id}>
-                  {claim.statement} · {claim.status}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <Band
+          title="Experiments"
+          items={corpus.selection.experiments.map((experiment) => (
+            <li key={experiment.id}>
+              <Link to={`/experiments/${experiment.id}`}>{experiment.name}</Link> ·{' '}
+              {experiment.workflow.state}
+            </li>
+          ))}
+        />
+        <Band
+          title="Tasks"
+          items={corpus.selection.tasks.map((task) => (
+            <li key={task.id}>
+              <Link to={`/tasks/${task.id}`}>{task.title}</Link> · {task.workflow.state}
+            </li>
+          ))}
+        />
+        <Band
+          title="Claims at capture"
+          items={corpus.selection.claims.map((claim) => (
+            <li key={claim.id}>
+              {claim.statement} · {claim.status}
+            </li>
+          ))}
+        />
         <p className="faint">
           Links open the record's current view. The states and claims above are the frozen
           observations.
         </p>
-        {corpus.selection.artifacts.length > 0 && (
-          <div className="stack">
-            <h3>Exact evidence</h3>
-            <ul>
-              {corpus.selection.artifacts.map((entry) => (
-                <li key={entry.id}>
-                  {entry.status === 'retained' ? (
-                    <EvidenceLink artifact={entry.artifact} />
-                  ) : (
-                    <>
-                      <ObjId id={entry.id} /> · unavailable at capture
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <Band
+          title="Exact evidence"
+          items={corpus.selection.artifacts.map((entry) => (
+            <li key={entry.id}>
+              {entry.status === 'retained' ? (
+                <EvidenceLink artifact={entry.artifact} />
+              ) : (
+                'Unavailable at capture'
+              )}
+            </li>
+          ))}
+        />
       </details>
       <details className="card stack">
         <summary>Living paper at capture</summary>
@@ -369,47 +362,30 @@ function ReflectionList({ row }: ViewProps) {
   const list = useTool<Reflection[]>('reflection.list', {}, { every: 8000 });
   const { actor } = useSession();
   const navigate = useNavigate();
-  const [creating, setCreating] = useState(false);
   return (
     <div className="page-stage stack stack--lg">
-      {(actor.role === 'producer' || actor.role === 'operator') && (
-        <div className="action-row">
-          <button
-            type="button"
-            className="btn btn--primary"
-            aria-expanded={creating}
-            onClick={() => setCreating((open) => !open)}
-          >
-            New reflection
-          </button>
-        </div>
-      )}
-      {creating && <CreateReflection onCreated={(wave) => navigate(`${row.path}/${wave.id}`)} />}
-      <LoadState
-        {...list}
-        empty={list.data?.length === 0}
+      <Fold label="New reflection" shown={actor.role === 'producer' || actor.role === 'operator'}>
+        {() => <CreateReflection onCreated={(wave) => navigate(`${row.path}/${wave.id}`)} />}
+      </Fold>
+      <Listing
+        load={list}
+        rows={list.data ?? []}
+        opens
         emptyTitle="No reflection waves yet"
         emptyHint="A wave gathers five independent readings of the research so far; a producer starts one here."
+        columns={[
+          col<Reflection>('title', 'Reflection', (wave) => <strong>{wave.title}</strong>),
+          col<Reflection>('state', 'Stage', (wave) => <StatusPill value={wave.workflow.state} />),
+          col<Reflection>(
+            'lenses',
+            'Lenses',
+            (wave) =>
+              `${wave.lenses.filter((lens) => lens.artifact).length} / ${wave.lenses.length}`,
+          ),
+          col<Reflection>('attempt', 'Attempt', (wave) => wave.attempt),
+          col<Reflection>('created', 'Started', (wave) => <Ago at={wave.createdAt} />),
+        ]}
       />
-      {list.data && !list.error && list.data.length > 0 && (
-        <Table
-          rows={list.data}
-          keyOf={(wave) => wave.id}
-          onRow={(wave) => wave.id}
-          columns={[
-            col<Reflection>('title', 'Reflection', (wave) => <strong>{wave.title}</strong>),
-            col<Reflection>('state', 'Stage', (wave) => <StatusPill value={wave.workflow.state} />),
-            col<Reflection>(
-              'lenses',
-              'Lenses',
-              (wave) =>
-                `${wave.lenses.filter((lens) => lens.artifact).length} / ${wave.lenses.length}`,
-            ),
-            col<Reflection>('attempt', 'Attempt', (wave) => wave.attempt),
-            col<Reflection>('created', 'Started', (wave) => <Ago at={wave.createdAt} />),
-          ]}
-        />
-      )}
     </div>
   );
 }
@@ -442,14 +418,11 @@ function ReflectionDetail({ row }: ViewProps) {
                   <details>
                     <summary>{lens.perspective.replaceAll('_', ' ')}</summary>
                     <p>{lens.instructions}</p>
-                    <ObjId id={lens.id} />
                   </details>
                 )),
                 col<Lens>('state', 'State', (lens) => <StatusPill value={lens.workflow.state} />),
                 col<Lens>('producer', 'Contributor', (lens) =>
-                  lens.producerId
-                    ? (nameOf(lens.producerId) ?? <ObjId id={lens.producerId} />)
-                    : 'Awaiting submission',
+                  lens.producerId ? nameOf(lens.producerId) : 'Awaiting submission',
                 ),
                 col<Lens>('report', 'Pinned report', (lens) =>
                   lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : 'Not submitted',
@@ -480,11 +453,8 @@ function ReflectionDetail({ row }: ViewProps) {
                   <StatusPill value={wave.review.verdict} />
                 </div>
                 {wave.review.synopsis && <p>{wave.review.synopsis}</p>}
-                {wave.review.reviewerId && (
-                  <p className="faint">
-                    Reviewer:{' '}
-                    {nameOf(wave.review.reviewerId) ?? <ObjId id={wave.review.reviewerId} />}
-                  </p>
+                {nameOf(wave.review.reviewerId) && (
+                  <p className="faint">Reviewer: {nameOf(wave.review.reviewerId)}</p>
                 )}
                 {wave.review.returnTo && (
                   <p>Return to: {wave.review.returnTo.replaceAll('_', ' ')}</p>
@@ -617,72 +587,53 @@ function ConsolidationList({ row }: ViewProps) {
   const list = useTool<ConsolidationRecord[]>('consolidation.list', {}, { every: 8000 });
   const { actor } = useSession();
   const navigate = useNavigate();
-  // Arriving from an approved reflection carries the sources: open the form on those.
-  const [creating, setCreating] = useState(() =>
-    new URLSearchParams(window.location.search).has('sources'),
-  );
   return (
     <div className="page-stage stack stack--lg">
-      {(actor.role === 'operator' || actor.role === 'producer') && (
-        <div className="action-row">
-          <button
-            type="button"
-            className="btn btn--primary"
-            aria-expanded={creating}
-            onClick={() => setCreating((open) => !open)}
-          >
-            New consolidation
-          </button>
-        </div>
-      )}
-      {creating && (
-        <CreateConsolidation onCreated={(record) => navigate(`${row.path}/${record.id}`)} />
-      )}
-      <LoadState
-        {...list}
-        empty={list.data?.length === 0}
+      {/* Arriving from an approved reflection carries the sources: open on those. */}
+      <Fold
+        label="New consolidation"
+        shown={actor.role === 'operator' || actor.role === 'producer'}
+        opened={new URLSearchParams(window.location.search).has('sources')}
+      >
+        {() => <CreateConsolidation onCreated={(record) => navigate(`${row.path}/${record.id}`)} />}
+      </Fold>
+      <Listing
+        load={list}
+        rows={list.data ?? []}
+        opens
         emptyTitle="No consolidations yet"
         emptyHint="A consolidation turns approved findings into reviewed decisions; a producer starts one here."
+        columns={[
+          col<ConsolidationRecord>('name', 'Consolidation', (r) => <strong>{r.name}</strong>),
+          col<ConsolidationRecord>('state', 'Stage', (r) => (
+            <StatusPill value={r.workflow.state} />
+          )),
+          col<ConsolidationRecord>('work', 'Environment', (r) =>
+            r.workspace === 'git' ? 'Git' : 'Research',
+          ),
+          col<ConsolidationRecord>(
+            'coverage',
+            'Corpus',
+            (r) => `${r.experimentIds.length} experiments`,
+          ),
+          col<ConsolidationRecord>('created', 'Started', (r) => <Ago at={r.createdAt} />),
+        ]}
       />
-      {list.data && !list.error && list.data.length > 0 && (
-        <Table
-          rows={list.data}
-          keyOf={(record) => record.id}
-          onRow={(record) => record.id}
-          columns={[
-            col<ConsolidationRecord>('name', 'Consolidation', (r) => <strong>{r.name}</strong>),
-            col<ConsolidationRecord>('state', 'Stage', (r) => (
-              <StatusPill value={r.workflow.state} />
-            )),
-            col<ConsolidationRecord>('work', 'Environment', (r) =>
-              r.workspace === 'git' ? 'Git' : 'Research',
-            ),
-            col<ConsolidationRecord>(
-              'coverage',
-              'Corpus',
-              (r) => `${r.experimentIds.length} experiments`,
-            ),
-            col<ConsolidationRecord>('created', 'Started', (r) => <Ago at={r.createdAt} />),
-          ]}
-        />
-      )}
     </div>
   );
 }
 
 function Submission({ submission }: { submission: ConsolidationSubmission }) {
+  // One list names every experiment a decision is about; an unnamed one shows no link text.
+  const experiments = useTool<{ id: string; name: string }[]>('experiment.list');
+  const named = new Map((experiments.data ?? []).map((item) => [item.id, item.name]));
   return (
     <div className="stack">
       <KV
         rows={[
-          ['Submitted', new Date(submission.createdAt).toLocaleString()],
+          ['Submitted', stamp(submission.createdAt)],
           ['Report', <EvidenceLink artifact={submission.report} />],
-          [
-            'Review',
-            <Link to={`/reviews/${submission.reviewId}`}>
-              <ObjId id={submission.reviewId} />
-            </Link>,
-          ],
+          ['Review', <Link to={`/reviews/${submission.reviewId}`}>Open the review</Link>],
         ]}
       />
       {submission.decisions.length ? (
@@ -691,7 +642,9 @@ function Submission({ submission }: { submission: ConsolidationSubmission }) {
           keyOf={(decision) => decision.experimentId}
           columns={[
             col<Decision>('experiment', 'Experiment', (decision) => (
-              <Link to={`/experiments/${decision.experimentId}`}>{decision.experimentId}</Link>
+              <Link to={`/experiments/${decision.experimentId}`}>
+                {named.get(decision.experimentId)}
+              </Link>
             )),
             col<Decision>('decision', 'Decision', (decision) =>
               decision.decision.replaceAll('_', ' '),
@@ -719,7 +672,6 @@ function Submission({ submission }: { submission: ConsolidationSubmission }) {
           <p>{submission.proposal.summary}</p>
           <KV
             rows={[
-              ['Proposal', <ObjId id={submission.proposal.id} />],
               [
                 'Exact head',
                 <span className="mono wrap">{submission.proposal.receipt.headOid}</span>,
@@ -786,8 +738,7 @@ function ConsolidationDetail({ row }: ViewProps) {
             )}
             {record.completion && (
               <p>
-                Independent consolidation review completed{' '}
-                {new Date(record.completion.completedAt).toLocaleString()}.{' '}
+                Independent consolidation review completed {stamp(record.completion.completedAt)}.{' '}
                 <Link to={`/reviews/${record.completion.reviewId}`}>View approval</Link>.
               </p>
             )}

@@ -4,16 +4,7 @@ import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import {
-  Area,
-  Failure,
-  Field,
-  KindLabel,
-  LoadState,
-  ObjId,
-  StatusPill,
-  kindStyle,
-} from '../components';
+import { Area, Failure, Field, Fold, KindLabel, LoadState, StatusPill } from '../components';
 import { useScopeKey, useSession } from '../session';
 import { ResearchCommand } from './paper';
 
@@ -111,12 +102,11 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
     (blocker) => blocker.message !== guidance.data?.instruction,
   );
   return (
-    <article className="record stack" style={kindStyle('research')}>
+    <article className="record stack">
       <KindLabel kind="research" />
       <div className="cluster">
         <h2>{record.name}</h2>
         <StatusPill value={record.workflow.state} />
-        <ObjId id={record.id} />
       </div>
       <p className="faint">
         Revision {record.workflow.revision} ·{' '}
@@ -143,7 +133,7 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
               <ul>
                 {guidance.data.dependencies.map((item) => (
                   <li key={item.id}>
-                    {item.name} <ObjId id={item.id} /> <StatusPill value={item.state} />
+                    {item.name} <StatusPill value={item.state} />
                   </li>
                 ))}
               </ul>
@@ -155,16 +145,8 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
         <Link to="/paper">
           Living paper{record.problem ? ` · problem revision ${record.problem.revision}` : ''}
         </Link>
-        {record.reflectionId && (
-          <Link to="/reflections">
-            Reflection <ObjId id={record.reflectionId} />
-          </Link>
-        )}
-        {record.consolidationId && (
-          <Link to="/consolidation">
-            Consolidation <ObjId id={record.consolidationId} />
-          </Link>
-        )}
+        {record.reflectionId && <Link to="/reflections">Reflection</Link>}
+        {record.consolidationId && <Link to="/consolidation">Consolidation</Link>}
       </div>
       {writable && (
         <ResearchCommand
@@ -185,29 +167,18 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
 function ResearchPage() {
   const { actor } = useSession();
   const cycles = useTool<ResearchRecord[]>('research.list', {}, { every: 10000 });
-  const [creating, setCreating] = useState(false);
   return (
     <div className="page-stage stack stack--lg">
-      {(actor.role === 'operator' || actor.role === 'producer') && (
-        <div className="action-row">
-          <button
-            type="button"
-            className="btn btn--primary"
-            aria-expanded={creating}
-            onClick={() => setCreating((open) => !open)}
-          >
-            New cycle
-          </button>
-        </div>
-      )}
-      {creating && (
-        <CreateResearch
-          onSaved={() => {
-            setCreating(false);
-            cycles.reload();
-          }}
-        />
-      )}
+      <Fold label="New cycle" shown={actor.role === 'operator' || actor.role === 'producer'}>
+        {(close) => (
+          <CreateResearch
+            onSaved={() => {
+              close();
+              cycles.reload();
+            }}
+          />
+        )}
+      </Fold>
       <LoadState
         {...cycles}
         empty={cycles.data?.length === 0}

@@ -116,7 +116,20 @@ h3 {
   font-weight: 600;
   line-height: 1.35;
 }
-a:hover {
+/* One statement for the whole app: what the pointer is on, or what is open,
+   takes the accent. Every surface names its own clickable part here. */
+a:hover,
+.lede-other:hover,
+.btn-text:hover,
+.row-link:hover strong,
+.ov-name:hover,
+.ov-all a:hover,
+.ov-note a:hover,
+.history-record-link:hover,
+.history-record-link[aria-expanded='true'],
+.feed a:hover,
+.verdict-jump:hover,
+.map-relation:hover {
   color: var(--active);
 }
 button {
@@ -135,7 +148,8 @@ code {
   font-size: 0.92em;
   overflow-wrap: anywhere;
 }
-time {
+time,
+.tabular {
   font-variant-numeric: tabular-nums;
 }
 ::selection {
@@ -176,9 +190,7 @@ time {
   flex: 1;
   min-width: 0;
 }
-.topbar {
-  display: none;
-}
+.topbar,
 .nav-scrim {
   display: none;
 }
@@ -212,14 +224,11 @@ time {
 }
 .sb-edge {
   position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
+  inset: 0 auto 0 0;
   width: 40px;
   z-index: 5;
   border: 0;
   background: none;
-  padding: 0;
   cursor: pointer;
 }
 .sb-edge-glyph {
@@ -258,7 +267,10 @@ time {
   cursor: pointer;
   border-radius: var(--radius-md);
 }
-.sidebar-hide:hover {
+/* Every quiet control in the rail lights the same way under the pointer. */
+.sidebar-hide:hover,
+.rail-switch:hover,
+.account-menu-item:hover {
   color: var(--text);
   background: var(--bg-soft);
 }
@@ -279,10 +291,9 @@ time {
   background: var(--hover);
   color: var(--text);
 }
-/* Active is marked in the section's own colour, never in the accent. */
+/* Active is marked by ink text beside the section's own dot, never by a bar. */
 .rail-row.active {
   color: var(--text);
-  box-shadow: inset 2px 0 var(--kind, var(--active));
 }
 .rail-row-label {
   flex: 1;
@@ -336,10 +347,6 @@ html[data-theme='dark'] .rail-kind {
 .rail-switch:focus-visible {
   opacity: 1;
 }
-.rail-switch:hover {
-  color: var(--text);
-  background: var(--bg-soft);
-}
 .rail-nav {
   display: flex;
   flex-direction: column;
@@ -383,7 +390,10 @@ html[data-theme='dark'] .rail-kind {
   cursor: pointer;
   text-align: left;
 }
-.account-row:hover {
+/* The soft ground marks what is open, or what the pointer is on. */
+.account-row:hover,
+.lease--open,
+.split-list tbody tr:has(.row-open) {
   background: var(--bg-soft);
 }
 .account-avatar {
@@ -414,9 +424,7 @@ html[data-theme='dark'] .rail-kind {
 }
 .account-menu {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  right: 0;
+  inset: auto 0 calc(100% + 6px);
   z-index: 10;
   background: var(--bg-elev);
   border: 1px solid var(--line);
@@ -441,10 +449,6 @@ html[data-theme='dark'] .rail-kind {
   font-size: var(--text-sm);
   color: var(--muted);
   cursor: pointer;
-}
-.account-menu-item:hover {
-  background: var(--bg-soft);
-  color: var(--text);
 }
 .account-menu-sep {
   height: 1px;
@@ -487,12 +491,6 @@ html[data-theme='dark'] .rail-kind {
 .lede-icon {
   font-size: 18px;
   margin-right: 8px;
-}
-.lede-other:hover {
-  color: var(--active);
-}
-.lede-sep {
-  color: var(--faint);
 }
 .lede-count {
   font-size: var(--text-sm);
@@ -559,29 +557,24 @@ html[data-theme='dark'] .rail-kind {
 }
 .btn-text {
   border: 0;
-  padding: 0;
   background: none;
   font-size: var(--text-sm);
   color: var(--muted);
   cursor: pointer;
-}
-.btn-text:hover {
-  color: var(--active);
 }
 .btn-text[aria-selected='true'],
 .btn-text[aria-pressed='true'] {
   color: var(--text);
 }
 /* Records. --------------------------------------------------------------- */
-/* Nothing here is a box. A record sits directly on the ground, edged in the
-   colour of its kind: the kind label, the name, its meta lines, then the state
-   it is in. A list is rows separated by one hairline, and a section is what
-   lies between two of them; only the map's property card and a criterion keep
-   a frame, because there the box is the object. */
+/* Nothing here is a box and nothing wears an edge. A record sits directly on
+   the ground: the kind label in its kind's colour, the name, its meta lines,
+   then the state it is in. A list is rows separated by one hairline, and a
+   section is what lies between two of them; only the map's property card and a
+   criterion keep a frame, because there the box is the object. */
 .record {
-  /* A record that is also a button keeps no edge but its kind's. */
+  /* A record that is also a button carries no border of its own. */
   border: 0;
-  border-left: 3px solid var(--kind, var(--line));
   padding: 12px 14px;
 }
 .card {
@@ -619,11 +612,11 @@ html[data-theme='dark'] .rail-kind {
 html[data-theme='dark'] .kind {
   color: color-mix(in srgb, var(--kind, var(--muted)) 55%, #ffffff);
 }
-html[data-theme='dark'] .record {
-  border-left-color: color-mix(in srgb, var(--kind, var(--line)) 55%, #ffffff);
-}
-/* Configuration stays possible, folded behind one control. */
-.fold > summary {
+/* Configuration stays possible, folded behind one control; every disclosure
+   summary on every page is written the same way. */
+.fold > summary,
+.agent-detail summary,
+.crit-file > summary {
   cursor: pointer;
   color: var(--muted);
   font-size: var(--text-sm);
@@ -632,7 +625,8 @@ html[data-theme='dark'] .record {
   margin-bottom: var(--space-3);
   color: var(--text);
 }
-.stack {
+.stack,
+.map {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -653,17 +647,22 @@ html[data-theme='dark'] .record {
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-.faint {
+/* Faint carries what the eye is meant to skip: a separator, a key, a clause name. */
+.faint,
+.lede-sep,
+.kv dt,
+.clause-k,
+.ev-role {
   color: var(--faint);
 }
-.muted {
+.muted,
+.states-word,
+.states-detail,
+.map-now-count {
   color: var(--muted);
 }
 .mono {
   font-family: var(--font-mono);
-}
-.tabular {
-  font-variant-numeric: tabular-nums;
 }
 /* Machine text breaks anywhere rather than pushing its column; recorded prose also
    keeps the line breaks it was written with. */
@@ -674,15 +673,12 @@ html[data-theme='dark'] .record {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* The one identifier still printed as text, in the two Codex-owned views. */
 .obj-id {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--faint);
   letter-spacing: 0.02em;
-}
-.obj-id--strong {
-  color: var(--muted);
-  font-size: var(--text-sm);
 }
 .label {
   display: block;
@@ -821,9 +817,6 @@ select.input,
 .kv-row {
   display: contents;
 }
-.kv dt {
-  color: var(--faint);
-}
 .kv dd {
   color: var(--text);
   display: flex;
@@ -871,9 +864,6 @@ select.input,
 .row-link {
   display: block;
 }
-.row-link:hover strong {
-  color: var(--active);
-}
 .checks {
   padding-left: 22px;
   display: flex;
@@ -907,7 +897,6 @@ select.input,
 }
 .doc--inline {
   padding: 0 0 0 var(--space-3);
-  border-left: 1px solid var(--line);
   max-height: 240px;
 }
 .doc-frame .empty {
@@ -1081,9 +1070,6 @@ select.input,
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ov-name:hover {
-  color: var(--active);
-}
 .ov-meta,
 .ov-note,
 .ov-all {
@@ -1119,10 +1105,6 @@ select.input,
   color: var(--muted);
   font-size: var(--text-sm);
 }
-.ov-all a:hover,
-.ov-note a:hover {
-  color: var(--active);
-}
 /* Narrow enough that truncating the title would cost more than a second line. */
 @media (max-width: 720px) {
   .ov-name {
@@ -1140,7 +1122,10 @@ select.input,
 .history-layout--selected {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr);
 }
-.history-layout > * {
+/* A grid child may shrink below its content: the row scrolls, the page does not. */
+.history-layout > *,
+.agent-directory,
+.split-list .table {
   min-width: 0;
 }
 .history-detail {
@@ -1198,10 +1183,6 @@ select.input,
   font: inherit;
   font-weight: 550;
   line-height: 1.5;
-}
-.history-record-link:hover,
-.history-record-link[aria-expanded='true'] {
-  color: var(--active);
 }
 .history-detail > .cluster {
   align-items: flex-start;
@@ -1268,9 +1249,6 @@ select.input,
 .agent-workspace--selected {
   grid-template-columns: minmax(300px, 1fr) minmax(390px, 1.1fr);
 }
-.agent-directory {
-  min-width: 0;
-}
 .agent-help {
   font-size: var(--text-sm);
 }
@@ -1317,9 +1295,6 @@ select.input,
 .agent-row--selected {
   background: rgba(var(--steel-rgb), 0.07);
 }
-.agent-row--selected td:first-child {
-  box-shadow: inset 3px 0 var(--steel);
-}
 .agent-select {
   display: flex;
   flex-direction: column;
@@ -1355,14 +1330,8 @@ select.input,
   display: block;
   overflow-wrap: anywhere;
 }
-.agent-detail summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
 .agent-assignment {
   padding-left: var(--space-3);
-  border-left: 1px solid var(--line);
 }
 .agent-token-stats {
   display: grid;
@@ -1421,9 +1390,7 @@ select.input,
   .agent-detail {
     position: fixed;
     z-index: 25;
-    top: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0 0 0 auto;
     width: min(540px, 100vw);
     max-height: 100dvh;
     padding: var(--space-4);
@@ -1453,9 +1420,7 @@ select.input,
     align-items: center;
     gap: var(--space-3);
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+    inset: 0 0 auto;
     height: var(--topbar-h);
     z-index: 20;
     padding: 0 var(--space-3);
@@ -1497,9 +1462,7 @@ select.input,
   .sidebar,
   .shell--nosb .sidebar {
     position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
+    inset: 0 auto 0 0;
     z-index: 40;
     width: min(300px, 85vw);
     height: 100dvh;
@@ -1573,12 +1536,9 @@ select.input,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.claim-standing {
-  font-size: var(--text-base);
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-/* One sentence per testing experiment; the name it is about is the part you can click. */
+/* The standing a person set, and one sentence per testing experiment: the same
+   quiet line, and in the sentence the name it is about is what you can click. */
+.claim-standing,
 .claim-line {
   font-size: var(--text-base);
   color: var(--muted);
@@ -1648,7 +1608,6 @@ select.input,
 }
 .crit-said {
   padding-left: var(--space-3);
-  border-left: 1px solid var(--line);
 }
 .crit-word {
   font-size: var(--text-xs);
@@ -1673,7 +1632,6 @@ select.input,
 }
 /* The same words are the reviewer's own control; the ones not chosen stay quiet. */
 .crit-pick {
-  margin: 0;
   padding: 3px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
@@ -1682,11 +1640,6 @@ select.input,
 }
 .crit-pick[aria-pressed='true'] {
   border-color: currentcolor;
-}
-.crit-file > summary {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  cursor: pointer;
 }
 .crit-file > summary:hover,
 .crit-file[open] > summary {
@@ -1740,9 +1693,6 @@ select.input,
   text-decoration: underline;
   text-decoration-color: var(--line-strong);
   text-underline-offset: 2px;
-}
-.feed a:hover {
-  color: var(--active);
 }
 .feed-by {
   display: flex;
@@ -1809,12 +1759,6 @@ select.input,
   color: var(--line-strong);
   margin-left: var(--space-3);
 }
-/* A clause names its fact, and evidence names the part it plays, in the same
-   small caps: neither is a column header the record is missing. */
-.clause-k,
-.ev-role {
-  color: var(--faint);
-}
 .clause-k {
   margin-right: 6px;
 }
@@ -1833,9 +1777,10 @@ select.input,
   white-space: pre-wrap;
   max-width: 68ch;
 }
-/* One round of the spine: submission, criticism, correction, re-review. */
-.round {
-  border-left: 2px solid var(--line);
+/* One round of the spine, and one lane of the track: an indented block under
+   the line that names it. */
+.round,
+.lane {
   padding-left: var(--space-4);
 }
 .round > * + * {
@@ -1868,10 +1813,6 @@ select.input,
 .states .crit-word {
   margin-right: 0;
 }
-.states-word,
-.states-detail {
-  color: var(--muted);
-}
 .states-absent {
   color: var(--faint);
 }
@@ -1883,8 +1824,6 @@ select.input,
    a check that does not apply is doing the right thing. One sentence per line. */
 .exceptions {
   list-style: none;
-  margin: 0;
-  padding: 0;
   max-width: 62ch;
   font-size: var(--text-sm);
   color: var(--muted);
@@ -1901,9 +1840,6 @@ select.input,
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.verdict-jump:hover {
-  color: var(--active);
-}
 .crit:focus {
   outline: 2px solid var(--active);
   outline-offset: -2px;
@@ -1912,13 +1848,8 @@ select.input,
 /* Map (home) -------------------------------------------------------------
    The project at a glance: planes of counts above and below, the record in
    the middle as an object graph. A plane is a labelled band under a hairline
-   and a card is its kind edge and its words; the only accent is the one way
+   and a card is its kind label and its words; the only accent is the one way
    out of the map, and the only frame is the property card. */
-.map {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
 .map-lede,
 .map-stale {
   color: var(--muted);
@@ -1934,9 +1865,6 @@ select.input,
   flex-wrap: wrap;
   padding: 10px 0;
   font-size: var(--text-sm);
-}
-.map-now-count {
-  color: var(--muted);
 }
 .map-now-count b {
   color: var(--text);
@@ -2023,8 +1951,8 @@ select.input,
 .map-edge.on text {
   fill: var(--active);
 }
-/* A card on the map is its kind edge and its words. The ground behind it is the
-   page's own, so a verb passing underneath is covered rather than boxed out. */
+/* A card on the map is its kind label and its words. The ground behind it is
+   the page's own, so a verb passing underneath is covered rather than boxed out. */
 .map-node {
   display: flex;
   flex-direction: column;
@@ -2068,7 +1996,6 @@ select.input,
   gap: 6px;
   background: var(--bg-elev);
   border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--kind, var(--line));
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   animation: map-slide 200ms ease-out both;
@@ -2085,7 +2012,6 @@ select.input,
 .map-relation {
   background: none;
   border: 0;
-  padding: 0;
   font-size: var(--text-sm);
   color: var(--muted);
   cursor: pointer;
@@ -2094,9 +2020,6 @@ select.input,
 .map-relation b {
   color: var(--text);
   font-weight: 600;
-}
-.map-relation:hover {
-  color: var(--active);
 }
 .map-open {
   margin-top: var(--space-2);
@@ -2183,8 +2106,6 @@ select.input,
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
-  margin: 0;
-  padding: 0;
   list-style: none;
 }
 .track-step {
@@ -2193,7 +2114,6 @@ select.input,
   flex-direction: column;
   gap: 2px;
   padding: 6px 10px;
-  border-left: 3px solid var(--kind, var(--line-strong));
   font-size: var(--text-sm);
 }
 /* The states are a sequence, so the gap between them carries a mark. */
@@ -2211,16 +2131,11 @@ select.input,
   border-radius: var(--radius-sm);
 }
 .track-step--unreached {
-  border-left-color: var(--line);
   color: var(--muted);
 }
 .track-when {
   font-size: var(--text-xs);
   color: var(--faint);
-}
-.lane {
-  border-left: 2px solid var(--line);
-  padding-left: var(--space-4);
 }
 .lane-head {
   font-size: var(--text-sm);
@@ -2238,8 +2153,6 @@ select.input,
 }
 /* The same derivation read as prose: rungs, for a record whose shape is a ladder. */
 .ladder {
-  margin: 0;
-  padding: 0;
   list-style: none;
 }
 .ladder-rung {
@@ -2249,11 +2162,8 @@ select.input,
   align-items: baseline;
   font-size: var(--text-sm);
   padding: 2px 0 2px var(--space-3);
-  border-left: 2px solid var(--line);
 }
-.ladder-rung--here {
-  border-left-color: var(--line-strong);
-}
+/* The rung it stands on is named in its own words and set in the heavier weight. */
 .ladder-rung--here > span:first-child {
   font-weight: 600;
 }
@@ -2261,7 +2171,7 @@ select.input,
 /* Work lists: split pane and scope. -------------------------------------- */
 /* Above 1080px a record opens beside the list that sent you to it. Nothing is
    boxed: one hairline divides the two panes, the list keeps its own rows, and
-   the open row is marked by its kind's colour the way the rail marks a place. */
+   the open row is marked by the soft ground under it and nothing else. */
 .split {
   display: grid;
   grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
@@ -2283,20 +2193,11 @@ select.input,
 }
 /* In a pane this narrow a table shows the two facts a person scans and scrolls
    for nothing: the rest of the row is in the record already open beside it. */
-.split-list .table {
-  min-width: 0;
-}
 .split-list .table :is(th, td):nth-child(n + 3) {
   display: none;
 }
 .split-list .table :is(th, td):first-child {
   padding-left: var(--space-2);
-}
-.split-list tbody tr:has(.row-open) {
-  background: var(--bg-soft);
-}
-.split-list tbody tr:has(.row-open) td:first-child {
-  box-shadow: inset 2px 0 0 var(--kind, var(--line-strong));
 }
 /* The two controls sit on one line; which states the list holds is the line
    under them, type rather than a third control. */
@@ -2360,9 +2261,6 @@ select.input,
 .lease-row:hover {
   background: var(--hover);
 }
-.lease--open {
-  background: var(--bg-soft);
-}
 .lease-live {
   padding-bottom: 11px;
 }
@@ -2397,7 +2295,6 @@ select.input,
   background: var(--bg-elev);
 }
 .guard-list {
-  margin: 0;
   padding-left: 18px;
   font-size: var(--text-sm);
 }

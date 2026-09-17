@@ -1,17 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import {
-  Area,
-  Failure,
-  KindLabel,
-  LoadState,
-  ObjId,
-  StatusPill,
-  Table,
-  col,
-  kindStyle,
-} from '../components';
+import { Area, Failure, Fold, KindLabel, Listing, LoadState, StatusPill, col } from '../components';
 
 interface Records {
   claims: { id: string; statement: string; status: string; revision: number }[];
@@ -77,11 +67,7 @@ function ReferenceLookup() {
       {lookup.data && !lookup.error && (
         <div className="stack">
           {lookup.data.map((item, index) => (
-            <article
-              className="record stack"
-              style={kindStyle('knowledge')}
-              key={`${index}:${item.ref}`}
-            >
+            <article className="record stack" key={`${index}:${item.ref}`}>
               <KindLabel kind="knowledge" />
               <div className="cluster">
                 <strong className="mono wrap">{item.ref}</strong>
@@ -102,11 +88,7 @@ function ReferenceLookup() {
               {item.status === 'unsupported' && <p>This reference kind is not supported.</p>}
               {item.capture && (
                 <>
-                  <p>
-                    Exact capture from session <ObjId id={item.capture.provenance.sessionId} />,
-                    work item <ObjId id={item.capture.provenance.instanceId} />, revision{' '}
-                    {item.capture.provenance.revision}.
-                  </p>
+                  <p>Exact capture at revision {item.capture.provenance.revision}.</p>
                   {item.capture.workspace?.headOid && (
                     <p className="mono wrap">Commit: {item.capture.workspace.headOid}</p>
                   )}
@@ -125,7 +107,6 @@ function ReferenceLookup() {
 
 export function KnowledgeView() {
   const records = useTool<Records>('project.records', {}, { every: 10000 });
-  const [checking, setChecking] = useState(false);
   const inventory = records.data
     ? [
         ...records.data.claims.map((claim) => ({
@@ -157,47 +138,32 @@ export function KnowledgeView() {
   type Listed = (typeof inventory)[number];
   return (
     <div className="page-stage stack stack--lg">
-      <div className="action-row">
-        {records.data && (
-          <span className="muted">
-            {records.data.claims.length} claims · {records.data.tasks.length} tasks ·{' '}
-            {records.data.experiments.length} experiments
-          </span>
-        )}
-        <button
-          type="button"
-          className="btn"
-          aria-expanded={checking}
-          onClick={() => setChecking((open) => !open)}
-        >
-          Check references
-        </button>
-      </div>
-      {checking && <ReferenceLookup />}
-      <LoadState
-        {...records}
-        empty={!!records.data && inventory.length === 0}
-        columns={4}
+      <Fold
+        label="Check references"
+        plain
+        note={
+          records.data && (
+            <span className="muted">
+              {records.data.claims.length} claims · {records.data.tasks.length} tasks ·{' '}
+              {records.data.experiments.length} experiments
+            </span>
+          )
+        }
+      >
+        {() => <ReferenceLookup />}
+      </Fold>
+      <Listing
+        load={records}
+        rows={inventory}
         emptyTitle="No research records yet"
         emptyHint="Every claim, task and experiment anyone opens in this project is listed here, closed work included."
+        columns={[
+          col<Listed>('kind', 'Kind', (item) => item.kind),
+          col<Listed>('name', 'Record', (item) => <Link to={item.path}>{item.name}</Link>),
+          col<Listed>('state', 'State', (item) => <StatusPill value={item.state} />),
+          col<Listed>('revision', 'Revision', (item) => item.revision),
+        ]}
       />
-      {inventory.length > 0 && !records.error && (
-        <Table
-          rows={inventory}
-          keyOf={(item) => item.id}
-          columns={[
-            col<Listed>('kind', 'Kind', (item) => item.kind),
-            col<Listed>('name', 'Record', (item) => (
-              <div className="stack">
-                <Link to={item.path}>{item.name}</Link>
-                <ObjId id={item.id} />
-              </div>
-            )),
-            col<Listed>('state', 'State', (item) => <StatusPill value={item.state} />),
-            col<Listed>('revision', 'Revision', (item) => item.revision),
-          ]}
-        />
-      )}
     </div>
   );
 }

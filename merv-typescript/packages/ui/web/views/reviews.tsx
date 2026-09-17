@@ -2,20 +2,17 @@ import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
-import { ListPage, matches, splitRoutes, stateCounts, type Scope } from '../list-filters';
+import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import {
   Ago,
   Evidence,
   KindLabel,
   LoadState,
-  ObjId,
   PageHeader,
   StatusPill,
-  Table,
   col,
   cx,
-  shortId,
   useArtifacts,
   words,
 } from '../components';
@@ -176,7 +173,7 @@ export function CriterionRows({
                                   })
                                 }
                               />
-                              {artifacts.get(id)?.title ?? shortId(id)}
+                              {artifacts.get(id)?.title}
                             </label>
                           ))}
                         </div>
@@ -224,15 +221,8 @@ function ReviewList() {
   const subjectOf = useSubjects();
   const { actor } = useSession();
   const { id: openId } = useParams();
-  const [query, setQuery] = useState('');
-  const [scope, setScope] = useState<Scope>('everyone');
-  const [chosen, setChosen] = useState<string>();
-  const search = query.trim().toLowerCase();
-  // The count in the title line is the filter: the page opens on the reviews it
-  // counted — unclaimed and in hand — and every status is one click away below.
-  const states = stateCounts(list.data, (item) => item.status, isOpenReview);
-  const open = states.find((item) => item.value === OPEN)?.count ?? 0;
-  const state = chosen ?? (open ? OPEN : '');
+  const filter = useListFilter(list.data, (item) => item.status, isOpenReview);
+  const { state, scope, search } = filter;
   // The record open beside the list is always one of its rows, whatever the filters say.
   const visible = (list.data ?? []).filter(
     (item) =>
@@ -257,64 +247,45 @@ function ReviewList() {
       list={list}
       noun="reviews"
       placeholder="Summary, work item or person"
-      query={query}
-      onQueryChange={setQuery}
-      scope={scope}
-      onScopeChange={setScope}
-      state={state}
-      onStateChange={setChosen}
-      states={states}
-      visible={visible.length}
-      columns={4}
+      filter={filter}
+      rows={[...visible].reverse()}
       emptyTitle="No reviews"
       emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
-    >
-      <Table
-        rows={[...visible].reverse()}
-        keyOf={(r) => r.id}
-        onRow={(r) => r.id}
-        columns={[
-          col<Review>('subject', 'Work item', (r) => {
-            const subject = subjectOf(r.subjectId);
-            const summary = r.synopsis || r.criteria[0] || 'Independent review';
-            return (
-              <div className={cx('row-name', r.id === openId && 'row-open')}>
-                <KindLabel kind={subject?.kind} />
-                <strong title={summary}>
-                  {subject?.name ?? <ObjId id={r.subjectId} strong />}
-                </strong>
-                <div className="faint" title={summary}>
-                  {summary.length > 110 ? `${summary.slice(0, 107)}…` : summary}
-                </div>
+      columns={[
+        col<Review>('subject', 'Work item', (r) => {
+          const subject = subjectOf(r.subjectId);
+          const summary = r.synopsis || r.criteria[0] || 'Independent review';
+          return (
+            <div className={cx('row-name', r.id === openId && 'row-open')}>
+              <KindLabel kind={subject?.kind} />
+              <strong title={summary}>{subject?.name}</strong>
+              <div className="faint" title={summary}>
+                {summary.length > 110 ? `${summary.slice(0, 107)}…` : summary}
               </div>
-            );
-          }),
-          col<Review>('standing', 'Standing', (r) => {
-            const subject = subjectOf(r.subjectId);
-            return (
-              <ThreeStates
-                execution={subject?.state ?? null}
-                review={reviewClause(r)}
-                outcome={
-                  firstSentence(subject?.outcome)
-                    ? { detail: firstSentence(subject?.outcome) }
-                    : { word: 'no outcome recorded', absent: true }
-                }
-              />
-            );
-          }),
-          // Who holds it; that nobody does is the standing clause's to say.
-          col<Review>('reviewer', 'Reviewer', (r) =>
-            r.reviewerId ? (
-              (nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId} />)
-            ) : (
-              <span className="faint">—</span>
-            ),
-          ),
-          col<Review>('when', 'When', (r) => <Ago at={r.createdAt} />, '90px'),
-        ]}
-      />
-    </ListPage>
+            </div>
+          );
+        }),
+        col<Review>('standing', 'Standing', (r) => {
+          const subject = subjectOf(r.subjectId);
+          return (
+            <ThreeStates
+              execution={subject?.state ?? null}
+              review={reviewClause(r)}
+              outcome={
+                firstSentence(subject?.outcome)
+                  ? { detail: firstSentence(subject?.outcome) }
+                  : { word: 'no outcome recorded', absent: true }
+              }
+            />
+          );
+        }),
+        // Who holds it; that nobody does is the standing clause's to say.
+        col<Review>('reviewer', 'Reviewer', (r) =>
+          r.reviewerId ? nameOf(r.reviewerId) : <span className="faint">—</span>,
+        ),
+        col<Review>('when', 'When', (r) => <Ago at={r.createdAt} />, '90px'),
+      ]}
+    />
   );
 }
 
@@ -398,20 +369,16 @@ function ReviewDetail({ row }: ViewProps) {
       <PageHeader
         eyebrow={<Link to={row.path}>← {row.label}</Link>}
         kind={row.view.kind}
-        title={
-          <>
-            {kind} · {experiment?.name ?? task?.title ?? <ObjId id={r.subjectId} strong />}
-          </>
-        }
+        title={[kind, experiment?.name ?? task?.title].filter(Boolean).join(' · ')}
         actions={<StatusPill value={r.status} />}
         summary={
           <>
             Requested <Ago at={r.createdAt} /> ·{' '}
-            {r.reviewerId ? (
-              <>claimed by {nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId} />}</>
-            ) : (
-              'unclaimed'
-            )}{' '}
+            {!r.reviewerId
+              ? 'unclaimed'
+              : nameOf(r.reviewerId)
+                ? `claimed by ${nameOf(r.reviewerId)}`
+                : 'claimed'}{' '}
             · revision {r.subjectRevision}
           </>
         }
@@ -447,8 +414,12 @@ function ReviewDetail({ row }: ViewProps) {
           <>
             <p className="verdict-said">{r.synopsis ?? r.notes}</p>
             <p className="muted">
-              {r.returnTo ? `Returned to ${words(r.returnTo)}` : `Recorded as ${words(r.verdict)}`}{' '}
-              · by {nameOf(r.reviewerId) ?? <ObjId id={r.reviewerId ?? r.id} />}
+              {[
+                r.returnTo ? `Returned to ${words(r.returnTo)}` : `Recorded as ${words(r.verdict)}`,
+                nameOf(r.reviewerId) && `by ${nameOf(r.reviewerId)}`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           </>
         )}

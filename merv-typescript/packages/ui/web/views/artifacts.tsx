@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { call, useScopeVersion, useTool } from '../api';
-import { Ago, KV, LoadState, ObjId, PageHeader, Table, col, recordRoutes } from '../components';
+import { Ago, KV, Listing, LoadState, PageHeader, col, recordRoutes, stamp } from '../components';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -152,36 +152,25 @@ function ArtifactList() {
           <span className="muted"> · every file retained in this project, whoever retained it</span>
         </p>
       )}
-      <LoadState
-        {...list}
-        empty={list.data?.length === 0}
-        columns={5}
+      <Listing
+        load={list}
+        rows={[...files].reverse()}
+        opens
         emptyTitle="No artifacts"
         emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
+        columns={[
+          col<Artifact>('title', 'Title', (a) => <strong>{a.title}</strong>),
+          col<Artifact>(
+            'type',
+            'Type',
+            (a) => <span className="mono faint">{a.mediaType}</span>,
+            '150px',
+          ),
+          col<Artifact>('size', 'Size', (a) => bytes(a.size), '90px'),
+          col<Artifact>('by', 'Created by', (a) => nameOf(a.createdBy)),
+          col<Artifact>('when', 'When', (a) => <Ago at={a.createdAt} />, '90px'),
+        ]}
       />
-      {list.data && list.data.length > 0 && (
-        <Table
-          rows={[...list.data].reverse()}
-          keyOf={(a) => a.id}
-          onRow={(a) => a.id}
-          columns={[
-            col<Artifact>('title', 'Title', (a) => <strong>{a.title}</strong>),
-            col<Artifact>(
-              'type',
-              'Type',
-              (a) => <span className="mono faint">{a.mediaType}</span>,
-              '150px',
-            ),
-            col<Artifact>('size', 'Size', (a) => bytes(a.size), '90px'),
-            col<Artifact>(
-              'by',
-              'Created by',
-              (a) => nameOf(a.createdBy) ?? <ObjId id={a.createdBy} />,
-            ),
-            col<Artifact>('when', 'When', (a) => <Ago at={a.createdAt} />, '90px'),
-          ]}
-        />
-      )}
     </div>
   );
 }
@@ -206,12 +195,11 @@ function ArtifactDetail({ row }: ViewProps) {
       />
       <KV
         rows={[
-          ['Id', <ObjId id={a.id} strong />],
           ['Media type', <span className="mono">{a.mediaType}</span>],
           ['Size', bytes(a.size)],
           ['Hash', <span className="mono faint">{a.hash.slice(0, 16)}…</span>],
-          ['Created by', nameOf(a.createdBy) ?? <ObjId id={a.createdBy} />],
-          ['Created', new Date(a.createdAt).toLocaleString()],
+          ['Created by', nameOf(a.createdBy)],
+          ['Created', stamp(a.createdAt)],
         ]}
       />
       <ArtifactBody artifactId={a.id} metadata={a} />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useSession, type Actor } from '../session';
-import { LoadState, ObjId, StatusPill, Table, col, term } from '../components';
+import { Listing, StatusPill, col, term } from '../components';
 
 /** Actor names for ids; operators get names, everyone else gets short ids. */
 export function useActorNames() {
@@ -147,87 +147,78 @@ export function PeopleView() {
       {human && (
         <section className="stack">
           <h2 className="section-title">Project members</h2>
-          <LoadState
-            loading={loading}
-            error={loadError}
-            data={members}
-            empty={members?.length === 0}
-            columns={3}
+          <Listing
+            load={{ loading, error: loadError, data: members }}
+            rows={members ?? []}
             emptyTitle="No active memberships"
             emptyHint={`Everyone who can open ${project.name} is listed here; an operator adds them by account ID.`}
-          />
-          {members && members.length > 0 && (
-            <Table
-              rows={members}
-              keyOf={(member) => member.id}
-              columns={[
-                col<Membership>('subject', 'Account ID', (member) => (
-                  <>
-                    <code>{member.subject}</code>
-                    {member.subject === subject && member.issuer === issuer ? ' (you)' : ''}
-                  </>
-                )),
-                col<Membership>('role', 'Project role', (member) =>
-                  canManage && member.issuer === issuer ? (
-                    <select
-                      className="input"
-                      aria-label={`Role for ${member.subject}`}
-                      value={draftRoles[member.id] ?? member.role}
-                      disabled={busy}
-                      onChange={(event) =>
-                        setDraftRoles((previous) => ({
-                          ...previous,
-                          [member.id]: event.target.value as Role,
-                        }))
-                      }
-                    >
-                      {roles.map((role) => (
-                        <option key={role} value={role}>
-                          {term(role)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <StatusPill value={member.role} />
-                  ),
+            columns={[
+              col<Membership>('subject', 'Account ID', (member) => (
+                <>
+                  <code>{member.subject}</code>
+                  {member.subject === subject && member.issuer === issuer ? ' (you)' : ''}
+                </>
+              )),
+              col<Membership>('role', 'Project role', (member) =>
+                canManage && member.issuer === issuer ? (
+                  <select
+                    className="input"
+                    aria-label={`Role for ${member.subject}`}
+                    value={draftRoles[member.id] ?? member.role}
+                    disabled={busy}
+                    onChange={(event) =>
+                      setDraftRoles((previous) => ({
+                        ...previous,
+                        [member.id]: event.target.value as Role,
+                      }))
+                    }
+                  >
+                    {roles.map((role) => (
+                      <option key={role} value={role}>
+                        {term(role)}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <StatusPill value={member.role} />
                 ),
-                ...(canManage
-                  ? [
-                      col<Membership>('actions', 'Actions', (member) =>
-                        member.issuer !== issuer ? (
-                          <span className="faint">Different sign-in provider</span>
-                        ) : (
-                          <div className="signin-actions">
-                            <button
-                              className="btn btn--sm"
-                              disabled={
-                                busy ||
-                                !draftRoles[member.id] ||
-                                draftRoles[member.id] === member.role
-                              }
-                              onClick={() =>
-                                void mutate('PATCH', member.subject, {
-                                  role: draftRoles[member.id],
-                                })
-                              }
-                            >
-                              Save role
-                            </button>
-                            <button
-                              className="btn btn--sm"
-                              disabled={busy}
-                              onClick={() => void mutate('DELETE', member.subject)}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ),
+              ),
+              ...(canManage
+                ? [
+                    col<Membership>('actions', 'Actions', (member) =>
+                      member.issuer !== issuer ? (
+                        <span className="faint">Different sign-in provider</span>
+                      ) : (
+                        <div className="signin-actions">
+                          <button
+                            className="btn btn--sm"
+                            disabled={
+                              busy ||
+                              !draftRoles[member.id] ||
+                              draftRoles[member.id] === member.role
+                            }
+                            onClick={() =>
+                              void mutate('PATCH', member.subject, {
+                                role: draftRoles[member.id],
+                              })
+                            }
+                          >
+                            Save role
+                          </button>
+                          <button
+                            className="btn btn--sm"
+                            disabled={busy}
+                            onClick={() => void mutate('DELETE', member.subject)}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       ),
-                    ]
-                  : []),
-              ]}
-            />
-          )}
+                    ),
+                  ]
+                : []),
+            ]}
+          />
           {canManage && adding && (
             <form className="identity-form card" onSubmit={add}>
               <h3 className="label">Add a member</h3>
@@ -278,25 +269,17 @@ export function PeopleView() {
       {isOperator && (
         <section className="stack">
           <h2 className="section-title">Project actors</h2>
-          <LoadState
-            {...actors}
-            empty={actors.data?.length === 0}
-            columns={4}
+          <Listing
+            load={actors}
+            rows={actors.data ?? []}
             emptyTitle="No actors"
             emptyHint="The identities that own work and reviews appear here as agents are issued credentials."
+            columns={[
+              col<Actor>('name', 'Name', (actor) => <strong>{actor.name}</strong>),
+              col<Actor>('role', 'Role', (actor) => <StatusPill value={actor.role} />),
+              col<Actor>('active', 'Status', (actor) => (actor.active ? 'active' : 'revoked')),
+            ]}
           />
-          {actors.data && actors.data.length > 0 && (
-            <Table
-              rows={actors.data}
-              keyOf={(actor) => actor.id}
-              columns={[
-                col<Actor>('name', 'Name', (actor) => <strong>{actor.name}</strong>),
-                col<Actor>('role', 'Role', (actor) => <StatusPill value={actor.role} />),
-                col<Actor>('active', 'Status', (actor) => (actor.active ? 'active' : 'revoked')),
-                col<Actor>('id', 'Id', (actor) => <ObjId id={actor.id} />, '160px'),
-              ]}
-            />
-          )}
         </section>
       )}
     </div>

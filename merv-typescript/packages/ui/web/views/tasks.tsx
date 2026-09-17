@@ -1,9 +1,18 @@
-import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { ListPage, matches, splitRoutes, stateCounts, type Scope } from '../list-filters';
+import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
-import { Ago, KV, LoadState, ObjId, PageHeader, StatusPill, Table, col } from '../components';
+import {
+  Ago,
+  KV,
+  LoadState,
+  PageHeader,
+  StatusPill,
+  Table,
+  col,
+  stamp,
+  useArtifacts,
+} from '../components';
 import {
   OPEN,
   ThreeStates,
@@ -55,15 +64,8 @@ function TaskList() {
   const nameOf = useActorNames();
   const { actor } = useSession();
   const { id: openId } = useParams();
-  const [query, setQuery] = useState('');
-  const [scope, setScope] = useState<Scope>('everyone');
-  const [chosen, setChosen] = useState<string>();
-  const search = query.trim().toLowerCase();
-  // The count in the title line is the filter: the page opens on the open tasks
-  // it counted, and every state is one click away on the line beneath.
-  const states = stateCounts(list.data, (item) => item.workflow.state, isOpenTask);
-  const open = states.find((item) => item.value === OPEN)?.count ?? 0;
-  const state = chosen ?? (open ? OPEN : '');
+  const filter = useListFilter(list.data, (item) => item.workflow.state, isOpenTask);
+  const { state, scope, search } = filter;
   // The record open beside the list is always one of its rows, whatever the
   // filters say, so the pane never marks a row that is not there.
   const visible = (list.data ?? []).filter(
@@ -84,59 +86,42 @@ function TaskList() {
       list={list}
       noun="tasks"
       placeholder="Name, goal or person"
-      query={query}
-      onQueryChange={setQuery}
-      scope={scope}
-      onScopeChange={setScope}
-      state={state}
-      onStateChange={setChosen}
-      states={states}
-      visible={visible.length}
-      columns={5}
+      filter={filter}
+      rows={[...visible].reverse()}
       emptyTitle="No tasks yet"
       emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
-    >
-      <Table
-        rows={[...visible].reverse()}
-        keyOf={(t) => t.id}
-        onRow={(t) => t.id}
-        columns={[
-          col<Task>('title', 'Task', (t) => (
-            <strong className={t.id === openId ? 'row-open' : undefined}>{t.title}</strong>
-          )),
-          col<Task>('standing', 'Standing', (t) => {
-            const review = newestReview(reviews.data, t.id);
-            return (
-              <ThreeStates
-                execution={t.workflow.state}
-                review={
-                  reviewClause(review, nameOf(review?.reviewerId)) ?? {
-                    word: 'not reviewed',
-                    absent: true,
-                  }
+      columns={[
+        col<Task>('title', 'Task', (t) => (
+          <strong className={t.id === openId ? 'row-open' : undefined}>{t.title}</strong>
+        )),
+        col<Task>('standing', 'Standing', (t) => {
+          const review = newestReview(reviews.data, t.id);
+          return (
+            <ThreeStates
+              execution={t.workflow.state}
+              review={
+                reviewClause(review, nameOf(review?.reviewerId)) ?? {
+                  word: 'not reviewed',
+                  absent: true,
                 }
-                outcome={
-                  t.failure
-                    ? { detail: firstSentence(t.failure.reason) }
-                    : { word: 'no outcome recorded', absent: true }
-                }
-              />
-            );
-          }),
-          col<Task>(
-            'producer',
-            'Producer',
-            (t) => nameOf(t.producerId) ?? <ObjId id={t.producerId} />,
-          ),
-          col<Task>('dependencies', 'Prerequisites', (t) =>
-            t.dependencies?.length
-              ? `${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} succeeded`
-              : 'None',
-          ),
-          col<Task>('when', 'Updated', (t) => <Ago at={t.workflow.updatedAt} />, '90px'),
-        ]}
-      />
-    </ListPage>
+              }
+              outcome={
+                t.failure
+                  ? { detail: firstSentence(t.failure.reason) }
+                  : { word: 'no outcome recorded', absent: true }
+              }
+            />
+          );
+        }),
+        col<Task>('producer', 'Producer', (t) => nameOf(t.producerId)),
+        col<Task>('dependencies', 'Prerequisites', (t) =>
+          t.dependencies?.length
+            ? `${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} succeeded`
+            : 'None',
+        ),
+        col<Task>('when', 'Updated', (t) => <Ago at={t.workflow.updatedAt} />, '90px'),
+      ]}
+    />
   );
 }
 
@@ -144,6 +129,7 @@ function TaskDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
   const task = useTool<Task>('task.get', { taskId: id }, { every: 8000 });
   const nameOf = useActorNames();
+  const artifacts = useArtifacts();
   const review = useTool<Review>(task.data?.reviewId ? 'review.get' : null, {
     reviewId: task.data?.reviewId ?? '',
   });
@@ -168,8 +154,7 @@ function TaskDetail({ row }: ViewProps) {
           <h2 className="section-title">Why this task ended</h2>
           <p style={{ whiteSpace: 'pre-wrap' }}>{t.failure.reason}</p>
           <p className="muted">
-            Closed by {nameOf(t.failure.actorId) ?? <ObjId id={t.failure.actorId} />} on{' '}
-            {new Date(t.failure.createdAt).toLocaleString()}
+            Closed by {nameOf(t.failure.actorId)} on {stamp(t.failure.createdAt)}
           </p>
         </section>
       )}
@@ -226,13 +211,12 @@ function TaskDetail({ row }: ViewProps) {
                 col<Confirmation>('notes', 'Verification / remaining work', (item) => (
                   <span style={{ whiteSpace: 'pre-wrap' }}>{item.notes}</span>
                 )),
+                // A file is named by its title; one this page cannot name is left out.
                 col<Confirmation>('evidence', 'Evidence', (item) =>
                   item.evidenceIds.length
                     ? item.evidenceIds.map((id) => (
                         <div key={id}>
-                          <Link to={`/artifacts/${id}`}>
-                            <ObjId id={id} />
-                          </Link>
+                          <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
                         </div>
                       ))
                     : 'None supplied',
@@ -260,11 +244,10 @@ function TaskDetail({ row }: ViewProps) {
         <h2 className="section-title">Record details</h2>
         <KV
           rows={[
-            ['Id', <ObjId id={t.id} strong />],
-            ['Producer', nameOf(t.producerId) ?? <ObjId id={t.producerId} />],
+            ['Producer', nameOf(t.producerId)],
             ['Revision', String(t.workflow.revision)],
-            ['Created', new Date(t.createdAt).toLocaleString()],
-            ['Updated', new Date(t.workflow.updatedAt).toLocaleString()],
+            ['Created', stamp(t.createdAt)],
+            ['Updated', stamp(t.workflow.updatedAt)],
           ]}
         />
       </section>
@@ -291,12 +274,8 @@ function WorkStarts({
   nameOf: ReturnType<typeof useActorNames>;
 }) {
   const ordered = [...starts].sort((left, right) => left.revision - right.revision);
-  const describe = (start: WorkflowWorkStart) => (
-    <>
-      {new Date(start.startedAt).toLocaleString()} by{' '}
-      {nameOf(start.actorId) ?? <ObjId id={start.actorId} />}
-    </>
-  );
+  const describe = (start: WorkflowWorkStart) =>
+    [stamp(start.startedAt), nameOf(start.actorId)].filter(Boolean).join(' by ');
   return (
     <section className="stack" aria-label="Recorded work starts">
       <h2 className="section-title">Work starts</h2>
@@ -351,11 +330,9 @@ function WorkRelations({
         columns={[
           col<WorkflowDependency>('name', 'Work item', (item) =>
             item.workflow === 'task' ? (
-              <Link to={`${taskPath}/${item.id}`}>{item.name || item.id}</Link>
+              <Link to={`${taskPath}/${item.id}`}>{item.name}</Link>
             ) : (
-              <span>
-                {item.name || item.id} <ObjId id={item.id} />
-              </span>
+              item.name
             ),
           ),
           col<WorkflowDependency>('workflow', 'Type', (item) => item.workflow),

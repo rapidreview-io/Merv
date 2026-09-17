@@ -1,7 +1,14 @@
-import { useEffect, useRef, useSyncExternalStore, type ComponentType, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentType,
+  type ReactNode,
+} from 'react';
 import { Route, Routes, useNavigate } from 'react-router-dom';
 import type { Loaded } from './api';
-import { LoadState, kindStyle, words } from './components';
+import { LoadState, Table, words, type Column } from './components';
 import { OPEN } from './states';
 import type { Row } from './shell-types';
 
@@ -48,18 +55,44 @@ export function stateCounts<T>(
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && !!target.closest('input, textarea, select, [contenteditable]');
 
-interface ListFiltersProps {
-  noun: string;
-  placeholder: string;
+/** Everything a filtered list holds between renders, and how a control changes it. */
+export interface Filter {
   query: string;
-  onQueryChange(value: string): void;
+  setQuery(value: string): void;
   scope: Scope;
-  onScopeChange(value: Scope): void;
+  setScope(value: Scope): void;
   state: string;
-  onStateChange(value: string): void;
+  setState(value: string): void;
   states: StateCount[];
-  shown: number;
-  total: number;
+  /** The search as the rows are matched against it. */
+  search: string;
+}
+
+/**
+ * That state, in one place. The count in the title line is the filter: a list
+ * that knows which of its states are open opens on the work it counted, and
+ * every state stays one click away on the line beneath.
+ */
+export function useListFilter<T>(
+  items: T[] | undefined,
+  stateOf: (item: T) => string,
+  isOpen?: (state: string) => boolean,
+): Filter {
+  const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<Scope>('everyone');
+  const [chosen, setChosen] = useState<string>();
+  const states = stateCounts(items, stateOf, isOpen);
+  const open = states.find((item) => item.value === OPEN)?.count ?? 0;
+  return {
+    query,
+    setQuery,
+    scope,
+    setScope,
+    state: chosen ?? (open ? OPEN : ''),
+    setState: setChosen,
+    states,
+    search: query.trim().toLowerCase(),
+  };
 }
 
 /**
@@ -67,7 +100,20 @@ interface ListFiltersProps {
  * state a record is in is not a control but the line under them — the list's own
  * composition, each segment narrowing to the states it counted.
  */
-export function ListFilters({ noun, states, shown, total, ...filter }: ListFiltersProps) {
+function ListFilters({
+  noun,
+  placeholder,
+  filter,
+  shown,
+  total,
+}: {
+  noun: string;
+  placeholder: string;
+  filter: Filter;
+  shown: number;
+  total: number;
+}) {
+  const states = filter.states;
   const filtering = !!(filter.query || filter.state || filter.scope === 'mine');
   return (
     <>
@@ -76,9 +122,9 @@ export function ListFilters({ noun, states, shown, total, ...filter }: ListFilte
           className="input"
           type="search"
           aria-label={`Search ${noun}`}
-          placeholder={filter.placeholder}
+          placeholder={placeholder}
           value={filter.query}
-          onChange={(event) => filter.onQueryChange(event.target.value)}
+          onChange={(event) => filter.setQuery(event.target.value)}
         />
         <span className="scope" role="group" aria-label={`Whose ${noun}`}>
           {SCOPES.map((value) => (
@@ -87,7 +133,7 @@ export function ListFilters({ noun, states, shown, total, ...filter }: ListFilte
               type="button"
               className="btn-text"
               aria-pressed={filter.scope === value}
-              onClick={() => filter.onScopeChange(value)}
+              onClick={() => filter.setScope(value)}
             >
               {value === 'mine' ? 'Mine' : 'Everyone'}
             </button>
@@ -103,9 +149,9 @@ export function ListFilters({ noun, states, shown, total, ...filter }: ListFilte
             type="button"
             className="btn-text"
             onClick={() => {
-              filter.onQueryChange('');
-              filter.onStateChange('');
-              filter.onScopeChange('everyone');
+              filter.setQuery('');
+              filter.setState('');
+              filter.setScope('everyone');
             }}
           >
             Clear filters
@@ -120,7 +166,7 @@ export function ListFilters({ noun, states, shown, total, ...filter }: ListFilte
               type="button"
               className="btn-text"
               aria-pressed={filter.state === value}
-              onClick={() => filter.onStateChange(filter.state === value ? '' : value)}
+              onClick={() => filter.setState(filter.state === value ? '' : value)}
             >
               {words(value)} <span className="state-n">{count}</span>
             </button>
@@ -160,51 +206,65 @@ function useRowKeys(frame: { current: HTMLDivElement | null }) {
 }
 
 /**
- * Every filtered list renders the same skeleton in the same order and differs only in
+ * Every filtered list renders the same page in the same order and differs only in
  * which parts are true: the filter row while there is something to filter, the state of
- * the read, the distinct screen for filtered-to-nothing, and the table itself. A failed
- * read is the one state that replaces the list rather than sitting beside it.
+ * the read, the distinct screen for filtered-to-nothing, and the table itself, whose
+ * rows are the records the page decided to show. A failed read is the one state that
+ * replaces the list rather than sitting beside it.
  */
-export function ListPage<T>({
+export function ListPage<T extends { id: string }>({
   list,
-  visible,
+  noun,
+  placeholder,
+  filter,
+  rows,
+  columns,
   emptyTitle,
   emptyHint,
-  columns,
-  children,
-  ...filters
-}: Omit<ListFiltersProps, 'shown' | 'total'> & {
+}: {
   list: Loaded<T[]>;
-  visible: number;
+  noun: string;
+  placeholder: string;
+  filter: Filter;
+  /** What the page shows, in the order it shows it. */
+  rows: T[];
+  columns: Column<T>[];
   emptyTitle: string;
   emptyHint: string;
-  /** How many columns the table below has, so the loading rows match it. */
-  columns?: number;
-  children: ReactNode;
 }) {
   const listed = !!list.data?.length && !list.error;
   const frame = useRef<HTMLDivElement>(null);
   useRowKeys(frame);
   // Filtered to nothing has a screen per cause, and the scope states its meaning there.
   const nothing =
-    filters.scope === 'mine'
-      ? [`None of these ${filters.noun} are yours`, 'Everyone shows the whole project.']
-      : [`No ${filters.noun} match these filters`, 'Try another search or clear the filters.'];
+    filter.scope === 'mine'
+      ? [`None of these ${noun} are yours`, 'Everyone shows the whole project.']
+      : [`No ${noun} match these filters`, 'Try another search or clear the filters.'];
   return (
     <div className="page-stage stack" ref={frame}>
-      {listed && <ListFilters {...filters} shown={visible} total={list.data!.length} />}
+      {listed && (
+        <ListFilters
+          noun={noun}
+          placeholder={placeholder}
+          filter={filter}
+          shown={rows.length}
+          total={list.data!.length}
+        />
+      )}
       <LoadState
         loading={list.loading}
         error={list.error}
         empty={list.data?.length === 0}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        columns={columns}
+        columns={columns.length}
       />
-      {listed && !list.loading && visible === 0 && (
+      {listed && !list.loading && rows.length === 0 && (
         <LoadState loading={false} empty emptyTitle={nothing[0]} emptyHint={nothing[1]} />
       )}
-      {visible > 0 && !list.error && children}
+      {rows.length > 0 && !list.error && (
+        <Table rows={rows} keyOf={(row) => row.id} onRow={(row) => row.id} columns={columns} />
+      )}
     </div>
   );
 }
@@ -235,7 +295,7 @@ function Split({ list, record, row }: { list: ReactNode; record: ReactNode; row:
   }, [navigate, row.path]);
   if (!wide) return <>{record}</>;
   return (
-    <div className="split" style={kindStyle(row.view.kind)}>
+    <div className="split">
       <div className="split-list">{list}</div>
       <div className="split-record">{record}</div>
     </div>

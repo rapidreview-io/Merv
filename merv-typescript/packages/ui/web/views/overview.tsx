@@ -4,7 +4,7 @@ import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError, type Loaded, type Project } from '../api';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
-import { KindLabel, ObjId, StatusPill, kindStyle, relativeTime, shortId } from '../components';
+import { KindLabel, StatusPill, relativeTime } from '../components';
 import { useActorNames } from './people';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import {
@@ -137,7 +137,7 @@ function Item({
   say?: string[];
 }) {
   return (
-    <li className="record ov-row" style={kindStyle(kind)}>
+    <li className="record ov-row">
       <KindLabel kind={kind} />
       <Link className="ov-name" to={to}>
         {title}
@@ -271,11 +271,13 @@ export function useStanding(rows: Row[], work: Work, me: string, named: Named): 
         ? 'waiting for a reviewer to claim it'
         : held === me
           ? 'claimed by you and still open'
-          : `with ${named(held) ?? shortId(held)}`;
+          : named(held)
+            ? `with ${named(held)}`
+            : 'claimed and still open';
       add(mine ? 'yours' : 'agent', {
         id: review.id,
         kind: 'reviews',
-        name: name ?? <ObjId id={review.subjectId} />,
+        name,
         to: `${reviewsRow.path}/${review.id}`,
         at: review.createdAt,
         mine,
@@ -440,7 +442,8 @@ function Recorded({ rows, work, named }: { rows: Row[]; work: Work; named: Named
             title={post.body.split('\n')[0]}
             meta={
               <>
-                {named(post.authorId) ?? <ObjId id={post.authorId} />} · {when(post.createdAt)}
+                {named(post.authorId) && `${named(post.authorId)} · `}
+                {when(post.createdAt)}
               </>
             }
           />

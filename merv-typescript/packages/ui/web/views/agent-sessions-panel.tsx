@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest, scopeVersion, useScopeVersion } from '../api';
-import { KV, ObjId, StatusPill, relativeTime } from '../components';
+import { accountRequest, scopeVersion } from '../api';
+import { KV, StatusPill, relativeTime, stamp, words } from '../components';
 
 export interface AgentSummary {
   id: string;
@@ -69,30 +69,21 @@ function AssignmentDetails({ assignment }: { assignment: Assignment }) {
         <StatusPill value={assignment.status} />
       </div>
       <p className="muted agent-help">
-        {assignment.role} · {assignment.workflow.name} /{' '}
-        {assignment.workflow.state.replaceAll('_', ' ')}
+        {assignment.role} · {assignment.workflow.name} / {words(assignment.workflow.state)}
       </p>
       <details>
         <summary>Assignment details and permitted tools</summary>
         <div className="stack">
           <KV
             rows={[
-              ['Work ID', <ObjId id={assignment.instanceId} />],
-              ['Execution ID', <ObjId id={assignment.id} />],
               ['Revision', assignment.revision],
-              ['Joined assignment', new Date(assignment.createdAt).toLocaleString()],
-              ['Lease expires', new Date(assignment.expiresAt).toLocaleString()],
-              ...(assignment.closedAt
-                ? [['Closed', new Date(assignment.closedAt).toLocaleString()] as [string, string]]
-                : []),
-              ...(assignment.outcome || assignment.closeReason
-                ? [
-                    [
-                      'Outcome',
-                      (assignment.outcome ?? assignment.closeReason ?? '').replaceAll('_', ' '),
-                    ] as [string, string],
-                  ]
-                : []),
+              ['Joined assignment', stamp(assignment.createdAt)],
+              ['Lease expires', stamp(assignment.expiresAt)],
+              !!assignment.closedAt && ['Closed', stamp(assignment.closedAt)],
+              !!(assignment.outcome || assignment.closeReason) && [
+                'Outcome',
+                words(assignment.outcome ?? assignment.closeReason ?? ''),
+              ],
             ]}
           />
           <strong>Permitted tools · {assignment.tools.length}</strong>
@@ -235,15 +226,6 @@ function AgentObservation({ observation }: { observation: Observation }) {
                     Output {call.outputTokens === null ? '—' : `≈ ${count(call.outputTokens)}`}
                   </span>
                 </div>
-                <details className="agent-help">
-                  <summary>Call identifiers</summary>
-                  <KV
-                    rows={[
-                      ['Call', <ObjId id={call.id} />],
-                      ['Execution', <ObjId id={call.executionId} />],
-                    ]}
-                  />
-                </details>
               </li>
             ))}
           </ol>
@@ -269,10 +251,8 @@ function AgentObservation({ observation }: { observation: Observation }) {
         <summary>Agent identity</summary>
         <KV
           rows={[
-            ['Agent ID', <ObjId id={observation.agent.id} />],
-            ['Continuing session', <ObjId id={observation.agent.sessionId} />],
             ['Runner', observation.agent.runnerId],
-            ['Joined', new Date(observation.agent.createdAt).toLocaleString()],
+            ['Joined', stamp(observation.agent.createdAt)],
             ['Context epoch', observation.agent.contextEpoch],
           ]}
         />
@@ -303,7 +283,6 @@ export function AgentSessionsPanel({
   agents: AgentSummary[];
   assignments: { id: string; label: string; role: string }[];
 }) {
-  const epoch = useScopeVersion();
   const [liveOnly, setLiveOnly] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [observation, setObservation] = useState<Observation>();
@@ -312,12 +291,6 @@ export function AgentSessionsPanel({
   const directoryHeading = useRef<HTMLHeadingElement>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
   const selectedAgent = agents.find((agent) => agent.id === selected);
-  useEffect(() => {
-    setSelected(null);
-    setLiveOnly(false);
-    setObservation(undefined);
-    setError(undefined);
-  }, [epoch]);
   useEffect(() => {
     setObservation(undefined);
     setError(undefined);
@@ -351,7 +324,7 @@ export function AgentSessionsPanel({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [selected, epoch]);
+  }, [selected]);
   const close = () => {
     setSelected(null);
     if (opener.current?.isConnected) opener.current.focus();
@@ -409,7 +382,6 @@ export function AgentSessionsPanel({
                         }}
                       >
                         <strong>{agent.name}</strong>
-                        <ObjId id={agent.id} />
                       </button>
                     </td>
                     <td>
@@ -429,10 +401,7 @@ export function AgentSessionsPanel({
                       )}
                     </td>
                     <td>
-                      <time
-                        dateTime={agent.createdAt}
-                        title={new Date(agent.createdAt).toLocaleString()}
-                      >
+                      <time dateTime={agent.createdAt} title={stamp(agent.createdAt)}>
                         {relativeTime(agent.createdAt)}
                       </time>
                     </td>

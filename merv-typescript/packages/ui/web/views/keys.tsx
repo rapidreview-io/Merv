@@ -8,7 +8,7 @@ import {
   type Project,
   type UserKey,
 } from '../api';
-import { PageHeader, kindStyle } from '../components';
+import { Failure, PageHeader } from '../components';
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : 'The request could not be completed.';
@@ -180,11 +180,7 @@ export function KeysPanel({
           </div>
         </section>
       )}
-      {error && (
-        <div className="error-message" role="alert">
-          {error}
-        </div>
-      )}
+      <Failure message={error} />
       <section className="card stack">
         <h2 className="section-title">Create a key</h2>
         {!keys ? (
@@ -266,25 +262,20 @@ export function KeysPanel({
           const project = projects.find((project) => project.id === key.projectId);
           const canRotate = key.grantScope === 'account' ? projects.length > 0 : !!project;
           return (
-            <section className="record stack" style={kindStyle('settings')} key={key.id}>
+            <section className="record stack" key={key.id}>
               <h3>{key.label || 'Unnamed key'}</h3>
-              <code>{key.id}</code>
               <p>
                 {key.grantScope === 'account'
                   ? 'All current and future memberships'
-                  : 'One project'}{' '}
-                · Issued in {project?.name ?? key.projectId}
+                  : 'One project'}
+                {project && ` · Issued in ${project.name}`}
               </p>
               <p>
                 {key.revokedAt ? `Revoked ${key.revokedAt}` : expired ? 'Expired' : 'Active'} ·
                 Created {key.createdAt} ·{' '}
                 {key.expiresAt ? `Expires ${key.expiresAt}` : 'No expiration'}
               </p>
-              {key.previousId && (
-                <p>
-                  Replaces <code>{key.previousId}</code>
-                </p>
-              )}
+              {key.previousId && <p>Replaces an earlier key</p>}
               <div className="signin-actions">
                 {!key.revokedAt && canRotate && (
                   <button

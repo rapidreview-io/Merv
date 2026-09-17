@@ -25,6 +25,7 @@ import {
   type Account,
   type AccountSession,
 } from './api';
+import { Failure, Field } from './components';
 import { browserAuth, setAuthMode, type AuthConfiguration } from './auth';
 import { KeysPanel } from './views/keys';
 
@@ -146,28 +147,24 @@ function SignIn({
           <>
             <p className="signin-help">Use your shared research account.</p>
             <form onSubmit={passwordSignIn} className="identity-form">
-              <label>
-                Email
-                <input
-                  className="input"
-                  type="email"
-                  autoComplete="username"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </label>
-              <label>
-                Password
-                <input
-                  className="input"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </label>
+              <Field
+                label="Email"
+                className="input"
+                type="email"
+                autoComplete="username"
+                required
+                value={email}
+                onChange={setEmail}
+              />
+              <Field
+                label="Password"
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={setPassword}
+              />
               <button className="btn btn--primary" disabled={busy} type="submit">
                 Sign in
               </button>
@@ -203,11 +200,7 @@ function SignIn({
             </button>
           </form>
         </details>
-        {error && (
-          <div className="error-message" role="alert">
-            {error}
-          </div>
-        )}
+        <Failure message={error} />
       </section>
     </main>
   );
@@ -285,8 +278,7 @@ function Projects({
         <div className="identity-form project-choices" aria-label="Available projects">
           {projects.map((project) => (
             <button className="btn" key={project.id} onClick={() => choose(project.id)}>
-              <span>{project.name}</span>
-              <span className="mono faint">{project.id}</span>
+              {project.name}
             </button>
           ))}
         </div>
@@ -317,11 +309,7 @@ function Projects({
             </form>
           </details>
         )}
-        {error && (
-          <div className="error-message" role="alert">
-            {error}
-          </div>
-        )}
+        <Failure message={error} />
         <div className="signin-actions">
           {account.kind === 'user' && (
             <button className="btn" onClick={manageKeys}>

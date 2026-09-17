@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { WorkflowDecision, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import type { Row } from '../shell';
-import { relativeTime, shortId } from '../components';
+import { relativeTime } from '../components';
 
 /**
  * The map's data layer: the shapes the map reads from the list tools, and the
@@ -131,7 +131,7 @@ export function graphOf(
   const pathOf = (kind: string) => rows.find((row) => row.view.kind === kind)?.path;
   const pool: MapNode[] = [];
   const edges: MapEdge[] = [];
-  const who = (id: string | null) => named(id) ?? (id ? shortId(id) : EM);
+  const who = (id: string | null) => named(id) ?? EM;
   const when = (iso: string | null) => (iso ? relativeTime(iso) : EM);
   const object = (
     col: number,
@@ -191,7 +191,7 @@ export function graphOf(
   if (reviews)
     for (const item of d.reviews) {
       const subject = pool.find((node) => node.id === item.subjectId);
-      const name = subject ? `Review · ${subject.name}` : `Review ${shortId(item.subjectId)}`;
+      const name = subject ? `Review · ${subject.name}` : 'Review';
       object(2, 'reviews', item.id, name, item.createdAt, `${reviews}/${item.id}`, item.status, [
         ['Verdict', item.verdict ?? EM],
         ['Reviewer', item.reviewerId ? who(item.reviewerId) : EM],

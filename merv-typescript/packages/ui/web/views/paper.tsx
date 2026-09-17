@@ -10,7 +10,7 @@ import type {
 } from '@merv/paper/models';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Area, Failure, Field, LoadState, ObjId, StatusPill, kindStyle } from '../components';
+import { Area, Failure, Field, LoadState, StatusPill } from '../components';
 import { useScopeKey, useSession } from '../session';
 
 const labels: Record<PaperKind, string> = {
@@ -349,7 +349,7 @@ function DocumentPanel({
         )}
       </div>
       {document.published && (
-        <div className="record stack" style={kindStyle('paper')}>
+        <div className="record stack">
           <div className="cluster">
             <StatusPill
               value={document.published.publication.reviewId ? 'approved' : 'published'}
@@ -379,13 +379,8 @@ function DocumentPanel({
               <article className="stack" key={proposal.id}>
                 <div className="cluster">
                   <StatusPill value={proposal.acceptance ? 'approved' : 'submitted'} />
-                  <span>
-                    {proposal.source.kind} <ObjId id={proposal.source.id} />
-                  </span>
+                  <span>{proposal.source.kind}</span>
                 </div>
-                <p>
-                  Change artifact <ObjId id={proposal.artifact.id} />
-                </p>
                 {proposal.documents
                   .filter((d) => d.edit.kind === kind)
                   .map((d) => (
@@ -413,7 +408,7 @@ function DocumentPanel({
         <>
           {!shown.sections.length && <p className="empty">No sections yet.</p>}
           {shown.sections.map((section) => (
-            <article className="record stack" style={kindStyle('paper')} key={section.id}>
+            <article className="record stack" key={section.id}>
               <div className="cluster">
                 <h3>{section.title}</h3>
                 {canEdit && (
@@ -502,7 +497,7 @@ function PaperPage() {
               )}
               {!workspace.data.citations.length && <p className="empty">No citations yet.</p>}
               {workspace.data.citations.map((item) => (
-                <article className="record stack" style={kindStyle('paper')} key={item.id}>
+                <article className="record stack" key={item.id}>
                   <h3>{item.title}</h3>
                   <p>
                     {item.authors.join(', ')}
@@ -532,7 +527,6 @@ function PaperPage() {
                         .join(', ')}
                     </p>
                   )}
-                  {!!item.refs.length && <p className="mono faint prose">{item.refs.join('\n')}</p>}
                   {writable && citation === null && (
                     <div>
                       <button className="btn btn--sm" onClick={() => setCitation(item)}>

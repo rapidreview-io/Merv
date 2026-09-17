@@ -6,11 +6,10 @@ import { useCommand } from '../mutations';
 import {
   Area,
   Failure,
+  Fold,
   KindLabel,
   LoadState,
-  ObjId,
   StatusPill,
-  kindStyle,
   relativeTime,
   words,
 } from '../components';
@@ -238,14 +237,14 @@ function ClaimEntry({
   const [conflictRevision, setConflictRevision] = useState<number>();
   const needsRefresh = conflictRevision !== undefined && claim.revision <= conflictRevision;
   return (
-    <article className="record claim" style={kindStyle('claims')} aria-labelledby={heading}>
+    <article className="record claim" aria-labelledby={heading}>
       <KindLabel kind="claims" />
       <h2 className="claim-statement" id={heading}>
         {claim.statement}
       </h2>
       <p className="claim-standing">
         <StatusPill value={claim.status} /> · {claim.confidence} confidence
-        {claim.scope && ` · ${claim.scope}`} <ObjId id={claim.id} />
+        {claim.scope && ` · ${claim.scope}`}
       </p>
       {tests.map((test) => (
         <p className="claim-line" key={test.id}>
@@ -320,7 +319,6 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
   const activity = useTool<StandingChange[]>(
     rows.some((row) => row.view.kind === 'feed') ? 'feed.activity' : null,
   );
-  const [creating, setCreating] = useState(false);
   const writable = actor.role === 'operator' || actor.role === 'producer';
   const verdictOf = (experimentId: string) =>
     (reviews.data ?? [])
@@ -354,26 +352,16 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
       .reverse();
   return (
     <div className="page-stage stack stack--lg">
-      {writable && (
-        <div className="action-row">
-          <button
-            type="button"
-            className="btn btn--primary"
-            aria-expanded={creating}
-            onClick={() => setCreating((open) => !open)}
-          >
-            New claim
-          </button>
-        </div>
-      )}
-      {creating && (
-        <CreateClaim
-          onSaved={() => {
-            setCreating(false);
-            claims.reload();
-          }}
-        />
-      )}
+      <Fold label="New claim" shown={writable}>
+        {(close) => (
+          <CreateClaim
+            onSaved={() => {
+              close();
+              claims.reload();
+            }}
+          />
+        )}
+      </Fold>
       <LoadState
         {...claims}
         empty={claims.data?.length === 0}

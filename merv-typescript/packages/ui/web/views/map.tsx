@@ -229,7 +229,7 @@ function Properties({
     }))
     .filter((item): item is { edge: MapEdge; other: MapNode } => !!item.other);
   return (
-    <div className="record map-props" style={kindStyle(node.kind)}>
+    <div className="record map-props">
       <KindLabel kind={node.kind} />
       <strong className="map-props-name">{node.name}</strong>
       <StatusPill value={node.state} />
@@ -415,20 +415,9 @@ export function MapView({ shell }: { shell: ShellData }) {
   });
   const visible = new Set(shown.map((node) => node.id));
   const node = pool.find((item) => item.id === selected);
-  const broken = [
-    experiments,
-    tasks,
-    cycles,
-    claims,
-    reviews,
-    reflections,
-    paper,
-    live,
-    mounts,
-    files,
-    posts,
-    earlier,
-  ].find((load) => load.error);
+  // One line at the top says a read failed, whichever read it was.
+  const record = [experiments, tasks, cycles, claims, reviews, reflections, paper];
+  const broken = [...record, live, mounts, files, posts, earlier].find((load) => load.error);
   // A registered row always states its own weight: a total not yet known is the
   // em dash the console uses, never a zero and never a tile that quietly vanishes.
   const counted = (kind: string) => {

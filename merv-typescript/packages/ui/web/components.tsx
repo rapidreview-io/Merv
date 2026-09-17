@@ -64,10 +64,22 @@ export function KindLabel({ kind }: { kind: string | undefined }) {
   );
 }
 
-export const shortId = (id: string) => {
+/** The absolute time, where a record states one exactly. */
+export const stamp = (at: string) => new Date(at).toLocaleString();
+
+/**
+ * An identifier printed as text. No page of this UI does that any more; the two
+ * Codex-owned views (views/code.tsx, views/settings.tsx) still do, and this
+ * exists for them alone until their own pass removes it.
+ */
+export function ObjId({ id }: { id: string }) {
   const [prefix, rest] = id.split('_', 2);
-  return rest ? `${prefix}_${rest.slice(0, 6)}` : id.slice(0, 10);
-};
+  return (
+    <span className="obj-id mono" title={id}>
+      {rest ? `${prefix}_${rest.slice(0, 6)}` : id.slice(0, 10)}
+    </span>
+  );
+}
 
 /** A relative time in a row, with the exact stamp kept in its title and nowhere else. */
 export const Ago = ({ at, className }: { at: string; className?: string }) => (
@@ -250,11 +262,47 @@ export function ActorSplit({ agent, you }: { agent?: ReactNode; you?: ReactNode 
   );
 }
 
-export function ObjId({ id, strong }: { id: string; strong?: boolean }) {
+/**
+ * A page's one creation form, folded behind a single control: the opener names
+ * what it opens and steps back while the form is on screen, and the form closes
+ * itself through the callback its own success path already carries.
+ */
+export function Fold({
+  label,
+  shown = true,
+  plain,
+  opened,
+  note,
+  children,
+}: {
+  label: string;
+  /** False where this reader may not create anything: no control is drawn. */
+  shown?: boolean;
+  /** True where the page's one primary control is something else. */
+  plain?: boolean;
+  /** Open on arrival, where arriving at the page is itself the request. */
+  opened?: boolean;
+  /** What the page states on the same line as the control. */
+  note?: ReactNode;
+  children(close: () => void): ReactNode;
+}) {
+  const [open, setOpen] = useState(!!opened);
+  if (!shown) return null;
   return (
-    <span className={cx('obj-id', 'mono', strong && 'obj-id--strong')} title={id}>
-      {shortId(id)}
-    </span>
+    <>
+      <div className="action-row">
+        {note}
+        <button
+          type="button"
+          className={cx('btn', !plain && 'btn--primary')}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {label}
+        </button>
+      </div>
+      {open && children(() => setOpen(false))}
+    </>
   );
 }
 
@@ -403,26 +451,36 @@ export const Failure = ({ message }: { message?: string }) =>
     </p>
   ) : null;
 
-export function KV({ rows }: { rows: [string, ReactNode][] }) {
+/** A row a record cannot have is left out where it is written, not filtered upstream. */
+export type KVRow = [string, ReactNode] | false | null | undefined;
+export function KV({ rows }: { rows: KVRow[] }) {
   return (
     <dl className="kv">
-      {rows.map(([label, value]) => (
-        <div className="kv-row" key={label}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
+      {rows
+        .filter((row): row is [string, ReactNode] => !!row)
+        .map(([label, value]) => (
+          <div className="kv-row" key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
     </dl>
   );
 }
 
 /** One column declared once: its key, its heading, and what a row says in it. */
+export interface Column<T> {
+  key: string;
+  label: string;
+  render(row: T): ReactNode;
+  width?: string;
+}
 export const col = <T,>(
   key: string,
   label: string,
   render: (row: T) => ReactNode,
   width?: string,
-) => ({ key, label, render, width });
+): Column<T> => ({ key, label, render, width });
 
 export function Table<T>({
   columns,
@@ -430,7 +488,7 @@ export function Table<T>({
   keyOf,
   onRow,
 }: {
-  columns: { key: string; label: string; render(row: T): ReactNode; width?: string }[];
+  columns: Column<T>[];
   rows: T[];
   keyOf(row: T): string;
   onRow?(row: T): string;
@@ -474,6 +532,51 @@ export function Table<T>({
 }
 
 /**
+ * A list with no filters: the state of the read, then the table it names. The
+ * loading rows take the table's own shape, and a failed read replaces the table
+ * rather than sitting beside it. A filtered list says the same thing through
+ * ListPage, which adds the filter row above it.
+ */
+export function Listing<T extends { id: string }>({
+  load,
+  rows,
+  columns,
+  emptyTitle,
+  emptyHint,
+  opens,
+}: {
+  /** The read behind the rows, as LoadState reads it. */
+  load: { loading: boolean; error?: ApiError; data?: unknown; loadedAt?: string };
+  /** What the page shows, in the order it shows it. */
+  rows: T[];
+  columns: Column<T>[];
+  emptyTitle: string;
+  emptyHint: string;
+  /** True where a row is the way into a record of its own. */
+  opens?: boolean;
+}) {
+  return (
+    <>
+      <LoadState
+        {...load}
+        empty={rows.length === 0}
+        columns={columns.length}
+        emptyTitle={emptyTitle}
+        emptyHint={emptyHint}
+      />
+      {rows.length > 0 && !load.error && (
+        <Table
+          rows={rows}
+          keyOf={(row) => row.id}
+          onRow={opens ? (row) => row.id : undefined}
+          columns={columns}
+        />
+      )}
+    </>
+  );
+}
+
+/**
  * A row's two routes, declared once: the list it opens on, and the record behind a
  * line. A declaration, not a const: views call it while this module is still being
  * initialised through the artifact reader it imports.
@@ -499,6 +602,7 @@ export const useArtifacts = () => {
  * A pinned file read where it is cited: the summary opens the body in place and
  * costs nothing until it is opened, and /artifacts/:id stays a destination —
  * reachable from the opened head — rather than the only way to read a file.
+ * A file this page cannot name is left out rather than named by its identifier.
  */
 export function Evidence({
   artifactId,
@@ -512,10 +616,11 @@ export function Evidence({
   meta?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  if (label === undefined && !artifact?.title) return null;
   return (
     <details className="crit-file" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
-        {label ?? artifact?.title ?? <ObjId id={artifactId} />}
+        {label ?? artifact?.title}
         {meta && artifact && (
           <span className="faint">
             {' '}
@@ -556,10 +661,10 @@ export function GateBox({ decision }: { decision: WorkflowDecision }) {
           <p className="muted" key={item.id}>
             {['task', 'experiment'].includes(item.workflow) ? (
               <Link to={`/${item.workflow === 'task' ? 'tasks' : 'experiments'}/${item.id}`}>
-                {item.name || shortId(item.id)}
+                {item.name}
               </Link>
             ) : (
-              item.name || <ObjId id={item.id} />
+              item.name
             )}{' '}
             <StatusPill value={item.state} />
           </p>

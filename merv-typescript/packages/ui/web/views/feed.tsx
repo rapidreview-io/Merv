@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { Ago, KindLabel, LoadState, ObjId, kindStyle, words } from '../components';
+import { Ago, KindLabel, LoadState, words } from '../components';
 import type { Row } from '../shell';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
@@ -66,10 +66,10 @@ function useRecordNames(rows: Row[]): Map<string, Named> {
   return names;
 }
 
-/** A name you can click where the id resolved, the bare id where it did not. */
+/** A name you can click where the id resolved, and nothing at all where it did not. */
 function Name({ id, names }: { id: string; names: Map<string, Named> }) {
   const found = names.get(id);
-  if (!found) return <ObjId id={id} />;
+  if (!found) return null;
   return found.to ? <Link to={found.to}>{found.name}</Link> : <span>{found.name}</span>;
 }
 
@@ -117,7 +117,7 @@ function Line({
   return (
     <p className="feed-line">
       <span>
-        {subject && (
+        {subject && names.has(subject) && (
           <>
             <Name id={subject} names={names} />{' '}
           </>
@@ -139,11 +139,11 @@ function Entry({
   author?: string;
 }) {
   return (
-    <article className="record feed-post" style={kindStyle('feed')}>
+    <article className="record feed-post">
       <p className="feed-by">
         <span className="feed-who">
           <KindLabel kind="feed" />
-          <span className="feed-author">{author ?? <ObjId id={post.authorId} />}</span>
+          <span className="feed-author">{author}</span>
         </span>
         <Ago at={post.createdAt} className="feed-when" />
       </p>
@@ -154,11 +154,13 @@ function Entry({
             .map((piece, at) => (at % 2 ? <Name key={at} id={piece} names={names} /> : piece))}
         </p>
       ))}
-      {post.artifactIds.map((id) => (
-        <p className="feed-file" key={id}>
-          <Name id={id} names={names} />
-        </p>
-      ))}
+      {post.artifactIds
+        .filter((id) => names.has(id))
+        .map((id) => (
+          <p className="feed-file" key={id}>
+            <Name id={id} names={names} />
+          </p>
+        ))}
     </article>
   );
 }

@@ -1,9 +1,9 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { ListPage, matches, splitRoutes, stateCounts, type Scope } from '../list-filters';
+import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import {
   Ago,
@@ -11,15 +11,12 @@ import {
   GateBox,
   KV,
   LoadState,
-  ObjId,
   PageHeader,
   StatusPill,
-  Table,
   col,
   cx,
-  kindStyle,
   relativeTime,
-  shortId,
+  stamp,
   useArtifacts,
   words,
 } from '../components';
@@ -191,11 +188,13 @@ function RoundsSpine({
               {review?.returnTo ? `returned to ${words(review.returnTo)}` : ''}
             </p>
             <p className="muted">
-              Submitted by {nameOf(s.producerId) ?? shortId(s.producerId)}{' '}
+              {nameOf(s.producerId) ? `Submitted by ${nameOf(s.producerId)} ` : 'Submitted '}
               <span title={s.createdAt}>{relativeTime(s.createdAt)}</span> ·{' '}
-              {review?.reviewerId
-                ? `read by ${nameOf(review.reviewerId) ?? shortId(review.reviewerId)}`
-                : 'no reviewer yet'}
+              {!review?.reviewerId
+                ? 'no reviewer yet'
+                : nameOf(review.reviewerId)
+                  ? `read by ${nameOf(review.reviewerId)}`
+                  : 'read'}
               {e.attempt.feedbackReviewIds.includes(s.reviewId)
                 ? ` · kept as context for attempt ${e.attempt.index}`
                 : ''}
@@ -260,7 +259,7 @@ function ProcessTrack({
   return (
     <section className="stack" aria-label="How this experiment moved through its gates">
       <h2 className="section-title">How it got here</h2>
-      <ol className="track" style={kindStyle('experiments')}>
+      <ol className="track">
         {graph.nodes.map((node) => (
           <li
             key={node.state}
@@ -330,6 +329,9 @@ export function ExperimentRecord({
   exhibit?: ExperimentExhibit;
   nameOf(id: string | null | undefined): string | undefined;
 }) {
+  // One list names every claim this experiment says it tests.
+  const statements = useTool<{ id: string; statement: string }[]>('claim.list');
+  const claims = new Map((statements.data ?? []).map((claim) => [claim.id, claim.statement]));
   const mine = (reviews ?? []).filter((review) => review.subjectId === e.id);
   const newest = newestReview(mine, e.id);
   const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
@@ -380,13 +382,12 @@ export function ExperimentRecord({
       {!!e.testedClaimIds.length && (
         <section className="stack">
           <h2 className="section-title">Claims tested</h2>
-          <div className="cluster">
-            {e.testedClaimIds.map((id) => (
-              <Link key={id} to="/claims">
-                <ObjId id={id} />
-              </Link>
-            ))}
-          </div>
+          {/* A claim is named by its statement; one the book cannot name is left out. */}
+          {e.testedClaimIds.map((id) => (
+            <p className="claim-line" key={id}>
+              <Link to="/claims">{claims.get(id)}</Link>
+            </p>
+          ))}
           <p className="muted">
             A completed experiment does not automatically change a claim's status.
           </p>
@@ -417,16 +418,13 @@ export function ExperimentRecord({
         {e.details && <p className="record-prose">{e.details}</p>}
         <KV
           rows={[
-            ['Id', <ObjId id={e.id} strong />],
-            ['Owner', nameOf(e.ownerId) ?? <ObjId id={e.ownerId} />],
+            ['Owner', nameOf(e.ownerId)],
             ['Revision', String(e.workflow.revision)],
-            ['Created', new Date(e.createdAt).toLocaleString()],
+            ['Created', stamp(e.createdAt)],
             ...e.attempts.map((attempt): [string, ReactNode] => [
               `Attempt ${attempt.index}`,
               `revisions ${attempt.startedRevision}–${attempt.endedRevision ?? 'current'}, ` +
-                (attempt.startedAt
-                  ? `first execution ${new Date(attempt.startedAt).toLocaleString()}`
-                  : 'not started'),
+                (attempt.startedAt ? `first execution ${stamp(attempt.startedAt)}` : 'not started'),
             ]),
           ]}
         />
@@ -440,11 +438,8 @@ function ExperimentList() {
   const nameOf = useActorNames();
   const { actor } = useSession();
   const { id: openId } = useParams();
-  const [query, setQuery] = useState('');
-  const [scope, setScope] = useState<Scope>('everyone');
-  const [state, setState] = useState('');
-  const search = query.trim().toLowerCase();
-  const states = stateCounts(list.data, (item) => item.workflow.state);
+  const filter = useListFilter(list.data, (item) => item.workflow.state);
+  const { state, scope, search } = filter;
   // The record open beside the list is always one of its rows, whatever the filters say.
   const visible = (list.data ?? []).filter(
     (item) =>
@@ -458,33 +453,20 @@ function ExperimentList() {
       list={list}
       noun="experiments"
       placeholder="Name, question or person"
-      query={query}
-      onQueryChange={setQuery}
-      scope={scope}
-      onScopeChange={setScope}
-      state={state}
-      onStateChange={setState}
-      states={states}
-      visible={visible.length}
-      columns={5}
+      filter={filter}
+      rows={[...visible].reverse()}
       emptyTitle="No experiments yet"
       emptyHint="Experiments appear here once a producer opens one to test a claim."
-    >
-      <Table
-        rows={[...visible].reverse()}
-        keyOf={(e) => e.id}
-        onRow={(e) => e.id}
-        columns={[
-          col<Experiment>('name', 'Experiment', (e) => (
-            <strong className={e.id === openId ? 'row-open' : undefined}>{e.name}</strong>
-          )),
-          col<Experiment>('state', 'State', (e) => <StatusPill value={e.workflow.state} />),
-          col<Experiment>('attempt', 'Attempt', (e) => String(e.attempt.index)),
-          col<Experiment>('owner', 'Owner', (e) => nameOf(e.ownerId) ?? <ObjId id={e.ownerId} />),
-          col<Experiment>('updated', 'Updated', (e) => <Ago at={e.workflow.updatedAt} />),
-        ]}
-      />
-    </ListPage>
+      columns={[
+        col<Experiment>('name', 'Experiment', (e) => (
+          <strong className={e.id === openId ? 'row-open' : undefined}>{e.name}</strong>
+        )),
+        col<Experiment>('state', 'State', (e) => <StatusPill value={e.workflow.state} />),
+        col<Experiment>('attempt', 'Attempt', (e) => String(e.attempt.index)),
+        col<Experiment>('owner', 'Owner', (e) => nameOf(e.ownerId)),
+        col<Experiment>('updated', 'Updated', (e) => <Ago at={e.workflow.updatedAt} />),
+      ]}
+    />
   );
 }
 

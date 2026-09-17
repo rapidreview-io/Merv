@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { accountRequest, scopeVersion, useScopeVersion, useTool } from '../api';
+import { accountRequest, scopeVersion, useTool } from '../api';
 import {
   ActorSplit,
   Ago,
@@ -10,14 +10,16 @@ import {
   KindLabel,
   Live,
   LoadState,
-  ObjId,
   StatusPill,
   Table,
   col,
+  stamp,
   term,
   useNow,
+  type KVRow,
 } from '../components';
 import { leaseLiveness, runnerLiveness } from '../liveness';
+import { useScopeKey } from '../session';
 import type { ViewProps } from './index';
 import { AgentSessionsPanel, type AgentSummary } from './agent-sessions-panel';
 
@@ -85,7 +87,6 @@ interface Status {
   queueTotal: number;
 }
 const isLive = (session: Session) => session.status === 'offered' || session.status === 'active';
-const stamp = (at: string) => new Date(at).toLocaleString();
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const platformPhrase = (platform: Platform) =>
   [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
@@ -105,8 +106,8 @@ const workspacePhrase = ({ workspace, workspaceMode }: Session) => {
 /**
  * One lease, two lines on one grid: identity above, liveness below, and no fact
  * on both. The body is a toggle and nothing else, so what a person scans stays
- * on the row and everything they copy — ids, refs, the absolute lease stamp —
- * waits in the panel, whose first line is the link back to the work.
+ * on the row and the rest — the revision, the absolute lease stamps, the
+ * platform — waits in the panel, whose first line is the link back to the work.
  */
 function LeaseRow({
   session,
@@ -126,19 +127,15 @@ function LeaseRow({
   control: ReactNode;
 }) {
   const panelId = `lease-${session.id}`;
-  const rows: [string, ReactNode][] = [
-    ['Work item', <span className="mono wrap">{session.instanceId}</span>],
-    ['Execution', <span className="mono wrap">{session.id}</span>],
+  const rows: KVRow[] = [
     ['Revision', session.expectedRevision],
     ['Offered', stamp(session.createdAt)],
+    !!session.activatedAt && ['Taken up', stamp(session.activatedAt)],
+    [isLive(session) ? 'Lease expires' : 'Lease ran to', stamp(session.expiresAt)],
+    !!session.closedAt && ['Closed', stamp(session.closedAt)],
+    !!session.platform && ['Platform', platformPhrase(session.platform)],
+    ['Workspace', <span className="wrap">{workspacePhrase(session)}</span>],
   ];
-  if (session.activatedAt) rows.push(['Taken up', stamp(session.activatedAt)]);
-  rows.push([isLive(session) ? 'Lease expires' : 'Lease ran to', stamp(session.expiresAt)]);
-  if (session.closedAt) rows.push(['Closed', stamp(session.closedAt)]);
-  if (session.platform) rows.push(['Platform', platformPhrase(session.platform)]);
-  if (session.runnerRef) rows.push(['Runner', <span className="mono">{session.runnerRef}</span>]);
-  if (session.hostRef) rows.push(['Host', <span className="mono">{session.hostRef}</span>]);
-  rows.push(['Workspace', <span className="wrap">{workspacePhrase(session)}</span>]);
   return (
     <div className={`lease${open ? ' lease--open' : ''}`}>
       <button
@@ -149,7 +146,7 @@ function LeaseRow({
         onClick={onToggle}
       >
         <span className="wrap">{agent}</span>
-        <strong>{session.label || <ObjId id={session.instanceId} />}</strong>
+        <strong>{session.label}</strong>
         <span className="muted">{term(session.role)}</span>
         <Countdown to={isLive(session) ? session.expiresAt : null} now={now} />
       </button>
@@ -172,30 +169,17 @@ function LeaseRow({
   );
 }
 
-export function SessionsView({ row, shell }: ViewProps) {
+function AgentsPage({ row, shell }: ViewProps) {
   const [cadence, setCadence] = useState(4000);
   const state = useTool<Status>('ui.read', { rowId: row.id }, { every: cadence });
-  const epoch = useScopeVersion();
-  const generation = useRef(0);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [view, setView] = useState<'agents' | 'operations'>('agents');
   const [open, setOpen] = useState<string>();
-  useEffect(() => {
-    generation.current++;
-    setBusy(undefined);
-    setError(undefined);
-    setView('agents');
-    setOpen(undefined);
-    return () => {
-      generation.current++;
-    };
-  }, [epoch]);
   const mutate = async (path: string, body: unknown, method = 'POST') => {
     if (!state.data?.canManage || busy) return;
     const version = scopeVersion();
-    const currentGeneration = generation.current;
-    const current = () => version === scopeVersion() && currentGeneration === generation.current;
+    const current = () => version === scopeVersion();
     setBusy(path);
     setError(undefined);
     try {
@@ -210,7 +194,7 @@ export function SessionsView({ row, shell }: ViewProps) {
   };
   const status = state.data;
   const liveCount = status?.liveSessionCount ?? 0;
-  // An agent is named where it worked; the id stays as the fallback.
+  // An agent is named where it worked; a lease with no name says so with a dash.
   const agentName = new Map((status?.agents ?? []).map((agent) => [agent.id, agent.name]));
   // The page's one clock ticks only while a lease or a runner is actually live,
   // and the read slows to match, so an idle Agents page costs nothing.
@@ -260,11 +244,7 @@ export function SessionsView({ row, shell }: ViewProps) {
             </button>
           </div>
           <div id="sessions-agents-panel" hidden={view !== 'agents'}>
-            <AgentSessionsPanel
-              key={epoch}
-              agents={status.agents ?? []}
-              assignments={status.sessions}
-            />
+            <AgentSessionsPanel agents={status.agents ?? []} assignments={status.sessions} />
           </div>
           <div id="sessions-operations-panel" hidden={view !== 'operations'}>
             <div className="stack stack--lg">
@@ -401,10 +381,7 @@ export function SessionsView({ row, shell }: ViewProps) {
                         session={session}
                         now={now}
                         route={routeOf(session.instanceId)}
-                        agent={
-                          agentName.get(session.agentId ?? '') ??
-                          (session.agentId ? <ObjId id={session.agentId} /> : term(null))
-                        }
+                        agent={agentName.get(session.agentId ?? '') ?? term(null)}
                         open={open === session.id}
                         onToggle={() =>
                           setOpen((current) => (current === session.id ? undefined : session.id))
@@ -457,7 +434,7 @@ export function SessionsView({ row, shell }: ViewProps) {
                     keyOf={(candidate) => `${candidate.instanceId}:${candidate.expectedRevision}`}
                     columns={[
                       col<Candidate>('label', 'Work', (candidate) => (
-                        <strong>{candidate.label || <ObjId id={candidate.instanceId} />}</strong>
+                        <strong>{candidate.label}</strong>
                       )),
                       col<Candidate>('gate', 'Gate', (candidate) => term(candidate.state)),
                       col<Candidate>('role', 'Role', (candidate) => term(candidate.role)),
@@ -477,3 +454,5 @@ export function SessionsView({ row, shell }: ViewProps) {
     </div>
   );
 }
+
+export const SessionsView = (props: ViewProps) => <AgentsPage key={useScopeKey()} {...props} />;

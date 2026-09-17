@@ -10,42 +10,33 @@ export type { RowStatus, Row, PluginState, ShellData } from './shell-types';
 
 export const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
 
-export function IconSidebar() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
-      <path d="M9.5 4.5v15" />
-    </svg>
-  );
-}
-
-function IconSwitch() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 9h15l-4-4M20 15H5l4 4" />
-    </svg>
-  );
-}
+/** One frame for every glyph the shell draws: the same stroked 24-unit grid. */
+const Icon = ({ size = 18, children }: { size?: number; children: ReactNode }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    {children}
+  </svg>
+);
+export const IconSidebar = () => (
+  <Icon>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
+    <path d="M9.5 4.5v15" />
+  </Icon>
+);
+const IconSwitch = () => (
+  <Icon size={16}>
+    <path d="M4 9h15l-4-4M20 15H5l4 4" />
+  </Icon>
+);
 
 const unwell = (row: Row) =>
   row.status.state === 'degraded' || row.status.state === 'unavailable' ? row : undefined;
