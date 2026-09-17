@@ -16,7 +16,6 @@ export interface NavSection {
 /** Known views map to user jobs; unknown views keep their declared group. */
 const SECTION_OF_VIEW: Record<string, string> = {
   claims: 'research',
-  paper: 'research',
   artifacts: 'research',
   reflections: 'work',
   sessions: 'operations',
@@ -46,6 +45,12 @@ export const WORK: Row = {
   status: {},
   readable: false,
 };
+
+/**
+ * The paper stands with Home and Now rather than inside a section: it is what the
+ * project is writing, not one collection among the others.
+ */
+export const topRows = (rows: Row[]) => rows.filter((row) => row.view.kind === 'paper');
 
 /** An archive with nothing in it is not a place; one that reports records is. */
 const shows = (row: Row) =>
@@ -77,7 +82,7 @@ export const humanizeGroup = (group: string) =>
 export function buildNavigation(rows: Row[]): NavSection[] {
   const working = rows.some((row) => ['tasks', 'experiments'].includes(row.view.kind));
   const sorted = [...(working ? [WORK] : []), ...rows]
-    .filter((row) => row.group !== 'settings' && shows(row))
+    .filter((row) => row.group !== 'settings' && shows(row) && row.view.kind !== 'paper')
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sections = new Map<string, NavSection>();
   for (const row of sorted) {

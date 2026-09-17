@@ -18,20 +18,14 @@ import type { Row } from '../shell-types';
 import type { ViewProps } from './index';
 
 /**
- * What `project.references` answers about one reference: what it names, whether
- * this project holds it, and the exact capture behind it where there is one.
+ * What `project.references` answers about one reference: what it names, and
+ * whether this project holds it.
  */
 interface Reference {
   ref: string;
   status: 'resolved' | 'missing' | 'unsupported' | 'unpublished';
   label?: string;
-  revision?: number;
   state?: string;
-  hash?: string;
-  capture?: {
-    provenance: { revision: number };
-    workspace: { headOid?: string; treeOid?: string } | null;
-  };
 }
 
 /**
@@ -83,13 +77,7 @@ function ReferenceLookup() {
                 <strong>{item.label ?? item.ref}</strong>
                 <StatusPill value={item.status} />
               </span>
-              <span className="states-detail">
-                {item.state ? `${words(item.state)} · ` : ''}
-                {item.revision !== undefined ? `revision ${item.revision}` : ''}
-                {item.capture
-                  ? ` · exact capture at revision ${item.capture.provenance.revision}`
-                  : ''}
-              </span>
+              <span className="states-detail">{item.state ? words(item.state) : ''}</span>
             </li>
           ))}
         </ul>
@@ -279,7 +267,6 @@ function EditClaim({
           onChange={setConfidence}
         />
       </fieldset>
-      <p className="faint">Editing revision {original.revision}.</p>
       <Failure message={mutation.error} />
       <div className="cluster">
         <button className="btn btn--primary" disabled={mutation.busy || !changed}>

@@ -4,7 +4,7 @@ import { useTool } from './api';
 import { useSession } from './session';
 import { cx, kindOf } from './components';
 import { RowIcon } from './icons';
-import { buildNavigation } from './navigation';
+import { buildNavigation, topRows } from './navigation';
 import { useStanding, type Work } from './views/overview';
 import type { MapCycle, MapExperiment, MapTask } from './views/map-data';
 
@@ -190,9 +190,9 @@ function AccountFoot() {
 }
 
 /**
- * The one navigation. Home and Now first, then every registered collection as
- * its own row under the heading of the section it belongs to, then Settings and
- * the account at the foot. Nothing is hidden behind a section row or a title.
+ * The one navigation. Home, Now and the paper first, then every other registered
+ * collection as its own row under the heading of the section it belongs to, then
+ * Settings and the account at the foot. Nothing is hidden behind a row or a title.
  */
 export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHide(): void }) {
   const { project, account, chooseProject } = useSession();
@@ -232,6 +232,16 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
       <nav className="rail-nav">
         <RailRow to="/" icon="home" label="Home" active={pathname === '/'} />
         <RailRow to="/now" icon="now" label="Now" active={pathname === '/now'} count={needsYou} />
+        {topRows(rows).map((row) => (
+          <RailRow
+            key={row.id}
+            to={row.path}
+            label={row.label}
+            icon={iconOf(row)}
+            active={holds(row)}
+            sick={unwell(row)}
+          />
+        ))}
         {buildNavigation(rows).map((section) => (
           <div className="rail-group" key={section.id}>
             <h3 className="rail-group-head">{section.label}</h3>

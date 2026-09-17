@@ -666,6 +666,7 @@ p,
 .label,
 .status,
 .ev-role,
+.rung-mark,
 .table th,
 .rail-group-head,
 .flag,
@@ -1761,15 +1762,6 @@ select.input,
 .record-prose {
   white-space: pre-wrap;
 }
-/* One round of the spine, and one lane of the track: an indented block under
-   the line that names it. */
-.round,
-.lane {
-  padding-left: var(--space-4);
-}
-.round > * + * {
-  margin-top: var(--space-2);
-}
 
 /* List rows. -------------------------------------------------------------- */
 /* Three facts are never one word: a row states execution, review and outcome as
@@ -1829,6 +1821,14 @@ select.input,
 .map-stale {
   color: var(--qualifies);
   font-size: var(--text-sm);
+}
+/* What is in flight reads as one line a record: the name on the left, the gate on
+   the right, in the same list anatomy every collection uses. */
+.map-running .row-link {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
 }
 .map-now {
   display: flex;
@@ -2100,24 +2100,6 @@ select.input,
 .track-step--unreached {
   color: var(--muted);
 }
-.track-when {
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
-.lane-head {
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-.lane-step {
-  font-size: var(--text-sm);
-  margin: 2px 0;
-}
-.lane-rev {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--faint);
-  margin-right: 6px;
-}
 /* The same derivation read as prose: rungs, for a record whose shape is a ladder. */
 .ladder {
   list-style: none;
@@ -2133,6 +2115,21 @@ select.input,
 /* The rung it stands on is named in its own words and set in the heavier weight. */
 .ladder-rung--here > span:first-child {
   font-weight: 600;
+}
+/* Done, here, next: the mark is the structure, so it wears the label type and the
+   quiet colour, and only the rung the record stands on takes the ink. */
+.rung-mark {
+  color: var(--faint);
+}
+.ladder-rung--here .rung-mark {
+  color: var(--text);
+}
+/* A section's own control sits beside its heading, in the quiet size. */
+.doc-h .btn-text,
+.sec-h .btn-text,
+.ledger .label .btn-text {
+  margin-left: var(--space-3);
+  font-weight: 400;
 }
 
 /* Work lists: split pane and scope. -------------------------------------- */

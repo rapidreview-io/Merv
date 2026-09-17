@@ -190,14 +190,11 @@ export function CriterionRows({
 interface SubjectExperiment {
   id: string;
   name: string;
-  workflow: { state: string; revision: number };
-  conclusion: string | null;
+  workflow: { state: string };
 }
 interface SubjectTask {
   id: string;
   title: string;
-  workflow: { state: string; revision: number };
-  failure: { reason: string } | null;
   deliveryConfirmations: Confirmation[];
 }
 
@@ -214,10 +211,10 @@ function ReviewDetail() {
   const experiment = experiments.data?.find((item) => item.id === subjectId);
   const task = tasks.data?.find((item) => item.id === subjectId);
   const confirmations = useTool<SubjectTask>(task ? 'task.get' : null, { taskId: subjectId ?? '' });
-  const stages = useTool<{
-    attempt: { index: number; approvedSubmissionId: string | null };
-    submissions: { id: string; stage: string; attemptIndex: number; reviewId: string | null }[];
-  }>(experiment ? 'experiment.get_state' : null, { experimentId: subjectId ?? '' });
+  const stages = useTool<{ submissions: { stage: string; reviewId: string | null }[] }>(
+    experiment ? 'experiment.get_state' : null,
+    { experimentId: subjectId ?? '' },
+  );
   const guidance = useTool<WorkflowDecision>(
     review.data && !review.data.verdict ? 'workflow.status_and_next' : null,
     { instanceId: subjectId ?? '' },
@@ -242,9 +239,6 @@ function ReviewDetail() {
   const rest = r.artifactIds.filter((artifactId) => !cited.has(artifactId));
   // The findings are the record's once a verdict exists, and this desk's draft
   // until then, so the exceptions are stated while their cost is being paid.
-  const approved = stages.data?.submissions.find(
-    (item) => item.id === stages.data?.attempt.approvedSubmissionId,
-  );
   const exceptions = exceptionsOf({
     review: r,
     findings: r.verdict
@@ -256,11 +250,6 @@ function ReviewDetail() {
           number: Number(number),
           status: draft.status ?? '',
         })),
-    revision: experiment?.workflow.revision ?? task?.workflow.revision,
-    attempt:
-      approved && stages.data && approved.attemptIndex < stages.data.attempt.index
-        ? { approvedIn: approved.attemptIndex, index: stages.data.attempt.index }
-        : undefined,
   });
   // Exceptions are stated where their cost is being paid: beside the control while
   // a verdict is still being written, beside the verdict once it is recorded.
@@ -284,8 +273,7 @@ function ReviewDetail() {
             ? 'unclaimed'
             : nameOf(r.reviewerId)
               ? `claimed by ${nameOf(r.reviewerId)}`
-              : 'claimed'}{' '}
-          · revision {r.subjectRevision}
+              : 'claimed'}
         </>
       }
       act={
@@ -355,13 +343,9 @@ function ReviewDetail() {
 function exceptionsOf({
   review,
   findings,
-  revision,
-  attempt,
 }: {
   review: Review;
   findings: { number: number; status: string }[];
-  revision?: number;
-  attempt?: { approvedIn: number; index: number };
 }): string[] {
   const lines: string[] = [];
   for (const [status, word] of [
@@ -376,15 +360,7 @@ function exceptionsOf({
     else if (at.length > 1)
       lines.push(`Criteria ${at.slice(0, -1).join(', ')} and ${at.at(-1)} were ${word}.`);
   }
-  if (revision !== undefined && revision !== review.subjectRevision)
-    lines.push(
-      `This review pins revision ${review.subjectRevision}; the work is now at revision ${revision}.`,
-    );
   if (review.status === 'superseded') lines.push('This review was superseded.');
-  if (attempt)
-    lines.push(
-      `The plan under review was approved in attempt ${attempt.approvedIn}; the work is now on attempt ${attempt.index}.`,
-    );
   return lines;
 }
 

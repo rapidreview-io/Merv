@@ -1,8 +1,8 @@
 import { Link, useParams } from 'react-router-dom';
 import type { ResearchRecord } from '@merv/research/models';
-import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { GateBox, LoadState, RecordPage, StatusPill } from '../components';
+import { Gate, LoadState, RecordPage, StatusPill } from '../components';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import { useSession } from '../session';
@@ -22,11 +22,7 @@ function CycleDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
   const { actor } = useSession();
   const cycle = useTool<ResearchRecord>('research.get', { researchId: id }, { every: 10000 });
-  const guidance = useTool<WorkflowDecision>(
-    'workflow.status_and_next',
-    { instanceId: id },
-    { every: 5000 },
-  );
+  const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 5000 });
   if (!cycle.data)
     return (
       <div className="page-stage">
@@ -41,12 +37,10 @@ function CycleDetail({ row }: ViewProps) {
       back={<Link to={WORK.path}>← Work</Link>}
       kind={row.view.kind}
       name={record.name}
-      standing={`${consolidation(record)} · revision ${record.workflow.revision}`}
+      standing={consolidation(record)}
       state={<StatusPill value={record.workflow.state} />}
       act={
-        <>
-          <LoadState {...guidance} />
-          {guidance.data && !guidance.error && <GateBox decision={guidance.data} />}
+        <Gate graph={process.data}>
           {writable && (
             <ResearchCommand
               disabled={record.workflow.state === 'complete'}
@@ -55,17 +49,15 @@ function CycleDetail({ row }: ViewProps) {
               label="Start next step"
               onSaved={() => {
                 cycle.reload();
-                guidance.reload();
+                process.reload();
               }}
             />
           )}
-        </>
+        </Gate>
       }
       related={
         <div className="cluster">
-          <Link to="/paper">
-            Living paper{record.problem ? ` · problem revision ${record.problem.revision}` : ''}
-          </Link>
+          <Link to="/paper">Living paper</Link>
           {record.reflectionId && (
             <Link to={`/reflections/${record.reflectionId}`}>Reflection</Link>
           )}

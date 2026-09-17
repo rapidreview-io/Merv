@@ -24,7 +24,6 @@ import {
   StatusPill,
   cx,
   useArtifacts,
-  type KVRow,
 } from '../components';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
@@ -563,11 +562,13 @@ function Entry({
   item,
   sections,
   artifacts,
+  edit,
 }: {
   at: number;
   item: PaperCitation;
   sections: PaperSection[];
   artifacts: Files;
+  edit?: ReactNode;
 }) {
   const cited = item.sectionIds
     .map((id) => sections.find((section) => section.id === id)?.title)
@@ -612,6 +613,7 @@ function Entry({
             const id = ref.replace(/^artifact:/, '');
             return <Evidence key={ref} artifactId={id} artifact={artifacts.get(id)} meta />;
           })}
+          {edit}
         </div>
       </details>
     </li>
@@ -623,7 +625,17 @@ function Entry({
  * waiting on it, and the text itself — carrying the marks of an open proposal
  * unless the reader asks for the version that passed review.
  */
-function Block({ row, from, markers }: { row: SectionRow; from: ReactNode; markers: ReactNode }) {
+function Block({
+  row,
+  from,
+  markers,
+  edit,
+}: {
+  row: SectionRow;
+  from: ReactNode;
+  markers: ReactNode;
+  edit?: ReactNode;
+}) {
   const [plain, setPlain] = useState(false);
   const { section, change, before } = row;
   const runs =
@@ -644,6 +656,7 @@ function Block({ row, from, markers }: { row: SectionRow; from: ReactNode; marke
             {change.remove ? 'Proposed removal' : before ? '' : 'Proposed'}
           </span>
         )}
+        {edit}
       </h4>
       {from}
       {runs ? (
@@ -667,7 +680,6 @@ function Block({ row, from, markers }: { row: SectionRow; from: ReactNode; marke
           (text, at) => <p key={at}>{text}</p>,
         )
       )}
-      {!section.content.trim() && !runs && <p className="faint">Not written yet.</p>}
       {markers}
       {change && before && (
         <p className="sec-tools">
@@ -856,6 +868,9 @@ function PaperPage({ row, shell }: ViewProps) {
     .sort()
     .at(-1);
   const changes = open.reduce((sum, proposal) => sum + edits(proposal), 0);
+  const retained = [
+    ...new Set(proposals.flatMap((proposal) => proposal.evidence.map((file) => file.id))),
+  ];
   const written = docs.flatMap((doc) => doc.current.sections);
   const characters = written.reduce((size, item) => size + item.content.length, 0);
   // Every revision each document retained, once, newest first when they are read.
@@ -878,9 +893,7 @@ function PaperPage({ row, shell }: ViewProps) {
         <ThreeStates
           execution={published.length ? 'published' : 'unpublished'}
           meta={dotted([
-            published
-              .map((kind) => `${labels[kind]} at revision ${accepted(kind).document.revision}`)
-              .join(', '),
+            published.map((kind) => labels[kind]).join(', '),
             changes ? `${changes} change${changes > 1 ? 's' : ''} waiting on review` : null,
             moved ? (
               <>
@@ -891,63 +904,6 @@ function PaperPage({ row, shell }: ViewProps) {
           ])}
         />
       }
-      act={
-        writable ? (
-          editing ? (
-            <SectionEditor
-              revision={workspace.data.documents[editing.kind].current}
-              section={editing.section}
-              onDone={() => setEditing(null)}
-              onSaved={reload}
-            />
-          ) : citing !== null ? (
-            <CitationEditor
-              key={citing}
-              citation={citations.find((item) => item.id === citing)}
-              ledger={citations}
-              sections={literature.sections}
-              onPick={setCiting}
-              onDone={() => setCiting(null)}
-              onSaved={reload}
-            />
-          ) : (
-            <>
-              <div className="cluster">
-                {(['problem', 'literature'] as PaperKind[]).flatMap((kind) =>
-                  workspace.data!.documents[kind].current.sections.map((section) => (
-                    <button
-                      className="btn"
-                      key={section.id}
-                      onClick={() => setEditing({ kind, section })}
-                    >
-                      Edit {section.title}
-                    </button>
-                  )),
-                )}
-                <button className="btn" onClick={() => setEditing({ kind: 'literature' })}>
-                  New section
-                </button>
-                <button className="btn" onClick={() => setCiting('')}>
-                  New citation
-                </button>
-                {citations.length > 0 && (
-                  <button className="btn" onClick={() => setCiting(citations[0].id)}>
-                    Edit citation
-                  </button>
-                )}
-              </div>
-              {open.map((proposal) =>
-                sourceOf(proposal.source) ? (
-                  <p className="muted" key={proposal.id}>
-                    {edits(proposal)} change{edits(proposal) > 1 ? 's' : ''} waiting on the review
-                    of <Source source={proposal.source} />
-                  </p>
-                ) : null,
-              )}
-            </>
-          )
-        ) : undefined
-      }
       content={
         <div className="paper">
           <Outline docs={docs} ledger={citations.length} here={here} />
@@ -957,18 +913,56 @@ function PaperPage({ row, shell }: ViewProps) {
                 <h3 className="doc-h">
                   <span className="dn">{doc.n}</span>
                   {labels[doc.kind]}
+                  {writable && !editing && (
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={() => setEditing({ kind: doc.kind })}
+                    >
+                      New section
+                    </button>
+                  )}
                 </h3>
                 {doc.current.revision > 0 && !doc.publication && (
                   <p className="from doc-from">{said(doc.current)}</p>
                 )}
-                {doc.rows.map((item) => (
-                  <Block
-                    key={item.section.id}
-                    row={item}
-                    from={attribution(doc, item)}
-                    markers={doc.kind === 'literature' && <Markers section={item.section.id} />}
+                {doc.rows.map((item) =>
+                  editing?.section?.id === item.section.id ? (
+                    <SectionEditor
+                      key={item.section.id}
+                      revision={doc.current}
+                      section={item.section}
+                      onDone={() => setEditing(null)}
+                      onSaved={reload}
+                    />
+                  ) : (
+                    <Block
+                      key={item.section.id}
+                      row={item}
+                      from={attribution(doc, item)}
+                      markers={doc.kind === 'literature' && <Markers section={item.section.id} />}
+                      edit={
+                        writable &&
+                        !editing && (
+                          <button
+                            type="button"
+                            className="btn-text"
+                            onClick={() => setEditing({ kind: doc.kind, section: item.section })}
+                          >
+                            Edit {item.section.title}
+                          </button>
+                        )
+                      }
+                    />
+                  ),
+                )}
+                {editing?.kind === doc.kind && !editing.section && (
+                  <SectionEditor
+                    revision={doc.current}
+                    onDone={() => setEditing(null)}
+                    onSaved={reload}
                   />
-                ))}
+                )}
                 {doc.figures.map((file) => (
                   <div className="fig" key={file.id}>
                     <Evidence artifactId={file.id} artifact={artifacts.get(file.id)} meta />
@@ -977,9 +971,27 @@ function PaperPage({ row, shell }: ViewProps) {
                     </p>
                   </div>
                 ))}
-                {doc.kind === 'literature' && citations.length > 0 && (
+                {doc.kind === 'literature' && (citations.length > 0 || writable) && (
                   <div className="ledger" id="references">
-                    <span className="label">References</span>
+                    <span className="label">
+                      References
+                      {writable && citing === null && (
+                        <button type="button" className="btn-text" onClick={() => setCiting('')}>
+                          New citation
+                        </button>
+                      )}
+                    </span>
+                    {citing !== null && (
+                      <CitationEditor
+                        key={citing}
+                        citation={citations.find((item) => item.id === citing)}
+                        ledger={citations}
+                        sections={literature.sections}
+                        onPick={setCiting}
+                        onDone={() => setCiting(null)}
+                        onSaved={reload}
+                      />
+                    )}
                     <ul className="rows">
                       {citations.map((item, at) => (
                         <Entry
@@ -988,6 +1000,18 @@ function PaperPage({ row, shell }: ViewProps) {
                           item={item}
                           sections={literature.sections}
                           artifacts={artifacts}
+                          edit={
+                            writable &&
+                            citing === null && (
+                              <button
+                                type="button"
+                                className="btn-text"
+                                onClick={() => setCiting(item.id)}
+                              >
+                                Edit citation
+                              </button>
+                            )
+                          }
                         />
                       ))}
                     </ul>
@@ -999,21 +1023,21 @@ function PaperPage({ row, shell }: ViewProps) {
         </div>
       }
       history={
-        <ul className="rows">
-          {[...revisions.values()]
-            .sort((a, b) => (b.revision.updatedAt ?? '').localeCompare(a.revision.updatedAt ?? ''))
-            .map(({ doc, revision }) => (
-              <Row
-                key={`${doc.kind}-${revision.revision}`}
-                name={
-                  <strong>
-                    {labels[doc.kind]} · revision {revision.revision}
-                  </strong>
-                }
-                stand={said(revision)}
-              />
-            ))}
-        </ul>
+        revisions.size ? (
+          <ul className="rows">
+            {[...revisions.values()]
+              .sort((a, b) =>
+                (b.revision.updatedAt ?? '').localeCompare(a.revision.updatedAt ?? ''),
+              )
+              .map(({ doc, revision }) => (
+                <Row
+                  key={`${doc.kind}-${revision.revision}`}
+                  name={<strong>{labels[doc.kind]}</strong>}
+                  stand={said(revision)}
+                />
+              ))}
+          </ul>
+        ) : undefined
       }
       related={
         <>
@@ -1066,15 +1090,15 @@ function PaperPage({ row, shell }: ViewProps) {
               )}
             </Group>
           )}
-          <Group label="Evidence retained with it">
-            {[
-              ...new Set(proposals.flatMap((proposal) => proposal.evidence.map((file) => file.id))),
-            ].map((id) => (
-              <li className="row" key={id}>
-                <Evidence artifactId={id} artifact={artifacts.get(id)} meta />
-              </li>
-            ))}
-          </Group>
+          {retained.length > 0 && (
+            <Group label="Evidence retained with it">
+              {retained.map((id) => (
+                <li className="row" key={id}>
+                  <Evidence artifactId={id} artifact={artifacts.get(id)} meta />
+                </li>
+              ))}
+            </Group>
+          )}
         </>
       }
       details={
@@ -1083,20 +1107,6 @@ function PaperPage({ row, shell }: ViewProps) {
             ['Sections', `${written.length} of 100`],
             ['Citations', `${citations.length}`],
             ['Characters', `${characters.toLocaleString()} of 160,000`],
-            ...docs.map((doc): KVRow => [
-              labels[doc.kind],
-              `revision ${doc.current.revision} · ${
-                doc.publication
-                  ? `published revision ${doc.publication.document.revision}`
-                  : 'never published'
-              }`,
-            ]),
-            open.length > 0 && [
-              'Proposed change artifact',
-              <span className="mono faint">
-                {open.map((proposal) => proposal.artifact.hash).join(' ')}
-              </span>,
-            ],
           ]}
         />
       }

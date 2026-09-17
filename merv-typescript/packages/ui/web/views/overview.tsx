@@ -227,11 +227,7 @@ export function useStanding(rows: Row[], work: Work, me: string, named: Named): 
           me,
           `${experimentsRow!.path}/${item.id}`,
         ),
-        meta: (
-          <>
-            attempt {item.attempt.index} · {when(item.workflow.updatedAt)}
-          </>
-        ),
+        meta: when(item.workflow.updatedAt),
       })),
       ...(cyclesRow ? (cycles.data ?? []).filter(alive) : []).map((item) =>
         open(item, 'research', item.name, item.ownerId, me, `${cyclesRow!.path}/${item.id}`),

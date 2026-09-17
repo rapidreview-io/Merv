@@ -13,9 +13,7 @@ export interface Clause {
   word?: string | null;
   /** True for a verdict or finding: the one word on a row that takes colour. */
   verdict?: boolean;
-  /** True when the word states that the fact is missing; it stays faint. */
-  absent?: boolean;
-  /** The quieter rest of the clause: a name, a revision, a recorded sentence. */
+  /** The quieter rest of the clause: a name, a recorded sentence. */
   detail?: ReactNode;
   /** Where the fact itself is a record: the clause is then the way to it. */
   to?: string;
@@ -24,7 +22,7 @@ export interface Clause {
 function Say({ clause }: { clause: Clause | null }) {
   if (!clause || (!clause.word && !clause.detail))
     return <span className="states-clause states-absent">—</span>;
-  const className = cx('states-clause', clause.absent && 'states-absent');
+  const className = 'states-clause';
   const said = (
     <>
       {clause.word && (
@@ -32,7 +30,6 @@ function Say({ clause }: { clause: Clause | null }) {
           className={cx(
             clause.verdict ? 'crit-word' : 'states-word',
             clause.verdict && `crit-word--${clause.word}`,
-            clause.absent && 'states-absent',
           )}
         >
           {words(clause.word)}
@@ -118,8 +115,7 @@ export function reviewClause(review: ReviewFacts | undefined, reviewer?: ReactNo
   if (!review) return null;
   if (review.status === 'requested') return { word: 'unclaimed' };
   if (review.status === 'started') return { word: 'in review', detail: reviewer };
-  if (review.status === 'superseded')
-    return { word: 'superseded', detail: `pinned revision ${review.subjectRevision}` };
+  if (review.status === 'superseded') return { word: 'superseded' };
   if (!review.verdict) return null;
   const findings = review.findings ?? [];
   const count = (status: string) => findings.filter((item) => item.status === status).length;

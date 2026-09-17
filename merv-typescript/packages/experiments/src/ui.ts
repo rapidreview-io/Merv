@@ -1,4 +1,5 @@
 import type { Context } from 'cordis';
+import type { Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
 
@@ -15,6 +16,17 @@ export const experimentsUiPlugin = {
         order: 16,
         path: '/experiments',
         view: { kind: 'experiments' },
+        // One record, with the gate it stands at: the process graph is derived from the
+        // same record, so the page reads both in one answer rather than two.
+        read: async (caller, params) => {
+          const id = String(params?.id ?? '');
+          return JSON.parse(
+            JSON.stringify({
+              experiment: await experiments.get(caller, id),
+              process: await experiments.process(caller, id),
+            }),
+          ) as Json;
+        },
         // Open work: an experiment still on its way to a result. A complete,
         // abandoned or failed record is read, not worked, so it is not counted.
         status: async (caller) => ({

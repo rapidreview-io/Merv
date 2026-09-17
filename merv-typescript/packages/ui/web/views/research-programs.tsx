@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
@@ -9,7 +9,7 @@ import {
   Area,
   Failure,
   Field,
-  GateBox,
+  Gate,
   KV,
   LoadState,
   RecordPage,
@@ -17,9 +17,7 @@ import {
   Table,
   col,
   cx,
-  relativeTime,
   stamp,
-  words,
 } from '../components';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { WORK } from '../navigation';
@@ -145,52 +143,10 @@ function EvidenceLink({ artifact }: { artifact: Artifact }) {
   );
 }
 
-/**
- * The ladder the program actually declares, as rungs of text: one rung per state in
- * reading order, the rung it stands on named, a rung it came back to said plainly. A
- * rung records that the machinery stepped through a gate, never that the work is right.
- */
-function Ladder({ id }: { id: string }) {
+/** The gate this wave stands at, derived from its own record. */
+function WaveGate({ id, children }: { id: string; children?: ReactNode }) {
   const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 8000 });
-  if (!process.data || process.error) return null;
-  return (
-    <>
-      <h3 className="ev-role">How it got here</h3>
-      <ol className="ladder">
-        {process.data.nodes.map((node) => (
-          <li key={node.state} className={cx('ladder-rung', node.current && 'ladder-rung--here')}>
-            <span>{words(node.state)}</span>
-            <span className="muted">
-              {[
-                node.current ? 'where it stands now' : null,
-                node.entries > 1
-                  ? `entered ${node.entries} times`
-                  : node.firstEnteredAt
-                    ? `entered ${relativeTime(node.firstEnteredAt)}`
-                    : 'not entered',
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </>
-  );
-}
-
-function Guidance({ id }: { id: string }) {
-  const guidance = useTool<WorkflowDecision>(
-    'workflow.status_and_next',
-    { instanceId: id },
-    { every: 8000 },
-  );
-  return (
-    <>
-      <LoadState {...guidance} />
-      {guidance.data && !guidance.error && <GateBox decision={guidance.data} />}
-    </>
-  );
+  return <Gate graph={process.error ? undefined : process.data}>{children}</Gate>;
 }
 
 function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'> }) {
@@ -263,8 +219,7 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
         {Object.entries(paper.documents).map(([kind, document]) => (
           <section key={kind} className="stack">
             <h3>
-              {kind === 'problem' ? 'Problem and scope' : kind[0]!.toUpperCase() + kind.slice(1)} ·
-              revision {document.current.revision}
+              {kind === 'problem' ? 'Problem and scope' : kind[0]!.toUpperCase() + kind.slice(1)}
             </h3>
             {document.current.sections.length ? (
               document.current.sections.map((section) => (
@@ -389,8 +344,8 @@ function ReflectionList({ shell }: { shell: ShellData }) {
         to: `${waves}/${wave.id}`,
         meta: (
           <>
-            {wave.lenses.filter((lens) => lens.artifact).length} of {wave.lenses.length} lenses ·
-            attempt {wave.attempt} · <Ago at={wave.createdAt} />
+            {wave.lenses.filter((lens) => lens.artifact).length} of {wave.lenses.length} lenses ·{' '}
+            <Ago at={wave.createdAt} />
           </>
         ),
       },
@@ -446,17 +401,15 @@ function ReflectionDetail({ row, shell }: ViewProps) {
       back={<Link to={row.path}>← {row.label}</Link>}
       kind={row.view.kind}
       name={wave.title}
-      standing={`Attempt ${wave.attempt} · workflow revision ${wave.workflow.revision}`}
       state={<StatusPill value={wave.workflow.state} />}
       act={
-        <>
-          <Guidance id={wave.id} />
+        <WaveGate id={wave.id}>
           {wave.workflow.state === 'approved' &&
             consolidationRow &&
             (actor.role === 'operator' || actor.role === 'producer') && (
               <NewConsolidation wave={wave} path={consolidationRow.path} />
             )}
-        </>
+        </WaveGate>
       }
       title="Synthesis"
       content={
@@ -473,11 +426,9 @@ function ReflectionDetail({ row, shell }: ViewProps) {
                 </details>
               )),
               col<Lens>('state', 'State', (lens) => <StatusPill value={lens.workflow.state} />),
-              col<Lens>('producer', 'Contributor', (lens) =>
-                lens.producerId ? nameOf(lens.producerId) : 'Awaiting submission',
-              ),
+              col<Lens>('producer', 'Contributor', (lens) => nameOf(lens.producerId)),
               col<Lens>('report', 'Pinned report', (lens) =>
-                lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : 'Not submitted',
+                lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : null,
               ),
             ]}
           />
@@ -486,16 +437,15 @@ function ReflectionDetail({ row, shell }: ViewProps) {
             <KV
               rows={[
                 ['Report', <EvidenceLink artifact={wave.report} />],
-                [
+                !!wave.changeSpec && [
                   'Change specification',
-                  wave.changeSpec ? <EvidenceLink artifact={wave.changeSpec} /> : 'Not submitted',
+                  <EvidenceLink artifact={wave.changeSpec} />,
                 ],
               ]}
             />
           )}
         </>
       }
-      history={<Ladder id={wave.id} />}
       related={
         <>
           {wave.review && (
@@ -748,44 +698,36 @@ function ConsolidationDetail({ shell }: ViewProps) {
       back={<Link to={back}>← Reflections</Link>}
       kind="consolidation"
       name={record.name}
-      standing={`Workflow revision ${record.workflow.revision} · ${record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}`}
+      standing={record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}
       state={<StatusPill value={record.workflow.state} />}
-      act={<Guidance id={record.id} />}
+      act={<WaveGate id={record.id} />}
       title="Synthesis"
       content={
-        <>
-          <h3 className="ev-role">
-            {record.completion
-              ? 'Approved decisions and evidence'
-              : 'Submitted decisions and evidence'}
-          </h3>
-          {latest ? (
+        latest ? (
+          <>
+            <h3 className="ev-role">
+              {record.completion
+                ? 'Approved decisions and evidence'
+                : 'Submitted decisions and evidence'}
+            </h3>
             <Submission submission={latest} />
-          ) : (
-            <p className="faint">
-              The assigned producer has not submitted a consolidation report yet.
-            </p>
-          )}
-        </>
+          </>
+        ) : undefined
       }
       history={
-        <>
-          <Ladder id={record.id} />
-          {record.submissions.length > 1 && (
-            <details className="stack">
-              <summary>Previous submissions ({record.submissions.length - 1})</summary>
-              {record.submissions
-                .slice(0, -1)
-                .reverse()
-                .map((submission) => (
-                  <div className="stack" key={submission.id}>
-                    <h3 className="ev-role">Revision {submission.revision}</h3>
-                    <Submission submission={submission} />
-                  </div>
-                ))}
-            </details>
-          )}
-        </>
+        record.submissions.length > 1 ? (
+          <details className="stack">
+            <summary>Previous submissions ({record.submissions.length - 1})</summary>
+            {record.submissions
+              .slice(0, -1)
+              .reverse()
+              .map((submission) => (
+                <div className="stack" key={submission.id}>
+                  <Submission submission={submission} />
+                </div>
+              ))}
+          </details>
+        ) : undefined
       }
       related={
         <>

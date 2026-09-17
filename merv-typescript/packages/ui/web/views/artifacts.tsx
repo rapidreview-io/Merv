@@ -112,18 +112,15 @@ function Take({ artifact }: { artifact: Artifact }) {
 }
 
 /**
- * Only small files enter the inline content path. Large files download directly
- * from storage — except on the file's own record, where taking a copy is the one
- * thing a person does here and so belongs in that page's act, not in its content.
+ * Only small files enter the inline content path; a large one is taken from
+ * storage by the control that sits with the file it copies.
  */
 export function ArtifactBody({
   artifactId,
   metadata,
-  download = true,
 }: {
   artifactId: string;
   metadata?: Artifact;
-  download?: boolean;
 }) {
   const scope = useScopeVersion();
   const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
@@ -140,7 +137,7 @@ export function ArtifactBody({
       {artifact.size <= 2_000_000 && (
         <InlineArtifact key={`${scope}:${artifactId}`} artifactId={artifactId} />
       )}
-      {download && <Take artifact={artifact} />}
+      <Take artifact={artifact} />
     </div>
   );
 }
@@ -197,10 +194,8 @@ function ArtifactDetail({ row }: ViewProps) {
       back={<Link to={row.path}>← {row.label}</Link>}
       kind={row.view.kind}
       name={a.title}
-      // A file this storage cannot serve has no move to offer, so the slot goes.
-      act={a.downloadAvailable ? <Take artifact={a} /> : undefined}
       title="Document"
-      content={<ArtifactBody artifactId={a.id} metadata={a} download={false} />}
+      content={<ArtifactBody artifactId={a.id} metadata={a} />}
       details={
         <KV
           rows={[

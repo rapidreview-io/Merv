@@ -16,7 +16,6 @@ export type MapExperiment = {
   intent: string;
   ownerId: string;
   testedClaimIds: string[];
-  attempt: { index: number };
   workflow: Flow;
 };
 export type MapTask = {
@@ -51,7 +50,6 @@ export type MapReflection = {
   id: string;
   title: string;
   ownerId: string;
-  attempt: number;
   experimentIds: string[];
   workflow: Flow;
 };
@@ -85,6 +83,10 @@ export interface MapEdge {
   verb: string;
 }
 export const EM = '—';
+/** A record whose own state says it has stopped; everything else is still in flight. */
+const ENDED = ['complete', 'completed', 'abandoned', 'failed', 'done', 'approved'];
+export const running = (node: MapNode) =>
+  ['experiments', 'tasks', 'reflections'].includes(node.kind) && !ENDED.includes(node.state);
 /** The one state per kind that means moving right now; everything else is still. */
 const MOVING: Record<string, string> = {
   experiments: 'running',
@@ -162,7 +164,6 @@ export function graphOf(
       const to = `${experiments}/${id}`;
       object(1, 'experiments', id, item.name, workflow.updatedAt, to, workflow.state, [
         ['Intent', item.intent],
-        ['Attempt', item.attempt.index],
         ['Owner', who(item.ownerId)],
       ]);
       for (const claimId of item.testedClaimIds)
@@ -198,7 +199,6 @@ export function graphOf(
       const { id, workflow } = item;
       const to = `${reflections}/${id}`;
       object(3, 'reflections', id, item.title, workflow.updatedAt, to, workflow.state, [
-        ['Attempt', item.attempt],
         ['Owner', who(item.ownerId)],
         ['Updated', when(workflow.updatedAt)],
       ]);
@@ -211,7 +211,6 @@ export function graphOf(
     const id = `paper:${kind}`;
     const name = `§ ${kind[0]!.toUpperCase()}${kind.slice(1)}`;
     object(3, 'paper', id, name, current.updatedAt, paper!, published ? 'published' : 'draft', [
-      ['Revision', current.revision],
       ['Sections', current.sections.length],
       ['Updated', when(current.updatedAt)],
     ]);

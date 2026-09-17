@@ -14,6 +14,7 @@ import {
   type Caller,
   type ContextBuilder,
   type Data,
+  type ProcessGraph,
   type ReviewApplication,
   type Reviews,
   type Scope,
@@ -145,6 +146,10 @@ export class ExperimentService implements Experiments {
   }
   private open(): void {
     check(!this.closed, 'experiments_unavailable', 'Experiments is unavailable', 503);
+  }
+  async process(caller: Caller, id: string): Promise<ProcessGraph> {
+    this.open();
+    return await this.workflows.process(caller, id);
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
     const row = await tx.get<ExperimentRow>(

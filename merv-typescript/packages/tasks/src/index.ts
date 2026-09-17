@@ -12,6 +12,7 @@ import {
   newId,
   type Artifacts,
   type Caller,
+  type ProcessGraph,
   type Reviews,
   type Scope,
   type Sql,
@@ -990,6 +991,9 @@ DROP TABLE task_leases_backup;`,
       await this.scope.require(caller, 'read', tx);
       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
     });
+  }
+  async process(caller: Caller, taskId: string): Promise<ProcessGraph> {
+    return await this.workflows.process(caller, taskId);
   }
   async record(caller: Caller, taskId: string, transaction?: Transaction): Promise<TaskRecord> {
     return await inTransaction(this.state, transaction, async (tx) => {

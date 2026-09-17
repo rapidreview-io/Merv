@@ -3,7 +3,7 @@ import { useTool } from '../api';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
-  GateBox,
+  Gate,
   KV,
   LoadState,
   RecordPage,
@@ -18,11 +18,7 @@ import { ArtifactBody } from './artifacts';
 import { CriterionRows, type Review } from './reviews';
 import { WorkList } from './work';
 import type { ViewProps } from './index';
-import type {
-  WorkflowDecision,
-  WorkflowDependency,
-  WorkflowWorkStart,
-} from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 
 interface Confirmation {
   checkNumber: number;
@@ -41,29 +37,33 @@ export interface Task {
   deliveryIds: string[];
   reviewId: string | null;
   workflow: { state: string; revision: number; updatedAt: string };
-  guidance: WorkflowDecision;
   failure: { reason: string; actorId: string; createdAt: string } | null;
   dependencies: WorkflowDependency[];
   dependents: WorkflowDependency[];
-  workStarts: WorkflowWorkStart[];
   createdAt: string;
 }
 
+/** The record and the gate it stands at arrive together, from the row that owns them. */
 function TaskDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
-  const task = useTool<Task>('task.get', { taskId: id }, { every: 8000 });
+  const record = useTool<{ task: Task; process: ProcessGraph }>(
+    'ui.read',
+    { rowId: row.id, params: { id } },
+    { every: 8000 },
+  );
   const nameOf = useActorNames();
   const artifacts = useArtifacts();
-  const review = useTool<Review>(task.data?.reviewId ? 'review.get' : null, {
-    reviewId: task.data?.reviewId ?? '',
+  const t = record.data?.task;
+  const review = useTool<Review>(t?.reviewId ? 'review.get' : null, {
+    reviewId: t?.reviewId ?? '',
   });
-  if (!task.data)
+  const process = record.data?.process;
+  if (!t)
     return (
       <div className="page-stage">
-        <LoadState {...task} back={{ to: WORK.path, label: 'Work' }} />
+        <LoadState {...record} back={{ to: WORK.path, label: 'Work' }} />
       </div>
     );
-  const t = task.data;
   return (
     <RecordPage
       back={<Link to={WORK.path}>← Work</Link>}
@@ -71,7 +71,7 @@ function TaskDetail({ row }: ViewProps) {
       name={t.title}
       standing={t.goal}
       state={<StatusPill value={t.workflow.state} />}
-      act={<GateBox decision={t.guidance} />}
+      act={process && !process.terminal ? <Gate graph={process} /> : undefined}
       title="Brief"
       content={
         <>
@@ -82,7 +82,9 @@ function TaskDetail({ row }: ViewProps) {
               <li key={i}>{check}</li>
             ))}
           </ol>
-          <h3 className="ev-role">Deliveries</h3>
+          {(t.deliveryConfirmations?.length > 0 || t.deliveryIds.length > 0) && (
+            <h3 className="ev-role">Deliveries</h3>
+          )}
           {t.deliveryConfirmations?.length > 0 && (
             <Table
               rows={t.deliveryConfirmations}
@@ -101,110 +103,58 @@ function TaskDetail({ row }: ViewProps) {
                 )),
                 // A file is named by its title; one this page cannot name is left out.
                 col<Confirmation>('evidence', 'Evidence', (item) =>
-                  item.evidenceIds.length
-                    ? item.evidenceIds.map((id) => (
-                        <div key={id}>
-                          <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
-                        </div>
-                      ))
-                    : 'None supplied',
+                  item.evidenceIds.map((id) => (
+                    <div key={id}>
+                      <Link to={`/artifacts/${id}`}>{artifacts.get(id)?.title}</Link>
+                    </div>
+                  )),
                 ),
               ]}
             />
           )}
-          {t.deliveryIds.length === 0 && <div className="empty">Nothing delivered yet.</div>}
           {t.deliveryIds.map((artifactId) => (
             <ArtifactBody key={artifactId} artifactId={artifactId} />
           ))}
         </>
       }
       history={
-        <>
-          {t.failure && (
-            <>
-              <h3 className="ev-role">Why this task ended</h3>
-              <p style={{ whiteSpace: 'pre-wrap' }}>{t.failure.reason}</p>
-              <p className="muted">
-                Closed by {nameOf(t.failure.actorId)} on {stamp(t.failure.createdAt)}
-              </p>
-            </>
-          )}
-          <WorkStarts
-            starts={t.workStarts ?? []}
-            current={t.guidance.workStart}
-            terminal={t.guidance.terminal}
-            nameOf={nameOf}
-          />
-        </>
+        t.failure ? (
+          <>
+            <h3 className="ev-role">Why this task ended</h3>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{t.failure.reason}</p>
+            <p className="muted">
+              {[nameOf(t.failure.actorId), stamp(t.failure.createdAt)].filter(Boolean).join(' · ')}
+            </p>
+          </>
+        ) : undefined
       }
       related={
-        <>
-          <WorkRelations title="Waits on" items={t.dependencies ?? []} taskPath={row.path} />
-          <WorkRelations title="Unblocks" items={t.dependents ?? []} taskPath={row.path} />
-          <h3 className="ev-role">Review</h3>
-          {!t.reviewId && <div className="empty">No review has been requested.</div>}
-          {t.reviewId && !review.data && (
-            <LoadState loading={review.loading} error={review.error} />
-          )}
-          {review.data && <CriterionRows review={review.data} head />}
-        </>
+        t.dependencies?.length || t.dependents?.length || t.reviewId ? (
+          <>
+            <WorkRelations title="Waits on" items={t.dependencies ?? []} taskPath={row.path} />
+            <WorkRelations title="Unblocks" items={t.dependents ?? []} taskPath={row.path} />
+            {t.reviewId && !review.data && (
+              <LoadState loading={review.loading} error={review.error} />
+            )}
+            {review.data && (
+              <>
+                <h3 className="ev-role">Review</h3>
+                <CriterionRows review={review.data} head />
+              </>
+            )}
+          </>
+        ) : undefined
       }
       details={
         <KV
           rows={[
             ['Producer', nameOf(t.producerId)],
-            ['Revision', String(t.workflow.revision)],
             ['Created', stamp(t.createdAt)],
             ['Updated', stamp(t.workflow.updatedAt)],
           ]}
         />
       }
     />
-  );
-}
-
-function WorkStarts({
-  starts,
-  current,
-  terminal,
-  nameOf,
-}: {
-  starts: WorkflowWorkStart[];
-  current: WorkflowWorkStart | null;
-  terminal: boolean;
-  nameOf: ReturnType<typeof useActorNames>;
-}) {
-  const ordered = [...starts].sort((left, right) => left.revision - right.revision);
-  const describe = (start: WorkflowWorkStart) =>
-    [stamp(start.startedAt), nameOf(start.actorId)].filter(Boolean).join(' by ');
-  return (
-    <>
-      <h3 className="ev-role">Work starts</h3>
-      <KV
-        rows={[
-          ['First recorded start', ordered[0] ? describe(ordered[0]) : 'No start recorded'],
-          [
-            'Current revision',
-            current
-              ? describe(current)
-              : terminal
-                ? 'No active assignment'
-                : 'No start recorded at this revision',
-          ],
-        ]}
-      />
-      {ordered.length > 0 && (
-        <Table
-          rows={ordered}
-          keyOf={(start) => String(start.revision)}
-          columns={[
-            col<WorkflowWorkStart>('revision', 'Revision', (start) => start.revision),
-            col<WorkflowWorkStart>('state', 'Stage', (start) => <StatusPill value={start.state} />),
-            col<WorkflowWorkStart>('started', 'First began work', describe),
-          ]}
-        />
-      )}
-    </>
   );
 }
 

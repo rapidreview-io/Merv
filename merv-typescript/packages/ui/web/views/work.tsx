@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
@@ -27,7 +27,6 @@ import type { Task } from './tasks';
 const ids = (value: string) => value.split(/\s+/).filter(Boolean);
 /** Open work, in the union of the two kinds' own words for having stopped. */
 const isOpen = (state: string) => !['done', 'failed', 'complete', 'abandoned'].includes(state);
-const phrase = (...parts: (string | undefined)[]) => parts.filter(Boolean).join(' · ');
 
 /** One row of the wave, whichever kind of record it is. */
 interface Item {
@@ -39,7 +38,6 @@ interface Item {
   at: string;
   mine: boolean;
   outcome: string | null;
-  meta: ReactNode;
   named: boolean;
   labels: (string | undefined)[];
   owner: string;
@@ -163,7 +161,6 @@ export function WorkList({ shell }: { shell: ShellData }) {
         at: task.workflow.updatedAt,
         mine: task.producerId === actor.id,
         outcome: task.failure?.reason ?? null,
-        meta: nameOf(task.producerId),
         named: inCycle.has(task.id),
         labels: [task.title, task.goal, nameOf(task.producerId)],
         owner: task.producerId,
@@ -177,7 +174,6 @@ export function WorkList({ shell }: { shell: ShellData }) {
         at: item.workflow.updatedAt,
         mine: item.ownerId === actor.id,
         outcome: item.conclusion,
-        meta: phrase(`attempt ${item.attempt.index}`, nameOf(item.ownerId)),
         named: inCycle.has(item.id),
         labels: [item.name, item.intent, nameOf(item.ownerId)],
         owner: item.ownerId,
@@ -255,6 +251,7 @@ export function WorkList({ shell }: { shell: ShellData }) {
       line={(item) => {
         const review = newestReview(reviews.data, item.id);
         const said = reviewClause(review, nameOf(review?.reviewerId));
+        const who = nameOf(item.owner);
         return {
           kind: item.kind,
           name: (
@@ -269,16 +266,15 @@ export function WorkList({ shell }: { shell: ShellData }) {
               review={
                 said && review && reviewsPath
                   ? { ...said, to: `${reviewsPath}/${review.id}` }
-                  : (said ?? { word: 'not reviewed', absent: true })
+                  : (said ?? undefined)
               }
               outcome={
-                firstSentence(item.outcome)
-                  ? { detail: firstSentence(item.outcome) }
-                  : { word: 'no outcome recorded', absent: true }
+                firstSentence(item.outcome) ? { detail: firstSentence(item.outcome) } : undefined
               }
               meta={
                 <>
-                  {item.meta} · <Ago at={item.at} />
+                  {who && `${who} · `}
+                  <Ago at={item.at} />
                 </>
               }
             />

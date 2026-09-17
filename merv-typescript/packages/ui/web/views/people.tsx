@@ -5,12 +5,17 @@ import { term } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 
-/** Actor names for ids; operators get names, everyone else gets short ids. */
+/** A directory entry whose name is an identifier names nobody, so the page says nothing. */
+const IDENTIFIER = /[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/;
+/** Actor names for ids; a name nobody wrote is not one. */
 export function useActorNames() {
   const { actor } = useSession();
   const { data } = useTool<Actor[]>(actor.role === 'operator' ? 'actor.list' : null);
   const names = new Map((data ?? []).map((actor) => [actor.id, actor.name]));
-  return (id: string | null | undefined) => (id ? names.get(id) : undefined);
+  return (id: string | null | undefined) => {
+    const name = id ? names.get(id) : undefined;
+    return name && !IDENTIFIER.test(name) ? name : undefined;
+  };
 }
 
 type Role = Actor['role'];

@@ -1,18 +1,17 @@
 import { useRef, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
-import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
   Ago,
   Evidence,
-  GateBox,
+  Gate,
   KV,
   LoadState,
   RecordPage,
-  StatusPill,
   cx,
   relativeTime,
   stamp,
@@ -20,11 +19,12 @@ import {
   words,
 } from '../components';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
-import { CriterionRows, type Review } from './reviews';
+import { type Review } from './reviews';
 import { useActorNames } from './people';
 import { WorkList } from './work';
+import type { ViewProps } from './index';
 
-/** The domain's own order. A role with nothing in it is a fact, so it keeps its line. */
+/** The domain's own order; a role with nothing retained under it is left out. */
 const ROLES = ['plan', 'result', 'report', 'exhibit'] as const;
 const STAGE = { design: 'Design review', results: 'Results review' };
 
@@ -46,11 +46,12 @@ function EvidenceFiles({
   if (retained.length) bands.push(['other retained files', retained]);
   return (
     <div className="stack">
-      {bands.map(([role, rows]) => (
-        <div key={role}>
-          <span className="ev-role">{role}</span>
-          {rows.length ? (
-            rows.map((item) => (
+      {bands
+        .filter(([, rows]) => rows.length)
+        .map(([role, rows]) => (
+          <div key={role}>
+            <span className="ev-role">{role}</span>
+            {rows.map((item) => (
               <Evidence
                 key={item.id}
                 artifactId={item.artifactId}
@@ -59,12 +60,9 @@ function EvidenceFiles({
                   item.systemGenerated ? ' · written by the system' : ''
                 }`}
               />
-            ))
-          ) : (
-            <p className="empty">no {role} attached</p>
-          )}
-        </div>
-      ))}
+            ))}
+          </div>
+        ))}
       {figures.length > 0 && (
         <div>
           <span className="ev-role">figures</span>
@@ -80,8 +78,8 @@ function EvidenceFiles({
 /**
  * The same three facts a row of the wave states, in the same grammar: what the
  * machinery did, what an independent reader decided, what the science came to.
- * None is derived from another — a passing verdict is not an outcome — and where
- * the reviewed revision is behind the record the line states the drift.
+ * None is derived from another — a passing verdict is not an outcome — and a fact
+ * the record does not carry yet is left out rather than named as missing.
  */
 function StandingLine({
   experiment: e,
@@ -98,216 +96,50 @@ function StandingLine({
   return (
     <ThreeStates
       execution={e.workflow.state}
-      review={said ?? { word: 'none requested yet', absent: true }}
-      outcome={
-        firstSentence(e.conclusion)
-          ? { detail: firstSentence(e.conclusion) }
-          : { word: 'no conclusion yet', absent: true }
-      }
-      meta={[
-        said && stage,
-        review &&
-          review.subjectRevision !== e.workflow.revision &&
-          `reviewed at revision ${review.subjectRevision}; now revision ${e.workflow.revision}`,
-      ]
-        .filter(Boolean)
-        .join(' · ')}
+      review={said ?? undefined}
+      outcome={firstSentence(e.conclusion) ? { detail: firstSentence(e.conclusion) } : undefined}
+      meta={said ? stage : undefined}
     />
   );
 }
 
 /**
- * Submission, criticism, correction, re-review as one chain read top to bottom.
- * Nothing here marks an objection answered: an answer is a later round's finding on
- * a criterion of identical wording, and where the wording changed the line says the
- * check was not re-examined rather than inventing a closure the record never made.
+ * Every round the record sealed, newest first: the gate it was read at, the word
+ * it came back with, and when. The round is the way to its own verdict, where the
+ * criteria and the reviewer's findings are already written down.
  */
-function RoundsSpine({
-  experiment: e,
-  reviews,
-  nameOf,
-}: {
-  experiment: Experiment;
-  reviews: Review[];
-  nameOf(id: string | null | undefined): string | undefined;
-}) {
-  const rounds = e.submissions.map((submission, index) => ({
-    submission,
-    review: reviews.find((item) => item.id === submission.reviewId),
-    index,
-  }));
-  const answerTo = (from: number, text: string) => {
-    for (const later of rounds.slice(from + 1)) {
-      const at = later.review?.criteria.indexOf(text) ?? -1;
-      const found = later.review?.findings?.find((item) => item.criterionNumber === at + 1);
-      if (at >= 0 && found)
-        return `round ${later.submission.round}: ${words(found.status)} — ${found.notes}`;
-    }
-    return 'not re-examined under the same wording.';
-  };
-  // A recovery note is the only feedback with no review behind it; the rest is a
-  // verdict already read on the round that produced it.
-  const carried = e.attempt.feedback.filter(
-    (note) => !rounds.some((round) => round.review?.notes === note),
-  );
+function Rounds({ experiment: e, reviews }: { experiment: Experiment; reviews: Review[] }) {
+  if (!e.submissions.length) return null;
   return (
     <>
       <h3 className="ev-role">Rounds</h3>
-      {carried.map((note) => (
-        <p className="muted" key={note}>
-          Carried into attempt {e.attempt.index}: {note}
-        </p>
-      ))}
-      {!rounds.length && <p className="empty">Nothing has been submitted for review yet.</p>}
-      {[...rounds].reverse().map(({ submission: s, review, index }) => {
-        const objections =
-          review?.findings?.filter((item) => ['not_met', 'not_verified'].includes(item.status)) ??
-          [];
-        const next = rounds[index + 1]?.submission;
+      {[...e.submissions].reverse().map((s) => {
+        const review = reviews.find((item) => item.id === s.reviewId);
+        const word = review?.verdict ?? review?.status;
         return (
-          <div className="round" key={s.id}>
-            <p title={`Manifest ${s.manifestHash}`}>
-              {STAGE[s.stage]}, attempt {s.attemptIndex}, round {s.round}, revision{' '}
-              {s.subjectRevision} ·{' '}
-              <span className={cx('crit-word', review?.verdict && `crit-word--${review.verdict}`)}>
-                {words(review?.verdict ?? review?.status ?? 'review not readable')}
+          <p key={s.id}>
+            <Link to={`/reviews/${s.reviewId}`}>{STAGE[s.stage]}</Link>{' '}
+            {word && (
+              <span className={cx('crit-word', review?.verdict && `crit-word--${word}`)}>
+                {words(word)}
               </span>
-              {review?.returnTo ? `returned to ${words(review.returnTo)}` : ''}
-            </p>
-            <p className="muted">
-              {nameOf(s.producerId) ? `Submitted by ${nameOf(s.producerId)} ` : 'Submitted '}
-              <span title={s.createdAt}>{relativeTime(s.createdAt)}</span> ·{' '}
-              {!review?.reviewerId
-                ? 'no reviewer yet'
-                : nameOf(review.reviewerId)
-                  ? `read by ${nameOf(review.reviewerId)}`
-                  : 'read'}
-              {e.attempt.feedbackReviewIds.includes(s.reviewId)
-                ? ` · kept as context for attempt ${e.attempt.index}`
-                : ''}
-            </p>
-            {review?.synopsis && <p className="record-prose">{review.synopsis}</p>}
-            {review && !!objections.length && <CriterionRows review={review} compact />}
-            {objections.map((item) => (
-              <p className="muted" key={item.criterionNumber}>
-                Criterion {item.criterionNumber} ·{' '}
-                {answerTo(index, review?.criteria[item.criterionNumber - 1] ?? '')}
-              </p>
-            ))}
-            {next && review?.verdict && review.verdict !== 'pass' && (
-              <p className="muted">
-                Corrected at revision {next.subjectRevision}, round {next.round}.
-              </p>
             )}
-          </div>
+            <Ago at={s.createdAt} className="muted" />
+          </p>
         );
       })}
     </>
   );
 }
 
-/**
- * The machinery, kept out of the science: the program's own states in reading order,
- * then one lane per attempt over its revision interval, carrying the gates the record
- * stepped through and the rounds sealed inside it. Nothing here is authored — it is
- * the definition and the record, derived on read.
- */
-function ProcessTrack({
-  graph,
+function ExperimentRecord({
   experiment: e,
-  reviews,
-}: {
-  graph: ProcessGraph;
-  experiment: Experiment;
-  reviews: Review[];
-}) {
-  const gates = graph.edges.flatMap((edge) =>
-    edge.traversals.map((crossing) => ({
-      key: `${edge.action}-${crossing.revision}`,
-      revision: crossing.revision,
-      line: `${words(edge.action)} · ${words(edge.from)} → ${words(edge.to)}`,
-      when: crossing.at,
-    })),
-  );
-  const sealed = (index: number) =>
-    e.submissions
-      .filter((item) => item.attemptIndex === index)
-      .map((item) => {
-        const review = reviews.find((entry) => entry.id === item.reviewId);
-        return {
-          key: item.id,
-          revision: item.subjectRevision,
-          line: `${STAGE[item.stage]} round ${item.round} sealed · ${words(
-            review?.verdict ?? review?.status ?? 'verdict not readable',
-          )}${review?.returnTo ? `, returned to ${words(review.returnTo)}` : ''}`,
-          when: item.createdAt,
-        };
-      });
-  return (
-    <>
-      <h3 className="ev-role">How it got here</h3>
-      <ol className="track">
-        {graph.nodes.map((node) => (
-          <li
-            key={node.state}
-            className={cx(
-              'track-step',
-              node.current && 'track-step--here',
-              !node.firstEnteredAt && !node.current && 'track-step--unreached',
-            )}
-          >
-            <span>{words(node.state)}</span>
-            <span className="track-when">
-              {node.entries > 1
-                ? `entered ${node.entries} times`
-                : node.firstEnteredAt
-                  ? relativeTime(node.firstEnteredAt)
-                  : 'not entered'}
-            </span>
-          </li>
-        ))}
-      </ol>
-      {e.attempts.map((attempt) => (
-        <div className="lane" key={attempt.index}>
-          <p className="lane-head">
-            Attempt {attempt.index} · revisions {attempt.startedRevision}–
-            {attempt.endedRevision ?? 'current'}
-            {attempt.previousIndex !== null &&
-              ` · re-entered from attempt ${attempt.previousIndex}`}
-          </p>
-          {[
-            // Attempt intervals are disjoint, so the gate that ended one attempt opens
-            // the lane of the attempt it created — which is what a re-entry looks like.
-            ...gates.filter(
-              (gate) =>
-                gate.revision >= attempt.startedRevision &&
-                gate.revision <= (attempt.endedRevision ?? graph.revision),
-            ),
-            ...sealed(attempt.index),
-          ]
-            .sort((a, b) => a.revision - b.revision)
-            .map((step) => (
-              <p className="lane-step" key={step.key}>
-                <span className="lane-rev tabular">r{step.revision}</span> {step.line}{' '}
-                <Ago at={step.when} className="muted" />
-              </p>
-            ))}
-        </div>
-      ))}
-    </>
-  );
-}
-
-export function ExperimentRecord({
-  experiment: e,
-  guidance,
   process,
   reviews,
   exhibit,
   nameOf,
 }: {
   experiment: Experiment;
-  guidance?: WorkflowDecision;
   process?: ProcessGraph;
   reviews?: Review[];
   exhibit?: ExperimentExhibit;
@@ -319,13 +151,11 @@ export function ExperimentRecord({
   const mine = (reviews ?? []).filter((review) => review.subjectId === e.id);
   const newest = newestReview(mine, e.id);
   const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
-  const approved = e.submissions.find(
-    (submission) => submission.id === e.attempt.approvedSubmissionId,
-  );
   const currentEvidence = e.evidence.filter(
     (item) => item.current && item.attemptIndex === e.attempt.index,
   );
-  const decision = guidance?.revision === e.workflow.revision ? guidance : undefined;
+  const figures = e.submissions.at(-1)?.figureIds ?? [];
+  const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
   const ended = ['failed', 'abandoned'].includes(e.workflow.state);
   return (
     <RecordPage
@@ -343,41 +173,33 @@ export function ExperimentRecord({
           />
         </>
       }
-      act={decision && !decision.terminal ? <GateBox decision={decision} /> : undefined}
+      act={process && !process.terminal ? <Gate graph={process} /> : undefined}
       title="Evidence"
       content={
-        <>
-          {approved ? (
-            <p className="muted">
-              Sealed design, attempt {approved.attemptIndex} ·{' '}
-              <Link to={`/reviews/${approved.reviewId}`}>its round</Link>
-            </p>
-          ) : (
-            <p className="muted">No plan has passed design review.</p>
-          )}
-          <EvidenceFiles
-            evidence={currentEvidence}
-            figures={e.submissions.at(-1)?.figureIds ?? []}
-          />
-          {exhibit && exhibit.attemptIndex === e.attempt.index && (
-            <figure className="stack">
-              <pre className="doc doc--inline">{exhibit.content}</pre>
-              <figcaption className="muted">{exhibit.path}</figcaption>
-            </figure>
-          )}
-        </>
+        currentEvidence.length || figures.length || shown ? (
+          <>
+            <EvidenceFiles evidence={currentEvidence} figures={figures} />
+            {shown && (
+              <figure className="stack">
+                <pre className="doc doc--inline">{shown.content}</pre>
+                <figcaption className="muted">{shown.path}</figcaption>
+              </figure>
+            )}
+          </>
+        ) : undefined
       }
       history={
-        <>
-          <h3 className="ev-role">{ended ? 'Why this experiment ended' : 'Conclusion'}</h3>
-          {e.conclusion ? (
-            <p className="record-prose">{e.conclusion}</p>
-          ) : (
-            <p className="empty">No conclusion recorded yet.</p>
-          )}
-          <RoundsSpine experiment={e} reviews={mine} nameOf={nameOf} />
-          {process && <ProcessTrack graph={process} experiment={e} reviews={mine} />}
-        </>
+        e.conclusion || e.submissions.length ? (
+          <>
+            {e.conclusion && (
+              <>
+                <h3 className="ev-role">{ended ? 'Why this experiment ended' : 'Conclusion'}</h3>
+                <p className="record-prose">{e.conclusion}</p>
+              </>
+            )}
+            <Rounds experiment={e} reviews={mine} />
+          </>
+        ) : undefined
       }
       related={
         e.testedClaimIds.length ? (
@@ -398,15 +220,7 @@ export function ExperimentRecord({
           <KV
             rows={[
               ['Owner', nameOf(e.ownerId)],
-              ['Revision', String(e.workflow.revision)],
               ['Created', stamp(e.createdAt)],
-              ...e.attempts.map((attempt): [string, ReactNode] => [
-                `Attempt ${attempt.index}`,
-                `revisions ${attempt.startedRevision}–${attempt.endedRevision ?? 'current'}, ` +
-                  (attempt.startedAt
-                    ? `first execution ${stamp(attempt.startedAt)}`
-                    : 'not started'),
-              ]),
             ]}
           />
         </>
@@ -415,25 +229,20 @@ export function ExperimentRecord({
   );
 }
 
-function ExperimentDetail() {
+/** The record and the gate it stands at arrive together, from the row that owns them. */
+function ExperimentDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
   // Whether the record can still change arrives with the record itself, so the
   // first read polls and every read stops once a settled state has come back.
   const settled = useRef(false);
-  const experiment = useTool<Experiment>(
-    'experiment.get_state',
-    { experimentId: id },
+  const record = useTool<{ experiment: Experiment; process: ProcessGraph }>(
+    'ui.read',
+    { rowId: row.id, params: { id } },
     { every: settled.current ? undefined : 8000 },
   );
-  const state = experiment.data?.workflow.state;
+  const state = record.data?.experiment.workflow.state;
   settled.current = !!state && ['complete', 'abandoned', 'failed'].includes(state);
   const live = settled.current ? undefined : 8000;
-  const guidance = useTool<WorkflowDecision>(
-    'workflow.status_and_next',
-    { instanceId: id },
-    { every: live },
-  );
-  const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: live });
   const reviews = useTool<Review[]>('review.list', {}, { every: live });
   const exhibit = useTool<ExperimentExhibit>(
     state === 'running' ? 'experiment.exhibit' : null,
@@ -441,23 +250,20 @@ function ExperimentDetail() {
     { every: live },
   );
   const nameOf = useActorNames();
-  if (!experiment.data)
+  if (!record.data)
     return (
       <div className="page-stage">
         <LoadState
-          loading={experiment.loading}
-          error={
-            experiment.error ?? guidance.error ?? process.error ?? reviews.error ?? exhibit.error
-          }
+          loading={record.loading}
+          error={record.error ?? reviews.error ?? exhibit.error}
           back={{ to: WORK.path, label: 'Work' }}
         />
       </div>
     );
   return (
     <ExperimentRecord
-      experiment={experiment.data}
-      guidance={guidance.data}
-      process={process.data}
+      experiment={record.data.experiment}
+      process={record.data.process}
       reviews={reviews.data}
       exhibit={exhibit.data}
       nameOf={nameOf}

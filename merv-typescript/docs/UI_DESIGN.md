@@ -151,3 +151,14 @@ The founder, on the Code sketch: "too much text on the code page. Get rid of the
 ## ⌘K removed (founder ruling, 2026-09-17)
 
 The founder: "remove the command K feature." The palette of wave 5 is gone: no ⌘K, no Search line in the rail, no Actions-here registry. Navigation is the rail, the lists, the records and Now; nothing else.
+
+## Structure over prose (founder ruling, 2026-09-17)
+
+The founder, on the Work page and an experiment record: "we have workflows, so we can always just show the next gate of the workflow. Remove the ids of attempts or other things; we don't need them to clog the visuals."
+
+- **Act is a ladder, not a paragraph.** Every record with a workflow instance shows its program's own states in order, each marked _done_, _here_ or _next_, with the time it was entered; the one control that acts stands beside it. The rungs and the marks come from `workflow.process`, which the row's own `ui.read` serves with the record (`packages/experiments/src/ui.ts`, `packages/tasks/src/ui.ts`), so a record page never asks a second time for its gate. A blocker earns one line only where its code is `input_required`; a role restriction and a pending prerequisite say nothing. Unsettled prerequisites keep their names and state words.
+- **No numbers that name a thing.** Attempt, round, revision and request numbers leave the pages entirely, in list rows, standing lines, history, details and property cards alike; they stay in routes and in the arguments of controls. A directory name that is only an identifier names nobody, so the page says nothing rather than printing it.
+- **Absence renders nothing.** No "no result attached", "not reviewed", "no outcome recorded" or "no conclusion recorded yet": a section, a clause or a cell with nothing in it is not drawn.
+- **One line per round.** A review round reads as the gate it was read at, the word it came back with, and when — and is the link to its own verdict.
+- **The paper is sections, not a toolbar.** The paper has no Act block: each section's `Edit <section name>` sits beside its own heading, `New section` beside its document's, and the citation controls in the References block. The skeleton of four documents renders whether or not anything is written yet, Problem & scope first. A file record likewise has no Act: `Download file` sits with the file it copies.
+- **Home leads with what is running.** The map opens on one line per live experiment, task and reflection — name and the state it stands at — above the Now strip and the planes. The paper stands with Home and Now in the rail, above the section groups.

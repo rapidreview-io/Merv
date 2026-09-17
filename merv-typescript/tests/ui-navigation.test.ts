@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildNavigation } from '../packages/ui/web/navigation.js';
+import { buildNavigation, topRows } from '../packages/ui/web/navigation.js';
 import type { Row } from '../packages/ui/web/shell-types.js';
 
 const row = (id: string, kind: string, group: string, order: number, path = `/${id}`): Row => ({
@@ -24,6 +24,7 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     row('trials', 'experiments', 'work', 13),
     row('verdicts', 'reviews', 'work', 14),
     row('claims', 'claims', 'work', 15),
+    row('paper', 'paper', 'work', 16),
     row('reflections', 'reflections', 'work', 35),
     row('feed', 'feed', 'activity', 30),
   ];
@@ -38,8 +39,21 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     sections.find((section) => section.id === 'work')!.rows.map((entry) => entry.id),
     ['work', 'reflections'],
   );
+  // The paper stands with Home and Now, so it is not one of the sections' rows.
+  assert.deepEqual(
+    topRows(rows).map((entry) => entry.id),
+    ['paper'],
+  );
   const shown = sections.flatMap((section) => section.rows.map((entry) => entry.id));
-  for (const hidden of ['research-provider', 'jobs', 'trials', 'verdicts', 'people', 'connections'])
+  for (const hidden of [
+    'research-provider',
+    'jobs',
+    'trials',
+    'verdicts',
+    'people',
+    'connections',
+    'paper',
+  ])
     assert.ok(!shown.includes(hidden), `${hidden} is registered but not a place`);
   // Every row the rail does show is the registration itself, untouched.
   for (const entry of sections.flatMap((section) => section.rows))

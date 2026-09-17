@@ -13,6 +13,7 @@ import {
   EM,
   graphOf,
   newest,
+  running,
   tally,
   type MapClaim,
   type MapCycle,
@@ -311,6 +312,29 @@ function useGitHub(enabled: boolean) {
   return status;
 }
 
+/**
+ * Everything in flight, first: one line per live record and the gate it stands
+ * at, which is the rung its own ladder marks. The record's state and nothing else.
+ */
+function Running({ nodes }: { nodes: MapNode[] }) {
+  if (!nodes.length) return null;
+  return (
+    <ul className="rows map-running">
+      {nodes.map((node) => (
+        <li className="row" key={node.id}>
+          <Link className="row-link" to={node.to}>
+            <span className="row-name">
+              <KindLabel kind={node.kind} />
+              <strong>{node.name}</strong>
+            </span>
+            <StatusPill value={node.state} />
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Whose move the open work is, in three numbers, one click from the line itself. */
 function Now({ standing }: { standing: Standing }) {
   const { yours, agent, nobody } = standing.lines;
@@ -452,6 +476,7 @@ export function MapView({ shell }: { shell: ShellData }) {
           <span className="mono">({broken.error.code})</span>
         </p>
       )}
+      <Running nodes={newest(pool.filter(running), (node) => node.at)} />
       <Now standing={standing} />
       <div className="map-band">
         <Plane

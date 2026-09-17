@@ -375,7 +375,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       section.rows.map((entry) => entry.label),
     ]),
     [
-      ['Research', ['Claims', 'Paper', 'Files']],
+      ['Research', ['Claims', 'Files']],
       ['Work', ['Work', 'Reflections']],
       ['Agents', ['Sessions', 'Code']],
       ['Feed', ['Feed']],
@@ -388,6 +388,9 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'code')?.view, { kind: 'code' });
   assert.equal(shell.rows.find((entry) => entry.id === 'code')?.readable, true);
+  // A record page reads its record and the gate it stands at in one answer.
+  for (const id of ['tasks', 'experiments'])
+    assert.equal(shell.rows.find((entry) => entry.id === id)?.readable, true);
   assert.deepEqual((await tool('ui.read', operator, { rowId: 'code' })).body.result, {
     operations: [],
     proposals: [],
@@ -409,7 +412,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(readerShell.find((entry) => entry.id === 'people')?.status, {});
   assert.ok(readerShell.every((entry) => entry.status.state !== 'unavailable'));
   assert.equal(
-    (await tool('ui.read', operator, { rowId: 'tasks' })).body.error.code,
+    (await tool('ui.read', operator, { rowId: 'claims' })).body.error.code,
     'row_unreadable',
   );
   assert.equal((await tool('ui.read', operator, { rowId: 'absent' })).status, 404);
