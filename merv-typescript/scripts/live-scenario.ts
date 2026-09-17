@@ -693,11 +693,12 @@ async function main(options: Options) {
       try {
         response = await fetch(`${baseUrl}${path}`, init);
       } catch (error) {
-        if (attempt >= 4 || !(error instanceof TypeError)) throw error;
+        if (attempt >= 7 || !(error instanceof TypeError)) throw error;
         return await again();
       }
-      // A 5xx (a database timeout under load, a gateway hiccup) is retried the same way.
-      return response.status >= 500 && attempt < 4 ? await again() : response;
+      // A 5xx (a database timeout under load, a release swapping the server) is retried
+      // the same way; seven attempts span about a minute and a half.
+      return response.status >= 500 && attempt < 7 ? await again() : response;
     };
     const request = async (path: string, body: unknown, method = 'POST'): Promise<any> => {
       const response = await send(path, {
