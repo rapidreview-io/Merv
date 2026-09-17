@@ -58,6 +58,9 @@ export function githubConfig(env = process.env): GitHubConfig | undefined {
 }
 export const randomSecret = () => randomBytes(32).toString('base64url');
 export const hashSecret = (value: string) => createHash('sha256').update(value).digest('base64url');
+// 2026-03-10 removes merge_commit_sha, which durable merge recovery needs.
+// Keep the supported 2022 contract until that recovery path is migrated.
+const githubApiVersion = '2022-11-28';
 const id = z.number().int().positive().safe();
 const userSchema = z.object({ id, login: z.string().regex(/^[A-Za-z0-9-]{1,100}$/) });
 const repositorySchema = z.object({
@@ -313,7 +316,7 @@ export class GitHubClient {
         headers: {
           accept: 'application/vnd.github+json',
           'user-agent': 'merv-code',
-          'x-github-api-version': '2026-03-10',
+          'x-github-api-version': githubApiVersion,
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(body ? { 'content-type': 'application/json' } : {}),
         },
@@ -407,7 +410,7 @@ export class GitHubClient {
           headers: {
             accept: 'application/vnd.github+json',
             'content-type': 'application/json',
-            'x-github-api-version': '2026-03-10',
+            'x-github-api-version': githubApiVersion,
             'user-agent': 'merv-code',
             authorization: `Basic ${Buffer.from(`${this.#config.clientId}:${this.#config.clientSecret}`).toString('base64')}`,
           },

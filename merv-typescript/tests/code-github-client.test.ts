@@ -75,6 +75,21 @@ test('GitHub PR writes use fixed routes, no force updates, and an exact-head mer
   assert.ok(calls.every((c) => !JSON.stringify(c).includes('private-test-token')));
 });
 
+test('the pinned API contract preserves the merge receipt needed after a lost merge reply', async (t) => {
+  const api = client((_url, init) => {
+    const version = new Headers(init.headers).get('x-github-api-version');
+    const response = { ...pull, state: 'closed', merged: true };
+    // GitHub 2026-03-10 removes this property from every pull response.
+    return version === '2022-11-28'
+      ? { ...response, merge_commit_sha: merged }
+      : { ...response, merge_commit_sha: undefined };
+  });
+  t.after(() => api.close());
+  const result = await api.pull('private-test-token', 'example/research', 3);
+  assert.equal(result.merged, true);
+  assert.equal(result.mergeCommitSha, merged);
+});
+
 test('PR inspection preserves missing binary patches and distinguishes no CI statuses', async (t) => {
   const api = client((url) => {
     if (url.pathname.endsWith('/files'))

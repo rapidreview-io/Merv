@@ -35,7 +35,23 @@ The App signing key was installed on 2026-09-17 at 05:00 UTC after the user gene
 
 Activation preserved the newer UI release already deployed by the parallel session: `merv-typescript:20260917T025401Z-50222607-320155bb6ea2`. All 54 plugins were active after restarting that same image. The actual compiled production GitHub client then minted a token restricted to `rapidreview-io/research-breast-cancer` with Contents read, read `main` at `f9b1c2a0e79ea64cebd4d844ffe8011f237cbaf0`, and successfully revoked the temporary token.
 
-A separate private repository, `rapidreview-io/merv-github-smoke`, was created for live write verification. The user approved adding only this repository to the existing installation; the GitHub confirmation-of-access step remains pending. Live transport/PR/merge verification is therefore still pending, and no GitHub code writes through Merv are claimed. The existing OAuth connection remains available; automation stays off until explicitly configured.
+A separate private repository, `rapidreview-io/merv-github-smoke`, was created for live write verification. After the user completed GitHub verification, the installation settings already showed access to all repositories; the agent did not change that selection. Every token minted for the write test was restricted to the smoke repository. The requested Merv wordmark was uploaded, and GitHub confirmed the App avatar update. The existing OAuth connection remains available; per-project automation stays off until explicitly configured.
+
+## Live GitHub acceptance — 2026-09-17
+
+The first live run exposed a real compatibility defect: the client requested API version `2026-03-10`, which removes `merge_commit_sha`, while strict PR validation and durable merge recovery require it. Identical reads against both API versions confirmed the difference. The client now pins all REST requests, including revocation, to `2022-11-28`. [GitHub documents the removal](https://docs.github.com/en/rest/about-the-rest-api/breaking-changes) and [supports the older version for at least 24 months from March 12, 2026](https://github.blog/changelog/2026-03-12-rest-api-version-2026-03-10-is-now-available/). Migrate merge-receipt retrieval before that version is retired; do not bump the header independently of the response contract. A regression test models the version-dependent merged-PR payload.
+
+The corrected implementation passed the real GitHub lifecycle in [smoke PR #3](https://github.com/rapidreview-io/merv-github-smoke/pull/3):
+
+- Read-only fetch into a producer runner store; checkpoint push with remote head/tree verification.
+- A second independent runner store fetched and checked the exact proposed commit and file contents.
+- Draft PR creation, rejection of merge before the independent verdict, and transition out of draft after the verdict.
+- File/commit/check inspection, explicit merge of head `f22a990195ff36cf81b7d9c0acfa31a3db725281`, and merge receipt `fa7cb0fab084e6c44a6ae0ec1b027a4c6270d89c`.
+- Idempotent merge replay and a scan confirming no GitHub tokens persisted in either runner store or the local test state. Temporary installation tokens were revoked.
+
+This used the real GitHub App and the actual GitHub client, Runner workspace manager, and publication service. Scope/State and the domain proposal were isolated local fixtures; the publication authority fixture used a repository-scoped installation token. It therefore does not claim a full production OAuth-to-assignment-to-Consolidation run. The smoke repository had no CI checks configured. The two unmerged PRs left by earlier attempts were closed; research repositories received no test commits.
+
+After the compatibility fix, backend typechecking passed. The GitHub client/automation/OAuth, publication, and architecture regression suite passed 50 tests with zero failures; its two opt-in PostgreSQL cases were skipped (the earlier separate PostgreSQL acceptance is recorded above).
 
 Full release acceptance is recorded in `deploy/RELEASES.md`.
 
@@ -44,3 +60,4 @@ Full release acceptance is recorded in `deploy/RELEASES.md`.
 - GitHub publication architecture review: `claude-fable-5`, completed 2026-09-16T23:15:50.864786+00:00; response SHA-256 `1d6cfa8f645a9e5aecf6398aff421376cd7da354977aa833ee040b6ce371b085`.
 - GitHub publication implementation review: `claude-fable-5`, completed 2026-09-16T23:58:21.778022+00:00; response SHA-256 `4cb3edc8c99cedd00a0798881448716747906c00ec206df10c838a64cff1f1ac`.
 - GitHub publication fixes verification: `claude-fable-5`, completed 2026-09-17T00:11:57.472355+00:00; response SHA-256 `424b0a2a6507b24f8db01c7c35b405adc999007901dd6aea7d8bbd5c2c99c49b`.
+- Live API compatibility review: `claude-fable-5`, completed 2026-09-17T05:47:16.486306+00:00; response SHA-256 `31633024f2ce476abff5032f336000aa8f9b37d1d0febf1b0abc7cd8f04534e8`; **READY**. Its nonblocking recommendation to align the separate revocation request was applied through a shared version constant.
