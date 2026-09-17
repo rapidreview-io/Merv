@@ -135,7 +135,7 @@ UI=$(code http://127.0.0.1:3081/ui/)
 ANON=$(code -X POST -H 'content-type: application/json' -d '{}' http://127.0.0.1:3081/tools/ui.shell)
 OKORIGIN=$(code -H 'Origin: ${PUBLIC}' http://127.0.0.1:3081/auth/config)
 BADORIGIN=$(code -X POST -H 'Origin: http://evil.example' -H 'content-type: application/json' -d '{}' http://127.0.0.1:3081/tools/ui.shell)
-PLUGINS=$(docker logs merv-typescript-control-1 2>&1 | grep -m1 '"status":"ready"' | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(sum(p["state"]=="active" for p in d["plugins"]), len(d["plugins"]))')
+PLUGINS=$(docker logs merv-typescript-control-1 2>&1 | grep -m1 '"status":"ready"' | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(sum(p["state"]=="active" for p in d["plugins"]), len(d["plugins"]))' 2>/dev/null || echo '?')
 ASSETS=$(curl -s http://127.0.0.1:3081/ui/ | grep -oE '/ui/assets/[^"]+\\.(js|css)' | sort -u | while read -r a; do printf '%s %s %s\\n' "$a" "$(code http://127.0.0.1:3081$a)" "$(curl -s http://127.0.0.1:3081$a | sha256sum | cut -c1-64)"; done | tr '\\n' ';')
 printf '{"release":"%s","image":"%s","imageId":"%s","health":"%s","ui":"%s","anonymous":"%s","approvedOrigin":"%s","unapprovedOrigin":"%s","containerHealth":"%s","plugins":"%s","assets":"%s","previousImage":"%s"}\\n' \\
   "${release}" "$IMG" "$IMAGE_ID" "$HEALTH" "$UI" "$ANON" "$OKORIGIN" "$BADORIGIN" "$H" "$PLUGINS" "$ASSETS" "$PREV" > staging-refresh-acceptance.json
