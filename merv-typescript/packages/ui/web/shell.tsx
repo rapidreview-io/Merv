@@ -1,9 +1,12 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, NavLink, useLocation, useNavigationType } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool } from './api';
 import { useSession } from './session';
-import { cx, kindOf, kindStyle } from './components';
+import { cx, kindOf } from './components';
+import { RowIcon } from './icons';
 import { buildNavigation } from './navigation';
+import { useStanding, type Work } from './views/overview';
+import type { MapCycle, MapExperiment, MapTask } from './views/map-data';
 
 import type { Row, ShellData } from './shell-types';
 export type { RowStatus, Row, PluginState, ShellData } from './shell-types';
@@ -42,32 +45,30 @@ const unwell = (row: Row) =>
   row.status.state === 'degraded' || row.status.state === 'unavailable' ? row : undefined;
 
 /**
- * One place in the rail: the colour of the first kind behind it as a dot and,
- * when it is the place you are in, as the bar at its left edge. A second dot
- * appears only when something behind it is unwell.
+ * One destination in the rail: a thin line glyph, its label, and, on the ground
+ * pill, the place you are in. Only Now carries a count; a second dot appears
+ * only when the row behind it is unwell.
  */
 function RailRow({
   to,
   label,
-  kind,
+  icon,
   active,
+  count,
   sick,
 }: {
   to: string;
   label: string;
-  kind: string;
+  icon: string;
   active: boolean;
+  count?: number;
   sick?: Row;
 }) {
   return (
-    <Link
-      to={to}
-      className={cx('rail-row', active && 'active')}
-      style={kindStyle(kind)}
-      title={sick?.status.detail}
-    >
-      <span className="rail-kind" aria-hidden="true" />
+    <Link to={to} className={cx('rail-row', active && 'active')} title={sick?.status.detail}>
+      <RowIcon name={icon} />
       <span className="rail-row-label">{label}</span>
+      {count !== undefined && count > 0 && <span className="rail-count">{count}</span>}
       {sick && (
         <span
           className={cx('rail-dot', sick.status.state)}
@@ -77,6 +78,29 @@ function RailRow({
       )}
     </Link>
   );
+}
+
+/**
+ * The rail's one number: how many open records are the signed-in actor's move,
+ * read exactly as the map's Now strip reads it. Nothing here is counted twice
+ * or invented — the policy lives in useStanding, and the rail only asks for it.
+ * Reviewer names are not needed for a count, so the actor list is not read.
+ */
+function useNeedsYou(rows: Row[]): number {
+  const { actor } = useSession();
+  const rowOf = (kind: string) => rows.find((row) => row.view.kind === kind);
+  const experimentsRow = rowOf('experiments');
+  const tasksRow = rowOf('tasks');
+  const cyclesRow = rowOf('research');
+  const work: Work = {
+    experiments: {
+      row: experimentsRow,
+      load: useTool<MapExperiment[]>(experimentsRow ? 'experiment.list' : null),
+    },
+    tasks: { row: tasksRow, load: useTool<MapTask[]>(tasksRow ? 'task.list' : null) },
+    cycles: { row: cyclesRow, load: useTool<MapCycle[]>(cyclesRow ? 'research.list' : null) },
+  };
+  return useStanding(rows, work, actor.id, () => undefined).lines.yours.length;
 }
 
 function useTheme() {
@@ -94,6 +118,15 @@ function useTheme() {
   };
   return { theme, toggle: () => apply(theme === 'dark' ? 'light' : 'dark') };
 }
+
+/** Up to two initials for the avatar; a name that yields none keeps the dot. */
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]!.toUpperCase())
+    .join('') || '·';
 
 function AccountFoot() {
   const { actor, account, signOut, manageKeys } = useSession();
@@ -143,10 +176,11 @@ function AccountFoot() {
         aria-expanded={open}
       >
         <span className="account-avatar" aria-hidden="true">
-          {actor.name[0]?.toUpperCase() ?? '·'}
+          {initials(actor.name)}
         </span>
-        <span className="account-name" title={`${actor.name} (${actor.role})`}>
-          {actor.name}
+        <span className="account-who" title={`${actor.name} (${actor.role})`}>
+          <span className="account-name">{actor.name}</span>
+          <span className="account-role">{actor.role}</span>
         </span>
         <span className="account-caret" aria-hidden="true">
           ▾
@@ -156,10 +190,16 @@ function AccountFoot() {
   );
 }
 
+/**
+ * The one navigation. Home and Now first, then every registered collection as
+ * its own row under the heading of the section it belongs to, then Settings and
+ * the account at the foot. Nothing is hidden behind a section row or a title.
+ */
 export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHide(): void }) {
   const { project, account, chooseProject } = useSession();
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
+  const needsYou = useNeedsYou(rows);
   const holds = (row: Row) => pathname === row.path || pathname.startsWith(`${row.path}/`);
   return (
     <aside className="sidebar" aria-label="Primary">
@@ -176,14 +216,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         </button>
       </div>
       <div className="rail-project">
-        <NavLink
-          to="/"
-          end
-          className={({ isActive }) => cx('rail-row', 'rail-project-name', isActive && 'active')}
-          title={project.id}
-        >
-          {project.name}
-        </NavLink>
+        <h2 className="rail-project-name">{project.name}</h2>
         {(account.kind === 'user' ||
           (account.kind === 'key' && account.key.grantScope === 'account')) && (
           <button
@@ -198,15 +231,22 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         )}
       </div>
       <nav className="rail-nav">
+        <RailRow to="/" icon="home" label="Home" active={pathname === '/'} />
+        <RailRow to="/now" icon="now" label="Now" active={pathname === '/now'} count={needsYou} />
         {buildNavigation(rows).map((section) => (
-          <RailRow
-            key={section.id}
-            to={section.rows[0]!.path}
-            label={section.label}
-            kind={section.rows[0]!.view.kind}
-            active={section.rows.some(holds)}
-            sick={section.rows.find(unwell)}
-          />
+          <div className="rail-group" key={section.id}>
+            <h3 className="rail-group-head">{section.label}</h3>
+            {section.rows.map((row) => (
+              <RailRow
+                key={row.id}
+                to={row.path}
+                label={row.label}
+                icon={row.view.kind}
+                active={holds(row)}
+                sick={unwell(row)}
+              />
+            ))}
+          </div>
         ))}
       </nav>
       <div className="sidebar-foot">
@@ -217,7 +257,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
               key={row.id}
               to={row.path}
               label={row.label}
-              kind={row.view.kind}
+              icon={row.view.kind}
               active={holds(row)}
               sick={unwell(row)}
             />
@@ -229,44 +269,28 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
 }
 
 /**
- * The page header the shell owns. On a row's index route it names the section,
- * then the section's rows with the current one in ink; views render no title there.
+ * The page header the shell owns: the collection you are in, and nothing to
+ * click. Navigation is the rail's job alone now, so no eyebrow and no siblings.
  */
 export function TitleLine({ rows }: { rows: Row[] }) {
   const { pathname } = useLocation();
   const current = pathname === '/' ? undefined : rows.find((row) => row.path === pathname);
   if (!current) return null;
-  const section = buildNavigation(rows).find((entry) => entry.rows.includes(current));
-  const line = section?.rows ?? [current];
+  const { icon } = kindOf(current.view.kind);
   return (
     <header className="page-lede">
-      {section && line.length > 1 && <div className="lede-eyebrow">{section.label}</div>}
       <h1 className="lede-line">
-        {line.map((row, index) => (
-          <Fragment key={row.id}>
-            {/* Real spaces around the dot: they are the line's only wrap points. */}
-            {index > 0 && <span className="lede-sep">{' · '}</span>}
-            {row === current ? (
-              <span className="lede-here">
-                {kindOf(row.view.kind).icon && (
-                  <span className="lede-icon" aria-hidden="true">
-                    {kindOf(row.view.kind).icon}
-                  </span>
-                )}
-                {row.label}
-              </span>
-            ) : (
-              <Link className="lede-other" to={row.path}>
-                {row.label}
-              </Link>
-            )}
-            {/* A counted row says its total, a measured zero included; a row that
-                reports none says nothing rather than drawing a slot it cannot fill. */}
-            {row.status.count === undefined ? null : (
-              <span className="lede-count">{row.status.count}</span>
-            )}
-          </Fragment>
-        ))}
+        {icon && (
+          <span className="lede-icon" aria-hidden="true">
+            {icon}
+          </span>
+        )}
+        <span className="lede-here">{current.label}</span>
+        {/* A counted row says its total, a measured zero included; a row that
+            reports none says nothing rather than drawing a slot it cannot fill. */}
+        {current.status.count === undefined ? null : (
+          <span className="lede-count">{current.status.count}</span>
+        )}
       </h1>
     </header>
   );
