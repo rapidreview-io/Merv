@@ -29,7 +29,9 @@ Deployed at 2026-09-17 00:13 UTC (2026-09-16 local): `20260917T001342Z-ea66c620-
 
 All 54 configured plugins are active. VM and public HTTPS health/UI checks return 200; both served UI assets return 200. Anonymous protected requests return 401 and an unapproved Origin returns 403. Previous image retained for rollback: `merv-typescript:20260916T235902Z-0f8b2bfc-193f875244ac`. The existing legacy service and database remain untouched.
 
-The application is deployed. Live GitHub transport/PR/merge verification remains pending the App signing key and permission upgrade: at preflight `MERV_GITHUB_PRIVATE_KEY_BASE64` was absent and the official App still granted only Metadata read. Both setup requests were handed to the user as required by the browser's credential/access-change policy. No production GitHub writes are claimed. The existing OAuth connection remains available; automation stays off until explicitly configured.
+The application is deployed. Following the user's approval, the official Merv Research App and installation `162326306` were upgraded to Contents/Pull requests read-write and Checks/Commit statuses read, with Metadata read retained. GitHub confirmed acceptance for rapidreview-io; repository access remains limited to the existing selected repository. No organization, administration or Actions permissions were added.
+
+Live GitHub transport/PR/merge verification remains pending the App signing key: `MERV_GITHUB_PRIVATE_KEY_BASE64` was absent at preflight. The initial manifest registration retained OAuth credentials but did not retain the App private key; no matching download was found. Credential creation remains a browser handoff while the user is away. No production GitHub code writes are claimed. The existing OAuth connection remains available; automation stays off until explicitly configured.
 
 Full release acceptance is recorded in `deploy/RELEASES.md`.
 
