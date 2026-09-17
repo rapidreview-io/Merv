@@ -19,7 +19,7 @@ import type { RunnerSnapshot } from '@merv/runner';
  *     [--only <name>[,<name>]] [--stop-after <state>] [--max-rounds <n>] \
  *     [--timeout-minutes <n>] \
  *     [--model <codex model>] [--effort <codex effort>] \
- *     [--sandboxes-url <url> --sandboxes-token-env <ENV_NAME>]
+ *     [--sandboxes-url <MCP endpoint, e.g. https://sandboxes.example/mcp> --sandboxes-token-env <ENV_NAME>]
  *
  * The machine key is read only from the environment variable named by --token-env
  * (default MERV_SCENARIO_TOKEN). It is never accepted on the command line or from a
