@@ -52,7 +52,9 @@ const ssh = (script, opts = {}) =>
 function packageSource() {
   // Releases are commits: the archive comes from HEAD, never from the working tree, so a peer's
   // uncommitted work cannot ride along. Uncommitted differences under the allowlist are listed.
-  const tree = 'HEAD:merv-typescript';
+  // A concurrent coding session may advance HEAD while this archive is being assembled.
+  const gitRevision = sh('git', ['rev-parse', 'HEAD']).trim();
+  const tree = `${gitRevision}:merv-typescript`;
   const files = sh('git', ['ls-tree', '-r', '-z', '--name-only', tree, '--', ...ROOTS], repo)
     .split('\0')
     .filter((p) => p && !EXCLUDE.test(p))
@@ -65,7 +67,6 @@ function packageSource() {
     return { path, sha256: sha256(buf), bytes: buf.length };
   });
   const contentSha256 = sha256(entries.map((e) => `${e.sha256}  ${e.path}\n`).join(''));
-  const gitRevision = sh('git', ['rev-parse', 'HEAD']).trim();
   const stamp = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
   const release = `${stamp}-${gitRevision.slice(0, 8)}-${contentSha256.slice(0, 12)}`;
   const dir = mkdtempSync(join(tmpdir(), 'merv-release-'));

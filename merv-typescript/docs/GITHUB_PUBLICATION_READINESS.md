@@ -23,7 +23,15 @@ The suggested relaxation of the launch identity fence was rejected after verifyi
 
 Publication is asynchronous and separate from workflow completion. Reconciliation processes one intent per poll. Repository authority changes fence old intents; they cannot be silently republished under a different authorization. GitHub enforces branch protection; its merge API accepts an expected head but no expected-base CAS. Audit refs are retained.
 
-Live activation evidence is recorded in deploy/RELEASES.md and the deployment follow-up. An App signing key and installation permission upgrade are required before Git transport can run.
+## Production deployment
+
+Deployed at 2026-09-17 00:13 UTC (2026-09-16 local): `20260917T001342Z-ea66c620-e39b3fb44c18`, source commit `ea66c620`, image `sha256:2c782113d2193d1bd68c06bac42dcac19ce3c37c0730e287701b389434e1f035`.
+
+All 54 configured plugins are active. VM and public HTTPS health/UI checks return 200; both served UI assets return 200. Anonymous protected requests return 401 and an unapproved Origin returns 403. Previous image retained for rollback: `merv-typescript:20260916T235902Z-0f8b2bfc-193f875244ac`. The existing legacy service and database remain untouched.
+
+The application is deployed. Live GitHub transport/PR/merge verification remains pending the App signing key and permission upgrade: at preflight `MERV_GITHUB_PRIVATE_KEY_BASE64` was absent and the official App still granted only Metadata read. Both setup requests were handed to the user as required by the browser's credential/access-change policy. No production GitHub writes are claimed. The existing OAuth connection remains available; automation stays off until explicitly configured.
+
+Full release acceptance is recorded in `deploy/RELEASES.md`.
 
 ## Review provenance
 
