@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -1029,15 +1029,25 @@ async function main(options: Options) {
       log({ record: entry.brief.name, state, round, lease: session.id, network, defect: !!defect });
       const workspace = join(options.out, 'workspaces', `${entry.brief.name}-${state}-${round}`);
       mkdirSync(workspace, { recursive: true, mode: 0o700 });
-      const exitCode = await spawnCodex(
-        entry,
-        `${state}-${round}`,
-        session,
-        secret,
-        workspace,
-        network,
-        defect,
+      const launch = () =>
+        spawnCodex(entry, `${state}-${round}`, session, secret, workspace, network, defect);
+      let exitCode = await launch();
+      // Codex dying at MCP initialisation on a transient server error (a release swap, a
+      // database timeout) leaves the offer untouched, so the same lease is launched once more.
+      const stderr = join(
+        options.out,
+        'launches',
+        `${entry.brief.name}-${state}-${round}.stderr.log`,
       );
+      if (
+        exitCode !== 0 &&
+        existsSync(stderr) &&
+        /MCP servers failed to initialize/.test(readFileSync(stderr, 'utf8'))
+      ) {
+        log({ record: entry.brief.name, state, round, retry: 'mcp_init' });
+        await delay(45_000);
+        exitCode = await launch();
+      }
       log({ record: entry.brief.name, state, round, exitCode });
       assert.equal(exitCode, 0, `Harness-launched Codex for ${entry.brief.name}/${state} failed`);
     }
