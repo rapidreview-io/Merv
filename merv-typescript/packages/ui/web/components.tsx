@@ -10,7 +10,8 @@ import {
 import { Link } from 'react-router-dom';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError } from './api';
-import { duration, term, words, type Liveness } from './liveness';
+import { useCommand } from './mutations';
+import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
 import { ArtifactBody, bytes, type Artifact } from './views/artifacts';
 
 export { term, words };
@@ -462,6 +463,47 @@ export const Failure = ({ message }: { message?: string }) =>
       {message}
     </p>
   ) : null;
+
+/** One control that advances a workflow, keeping its receipt through an uncertain answer. */
+export function ResearchCommand({
+  tool,
+  input,
+  label,
+  onSaved,
+  available = true,
+  disabled = false,
+}: {
+  tool: string;
+  input: Record<string, unknown>;
+  label: string;
+  onSaved: () => void;
+  available?: boolean;
+  disabled?: boolean;
+}) {
+  const command = useCommand<{ id: string; kind?: string }>({
+    tool,
+    validate: (value) =>
+      !!value &&
+      typeof value.id === 'string' &&
+      (input.kind === undefined || value.kind === input.kind),
+    onSuccess: onSaved,
+  });
+  if (!available && !command.locked) return null;
+  return (
+    <div className="stack">
+      <Failure message={command.error} />
+      <div>
+        <button
+          className="btn"
+          disabled={command.busy || (disabled && !command.retry)}
+          onClick={() => void command.submit(input)}
+        >
+          {command.busy ? 'Saving…' : command.retry ? 'Retry same request' : label}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /** A row a record cannot have is left out where it is written, not filtered upstream. */
 export type KVRow = [string, ReactNode] | false | null | undefined;

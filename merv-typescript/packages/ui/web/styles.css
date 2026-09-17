@@ -2414,3 +2414,289 @@ select.input,
     border-left: 0;
   }
 }
+
+/* Paper ------------------------------------------------------------------ */
+/* The one page read for minutes rather than scanned: a single reading column
+   on the page ground at the app's own measure, an arXiv/Distill outline in the
+   gutter, and a proposed change shown as marks on the text it changes. Three
+   custom properties and one colour, the amber proposals already wear. */
+.paper {
+  --measure: 68ch;
+  --outline-w: 196px;
+  --paper-lh: 1.7;
+  --proposed: #d97706;
+  display: grid;
+  grid-template-columns: var(--outline-w) minmax(0, 1fr);
+  align-items: start;
+}
+html[data-theme='dark'] .paper {
+  --proposed: var(--qualifies);
+}
+/* The outline is sticky and is text: the rail owns the pill, the dot and the icon. */
+.paper-outline {
+  position: sticky;
+  top: var(--space-4);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding-right: 32px;
+  font-size: var(--text-sm);
+}
+.paper-outline ol {
+  list-style: none;
+}
+.paper-outline .out-doc,
+.paper-outline .out-sec {
+  display: block;
+  color: var(--muted);
+}
+.paper-outline .out-doc {
+  padding: 4px 0;
+}
+.paper-outline .out-sec {
+  padding: 3px 0 3px 34px;
+}
+/* Where the reading is: ink and 600, and nothing else drawn. */
+.paper-outline .here {
+  color: var(--text);
+  font-weight: 600;
+}
+.out-n {
+  display: inline-block;
+  width: 22px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  font-weight: 400;
+}
+.out-sec .out-n {
+  width: 34px;
+  margin-left: -34px;
+}
+/* A section with a change waiting on review carries one amber dot. */
+.out-flag {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--proposed);
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+/* The reading column. The hairline divides the two panes and belongs to the
+   column, so it runs the height of the document rather than of the outline. */
+.paper-body {
+  min-width: 0;
+  padding-left: 32px;
+  border-left: 1px solid var(--line);
+  font-size: var(--text-md);
+  line-height: var(--paper-lh);
+  font-variant-numeric: tabular-nums;
+}
+.paper-doc + .paper-doc {
+  margin-top: 40px;
+}
+.doc-h {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  padding-left: 30px;
+  text-indent: -30px;
+}
+.doc-from {
+  padding-left: 30px;
+}
+.dn,
+.sec-h .n {
+  display: inline-block;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  text-indent: 0;
+}
+.dn {
+  width: 30px;
+}
+.sec {
+  margin-top: 20px;
+  max-width: var(--measure);
+}
+.sec-h {
+  padding-left: 36px;
+  text-indent: -36px;
+}
+.sec-h .n {
+  width: 36px;
+}
+/* A section's paragraphs are split on blank lines; the newlines inside one stay. */
+.sec p {
+  margin-top: var(--space-3);
+  white-space: pre-line;
+}
+/* Where a section came from, or what is waiting on it. */
+.from {
+  margin-top: 5px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: normal;
+}
+.from a,
+.ref-open a,
+.ref-stand a {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+.sec-tools {
+  margin-top: var(--space-2);
+}
+/* A proposed change against the text it changes: one colour, no fill, no box,
+   no left edge, no green. Insertions are underlined, deletions struck in faint. */
+ins.add {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--proposed);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+del.cut {
+  color: var(--faint);
+  text-decoration: line-through;
+  text-decoration-color: var(--faint);
+}
+.flag {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--proposed);
+  margin-left: var(--space-2);
+}
+/* A figure is a retained file read in place, with its number below it. */
+.fig {
+  margin-top: var(--space-5);
+  max-width: min(100%, 92ch);
+}
+.fig-cap {
+  margin-top: 6px;
+}
+.fig-cap .label {
+  display: inline;
+}
+/* Citations: a small marker that opens a card, and a numbered ledger. */
+.cites {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+.cite {
+  position: relative;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.cite:hover,
+.cite:focus-visible {
+  color: var(--active);
+}
+/* The one box in the column, because there the box is the object. */
+.cite-card {
+  position: absolute;
+  left: 0;
+  top: 22px;
+  z-index: 5;
+  display: none;
+  width: min(340px, 80vw);
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  text-align: left;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--muted);
+}
+.cite:hover .cite-card,
+.cite:focus-visible .cite-card {
+  display: block;
+}
+.cite-card > strong,
+.cite-card > span {
+  display: block;
+  margin-top: 2px;
+}
+.cite-card > strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.ledger {
+  margin-top: 40px;
+  max-width: min(100%, 92ch);
+}
+.ref-n {
+  margin-right: 5px;
+  font-size: var(--text-sm);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.ledger .ref-name {
+  font-size: var(--text-md);
+  color: var(--text);
+}
+.ref-stand {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.ledger .ref-stand {
+  padding-left: 34px;
+}
+.ref-open {
+  margin-top: var(--space-2);
+  max-width: var(--measure);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.6;
+}
+.ref-open .mono {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+/* Below 1080 the outline is one wrapped row; below 760 the headings are the
+   navigation. One pane leaves the divider nothing to divide, so it goes. */
+@media (max-width: 1080px) {
+  .paper {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .paper-outline {
+    position: static;
+    max-height: none;
+    padding: 0 0 var(--space-3);
+    margin-bottom: var(--space-4);
+    border-bottom: 1px solid var(--line);
+  }
+  .paper-outline ol {
+    display: flex;
+    gap: var(--space-5);
+    flex-wrap: wrap;
+  }
+  .paper-outline li:has(.out-sec) {
+    display: none;
+  }
+  .paper-outline .out-doc .out-n {
+    display: none;
+  }
+  .paper-body {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+@media (max-width: 760px) {
+  .paper-outline {
+    display: none;
+  }
+}
