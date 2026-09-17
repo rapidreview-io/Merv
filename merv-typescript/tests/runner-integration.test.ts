@@ -37,9 +37,17 @@ interface ChildResult {
   secretInArgvOrPrompt: boolean;
 }
 function childResults(directory: string): ChildResult[] {
+  // A child may still be writing its result when a poll reads it; a partial
+  // file is not a result yet, so it is skipped and the next poll reads it whole.
   return files(directory)
     .filter((path) => path.endsWith('/worker-result.json'))
-    .map((path) => JSON.parse(readFileSync(path, 'utf8')) as ChildResult);
+    .flatMap((path) => {
+      try {
+        return [JSON.parse(readFileSync(path, 'utf8')) as ChildResult];
+      } catch {
+        return [];
+      }
+    });
 }
 async function until(
   condition: () => boolean | Promise<boolean>,

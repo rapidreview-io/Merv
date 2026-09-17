@@ -1,6 +1,6 @@
 /** A real child process and MCP client, with no model service or external network dependency. */
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -48,8 +48,9 @@ await call('task.checkpoint', {
   requestId: 'runner-child-checkpoint',
 });
 await client.close();
+// Written whole then renamed, so a poll never reads a half-written result.
 writeFileSync(
-  'worker-result.json',
+  'worker-result.json.tmp',
   JSON.stringify({
     pid: process.pid,
     artifactId: artifact.id,
@@ -61,6 +62,7 @@ writeFileSync(
   }),
   { mode: 0o600 },
 );
+renameSync('worker-result.json.tmp', 'worker-result.json');
 
 if (process.argv.includes('--hold')) {
   // The guardian must stop this process after remote halt, revocation, or controller disposal.
