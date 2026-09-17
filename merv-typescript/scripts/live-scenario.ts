@@ -678,13 +678,19 @@ async function main(options: Options) {
     // Every write carries a request id and replays identically, so a request that
     // never reached the server (a reset connection, a DNS blip) is retried a few times.
     const send = async (path: string, init: RequestInit, attempt = 1): Promise<Response> => {
-      try {
-        return await fetch(`${baseUrl}${path}`, init);
-      } catch (error) {
-        if (attempt >= 4 || !(error instanceof TypeError)) throw error;
+      const again = async () => {
         await new Promise((resolve) => setTimeout(resolve, 1500 * 2 ** (attempt - 1)));
         return await send(path, init, attempt + 1);
+      };
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}${path}`, init);
+      } catch (error) {
+        if (attempt >= 4 || !(error instanceof TypeError)) throw error;
+        return await again();
       }
+      // A 5xx (a database timeout under load, a gateway hiccup) is retried the same way.
+      return response.status >= 500 && attempt < 4 ? await again() : response;
     };
     const request = async (path: string, body: unknown, method = 'POST'): Promise<any> => {
       const response = await send(path, {
