@@ -145,6 +145,7 @@ function ArtifactList() {
       <LoadState
         {...list}
         empty={list.data?.length === 0}
+        columns={5}
         emptyTitle="No artifacts"
         emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
       />

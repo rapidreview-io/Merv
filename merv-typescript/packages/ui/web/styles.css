@@ -1,9 +1,12 @@
 /* ======================================================================
-   Merv design system — records on a light ground.
-   One clean sans, white surfaces over a light gray page, one blue accent
-   for the primary control and focus; green/amber/red carry state. Every
-   record kind supplies its own colour through --kind (see components.tsx).
-   Theme boot lives in index.html under the merv:theme key.
+   Merv design system — records on a light ground, and no chrome around
+   them. One clean sans, a 1px hairline wherever two things meet and
+   nothing else, one blue accent for the primary control and focus;
+   green/amber/red carry state. Every record kind supplies its own colour
+   through --kind (see components.tsx), and that colour is what keeps a
+   page of lines from reading sterile. A box is drawn only where the box
+   is the object: the map's property card and a criterion on the verdict
+   page. Theme boot lives in index.html under the merv:theme key.
    ====================================================================== */
 
 :root {
@@ -44,7 +47,6 @@
   --text-md: 15px;
   --text-lg: 16px;
   --text-xl: 22px;
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.1);
   --motion-fast: 120ms;
   --sidebar-in: 300ms cubic-bezier(0.05, 0.7, 0.1, 1);
@@ -83,7 +85,6 @@ html[data-theme='dark'] {
   --hover: rgba(var(--active-rgb), 0.12);
   --select: rgba(var(--active-rgb), 0.2);
   --scrim: rgba(0, 0, 0, 0.55);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.55);
 }
 
@@ -227,14 +228,10 @@ time {
   left: 12px;
   display: inline-flex;
   padding: 6px 7px;
-  color: var(--muted);
-  background: var(--bg-soft);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
+  color: var(--faint);
 }
 .sb-edge:hover .sb-edge-glyph {
   color: var(--text);
-  background: var(--bg);
 }
 
 /* The rail: wordmark, project, one row per section, settings and account. */
@@ -575,27 +572,27 @@ html[data-theme='dark'] .rail-kind {
 .btn-text[aria-pressed='true'] {
   color: var(--text);
 }
-/* Record cards. ---------------------------------------------------------- */
-/* A record is a white card on the ground, edged in the colour of its kind:
-   the kind label, the name, its meta lines, then the state it is in. Panels
-   that hold ruled rows (a table, a criterion list) are the same surface. */
-.record,
-.card,
-.plane,
-.map-now,
-.table-wrap,
-.crits {
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-}
+/* Records. --------------------------------------------------------------- */
+/* Nothing here is a box. A record sits directly on the ground, edged in the
+   colour of its kind: the kind label, the name, its meta lines, then the state
+   it is in. A list is rows separated by one hairline, and a section is what
+   lies between two of them; only the map's property card and a criterion keep
+   a frame, because there the box is the object. */
 .record {
+  /* A record that is also a button keeps no edge but its kind's. */
+  border: 0;
   border-left: 3px solid var(--kind, var(--line));
   padding: 12px 14px;
 }
 .card {
-  padding: var(--space-4);
+  padding-block: var(--space-4);
+}
+.card + .card,
+.ov-list > li + li,
+.claim-book > .claim + .claim,
+.feed > * + *,
+.stack > .record + .record {
+  border-top: 1px solid var(--line);
 }
 /* Small caps carry every label the eye skims past: a kind, a state, a column
    heading, a clause name. One rule states the type; each says only its colour. */
@@ -836,16 +833,9 @@ select.input,
   flex-wrap: wrap;
   overflow-wrap: anywhere;
 }
-/* A table is one white surface holding plain ruled rows. */
+/* A table is ruled rows on the ground: the head rule, then a line per row. */
 .table-wrap {
   overflow-x: auto;
-}
-/* Inside a panel the rows are already on a surface; one border is enough. */
-.card .table-wrap {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: none;
 }
 .table {
   width: 100%;
@@ -863,13 +853,17 @@ select.input,
 }
 .table td {
   padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line);
   vertical-align: top;
   /* break-word, not anywhere: a column never shrinks below its longest word. */
   overflow-wrap: break-word;
 }
-.card .table :is(th, td):first-child {
+/* The first and last columns line up with the page, not with a vanished box. */
+.table :is(th, td):first-child {
   padding-left: 0;
+}
+.table :is(th, td):last-child {
+  padding-right: 0;
 }
 .table tr:last-child td {
   border-bottom: 0;
@@ -889,20 +883,17 @@ select.input,
 }
 
 /* Documents and posts. --------------------------------------------------- */
+/* A pinned file is named on one line, ruled off, and then read. No frame. */
 .doc-frame {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  overflow: hidden;
+  border-top: 1px solid var(--line);
 }
 .doc-head {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 8px 14px;
+  padding: 8px 0;
   font-size: var(--text-sm);
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
 }
 .doc {
   font-family: var(--font-mono);
@@ -910,19 +901,17 @@ select.input,
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 14px;
+  padding: 14px 0;
   max-height: 480px;
   overflow: auto;
 }
 .doc--inline {
-  padding: 8px 10px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--line);
   max-height: 240px;
 }
 .doc-frame .empty {
-  padding: 12px 14px;
+  padding: 12px 0;
 }
 
 /* States. ---------------------------------------------------------------- */
@@ -955,6 +944,25 @@ select.input,
 .error-message {
   color: var(--refutes);
   font-size: var(--text-sm);
+}
+/* While a list loads it keeps its own shape: grey rows in the list's own grid,
+   never a spinner and never one centred word where the rows will be. */
+.skel {
+  display: grid;
+}
+.skel-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr));
+  gap: var(--space-4);
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.skel-cell {
+  height: 10px;
+  background: var(--line);
+}
+.skel-cell:not(:first-child) {
+  width: 62%;
 }
 
 /* Sign-in and project chooser: the only pages without the shell. --------- */
@@ -1031,8 +1039,11 @@ select.input,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* One block meets the next at a hairline; nothing around either of them. */
 .ov-block {
-  margin-top: 28px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
 }
 .ov-h {
   font-size: var(--text-md);
@@ -1051,7 +1062,6 @@ select.input,
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
 }
 .ov-row {
   display: flex;
@@ -1100,15 +1110,12 @@ select.input,
   line-clamp: 3;
   overflow: hidden;
 }
-/* A note, a link onward or an empty line is not a record: it stays on the ground. */
+/* A note, a link onward or an empty line is not a record: it carries no edge. */
 .ov-row.ov-note,
 .ov-row.ov-all,
 .ov-none {
   display: block;
-  background: none;
-  border: 0;
-  box-shadow: none;
-  padding: 2px 2px 2px 3px;
+  padding: var(--space-2) 2px var(--space-2) 3px;
   color: var(--muted);
   font-size: var(--text-sm);
 }
@@ -1196,9 +1203,6 @@ select.input,
 .history-record-link[aria-expanded='true'] {
   color: var(--active);
 }
-.history-detail {
-  padding: 28px;
-}
 .history-detail > .cluster {
   align-items: flex-start;
   justify-content: space-between;
@@ -1248,11 +1252,6 @@ select.input,
 @media (min-width: 1100px) {
   .history-layout--selected {
     grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
-  }
-}
-@media (max-width: 760px) {
-  .history-detail {
-    padding: 20px;
   }
 }
 
@@ -1332,13 +1331,15 @@ select.input,
   text-align: left;
   cursor: pointer;
 }
+/* The inspector is the right half of a split, so one line divides the two. */
 .agent-detail {
   position: sticky;
   top: 24px;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   min-width: 0;
-  border-color: var(--line-strong);
+  padding-left: var(--space-5);
+  border-left: 1px solid var(--line);
 }
 .agent-detail h2 {
   font-size: var(--text-lg);
@@ -1360,23 +1361,17 @@ select.input,
   font-size: var(--text-sm);
 }
 .agent-assignment {
-  padding: 12px;
-  background: var(--bg);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--line);
 }
 .agent-token-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--space-4);
 }
 .agent-token-stats > div {
   display: flex;
   flex-direction: column;
-  padding: 10px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg);
 }
 .agent-token-stats strong {
   font-size: var(--text-lg);
@@ -1390,12 +1385,10 @@ select.input,
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 .agent-call {
-  padding: 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--line);
   gap: 6px;
 }
 .agent-call code {
@@ -1424,6 +1417,7 @@ select.input,
   .agent-workspace--selected {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* Narrow, the inspector is a surface over the page and carries its ground. */
   .agent-detail {
     position: fixed;
     z-index: 25;
@@ -1432,7 +1426,9 @@ select.input,
     bottom: 0;
     width: min(540px, 100vw);
     max-height: 100dvh;
-    border-radius: 0;
+    padding: var(--space-4);
+    border-left: 0;
+    background: var(--bg);
     box-shadow: var(--shadow-md);
   }
   .agent-detail-heading {
@@ -1440,8 +1436,8 @@ select.input,
     top: -16px;
     margin: -16px -16px 0;
     padding: 16px;
-    background: var(--bg-elev);
-    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
     z-index: 1;
   }
 }
@@ -1472,9 +1468,8 @@ select.input,
     justify-content: center;
     width: 34px;
     height: 34px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-md);
-    background: var(--bg-elev);
+    border: 0;
+    background: none;
     color: var(--muted);
     cursor: pointer;
   }
@@ -1561,12 +1556,11 @@ select.input,
   white-space: nowrap;
 }
 
-/* Claim book. One card per claim: the statement is the entry, the standing a
+/* Claim book. One entry per claim: the statement is the entry, the standing a
    person set and the machine evidence are read beneath it. */
 .claim-book {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
 }
 .claim > * + * {
   margin-top: var(--space-2);
@@ -1617,23 +1611,23 @@ select.input,
 }
 
 /* Verdict page. --------------------------------------------------------- */
-/* A review is one document: one surface holding the numbered criteria, each
-   carrying the producer's confirmation, the reviewer's finding and the files
-   it cites. The finding words are the only small caps, and only the one
-   control that decides is filled with the accent. */
+/* A review is its numbered criteria, each carrying the producer's confirmation,
+   the reviewer's finding and the files it cites. The criterion is the one thing
+   on the page that keeps a frame, because there the box is the object being
+   judged; the finding words are the only small caps, and only the one control
+   that decides is filled with the accent. */
 .crits {
   list-style: none;
-  padding: 0 var(--space-4);
+  display: grid;
+  gap: var(--space-2);
 }
 .crit {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
   gap: var(--space-2);
-  padding: var(--space-4) 0;
-  border-bottom: 1px solid var(--line-soft);
-}
-.crit:last-child {
-  border-bottom: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
 .crit-n {
   font-size: var(--text-base);
@@ -1733,13 +1727,12 @@ select.input,
 }
 
 /* Narrative feed. --------------------------------------------------------- */
-/* One reverse-chronological column at a reading measure. A post is a card in
-   its author's voice; a state change is one quiet line on the ground between
-   the cards, so it never competes with a paragraph. */
+/* One reverse-chronological column at a reading measure, ruled between entries.
+   A post is a paragraph in its author's voice; a state change is one quiet line
+   between the posts, so it never competes with a paragraph. */
 .feed {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   max-width: 620px;
 }
 /* A name is a link at rest, marked by a hairline rather than by the accent. */
@@ -1797,7 +1790,7 @@ select.input,
   justify-content: space-between;
   align-items: baseline;
   gap: var(--space-3);
-  padding: 2px 3px;
+  padding: var(--space-2) 3px;
   font-size: var(--text-sm);
   color: var(--muted);
 }
@@ -1914,20 +1907,17 @@ select.input,
 .crit:focus {
   outline: 2px solid var(--active);
   outline-offset: -2px;
-  border-radius: var(--radius-sm);
 }
 
 /* Map (home) -------------------------------------------------------------
    The project at a glance: planes of counts above and below, the record in
-   the middle as an object graph. Cards are the same white surfaces as every
-   other record; the only accent is the one way out of the map. */
+   the middle as an object graph. A plane is a labelled band under a hairline
+   and a card is its kind edge and its words; the only accent is the one way
+   out of the map, and the only frame is the property card. */
 .map {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-.map-title {
-  margin-bottom: 0;
 }
 .map-lede,
 .map-stale {
@@ -1942,7 +1932,7 @@ select.input,
   align-items: baseline;
   gap: var(--space-2) var(--space-4);
   flex-wrap: wrap;
-  padding: 10px 14px;
+  padding: 10px 0;
   font-size: var(--text-sm);
 }
 .map-now-count {
@@ -1965,7 +1955,8 @@ select.input,
   gap: var(--space-3);
 }
 .plane {
-  padding: 12px 14px;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
   min-width: 0;
 }
 .plane-title {
@@ -1978,18 +1969,15 @@ select.input,
 .plane-tiles {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+  gap: var(--space-3) var(--space-5);
+  margin-top: var(--space-3);
 }
+/* A metric is its number over its name. The column it keeps is its own width. */
 .tile {
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 96px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-soft);
 }
 .plane-value {
   font-size: var(--text-md);
@@ -2025,7 +2013,7 @@ select.input,
   fill: var(--faint);
   text-anchor: middle;
   paint-order: stroke;
-  stroke: var(--bg-elev);
+  stroke: var(--bg);
   stroke-width: 4px;
   opacity: 0.55;
 }
@@ -2035,6 +2023,8 @@ select.input,
 .map-edge.on text {
   fill: var(--active);
 }
+/* A card on the map is its kind edge and its words. The ground behind it is the
+   page's own, so a verb passing underneath is covered rather than boxed out. */
 .map-node {
   display: flex;
   flex-direction: column;
@@ -2045,6 +2035,7 @@ select.input,
   text-align: left;
   cursor: pointer;
   padding: 8px 10px;
+  background: var(--bg);
 }
 .map-node-name {
   font-size: var(--text-sm);
@@ -2068,13 +2059,18 @@ select.input,
   width: 100%;
   height: auto;
 }
-/* The property card: what the selected object is, and the one way out. */
+/* The property card: what the selected object is, and the one way out. It is
+   the one surface that keeps a frame, because the card itself is the object. */
 .map-props {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  border-color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--kind, var(--line));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
   animation: map-slide 200ms ease-out both;
 }
 .map-props-name {
@@ -2197,11 +2193,7 @@ select.input,
   flex-direction: column;
   gap: 2px;
   padding: 6px 10px;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
   border-left: 3px solid var(--kind, var(--line-strong));
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
   font-size: var(--text-sm);
 }
 /* The states are a sequence, so the gap between them carries a mark. */
@@ -2213,9 +2205,10 @@ select.input,
   transform: translateY(-50%);
   color: var(--faint);
 }
+/* Where the program stands now is a state, so it keeps its quiet fill. */
 .track-step--here {
-  border-color: var(--kind, var(--line-strong));
   background: var(--bg-soft);
+  border-radius: var(--radius-sm);
 }
 .track-step--unreached {
   border-left-color: var(--line);

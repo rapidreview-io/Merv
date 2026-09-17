@@ -177,6 +177,7 @@ export function KnowledgeView() {
       <LoadState
         {...records}
         empty={!!records.data && inventory.length === 0}
+        columns={4}
         emptyTitle="No research records yet"
         emptyHint="Every claim, task and experiment anyone opens in this project is listed here, closed work included."
       />

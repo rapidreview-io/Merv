@@ -258,6 +258,7 @@ function ReviewList() {
       states={states}
       stateLabel="Status"
       visible={visible.length}
+      columns={4}
       emptyTitle="No reviews"
       emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
     >

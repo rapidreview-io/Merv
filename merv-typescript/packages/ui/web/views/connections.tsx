@@ -17,6 +17,7 @@ export function ConnectionsView({ row }: ViewProps) {
       <LoadState
         {...mounts}
         empty={mounts.data?.length === 0}
+        columns={5}
         emptyTitle="No mounts configured"
         emptyHint="External services an operator mounts into this server appear here with their connection health."
       />

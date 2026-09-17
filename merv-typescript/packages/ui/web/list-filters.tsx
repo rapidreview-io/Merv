@@ -84,6 +84,7 @@ export function ListPage<T>({
   visible,
   emptyTitle,
   emptyHint,
+  columns,
   children,
   ...filters
 }: Omit<ListFiltersProps, 'shown' | 'total'> & {
@@ -91,6 +92,8 @@ export function ListPage<T>({
   visible: number;
   emptyTitle: string;
   emptyHint: string;
+  /** How many columns the table below has, so the loading rows match it. */
+  columns?: number;
   children: ReactNode;
 }) {
   const listed = !!list.data?.length && !list.error;
@@ -103,6 +106,7 @@ export function ListPage<T>({
         empty={list.data?.length === 0}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
+        columns={columns}
       />
       {listed && !list.loading && visible === 0 && (
         <LoadState

@@ -166,7 +166,11 @@ export function PageHeader({
   );
 }
 
-/** Loading, error, and empty states share one calm voice; errors name the code the server sent. */
+/**
+ * Loading, error, and empty states share one calm voice; errors name the code
+ * the server sent. While the read is in flight the list keeps its own shape:
+ * grey rows in the same grid, in as many columns as the list will have.
+ */
 export function LoadState({
   loading,
   error,
@@ -174,6 +178,7 @@ export function LoadState({
   emptyTitle = 'Nothing here yet',
   emptyHint,
   back,
+  columns = 1,
 }: {
   loading: boolean;
   error?: ApiError;
@@ -181,6 +186,7 @@ export function LoadState({
   emptyTitle?: string;
   emptyHint?: ReactNode;
   back?: { to: string; label: string };
+  columns?: number;
 }) {
   if (error)
     return (
@@ -204,8 +210,14 @@ export function LoadState({
     );
   if (loading)
     return (
-      <div className="empty" role="status">
-        Loading…
+      <div className="skel" role="status" aria-label="Loading">
+        {[0, 1, 2, 3].map((row) => (
+          <div className="skel-row" key={row} style={{ '--cols': columns } as CSSProperties}>
+            {Array.from({ length: columns }, (_, cell) => (
+              <span className="skel-cell" key={cell} />
+            ))}
+          </div>
+        ))}
       </div>
     );
   if (empty)

@@ -466,6 +466,7 @@ function ExperimentList() {
       onStateChange={setState}
       states={states}
       visible={visible.length}
+      columns={5}
       emptyTitle="No experiments yet"
       emptyHint="Experiments appear here once a producer opens one to test a claim."
     >

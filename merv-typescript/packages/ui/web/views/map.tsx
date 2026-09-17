@@ -428,9 +428,11 @@ export function MapView({ shell }: { shell: ShellData }) {
     posts,
     earlier,
   ].find((load) => load.error);
+  // A registered row always states its own weight: a total not yet known is the
+  // em dash the console uses, never a zero and never a tile that quietly vanishes.
   const counted = (kind: string) => {
     const row = rowOf(kind);
-    return row?.status.count !== undefined && tile(row.label, row.status.count, row.path);
+    return row && tile(row.label, row.status.count ?? EM, row.path);
   };
   const cycle = newest(cycles.data ?? [], (item) => item.workflow.updatedAt)[0];
   const ready = (mounts.data ?? []).filter((mount) => mount.state === 'ready').length;
@@ -439,7 +441,7 @@ export function MapView({ shell }: { shell: ShellData }) {
   const archive = Object.values(earlier.data?.counts ?? {}).reduce((sum, n) => sum + n, 0);
   return (
     <div className="page-stage page-stage--wide map">
-      <h1 className="page-title map-title">
+      <h1 className="page-title">
         {session.project.name} <span className="muted">· the map</span>
       </h1>
       <p className="map-lede">

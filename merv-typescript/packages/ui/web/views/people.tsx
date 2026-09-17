@@ -151,6 +151,7 @@ export function PeopleView() {
             loading={loading}
             error={loadError}
             empty={members?.length === 0}
+            columns={3}
             emptyTitle="No active memberships"
             emptyHint={`Everyone who can open ${project.name} is listed here; an operator adds them by account ID.`}
           />
@@ -279,6 +280,7 @@ export function PeopleView() {
           <LoadState
             {...actors}
             empty={actors.data?.length === 0}
+            columns={4}
             emptyTitle="No actors"
             emptyHint="The identities that own work and reviews appear here as agents are issued credentials."
           />

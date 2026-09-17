@@ -94,6 +94,7 @@ function TaskList() {
       onStateChange={setChosen}
       states={states}
       visible={visible.length}
+      columns={5}
       emptyTitle="No tasks yet"
       emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
     >

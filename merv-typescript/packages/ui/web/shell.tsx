@@ -269,7 +269,11 @@ export function TitleLine({ rows }: { rows: Row[] }) {
                 {row.label}
               </Link>
             )}
-            {row.status.count ? <span className="lede-count">{row.status.count}</span> : null}
+            {/* A counted row says its total, a measured zero included; a row that
+                reports none says nothing rather than drawing a slot it cannot fill. */}
+            {row.status.count === undefined ? null : (
+              <span className="lede-count">{row.status.count}</span>
+            )}
           </Fragment>
         ))}
       </h1>
