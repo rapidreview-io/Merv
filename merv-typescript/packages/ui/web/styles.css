@@ -2702,3 +2702,26 @@ del.cut {
 }
 
 /* Sessions ---------------------------------------------------------------- */
+/* The page's subject is the page. Dispatch, the machines, the leases and the
+   queue stand on the ground above the agent directory, which keeps the list
+   anatomy every other collection has; the two stages read as one column, so the
+   heading that names the directory sits at the foot of the first. */
+.sessions-ops {
+  padding-bottom: 0;
+}
+.sessions-ops + .page-stage {
+  padding-top: var(--space-3);
+}
+.sessions-ops .section-title:last-child {
+  margin-bottom: 0;
+}
+/* A halt answers where it was asked: the count it closed, or the reason it could
+   not, reads inside the guard rather than at the top of the page. */
+.guard .error-message {
+  margin: 0;
+}
+/* A lease past its expiry drops its countdown; the age of the read takes its
+   place, at the quiet weight, so a stale number never reads as a live one. */
+.countdown .faint {
+  font-size: var(--text-sm);
+}
