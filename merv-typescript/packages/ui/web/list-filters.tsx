@@ -9,6 +9,7 @@ import {
 import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import type { ApiError } from './api';
 import { KindLabel, LoadState, cx, words } from './components';
+import { useHere } from './palette';
 import { OPEN } from './states';
 import type { Row } from './shell-types';
 
@@ -244,6 +245,8 @@ export function ListPage<T extends { id: string }>({
 }) {
   const frame = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(!!create?.opened);
+  // The page's one creation control, registered so the palette can open the same fold.
+  const opener = useHere<HTMLButtonElement>('create');
   useRowKeys(frame);
   const total = filter.items.length;
   // Filtered to nothing has a screen per cause, and the scope states its meaning there.
@@ -302,6 +305,7 @@ export function ListPage<T extends { id: string }>({
           {create && create.shown !== false && (
             <button
               type="button"
+              ref={opener}
               className={cx('btn', !create.plain && 'btn--primary', 'action-end')}
               aria-expanded={open}
               onClick={() => setOpen((value) => !value)}

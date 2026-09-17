@@ -10,6 +10,7 @@ import {
 import { Link } from 'react-router-dom';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError } from './api';
+import { useHere } from './palette';
 import { duration, term, words, type Liveness } from './liveness';
 import { ArtifactBody, bytes, type Artifact } from './views/artifacts';
 
@@ -330,8 +331,17 @@ export function RecordPage({
   state?: ReactNode;
   title?: string;
 } & Partial<Record<'act' | 'content' | 'history' | 'related' | 'details', ReactNode>>) {
+  // The one place a record offers a move; the palette offers the same controls.
+  const act = useHere<HTMLDivElement>('act');
   const order: [string, ReactNode][] = [
-    ['What happens next', slots.act],
+    [
+      'What happens next',
+      slots.act && (
+        <div ref={act} style={{ display: 'contents' }}>
+          {slots.act}
+        </div>
+      ),
+    ],
     [title, slots.content],
     ['History', slots.history],
     ['Related', slots.related],

@@ -5,6 +5,7 @@ import { useSession } from './session';
 import { cx, kindOf } from './components';
 import { RowIcon } from './icons';
 import { buildNavigation } from './navigation';
+import { FIND_KB } from './palette';
 import { useStanding, type Work } from './views/overview';
 import type { MapCycle, MapExperiment, MapTask } from './views/map-data';
 
@@ -198,7 +199,15 @@ function AccountFoot() {
  * its own row under the heading of the section it belongs to, then Settings and
  * the account at the foot. Nothing is hidden behind a section row or a title.
  */
-export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHide(): void }) {
+export function Sidebar({
+  shell,
+  onHide,
+  onFind,
+}: {
+  shell: ShellData | undefined;
+  onHide(): void;
+  onFind(): void;
+}) {
   const { project, account, chooseProject } = useSession();
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
@@ -233,6 +242,11 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           </button>
         )}
       </div>
+      {/* The one way in that is not a place: what can I do here, from anywhere. */}
+      <button type="button" className="rail-row rail-find" onClick={onFind}>
+        <span className="rail-row-label">Search</span>
+        <span className="rail-count">{FIND_KB}</span>
+      </button>
       <nav className="rail-nav">
         <RailRow to="/" icon="home" label="Home" active={pathname === '/'} />
         <RailRow to="/now" icon="now" label="Now" active={pathname === '/now'} count={needsYou} />
@@ -432,7 +446,8 @@ export function ShellFrame({
           }
         }}
         onClick={(event) => {
-          if ((event.target as HTMLElement).closest('a')) setMobileOpen(false);
+          // A link leaves, and so does the search: the palette is the next thing to see.
+          if ((event.target as HTMLElement).closest('a, .rail-find')) setMobileOpen(false);
         }}
       >
         {sidebar}
