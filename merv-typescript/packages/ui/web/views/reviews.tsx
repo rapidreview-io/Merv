@@ -2,21 +2,19 @@ import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
-import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import {
   Ago,
   Evidence,
-  KindLabel,
   LoadState,
   RecordPage,
   StatusPill,
-  col,
   cx,
   useArtifacts,
   words,
 } from '../components';
-import { OPEN, ThreeStates, firstSentence, isOpenReview, reviewClause } from '../states';
+import { ThreeStates, firstSentence, isOpenReview, reviewClause } from '../states';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
@@ -220,54 +218,37 @@ function ReviewList() {
   const nameOf = useActorNames();
   const subjectOf = useSubjects();
   const { actor } = useSession();
-  const { id: openId } = useParams();
-  const filter = useListFilter(list.data, (item) => item.status, isOpenReview);
-  const { state, scope, search } = filter;
-  // The record open beside the list is always one of its rows, whatever the filters say.
-  const visible = (list.data ?? []).filter(
-    (item) =>
-      item.id === openId ||
-      ((state === OPEN ? isOpenReview(item.status) : !state || item.status === state) &&
-        // A review is yours when you hold it or you asked for it.
-        (scope === 'everyone' || item.reviewerId === actor.id || item.producerId === actor.id) &&
-        matches(
-          search,
-          [
-            subjectOf(item.subjectId)?.name,
-            item.synopsis,
-            ...item.criteria,
-            nameOf(item.producerId),
-            nameOf(item.reviewerId),
-          ],
-          [item.id, item.subjectId, item.producerId, item.reviewerId],
-        )),
-  );
+  const filter = useListFilter(list.data, {
+    stateOf: (r) => r.status,
+    isOpen: isOpenReview,
+    // A review is yours when you hold it or you asked for it.
+    mine: (r) => r.reviewerId === actor.id || r.producerId === actor.id,
+    labels: (r) => [
+      subjectOf(r.subjectId)?.name,
+      r.synopsis,
+      ...r.criteria,
+      nameOf(r.producerId),
+      nameOf(r.reviewerId),
+    ],
+    ids: (r) => [r.id, r.subjectId, r.producerId, r.reviewerId],
+  });
   return (
     <ListPage
-      list={list}
+      load={list}
       noun="reviews"
       placeholder="Summary, work item or person"
       filter={filter}
-      rows={[...visible].reverse()}
+      rows={[...filter.rows].reverse()}
+      opens
       emptyTitle="No reviews"
       emptyHint="A review appears here when work is submitted for assessment; someone other than its producer takes it."
-      columns={[
-        col<Review>('subject', 'Work item', (r) => {
-          const subject = subjectOf(r.subjectId);
-          const summary = r.synopsis || r.criteria[0] || 'Independent review';
-          return (
-            <div className={cx('row-name', r.id === openId && 'row-open')}>
-              <KindLabel kind={subject?.kind} />
-              <strong title={summary}>{subject?.name}</strong>
-              <div className="faint" title={summary}>
-                {summary.length > 110 ? `${summary.slice(0, 107)}…` : summary}
-              </div>
-            </div>
-          );
-        }),
-        col<Review>('standing', 'Standing', (r) => {
-          const subject = subjectOf(r.subjectId);
-          return (
+      line={(r) => {
+        const subject = subjectOf(r.subjectId);
+        return {
+          // A review is named by what it judges, and the kind label says which kind that is.
+          kind: subject?.kind,
+          name: <strong>{subject?.name}</strong>,
+          standing: (
             <ThreeStates
               execution={subject?.state ?? null}
               review={reviewClause(r)}
@@ -276,15 +257,17 @@ function ReviewList() {
                   ? { detail: firstSentence(subject?.outcome) }
                   : { word: 'no outcome recorded', absent: true }
               }
+              // Who holds it; that nobody does is the standing clause's to say.
+              meta={
+                <>
+                  {r.reviewerId ? `${nameOf(r.reviewerId)} · ` : ''}
+                  <Ago at={r.createdAt} />
+                </>
+              }
             />
-          );
-        }),
-        // Who holds it; that nobody does is the standing clause's to say.
-        col<Review>('reviewer', 'Reviewer', (r) =>
-          r.reviewerId ? nameOf(r.reviewerId) : <span className="faint">—</span>,
-        ),
-        col<Review>('when', 'When', (r) => <Ago at={r.createdAt} />, '90px'),
-      ]}
+          ),
+        };
+      }}
     />
   );
 }

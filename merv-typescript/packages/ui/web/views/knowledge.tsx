@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { Area, Failure, Fold, KindLabel, Listing, LoadState, StatusPill, col } from '../components';
+import { Area, Failure, KindLabel, LoadState, StatusPill, kindOf } from '../components';
+import { ListPage, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
 
 interface Records {
   claims: { id: string; statement: string; status: string; revision: number }[];
@@ -112,7 +114,7 @@ export function KnowledgeView() {
         ...records.data.claims.map((claim) => ({
           id: claim.id,
           name: claim.statement,
-          kind: 'Claim',
+          kind: 'claims',
           state: claim.status,
           revision: claim.revision,
           path: '/claims',
@@ -120,7 +122,7 @@ export function KnowledgeView() {
         ...records.data.tasks.map((task) => ({
           id: task.id,
           name: task.title,
-          kind: 'Task',
+          kind: 'tasks',
           state: task.workflow.state,
           revision: task.workflow.revision,
           path: `/tasks/${task.id}`,
@@ -128,42 +130,37 @@ export function KnowledgeView() {
         ...records.data.experiments.map((experiment) => ({
           id: experiment.id,
           name: experiment.name,
-          kind: 'Experiment',
+          kind: 'experiments',
           state: experiment.workflow.state,
           revision: experiment.workflow.revision,
           path: `/experiments/${experiment.id}`,
         })),
       ]
     : [];
-  type Listed = (typeof inventory)[number];
+  const filter = useListFilter(inventory, {
+    stateOf: (item) => item.state,
+    labels: (item) => [item.name, kindOf(item.kind).label],
+    ids: (item) => [item.id],
+  });
   return (
-    <div className="page-stage stack stack--lg">
-      <Fold
-        label="Check references"
-        plain
-        note={
-          records.data && (
-            <span className="muted">
-              {records.data.claims.length} claims · {records.data.tasks.length} tasks ·{' '}
-              {records.data.experiments.length} experiments
-            </span>
-          )
-        }
-      >
-        {() => <ReferenceLookup />}
-      </Fold>
-      <Listing
-        load={records}
-        rows={inventory}
-        emptyTitle="No research records yet"
-        emptyHint="Every claim, task and experiment anyone opens in this project is listed here, closed work included."
-        columns={[
-          col<Listed>('kind', 'Kind', (item) => item.kind),
-          col<Listed>('name', 'Record', (item) => <Link to={item.path}>{item.name}</Link>),
-          col<Listed>('state', 'State', (item) => <StatusPill value={item.state} />),
-          col<Listed>('revision', 'Revision', (item) => item.revision),
-        ]}
-      />
-    </div>
+    <ListPage
+      load={records}
+      noun="records"
+      placeholder="Name or kind"
+      filter={filter}
+      emptyTitle="No research records yet"
+      emptyHint="Every claim, task and experiment anyone opens in this project is listed here, closed work included."
+      create={{ label: 'Check references', plain: true, form: () => <ReferenceLookup /> }}
+      // A record here is read where it lives, so the row names it and its own page opens it.
+      line={(item) => ({
+        kind: item.kind,
+        name: (
+          <Link className="row-link" to={item.path}>
+            {item.name}
+          </Link>
+        ),
+        standing: <ThreeStates execution={item.state} meta={`revision ${item.revision}`} />,
+      })}
+    />
   );
 }

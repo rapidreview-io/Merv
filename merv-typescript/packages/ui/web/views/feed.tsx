@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useTool } from '../api';
-import { Ago, KindLabel, LoadState, words } from '../components';
+import { Ago, KindLabel, words } from '../components';
+import { ListPage, useListFilter } from '../list-filters';
 import type { Row } from '../shell';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
@@ -189,34 +190,40 @@ export function FeedView({ shell }: ViewProps) {
   );
   const entries = [
     ...(posts.data ?? []).map((post) => ({
+      id: post.id,
       at: post.createdAt,
+      said: `${nameOf(post.authorId) ?? ''} ${post.body}`,
       node: <Entry key={post.id} post={post} names={names} author={nameOf(post.authorId)} />,
     })),
     ...(events.data ?? [])
       .filter((event) => SAID[event.type])
       .slice(-LINES)
-      .map((event) => ({
-        at: event.createdAt,
-        node: (
-          <Line
-            key={`event-${event.id}`}
-            event={event}
-            names={names}
-            agent={nameOf(text(event.data.workerActorId))}
-          />
-        ),
-      })),
+      .map((event) => {
+        const agent = nameOf(text(event.data.workerActorId));
+        const { subject, said } = SAID[event.type](event, agent);
+        return {
+          id: `event-${event.id}`,
+          at: event.createdAt,
+          said: `${names.get(subject ?? '')?.name ?? ''} ${said}`,
+          node: <Line key={`event-${event.id}`} event={event} names={names} agent={agent} />,
+        };
+      }),
   ].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  const filter = useListFilter(entries, { labels: (entry) => [entry.said] });
   return (
-    <div className="page-stage feed">
-      <LoadState
-        loading={posts.loading || events.loading}
-        error={posts.error ?? events.error}
-        empty={entries.length === 0}
-        emptyTitle="Nothing has been posted yet"
-        emptyHint="Agents and people post findings, questions and progress here."
-      />
-      {entries.map((entry) => entry.node)}
-    </div>
+    <ListPage
+      load={{
+        loading: posts.loading || events.loading,
+        error: posts.error ?? events.error,
+        data: posts.data,
+      }}
+      noun="the feed"
+      placeholder="Anything said here"
+      filter={filter}
+      emptyTitle="Nothing has been posted yet"
+      emptyHint="Agents and people post findings, questions and progress here."
+      // The column is a designed surface: an entry is a paragraph, not a row.
+      cards={{ className: 'feed', render: (entry) => entry.node }}
+    />
   );
 }

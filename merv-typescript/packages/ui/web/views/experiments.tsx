@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import {
   Ago,
@@ -13,14 +13,13 @@ import {
   LoadState,
   RecordPage,
   StatusPill,
-  col,
   cx,
   relativeTime,
   stamp,
   useArtifacts,
   words,
 } from '../components';
-import { firstSentence, newestReview, reviewClause } from '../states';
+import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import { CriterionRows, type Review } from './reviews';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
@@ -442,37 +441,49 @@ export function ExperimentRecord({
 
 function ExperimentList() {
   const list = useTool<Experiment[]>('experiment.list', {}, { every: 8000 });
+  const reviews = useTool<Review[]>('review.list');
   const nameOf = useActorNames();
   const { actor } = useSession();
-  const { id: openId } = useParams();
-  const filter = useListFilter(list.data, (item) => item.workflow.state);
-  const { state, scope, search } = filter;
-  // The record open beside the list is always one of its rows, whatever the filters say.
-  const visible = (list.data ?? []).filter(
-    (item) =>
-      item.id === openId ||
-      ((!state || item.workflow.state === state) &&
-        (scope === 'everyone' || item.ownerId === actor.id) &&
-        matches(search, [item.name, item.intent, nameOf(item.ownerId)], [item.id, item.ownerId])),
-  );
+  const filter = useListFilter(list.data, {
+    stateOf: (e) => e.workflow.state,
+    mine: (e) => e.ownerId === actor.id,
+    labels: (e) => [e.name, e.intent, nameOf(e.ownerId)],
+    ids: (e) => [e.id, e.ownerId],
+  });
   return (
     <ListPage
-      list={list}
+      load={list}
       noun="experiments"
       placeholder="Name, question or person"
       filter={filter}
-      rows={[...visible].reverse()}
+      rows={[...filter.rows].reverse()}
+      opens
       emptyTitle="No experiments yet"
       emptyHint="Experiments appear here once a producer opens one to test a claim."
-      columns={[
-        col<Experiment>('name', 'Experiment', (e) => (
-          <strong className={e.id === openId ? 'row-open' : undefined}>{e.name}</strong>
-        )),
-        col<Experiment>('state', 'State', (e) => <StatusPill value={e.workflow.state} />),
-        col<Experiment>('attempt', 'Attempt', (e) => String(e.attempt.index)),
-        col<Experiment>('owner', 'Owner', (e) => nameOf(e.ownerId)),
-        col<Experiment>('updated', 'Updated', (e) => <Ago at={e.workflow.updatedAt} />),
-      ]}
+      line={(e) => ({
+        name: <strong>{e.name}</strong>,
+        standing: (
+          <ThreeStates
+            execution={e.workflow.state}
+            review={
+              reviewClause(newestReview(reviews.data, e.id)) ?? {
+                word: 'not reviewed',
+                absent: true,
+              }
+            }
+            outcome={
+              firstSentence(e.conclusion)
+                ? { detail: firstSentence(e.conclusion) }
+                : { word: 'no conclusion yet', absent: true }
+            }
+            meta={
+              <>
+                attempt {e.attempt.index} · {nameOf(e.ownerId)} · <Ago at={e.workflow.updatedAt} />
+              </>
+            }
+          />
+        ),
+      })}
     />
   );
 }

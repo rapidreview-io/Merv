@@ -421,8 +421,7 @@ time,
 }
 /* The soft ground marks what is open, or what the pointer is on. */
 .account-row:hover,
-.lease--open,
-.split-list tbody tr:has(.row-open) {
+.lease--open {
   background: var(--bg-soft);
 }
 .account-avatar {
@@ -587,12 +586,35 @@ time,
 .action-row {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: var(--space-3);
   flex-wrap: wrap;
 }
+/* A row of controls that is not a list's own keeps its old right-hand place. */
+.action-row:not(:has(.action-filters)) {
+  justify-content: flex-end;
+}
+/* A list's control row never breaks: the filters shrink and wrap inside it, so
+   the one control at its end is in the same place on every collection. */
+.action-row:has(.action-filters) {
+  flex-wrap: nowrap;
+}
+/* The filters wrap among themselves and shrink before the row does. */
+.action-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Whatever a page's one control is, it ends the row: the same place everywhere. */
+.action-end {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
 .action-row input.input {
-  width: 220px;
+  flex: 0 1 220px;
+  min-width: 120px;
   max-width: 100%;
 }
 .btn-text {
@@ -912,6 +934,54 @@ select.input,
 .row-link {
   display: block;
 }
+/* One list anatomy, on every collection: rows on the ground divided by one
+   hairline, two lines at most — what the record is above, how it stands below.
+   No head, no columns that move from page to page, and nothing boxed. */
+.rows {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+}
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 0;
+}
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+/* Where the row opens a record, the whole row is the link and carries the padding. */
+.row:has(> .row-link) {
+  padding: 0;
+}
+.row > .row-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px var(--space-2) 11px 0;
+}
+/* The soft ground marks the row the pointer is on, and the record open beside it. */
+.row > .row-link:hover,
+.row > .row-link.row-open {
+  background: var(--bg-soft);
+}
+.row-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The kind opens the identity line and never breaks: the name takes the wrap. */
+.row-name .kind {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* A standing on a row runs the width of the row rather than a cell's measure. */
+.row .states {
+  max-width: none;
+}
 .checks {
   padding-left: 22px;
   display: flex;
@@ -1171,9 +1241,7 @@ select.input,
   grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr);
 }
 /* A grid child may shrink below its content: the row scrolls, the page does not. */
-.history-layout > *,
-.agent-directory,
-.split-list .table {
+.history-layout > * {
   min-width: 0;
 }
 .history-detail {
@@ -1284,64 +1352,9 @@ select.input,
   }
 }
 
-/* Agent directory and its right-hand assignment inspector. ---------------- */
-.sessions-page {
-  max-width: 1600px;
-}
-.agent-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-}
-.agent-workspace--selected {
-  grid-template-columns: minmax(300px, 1fr) minmax(390px, 1.1fr);
-}
+/* The agent an operator opened, read under the list that named it. --------- */
 .agent-help {
   font-size: var(--text-sm);
-}
-.agent-switch {
-  display: inline-flex;
-  gap: 10px;
-  align-items: center;
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-.agent-switch input {
-  appearance: none;
-  width: 34px;
-  height: 20px;
-  border: 1px solid var(--line-strong);
-  border-radius: 20px;
-  background: var(--bg-soft);
-  position: relative;
-  cursor: pointer;
-}
-.agent-switch input::before {
-  content: '';
-  position: absolute;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--muted);
-  top: 2px;
-  left: 2px;
-  transition: transform 120ms;
-}
-.agent-switch input:checked {
-  background: var(--supports);
-  border-color: var(--supports);
-}
-.agent-switch input:checked::before {
-  transform: translateX(14px);
-  background: var(--bg-elev);
-}
-.agent-table tbody tr {
-  cursor: pointer;
-}
-.agent-table tbody tr:hover,
-.agent-row--selected {
-  background: rgba(var(--steel-rgb), 0.07);
 }
 .agent-select {
   display: flex;
@@ -1354,15 +1367,10 @@ select.input,
   text-align: left;
   cursor: pointer;
 }
-/* The inspector is the right half of a split, so one line divides the two. */
+/* The inspector is read under the rows, divided from them by one hairline. */
 .agent-detail {
-  position: sticky;
-  top: 24px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
-  min-width: 0;
-  padding-left: var(--space-5);
-  border-left: 1px solid var(--line);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
 }
 .agent-detail h2 {
   font-size: var(--text-lg);
@@ -1423,38 +1431,6 @@ select.input,
 }
 .agent-history[open] summary {
   margin-bottom: 10px;
-}
-.agent-row-work {
-  display: flex;
-  flex-direction: column;
-  margin-top: 6px;
-  font-size: var(--text-sm);
-}
-@media (max-width: 1100px) {
-  .agent-workspace--selected {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  /* Narrow, the inspector is a surface over the page and carries its ground. */
-  .agent-detail {
-    position: fixed;
-    z-index: 25;
-    inset: 0 0 0 auto;
-    width: min(540px, 100vw);
-    max-height: 100dvh;
-    padding: var(--space-4);
-    border-left: 0;
-    background: var(--bg);
-    box-shadow: var(--shadow-md);
-  }
-  .agent-detail-heading {
-    position: sticky;
-    top: -16px;
-    margin: -16px -16px 0;
-    padding: 16px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--line);
-    z-index: 1;
-  }
 }
 
 /* One responsive implementation: the same sidebar becomes an overlay. ----- */
@@ -1610,10 +1586,9 @@ select.input,
   margin-top: var(--space-2);
 }
 .claim-edit {
-  display: flex;
-  gap: var(--space-4);
+  margin-left: var(--space-2);
 }
-.claim-edit .btn-text:disabled {
+.claim-edit:disabled {
   color: var(--faint);
   cursor: not-allowed;
 }
@@ -1867,10 +1842,6 @@ select.input,
 }
 .states-absent {
   color: var(--faint);
-}
-/* A row names its record: the kind mark above the name, as on a card. */
-.row-name .kind {
-  display: flex;
 }
 /* An exception is stated, never absorbed, and never coloured: a reviewer waiving
    a check that does not apply is doing the right thing. One sentence per line. */
@@ -2243,14 +2214,6 @@ select.input,
   max-width: none;
   padding-inline: var(--space-5);
 }
-/* In a pane this narrow a table shows the two facts a person scans and scrolls
-   for nothing: the rest of the row is in the record already open beside it. */
-.split-list .table :is(th, td):nth-child(n + 3) {
-  display: none;
-}
-.split-list .table :is(th, td):first-child {
-  padding-left: var(--space-2);
-}
 /* The two controls sit on one line; which states the list holds is the line
    under them, type rather than a third control. */
 .scope {
@@ -2259,8 +2222,7 @@ select.input,
   gap: var(--space-3);
 }
 .state-line {
-  display: flex;
-  justify-content: flex-end;
+  display: inline-flex;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-3);
   font-size: var(--text-sm);

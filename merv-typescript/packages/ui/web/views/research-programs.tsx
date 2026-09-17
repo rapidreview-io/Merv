@@ -9,21 +9,20 @@ import {
   Area,
   Failure,
   Field,
-  Fold,
   GateBox,
   KV,
-  Listing,
   LoadState,
   RecordPage,
   StatusPill,
   Table,
   col,
   cx,
-  recordRoutes,
   relativeTime,
   stamp,
   words,
 } from '../components';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -351,31 +350,40 @@ function ReflectionList({ row }: ViewProps) {
   const list = useTool<Reflection[]>('reflection.list', {}, { every: 8000 });
   const { actor } = useSession();
   const navigate = useNavigate();
+  const filter = useListFilter(list.data, {
+    stateOf: (wave) => wave.workflow.state,
+    labels: (wave) => [wave.title],
+    ids: (wave) => [wave.id],
+  });
   return (
-    <div className="page-stage stack stack--lg">
-      <Fold label="New reflection" shown={actor.role === 'producer' || actor.role === 'operator'}>
-        {() => <CreateReflection onCreated={(wave) => navigate(`${row.path}/${wave.id}`)} />}
-      </Fold>
-      <Listing
-        load={list}
-        rows={list.data ?? []}
-        opens
-        emptyTitle="No reflection waves yet"
-        emptyHint="A wave gathers five independent readings of the research so far; a producer starts one here."
-        columns={[
-          col<Reflection>('title', 'Reflection', (wave) => <strong>{wave.title}</strong>),
-          col<Reflection>('state', 'Stage', (wave) => <StatusPill value={wave.workflow.state} />),
-          col<Reflection>(
-            'lenses',
-            'Lenses',
-            (wave) =>
-              `${wave.lenses.filter((lens) => lens.artifact).length} / ${wave.lenses.length}`,
-          ),
-          col<Reflection>('attempt', 'Attempt', (wave) => wave.attempt),
-          col<Reflection>('created', 'Started', (wave) => <Ago at={wave.createdAt} />),
-        ]}
-      />
-    </div>
+    <ListPage
+      load={list}
+      noun="reflections"
+      placeholder="Title"
+      filter={filter}
+      opens
+      emptyTitle="No reflection waves yet"
+      emptyHint="A wave gathers five independent readings of the research so far; a producer starts one here."
+      create={{
+        label: 'New reflection',
+        shown: actor.role === 'producer' || actor.role === 'operator',
+        form: () => <CreateReflection onCreated={(wave) => navigate(`${row.path}/${wave.id}`)} />,
+      }}
+      line={(wave) => ({
+        name: <strong>{wave.title}</strong>,
+        standing: (
+          <ThreeStates
+            execution={wave.workflow.state}
+            meta={
+              <>
+                {wave.lenses.filter((lens) => lens.artifact).length} of {wave.lenses.length} lenses
+                · attempt {wave.attempt} · <Ago at={wave.createdAt} />
+              </>
+            }
+          />
+        ),
+      })}
+    />
   );
 }
 
@@ -582,39 +590,42 @@ function ConsolidationList({ row }: ViewProps) {
   const list = useTool<ConsolidationRecord[]>('consolidation.list', {}, { every: 8000 });
   const { actor } = useSession();
   const navigate = useNavigate();
+  const filter = useListFilter(list.data, {
+    stateOf: (record) => record.workflow.state,
+    labels: (record) => [record.name],
+    ids: (record) => [record.id],
+  });
   return (
-    <div className="page-stage stack stack--lg">
-      {/* Arriving from an approved reflection carries the sources: open on those. */}
-      <Fold
-        label="New consolidation"
-        shown={actor.role === 'operator' || actor.role === 'producer'}
-        opened={new URLSearchParams(window.location.search).has('sources')}
-      >
-        {() => <CreateConsolidation onCreated={(record) => navigate(`${row.path}/${record.id}`)} />}
-      </Fold>
-      <Listing
-        load={list}
-        rows={list.data ?? []}
-        opens
-        emptyTitle="No consolidations yet"
-        emptyHint="A consolidation turns approved findings into reviewed decisions; a producer starts one here."
-        columns={[
-          col<ConsolidationRecord>('name', 'Consolidation', (r) => <strong>{r.name}</strong>),
-          col<ConsolidationRecord>('state', 'Stage', (r) => (
-            <StatusPill value={r.workflow.state} />
-          )),
-          col<ConsolidationRecord>('work', 'Environment', (r) =>
-            r.workspace === 'git' ? 'Git' : 'Research',
-          ),
-          col<ConsolidationRecord>(
-            'coverage',
-            'Corpus',
-            (r) => `${r.experimentIds.length} experiments`,
-          ),
-          col<ConsolidationRecord>('created', 'Started', (r) => <Ago at={r.createdAt} />),
-        ]}
-      />
-    </div>
+    <ListPage
+      load={list}
+      noun="consolidations"
+      placeholder="Name"
+      filter={filter}
+      opens
+      emptyTitle="No consolidations yet"
+      emptyHint="A consolidation turns approved findings into reviewed decisions; a producer starts one here."
+      create={{
+        label: 'New consolidation',
+        shown: actor.role === 'operator' || actor.role === 'producer',
+        // Arriving from an approved reflection carries the sources: open on those.
+        opened: new URLSearchParams(window.location.search).has('sources'),
+        form: () => <CreateConsolidation onCreated={(r) => navigate(`${row.path}/${r.id}`)} />,
+      }}
+      line={(record) => ({
+        name: <strong>{record.name}</strong>,
+        standing: (
+          <ThreeStates
+            execution={record.workflow.state}
+            meta={
+              <>
+                {record.workspace === 'git' ? 'Git' : 'Research'} · {record.experimentIds.length}{' '}
+                experiments · <Ago at={record.createdAt} />
+              </>
+            }
+          />
+        ),
+      })}
+    />
   );
 }
 
@@ -783,8 +794,8 @@ function ConsolidationDetail({ row }: ViewProps) {
   );
 }
 
-const ReflectionRoutes = recordRoutes(ReflectionList, ReflectionDetail);
-const ConsolidationRoutes = recordRoutes(ConsolidationList, ConsolidationDetail);
+const ReflectionRoutes = splitRoutes(ReflectionList, ReflectionDetail);
+const ConsolidationRoutes = splitRoutes(ConsolidationList, ConsolidationDetail);
 export const ReflectionsView = (props: ViewProps) => (
   <ReflectionRoutes key={useScopeKey()} {...props} />
 );

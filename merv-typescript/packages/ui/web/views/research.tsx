@@ -1,22 +1,15 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import {
-  Area,
-  Failure,
-  Field,
-  Fold,
-  GateBox,
-  KindLabel,
-  LoadState,
-  Part,
-  StatusPill,
-} from '../components';
-import { useScopeKey, useSession } from '../session';
+import { Area, Failure, Field, GateBox, LoadState, RecordPage, StatusPill } from '../components';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
+import { useSession } from '../session';
 import { ResearchCommand } from './paper';
+import type { ViewProps } from './index';
 
 const ids = (value: string) => value.split(/\s+/).filter(Boolean);
 
@@ -98,47 +91,58 @@ function CreateResearch({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void }) {
+/** How a cycle handles code, in the words the cycle itself was opened with. */
+const consolidation = (record: ResearchRecord) =>
+  record.consolidationWorkspace === 'git'
+    ? 'Git consolidation'
+    : record.workflow.version < 3
+      ? 'Report consolidation (legacy cycle)'
+      : 'No code changes';
+
+function CycleDetail({ row }: ViewProps) {
+  const { id = '' } = useParams();
   const { actor } = useSession();
+  const cycle = useTool<ResearchRecord>('research.get', { researchId: id }, { every: 10000 });
   const guidance = useTool<WorkflowDecision>(
     'workflow.status_and_next',
-    { instanceId: record.id },
+    { instanceId: id },
     { every: 5000 },
   );
+  if (!cycle.data)
+    return (
+      <div className="page-stage">
+        <LoadState {...cycle} back={{ to: row.path, label: row.label }} />
+      </div>
+    );
+  const record = cycle.data;
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && record.ownerId === actor.id);
   return (
-    <article className="record record-page stack">
-      <KindLabel kind="research" />
-      <div className="cluster">
-        <h2>{record.name}</h2>
-        <StatusPill value={record.workflow.state} />
-      </div>
-      <p className="faint">
-        Revision {record.workflow.revision} ·{' '}
-        {record.consolidationWorkspace === 'git'
-          ? 'Git consolidation'
-          : record.workflow.version < 3
-            ? 'Report consolidation (legacy cycle)'
-            : 'No code changes'}
-      </p>
-      <Part title="What happens next">
-        <LoadState {...guidance} />
-        {guidance.data && !guidance.error && <GateBox decision={guidance.data} />}
-        {writable && (
-          <ResearchCommand
-            disabled={record.workflow.state === 'complete'}
-            tool="research.advance"
-            input={{ researchId: record.id, expectedRevision: record.workflow.revision }}
-            label={record.workflow.state === 'complete' ? 'Cycle complete' : 'Advance when ready'}
-            onSaved={() => {
-              reload();
-              guidance.reload();
-            }}
-          />
-        )}
-      </Part>
-      <Part title="Related">
+    <RecordPage
+      back={<Link to={row.path}>← {row.label}</Link>}
+      kind={row.view.kind}
+      name={record.name}
+      standing={`${consolidation(record)} · revision ${record.workflow.revision}`}
+      state={<StatusPill value={record.workflow.state} />}
+      act={
+        <>
+          <LoadState {...guidance} />
+          {guidance.data && !guidance.error && <GateBox decision={guidance.data} />}
+          {writable && (
+            <ResearchCommand
+              disabled={record.workflow.state === 'complete'}
+              tool="research.advance"
+              input={{ researchId: record.id, expectedRevision: record.workflow.revision }}
+              label={record.workflow.state === 'complete' ? 'Cycle complete' : 'Advance when ready'}
+              onSaved={() => {
+                cycle.reload();
+                guidance.reload();
+              }}
+            />
+          )}
+        </>
+      }
+      related={
         <div className="cluster">
           <Link to="/paper">
             Living paper{record.problem ? ` · problem revision ${record.problem.revision}` : ''}
@@ -146,37 +150,52 @@ function Cycle({ record, reload }: { record: ResearchRecord; reload: () => void 
           {record.reflectionId && <Link to="/reflections">Reflection</Link>}
           {record.consolidationId && <Link to="/consolidation">Consolidation</Link>}
         </div>
-      </Part>
-    </article>
+      }
+    />
   );
 }
 
-function ResearchPage() {
+function CycleList() {
   const { actor } = useSession();
   const cycles = useTool<ResearchRecord[]>('research.list', {}, { every: 10000 });
+  const filter = useListFilter(cycles.data, {
+    stateOf: (record) => record.workflow.state,
+    mine: (record) => record.ownerId === actor.id,
+    labels: (record) => [record.name],
+    ids: (record) => [record.id],
+  });
   return (
-    <div className="page-stage stack stack--lg">
-      <Fold label="New cycle" shown={actor.role === 'operator' || actor.role === 'producer'}>
-        {(close) => (
+    <ListPage
+      load={cycles}
+      noun="cycles"
+      placeholder="Name"
+      filter={filter}
+      opens
+      emptyTitle="No research cycles yet"
+      emptyHint="A cycle runs from the problem definition to reviewed findings; a producer starts one here."
+      create={{
+        label: 'New cycle',
+        shown: actor.role === 'operator' || actor.role === 'producer',
+        form: (close) => (
           <CreateResearch
             onSaved={() => {
               close();
               cycles.reload();
             }}
           />
-        )}
-      </Fold>
-      <LoadState
-        {...cycles}
-        empty={cycles.data?.length === 0}
-        emptyTitle="No research cycles yet"
-        emptyHint="A cycle runs from the problem definition to reviewed findings; a producer starts one here."
-      />
-      {cycles.data?.map((record) => (
-        <Cycle key={record.id} record={record} reload={cycles.reload} />
-      ))}
-    </div>
+        ),
+      }}
+      line={(record) => ({
+        name: <strong>{record.name}</strong>,
+        standing: (
+          <ThreeStates
+            execution={record.workflow.state}
+            meta={`${consolidation(record)} · revision ${record.workflow.revision}`}
+          />
+        ),
+      })}
+    />
   );
 }
 
-export const ResearchView = () => <ResearchPage key={useScopeKey()} />;
+export const ResearchView = splitRoutes(CycleList, CycleDetail);

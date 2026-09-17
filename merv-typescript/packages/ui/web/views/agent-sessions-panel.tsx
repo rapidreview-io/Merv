@@ -58,7 +58,7 @@ interface Observation {
 const count = (value: number) => value.toLocaleString();
 const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
-const activity = (agent: AgentSummary) =>
+export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
 
 function AssignmentDetails({ assignment }: { assignment: Assignment }) {
@@ -276,25 +276,18 @@ function AgentObservation({ observation }: { observation: Observation }) {
   );
 }
 
-export function AgentSessionsPanel({
-  agents,
-  assignments,
-}: {
-  agents: AgentSummary[];
-  assignments: { id: string; label: string; role: string }[];
-}) {
-  const [liveOnly, setLiveOnly] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+/**
+ * What one agent is doing, read beside the list that named it. The row that opened
+ * it holds the way back: Escape and the close control both return the cursor there.
+ */
+export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): void }) {
   const [observation, setObservation] = useState<Observation>();
   const [error, setError] = useState<string>();
   const heading = useRef<HTMLHeadingElement>(null);
-  const directoryHeading = useRef<HTMLHeadingElement>(null);
-  const opener = useRef<HTMLButtonElement | null>(null);
-  const selectedAgent = agents.find((agent) => agent.id === selected);
+  const selected = agent.id;
   useEffect(() => {
     setObservation(undefined);
     setError(undefined);
-    if (!selected) return;
     heading.current?.focus();
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -325,134 +318,38 @@ export function AgentSessionsPanel({
       clearTimeout(timer);
     };
   }, [selected]);
-  const close = () => {
-    setSelected(null);
-    if (opener.current?.isConnected) opener.current.focus();
-    else directoryHeading.current?.focus();
-  };
-  const assignmentLabels = new Map(assignments.map((assignment) => [assignment.id, assignment]));
-  const visible = [...agents]
-    .filter((agent) => !liveOnly || !!agent.currentExecutionId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return (
-    <section className="stack" aria-labelledby="agents-title">
-      <div className="cluster cluster--between">
-        <h2 id="agents-title" ref={directoryHeading} tabIndex={-1}>
-          Agents <span className="muted">· {agents.length}</span>
-        </h2>
-        <label className="agent-switch">
-          <input
-            type="checkbox"
-            role="switch"
-            checked={liveOnly}
-            onChange={(event) => setLiveOnly(event.target.checked)}
-          />
-          <span>Live assignments only</span>
-        </label>
-      </div>
-      <div className={`agent-workspace${selected ? ' agent-workspace--selected' : ''}`}>
-        <div className="stack agent-directory">
-          <div className="table-wrap">
-            <table className="table agent-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Assignment</th>
-                  <th aria-sort="descending">Joined ↓</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((agent) => (
-                  <tr
-                    key={agent.id}
-                    className={selected === agent.id ? 'agent-row--selected' : ''}
-                    onClick={(event) => {
-                      opener.current = event.currentTarget.querySelector('button');
-                      setSelected(agent.id);
-                    }}
-                  >
-                    <td>
-                      <button
-                        className="agent-select"
-                        aria-expanded={selected === agent.id}
-                        aria-controls={selected === agent.id ? 'agent-detail' : undefined}
-                        onClick={(event) => {
-                          opener.current = event.currentTarget;
-                          setSelected(agent.id);
-                        }}
-                      >
-                        <strong>{agent.name}</strong>
-                      </button>
-                    </td>
-                    <td>
-                      <StatusPill value={activity(agent)} />
-                      {agent.currentExecutionId && (
-                        <div className="agent-row-work">
-                          <strong>
-                            {agent.currentAssignment?.label ??
-                              assignmentLabels.get(agent.currentExecutionId)?.label ??
-                              'Assignment execution'}
-                          </strong>
-                          <span className="muted">
-                            {agent.currentAssignment?.role ??
-                              assignmentLabels.get(agent.currentExecutionId)?.role}
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <time dateTime={agent.createdAt} title={stamp(agent.createdAt)}>
-                        {relativeTime(agent.createdAt)}
-                      </time>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {visible.length === 0 && (
-            <p className="muted">
-              {liveOnly
-                ? 'No agents have live assignments.'
-                : 'No agents have joined this project yet.'}
-            </p>
-          )}
+    <section
+      id="agent-detail"
+      className="stack stack--lg agent-detail"
+      aria-labelledby="agent-detail-title"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation();
+          close();
+        }
+      }}
+    >
+      <div className="cluster cluster--between agent-detail-heading">
+        <div>
+          <p className="label">Agent details</p>
+          <h2 id="agent-detail-title" ref={heading} tabIndex={-1}>
+            {agent.name}
+          </h2>
         </div>
-        {selected && (
-          <aside
-            id="agent-detail"
-            className="card stack stack--lg agent-detail"
-            aria-labelledby="agent-detail-title"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.stopPropagation();
-                close();
-              }
-            }}
-          >
-            <div className="cluster cluster--between agent-detail-heading">
-              <div>
-                <p className="label">Agent details</p>
-                <h2 id="agent-detail-title" ref={heading} tabIndex={-1}>
-                  {selectedAgent?.name ?? 'Agent'}
-                </h2>
-              </div>
-              <button className="btn btn--sm" aria-label="Close agent details" onClick={close}>
-                Close ×
-              </button>
-            </div>
-            {error ? (
-              <p role="alert">{error}</p>
-            ) : observation?.agent.id === selected ? (
-              <AgentObservation key={observation.agent.id} observation={observation} />
-            ) : (
-              <p role="status" className="muted">
-                Loading agent activity…
-              </p>
-            )}
-          </aside>
-        )}
+        <button className="btn btn--sm" aria-label="Close agent details" onClick={close}>
+          Close ×
+        </button>
       </div>
+      {error ? (
+        <p role="alert">{error}</p>
+      ) : observation?.agent.id === selected ? (
+        <AgentObservation key={observation.agent.id} observation={observation} />
+      ) : (
+        <p role="status" className="muted">
+          Loading agent activity…
+        </p>
+      )}
     </section>
   );
 }

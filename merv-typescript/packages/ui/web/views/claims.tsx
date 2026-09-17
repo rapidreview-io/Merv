@@ -3,16 +3,8 @@ import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import {
-  Area,
-  Failure,
-  Fold,
-  KindLabel,
-  LoadState,
-  StatusPill,
-  relativeTime,
-  words,
-} from '../components';
+import { Area, Failure, KindLabel, StatusPill, relativeTime, words } from '../components';
+import { ListPage, useListFilter } from '../list-filters';
 import { useScopeKey, useSession } from '../session';
 import type { Row } from '../shell-types';
 import type { ViewProps } from './index';
@@ -245,6 +237,25 @@ function ClaimEntry({
       <p className="claim-standing">
         <StatusPill value={claim.status} /> · {claim.confidence} confidence
         {claim.scope && ` · ${claim.scope}`}
+        {/* The one quiet action a card carries, at the end of its standing and nowhere else. */}
+        {writable && !editing && (
+          <button
+            type="button"
+            className="btn-text claim-edit"
+            disabled={needsRefresh}
+            onClick={() => {
+              setEditing(true);
+              setConflictRevision(undefined);
+            }}
+          >
+            Edit standing
+          </button>
+        )}
+        {writable && needsRefresh && (
+          <button type="button" className="btn-text claim-edit" onClick={reload}>
+            Load latest claim
+          </button>
+        )}
       </p>
       {tests.map((test) => (
         <p className="claim-line" key={test.id}>
@@ -265,7 +276,7 @@ function ClaimEntry({
           standing again before starting a new edit.
         </p>
       )}
-      {editing ? (
+      {editing && (
         <EditClaim
           claim={claim}
           onCancel={() => setEditing(false)}
@@ -280,27 +291,6 @@ function ClaimEntry({
             reload();
           }}
         />
-      ) : (
-        writable && (
-          <p className="claim-edit">
-            <button
-              type="button"
-              className="btn-text"
-              disabled={needsRefresh}
-              onClick={() => {
-                setEditing(true);
-                setConflictRevision(undefined);
-              }}
-            >
-              Edit standing
-            </button>
-            {needsRefresh && (
-              <button type="button" className="btn-text" onClick={reload}>
-                Load latest claim
-              </button>
-            )}
-          </p>
-        )
       )}
     </article>
   );
@@ -320,6 +310,12 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
     rows.some((row) => row.view.kind === 'feed') ? 'feed.activity' : null,
   );
   const writable = actor.role === 'operator' || actor.role === 'producer';
+  const filter = useListFilter(claims.data, {
+    stateOf: (claim) => claim.status,
+    mine: (claim) => claim.createdBy === actor.id,
+    labels: (claim) => [claim.statement, claim.scope],
+    ids: (claim) => [claim.id],
+  });
   const verdictOf = (experimentId: string) =>
     (reviews.data ?? [])
       .filter((review) => review.subjectId === experimentId && review.verdict)
@@ -351,38 +347,40 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
       )
       .reverse();
   return (
-    <div className="page-stage stack stack--lg">
-      <Fold label="New claim" shown={writable}>
-        {(close) => (
+    <ListPage
+      load={claims}
+      noun="claims"
+      placeholder="Statement or scope"
+      filter={filter}
+      emptyTitle="No claims yet"
+      emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here. A completed experiment does not change its standing automatically: that stays a person's call."
+      create={{
+        label: 'New claim',
+        shown: writable,
+        form: (close) => (
           <CreateClaim
             onSaved={() => {
               close();
               claims.reload();
             }}
           />
-        )}
-      </Fold>
-      <LoadState
-        {...claims}
-        empty={claims.data?.length === 0}
-        emptyTitle="No claims yet"
-        emptyHint="A claim records a statement, where it applies and how confident you are; a producer writes one here. A completed experiment does not change its standing automatically: that stays a person's call."
-      />
-      {claims.data && claims.data.length > 0 && (
-        <div className="claim-book">
-          {claims.data.map((claim) => (
-            <ClaimEntry
-              key={claim.id}
-              claim={claim}
-              tests={testsOf(claim.id)}
-              changes={changesOf(claim.id)}
-              writable={writable}
-              reload={claims.reload}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+        ),
+      }}
+      // The book is a designed surface: its rows stay the cards it was drawn as.
+      cards={{
+        className: 'claim-book',
+        render: (claim) => (
+          <ClaimEntry
+            key={claim.id}
+            claim={claim}
+            tests={testsOf(claim.id)}
+            changes={changesOf(claim.id)}
+            writable={writable}
+            reload={claims.reload}
+          />
+        ),
+      }}
+    />
   );
 }
 

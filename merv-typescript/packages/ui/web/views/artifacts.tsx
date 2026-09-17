@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { call, useScopeVersion, useTool } from '../api';
-import { Ago, KV, Listing, LoadState, RecordPage, col, recordRoutes, stamp } from '../components';
+import { Ago, KV, LoadState, RecordPage, stamp } from '../components';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
+import { useSession } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
@@ -150,38 +153,37 @@ export function ArtifactBody({
 function ArtifactList() {
   const list = useTool<Artifact[]>('artifact.list', {}, { every: 10000 });
   const nameOf = useActorNames();
-  // What an inventory is asked first: how much of this is there. Both numbers are
-  // exact — the count and every file's own `size` — so neither is hedged.
-  const files = list.data ?? [];
-  const held = files.reduce((sum, file) => sum + file.size, 0);
+  const { actor } = useSession();
+  const filter = useListFilter(list.data, {
+    mine: (a) => a.createdBy === actor.id,
+    labels: (a) => [a.title, a.mediaType, nameOf(a.createdBy)],
+    ids: (a) => [a.id, a.createdBy],
+  });
   return (
-    <div className="page-stage stack">
-      {list.data && (
-        <p className="list-totals">
-          {files.length} {files.length === 1 ? 'file' : 'files'} · {bytes(held)}
-          <span className="muted"> · every file retained in this project, whoever retained it</span>
-        </p>
-      )}
-      <Listing
-        load={list}
-        rows={[...files].reverse()}
-        opens
-        emptyTitle="No artifacts"
-        emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
-        columns={[
-          col<Artifact>('title', 'Title', (a) => <strong>{a.title}</strong>),
-          col<Artifact>(
-            'type',
-            'Type',
-            (a) => <span className="mono faint">{a.mediaType}</span>,
-            '150px',
-          ),
-          col<Artifact>('size', 'Size', (a) => bytes(a.size), '90px'),
-          col<Artifact>('by', 'Created by', (a) => nameOf(a.createdBy)),
-          col<Artifact>('when', 'When', (a) => <Ago at={a.createdAt} />, '90px'),
-        ]}
-      />
-    </div>
+    <ListPage
+      load={list}
+      noun="files"
+      placeholder="Title, type or person"
+      filter={filter}
+      rows={[...filter.rows].reverse()}
+      opens
+      emptyTitle="No artifacts"
+      emptyHint="Briefs, deliveries and evidence files land here as agents retain them; their contents never change afterwards."
+      // A file has no state; what it stands as is its type, its exact weight and its keeper.
+      line={(a) => ({
+        name: <strong>{a.title}</strong>,
+        standing: (
+          <ThreeStates
+            meta={
+              <>
+                <span className="mono">{a.mediaType}</span> · {bytes(a.size)} ·{' '}
+                {nameOf(a.createdBy)} · <Ago at={a.createdAt} />
+              </>
+            }
+          />
+        ),
+      })}
+    />
   );
 }
 
@@ -220,4 +222,4 @@ function ArtifactDetail({ row }: ViewProps) {
   );
 }
 
-export const ArtifactsView = recordRoutes(ArtifactList, ArtifactDetail);
+export const ArtifactsView = splitRoutes(ArtifactList, ArtifactDetail);

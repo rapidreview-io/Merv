@@ -40,19 +40,23 @@ function Say({ clause }: { clause: Clause | null }) {
 }
 
 /**
- * Execution, review and outcome in one cell, in that fixed order and never
+ * Execution, review and outcome on one line, in that fixed order and never
  * collapsed into a single word: work can be finished and unreviewed, reviewed
  * and inconclusive, or running under a plan that already passed. Colour reaches
- * the verdict word alone; the rest of the row stays ink.
+ * the verdict word alone; the rest of the line stays ink. A kind with none of the
+ * three still stands somehow, and says so in the same place through `meta`, which
+ * carries whose it is and when it last moved and is never a summary of it.
  */
 export function ThreeStates({
   execution,
   review,
   outcome,
+  meta,
 }: {
   execution?: string | null;
   review?: Clause | null;
   outcome?: Clause | null;
+  meta?: ReactNode;
 }) {
   return (
     <div className="states">
@@ -63,6 +67,7 @@ export function ThreeStates({
       )}
       {review !== undefined && <Say clause={review} />}
       {outcome !== undefined && <Say clause={outcome} />}
+      {meta && <span className="states-clause states-detail">{meta}</span>}
     </div>
   );
 }

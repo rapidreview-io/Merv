@@ -2,13 +2,12 @@ import {
   useEffect,
   useRef,
   useState,
-  type ComponentType,
   type CSSProperties,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
 } from 'react';
-import { Link, Route, Routes } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool, type ApiError } from './api';
 import { duration, term, words, type Liveness } from './liveness';
@@ -262,50 +261,6 @@ export function ActorSplit({ agent, you }: { agent?: ReactNode; you?: ReactNode 
   );
 }
 
-/**
- * A page's one creation form, folded behind a single control: the opener names
- * what it opens and steps back while the form is on screen, and the form closes
- * itself through the callback its own success path already carries.
- */
-export function Fold({
-  label,
-  shown = true,
-  plain,
-  opened,
-  note,
-  children,
-}: {
-  label: string;
-  /** False where this reader may not create anything: no control is drawn. */
-  shown?: boolean;
-  /** True where the page's one primary control is something else. */
-  plain?: boolean;
-  /** Open on arrival, where arriving at the page is itself the request. */
-  opened?: boolean;
-  /** What the page states on the same line as the control. */
-  note?: ReactNode;
-  children(close: () => void): ReactNode;
-}) {
-  const [open, setOpen] = useState(!!opened);
-  if (!shown) return null;
-  return (
-    <>
-      <div className="action-row">
-        {note}
-        <button
-          type="button"
-          className={cx('btn', !plain && 'btn--primary')}
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-        >
-          {label}
-        </button>
-      </div>
-      {open && children(() => setOpen(false))}
-    </>
-  );
-}
-
 export function PageHeader({
   eyebrow,
   kind,
@@ -544,12 +499,10 @@ export function Table<T>({
   columns,
   rows,
   keyOf,
-  onRow,
 }: {
   columns: Column<T>[];
   rows: T[];
   keyOf(row: T): string;
-  onRow?(row: T): string;
 }) {
   return (
     <div className="table-wrap">
@@ -570,16 +523,8 @@ export function Table<T>({
         <tbody>
           {rows.map((row) => (
             <tr key={keyOf(row)}>
-              {columns.map((column, index) => (
-                <td key={column.key}>
-                  {index === 0 && onRow ? (
-                    <Link className="row-link" to={onRow(row)}>
-                      {column.render(row)}
-                    </Link>
-                  ) : (
-                    column.render(row)
-                  )}
-                </td>
+              {columns.map((column) => (
+                <td key={column.key}>{column.render(row)}</td>
               ))}
             </tr>
           ))}
@@ -587,67 +532,6 @@ export function Table<T>({
       </table>
     </div>
   );
-}
-
-/**
- * A list with no filters: the state of the read, then the table it names. The
- * loading rows take the table's own shape, and a failed read replaces the table
- * rather than sitting beside it. A filtered list says the same thing through
- * ListPage, which adds the filter row above it.
- */
-export function Listing<T extends { id: string }>({
-  load,
-  rows,
-  columns,
-  emptyTitle,
-  emptyHint,
-  opens,
-}: {
-  /** The read behind the rows, as LoadState reads it. */
-  load: { loading: boolean; error?: ApiError; data?: unknown; loadedAt?: string };
-  /** What the page shows, in the order it shows it. */
-  rows: T[];
-  columns: Column<T>[];
-  emptyTitle: string;
-  emptyHint: string;
-  /** True where a row is the way into a record of its own. */
-  opens?: boolean;
-}) {
-  return (
-    <>
-      <LoadState
-        {...load}
-        empty={rows.length === 0}
-        columns={columns.length}
-        emptyTitle={emptyTitle}
-        emptyHint={emptyHint}
-      />
-      {rows.length > 0 && !load.error && (
-        <Table
-          rows={rows}
-          keyOf={(row) => row.id}
-          onRow={opens ? (row) => row.id : undefined}
-          columns={columns}
-        />
-      )}
-    </>
-  );
-}
-
-/**
- * A row's two routes, declared once: the list it opens on, and the record behind a
- * line. A declaration, not a const: views call it while this module is still being
- * initialised through the artifact reader it imports.
- */
-export function recordRoutes<P extends object>(Index: ComponentType<P>, Detail: ComponentType<P>) {
-  return function Routed(props: P) {
-    return (
-      <Routes>
-        <Route index element={<Index {...props} />} />
-        <Route path=":id" element={<Detail {...props} />} />
-      </Routes>
-    );
-  };
 }
 
 /** One list serves every pinned title, so a record does not fetch each file to name it. */

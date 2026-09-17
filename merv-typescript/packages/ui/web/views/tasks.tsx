@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { useSession } from '../session';
 import {
   Ago,
@@ -14,14 +14,7 @@ import {
   stamp,
   useArtifacts,
 } from '../components';
-import {
-  OPEN,
-  ThreeStates,
-  firstSentence,
-  isOpenTask,
-  newestReview,
-  reviewClause,
-} from '../states';
+import { ThreeStates, firstSentence, isOpenTask, newestReview, reviewClause } from '../states';
 import { useActorNames } from './people';
 import { ArtifactBody } from './artifacts';
 import { CriterionRows, type Review } from './reviews';
@@ -64,40 +57,28 @@ function TaskList() {
   const reviews = useTool<Review[]>('review.list');
   const nameOf = useActorNames();
   const { actor } = useSession();
-  const { id: openId } = useParams();
-  const filter = useListFilter(list.data, (item) => item.workflow.state, isOpenTask);
-  const { state, scope, search } = filter;
-  // The record open beside the list is always one of its rows, whatever the
-  // filters say, so the pane never marks a row that is not there.
-  const visible = (list.data ?? []).filter(
-    (item) =>
-      item.id === openId ||
-      ((state === OPEN
-        ? isOpenTask(item.workflow.state)
-        : !state || item.workflow.state === state) &&
-        (scope === 'everyone' || item.producerId === actor.id) &&
-        matches(
-          search,
-          [item.title, item.goal, nameOf(item.producerId)],
-          [item.id, item.producerId],
-        )),
-  );
+  const filter = useListFilter(list.data, {
+    stateOf: (t) => t.workflow.state,
+    isOpen: isOpenTask,
+    mine: (t) => t.producerId === actor.id,
+    labels: (t) => [t.title, t.goal, nameOf(t.producerId)],
+    ids: (t) => [t.id, t.producerId],
+  });
   return (
     <ListPage
-      list={list}
+      load={list}
       noun="tasks"
       placeholder="Name, goal or person"
       filter={filter}
-      rows={[...visible].reverse()}
+      rows={[...filter.rows].reverse()}
+      opens
       emptyTitle="No tasks yet"
       emptyHint="Tasks appear here once a producer opens one with a goal and its acceptance checks."
-      columns={[
-        col<Task>('title', 'Task', (t) => (
-          <strong className={t.id === openId ? 'row-open' : undefined}>{t.title}</strong>
-        )),
-        col<Task>('standing', 'Standing', (t) => {
-          const review = newestReview(reviews.data, t.id);
-          return (
+      line={(t) => {
+        const review = newestReview(reviews.data, t.id);
+        return {
+          name: <strong>{t.title}</strong>,
+          standing: (
             <ThreeStates
               execution={t.workflow.state}
               review={
@@ -111,17 +92,19 @@ function TaskList() {
                   ? { detail: firstSentence(t.failure.reason) }
                   : { word: 'no outcome recorded', absent: true }
               }
+              meta={
+                <>
+                  {nameOf(t.producerId)}
+                  {t.dependencies?.length
+                    ? ` · ${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} prerequisites succeeded`
+                    : ''}{' '}
+                  · <Ago at={t.workflow.updatedAt} />
+                </>
+              }
             />
-          );
-        }),
-        col<Task>('producer', 'Producer', (t) => nameOf(t.producerId)),
-        col<Task>('dependencies', 'Prerequisites', (t) =>
-          t.dependencies?.length
-            ? `${t.dependencies.filter((item) => item.settled).length}/${t.dependencies.length} succeeded`
-            : 'None',
-        ),
-        col<Task>('when', 'Updated', (t) => <Ago at={t.workflow.updatedAt} />, '90px'),
-      ]}
+          ),
+        };
+      }}
     />
   );
 }

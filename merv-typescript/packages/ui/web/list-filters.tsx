@@ -6,9 +6,9 @@ import {
   type ComponentType,
   type ReactNode,
 } from 'react';
-import { Route, Routes, useNavigate } from 'react-router-dom';
-import type { Loaded } from './api';
-import { LoadState, Table, words, type Column } from './components';
+import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import type { ApiError } from './api';
+import { KindLabel, LoadState, cx, words } from './components';
 import { OPEN } from './states';
 import type { Row } from './shell-types';
 
@@ -55,8 +55,24 @@ export function stateCounts<T>(
 const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && !!target.closest('input, textarea, select, [contenteditable]');
 
+/**
+ * What a collection is made of, and so what its one control row can read: the
+ * state a row is in, whose row it is where the record has an owner at all, and
+ * the words and ids a person searches it by. A fact a kind does not have is left
+ * out, and its control is not drawn.
+ */
+export interface ListShape<T> {
+  stateOf?(item: T): string;
+  isOpen?(state: string): boolean;
+  /** Present only where the record has an owner: what draws Mine / Everyone. */
+  mine?(item: T): boolean;
+  /** What a person types: the names first, then the ids they may paste. */
+  labels?(item: T): (string | null | undefined)[];
+  ids?(item: T): (string | null | undefined)[];
+}
+
 /** Everything a filtered list holds between renders, and how a control changes it. */
-export interface Filter {
+export interface Filter<T> {
   query: string;
   setQuery(value: string): void;
   scope: Scope;
@@ -64,117 +80,68 @@ export interface Filter {
   state: string;
   setState(value: string): void;
   states: StateCount[];
-  /** The search as the rows are matched against it. */
-  search: string;
+  /** True where this kind has an owner, so whose work it is can be asked. */
+  owned: boolean;
+  /** Everything the read holds, and the part of it the controls keep. */
+  items: T[];
+  rows: T[];
+  filtering: boolean;
+  clear(): void;
+  /** The record open beside the list, which stays a row whatever the filters say. */
+  openId?: string;
 }
 
 /**
- * That state, in one place. The count in the title line is the filter: a list
- * that knows which of its states are open opens on the work it counted, and
- * every state stays one click away on the line beneath.
+ * That state, in one place, and the rows it keeps. The count in the title line is
+ * the filter: a list that knows which of its states are open opens on the work it
+ * counted, and every state stays one click away on the same line as the search.
  */
-export function useListFilter<T>(
+export function useListFilter<T extends { id: string }>(
   items: T[] | undefined,
-  stateOf: (item: T) => string,
-  isOpen?: (state: string) => boolean,
-): Filter {
+  shape: ListShape<T> = {},
+): Filter<T> {
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<Scope>('everyone');
   const [chosen, setChosen] = useState<string>();
-  const states = stateCounts(items, stateOf, isOpen);
+  const { id: openId } = useParams();
+  const held = items ?? [];
+  const states = shape.stateOf ? stateCounts(held, shape.stateOf, shape.isOpen) : [];
   const open = states.find((item) => item.value === OPEN)?.count ?? 0;
+  const state = chosen ?? (open ? OPEN : '');
+  const search = query.trim().toLowerCase();
+  const stateOf = shape.stateOf;
+  const holds = (item: T) =>
+    !state || !stateOf
+      ? true
+      : state === OPEN
+        ? !!shape.isOpen?.(stateOf(item))
+        : stateOf(item) === state;
   return {
     query,
     setQuery,
     scope,
     setScope,
-    state: chosen ?? (open ? OPEN : ''),
+    state,
     setState: setChosen,
     states,
-    search: query.trim().toLowerCase(),
+    owned: !!shape.mine,
+    items: held,
+    // The record open beside the list is always one of its rows, whatever the filters say.
+    rows: held.filter(
+      (item) =>
+        item.id === openId ||
+        (holds(item) &&
+          (scope === 'everyone' || !shape.mine || shape.mine(item)) &&
+          matches(search, shape.labels?.(item) ?? [], shape.ids?.(item) ?? [])),
+    ),
+    filtering: !!(query || state || scope === 'mine'),
+    clear() {
+      setQuery('');
+      setChosen('');
+      setScope('everyone');
+    },
+    openId,
   };
-}
-
-/**
- * Two controls and never a third: the search box, and whose work this is. What
- * state a record is in is not a control but the line under them — the list's own
- * composition, each segment narrowing to the states it counted.
- */
-function ListFilters({
-  noun,
-  placeholder,
-  filter,
-  shown,
-  total,
-}: {
-  noun: string;
-  placeholder: string;
-  filter: Filter;
-  shown: number;
-  total: number;
-}) {
-  const states = filter.states;
-  const filtering = !!(filter.query || filter.state || filter.scope === 'mine');
-  return (
-    <>
-      <div className="action-row">
-        <input
-          className="input"
-          type="search"
-          aria-label={`Search ${noun}`}
-          placeholder={placeholder}
-          value={filter.query}
-          onChange={(event) => filter.setQuery(event.target.value)}
-        />
-        <span className="scope" role="group" aria-label={`Whose ${noun}`}>
-          {SCOPES.map((value) => (
-            <button
-              key={value}
-              type="button"
-              className="btn-text"
-              aria-pressed={filter.scope === value}
-              onClick={() => filter.setScope(value)}
-            >
-              {value === 'mine' ? 'Mine' : 'Everyone'}
-            </button>
-          ))}
-        </span>
-        {filtering && (
-          <span className="muted" role="status">
-            {shown} of {total} {noun}
-          </span>
-        )}
-        {filtering && (
-          <button
-            type="button"
-            className="btn-text"
-            onClick={() => {
-              filter.setQuery('');
-              filter.setState('');
-              filter.setScope('everyone');
-            }}
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
-      {states.length > 1 && (
-        <p className="state-line">
-          {states.map(({ value, count }) => (
-            <button
-              key={value}
-              type="button"
-              className="btn-text"
-              aria-pressed={filter.state === value}
-              onClick={() => filter.setState(filter.state === value ? '' : value)}
-            >
-              {words(value)} <span className="state-n">{count}</span>
-            </button>
-          ))}
-        </p>
-      )}
-    </>
-  );
 }
 
 /**
@@ -206,35 +173,76 @@ function useRowKeys(frame: { current: HTMLDivElement | null }) {
 }
 
 /**
- * Every filtered list renders the same page in the same order and differs only in
- * which parts are true: the filter row while there is something to filter, the state of
- * the read, the distinct screen for filtered-to-nothing, and the table itself, whose
- * rows are the records the page decided to show. A failed read is the one state that
- * replaces the list rather than sitting beside it.
+ * One row of every list: what the record is above — its kind where the collection
+ * mixes kinds, and its name — and how it stands below. Never a third line, and
+ * never a paragraph of what it says: that is the record's own page.
+ */
+export interface Line {
+  kind?: string;
+  name: ReactNode;
+  standing?: ReactNode;
+}
+
+/**
+ * The page's one creation control and the form behind it. The opener is the last
+ * thing in the control row and the only accent outside the form; the form opens
+ * directly under the row, in place, and closes itself through the callback its
+ * own success path already carries.
+ */
+export interface Creation {
+  label: string;
+  /** False where this reader may not create anything: no control is drawn. */
+  shown?: boolean;
+  /** True where the control opens something other than a new record. */
+  plain?: boolean;
+  /** Open on arrival, where arriving at the page is itself the request. */
+  opened?: boolean;
+  form(close: () => void): ReactNode;
+}
+
+/**
+ * Every collection renders the same page in the same order and differs only in
+ * which parts are true: the title line the shell draws, one control row — search,
+ * whose work this is, which states it holds, and the one creation control at its
+ * right end — then the rows. The state of the read keeps the list's own shape, the
+ * filtered-to-nothing screen is distinct from the empty one, and a failed read is
+ * the one state that replaces the list rather than sitting beside it.
  */
 export function ListPage<T extends { id: string }>({
-  list,
+  load,
   noun,
   placeholder,
   filter,
-  rows,
-  columns,
+  rows = filter.rows,
+  line,
+  opens,
+  create,
+  cards,
   emptyTitle,
   emptyHint,
+  after,
 }: {
-  list: Loaded<T[]>;
+  load: { loading: boolean; error?: ApiError; data?: unknown; loadedAt?: string };
   noun: string;
   placeholder: string;
-  filter: Filter;
-  /** What the page shows, in the order it shows it. */
-  rows: T[];
-  columns: Column<T>[];
+  filter: Filter<T>;
+  /** What the page shows, in the order it shows it; the kept rows unless said otherwise. */
+  rows?: T[];
+  line?(item: T): Line;
+  /** True where a row is the way into a record of its own. */
+  opens?: boolean;
+  create?: Creation;
+  /** Where the row is a designed card of its own: the class its stack takes. */
+  cards?: { className: string; render(item: T): ReactNode };
   emptyTitle: string;
   emptyHint: string;
+  /** What a page states after its rows, where it holds a second list of another kind. */
+  after?: ReactNode;
 }) {
-  const listed = !!list.data?.length && !list.error;
   const frame = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(!!create?.opened);
   useRowKeys(frame);
+  const total = filter.items.length;
   // Filtered to nothing has a screen per cause, and the scope states its meaning there.
   const nothing =
     filter.scope === 'mine'
@@ -242,29 +250,122 @@ export function ListPage<T extends { id: string }>({
       : [`No ${noun} match these filters`, 'Try another search or clear the filters.'];
   return (
     <div className="page-stage stack" ref={frame}>
-      {listed && (
-        <ListFilters
-          noun={noun}
-          placeholder={placeholder}
-          filter={filter}
-          shown={rows.length}
-          total={list.data!.length}
-        />
-      )}
+      <div className="stack">
+        <div className="action-row">
+          {/* The filters wrap among themselves, so the one control at the end of the
+              row keeps the same place however many states a list turns out to hold. */}
+          <div className="action-filters">
+            {total > 0 && (
+              <input
+                className="input"
+                type="search"
+                aria-label={`Search ${noun}`}
+                placeholder={placeholder}
+                value={filter.query}
+                onChange={(event) => filter.setQuery(event.target.value)}
+              />
+            )}
+            {total > 0 && filter.owned && (
+              <span className="scope" role="group" aria-label={`Whose ${noun}`}>
+                {SCOPES.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="btn-text"
+                    aria-pressed={filter.scope === value}
+                    onClick={() => filter.setScope(value)}
+                  >
+                    {value === 'mine' ? 'Mine' : 'Everyone'}
+                  </button>
+                ))}
+              </span>
+            )}
+            {filter.states.length > 1 && (
+              <span className="state-line">
+                {filter.states.map(({ value, count }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="btn-text"
+                    aria-pressed={filter.state === value}
+                    onClick={() => filter.setState(filter.state === value ? '' : value)}
+                  >
+                    {words(value)} <span className="state-n">{count}</span>
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
+          {create && create.shown !== false && (
+            <button
+              type="button"
+              className={cx('btn', !create.plain && 'btn--primary', 'action-end')}
+              aria-expanded={open}
+              onClick={() => setOpen((value) => !value)}
+            >
+              {create.label}
+            </button>
+          )}
+        </div>
+        {open && create && create.form(() => setOpen(false))}
+      </div>
       <LoadState
-        loading={list.loading}
-        error={list.error}
-        empty={list.data?.length === 0}
+        {...load}
+        empty={total === 0}
         emptyTitle={emptyTitle}
         emptyHint={emptyHint}
-        columns={columns.length}
+        columns={2}
       />
-      {listed && !list.loading && rows.length === 0 && (
-        <LoadState loading={false} empty emptyTitle={nothing[0]} emptyHint={nothing[1]} />
+      {total > 0 && !load.loading && rows.length === 0 && (
+        <LoadState
+          loading={false}
+          empty
+          emptyTitle={nothing[0]}
+          emptyHint={
+            <>
+              {nothing[1]}{' '}
+              <button type="button" className="btn-text" onClick={filter.clear}>
+                Clear filters
+              </button>
+            </>
+          }
+        />
       )}
-      {rows.length > 0 && !list.error && (
-        <Table rows={rows} keyOf={(row) => row.id} onRow={(row) => row.id} columns={columns} />
-      )}
+      {rows.length > 0 &&
+        !load.error &&
+        (cards ? (
+          <div className={cards.className}>{rows.map((item) => cards.render(item))}</div>
+        ) : (
+          <ul className="rows">
+            {rows.map((item) => {
+              const { kind, name, standing } = line!(item);
+              const body = (
+                <>
+                  <span className="row-name">
+                    {kind && <KindLabel kind={kind} />}
+                    {name}
+                  </span>
+                  {standing}
+                </>
+              );
+              return (
+                <li className="row" key={item.id}>
+                  {opens ? (
+                    <Link
+                      className={cx('row-link', item.id === filter.openId && 'row-open')}
+                      to={item.id}
+                    >
+                      {body}
+                    </Link>
+                  ) : (
+                    body
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ))}
+      {after}
     </div>
   );
 }

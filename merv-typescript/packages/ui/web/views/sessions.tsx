@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { accountRequest, scopeVersion, useTool } from '../api';
 import {
@@ -9,7 +9,6 @@ import {
   KV,
   KindLabel,
   Live,
-  LoadState,
   StatusPill,
   Table,
   col,
@@ -18,10 +17,12 @@ import {
   useNow,
   type KVRow,
 } from '../components';
+import { ListPage, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
 import { leaseLiveness, runnerLiveness } from '../liveness';
 import { useScopeKey } from '../session';
 import type { ViewProps } from './index';
-import { AgentSessionsPanel, type AgentSummary } from './agent-sessions-panel';
+import { AgentDetail, activity, type AgentSummary } from './agent-sessions-panel';
 
 interface Platform {
   name: string;
@@ -174,8 +175,9 @@ function AgentsPage({ row, shell }: ViewProps) {
   const state = useTool<Status>('ui.read', { rowId: row.id }, { every: cadence });
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
-  const [view, setView] = useState<'agents' | 'operations'>('agents');
+  const [selected, setSelected] = useState<string>();
   const [open, setOpen] = useState<string>();
+  const opener = useRef<HTMLButtonElement | null>(null);
   const mutate = async (path: string, body: unknown, method = 'POST') => {
     if (!state.data?.canManage || busy) return;
     const version = scopeVersion();
@@ -212,6 +214,12 @@ function AgentsPage({ row, shell }: ViewProps) {
       : experiments.data?.some((experiment) => experiment.id === instanceId)
         ? { to: `${experimentRow!.path}/${instanceId}`, kind: 'experiments' }
         : undefined;
+  const agents = status?.agents ?? [];
+  const filter = useListFilter(agents, {
+    stateOf: activity,
+    labels: (agent) => [agent.name, agent.currentAssignment?.label],
+    ids: (agent) => [agent.id],
+  });
   const offered = (status?.sessions ?? []).filter((session) => session.status === 'offered');
   const live = (status?.sessions ?? []).filter(isLive);
   const waiting = [
@@ -220,33 +228,65 @@ function AgentsPage({ row, shell }: ViewProps) {
   ]
     .filter(Boolean)
     .join(' · ');
+  const assignmentLabels = new Map(
+    (status?.sessions ?? []).map((session) => [session.id, session]),
+  );
+  const selectedAgent = agents.find((agent) => agent.id === selected);
+  const close = () => {
+    setSelected(undefined);
+    opener.current?.focus();
+  };
   return (
-    <div className="page-stage sessions-page stack stack--lg">
-      <LoadState {...state} />
-      {status && (
-        <>
-          <div className="action-row" role="group" aria-label="Agent page views">
-            <button
-              className="btn-text"
-              aria-pressed={view === 'agents'}
-              aria-controls="sessions-agents-panel"
-              onClick={() => setView('agents')}
-            >
-              Agents
-            </button>
-            <button
-              className="btn-text"
-              aria-pressed={view === 'operations'}
-              aria-controls="sessions-operations-panel"
-              onClick={() => setView('operations')}
-            >
-              Operations
-            </button>
-          </div>
-          <div id="sessions-agents-panel" hidden={view !== 'agents'}>
-            <AgentSessionsPanel agents={status.agents ?? []} assignments={status.sessions} />
-          </div>
-          <div id="sessions-operations-panel" hidden={view !== 'operations'}>
+    <ListPage
+      load={state}
+      noun="agents"
+      placeholder="Agent or assignment"
+      filter={filter}
+      rows={[...filter.rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
+      emptyTitle="No agents yet"
+      emptyHint="An agent appears here when a runner takes up a lease in this project."
+      line={(agent) => ({
+        name: (
+          <button
+            className="row-link agent-select"
+            aria-expanded={selected === agent.id}
+            aria-controls={selected === agent.id ? 'agent-detail' : undefined}
+            onClick={(event) => {
+              opener.current = event.currentTarget;
+              setSelected(agent.id);
+            }}
+          >
+            <strong>{agent.name}</strong>
+          </button>
+        ),
+        standing: (
+          <ThreeStates
+            execution={activity(agent)}
+            meta={
+              <>
+                {agent.currentExecutionId
+                  ? `${
+                      agent.currentAssignment?.label ??
+                      assignmentLabels.get(agent.currentExecutionId)?.label ??
+                      'Assignment execution'
+                    } · ${
+                      agent.currentAssignment?.role ??
+                      assignmentLabels.get(agent.currentExecutionId)?.role ??
+                      ''
+                    } · `
+                  : ''}
+                joined <Ago at={agent.createdAt} />
+              </>
+            }
+          />
+        ),
+      })}
+      after={selectedAgent && <AgentDetail agent={selectedAgent} close={close} />}
+      create={{
+        label: 'Operations',
+        plain: true,
+        form: () =>
+          status && (
             <div className="stack stack--lg">
               <section className="stack">
                 <div className="cluster">
@@ -448,10 +488,9 @@ function AgentsPage({ row, shell }: ViewProps) {
                 )}
               </section>
             </div>
-          </div>
-        </>
-      )}
-    </div>
+          ),
+      }}
+    />
   );
 }
 

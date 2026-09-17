@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
-import { KV, Listing, LoadState, StatusPill, col, stamp, words } from '../components';
+import { KV, LoadState, StatusPill, stamp, words } from '../components';
+import { ListPage, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
 
@@ -275,6 +277,11 @@ function History({ row }: ViewProps) {
     },
   );
   const types = Object.entries(summary.data?.counts ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const filter = useListFilter(records.data?.records, {
+    stateOf: (item) => item.status ?? '',
+    labels: (item) => [item.label],
+    ids: (item) => [item.id],
+  });
   return (
     <div className="page-stage page-stage--wide stack stack--lg">
       <LoadState
@@ -324,43 +331,42 @@ function History({ row }: ViewProps) {
           </details>
           <div className={`history-layout${selected ? ' history-layout--selected' : ''}`}>
             <section className="stack" aria-label="Historical records">
-              <Listing
+              <ListPage
                 load={records}
-                rows={records.data?.records ?? []}
+                noun="records"
+                placeholder="Record"
+                filter={filter}
                 emptyTitle="No records of this type"
                 emptyHint="Records imported from the previous backend are read-only; choose another category above."
-                columns={[
-                  col<RecordSummary>('label', 'Record', (item) => (
-                    <div className="stack">
-                      <button
-                        className="history-record-link"
-                        ref={selected?.id === item.id ? opener : undefined}
-                        aria-expanded={selected?.id === item.id}
-                        aria-controls={selected?.id === item.id ? 'history-detail' : undefined}
-                        onClick={() => update({ type, pages, selected: { type, id: item.id } })}
-                      >
-                        {item.label}
-                      </button>
-                    </div>
-                  )),
-                  col<RecordSummary>('status', 'Status', (item) => (
-                    <StatusPill value={item.status} />
-                  )),
-                  ...(type === 'artifacts'
-                    ? [
-                        col<RecordSummary>('retention', 'File', (item) =>
-                          item.fileRetention?.status === 'verified'
+                line={(item) => ({
+                  name: (
+                    <button
+                      className="row-link history-record-link"
+                      ref={selected?.id === item.id ? opener : undefined}
+                      aria-expanded={selected?.id === item.id}
+                      aria-controls={selected?.id === item.id ? 'history-detail' : undefined}
+                      onClick={() => update({ type, pages, selected: { type, id: item.id } })}
+                    >
+                      {item.label}
+                    </button>
+                  ),
+                  standing: (
+                    <ThreeStates
+                      execution={item.status ?? null}
+                      meta={[
+                        type === 'artifacts' &&
+                          (item.fileRetention?.status === 'verified'
                             ? 'Available'
                             : item.fileRetention?.status === 'metadata-only'
                               ? 'Metadata only'
-                              : 'Not verified',
-                        ),
+                              : 'Not verified'),
+                        item.createdAt && new Date(item.createdAt).toLocaleDateString(),
                       ]
-                    : []),
-                  col<RecordSummary>('date', 'Created', (item) =>
-                    item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—',
+                        .filter(Boolean)
+                        .join(' · ')}
+                    />
                   ),
-                ]}
+                })}
               />
               <div className="cluster">
                 <button

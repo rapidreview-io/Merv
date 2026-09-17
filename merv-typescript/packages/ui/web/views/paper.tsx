@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import type {
   PaperCitation,
   PaperDocument,
@@ -10,8 +11,11 @@ import type {
 } from '@merv/paper/models';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Area, Failure, Field, LoadState, Part, StatusPill } from '../components';
-import { useScopeKey, useSession } from '../session';
+import { Area, Failure, Field, LoadState, PageHeader, Part, StatusPill } from '../components';
+import { ListPage, splitRoutes, useListFilter } from '../list-filters';
+import { ThreeStates } from '../states';
+import { useSession } from '../session';
+import type { ViewProps } from './index';
 
 const labels: Record<PaperKind, string> = {
   problem: 'Problem & scope',
@@ -493,54 +497,76 @@ function DocumentPanel({
   );
 }
 
-function PaperPage() {
+const KINDS = Object.keys(labels) as PaperKind[];
+/** A document stands as what it has been published as, and how much of it there is. */
+const standing = (document: PaperDocument) => (
+  <ThreeStates
+    execution={document.published ? 'published' : 'unpublished'}
+    meta={`revision ${document.current.revision} · ${document.current.sections.length} sections`}
+  />
+);
+
+function DocumentList() {
+  const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
+  const documents = KINDS.filter((kind) => workspace.data?.documents[kind]).map((kind) => ({
+    id: kind,
+    document: workspace.data!.documents[kind],
+  }));
+  const filter = useListFilter(documents, {
+    stateOf: (item) => (item.document.published ? 'published' : 'unpublished'),
+    labels: (item) => [labels[item.id]],
+  });
+  return (
+    <ListPage
+      load={workspace}
+      noun="documents"
+      placeholder="Document"
+      filter={filter}
+      opens
+      emptyTitle="No living paper yet"
+      emptyHint="The problem, the literature, the methods and the results are written here as the research finds them."
+      line={(item) => ({
+        name: <strong>{labels[item.id]}</strong>,
+        standing: standing(item.document),
+      })}
+    />
+  );
+}
+
+function DocumentDetail({ row }: ViewProps) {
+  const { id = '' } = useParams();
   const { actor } = useSession();
   const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
-  const [kind, setKind] = useState<PaperKind>('problem');
+  const kind = (KINDS.includes(id as PaperKind) ? id : KINDS[0]) as PaperKind;
   const writable = actor.role === 'operator' || actor.role === 'producer';
+  if (!workspace.data)
+    return (
+      <div className="page-stage">
+        <LoadState {...workspace} back={{ to: row.path, label: row.label }} />
+      </div>
+    );
   return (
     <div className="page-stage stack stack--lg">
-      <LoadState {...workspace} />
-      {workspace.data && (
-        <>
-          <div className="action-row" role="tablist" aria-label="Paper documents">
-            {(Object.keys(labels) as PaperKind[]).map((value) => (
-              <button
-                className="btn-text"
-                role="tab"
-                id={`paper-tab-${value}`}
-                aria-controls={`paper-panel-${value}`}
-                aria-selected={kind === value}
-                key={value}
-                onClick={() => setKind(value)}
-              >
-                {labels[value]}
-              </button>
-            ))}
-          </div>
-          {/* Hide inactive panels without unmounting their drafts or uncertain command receipts. */}
-          {(Object.keys(labels) as PaperKind[]).map((value) => (
-            <div
-              role="tabpanel"
-              id={`paper-panel-${value}`}
-              aria-labelledby={`paper-tab-${value}`}
-              key={value}
-              hidden={kind !== value}
-              className="record-page stack stack--lg"
-            >
-              <DocumentPanel
-                document={workspace.data!.documents[value]}
-                citations={value === 'literature' ? workspace.data!.citations : []}
-                proposals={workspace.data!.proposals}
-                writable={writable}
-                reload={workspace.reload}
-              />
-            </div>
-          ))}
-        </>
-      )}
+      <PageHeader
+        eyebrow={<Link to={row.path}>← {row.label}</Link>}
+        kind={row.view.kind}
+        title={labels[kind]}
+        summary={standing(workspace.data.documents[kind])}
+      />
+      {/* Hide inactive panels without unmounting their drafts or uncertain command receipts. */}
+      {KINDS.map((value) => (
+        <div key={value} hidden={kind !== value} className="record-page stack stack--lg">
+          <DocumentPanel
+            document={workspace.data!.documents[value]}
+            citations={value === 'literature' ? workspace.data!.citations : []}
+            proposals={workspace.data!.proposals}
+            writable={writable}
+            reload={workspace.reload}
+          />
+        </div>
+      ))}
     </div>
   );
 }
 
-export const PaperView = () => <PaperPage key={useScopeKey()} />;
+export const PaperView = splitRoutes(DocumentList, DocumentDetail);
