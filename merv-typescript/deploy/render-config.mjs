@@ -48,8 +48,10 @@ set('state', {
   backend: 'postgres',
   connectionStringEnv: 'MERV_DB_URL',
   schema: deploymentSchema(),
-  maxConnections: 10,
-  connectionTimeoutMs: 5000,
+  // Writers queue on the schema lock and each read scope holds a connection while it
+  // runs; ten connections filled with lock waiters starved every read under three runs.
+  maxConnections: 40,
+  connectionTimeoutMs: 30000,
   statementTimeoutMs: 60000,
   // Every transaction takes one advisory lock per schema; two scenario runs with their
   // runners overran 5 s of waiting.

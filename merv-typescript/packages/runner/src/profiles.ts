@@ -304,7 +304,8 @@ function codexArgs(
   // enforce the same fixed manifest and argument bindings on every server call.
   config(
     'mcp_servers',
-    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,enabled_tools=${JSON.stringify(tools)},tools=${toolApprovals}}}`,
+    // The handshake waits behind the server's writer queue under load; Codex's default 30 s failed every review launch.
+    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,enabled_tools=${JSON.stringify(tools)},tools=${toolApprovals}}}`,
   );
   if (profile.model !== undefined) args.push('--model', profile.model);
   if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));
