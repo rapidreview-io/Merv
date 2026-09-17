@@ -239,6 +239,17 @@ export class WorkflowsService implements Workflows {
         !['artifact.get', 'artifact.read', 'review.get'].includes(tool)
       )
         throw error;
+      // A reviewer reads whatever the project holds (founder, 2026-09-17): a verdict is only
+      // as good as what it could check. The project boundary stays the caller's own, and
+      // nothing but these reads opens: every other grant and binding holds as published.
+      // It opens which record is read, never whether one is named.
+      const named = execution.policy.tools
+        .find((entry) => entry.name === tool)!
+        .alternatives.flatMap((entry) => Object.keys(entry));
+      if (execution.policy.readOnly && named.every((field) => typeof input[field] === 'string')) {
+        await this.scope.require(caller, 'read', tx);
+        return { tool, input: structuredClone(input) };
+      }
       const fields = new Set(
         execution.policy.tools
           .find((entry) => entry.name === tool)!

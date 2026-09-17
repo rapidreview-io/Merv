@@ -241,15 +241,22 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
       ).input.artifactId,
       artifactId,
     );
-  for (const artifactId of ['unknown', undefined])
-    await assert.rejects(
-      async () =>
-        await f.workflows.authorizeDispatch(
-          f.caller,
-          dispatch(execution, 'artifact.read', artifactId ? { artifactId } : {}),
-        ),
-      { code: 'execution_arguments_forbidden' },
-    );
+  // This execution is read-only, a reviewer's: it reads whatever the project holds, so an id
+  // outside its references is admitted as given. An omitted id still selects nothing.
+  assert.equal(
+    (
+      await f.workflows.authorizeDispatch(
+        f.caller,
+        dispatch(execution, 'artifact.read', { artifactId: 'unknown' }),
+      )
+    ).input.artifactId,
+    'unknown',
+  );
+  await assert.rejects(
+    async () =>
+      await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'artifact.read', {})),
+    { code: 'execution_arguments_forbidden' },
+  );
   await assert.rejects(
     async () =>
       await f.workflows.authorizeDispatch(
