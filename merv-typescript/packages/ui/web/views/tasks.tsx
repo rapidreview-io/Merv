@@ -1,18 +1,9 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { ListPage } from '../list-filters';
-import {
-  Ago,
-  KV,
-  LoadState,
-  ObjId,
-  PageHeader,
-  StatusPill,
-  Table,
-  col,
-  recordRoutes,
-} from '../components';
+import { ListPage, matches, splitRoutes, stateCounts, type Scope } from '../list-filters';
+import { useSession } from '../session';
+import { Ago, KV, LoadState, ObjId, PageHeader, StatusPill, Table, col } from '../components';
 import {
   OPEN,
   ThreeStates,
@@ -62,25 +53,30 @@ function TaskList() {
   // project's reviews once rather than fetching one per row.
   const reviews = useTool<Review[]>('review.list');
   const nameOf = useActorNames();
+  const { actor } = useSession();
+  const { id: openId } = useParams();
   const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<Scope>('everyone');
   const [chosen, setChosen] = useState<string>();
   const search = query.trim().toLowerCase();
   // The count in the title line is the filter: the page opens on the open tasks
-  // it counted, and every state is one click away.
-  const open = (list.data ?? []).filter((item) => isOpenTask(item.workflow.state)).length;
+  // it counted, and every state is one click away on the line beneath.
+  const states = stateCounts(list.data, (item) => item.workflow.state, isOpenTask);
+  const open = states.find((item) => item.value === OPEN)?.count ?? 0;
   const state = chosen ?? (open ? OPEN : '');
-  const states = [
-    OPEN,
-    ...[...new Set((list.data ?? []).map((item) => item.workflow.state))].sort(),
-  ];
+  // The record open beside the list is always one of its rows, whatever the
+  // filters say, so the pane never marks a row that is not there.
   const visible = (list.data ?? []).filter(
     (item) =>
-      (state === OPEN
+      item.id === openId ||
+      ((state === OPEN
         ? isOpenTask(item.workflow.state)
         : !state || item.workflow.state === state) &&
-      (!search ||
-        [item.title, item.goal, item.id, item.producerId, nameOf(item.producerId)].some((value) =>
-          value?.toLowerCase().includes(search),
+        (scope === 'everyone' || item.producerId === actor.id) &&
+        matches(
+          search,
+          [item.title, item.goal, nameOf(item.producerId)],
+          [item.id, item.producerId],
         )),
   );
   return (
@@ -90,6 +86,8 @@ function TaskList() {
       placeholder="Name, goal or person"
       query={query}
       onQueryChange={setQuery}
+      scope={scope}
+      onScopeChange={setScope}
       state={state}
       onStateChange={setChosen}
       states={states}
@@ -103,7 +101,9 @@ function TaskList() {
         keyOf={(t) => t.id}
         onRow={(t) => t.id}
         columns={[
-          col<Task>('title', 'Task', (t) => <strong>{t.title}</strong>),
+          col<Task>('title', 'Task', (t) => (
+            <strong className={t.id === openId ? 'row-open' : undefined}>{t.title}</strong>
+          )),
           col<Task>('standing', 'Standing', (t) => {
             const review = newestReview(reviews.data, t.id);
             return (
@@ -373,4 +373,4 @@ function WorkRelations({
   );
 }
 
-export const TasksView = recordRoutes(TaskList, TaskDetail);
+export const TasksView = splitRoutes(TaskList, TaskDetail);

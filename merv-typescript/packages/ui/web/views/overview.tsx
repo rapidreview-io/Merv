@@ -58,6 +58,8 @@ type Whose = 'yours' | 'agent' | 'nobody' | 'unknown' | 'moving';
 type Lines = Record<Whose, Line[]>;
 export interface Standing {
   lines: Lines;
+  /** Open records whose guidance the eight fixed hook slots could not ask for. */
+  capped: number;
   reviews?: Loaded<MapReview[]>;
   loads: Loaded<unknown>[];
 }
@@ -238,6 +240,7 @@ export function useStanding(rows: Row[], work: Work, me: string, named: Named): 
     (item) => item.at,
   );
   const decisions = useDecisions(asked.slice(0, CAP).map((item) => item.id));
+  const capped = Math.max(0, asked.length - CAP);
   const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [], moving: [] };
   const add = (bucket: Whose, line: Line) => lines[bucket].push(line);
   /** Without a readable blocker a record is simply moving, never promoted. */
@@ -281,7 +284,7 @@ export function useStanding(rows: Row[], work: Work, me: string, named: Named): 
     }
   for (const bucket of Object.keys(lines) as Whose[])
     lines[bucket] = newest(lines[bucket], (line) => line.at);
-  return { lines, reviews: reviewsRow && reviews, loads: [reviews, ...decisions] };
+  return { lines, capped, reviews: reviewsRow && reviews, loads: [reviews, ...decisions] };
 }
 
 /** Block 1. What is yours to move, then any row that cannot speak for itself. */
@@ -306,6 +309,14 @@ function NeedsYou({ rows, standing }: { rows: Row[]; standing: Standing }) {
       ))}
       {!yours.length && !unwell.length && !busy(standing.loads) && (
         <li className="ov-none">Nothing needs you right now.</li>
+      )}
+      {/* The one number on this page that is partial says so: guidance is asked for
+          one record at a time, so only the newest few were asked. */}
+      {standing.capped > 0 && (
+        <li className="ov-row ov-note">
+          Estimated: the {CAP} most recently updated records were asked what they are waiting on;{' '}
+          {standing.capped} more are listed under In motion.
+        </li>
       )}
     </Block>
   );

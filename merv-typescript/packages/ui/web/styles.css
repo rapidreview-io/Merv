@@ -2257,3 +2257,68 @@ select.input,
 .ladder-rung--here > span:first-child {
   font-weight: 600;
 }
+
+/* Work lists: split pane and scope. -------------------------------------- */
+/* Above 1080px a record opens beside the list that sent you to it. Nothing is
+   boxed: one hairline divides the two panes, the list keeps its own rows, and
+   the open row is marked by its kind's colour the way the rail marks a place. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  align-items: start;
+}
+.split-list {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.split-record {
+  border-left: 1px solid var(--line);
+}
+.split .page-stage {
+  max-width: none;
+  padding-inline: var(--space-5);
+}
+/* In a pane this narrow a table shows the two facts a person scans and scrolls
+   for nothing: the rest of the row is in the record already open beside it. */
+.split-list .table {
+  min-width: 0;
+}
+.split-list .table :is(th, td):nth-child(n + 3) {
+  display: none;
+}
+.split-list .table :is(th, td):first-child {
+  padding-left: var(--space-2);
+}
+.split-list tbody tr:has(.row-open) {
+  background: var(--bg-soft);
+}
+.split-list tbody tr:has(.row-open) td:first-child {
+  box-shadow: inset 2px 0 0 var(--kind, var(--line-strong));
+}
+/* The two controls sit on one line; which states the list holds is the line
+   under them, type rather than a third control. */
+.scope {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.state-line {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.state-n {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+/* An inventory says its weight before its rows, in the same plain grammar. */
+.list-totals {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}

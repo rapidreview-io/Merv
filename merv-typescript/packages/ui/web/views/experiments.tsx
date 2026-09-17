@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { ProcessGraph, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { ListPage } from '../list-filters';
+import { ListPage, matches, splitRoutes, stateCounts, type Scope } from '../list-filters';
+import { useSession } from '../session';
 import {
   Ago,
   Evidence,
@@ -17,7 +18,6 @@ import {
   col,
   cx,
   kindStyle,
-  recordRoutes,
   relativeTime,
   shortId,
   useArtifacts,
@@ -438,22 +438,20 @@ export function ExperimentRecord({
 function ExperimentList() {
   const list = useTool<Experiment[]>('experiment.list', {}, { every: 8000 });
   const nameOf = useActorNames();
+  const { actor } = useSession();
+  const { id: openId } = useParams();
   const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<Scope>('everyone');
   const [state, setState] = useState('');
   const search = query.trim().toLowerCase();
-  const states = [
-    ...new Set([
-      ...(list.data ?? []).map((item) => item.workflow.state),
-      ...(state ? [state] : []),
-    ]),
-  ].sort();
+  const states = stateCounts(list.data, (item) => item.workflow.state);
+  // The record open beside the list is always one of its rows, whatever the filters say.
   const visible = (list.data ?? []).filter(
     (item) =>
-      (!state || item.workflow.state === state) &&
-      (!search ||
-        [item.name, item.intent, item.id, item.ownerId, nameOf(item.ownerId)].some((value) =>
-          value?.toLowerCase().includes(search),
-        )),
+      item.id === openId ||
+      ((!state || item.workflow.state === state) &&
+        (scope === 'everyone' || item.ownerId === actor.id) &&
+        matches(search, [item.name, item.intent, nameOf(item.ownerId)], [item.id, item.ownerId])),
   );
   return (
     <ListPage
@@ -462,6 +460,8 @@ function ExperimentList() {
       placeholder="Name, question or person"
       query={query}
       onQueryChange={setQuery}
+      scope={scope}
+      onScopeChange={setScope}
       state={state}
       onStateChange={setState}
       states={states}
@@ -475,7 +475,9 @@ function ExperimentList() {
         keyOf={(e) => e.id}
         onRow={(e) => e.id}
         columns={[
-          col<Experiment>('name', 'Experiment', (e) => <strong>{e.name}</strong>),
+          col<Experiment>('name', 'Experiment', (e) => (
+            <strong className={e.id === openId ? 'row-open' : undefined}>{e.name}</strong>
+          )),
           col<Experiment>('state', 'State', (e) => <StatusPill value={e.workflow.state} />),
           col<Experiment>('attempt', 'Attempt', (e) => String(e.attempt.index)),
           col<Experiment>('owner', 'Owner', (e) => nameOf(e.ownerId) ?? <ObjId id={e.ownerId} />),
@@ -535,4 +537,4 @@ function ExperimentDetail({ row }: ViewProps) {
   );
 }
 
-export const ExperimentsView = recordRoutes(ExperimentList, ExperimentDetail);
+export const ExperimentsView = splitRoutes(ExperimentList, ExperimentDetail);

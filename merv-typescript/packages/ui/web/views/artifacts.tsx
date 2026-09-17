@@ -140,8 +140,18 @@ export function ArtifactBody({
 function ArtifactList() {
   const list = useTool<Artifact[]>('artifact.list', {}, { every: 10000 });
   const nameOf = useActorNames();
+  // What an inventory is asked first: how much of this is there. Both numbers are
+  // exact — the count and every file's own `size` — so neither is hedged.
+  const files = list.data ?? [];
+  const held = files.reduce((sum, file) => sum + file.size, 0);
   return (
-    <div className="page-stage">
+    <div className="page-stage stack">
+      {list.data && (
+        <p className="list-totals">
+          {files.length} {files.length === 1 ? 'file' : 'files'} · {bytes(held)}
+          <span className="muted"> · every file retained in this project, whoever retained it</span>
+        </p>
+      )}
       <LoadState
         {...list}
         empty={list.data?.length === 0}

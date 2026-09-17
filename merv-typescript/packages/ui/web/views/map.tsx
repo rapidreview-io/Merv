@@ -5,6 +5,7 @@ import { accountRequest, useScopeVersion, useTool } from '../api';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
 import { KV, KindLabel, StatusPill, cx, kindStyle } from '../components';
+import { bytes } from './artifacts';
 import { useActorNames } from './people';
 import { useStanding, type Standing, type Work } from './overview';
 import {
@@ -367,7 +368,7 @@ export function MapView({ shell }: { shell: ShellData }) {
   const paper = useTool<MapPaper>(paperRow ? 'ui.read' : null, rowId(paperRow));
   const live = useTool<Live>(sessionsRow ? 'ui.read' : null, rowId(sessionsRow), LIVE);
   const mounts = useTool<{ state: string }[]>(mountsRow ? 'ui.read' : null, rowId(mountsRow), LIVE);
-  const files = useTool<unknown[]>(filesRow ? 'artifact.list' : null);
+  const files = useTool<{ size: number }[]>(filesRow ? 'artifact.list' : null);
   const posts = useTool<unknown[]>(feedRow ? 'feed.list' : null);
   const earlier = useTool<{ counts: Record<string, number> }>(archiveRow ? 'ui.read' : null, {
     ...rowId(archiveRow),
@@ -439,6 +440,7 @@ export function MapView({ shell }: { shell: ShellData }) {
   const agents = (live.data?.agents ?? []).filter((agent) => agent.status !== 'retired').length;
   const runners = (live.data?.runners ?? []).filter((runner) => runner.live).length;
   const archive = Object.values(earlier.data?.counts ?? {}).reduce((sum, n) => sum + n, 0);
+  const retained = (files.data ?? []).reduce((sum, file) => sum + file.size, 0);
   return (
     <div className="page-stage page-stage--wide map">
       <h1 className="page-title">
@@ -517,6 +519,7 @@ export function MapView({ shell }: { shell: ShellData }) {
           index={3}
           tiles={tiles(
             filesRow && tile('files', files.data?.length ?? EM, filesRow.path),
+            filesRow && tile('retained', files.data ? bytes(retained) : EM, filesRow.path),
             feedRow && tile('posts', posts.data?.length ?? EM, feedRow.path),
             archiveRow && !!archive && tile('earlier records', archive, archiveRow.path),
           )}
@@ -527,7 +530,11 @@ export function MapView({ shell }: { shell: ShellData }) {
           tiles={tiles(
             sessionsRow && tile('agents', live.data ? agents : EM, sessionsRow.path),
             sessionsRow &&
-              tile('live sessions', live.data?.liveSessionCount ?? EM, sessionsRow.path),
+              tile(
+                'leases live',
+                live.data ? `${live.data.liveSessionCount}/${live.data.sessionTotal}` : EM,
+                sessionsRow.path,
+              ),
             sessionsRow &&
               tile(
                 'runners connected',

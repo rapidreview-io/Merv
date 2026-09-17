@@ -67,6 +67,7 @@ export type MapPaper = {
 export type Live = {
   agents?: { status: string }[];
   liveSessionCount: number;
+  sessionTotal: number;
   runners: { live: boolean }[];
   queueTotal: number;
 };

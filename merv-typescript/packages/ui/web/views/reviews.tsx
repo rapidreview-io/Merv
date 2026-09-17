@@ -2,7 +2,8 @@ import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
-import { ListPage } from '../list-filters';
+import { ListPage, matches, splitRoutes, stateCounts, type Scope } from '../list-filters';
+import { useSession } from '../session';
 import {
   Ago,
   Evidence,
@@ -14,7 +15,6 @@ import {
   Table,
   col,
   cx,
-  recordRoutes,
   shortId,
   useArtifacts,
   words,
@@ -222,29 +222,35 @@ function ReviewList() {
   const list = useTool<Review[]>('review.list', {}, { every: 10000 });
   const nameOf = useActorNames();
   const subjectOf = useSubjects();
+  const { actor } = useSession();
+  const { id: openId } = useParams();
   const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<Scope>('everyone');
   const [chosen, setChosen] = useState<string>();
   const search = query.trim().toLowerCase();
   // The count in the title line is the filter: the page opens on the reviews it
-  // counted — unclaimed and in hand — and every status is one click away.
-  const open = (list.data ?? []).filter((item) => isOpenReview(item.status)).length;
+  // counted — unclaimed and in hand — and every status is one click away below.
+  const states = stateCounts(list.data, (item) => item.status, isOpenReview);
+  const open = states.find((item) => item.value === OPEN)?.count ?? 0;
   const state = chosen ?? (open ? OPEN : '');
-  const states = [OPEN, ...[...new Set((list.data ?? []).map((item) => item.status))].sort()];
+  // The record open beside the list is always one of its rows, whatever the filters say.
   const visible = (list.data ?? []).filter(
     (item) =>
-      (state === OPEN ? isOpenReview(item.status) : !state || item.status === state) &&
-      (!search ||
-        [
-          item.id,
-          item.subjectId,
-          subjectOf(item.subjectId)?.name,
-          item.synopsis,
-          ...item.criteria,
-          item.producerId,
-          nameOf(item.producerId),
-          item.reviewerId,
-          nameOf(item.reviewerId),
-        ].some((value) => value?.toLowerCase().includes(search))),
+      item.id === openId ||
+      ((state === OPEN ? isOpenReview(item.status) : !state || item.status === state) &&
+        // A review is yours when you hold it or you asked for it.
+        (scope === 'everyone' || item.reviewerId === actor.id || item.producerId === actor.id) &&
+        matches(
+          search,
+          [
+            subjectOf(item.subjectId)?.name,
+            item.synopsis,
+            ...item.criteria,
+            nameOf(item.producerId),
+            nameOf(item.reviewerId),
+          ],
+          [item.id, item.subjectId, item.producerId, item.reviewerId],
+        )),
   );
   return (
     <ListPage
@@ -253,10 +259,11 @@ function ReviewList() {
       placeholder="Summary, work item or person"
       query={query}
       onQueryChange={setQuery}
+      scope={scope}
+      onScopeChange={setScope}
       state={state}
       onStateChange={setChosen}
       states={states}
-      stateLabel="Status"
       visible={visible.length}
       columns={4}
       emptyTitle="No reviews"
@@ -271,7 +278,7 @@ function ReviewList() {
             const subject = subjectOf(r.subjectId);
             const summary = r.synopsis || r.criteria[0] || 'Independent review';
             return (
-              <div className="row-name">
+              <div className={cx('row-name', r.id === openId && 'row-open')}>
                 <KindLabel kind={subject?.kind} />
                 <strong title={summary}>
                   {subject?.name ?? <ObjId id={r.subjectId} strong />}
@@ -764,4 +771,4 @@ function Unmet({ text, at }: { text: string; at?: number }) {
   );
 }
 
-export const ReviewsView = recordRoutes(ReviewList, ReviewDetail);
+export const ReviewsView = splitRoutes(ReviewList, ReviewDetail);
