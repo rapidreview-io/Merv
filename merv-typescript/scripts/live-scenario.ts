@@ -1070,6 +1070,9 @@ async function main(options: Options) {
         '-c',
         `mcp_servers.merv.url=${quote(`${baseUrl}/mcp`)}`,
         '-c',
+        // One handshake timed out at 30 s while another lease was uploading evidence.
+        'mcp_servers.merv.startup_timeout_sec=120',
+        '-c',
         'mcp_servers.merv.bearer_token_env_var="MERV_AGENT_SESSION_TOKEN"',
         '-c',
         'mcp_servers.merv.required=true',
@@ -1088,6 +1091,12 @@ async function main(options: Options) {
               `mcp_servers.sandboxes.bearer_token_env_var=${quote(options.sandboxesTokenEnv)}`,
               '-c',
               'mcp_servers.sandboxes.required=true',
+              // The lease runs with approval_policy never, and Codex prompts for MCP tools
+              // by default; the namespace's spend cap is the guard, so its tools are approved.
+              '-c',
+              'mcp_servers.sandboxes.default_tools_approval_mode="approve"',
+              '-c',
+              'mcp_servers.sandboxes.startup_timeout_sec=120',
             ]
           : []),
         ...(options.model ? ['--model', options.model] : []),
