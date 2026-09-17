@@ -1,4 +1,4 @@
-import { mapAsync, type Caller, type Json } from '@merv/contracts';
+import { type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
@@ -40,11 +40,12 @@ const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
  * all of it with its rows, so opening the app is one read rather than three.
  */
 export async function identityOf(tools: Tools, caller: Caller): Promise<Record<string, Json>> {
-  return {
-    actor: (await tools.call('actor.whoami', caller, {})) as Json,
-    project: (await tools.call('project.get', caller, {})) as Json,
-    workflows: (await answer(async () => await tools.call('workflow.catalog', caller, {}))) ?? [],
-  };
+  const [actor, project, workflows] = await Promise.all([
+    tools.call('actor.whoami', caller, {}),
+    tools.call('project.get', caller, {}),
+    answer(async () => await tools.call('workflow.catalog', caller, {})),
+  ]);
+  return { actor: actor as Json, project: project as Json, workflows: workflows ?? [] };
 }
 
 /**
@@ -59,13 +60,19 @@ export async function homeRead(
   read: (caller: Caller, rowId: string, params?: Record<string, unknown>) => Promise<Json>,
   caller: Caller,
 ): Promise<Json> {
-  const parts = await mapAsync(PARTS, async ([key, tool]) => [
-    key,
-    await answer(async () => await tools.call(tool, caller, {})),
-  ]);
-  const reads = await mapAsync(READS, async ([key, kind, params]) => {
-    const row = rows.find((item) => item.view.kind === kind && item.read);
-    return [key, row ? await answer(async () => await read(caller, row.id, params)) : null];
-  });
+  // The parts are independent read-only tools, each in its own snapshot scope, so they
+  // read in parallel; this tool is not itself scoped, or they would share one connection.
+  const parts = await Promise.all(
+    PARTS.map(async ([key, tool]) => [
+      key,
+      await answer(async () => await tools.call(tool, caller, {})),
+    ]),
+  );
+  const reads = await Promise.all(
+    READS.map(async ([key, kind, params]) => {
+      const row = rows.find((item) => item.view.kind === kind && item.read);
+      return [key, row ? await answer(async () => await read(caller, row.id, params)) : null];
+    }),
+  );
   return Object.fromEntries([...parts, ...reads]) as Json;
 }
