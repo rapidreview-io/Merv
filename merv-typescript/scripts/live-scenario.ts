@@ -871,13 +871,6 @@ async function main(options: Options) {
           log({ record: entry.brief.name, state, revision: current.workflow.revision });
           divergence ??= matchTrajectory(entry.brief.name, entry.brief.trajectory, entry.states);
         }
-        // --max-rounds stops a record after that many verdicts: "design round only".
-        if (
-          state === terminalState(entry) ||
-          TERMINAL.has(state) ||
-          (options.maxRounds !== undefined && entry.reviews.length >= options.maxRounds)
-        )
-          entry.finished = true;
       }
 
       // Collect every submitted verdict for these records and check it. This runs even
@@ -911,6 +904,15 @@ async function main(options: Options) {
         }
         if (entry.brief.reviewRounds)
           divergence ??= matchVerdicts(entry.brief.name, entry.brief.reviewRounds, entry.reviews);
+        // --max-rounds stops a record after that many verdicts: "design round only". Checked
+        // here, after this tick's verdicts are in, so the last verdict never launches a round.
+        const state = entry.states.at(-1)!;
+        if (
+          state === terminalState(entry) ||
+          TERMINAL.has(state) ||
+          (options.maxRounds !== undefined && entry.reviews.length >= options.maxRounds)
+        )
+          entry.finished = true;
       }
       // A divergence is a finding, not a stop: the run keeps driving every record to a
       // terminal state (or --max-rounds), and the report carries the first divergence.
