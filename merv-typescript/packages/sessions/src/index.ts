@@ -645,10 +645,12 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       frozen.execution.references,
       frozen.lease.receipt,
     ])
+      // The review standards travel in the assignment text, and a task review carries
+      // its delivery, so a packet of a real task runs past 64 KiB.
       check(
-        Buffer.byteLength(JSON.stringify(packet)) <= 65_536,
+        Buffer.byteLength(JSON.stringify(packet)) <= 524_288,
         'session_packet_large',
-        'Each frozen assignment, policy, reference set and receipt must fit 64 KiB',
+        'Each frozen assignment, policy, reference set and receipt must fit 512 KiB',
       );
     const time = this.clock();
     const hard = Math.min(

@@ -785,7 +785,7 @@ async function main(options: Options) {
       projectId,
       credentialEnv: options.tokenEnv,
       capacity: 2,
-      pollIntervalMs: 1000,
+      pollIntervalMs: 3000,
       profiles: [
         {
           name: 'scenario-codex',

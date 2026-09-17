@@ -66,7 +66,7 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
           return {
             role: 'producer',
             label: 'Work',
-            brief: largeBuild ? 'x'.repeat(70_000) : 'Frozen brief',
+            brief: largeBuild ? 'x'.repeat(600_000) : 'Frozen brief',
             references: [],
             handoff: { instruction: 'Finish', tools: ['finish'] },
             execution: { readOnly: false, tools: [] },
