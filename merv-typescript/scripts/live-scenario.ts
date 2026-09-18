@@ -966,7 +966,15 @@ async function main(options: Options) {
           ? node.entries + (node.initial ? 1 : 0)
           : entry.states.filter((seen) => seen === state).length;
         const stage = `${state}@${round}`;
-        if (entry.launchedStages.includes(stage)) continue;
+        // A stage launched once is not launched again while its lease lives. A lease that
+        // ended without moving the record (halted, expired, a worker that stopped) is
+        // launched afresh, up to three times, so an operator's halt does not strand it.
+        const launches = entry.launchedStages.filter((item) => item === stage).length;
+        if (
+          launches &&
+          (leased.has(`${entry.id}:${(await read(entry)).workflow.revision}`) || launches >= 3)
+        )
+          continue;
         entry.launchedStages.push(stage);
         harnessLaunches++;
         await launchHarnessStage(entry, state, round);
