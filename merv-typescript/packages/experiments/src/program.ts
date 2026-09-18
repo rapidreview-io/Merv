@@ -987,7 +987,10 @@ DROP TABLE experiment_leases_backup;`,
       dependencyFailureAction: 'mark_failed',
       assignments: activeStates.map((state) => ({
         state,
-        ...(state === 'running' ? { requiresDependencies: true } : {}),
+        // A plan is written against its inputs, so planning waits for the tasks the
+        // experiment depends on, as running does (founder, 2026-09-18: an experiment
+        // depends on tasks, never on another experiment).
+        ...(['planned', 'running'].includes(state) ? { requiresDependencies: true } : {}),
         check: async (context) => {
           await this.admit(context);
         },

@@ -246,7 +246,7 @@ const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) 
   input,
 });
 
-test('all four real assignments use distinct recipes; only execution is gated by prerequisites', async (t) => {
+test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
   const prerequisite = await f.tasks.create(f.source, {
     title: 'Prerequisite',
@@ -255,34 +255,13 @@ test('all four real assignments use distinct recipes; only execution is gated by
     requestId: f.request(),
   });
   const experiment = await f.create([prerequisite.id]);
-  const planned = await f.workflows.assignment(f.source, experiment.id);
-  assert.equal(planned.context!.type, 'experiment.design');
-  assert.equal(planned.execution.readOnly, false);
-  assert.ok(
-    (await f.workflows.dispatchCandidates(f.source)).some(
-      (candidate) => candidate.instanceId === experiment.id,
-    ),
-  );
-  const pending = (await f.design(experiment)).experiment;
-  assert.equal(
-    (await f.workflows.assignment(f.reviewer, pending.id)).context!.type,
-    'experiment.design_review',
-  );
-  assert.ok(
-    (await f.workflows.dispatchCandidates(f.source)).some(
-      (candidate) => candidate.instanceId === experiment.id,
-    ),
-    'The source may delegate independent review of its own previous work',
-  );
-  const running = await f.verdict(pending, 'pass');
-  assert.equal(running.workflow.state, 'running');
-  assert.equal(running.attempt.startedAt, null);
-  await assert.rejects(async () => await f.workflows.assignment(f.source, running.id), {
+  // A plan is written against its inputs: nothing is planned while a prerequisite is open.
+  await assert.rejects(async () => await f.workflows.assignment(f.source, experiment.id), {
     code: 'dependencies_pending',
   });
   assert.ok(
     !(await f.workflows.dispatchCandidates(f.source)).some(
-      (candidate) => candidate.instanceId === running.id,
+      (candidate) => candidate.instanceId === experiment.id,
     ),
   );
   const proof = await f.artifacts.create(f.source, {
@@ -308,6 +287,28 @@ test('all four real assignments use distinct recipes; only execution is gated by
     expectedRevision: delivery.workflow.revision,
     requestId: f.request(),
   } as ReviewApplication);
+  const planned = await f.workflows.assignment(f.source, experiment.id);
+  assert.equal(planned.context!.type, 'experiment.design');
+  assert.equal(planned.execution.readOnly, false);
+  assert.ok(
+    (await f.workflows.dispatchCandidates(f.source)).some(
+      (candidate) => candidate.instanceId === experiment.id,
+    ),
+  );
+  const pending = (await f.design(experiment)).experiment;
+  assert.equal(
+    (await f.workflows.assignment(f.reviewer, pending.id)).context!.type,
+    'experiment.design_review',
+  );
+  assert.ok(
+    (await f.workflows.dispatchCandidates(f.source)).some(
+      (candidate) => candidate.instanceId === experiment.id,
+    ),
+    'The source may delegate independent review of its own previous work',
+  );
+  const running = await f.verdict(pending, 'pass');
+  assert.equal(running.workflow.state, 'running');
+  assert.equal(running.attempt.startedAt, null);
   assert.equal(
     (await f.workflows.assignment(f.source, running.id)).context!.type,
     'experiment.execute',
