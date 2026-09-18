@@ -124,7 +124,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   await assert.rejects(
     async () =>
       await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave', title: 'Different' }),
-    { code: 'idempotency_conflict' },
+    { code: 'request_conflict' },
   );
   await assert.rejects(async () => await f.app.ctx.reflections.approved(f.owner, wave.id), {
     code: 'reflection_not_approved',

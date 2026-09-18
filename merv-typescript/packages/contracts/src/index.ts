@@ -119,6 +119,58 @@ export function sound<T>(value: T, depth = 0): T {
   }
   return value;
 }
+/**
+ * One durable answer per (project, actor, requestId): a retry with the same operation and
+ * input replays it, a different input conflicts. Each domain keeps its own table with the
+ * columns project_id, actor_id, request_id, a hash and the answer. `after` runs between the
+ * work and its record, for a domain that rechecks authority once the work has yielded.
+ */
+export async function replayed<T>(
+  tx: Transaction,
+  table: string,
+  caller: Caller,
+  operation: string,
+  input: { requestId: string },
+  execute: () => T | Promise<T>,
+  options: { hash?: string; result?: string; after?: () => Promise<unknown> } = {},
+): Promise<T> {
+  const hashColumn = options.hash ?? 'input_hash';
+  const resultColumn = options.result ?? 'result';
+  check(
+    typeof input.requestId === 'string' &&
+      input.requestId.trim().length > 0 &&
+      input.requestId.length <= 200,
+    'invalid_request_id',
+    'A stable requestId of 1–200 characters is required',
+  );
+  const hash = digest({ operation, input });
+  const previous = await tx.get<{ hash: string; result: string }>(
+    `SELECT ${hashColumn} AS hash,${resultColumn} AS result FROM ${table} WHERE project_id=? AND actor_id=? AND request_id=?`,
+    caller.projectId,
+    caller.actorId,
+    input.requestId,
+  );
+  if (previous) {
+    check(
+      previous.hash === hash,
+      'request_conflict',
+      'requestId was already used with different input',
+      409,
+    );
+    return JSON.parse(previous.result) as T;
+  }
+  const result = await execute();
+  await options.after?.();
+  await tx.run(
+    `INSERT INTO ${table}(project_id,actor_id,request_id,${hashColumn},${resultColumn}) VALUES(?,?,?,?,?)`,
+    caller.projectId,
+    caller.actorId,
+    input.requestId,
+    hash,
+    JSON.stringify(result),
+  );
+  return result;
+}
 export function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;

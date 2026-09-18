@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -1073,32 +1073,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     tx: Transaction,
     execute: () => T | Promise<T>,
   ): Promise<T> {
-    const hash = digest({ operation, input });
-    const previous = await tx.get<{ input_hash: string; result: string }>(
-      'SELECT input_hash,result FROM consolidation_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-    );
-    if (previous) {
-      check(
-        previous.input_hash === hash,
-        'request_conflict',
-        'requestId already identifies different consolidation input',
-        409,
-      );
-      return JSON.parse(previous.result) as T;
-    }
-    const result = await execute();
-    await tx.run(
-      'INSERT INTO consolidation_commands(project_id,actor_id,request_id,input_hash,result) VALUES(?,?,?,?,?)',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-      hash,
-      JSON.stringify(result),
-    );
-    return result;
+    return await replayed(tx, 'consolidation_commands', caller, operation, input, execute);
   }
   private async event(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
     await this.state.appendEvent(tx, {

@@ -1,5 +1,5 @@
 import { mapAsync, filterAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
 import {
@@ -1301,40 +1301,10 @@ export class ExperimentService implements Experiments {
     tx: Transaction,
     execute: () => T | Promise<T>,
   ): Promise<T> {
-    check(
-      typeof input.requestId === 'string' &&
-        input.requestId.trim().length > 0 &&
-        input.requestId.length <= 200,
-      'invalid_request_id',
-      'A bounded nonempty requestId is required',
-    );
-    const hash = digest({ operation, input });
-    const previous = await tx.get<{ input_hash: string; result: string }>(
-      'SELECT input_hash,result FROM experiment_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-    );
-    if (previous) {
-      check(
-        previous.input_hash === hash,
-        'request_conflict',
-        'requestId was already used with different experiment input',
-        409,
-      );
-      return JSON.parse(previous.result) as T;
-    }
-    const result = await execute();
-    await this.scope.require(caller, operation === 'submit_review' ? 'review' : 'write', tx);
-    await tx.run(
-      'INSERT INTO experiment_commands(project_id,actor_id,request_id,input_hash,result) VALUES(?,?,?,?,?)',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-      hash,
-      JSON.stringify(result),
-    );
-    return result;
+    return await replayed(tx, 'experiment_commands', caller, operation, input, execute, {
+      after: async () =>
+        await this.scope.require(caller, operation === 'submit_review' ? 'review' : 'write', tx),
+    });
   }
   private async record(
     caller: Caller,

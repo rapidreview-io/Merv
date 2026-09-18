@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -648,34 +648,9 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     operation: string,
     input: { requestId: string },
     tx: Transaction,
-    run: () => T | Promise<T>,
+    execute: () => T | Promise<T>,
   ): Promise<T> {
-    const hash = digest({ operation, input });
-    const old = await tx.get<{ input_hash: string; result: string }>(
-      'SELECT input_hash,result FROM research_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-    );
-    if (old) {
-      check(
-        old.input_hash === hash,
-        'request_conflict',
-        'requestId already identifies different research input',
-        409,
-      );
-      return JSON.parse(old.result) as T;
-    }
-    const result = await run();
-    await tx.run(
-      'INSERT INTO research_commands(project_id,actor_id,request_id,input_hash,result) VALUES(?,?,?,?,?)',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-      hash,
-      JSON.stringify(result),
-    );
-    return result;
+    return await replayed(tx, 'research_commands', caller, operation, input, execute);
   }
   private async event(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
     await this.state.appendEvent(tx, {

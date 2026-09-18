@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
@@ -159,33 +159,10 @@ export class PaperService implements Paper {
     tx: Transaction,
     execute: () => T | Promise<T>,
   ): Promise<T> {
-    const inputHash = digest({ operation, input });
-    const row = await tx.get<{ input_hash: string; result_json: string }>(
-      'SELECT input_hash,result_json FROM paper_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-    );
-    if (row) {
-      check(
-        row.input_hash === inputHash,
-        'request_conflict',
-        'requestId was used with different paper input',
-        409,
-      );
-      return JSON.parse(row.result_json) as T;
-    }
-    const result = await execute();
-    await this.scope.require(caller, 'write', tx);
-    await tx.run(
-      'INSERT INTO paper_commands VALUES(?,?,?,?,?)',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-      inputHash,
-      JSON.stringify(result),
-    );
-    return result;
+    return await replayed(tx, 'paper_commands', caller, operation, input, execute, {
+      result: 'result_json',
+      after: async () => await this.scope.require(caller, 'write', tx),
+    });
   }
   private async event(
     caller: Caller,

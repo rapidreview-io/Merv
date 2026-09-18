@@ -1,6 +1,6 @@
 import { everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -296,41 +296,11 @@ export class ReflectionService implements Reflections {
     operation: string,
     input: { requestId: string },
     tx: Transaction,
-    run: () => T | Promise<T>,
+    execute: () => T | Promise<T>,
   ): Promise<T> {
-    check(
-      typeof input.requestId === 'string' &&
-        input.requestId.trim().length > 0 &&
-        input.requestId.length <= 200,
-      'invalid_request_id',
-      'A stable request ID of 1–200 characters is required',
-    );
-    const fingerprint = digest({ operation, input });
-    const prior = await tx.get<{ fingerprint: string; result: string }>(
-      'SELECT fingerprint,result FROM reflection_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-    );
-    if (prior) {
-      check(
-        prior.fingerprint === fingerprint,
-        'idempotency_conflict',
-        'Request ID was used with different input',
-        409,
-      );
-      return JSON.parse(prior.result) as T;
-    }
-    const result = await run();
-    await tx.run(
-      'INSERT INTO reflection_commands VALUES(?,?,?,?,?)',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-      fingerprint,
-      JSON.stringify(result),
-    );
-    return result;
+    return await replayed(tx, 'reflection_commands', caller, operation, input, execute, {
+      hash: 'fingerprint',
+    });
   }
   private async emit(
     caller: Caller,

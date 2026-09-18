@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -226,33 +226,10 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
     tx: Transaction,
     execute: () => Claim | Promise<Claim>,
   ): Promise<Claim> {
-    const hash = digest({ operation, input });
-    const previous = await tx.get<{ input_hash: string; result_json: string }>(
-      'SELECT input_hash,result_json FROM claim_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-    );
-    if (previous) {
-      check(
-        previous.input_hash === hash,
-        'request_conflict',
-        'requestId was already used with different claim input',
-        409,
-      );
-      return JSON.parse(previous.result_json) as Claim;
-    }
-    const claim = await execute();
-    await this.scope.require(caller, 'write', tx);
-    await tx.run(
-      'INSERT INTO claim_commands(project_id,actor_id,request_id,input_hash,result_json) VALUES(?,?,?,?,?)',
-      caller.projectId,
-      caller.actorId,
-      input.requestId,
-      hash,
-      JSON.stringify(claim),
-    );
-    return claim;
+    return await replayed(tx, 'claim_commands', caller, operation, input, execute, {
+      result: 'result_json',
+      after: async () => await this.scope.require(caller, 'write', tx),
+    });
   }
 
   private async record(
