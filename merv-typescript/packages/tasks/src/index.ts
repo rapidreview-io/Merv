@@ -1,4 +1,4 @@
-import { visible, recorded, mapAsync } from '@merv/contracts';
+import { releasedLease, visible, recorded, mapAsync } from '@merv/contracts';
 import { clip, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -437,37 +437,9 @@ DROP TABLE task_leases_backup;`,
   }
 
   private async releaseLease(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
-    const row = await tx.get<TaskLeaseRow>(
-      'SELECT * FROM task_leases WHERE id=? AND project_id=? AND task_id=? AND revision=? AND actor_id=?',
-      lease.leaseId,
-      lease.projectId,
-      lease.instanceId,
-      lease.expectedRevision,
-      lease.actorId,
-    );
-    check(
-      row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
-      'stale_lease',
-      'Lease release must identify its exact ownership receipt',
-      409,
-    );
-    if (row.released_at) return;
-    if (row.review_id && row.claim_id)
-      await this.reviews.releaseClaim(
-        {
-          projectId: row.project_id,
-          reviewId: row.review_id,
-          claimId: row.claim_id,
-          actorId: row.actor_id,
-          reason,
-        },
-        tx,
-      );
-    await tx.run(
-      'UPDATE task_leases SET released_at=? WHERE id=? AND released_at IS NULL',
-      now(),
-      row.id,
-    );
+    await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
+      task_id: lease.instanceId,
+    });
   }
 
   private async leaseArtifactIds(

@@ -1,9 +1,8 @@
-import { mapAsync } from '@merv/contracts';
+import { releasedLease, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
   digest,
-  now,
   type Artifact,
   type Artifacts,
   type Caller,
@@ -968,38 +967,10 @@ DROP TABLE experiment_leases_backup;`,
 
   private async release(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
     this.host.state.assertTransaction(tx);
-    const row = await tx.get<LeaseRow>(
-      'SELECT * FROM experiment_leases WHERE id=? AND project_id=? AND experiment_id=? AND revision=? AND actor_id=? AND state=?',
-      lease.leaseId,
-      lease.projectId,
-      lease.instanceId,
-      lease.expectedRevision,
-      lease.actorId,
-      lease.state,
-    );
-    check(
-      row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
-      'stale_lease',
-      'Release must identify the original experiment ownership receipt',
-      409,
-    );
-    if (row.released_at) return;
-    if (row.review_id && row.claim_id)
-      await this.host.reviews.releaseClaim(
-        {
-          projectId: row.project_id,
-          reviewId: row.review_id,
-          claimId: row.claim_id,
-          actorId: row.actor_id,
-          reason,
-        },
-        tx,
-      );
-    await tx.run(
-      'UPDATE experiment_leases SET released_at=? WHERE id=? AND released_at IS NULL',
-      now(),
-      row.id,
-    );
+    await releasedLease(tx, this.host.reviews, 'experiment_leases', lease, reason, {
+      experiment_id: lease.instanceId,
+      state: lease.state,
+    });
   }
 
   private policy(version: number): WorkflowPolicy {

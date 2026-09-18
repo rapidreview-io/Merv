@@ -197,6 +197,18 @@ It prints only the artifact receipt; file/base64 contents never pass through the
       ...(port !== undefined ? { port } : {}),
       ...(args.host !== undefined ? { host: args.host } : {}),
     });
+    // A signal that lands right after the ready line must find its handler already in place.
+    const stop = () => {
+      void app.stop().then(
+        () => process.exit(0),
+        (error) => {
+          console.error(error);
+          process.exit(1);
+        },
+      );
+    };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
     try {
       check(
         existsSync(credentialPath) || app.ctx.get('identity')?.configuration().enabled,
@@ -226,20 +238,11 @@ It prints only the artifact receipt; file/base64 contents never pass through the
         }),
       );
     } catch (error) {
+      process.removeListener('SIGINT', stop);
+      process.removeListener('SIGTERM', stop);
       await app.stop();
       throw error;
     }
-    const stop = () => {
-      void app.stop().then(
-        () => process.exit(0),
-        (error) => {
-          console.error(error);
-          process.exit(1);
-        },
-      );
-    };
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
     return;
   }
   if (command === 'adopt-project') {

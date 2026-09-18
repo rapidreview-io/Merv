@@ -463,6 +463,63 @@ export const recorded = async (
     data: { ...data, ...eventSource(caller) },
   });
 /** Audit provenance only. Authority is still rechecked by Scope inside the operation. */
+/**
+ * Release a domain's lease row by its exact ownership receipt: the worker's review claim goes
+ * back with it, and a row already released is left alone. `where` adds the domain's columns.
+ */
+export async function releasedLease(
+  tx: Transaction,
+  reviews: Pick<Reviews, 'releaseClaim'>,
+  table: string,
+  lease: WorkflowLease,
+  reason: string,
+  where: Record<string, SqlValue> = {},
+): Promise<void> {
+  const match = {
+    id: lease.leaseId,
+    project_id: lease.projectId,
+    revision: lease.expectedRevision,
+    actor_id: lease.actorId,
+    ...where,
+  };
+  const row = await tx.get<{
+    id: string;
+    project_id: string;
+    actor_id: string;
+    receipt: string;
+    released_at: string | null;
+    review_id: string | null;
+    claim_id: string | null;
+  }>(
+    `SELECT * FROM ${table} WHERE ${Object.keys(match)
+      .map((column) => `${column}=?`)
+      .join(' AND ')}`,
+    ...Object.values(match),
+  );
+  check(
+    row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
+    'stale_lease',
+    'Release must name the exact ownership receipt',
+    409,
+  );
+  if (row.released_at) return;
+  if (row.review_id && row.claim_id)
+    await reviews.releaseClaim(
+      {
+        projectId: row.project_id,
+        reviewId: row.review_id,
+        claimId: row.claim_id,
+        actorId: row.actor_id,
+        reason,
+      },
+      tx,
+    );
+  await tx.run(
+    `UPDATE ${table} SET released_at=? WHERE id=? AND released_at IS NULL`,
+    now(),
+    row.id,
+  );
+}
 export function eventSource(caller: Caller): Data {
   return caller.session
     ? { source: { kind: 'session', sessionId: caller.session.id } }

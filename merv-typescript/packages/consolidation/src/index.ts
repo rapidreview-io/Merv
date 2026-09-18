@@ -1,4 +1,4 @@
-import { visible, mapAsync } from '@merv/contracts';
+import { releasedLease, visible, mapAsync } from '@merv/contracts';
 import { createService, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -875,33 +875,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
   }
   private async release(lease: WorkflowLease, reason: string, tx: Transaction) {
     this.state.assertTransaction(tx);
-    const row = await tx.get<LeaseRow>(
-      'SELECT * FROM consolidation_leases WHERE id=? AND project_id=? AND instance_id=? AND revision=? AND actor_id=?',
-      lease.leaseId,
-      lease.projectId,
-      lease.instanceId,
-      lease.expectedRevision,
-      lease.actorId,
-    );
-    check(
-      row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
-      'stale_lease',
-      'The original consolidation ownership receipt is required',
-      409,
-    );
-    if (row.released_at) return;
-    if (row.review_id && row.claim_id)
-      await this.reviews.releaseClaim(
-        {
-          projectId: row.project_id,
-          reviewId: row.review_id,
-          claimId: row.claim_id,
-          actorId: row.actor_id,
-          reason,
-        },
-        tx,
-      );
-    await tx.run('UPDATE consolidation_leases SET released_at=? WHERE id=?', now(), row.id);
+    await releasedLease(tx, this.reviews, 'consolidation_leases', lease, reason, {
+      instance_id: lease.instanceId,
+    });
   }
   private policy(version: number): Parameters<Workflows['register']>[1] {
     return {

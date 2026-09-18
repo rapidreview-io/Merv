@@ -9,7 +9,6 @@ import {
   now,
   type Artifacts,
   type Caller,
-  type Data,
   type Scope,
   type State,
   type Transaction,

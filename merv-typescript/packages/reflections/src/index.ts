@@ -1,4 +1,4 @@
-import { visible, everyAsync } from '@merv/contracts';
+import { releasedLease, visible, everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
 import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -14,7 +14,6 @@ import {
   type ContextBuilder,
   type ContextInput,
   type ContextRegistration,
-  type Data,
   type ReviewApplication,
   type Reviews,
   type Scope,
@@ -806,33 +805,9 @@ export class ReflectionService implements Reflections {
     };
   }
   private async release(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
-    const row = await tx.get<LeaseRow>(
-      'SELECT * FROM reflection_leases WHERE id=? AND project_id=? AND instance_id=? AND revision=? AND actor_id=?',
-      lease.leaseId,
-      lease.projectId,
-      lease.instanceId,
-      lease.expectedRevision,
-      lease.actorId,
-    );
-    check(
-      row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
-      'stale_lease',
-      'Lease cleanup must name exact reflection ownership',
-      409,
-    );
-    if (row.released_at) return;
-    if (row.review_id && row.claim_id)
-      await this.reviews.releaseClaim(
-        {
-          projectId: row.project_id,
-          reviewId: row.review_id,
-          claimId: row.claim_id,
-          actorId: row.actor_id,
-          reason,
-        },
-        tx,
-      );
-    await tx.run('UPDATE reflection_leases SET released_at=? WHERE id=?', now(), row.id);
+    await releasedLease(tx, this.reviews, 'reflection_leases', lease, reason, {
+      instance_id: lease.instanceId,
+    });
   }
   private policy(lens: boolean, live: boolean): WorkflowPolicy {
     const assignments = (lens ? ['reflecting'] : ['synthesizing', 'in_review']).map((state) => ({
