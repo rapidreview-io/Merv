@@ -1,3 +1,4 @@
+import { expiry } from './expiry.js';
 import { visible, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
@@ -480,19 +481,6 @@ export class ProjectScope implements Scope {
   private time(): string {
     return new Date(this.clock()).toISOString();
   }
-  private expiry(value: string | null | undefined, time: string): string | null {
-    if (value === undefined || value === null) return null;
-    check(
-      typeof value === 'string' &&
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
-        Number.isFinite(Date.parse(value)) &&
-        new Date(value).toISOString() === value &&
-        value > time,
-      'invalid_expiry',
-      'Credential expiry must be a future canonical UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ) or null',
-    );
-    return value;
-  }
   private selfExpiry(expiresAt: string | null, limit: string | null): void {
     check(
       limit === null || (expiresAt !== null && expiresAt <= limit),
@@ -523,7 +511,7 @@ export class ProjectScope implements Scope {
       role,
     );
     const time = this.time();
-    return await this.issueCredential(tx, value, this.expiry(expiresAt, time), null, time);
+    return await this.issueCredential(tx, value, expiry(expiresAt, time), null, time);
   }
   private async issueCredential(
     tx: Transaction,
@@ -926,7 +914,7 @@ export class ProjectScope implements Scope {
           ? await this.credentialRow(tx, caller.projectId, caller.credentialId)
           : undefined;
       const time = this.time();
-      const expiresAt = this.expiry(
+      const expiresAt = expiry(
         input.expiresAt === undefined ? current?.expires_at : input.expiresAt,
         time,
       );
@@ -966,7 +954,7 @@ export class ProjectScope implements Scope {
         409,
       );
       const time = this.time();
-      const expiresAt = this.expiry(
+      const expiresAt = expiry(
         input.expiresAt === undefined ? previous.expires_at : input.expiresAt,
         time,
       );

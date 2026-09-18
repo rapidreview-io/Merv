@@ -1,3 +1,4 @@
+import { expiry } from './expiry.js';
 import { postgresMigrations } from './user-keys.postgres.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -244,20 +245,6 @@ export class UserKeys {
     });
   }
 
-  private expiry(value: string | null | undefined, time: string): string | null {
-    if (value === undefined || value === null) return null;
-    check(
-      typeof value === 'string' &&
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
-        Number.isFinite(Date.parse(value)) &&
-        new Date(value).toISOString() === value &&
-        value > time,
-      'invalid_expiry',
-      'Key expiry must be a future canonical UTC timestamp or null',
-    );
-    return value;
-  }
-
   private async issue(
     tx: Transaction,
     input: Omit<UserKey, 'id' | 'createdAt' | 'revokedAt'>,
@@ -314,7 +301,7 @@ export class UserKeys {
           projectId: caller.projectId,
           grantScope,
           label: input.label?.trim() ?? null,
-          expiresAt: this.expiry(input.expiresAt, time),
+          expiresAt: expiry(input.expiresAt, time),
           previousId: null,
         },
         time,
@@ -385,7 +372,7 @@ export class UserKeys {
         authorizationProject = membership.project_id;
       }
       await this.members.resolve(principal, authorizationProject, tx);
-      const expiresAt = this.expiry(
+      const expiresAt = expiry(
         input.expiresAt === undefined ? previous.expires_at : input.expiresAt,
         time,
       );
