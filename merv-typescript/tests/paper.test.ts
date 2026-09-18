@@ -378,7 +378,14 @@ test('a conflicting second document rolls back all accepted edits and preserves 
     {
       kind: 'results' as 'methods',
       expectedRevision: 0,
-      changes: [{ id: 'other', title: 'Other', content: 'Concurrent accepted result' }],
+      changes: [{ id: 'result', title: 'Result', content: 'Concurrent accepted result' }],
+    },
+  ]);
+  const disjoint = await proposal(f, [
+    {
+      kind: 'results' as 'methods',
+      expectedRevision: 0,
+      changes: [{ id: 'another', title: 'Another', content: 'Independent result' }],
     },
   ]);
   await f.state.transaction(
@@ -402,9 +409,26 @@ test('a conflicting second document rolls back all accepted edits and preserves 
     hasCode('paper_revision_conflict'),
   );
   assert.equal((await f.paper.read(f.reader)).documents.methods.current.revision, 0);
-  assert.equal((await f.paper.read(f.reader)).documents.results.current.sections[0].id, 'other');
+  assert.equal(
+    (await f.paper.read(f.reader)).documents.results.current.sections[0].content,
+    'Concurrent accepted result',
+  );
   assert.equal(
     (await f.paper.read(f.reader)).proposals.find((p) => p.id === both.id)!.acceptance,
     null,
+  );
+  // A stale proposal whose sections nobody touched since still lands, on the current revision.
+  const [published] = await f.state.transaction(
+    async (tx) =>
+      await f.paper.accept(
+        f.reviewer,
+        { proposalId: disjoint.id, source: disjoint.source, reviewId: 'disjoint-review' },
+        tx,
+      ),
+  );
+  assert.equal(published!.revision, 2);
+  assert.deepEqual(
+    (await f.paper.read(f.reader)).documents.results.current.sections.map((s) => s.id),
+    ['result', 'another'],
   );
 });

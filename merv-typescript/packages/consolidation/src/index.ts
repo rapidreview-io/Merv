@@ -1,4 +1,4 @@
-import { mapAsync } from '@merv/contracts';
+import { visible, mapAsync } from '@merv/contracts';
 import { createService, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -526,7 +526,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     );
     const body = await this.artifacts.read(caller, report.id);
     check(
-      body.encoding === 'utf8' && !!body.content.trim(),
+      body.encoding === 'utf8' && visible(body.content),
       'consolidation_report',
       'A readable nonempty UTF-8 consolidation report is required',
     );

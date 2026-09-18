@@ -912,16 +912,16 @@ DROP TABLE task_leases_backup;`,
         }
         check(
           typeof input.title === 'string' &&
-            input.title.trim() &&
+            visible(input.title) &&
             typeof input.goal === 'string' &&
-            input.goal.trim(),
+            visible(input.goal),
           'invalid_brief',
           'Task title and goal must be nonempty',
         );
         check(
           Array.isArray(input.checks) &&
             input.checks.length > 0 &&
-            input.checks.every((item) => typeof item === 'string' && item.trim()),
+            input.checks.every((item) => typeof item === 'string' && visible(item)),
           'invalid_checks',
           'Task requires at least one nonempty Done-when check',
         );

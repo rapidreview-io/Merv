@@ -538,7 +538,7 @@ export class ReviewService implements Reviews {
     if (excludedActorIds !== undefined) input = { ...input, excludedActorIds };
     return await this.command(tx, caller, input.requestId, 'request', input, async () => {
       check(
-        typeof input.subjectId === 'string' && input.subjectId.trim(),
+        typeof input.subjectId === 'string' && visible(input.subjectId),
         'invalid_subject',
         'A subject identifier is required',
       );
@@ -556,7 +556,7 @@ export class ReviewService implements Reviews {
       check(
         Array.isArray(input.criteria) &&
           input.criteria.length > 0 &&
-          input.criteria.every((item) => typeof item === 'string' && item.trim()),
+          input.criteria.every((item) => typeof item === 'string' && visible(item)),
         'invalid_criteria',
         'At least one nonempty assessment criterion is required',
       );

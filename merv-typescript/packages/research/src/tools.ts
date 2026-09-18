@@ -1,3 +1,4 @@
+import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
@@ -16,7 +17,10 @@ export const researchToolsPlugin = {
         description:
           'Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.',
         inputSchema: z
-          .object({ title: z.string().trim().min(1).max(300).optional(), requestId })
+          .object({
+            title: z.string().trim().min(1).max(300).refine(visible).optional(),
+            requestId,
+          })
           .strict(),
         handler: async (caller: Caller, input: { title?: string; requestId: string }) =>
           await research.startReflection(caller, input),

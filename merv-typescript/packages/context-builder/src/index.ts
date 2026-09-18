@@ -1,4 +1,4 @@
-import { recorded, mapAsync } from '@merv/contracts';
+import { visible, recorded, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -31,14 +31,14 @@ const definitionSchema = z
     kind: z.enum(['work', 'review']),
     recipe: z
       .object({
-        instructions: z.string().trim().min(1),
-        outputInstructions: z.string().trim().min(1),
+        instructions: z.string().trim().min(1).refine(visible),
+        outputInstructions: z.string().trim().min(1).refine(visible),
         sections: z
           .array(
             z
               .object({
                 key: z.string().regex(/^[a-z][a-zA-Z0-9_.-]{0,127}$/),
-                title: z.string().trim().min(1),
+                title: z.string().trim().min(1).refine(visible),
                 required: z.boolean(),
               })
               .strict(),
@@ -69,7 +69,7 @@ const buildSchema = z
           .strict(),
       ]),
     ),
-    requestId: z.string().trim().min(1).max(200),
+    requestId: z.string().trim().min(1).max(200).refine(visible),
   })
   .strict();
 const previewSchema = buildSchema.omit({ requestId: true });

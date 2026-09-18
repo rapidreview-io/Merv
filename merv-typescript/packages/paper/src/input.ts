@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { parsed } from '@merv/contracts';
+import { visible, parsed } from '@merv/contracts';
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-const requestId = z.string().trim().min(1).max(200);
+const requestId = z.string().trim().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const kind = z.enum(['problem', 'literature', 'methods', 'results']);
 export const patchSchema = z
@@ -14,7 +14,7 @@ export const patchSchema = z
         z
           .object({
             id,
-            title: z.string().trim().min(1).max(300).optional(),
+            title: z.string().trim().min(1).max(300).refine(visible).optional(),
             content: z.string().max(100_000).optional(),
             afterId: id.nullable().optional(),
             remove: z.boolean().optional(),
@@ -30,9 +30,9 @@ export const citeSchema = z
     id: id.optional(),
     expectedRevision: revision,
     requestId,
-    identifier: z.string().trim().min(1).max(500),
-    title: z.string().trim().min(1).max(1000),
-    authors: z.array(z.string().trim().min(1).max(300)).max(100).default([]),
+    identifier: z.string().trim().min(1).max(500).refine(visible),
+    title: z.string().trim().min(1).max(1000).refine(visible),
+    authors: z.array(z.string().trim().min(1).max(300).refine(visible)).max(100).default([]),
     year: z.number().int().min(1000).max(9999).nullable().default(null),
     url: z
       .string()

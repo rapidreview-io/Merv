@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { parsed } from '@merv/contracts';
+import { visible, parsed } from '@merv/contracts';
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-const text = (max: number) => z.string().trim().min(1).max(max);
+const text = (max: number) => z.string().trim().min(1).max(max).refine(visible);
 export const createSchema = z
   .object({
     sourceArtifactIds: z.array(id).min(1).max(2000),

@@ -187,6 +187,35 @@ export class PaperService implements Paper {
       updateId: after.updateId,
     });
   }
+  /**
+   * A proposal written against an older revision still applies when the sections it touches,
+   * and the anchors it inserts after, are unchanged since; otherwise its author must rewrite it.
+   */
+  private async rebased(
+    caller: Caller,
+    edit: PaperEdit,
+    before: PaperRevision,
+    tx: Transaction,
+  ): Promise<PaperEdit> {
+    if (edit.expectedRevision === before.revision) return edit;
+    const row = await tx.get<{ record: string }>(
+      'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
+      caller.projectId,
+      edit.kind,
+      edit.expectedRevision,
+    );
+    const then = row ? (JSON.parse(row.record) as PaperRevision).sections : [];
+    const same = (id: string) =>
+      digest(then.find((s) => s.id === id) ?? null) ===
+      digest(before.sections.find((s) => s.id === id) ?? null);
+    check(
+      edit.changes.every((c) => same(c.id) && (c.afterId == null || same(c.afterId))),
+      'paper_revision_conflict',
+      `The proposed ${edit.kind} edits overlap changes accepted since revision ${edit.expectedRevision}; return the work for a proposal against revision ${before.revision}`,
+      409,
+    );
+    return { ...edit, expectedRevision: before.revision };
+  }
   private async edited(
     caller: Caller,
     input: PaperEdit | PaperPatch,
@@ -500,7 +529,7 @@ export class PaperService implements Paper {
     const publications = await mapAsync(proposal.documents, async ({ edit }) => {
       const before = await this.current(caller, edit.kind, tx);
       const after = {
-        ...(await this.edited(caller, edit, before, tx)),
+        ...(await this.edited(caller, await this.rebased(caller, edit, before, tx), before, tx)),
         proposalId: proposal.id,
         updatedBy: proposal.createdBy,
       };

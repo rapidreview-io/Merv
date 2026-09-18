@@ -1,4 +1,4 @@
-import { mapAsync, filterAsync } from '@merv/contracts';
+import { visible, mapAsync, filterAsync } from '@merv/contracts';
 import { createService, plain, recorded, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
@@ -948,7 +948,7 @@ export class ExperimentService implements Experiments {
           const body = await this.text(caller, report.artifactId, tx);
           const section = reportConclusion(body);
           conclusion =
-            typeof input.evidence?.conclusion === 'string' && input.evidence.conclusion.trim()
+            typeof input.evidence?.conclusion === 'string' && visible(input.evidence.conclusion)
               ? input.evidence.conclusion.trim()
               : section || input.notes;
         }

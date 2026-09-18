@@ -53,6 +53,7 @@ export type {
   CodeCommandCompletion,
 } from './code.js';
 import type { Data, Json } from './data.js';
+import { visible } from './text.js';
 import type {
   Role,
   WorkflowDispatchCandidate,
@@ -228,7 +229,7 @@ export async function replayed<T>(
   const resultColumn = options.result ?? 'result';
   check(
     typeof input.requestId === 'string' &&
-      input.requestId.trim().length > 0 &&
+      visible(input.requestId) &&
       input.requestId.length <= 200,
     'invalid_request_id',
     'A stable requestId of 1–200 characters is required',
@@ -311,7 +312,7 @@ export function markdownSection(text: string, title: string): string | null {
     }
   }
   const body = content.join('\n').trim();
-  return level && body ? body : null;
+  return level && visible(body) ? body : null;
 }
 /** Keys sorted by UTF-16 code unit, independent of the process locale. */
 export function canonical(value: unknown): string {
