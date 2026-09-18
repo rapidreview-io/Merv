@@ -883,10 +883,10 @@ async function main(options: Options) {
     const TERMINAL = new Set(['done', 'complete', 'failed', 'abandoned', 'cancelled']);
     let divergenceLogged = false;
     const held = new Map<string, number>();
-    // SIGUSR1 drains the run: nothing more is launched or dispatched, the workers that
+    // SIGUSR2 drains the run: nothing more is launched or dispatched, the workers that
     // are running finish their handoff, and the process exits so a restart loses nothing.
     let draining = false;
-    process.once('SIGUSR1', () => {
+    process.once('SIGUSR2', () => {
       draining = true;
       log({ draining: true });
     });
