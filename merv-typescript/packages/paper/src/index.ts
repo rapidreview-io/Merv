@@ -490,7 +490,12 @@ export class PaperService implements Paper {
     });
     return proposal;
   }
-  async accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]> {
+  /** Everything accept() checks before it writes: the proposal, its source, the reviewer, the pins and whether every edit still applies. */
+  async checkAccept(
+    caller: Caller,
+    input: PaperAccept,
+    tx: Transaction,
+  ): Promise<{ proposal: PaperProposal; accepted: PaperPublication[] | null }> {
     this.open();
     this.state.assertTransaction(tx);
     await this.scope.require(caller, 'review', tx);
@@ -521,7 +526,7 @@ export class PaperService implements Paper {
         'Proposal was accepted by another review',
         409,
       );
-      return accepted.publications;
+      return { proposal, accepted: accepted.publications };
     }
     for (const pin of [proposal.artifact, ...proposal.evidence])
       check(
@@ -530,6 +535,13 @@ export class PaperService implements Paper {
         'Retained source evidence changed',
         409,
       );
+    for (const { edit } of proposal.documents)
+      await this.rebased(caller, edit, await this.current(caller, edit.kind, tx), tx);
+    return { proposal, accepted: null };
+  }
+  async accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]> {
+    const { proposal, accepted } = await this.checkAccept(caller, input, tx);
+    if (accepted) return accepted;
     const publications = await mapAsync(proposal.documents, async ({ edit }) => {
       const before = await this.current(caller, edit.kind, tx);
       const after = {

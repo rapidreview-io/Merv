@@ -1100,6 +1100,17 @@ export class ExperimentService implements Experiments {
     await this.program.reviewCapture(caller, experiment, tx);
     this.route(submission.stage, input);
     await this.reviews.checkSubmit(caller, review.id, input, tx);
+    // A pass applies the paper proposal; what that would hit is part of the verdict's check.
+    if (input.verdict === 'pass' && submission.paperProposal)
+      await this.paper.checkAccept(
+        caller,
+        {
+          proposalId: submission.paperProposal.id,
+          source: submission.paperProposal.source,
+          reviewId: review.id,
+        },
+        tx,
+      );
   }
   /** Exit readiness checks share actual submission validation; dispatch admission remains separate. */
   private async checkAction(context: WorkflowCheckContext): Promise<void> {

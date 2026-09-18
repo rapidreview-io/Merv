@@ -24,6 +24,8 @@ export interface Paper {
   validate(caller: Caller, artifactId: string, tx: Transaction): Promise<unknown>;
   /** The owning workflow checks and submits its exact review in the same transaction. */
   accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]>;
+  /** The checks accept() makes before it writes; a preflight that names what a pass would hit. */
+  checkAccept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<unknown>;
   close(): void;
 }
 declare module 'cordis' {

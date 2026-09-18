@@ -139,7 +139,7 @@ const sessionOfferInput = z
     instanceId: nonblank,
     expectedRevision: z.number().int().nonnegative(),
     runnerId: nonblank,
-    requestId: nonblank,
+    requestId: z.string().trim().min(1).max(256),
     secret: z
       .string()
       .regex(

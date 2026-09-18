@@ -557,13 +557,16 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
     check(
-      input &&
-        (input.agentId === undefined || text(input.agentId)) &&
+      input && text(input.requestId, 320),
+      'invalid_request_id',
+      'A stable requestId of 1–320 characters is required',
+    );
+    check(
+      (input.agentId === undefined || text(input.agentId)) &&
         text(input.instanceId) &&
         Number.isSafeInteger(input.expectedRevision) &&
         input.expectedRevision >= 0 &&
         text(input.runnerId) &&
-        text(input.requestId, 320) &&
         tokenPattern.test(input.secret),
       'invalid_session_offer',
       'Offer requires a target revision, runner, request and caller-generated ms_ secret',
