@@ -20,7 +20,7 @@ const RUN_ID = randomBytes(4).toString('hex');
  *   node --import tsx scripts/live-scenario.ts --brief <file> --out <dir> \
  *     [--base-url <url> --project <projectId> --token-env <ENV_NAME>] [--local] \
  *     [--only <name>[,<name>]] [--stop-after <state>] [--max-rounds <n>] \
- *     [--timeout-minutes <n>] \
+ *     [--timeout-minutes <n>] [--github] \
  *     [--model <codex model>] [--effort <codex effort>] \
  *     [--sandboxes-url <MCP endpoint, e.g. https://sandboxes.example/mcp> --sandboxes-token-env <ENV_NAME>]
  *
@@ -91,6 +91,8 @@ export interface RecordBrief {
   details?: string;
   testedClaims?: string[];
   dependsOn?: string[];
+  /** An experiment whose work is code: the runner fetches the project's repository. */
+  workspace?: 'git';
   networkStages?: string[];
   defects?: DefectBrief[];
   trajectory: string[];
@@ -351,6 +353,7 @@ export function parseBrief(markdown: string): Brief {
         kind,
         name: key,
         dependsOn,
+        ...(/\*\*`?workspace`?:?\*\*:?\s*`?git`?/i.test(body) ? { workspace: 'git' as const } : {}),
         testedClaims,
         trajectory,
         reviewRounds,
@@ -554,6 +557,8 @@ interface Options {
   model?: string;
   effort?: string;
   sandboxesUrl?: string;
+  /** The runner fetches the project's linked GitHub repository for Git-workspace records. */
+  github?: boolean;
   sandboxesTokenEnv?: string;
 }
 
@@ -564,7 +569,7 @@ function parseArgs(argv: string[]): Options {
     const arg = argv[index];
     assert.ok(arg.startsWith('--'), `Unexpected argument ${arg}`);
     const name = arg.slice(2);
-    if (name === 'local') flags.add(name);
+    if (name === 'local' || name === 'github') flags.add(name);
     else {
       const value = argv[++index];
       assert.ok(value !== undefined && !value.startsWith('--'), `--${name} needs a value`);
@@ -605,6 +610,7 @@ function parseArgs(argv: string[]): Options {
     model: values.get('model'),
     effort: values.get('effort'),
     sandboxesUrl: values.get('sandboxes-url'),
+    github: flags.has('github'),
     sandboxesTokenEnv: values.get('sandboxes-token-env'),
   };
 }
@@ -790,6 +796,7 @@ async function main(options: Options) {
                 .map((key) => claimIds.get(key))
                 .filter((id): id is string => !!id),
               ...(dependsOn.length ? { dependsOn } : {}),
+              ...(record.workspace ? { workspace: record.workspace } : {}),
               requestId: `scenario:experiment:${record.name}`,
             });
       observed.set(record.name, {
@@ -824,6 +831,7 @@ async function main(options: Options) {
       credentialEnv: options.tokenEnv,
       capacity: 2,
       pollIntervalMs: 8000,
+      ...(options.github ? { workspace: { github: true as const } } : {}),
       profiles: [
         {
           name: 'scenario-codex',
