@@ -999,7 +999,9 @@ async function main(options: Options) {
         const launches = entry.launchedStages.filter((item) => item === stage).length;
         if (
           launches &&
-          (leased.has(`${entry.id}:${(await read(entry)).workflow.revision}`) || launches >= 3)
+          (leased.has(`${entry.id}:${(await read(entry)).workflow.revision}`) ||
+            launches >= 8 ||
+            (held.get(`${entry.brief.name}:${stage}:ended`) ?? 0) > Date.now() - 300_000)
         )
           continue;
         entry.launchedStages.push(stage);
@@ -1112,6 +1114,8 @@ async function main(options: Options) {
         exitCode = await launch();
       }
       log({ record: entry.brief.name, state, round, exitCode });
+      // A worker that ended without moving the record is launched again after a pause.
+      held.set(`${entry.brief.name}:${state}@${round}:ended`, Date.now());
       assert.equal(exitCode, 0, `Harness-launched Codex for ${entry.brief.name}/${state} failed`);
     }
 
@@ -1311,6 +1315,9 @@ async function main(options: Options) {
             ? 'This stage has network access: acquire the data and compute the assignment names, outside Merv, and bring the evidence back as artifacts.'
             : 'This stage has no network. Do the work the assignment describes with what it gives you.',
           'Tool arguments are constrained by the server. Stop when the handoff completes.',
+          options.harness === 'claude'
+            ? 'This session ends the moment you give a final reply, and nothing wakes it later: there is no timer, no callback and no next turn. To wait for remote work, wait inside this session (a shell sleep loop that checks again), then finish the handoff before you reply.'
+            : '',
           defect ? `Additional instructions for this launch only:\n${defect}` : '',
           'Frozen assignment:',
           JSON.stringify(session.assignment),
