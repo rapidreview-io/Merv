@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { clip, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -936,7 +936,7 @@ DROP TABLE task_leases_backup;`,
             ? await this.artifacts.create(
                 caller,
                 {
-                  title: `Task brief: ${input.title}`.slice(0, 300),
+                  title: clip(`Task brief: ${input.title}`, 300),
                   content: renderBrief(input),
                 },
                 tx,
@@ -1743,7 +1743,7 @@ DROP TABLE task_leases_backup;`,
             ? await this.artifacts.create(
                 caller,
                 {
-                  title: `Delivery confirmations: ${row.title}`.slice(0, 300),
+                  title: clip(`Delivery confirmations: ${row.title}`, 300),
                   content: renderAssessment(checks, confirmations),
                 },
                 tx,

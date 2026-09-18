@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { createService, recorded, replayed } from '@merv/contracts';
+import { clip, createService, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -453,7 +453,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
               service.create(
                 caller,
                 {
-                  title: `${record.name.slice(0, 288)}: reflection`,
+                  title: `${clip(record.name, 288)}: reflection`,
                   requestId: this.request(caller, input.requestId, 'reflection'),
                 },
                 tx,
@@ -502,7 +502,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
                     reflection.experimentIds ??
                     reflection.corpus?.selection.experiments.map((e) => e.id) ??
                     [],
-                  name: `${record.name.slice(0, 185)}: consolidation`,
+                  name: `${clip(record.name, 185)}: consolidation`,
                   workspace: record.consolidationWorkspace,
                   dependsOn: [record.reflectionId!, ...record.consolidationDependencies],
                   requestId: this.request(caller, input.requestId, 'consolidation'),

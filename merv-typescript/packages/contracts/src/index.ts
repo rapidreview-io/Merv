@@ -109,6 +109,9 @@ export function check(
 ): asserts condition {
   if (!condition) throw new MervError(code, message, status);
 }
+/** At most `max` UTF-16 units, never ending in half a surrogate pair. */
+export const clip = (text: string, max: number) =>
+  text.length > max ? text.slice(0, max).replace(/\p{Surrogate}$/u, '') : text;
 export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-', '')}`;
 export const now = () => new Date().toISOString();
 export type Limits = { depth?: number; nodes?: number; bytes?: number; keys?: 'json' | 'any' };
@@ -259,6 +262,58 @@ export async function replayed<T>(
     JSON.stringify(result),
   );
   return result;
+}
+/** Markdown with comments and fenced blocks blanked: nothing inside them is a heading or a figure. */
+export function visibleMarkdown(text: string): string {
+  let fence: { character: string; count: number } | undefined;
+  return text
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        if (
+          match &&
+          match[1][0] === fence.character &&
+          match[1].length >= fence.count &&
+          line.slice(match[0].length).trim() === ''
+        )
+          fence = undefined;
+        return '';
+      }
+      if (match) fence = { character: match[1][0], count: match[1].length };
+      return match ? '' : line;
+    })
+    .join('\n');
+}
+const normalizeHeading = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+/**
+ * The first nonblank body under a heading that starts with `title` (case, punctuation and
+ * closing hashes aside), up to the next heading of the same or a higher level; null when none.
+ */
+export function markdownSection(text: string, title: string): string | null {
+  const wanted = normalizeHeading(title);
+  let level = 0;
+  let content: string[] = [];
+  for (const line of visibleMarkdown(text).split('\n')) {
+    const heading = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (level && heading && heading[1].length <= level) {
+      if (content.join('\n').trim()) break;
+      level = 0;
+    }
+    if (level) content.push(line);
+    else if (heading && normalizeHeading(heading[2]).startsWith(wanted)) {
+      level = heading[1].length;
+      content = [];
+    }
+  }
+  const body = content.join('\n').trim();
+  return level && body ? body : null;
 }
 /** Keys sorted by UTF-16 code unit, independent of the process locale. */
 export function canonical(value: unknown): string {

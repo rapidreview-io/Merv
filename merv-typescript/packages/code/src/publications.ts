@@ -1,4 +1,5 @@
 import {
+  clip,
   canonical,
   check,
   codePublicationIdSchema,
@@ -94,7 +95,7 @@ export class CodePublicationService implements CodePublicationApi {
       baseOid: proposal.receipt.baseOid,
       headOid: proposal.receipt.headOid,
       treeOid: proposal.receipt.treeOid,
-      title: proposal.summary.slice(0, 240),
+      title: clip(proposal.summary, 240),
       createdAt: now(),
       review: null,
       pull: null,

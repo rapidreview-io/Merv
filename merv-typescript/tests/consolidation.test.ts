@@ -340,6 +340,15 @@ test('consolidation pins source artifacts without a Reflections service, exact e
   await assert.rejects(async () => await f.consolidation.submit(f.reviewer, submission), {
     code: 'forbidden',
   });
+  await assert.rejects(
+    async () =>
+      await f.consolidation.submit(f.producer, {
+        ...submission,
+        reportArtifactId: f.reflection.report.id,
+        requestId: 'source-as-report',
+      }),
+    { code: 'consolidation_report' },
+  );
   const submitted = await f.consolidation.submit(f.producer, submission);
   assert.equal(submitted.workflow.state, 'consolidation_review');
   assert.deepEqual(await f.consolidation.submit(f.producer, submission), submitted);

@@ -1,7 +1,7 @@
 import { isUtf8 } from 'node:buffer';
 import { types } from 'node:util';
 import { z } from 'zod';
-import { check, plain, type Json } from '@merv/contracts';
+import { check, markdownSection, plain, visibleMarkdown, type Json } from '@merv/contracts';
 import { experimentIdSchema, experimentPathSchema } from './input.js';
 
 export const evidenceByteLimit = 16_000;
@@ -64,59 +64,11 @@ export function parseResult(text: string, format: 'json' | 'qualitative'): Json 
   return format === 'json' ? parseJson(text) : null;
 }
 
-/** Comments and fenced examples are not rendered section headers or figures. */
-function visibleMarkdown(text: string): string {
-  const uncommented = boundedText(text).replace(/<!--[\s\S]*?(?:-->|$)/g, '');
-  let fence: { character: string; count: number } | undefined;
-  return uncommented
-    .split(/\r?\n/)
-    .map((line) => {
-      const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-      if (fence) {
-        if (
-          match &&
-          match[1][0] === fence.character &&
-          match[1].length >= fence.count &&
-          line.slice(match[0].length).trim() === ''
-        )
-          fence = undefined;
-        return '';
-      }
-      if (match) {
-        fence = { character: match[1][0], count: match[1].length };
-        return '';
-      }
-      return line;
-    })
-    .join('\n');
-}
-
-const normalizeHeading = (text: string) =>
-  text
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-
-function section(text: string, required: string): string | null {
-  const lines = visibleMarkdown(text).split('\n');
-  let level = 0;
-  const content: string[] = [];
-  for (const line of lines) {
-    const heading = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
-    if (level) {
-      if (heading && heading[1].length <= level) break;
-      content.push(line);
-    } else if (heading && normalizeHeading(heading[2]).startsWith(normalizeHeading(required))) {
-      level = heading[1].length;
-    }
-  }
-  return level && content.join('\n').trim() ? content.join('\n').trim() : null;
-}
+const section = (text: string, title: string) => markdownSection(boundedText(text), title);
 
 /** Only retained artifact images are supported; the caller verifies bytes, media type and scope. */
 export function markdownImageTargets(text: string): string[] {
-  const visible = visibleMarkdown(text)
+  const visible = visibleMarkdown(boundedText(text))
     .replace(/(`+)[\s\S]*?\1/g, '')
     .replace(/\\!/g, '');
   error(
@@ -166,7 +118,7 @@ export function validateReport(
   if (options.exhibitPath) {
     const filename = options.exhibitPath.split('/').at(-1)!;
     error(
-      filename.length > 0 && visibleMarkdown(text).includes(filename),
+      filename.length > 0 && visibleMarkdown(boundedText(text)).includes(filename),
       'Report must reference the pinned metrics exhibit filename',
     );
   }

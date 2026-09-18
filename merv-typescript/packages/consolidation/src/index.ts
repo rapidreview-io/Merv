@@ -510,6 +510,11 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       409,
     );
     const report = await this.artifacts.get(caller, input.reportArtifactId, tx);
+    check(
+      !this.sourceArtifacts(record).includes(report.id),
+      'consolidation_report',
+      'The consolidation report must be a new artifact, not one of its frozen sources',
+    );
     const authored = new Set(
       caller.session ? (await this.artifacts.authored(caller, tx)).map((a) => a.id) : [],
     );

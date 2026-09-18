@@ -1,4 +1,4 @@
-import { type Caller, type Json } from '@merv/contracts';
+import { clip, type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
@@ -106,7 +106,7 @@ const KEEP: Record<string, string[]> = {
 };
 /** The map shows a summary of each record's prose; the record's page has all of it. */
 const brief = (value: Json): Json =>
-  typeof value === 'string' && value.length > 400 ? `${value.slice(0, 399)}…` : value;
+  typeof value === 'string' && value.length > 400 ? `${clip(value, 399)}…` : value;
 const pick = (record: Json, keys: string[]): Json =>
   record && typeof record === 'object' && !Array.isArray(record)
     ? Object.fromEntries(

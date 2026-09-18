@@ -1,6 +1,6 @@
 import { everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
-import { createService, replayed } from '@merv/contracts';
+import { createService, markdownSection, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -504,6 +504,7 @@ export class ReflectionService implements Reflections {
           409,
         );
     } else {
+      check(snapshot.state !== 'approved', 'reflection_complete', 'Reflection has ended', 409);
       check(
         snapshot.state === 'synthesizing',
         'reflection_not_ready',
@@ -1027,11 +1028,7 @@ export class ReflectionService implements Reflections {
         const artifact = await this.author(caller, input.artifactId, tx);
         const text = (await this.artifacts.read(caller, artifact.id)).content;
         check(
-          Boolean(
-            /(?:^|\n)#{1,6}[ \t]+Summary[ \t]*\r?\n([\s\S]*?)(?=(?<=\n)#{1,6}[ \t]|\n#{1,6}[ \t]|\s*$)/i
-              .exec(text)?.[1]
-              ?.trim(),
-          ),
+          markdownSection(text, 'Summary'),
           'reflection_summary_required',
           'Lens report requires a nonempty Summary section',
         );

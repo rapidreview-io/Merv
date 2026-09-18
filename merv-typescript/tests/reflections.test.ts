@@ -146,6 +146,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   for (const [index, content] of [
     '# Summary\n\n# Evidence\nThis is evidence, not a summary.',
     '# Summary\n# Evidence\nThis is evidence, not a summary.',
+    '```\n# Summary\nA fenced example is not the summary.\n```\n# Evidence\nEvidence.',
   ].entries()) {
     const emptySummary = await f.app.ctx.artifacts.create(lensWorker, {
       title: 'Empty summary',
@@ -205,6 +206,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   const reviewer = await f.actor('Independent reviewer', 'reviewer');
   wave = await f.verdict(wave, reviewer, true);
   assert.equal(wave.workflow.state, 'approved');
+  await assert.rejects(async () => await f.synthesize(wave), { code: 'reflection_complete' });
   const approved = await f.app.ctx.reflections.approved(f.owner, wave.id);
   assert.equal(approved.report.id, wave.report!.id);
   assert.equal(approved.reviewerId, reviewer.actorId);
