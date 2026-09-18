@@ -1126,8 +1126,30 @@ async function main(options: Options) {
       log({ record: entry.brief.name, state, round, lease: session.id, network, defect: !!defect });
       const workspace = join(options.out, 'workspaces', `${entry.brief.name}-${state}-${round}`);
       mkdirSync(workspace, { recursive: true, mode: 0o700 });
-      const launch = () =>
-        spawnCodex(entry, `${state}-${round}`, session, secret, workspace, network, defect);
+      // A session lives four hours from its last heartbeat and nobody else heartbeats ours:
+      // a worker longer than that (the 150M runs took nearly four) would lose its lease
+      // with its work still in hand.
+      const beat = setInterval(() => {
+        control(`/sessions/${encodeURIComponent(session.id)}/heartbeat`, {
+          runnerId: 'live-scenario',
+        }).catch(() => undefined);
+      }, 600_000);
+      beat.unref();
+      const launch = async () => {
+        try {
+          return await spawnCodex(
+            entry,
+            `${state}-${round}`,
+            session,
+            secret,
+            workspace,
+            network,
+            defect,
+          );
+        } finally {
+          clearInterval(beat);
+        }
+      };
       let exitCode = await launch();
       // Codex dying at MCP initialisation on a transient server error (a release swap, a
       // database timeout) leaves the offer untouched, so the same lease is launched once more.
