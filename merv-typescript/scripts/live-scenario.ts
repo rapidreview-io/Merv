@@ -979,9 +979,11 @@ async function main(options: Options) {
       const leased = new Set(
         live.map((session: any) => `${session.instanceId}:${session.expectedRevision}`),
       );
+      // The status view names the runner that was dispatched a session; an explicit offer,
+      // which is how this harness leases, carries none.
       const ours = new Set(
         live
-          .filter((session: any) => session.runnerRef === 'live-scenario')
+          .filter((session: any) => !session.runnerRef)
           .map((session: any) => `${session.instanceId}:${session.expectedRevision}`),
       );
       const blocking = [...observed.values()].filter((entry) => {
@@ -1100,7 +1102,7 @@ async function main(options: Options) {
           session.instanceId === entry.id &&
           session.expectedRevision === revision &&
           ['offered', 'active'].includes(session.status) &&
-          session.runnerRef !== 'live-scenario'
+          session.runnerRef
         ) {
           await control(`/sessions/${encodeURIComponent(session.id)}/halt`, {
             reason: 'this stage is launched by the scenario harness',
