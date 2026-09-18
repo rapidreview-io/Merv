@@ -20,6 +20,7 @@ export const advanceSchema = z
     requestId: id,
   })
   .strict();
+export const replanSchema = advanceSchema.extend({ dependsOn: z.array(id).max(100) }).strict();
 export const getSchema = z.object({ researchId: id }).strict();
 export const listSchema = z.object({}).strict();
 export function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {

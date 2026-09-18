@@ -173,6 +173,28 @@ export function requireDependencies(dependencies: WorkflowDependency[]): void {
   );
 }
 
+/** Called only inside the owner's transaction: the edges named are gone, the rest untouched. */
+export async function detachDependencies(
+  tx: Transaction,
+  source: WorkflowSnapshot,
+  ids: string[],
+): Promise<string[]> {
+  const removed: string[] = [];
+  for (const targetId of ids)
+    if (
+      (
+        await tx.run(
+          'DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=?',
+          source.projectId,
+          source.id,
+          targetId,
+        )
+      ).changes
+    )
+      removed.push(targetId);
+  return removed;
+}
+
 /** Called only inside the owner's transaction. Existing edges keep their original success contract. */
 export async function attachDependencies(
   tx: Transaction,

@@ -266,7 +266,13 @@ function keyQuery(params: URLSearchParams, allowProject = false): string | undef
 
 function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
   const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new ApiError('invalid_input', 'Request body failed validation');
+  if (!parsed.success)
+    throw new ApiError(
+      'invalid_input',
+      'Request body failed validation',
+      400,
+      parsed.error.issues.map(({ path, message }) => ({ path, message })),
+    );
   return parsed.data;
 }
 

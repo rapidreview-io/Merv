@@ -66,6 +66,7 @@ import {
 } from './execution.js';
 import {
   attachDependencies,
+  detachDependencies,
   normalizeDependencies,
   persistSuccess,
   relations,
@@ -1484,12 +1485,14 @@ export class WorkflowsService implements Workflows {
       'Expected revision must be a nonnegative integer',
     );
     const dependsOn = normalizeDependencies(input.dependsOn);
+    const drop = normalizeDependencies(input.drop ?? null).filter((id) => !dependsOn.includes(id));
     const hash = fingerprint({
       operation: 'add_dependencies',
       actorId: caller.actorId,
       instanceId: input.instanceId,
       expectedRevision: input.expectedRevision,
       dependsOn,
+      ...(drop.length ? { drop } : {}),
     });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -1513,7 +1516,8 @@ export class WorkflowsService implements Workflows {
         409,
       );
       const added = await attachDependencies(tx, before, dependsOn);
-      if (!added.length) {
+      const dropped = await detachDependencies(tx, before, drop);
+      if (!added.length && !dropped.length) {
         await tx.run(
           'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
           caller.projectId,
@@ -1545,10 +1549,10 @@ export class WorkflowsService implements Workflows {
         after,
         input.requestId,
         hash,
-        'add_dependencies',
+        dropped.length ? 'replan_dependencies' : 'add_dependencies',
         before.state,
-        { dependsOn: added },
-        { dependsOn: added },
+        { dependsOn: added, dropped },
+        { dependsOn: added, dropped },
       );
       this.requireActive(owner);
       return after;

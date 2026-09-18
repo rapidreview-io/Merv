@@ -21,8 +21,14 @@ import type { Paper, PaperRevision } from '@merv/paper/types';
 import type { Knowledge } from '@merv/knowledge/types';
 import type { ReflectionCreate, Reflections } from '@merv/reflections/types';
 import type { Consolidation } from '@merv/consolidation/types';
-import type { Research, ResearchAdvance, ResearchCreate, ResearchRecord } from './types.js';
-import { advanceSchema, createSchema, getSchema, parse } from './input.js';
+import type {
+  Research,
+  ResearchAdvance,
+  ResearchCreate,
+  ResearchRecord,
+  ResearchReplan,
+} from './types.js';
+import { advanceSchema, createSchema, getSchema, parse, replanSchema } from './input.js';
 export type * from './types.js';
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 type Stage = (typeof stages)[number];
@@ -363,6 +369,45 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
       );
     }
     checks.forEach((check) => check());
+  }
+
+  /**
+   * The owner reselects the work a cycle waits on while it is still defining or researching:
+   * an experiment abandoned after selection would otherwise hold the cycle forever. The
+   * cycle's own children (its reflection, its consolidation) are never part of the selection.
+   */
+  async replan(
+    caller: Caller,
+    value: ResearchReplan,
+    transaction?: Transaction,
+  ): Promise<ResearchRecord> {
+    const input = parse(replanSchema, value);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      const record = await this.get(caller, input.researchId, tx);
+      await this.authorize(caller, record, tx);
+      check(
+        ['defining', 'researching'].includes(record.workflow.state),
+        'invalid_transition',
+        'A cycle is replanned before it reflects',
+        409,
+      );
+      const children = [record.reflectionId, record.consolidationId];
+      const current = (await this.workflows.dependencies(caller, record.id, tx)).dependencies
+        .map((item) => item.id)
+        .filter((id) => !children.includes(id));
+      await this.handles.get(record.workflow.version)!.addDependencies(
+        caller,
+        {
+          instanceId: record.id,
+          expectedRevision: input.expectedRevision,
+          dependsOn: input.dependsOn.filter((id) => !current.includes(id)),
+          drop: current.filter((id) => !input.dependsOn.includes(id)),
+          requestId: this.request(caller, input.requestId, 'replan'),
+        },
+        tx,
+      );
+      return await this.get(caller, record.id, tx);
+    });
   }
 
   async advance(

@@ -104,9 +104,14 @@ const KEEP: Record<string, string[]> = {
   reflections: ['id', 'title', 'ownerId', 'experimentIds', 'workflow'],
   connections: ['state'],
 };
+/** The map shows a summary of each record's prose; the record's page has all of it. */
+const brief = (value: Json): Json =>
+  typeof value === 'string' && value.length > 400 ? `${value.slice(0, 399)}…` : value;
 const pick = (record: Json, keys: string[]): Json =>
   record && typeof record === 'object' && !Array.isArray(record)
-    ? Object.fromEntries(keys.filter((key) => key in record).map((key) => [key, record[key]]))
+    ? Object.fromEntries(
+        keys.filter((key) => key in record).map((key) => [key, brief(record[key])]),
+      )
     : record;
 function trim(key: string, value: Json): Json {
   const keys = KEEP[key];

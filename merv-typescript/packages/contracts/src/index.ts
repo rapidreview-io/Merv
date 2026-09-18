@@ -509,6 +509,8 @@ export interface WorkflowStart {
 export interface WorkflowAddDependencies {
   instanceId: string;
   dependsOn: string[] | string | null;
+  /** Edges to remove in the same change: an owner reselecting the work it depends on. */
+  drop?: string[] | string | null;
   expectedRevision: number;
   requestId: string;
 }

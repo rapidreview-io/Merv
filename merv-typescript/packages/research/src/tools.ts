@@ -2,8 +2,8 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { ResearchCreate, ResearchAdvance } from './types.js';
-import { createSchema, getSchema, listSchema, advanceSchema } from './input.js';
+import type { ResearchCreate, ResearchAdvance, ResearchReplan } from './types.js';
+import { createSchema, getSchema, listSchema, advanceSchema, replanSchema } from './input.js';
 export const researchToolsPlugin = {
   name: 'merv-research-tools',
   inject: ['research', 'tools'],
@@ -45,6 +45,14 @@ export const researchToolsPlugin = {
         inputSchema: getSchema,
         handler: async (caller: Caller, input: { researchId: string }) =>
           await research.get(caller, input.researchId),
+      },
+      {
+        name: 'research.replan',
+        description:
+          'Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it when a selected experiment was abandoned or failed and the cycle should carry on without it.',
+        inputSchema: replanSchema,
+        handler: async (caller: Caller, input: ResearchReplan) =>
+          await research.replan(caller, input),
       },
       {
         name: 'research.advance',

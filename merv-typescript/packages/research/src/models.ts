@@ -15,6 +15,10 @@ export interface ResearchAdvance {
   expectedRevision: number;
   requestId: string;
 }
+/** The cycle's selected work, reselected whole: what is missing is added, what is left out is dropped. */
+export interface ResearchReplan extends ResearchAdvance {
+  dependsOn: string[];
+}
 export interface ResearchRecord {
   id: string;
   projectId: string;

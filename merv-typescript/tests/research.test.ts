@@ -357,6 +357,41 @@ test('research owner authorization, project scoping, selected prerequisite succe
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'researching');
   await assert.rejects(async () => await f.advance(record), { code: 'dependencies_pending' });
+  // The owner reselects the cycle's work: a second prerequisite joins, then leaves again.
+  const spare = await handle.start(f.owner, {
+    workflow: 'research-test-prerequisite',
+    requestId: f.id(),
+  });
+  const replan = async (dependsOn: string[]) =>
+    await f.research.replan(f.owner, {
+      researchId: record.id,
+      expectedRevision: (await f.research.get(f.owner, record.id)).workflow.revision,
+      dependsOn,
+      requestId: f.id(),
+    });
+  await assert.rejects(
+    async () =>
+      await f.research.replan(await f.issue('producer'), {
+        researchId: record.id,
+        expectedRevision: record.workflow.revision,
+        dependsOn: [],
+        requestId: f.id(),
+      }),
+    { code: 'forbidden' },
+  );
+  const widened = await replan([selected.id, spare.id]);
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies
+      .map((item) => item.id)
+      .sort(),
+    [selected.id, spare.id].sort(),
+  );
+  record = await replan([selected.id]);
+  assert.equal(record.workflow.revision, widened.workflow.revision + 1);
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.map((i) => i.id),
+    [selected.id],
+  );
   await handle.transition(f.owner, {
     instanceId: selected.id,
     expectedRevision: 0,
