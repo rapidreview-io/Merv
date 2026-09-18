@@ -814,8 +814,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     });
   }
   async agentSelf(token: string) {
-    await this.sweep();
-    // A status poll only reads; scanning every instance for candidates must not hold the lock.
+    // A status poll only reads; the timer sweep records closures, and a candidate scan over
+    // every instance must not hold the writer lock.
     return await this.reading(async (tx) => {
       const agent = await this.directory.authenticate(token, tx);
       const busy = new Set(
