@@ -410,7 +410,9 @@ export class ExperimentService implements Experiments {
     tx: Transaction,
   ): Promise<ExperimentEvidence[]> {
     const evidence = this.current(experiment, roles);
-    if (!caller.session) return evidence;
+    // The worker holding this experiment sees the evidence it was offered plus its own;
+    // anyone else, another record's worker included, reads what the record holds.
+    if (!caller.session || !(await this.program.holds(caller, experiment, tx))) return evidence;
     const allowed = new Set(await this.program.allowedArtifacts(caller, experiment, tx));
     return evidence.filter((e) => allowed.has(e.artifactId));
   }

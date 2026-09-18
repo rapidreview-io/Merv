@@ -535,7 +535,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         Number.isSafeInteger(input.expectedRevision) &&
         input.expectedRevision >= 0 &&
         text(input.runnerId) &&
-        text(input.requestId, 256) &&
+        text(input.requestId, 320) &&
         tokenPattern.test(input.secret),
       'invalid_session_offer',
       'Offer requires a target revision, runner, request and caller-generated ms_ secret',
@@ -818,8 +818,10 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     const secret = `ms_${createHash('sha256')
       .update(canonical({ token, requestId: input.requestId }))
       .digest('base64url')}`;
+    // An agent's request ids are its own: the replay key is per runner, so they carry the agent.
     return await this.offer(sourceCaller(agent.source), {
       ...input,
+      requestId: `${agent.id}:${input.requestId}`,
       agentId: agent.id,
       runnerId: agent.runnerId,
       secret,

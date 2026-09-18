@@ -512,6 +512,10 @@ DROP TABLE experiment_leases_backup;`,
     return JSON.parse((await this.lease(caller, experiment, tx)).recovery) as ExperimentEvidence[];
   }
 
+  /** Whether this session is the worker holding the experiment's live lease. */
+  async holds(caller: Caller, experiment: Experiment, tx: Transaction): Promise<boolean> {
+    return (await this.activeLease(experiment, tx))?.id === caller.session?.id;
+  }
   async allowedArtifacts(
     caller: Caller,
     experiment: Experiment,

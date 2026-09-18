@@ -865,7 +865,9 @@ export class ApiServer {
           return;
         }
         const route =
-          /^\/sessions\/([^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(path);
+          /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(
+            path,
+          );
         if (route) {
           const sessionId = pathSegment(route[1]!);
           if (!route[2] && req.method === 'GET') {
