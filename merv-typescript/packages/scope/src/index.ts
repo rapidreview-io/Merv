@@ -688,9 +688,11 @@ export class ProjectScope implements Scope {
           'Worker actors require their live session authority',
           403,
         );
+        // A worker's authority is checked several times per tool call and only read, so
+        // it is read on a snapshot: outside any scope that takes no writer lock.
         if (!('transactionId' in sql))
-          return await this.state.transaction(
-            async (inner) => await this.require(caller, permission, inner),
+          return await this.state.snapshot(() =>
+            this.state.transaction(async (inner) => await this.require(caller, permission, inner)),
           );
         const authority = this.sessionAuthority;
         check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
