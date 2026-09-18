@@ -1182,10 +1182,15 @@ export class ReflectionService implements Reflections {
       check(
         wave.review_id === review.id &&
           snapshot.state === 'in_review' &&
-          snapshot.revision === input.expectedRevision &&
           review.subjectRevision === snapshot.revision,
         'stale_review',
         'Only the exact current reflection review can be submitted',
+        409,
+      );
+      check(
+        snapshot.revision === input.expectedRevision,
+        'revision_conflict',
+        `Expected revision ${input.expectedRevision}, found ${snapshot.revision}`,
         409,
       );
       await this.admit({ caller, snapshot, tx });

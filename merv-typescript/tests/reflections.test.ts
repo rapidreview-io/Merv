@@ -93,6 +93,15 @@ async function fixture(t: TestContext) {
       })),
       requestId: `verdict-${review.id}`,
     };
+    await assert.rejects(
+      async () =>
+        await app.ctx.reviews.apply(reviewer, {
+          ...input,
+          expectedRevision: input.expectedRevision + 1,
+          requestId: `stale-${review.id}`,
+        }),
+      { code: 'revision_conflict' },
+    );
     return (await app.ctx.reviews.apply(reviewer, input)) as Reflection;
   };
   return { app, owner, actor, create, lenses, synthesize, verdict };
