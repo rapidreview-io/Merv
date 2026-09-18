@@ -165,6 +165,7 @@ export const mcpUrlVariable = 'MERV_MCP_URL';
 const runtimeVariables = [
   'PATH',
   'HOME',
+  'CLAUDE_CONFIG_DIR',
   'USER',
   'TMPDIR',
   'LANG',
@@ -302,6 +303,7 @@ function codexArgs(
   // absent from the environment made available to model-generated shell commands.
   const shellEnvironment = { ...safeEnvironment };
   delete shellEnvironment.CODEX_HOME;
+  delete shellEnvironment.CLAUDE_CONFIG_DIR;
   config('shell_environment_policy.set', table(shellEnvironment));
   config('sandbox_workspace_write.writable_roots', '[]');
   config('sandbox_workspace_write.network_access', 'false');

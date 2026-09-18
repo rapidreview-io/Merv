@@ -1120,6 +1120,8 @@ async function main(options: Options) {
         if (process.env[key] !== undefined) shellEnvironment[key] = process.env[key]!;
       for (const [key, value] of Object.entries(shellEnvironment)) childEnv[key] = value;
       if (process.env.CODEX_HOME !== undefined) childEnv.CODEX_HOME = process.env.CODEX_HOME;
+      if (process.env.CLAUDE_CONFIG_DIR !== undefined)
+        childEnv.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
       if (network && options.sandboxesTokenEnv) {
         const grant = process.env[options.sandboxesTokenEnv];
         assert.ok(grant, `No sandboxes grant in ${options.sandboxesTokenEnv}`);
