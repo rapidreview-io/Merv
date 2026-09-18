@@ -60,7 +60,7 @@ export const taskToolsPlugin = {
           .object({
             title: z.string().min(1).max(300),
             goal: z.string().min(1).max(16000),
-            checks: z.array(z.string().min(1).max(2000)).min(1).max(50),
+            checks: z.array(z.string().min(1).max(2000)).min(1).max(20),
             briefId: id.optional(),
             type: z.string().min(1).optional(),
             typeVersion: z.number().int().positive().optional(),
@@ -105,7 +105,7 @@ export const taskToolsPlugin = {
                     checkNumber: z.number().int().positive(),
                     status: z.enum(['met', 'not_met']),
                     evidenceIds: z.array(id),
-                    notes: z.string().min(1).max(16000),
+                    notes: z.string().min(1).max(2000),
                   })
                   .strict(),
               )

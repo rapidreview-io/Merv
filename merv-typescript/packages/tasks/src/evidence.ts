@@ -63,9 +63,9 @@ export function validateConfirmations(
       'Confirmation status must be met or not_met',
     );
     check(
-      typeof item.notes === 'string' && item.notes.trim().length > 0 && item.notes.length <= 16000,
+      typeof item.notes === 'string' && item.notes.trim().length > 0 && item.notes.length <= 2000,
       'invalid_confirmations',
-      `Check ${item.checkNumber} needs notes explaining the evidence or unmet condition (1–16000 characters)`,
+      `Check ${item.checkNumber} needs notes explaining the evidence or unmet condition (1–2000 characters)`,
     );
     check(
       Array.isArray(item.evidenceIds) &&

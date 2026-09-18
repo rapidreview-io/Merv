@@ -111,9 +111,10 @@ export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-
 export const now = () => new Date().toISOString();
 /** Input that can be stored as written: text well-formed Unicode without NUL, nesting shallow. */
 export function sound<T>(value: T, depth = 0): T {
-  if (typeof value === 'string')
-    check(!/[\0\p{Surrogate}]/u.test(value), 'invalid_input', 'Text must be well-formed Unicode');
-  else if (value && typeof value === 'object') {
+  if (typeof value === 'string') {
+    check(!value.includes('\0'), 'invalid_input', 'Text cannot contain NUL');
+    check(!/\p{Surrogate}/u.test(value), 'invalid_input', 'Text must be well-formed Unicode');
+  } else if (value && typeof value === 'object') {
     check(depth < 64, 'invalid_input', 'Input nests too deeply');
     for (const item of Array.isArray(value) ? value : Object.values(value)) sound(item, depth + 1);
   }
