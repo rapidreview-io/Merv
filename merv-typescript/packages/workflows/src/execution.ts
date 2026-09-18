@@ -89,7 +89,7 @@ const referencesSchema = z.record(
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Reject accessors, cycles and values JSON would silently erase at this provider boundary. */
-function json<T>(value: T, code: string, status: number): T {
+function json<T>(value: T, code: string, status: number, limit = 256_000): T {
   let count = 0;
   const ancestors = new Set<object>();
   const visit = (item: unknown, depth: number): void => {
@@ -144,7 +144,7 @@ function json<T>(value: T, code: string, status: number): T {
   };
   visit(value, 0);
   const encoded = canonical(value);
-  check(encoded.length <= 256_000, code, 'Execution metadata is too large', status);
+  check(encoded.length <= limit, code, 'Input is too large', status);
   return JSON.parse(encoded) as T;
 }
 
@@ -268,7 +268,8 @@ export function admitDispatch(
 ): WorkflowDispatchAdmission {
   const grant = execution.policy.tools.find((grant) => grant.name === tool);
   check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
-  const original = json(input, 'invalid_input', 400);
+  // A worker's tool input is bounded like anyone's request body, not like policy metadata.
+  const original = json(input, 'invalid_input', 400, 4_000_000);
   check(
     original && typeof original === 'object' && !Array.isArray(original),
     'invalid_input',

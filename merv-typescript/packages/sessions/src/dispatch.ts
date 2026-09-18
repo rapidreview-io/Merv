@@ -130,6 +130,15 @@ interface Hooks {
 }
 
 /** Scheduling controls are metadata only; Sessions alone reserves and authenticates a selected step. */
+/** An offer for one candidate that cannot be built; the queue moves past it. */
+class PoisonedOffer extends Error {
+  constructor(
+    readonly candidate: string,
+    readonly cause: unknown,
+  ) {
+    super('Offer could not be built');
+  }
+}
 export class SessionDispatch {
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
@@ -605,6 +614,29 @@ export class SessionDispatch {
     );
     input = parsed.data;
     await this.hooks.prepare(caller);
+    // A candidate whose offer cannot be built (a context past its recipe's budget) must
+    // not stop the queue behind it: its failure rolls the attempt back, the next
+    // candidate is tried, and the failure is what the runner sees only when nothing
+    // else is leasable.
+    const skipped = new Set<string>();
+    let poison: unknown;
+    for (;;) {
+      try {
+        const result = await this.leaseOnce(caller, input, skipped);
+        if (!result.session && poison !== undefined) throw poison;
+        return result;
+      } catch (error) {
+        if (!(error instanceof PoisonedOffer)) throw error;
+        skipped.add(error.candidate);
+        poison = error.cause;
+      }
+    }
+  }
+  private async leaseOnce(
+    caller: Caller,
+    input: AutomaticLease,
+    skipped: Set<string>,
+  ): Promise<{ session: Session | null; reason: string }> {
     return await this.state.transaction(async (tx) => {
       const owner = await this.owner(caller, tx);
       const fingerprint = digest({
@@ -666,7 +698,9 @@ export class SessionDispatch {
           platform.name,
         )
       ).map((row) => JSON.parse(row.session_json) as Session);
-      const candidates = await this.candidates(caller, tx);
+      const candidates = (await this.candidates(caller, tx)).filter(
+        (item) => !skipped.has(`${item.instanceId}:${item.expectedRevision}`),
+      );
       const candidate = candidates.find(
         (item) =>
           !failures.some(
@@ -699,18 +733,24 @@ export class SessionDispatch {
         'Runner controls changed before the offer',
         409,
       );
-      const session = await this.hooks.offer(
-        caller,
-        {
-          instanceId: candidate.instanceId,
-          expectedRevision: candidate.expectedRevision,
-          runnerId: input.runnerId,
-          requestId: input.requestId,
-          secret: input.secret,
-          hardDeadlineSeconds: input.hardDeadlineSeconds,
-        },
-        tx,
-      );
+      const session = await this.hooks
+        .offer(
+          caller,
+          {
+            instanceId: candidate.instanceId,
+            expectedRevision: candidate.expectedRevision,
+            runnerId: input.runnerId,
+            requestId: input.requestId,
+            secret: input.secret,
+            hardDeadlineSeconds: input.hardDeadlineSeconds,
+          },
+          tx,
+        )
+        .catch((error: unknown) => {
+          const status = (error as { status?: number })?.status ?? 500;
+          if (status >= 500) throw error;
+          throw new PoisonedOffer(`${candidate.instanceId}:${candidate.expectedRevision}`, error);
+        });
       check(
         (await this.dispatch(caller.projectId, tx)).enabled,
         'dispatch_disabled',

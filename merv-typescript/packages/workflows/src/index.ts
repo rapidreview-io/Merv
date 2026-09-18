@@ -239,7 +239,11 @@ export class WorkflowsService implements Workflows {
       // given, bounded by the project alone. Every write holds as published.
       if (
         read &&
-        ['execution_tool_forbidden', 'execution_arguments_forbidden'].includes(error.code)
+        [
+          'execution_tool_forbidden',
+          'execution_arguments_forbidden',
+          'execution_reference_unavailable',
+        ].includes(error.code)
       ) {
         await this.scope.require(caller, 'read', tx);
         return { tool, input: structuredClone(input) };

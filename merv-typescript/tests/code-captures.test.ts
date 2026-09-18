@@ -206,7 +206,12 @@ test('Exact command captures retain historical parent/head/tree/provenance after
     projectId: f.source.projectId,
     sessionId: worker.session.id,
     actorId: worker.caller.actorId,
-    source: worker.session.source,
+    // Who delegated, without the credential they held.
+    source: {
+      kind: worker.session.source.kind,
+      actorId: worker.session.source.actorId,
+      projectId: worker.session.source.projectId,
+    },
     instanceId: worker.session.instanceId,
     revision: 0,
     workflow: {

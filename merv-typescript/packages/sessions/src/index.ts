@@ -954,12 +954,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
               caller.projectId,
               sessionId,
             );
+      // Provenance names who delegated the work, not the credential they held.
+      const { kind, actorId, projectId } = session.source;
       return {
         provenance: {
           projectId: session.projectId,
           sessionId: session.id,
           actorId: session.actorId,
-          source: session.source,
+          source: { kind, actorId, projectId },
           instanceId: session.instanceId,
           revision: session.expectedRevision,
           workflow: {
@@ -1145,6 +1147,13 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         );
         return session;
       }
+      // A final capture is of a process that ran; an offer nobody activated has none.
+      check(
+        session.status !== 'offered',
+        'session_not_started',
+        'Workspace results follow an activated session',
+        409,
+      );
       await tx.run(
         'UPDATE session_workspaces SET result_json=? WHERE session_id=? AND result_json IS NULL',
         canonical(workspace),

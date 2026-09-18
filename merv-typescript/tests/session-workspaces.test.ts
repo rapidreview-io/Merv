@@ -477,6 +477,13 @@ test('workspace reports reject malformed object graphs before invoking getters a
   assert.equal((await f.app.ctx.sessions.get(f.source, f.session.id)).workspace, undefined);
   rejectedType = '';
   await f.app.ctx.sessions.attach(f.source, { ...f.control, workspace: workspace() });
+  // A final capture is of a process that ran; an offer nobody activated has none.
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.sessions.workspaceResult(f.source, { ...f.control, workspace: workspace() }),
+    { code: 'session_not_started' },
+  );
+  await f.app.ctx.sessions.release(f.source, f.control);
   rejectedType = 'session.workspace_result';
   await assert.rejects(
     async () =>

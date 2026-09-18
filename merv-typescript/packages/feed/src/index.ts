@@ -10,6 +10,7 @@ import {
   now,
   type Artifacts,
   type Caller,
+  type Data,
   type Scope,
   type State,
   type StoredEvent,
@@ -124,9 +125,12 @@ export class FeedService implements Feed {
       const artifactIds = input.artifactIds === undefined ? [] : input.artifactIds;
       check(
         Array.isArray(artifactIds) &&
-          artifactIds.length <= 10 &&
-          artifactIds.every((id) => typeof id === 'string' && id.trim().length > 0) &&
-          new Set(artifactIds).size === artifactIds.length,
+          artifactIds.every((id) => typeof id === 'string' && id.trim().length > 0),
+        'invalid_attachments',
+        'Attachments are artifact IDs',
+      );
+      check(
+        artifactIds.length <= 10 && new Set(artifactIds).size === artifactIds.length,
         'invalid_attachments',
         'Attach at most 10 distinct artifact IDs',
       );
@@ -239,16 +243,10 @@ export class FeedService implements Feed {
           (event) => !event.type.startsWith('actor.') && !event.type.startsWith('membership.'),
         )
         .map((event) => {
-          const { source } = event.data as { source?: { kind?: string; actorId?: string } };
-          return source
-            ? {
-                ...event,
-                data: {
-                  ...event.data,
-                  source: { kind: source.kind ?? '', actorId: source.actorId ?? '' },
-                },
-              }
-            : event;
+          const { source } = event.data as { source?: Data };
+          if (!source) return event;
+          const { credentialId: _c, keyId: _k, membershipId: _m, expiresAt: _e, ...who } = source;
+          return { ...event, data: { ...event.data, source: who as Data } };
         });
       // State.events pages contain at most 1000 events. Do not signal exhaustion
       // merely because a complete page consists of private actor administration.

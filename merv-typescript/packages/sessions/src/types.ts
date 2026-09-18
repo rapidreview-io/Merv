@@ -126,7 +126,8 @@ export interface SessionObservationProvenance {
   projectId: string;
   sessionId: string;
   actorId: string;
-  source: DelegationSource;
+  /** Who delegated the work; the credential they held stays with the session's owner. */
+  source: Pick<DelegationSource, 'kind' | 'actorId' | 'projectId'>;
   instanceId: string;
   revision: number;
   workflow: {

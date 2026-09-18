@@ -3,7 +3,13 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { check, type Caller, type Transaction, type WorkflowPolicy } from '@merv/contracts';
+import {
+  MervError,
+  check,
+  type Caller,
+  type Transaction,
+  type WorkflowPolicy,
+} from '@merv/contracts';
 import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
@@ -722,6 +728,30 @@ const autoInput = (requestId = randomBytes(10).toString('hex')) => ({
   requestId,
   secret: secret(),
   platform: { name: 'codex', harness: 'codex' as const },
+});
+
+test('automatic dispatch moves past a candidate whose offer cannot be built', async (t) => {
+  const f = await fixture(t);
+  await f.instance();
+  await f.instance();
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.heartbeatRunner(f.source, presenceInput);
+  // The first candidate's context is past its budget; the queue behind it still moves.
+  let builds = 0;
+  f.onBuild(() => {
+    if (++builds === 1) throw new MervError('context_too_large', 'Context exceeds the budget', 400);
+  });
+  const leased = await f.sessions.lease(f.source, autoInput());
+  assert.equal(leased.reason, 'offered');
+  assert.equal(builds, 2);
+  // With nothing else leasable, the runner sees why the remaining candidate cannot be offered.
+  await f.sessions.release(f.source, { sessionId: leased.session!.id, runnerId: 'machine' });
+  f.onBuild(() => {
+    throw new MervError('context_too_large', 'Context exceeds the budget', 400);
+  });
+  await assert.rejects(async () => await f.sessions.lease(f.source, autoInput()), {
+    code: 'context_too_large',
+  });
 });
 
 test('automatic dispatch defaults off, pauses only new offers, and halt never revives old worker authority', async (t) => {
