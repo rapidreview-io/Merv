@@ -584,13 +584,19 @@ export class ReviewService implements Reviews {
         input.artifactIds,
         async (id) => await this.artifacts.get(caller, id, tx),
       );
+      // Exclusions name contributors: authors of retained evidence, the record's owner, or
+      // the authority that directed the submitting worker.
+      const directing = (await this.scope.authorityActor(caller, tx)).id;
       check(
         !excludedActorIds ||
-          excludedActorIds.every((actorId) =>
-            manifest.some((artifact) => artifact.createdBy === actorId),
+          excludedActorIds.every(
+            (actorId) =>
+              actorId === (input.administrativeActorId ?? input.producerId) ||
+              actorId === directing ||
+              manifest.some((artifact) => artifact.createdBy === actorId),
           ),
         'invalid_review_exclusions',
-        'Excluded contributors must be authors of retained evidence in this project-scoped review manifest',
+        'Excluded contributors must be authors of retained evidence, the record owner, or the directing authority',
       );
       check(
         manifest.every(

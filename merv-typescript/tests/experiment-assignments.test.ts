@@ -552,6 +552,40 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
   assert.match(successor.session.assignment.context!.prompt, /NEW_WORKER_PLAN_2391/);
   assert.ok((successor.session.execution.references.artifacts as string[]).includes(own.id));
   assert.notEqual(successor.session.actorId, worker.actorId);
+  // The successor's manifest holds only worker output; the review still excludes the owner
+  // who directed the work, because exclusions may name the owner and the directing authority.
+  const next = await f.sessions.authenticate(successor.secret);
+  const verified = await f.run(
+    next,
+    'artifact.create',
+    { title: 'Successor plan', content: plan + '\nSUCCESSOR_PLAN_2392\n' },
+    async (caller, input) =>
+      await f.artifacts.create(caller, input as unknown as { title: string; content: string }),
+  );
+  await f.run(
+    next,
+    'experiment.attach',
+    {
+      artifactId: verified.id,
+      role: 'plan',
+      path: 'plan.md',
+      attemptIndex: 1,
+      requestId: f.request(),
+    },
+    async (caller, input) =>
+      await f.experiments.attach(caller, input as unknown as ExperimentAttach),
+  );
+  const submitted = (await f.run(
+    next,
+    'experiment.transition',
+    { transition: 'submit_design', requestId: f.request() },
+    async (caller, input) =>
+      await f.experiments.transition(caller, input as unknown as ExperimentTransition),
+  )) as Experiment;
+  assert.equal(submitted.workflow.state, 'design_review');
+  assert.deepEqual((await f.reviews.get(f.source, submitted.reviewId!)).excludedActorIds, [
+    f.source.actorId,
+  ]);
 });
 
 test('review leases claim before freezing, recover exactly once, and preserve same-source independence', async (t) => {

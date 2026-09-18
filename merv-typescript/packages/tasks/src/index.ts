@@ -1758,9 +1758,14 @@ DROP TABLE task_leases_backup;`,
             subjectRevision: moved.revision,
             producerId: caller.actorId,
             administrativeActorId: row.producer_id,
-            // The owner who directed a worker is no more independent of its delivery than the worker.
+            // Neither the owner nor the authority that directed a worker is independent of its delivery.
             ...(caller.session
-              ? { pinnedInputIds: [row.brief_id], excludedActorIds: [row.producer_id] }
+              ? {
+                  pinnedInputIds: [row.brief_id],
+                  excludedActorIds: [
+                    ...new Set([row.producer_id, (await this.scope.authorityActor(caller, tx)).id]),
+                  ],
+                }
               : {}),
             artifactIds: [row.brief_id, ...deliveryIds],
             criteria: checks,

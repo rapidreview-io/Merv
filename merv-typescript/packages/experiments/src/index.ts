@@ -800,8 +800,14 @@ export class ExperimentService implements Experiments {
         subjectRevision: moved.revision,
         producerId: caller.actorId,
         administrativeActorId: experiment.ownerId,
-        // The owner who directed a worker is no more independent of its work than the worker.
-        ...(caller.session ? { excludedActorIds: [experiment.ownerId] } : {}),
+        // Neither the owner nor the authority that directed a worker is independent of its work.
+        ...(caller.session
+          ? {
+              excludedActorIds: [
+                ...new Set([experiment.ownerId, (await this.scope.authorityActor(caller, tx)).id]),
+              ],
+            }
+          : {}),
         artifactIds,
         pinnedInputIds,
         criteria: [
