@@ -67,40 +67,46 @@ async function fixture(t: TestContext, github = false) {
   const code = await createService(
     new CodeService(state, scope, sessions, artifacts, gh ? githubConfig : undefined, gh?.fetcher),
   );
-  const prior = await workflows.register(
-    {
-      name: 'approved-reflection-fixture',
-      version: 1,
-      initial: 'working',
-      states: ['working', 'complete'],
-      terminal: ['complete'],
-      edges: [{ from: 'working', action: 'finish', to: 'complete' }],
-    },
-    {
-      successStates: ['complete'],
-      actions: [
-        {
-          name: 'finish',
-          states: ['working'],
-          transitions: ['finish'],
-          tool: 'fixture.finish',
-          instruction: 'Complete fixture.',
-          check: async () => {},
-        },
-      ],
-    },
-  );
+  const fixtureDefinition = {
+    name: 'approved-reflection-fixture',
+    version: 1,
+    initial: 'working',
+    states: ['working', 'complete'],
+    terminal: ['complete'],
+    edges: [{ from: 'working', action: 'finish', to: 'complete' }],
+  };
+  const fixturePolicy = {
+    successStates: ['complete'],
+    actions: [
+      {
+        name: 'finish',
+        states: ['working'],
+        transitions: ['finish'],
+        tool: 'fixture.finish',
+        instruction: 'Complete fixture.',
+        check: async () => {},
+      },
+    ],
+  };
+  const prior = await workflows.register(fixtureDefinition, fixturePolicy);
   const predecessor = await prior.start(owner, {
     workflow: 'approved-reflection-fixture',
     requestId: 'predecessor',
   });
+  // A consolidation names experiments of the project: one stands in under the real name.
+  const experiments = await workflows.register(
+    { ...fixtureDefinition, name: 'experiment' },
+    fixturePolicy,
+  );
+  const experimentId = (await experiments.start(owner, { workflow: 'experiment', requestId: 'e1' }))
+    .id;
   const report = await artifacts.create(owner, {
     title: 'Reflection',
     content: 'Approved reflection: remove the unsupported experiment.',
   });
   let approved = false;
   const reflection: ApprovedReflection = {
-    experimentIds: ['experiment-1'],
+    experimentIds: [experimentId],
     id: predecessor.id,
     projectId: owner.projectId,
     revision: 1,
@@ -144,7 +150,7 @@ async function fixture(t: TestContext, github = false) {
         project: boot.project,
         claims: [],
         tasks: [],
-        experiments: [{ id: 'experiment-1' }] as NonNullable<
+        experiments: [{ id: experimentId }] as NonNullable<
           ApprovedReflection['corpus']
         >['selection']['experiments'],
         artifacts: [{ id: report.id, status: 'retained', artifact: report }],
@@ -175,7 +181,7 @@ async function fixture(t: TestContext, github = false) {
     return await consolidation.create(producer, {
       name: 'Combine findings',
       sourceArtifactIds: [report.id],
-      experimentIds: ['experiment-1'],
+      experimentIds: [experimentId],
       workspace,
       dependsOn: [predecessor.id, ...dependsOn],
       requestId: id(),
@@ -196,7 +202,7 @@ async function fixture(t: TestContext, github = false) {
     evidenceArtifactIds: [],
     decisions: [
       {
-        experimentId: 'experiment-1',
+        experimentId: experimentId,
         decision: 'drop',
         rationale: 'The approved reflection rejected this unsupported approach.',
       },
@@ -254,6 +260,7 @@ async function fixture(t: TestContext, github = false) {
     rmSync(dir, { recursive: true, force: true });
   });
   return {
+    experimentId,
     gh,
     state,
     scope,
@@ -394,7 +401,7 @@ test('a consolidation row written before the sources field keeps its legacy proj
     [f.reflection.report.id, graph.id].sort(),
     'the reconstructed source set of an already-completed consolidation does not shrink',
   );
-  assert.deepEqual(record.experimentIds, ['experiment-1']);
+  assert.deepEqual(record.experimentIds, [f.experimentId]);
 });
 
 test('independent review returns only consolidation and seals the reviewed result', async (t) => {
@@ -499,7 +506,7 @@ test('leased workers receive frozen context, bounded artifact tools, and recover
       expectedRevision: 0,
       reportArtifactId: report.id,
       evidenceArtifactIds: [],
-      decisions: [{ experimentId: 'experiment-1', decision: 'drop', rationale: 'Confirmed.' }],
+      decisions: [{ experimentId: f.experimentId, decision: 'drop', rationale: 'Confirmed.' }],
       requestId: f.id(),
     },
     async (caller, input) =>
@@ -587,7 +594,7 @@ for (const github of [false, true])
         commandId: command.id,
         decisions: [
           {
-            experimentId: 'experiment-1',
+            experimentId: f.experimentId,
             decision: 'adapt',
             rationale: 'Keep only the supported behavior.',
           },
@@ -658,7 +665,7 @@ test('creation composes in the caller transaction and project scopes and produce
   const input = {
     name: 'Rollback',
     sourceArtifactIds: [f.reflection.report.id],
-    experimentIds: ['experiment-1'],
+    experimentIds: [f.experimentId],
     requestId: f.id(),
   };
   await assert.rejects(

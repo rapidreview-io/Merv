@@ -485,6 +485,22 @@ DROP TABLE task_leases_backup;`,
     ].sort();
   }
 
+  /** An interactive delivery yields to a worker that holds the revision, as every domain's submission does. */
+  private async unleased(caller: Caller, taskId: string, revision: number, tx: Transaction) {
+    if (caller.session) return;
+    check(
+      !(await tx.get(
+        "SELECT id FROM task_leases WHERE project_id=? AND task_id=? AND revision=? AND purpose='work' AND released_at IS NULL",
+        caller.projectId,
+        taskId,
+        revision,
+      )),
+      'task_leased',
+      'An active worker owns this revision; release it before interactive production',
+      409,
+    );
+  }
+
   private async isProducer(
     caller: Caller,
     row: TaskRow,
@@ -1466,6 +1482,7 @@ DROP TABLE task_leases_backup;`,
       'Only this task’s producer may submit its delivery',
       403,
     );
+    await this.unleased(caller, row.id, current.revision, tx);
     check(
       current.state === 'in_progress',
       'invalid_transition',

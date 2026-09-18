@@ -263,6 +263,14 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           async (id) => await this.artifacts.get(caller, id, tx),
         );
         const experimentIds = [...new Set(input.experimentIds)].sort();
+        // A consolidation names experiments of this project, each read as any record is.
+        for (const id of experimentIds)
+          check(
+            (await this.workflows.get(caller, id, tx)).workflow === 'experiment',
+            'invalid_consolidation',
+            `${id} is not an experiment`,
+            404,
+          );
         const workflow = await this.handles.get(input.workspace === 'git' ? 2 : 1)!.start(
           caller,
           {
@@ -655,11 +663,15 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       409,
     );
     check(
-      input.verdict === 'pass'
-        ? !input.returnTo
-        : !input.returnTo || input.returnTo === 'consolidating',
+      input.verdict === 'pass' || !input.returnTo || input.returnTo === 'consolidating',
       'invalid_review_return',
       'Consolidation review can return only to consolidating',
+      409,
+    );
+    check(
+      input.verdict !== 'pass' || !input.returnTo,
+      'invalid_review_return',
+      'Passing reviews do not accept returnTo',
       409,
     );
     if (caller.session) await this.lease(caller, record, tx);

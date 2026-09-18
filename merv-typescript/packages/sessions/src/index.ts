@@ -580,6 +580,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       );
       return await this.decode(old, tx);
     }
+    // Authority first: a caller who may not offer learns nothing about live sessions or secrets.
+    const role = await this.workflows.leaseRole(caller, input, tx);
+    check(
+      role === 'producer' || role === 'reviewer' || role === 'reader',
+      'invalid_session_role',
+      'Worker sessions cannot receive an operator role',
+      403,
+    );
     check(
       !(await tx.get(
         "SELECT id FROM worker_sessions WHERE project_id=? AND instance_id=? AND revision=? AND status IN ('offered','active')",
@@ -599,13 +607,6 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       'session_secret_used',
       'Session secret was already used',
       409,
-    );
-    const role = await this.workflows.leaseRole(caller, input, tx);
-    check(
-      role === 'producer' || role === 'reviewer' || role === 'reader',
-      'invalid_session_role',
-      'Worker sessions cannot receive an operator role',
-      403,
     );
     const id = newId('session');
     const agent = input.agentId
