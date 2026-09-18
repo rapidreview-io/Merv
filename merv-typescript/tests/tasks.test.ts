@@ -200,6 +200,23 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
       async () => await f.tasks.submitReview(f.reviewer, { ...revise, verdict: 'pass' }),
       code('request_conflict'),
     );
+    // The confirmation sheet Merv rendered for the first delivery is not new evidence.
+    await assert.rejects(
+      async () =>
+        await f.tasks.submitDelivery(
+          f.producer,
+          confirmedDelivery(
+            {
+              taskId: initial.id,
+              artifactIds: [pending.deliveryAssessmentId!],
+              expectedRevision: revised.workflow.revision,
+              requestId: 'deliver-sheet',
+            },
+            2,
+          ),
+        ),
+      code('invalid_delivery'),
+    );
     const second = await f.tasks.submitDelivery(
       f.producer,
       confirmedDelivery(

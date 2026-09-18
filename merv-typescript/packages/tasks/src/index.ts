@@ -1484,13 +1484,27 @@ DROP TABLE task_leases_backup;`,
       'invalid_delivery',
       'Delivery requires a nonempty list of distinct artifacts',
     );
-    // No task's brief is a delivery, this task's least of all.
+    // No task's brief is a delivery, this task's least of all; nor is the confirmation
+    // sheet Merv rendered for an earlier delivery, which every delivery records in history.
+    const placeholders = input.artifactIds.map(() => '?').join(',');
     const briefs = await tx.all<{ brief_id: string }>(
-      `SELECT brief_id FROM tasks WHERE project_id=? AND brief_id IN (${input.artifactIds.map(() => '?').join(',')})`,
+      `SELECT brief_id FROM tasks WHERE project_id=? AND brief_id IN (${placeholders})`,
       caller.projectId,
       ...input.artifactIds,
     );
     check(briefs.length === 0, 'invalid_delivery', 'A task brief cannot serve as a delivery');
+    const rendered = await tx.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM wf_history WHERE project_id=? AND action='submit_delivery' AND (${input.artifactIds
+        .map(() => 'data_json LIKE ?')
+        .join(' OR ')})`,
+      caller.projectId,
+      ...input.artifactIds.map((id) => `%"deliveryAssessmentId":"${id}"%`),
+    );
+    check(
+      !rendered?.n,
+      'invalid_delivery',
+      'A confirmation sheet Merv rendered for a delivery cannot serve as evidence',
+    );
     const artifacts = await mapAsync(
       input.artifactIds,
       async (id) => await this.artifacts.get(caller, id, tx),
