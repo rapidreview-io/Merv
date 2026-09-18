@@ -1,4 +1,4 @@
-import { mapAsync } from '@merv/contracts';
+import { canonical, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
@@ -33,7 +33,6 @@ import type {
   KnowledgeSnapshot,
 } from './types.js';
 import {
-  canonicalKnowledge,
   knowledgeCaptureSchema,
   knowledgeIdSchema,
   knowledgeReferencesSchema,
@@ -44,8 +43,7 @@ import { migrateKnowledge } from './storage.js';
 export type * from './types.js';
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const hash = (value: unknown) =>
-  createHash('sha256').update(canonicalKnowledge(value)).digest('hex');
+const hash = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 const publication = (): KnowledgePublication => ({
   status: 'none',
   reflection: null,
@@ -246,7 +244,7 @@ export class KnowledgeService implements Knowledge {
         return { id, status: 'retained', artifact };
       },
     );
-    captures.sort((a, b) => compare(canonicalKnowledge(a.ref), canonicalKnowledge(b.ref)));
+    captures.sort((a, b) => compare(canonical(a.ref), canonical(b.ref)));
     return {
       projectFacts: 'pinned-at-capture',
       project: inventory.project,
@@ -325,7 +323,7 @@ export class KnowledgeService implements Knowledge {
         snapshot.createdAt,
         snapshot.formatVersion,
         snapshot.manifestHash,
-        canonicalKnowledge(snapshot),
+        canonical(snapshot),
       );
       await tx.run(
         'INSERT INTO knowledge_commands(project_id,actor_id,request_id,input_hash,snapshot_id) VALUES(?,?,?,?,?)',

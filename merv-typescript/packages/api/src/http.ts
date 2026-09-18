@@ -19,7 +19,7 @@ import {
   codeCommandControlSchema,
   codeTransportInputSchema,
   sessionWorkspaceSchema,
-  sound,
+  plain,
   type Caller,
   type Principal,
   type Scope,
@@ -101,7 +101,7 @@ function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
     req.once('end', () => {
       if (rejected) return;
       try {
-        resolve(sound(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+        resolve(plain(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
       } catch (error) {
         if (error instanceof MervError) reject(error);
         else reject(new ApiError('invalid_json', 'Request body must contain valid JSON'));

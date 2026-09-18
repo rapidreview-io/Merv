@@ -1,6 +1,5 @@
-import { types } from 'node:util';
 import { z } from 'zod';
-import { check, type Data, type Json } from '@merv/contracts';
+import { parsed } from '@merv/contracts';
 import type { ExperimentTransition } from './types.js';
 
 export const experimentIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
@@ -129,92 +128,7 @@ export const experimentTransitionSchema = z
     return rest;
   });
 
-/** Detach bounded data before any parser can inspect getters, proxies or serializers. */
-export function copyExperimentJson(
-  input: unknown,
-  limits: { maxBytes?: number; maxNodes?: number; preserveKeys?: boolean } = {},
-): Json {
-  const maxBytes = limits.maxBytes ?? 262144;
-  const maxNodes = limits.maxNodes ?? 8192;
-  let bytes = 0,
-    nodes = 0;
-  const active = new Set<object>();
-  const fail = (message: string): never => {
-    check(false, 'invalid_experiment_input', message);
-  };
-  const account = (value: string) => {
-    bytes += Buffer.byteLength(value, 'utf8');
-    if (bytes > maxBytes) fail('Experiment input is too large');
-  };
-  const copy = (value: unknown, depth = 0): Json => {
-    if (++nodes > maxNodes || depth > 20) fail('Experiment input is too large or deeply nested');
-    if (value === null || typeof value === 'boolean') return value;
-    if (typeof value === 'string') {
-      account(value);
-      return value;
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value !== 'object' || value === null || types.isProxy(value) || active.has(value))
-      return fail('Experiment input must be finite, acyclic plain JSON');
-    const array = Array.isArray(value);
-    const prototype = Object.getPrototypeOf(value);
-    if (
-      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
-    )
-      return fail('Experiment input must contain ordinary JSON objects and arrays');
-    const keys = Reflect.ownKeys(value);
-    if (keys.length > maxNodes || keys.some((key) => typeof key !== 'string'))
-      return fail('Experiment input has too many or invalid fields');
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    if (
-      Object.entries(descriptors).some(
-        ([key, field]) =>
-          !Object.hasOwn(field, 'value') || (!field.enumerable && !(array && key === 'length')),
-      )
-    )
-      return fail('Experiment input fields must be ordinary enumerable data');
-    active.add(value);
-    if (array) {
-      const length = descriptors.length.value as number;
-      if (
-        length > maxNodes - nodes ||
-        keys.length !== length + 1 ||
-        !Array.from({ length }, (_, index) => String(index)).every((key) =>
-          Object.hasOwn(descriptors, key),
-        )
-      )
-        return fail('Experiment arrays must be dense and have no extra properties');
-      const result = Array.from({ length }, (_, index) =>
-        copy(descriptors[String(index)].value, depth + 1),
-      );
-      active.delete(value);
-      return result;
-    }
-    const result: Data = {};
-    for (const [key, field] of Object.entries(descriptors)) {
-      if (!limits.preserveKeys && ['__proto__', 'prototype', 'constructor'].includes(key))
-        return fail('Experiment input contains an invalid field');
-      account(key);
-      // Optional in-process fields have the same request identity as omitted JSON fields.
-      if (field.value !== undefined)
-        Object.defineProperty(result, key, {
-          value: copy(field.value, depth + 1),
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-    }
-    active.delete(value);
-    return result;
-  };
-  return copy(input);
-}
-
-export function parseExperimentInput<T>(
+export const parseExperimentInput = <T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   input: unknown,
-): T {
-  const parsed = schema.safeParse(copyExperimentJson(input));
-  check(parsed.success, 'invalid_experiment_input', 'Experiment input does not match its schema');
-  return parsed.data;
-}
+) => parsed(schema, input, 'invalid_experiment_input', { nodes: 8192, depth: 20, bytes: 262144 });

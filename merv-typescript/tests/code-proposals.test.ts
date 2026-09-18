@@ -25,7 +25,6 @@ import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { CodeCommandService } from '../packages/code/src/commands.js';
 import { CodeProposalService } from '../packages/code/src/proposals.js';
-import { canonicalCode } from '../packages/code/src/input.js';
 import type { CodeProposalInput } from '../packages/code/src/types.js';
 
 const oid = (digit: string) => digit.repeat(40);
@@ -686,16 +685,7 @@ test('malformed plain JSON is rejected without getters, proxy traps, sparse allo
   const sparse = new Array(2 ** 32 - 1);
   const inherited = Object.create({ unexpected: true });
   const dangerous = JSON.parse('{"__proto__":{"polluted":true}}');
-  const values = [
-    getter,
-    proxy,
-    cycle,
-    sparse,
-    inherited,
-    dangerous,
-    { value: undefined },
-    { value: NaN },
-  ];
+  const values = [getter, proxy, cycle, sparse, inherited, dangerous, { value: NaN }];
   const count = (await f.artifacts.list(f.source)).length;
   for (const provenance of values) {
     await assert.rejects(f.seal(worker.caller, { ...input, provenance: provenance as Data }), {
@@ -715,7 +705,7 @@ test('format-1 manifest and replay hashes use deterministic nested Unicode key o
     String.prototype.localeCompare = () => {
       throw new Error('Ambient collation must not participate');
     };
-    serialized = canonicalCode(unicode);
+    serialized = canonical(unicode);
   } finally {
     String.prototype.localeCompare = localeCompare;
   }

@@ -1,5 +1,5 @@
 import { mapAsync, filterAsync } from '@merv/contracts';
-import { createService, recorded, replayed } from '@merv/contracts';
+import { createService, plain, recorded, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
 import {
@@ -36,7 +36,6 @@ import type {
   ExperimentTransition,
 } from './types.js';
 import {
-  copyExperimentJson,
   experimentAttachSchema,
   experimentCreateSchema,
   experimentGetSchema,
@@ -915,7 +914,11 @@ export class ExperimentService implements Experiments {
     this.open();
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
-      const input = copyExperimentJson(value) as unknown as ReviewApplication;
+      const input = plain<ReviewApplication>(value, 'invalid_experiment_input', {
+        nodes: 8192,
+        depth: 20,
+        bytes: 262144,
+      });
       check(
         input && typeof input === 'object' && !Array.isArray(input),
         'invalid_experiment_input',

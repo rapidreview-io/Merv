@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { plain } from '@merv/contracts';
 import {
-  copyExperimentJson,
   experimentAttachSchema,
   experimentCreateSchema,
   experimentGetSchema,
@@ -31,6 +31,8 @@ const invalidInput = (action: () => unknown) =>
 const invalidEvidence = (action: () => unknown) =>
   assert.throws(action, { code: 'invalid_experiment_evidence' });
 const mutation = { experimentId: 'exp_one', expectedRevision: 0, requestId: 'request_1' };
+const copy = (value: unknown, limits = {}) =>
+  plain(value, 'invalid_experiment_input', { depth: 20, ...limits });
 
 test('input normalization is idempotent across tool and core parsing', () => {
   const created = parseExperimentInput(experimentCreateSchema, {
@@ -200,12 +202,12 @@ test('plain JSON boundary refuses cycles, sparse arrays, symbols, dangerous keys
       },
     },
   ])
-    invalidInput(() => copyExperimentJson(value));
-  invalidInput(() => copyExperimentJson({ x: 'é'.repeat(10) }, { maxBytes: 20 }));
-  invalidInput(() => copyExperimentJson([1, 2, 3], { maxNodes: 3 }));
+    invalidInput(() => copy(value));
+  invalidInput(() => copy({ x: 'é'.repeat(10) }, { bytes: 20 }));
+  invalidInput(() => copy([1, 2, 3], { nodes: 3 }));
   let deep: unknown = 1;
   for (let index = 0; index < 21; index++) deep = { x: deep };
-  invalidInput(() => copyExperimentJson(deep));
+  invalidInput(() => copy(deep));
 });
 
 test('retained evidence uses exact UTF-8 byte bounds and never caller byte accessors', () => {
@@ -376,5 +378,5 @@ test('finite evidence preserves reserved-looking data keys without changing obje
   );
   assert.deepEqual(JSON.parse(encoded.toString()).resultFiles[0].data, JSON.parse(raw));
   assert.equal(encoded.toString().includes('"__proto__": {'), true);
-  invalidInput(() => copyExperimentJson(JSON.parse(raw)));
+  invalidInput(() => copy(JSON.parse(raw)));
 });

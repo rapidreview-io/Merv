@@ -7,6 +7,8 @@ export type {
   SessionToolInvocation,
 } from './tool-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { types } from 'node:util';
+import type { z } from 'zod';
 import 'cordis';
 
 export type { Json, Data } from './data.js';
@@ -109,16 +111,102 @@ export function check(
 }
 export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-', '')}`;
 export const now = () => new Date().toISOString();
-/** Input that can be stored as written: text well-formed Unicode without NUL, nesting shallow. */
-export function sound<T>(value: T, depth = 0): T {
-  if (typeof value === 'string') {
-    check(!value.includes('\0'), 'invalid_input', 'Text cannot contain NUL');
-    check(!/\p{Surrogate}/u.test(value), 'invalid_input', 'Text must be well-formed Unicode');
-  } else if (value && typeof value === 'object') {
-    check(depth < 64, 'invalid_input', 'Input nests too deeply');
-    for (const item of Array.isArray(value) ? value : Object.values(value)) sound(item, depth + 1);
-  }
-  return value;
+export type Limits = { depth?: number; nodes?: number; bytes?: number; keys?: 'json' | 'any' };
+/**
+ * A detached plain-JSON copy of an input, made without calling accessors: no proxies, foreign
+ * prototypes, cycles, sparse arrays, symbol keys, non-finite numbers, NUL or lone surrogates;
+ * bounded in depth, nodes and UTF-8 bytes; undefined fields omitted as JSON omits them. Names
+ * that steer prototypes are refused unless `keys` is 'any'.
+ */
+export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: Limits = {}): T {
+  const { depth: maxDepth = 64, nodes: maxNodes = Infinity, bytes: maxBytes = Infinity } = limits;
+  let nodes = 0,
+    bytes = 0;
+  const active = new Set<object>();
+  const refuse = (message: string): never => check(false, code, message) as never;
+  const text = (item: string) => {
+    check(!item.includes('\0'), code, 'Text cannot contain NUL');
+    check(!/\p{Surrogate}/u.test(item), code, 'Text must be well-formed Unicode');
+    bytes += Buffer.byteLength(item, 'utf8');
+    if (bytes > maxBytes) refuse('Input is too large');
+    return item;
+  };
+  const copy = (item: unknown, depth: number): Json => {
+    if (++nodes > maxNodes || depth > maxDepth) refuse('Input is too large or nests too deeply');
+    if (item === null || typeof item === 'boolean') return item;
+    if (typeof item === 'string') return text(item);
+    if (typeof item === 'number' && Number.isFinite(item)) return item;
+    if (typeof item !== 'object' || types.isProxy(item) || active.has(item))
+      return refuse('Input must be finite, acyclic plain JSON');
+    const array = Array.isArray(item);
+    const prototype = Object.getPrototypeOf(item);
+    if (
+      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
+    )
+      refuse('Input must contain plain objects and arrays');
+    const keys = Reflect.ownKeys(item);
+    const descriptors = Object.getOwnPropertyDescriptors(item);
+    if (
+      keys.some((key) => typeof key !== 'string') ||
+      Object.entries(descriptors).some(
+        ([key, field]) =>
+          !Object.hasOwn(field, 'value') || !(field.enumerable || (array && key === 'length')),
+      )
+    )
+      refuse('Input fields must be ordinary data');
+    active.add(item);
+    let result: Json;
+    if (array) {
+      const length = descriptors.length.value as number;
+      if (
+        keys.length !== length + 1 ||
+        !Array.from({ length }, (_, index) => String(index)).every((key) =>
+          Object.hasOwn(descriptors, key),
+        )
+      )
+        refuse('Arrays must be dense without extra fields');
+      result = Array.from({ length }, (_, index) =>
+        copy(descriptors[String(index)].value, depth + 1),
+      );
+    } else {
+      const record: Data = {};
+      for (const [key, field] of Object.entries(descriptors)) {
+        if (limits.keys !== 'any' && ['__proto__', 'prototype', 'constructor'].includes(key))
+          refuse('Input contains a reserved field name');
+        text(key);
+        if (field.value !== undefined)
+          Object.defineProperty(record, key, {
+            value: copy(field.value, depth + 1),
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+      }
+      result = record;
+    }
+    active.delete(item);
+    return result;
+  };
+  return (value === undefined ? undefined : copy(value, 0)) as T;
+}
+/** Parse a detached copy of `value`; refusals carry `code` and name the failing fields. */
+export function parsed<T>(
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  value: unknown,
+  code: string,
+  limits?: Limits,
+): T {
+  const result = schema.safeParse(plain(value, code, limits));
+  check(
+    result.success,
+    code,
+    result.success
+      ? ''
+      : result.error.issues
+          .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`)
+          .join('; '),
+  );
+  return result.data;
 }
 /**
  * One durable answer per (project, actor, requestId): a retry with the same operation and
@@ -172,12 +260,13 @@ export async function replayed<T>(
   );
   return result;
 }
+/** Keys sorted by UTF-16 code unit, independent of the process locale. */
 export function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   return `{${Object.entries(value)
     .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`)
     .join(',')}}`;
 }

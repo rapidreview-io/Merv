@@ -1,8 +1,8 @@
 import { isUtf8 } from 'node:buffer';
 import { types } from 'node:util';
 import { z } from 'zod';
-import { check, type Json } from '@merv/contracts';
-import { copyExperimentJson, experimentIdSchema, experimentPathSchema } from './input.js';
+import { check, plain, type Json } from '@merv/contracts';
+import { experimentIdSchema, experimentPathSchema } from './input.js';
 
 export const evidenceByteLimit = 16_000;
 function error(condition: unknown, message: string): asserts condition {
@@ -36,9 +36,10 @@ function boundedText(text: string): string {
 
 function safeJson(input: unknown, aggregate = false): Json {
   try {
-    return copyExperimentJson(input, {
-      preserveKeys: true,
-      ...(aggregate ? { maxBytes: 2_000_000, maxNodes: 262144 } : {}),
+    return plain(input, 'invalid_experiment_input', {
+      keys: 'any',
+      depth: 20,
+      ...(aggregate ? { bytes: 2_000_000, nodes: 262144 } : { bytes: 262144, nodes: 8192 }),
     });
   } catch {
     error(false, 'Evidence must contain bounded, finite plain JSON');

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { types } from 'node:util';
-import { check } from '@merv/contracts';
+import { parsed } from '@merv/contracts';
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const requestId = z.string().trim().min(1).max(200);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -62,64 +61,5 @@ export const proposeSchema = z
     evidenceIds: z.array(id).min(1).max(2000),
   })
   .strict();
-export function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown): T {
-  let count = 0;
-  const copy = (item: unknown, depth = 0): unknown => {
-    check(
-      ++count <= 20_000 && depth <= 8,
-      'invalid_paper_input',
-      'Input is too large or deeply nested',
-    );
-    if (
-      item === null ||
-      item === undefined ||
-      ['string', 'number', 'boolean'].includes(typeof item)
-    )
-      return item;
-    check(
-      typeof item === 'object' && !types.isProxy(item),
-      'invalid_paper_input',
-      'Input must contain ordinary data',
-    );
-    const array = Array.isArray(item);
-    const prototype = Object.getPrototypeOf(item);
-    check(
-      array ? prototype === Array.prototype : prototype === Object.prototype || prototype === null,
-      'invalid_paper_input',
-      'Input must contain plain records and arrays',
-    );
-    const keys = Reflect.ownKeys(item);
-    check(
-      keys.length <= 2001 && keys.every((key) => typeof key === 'string'),
-      'invalid_paper_input',
-      'Input has invalid fields',
-    );
-    const descriptors = Object.getOwnPropertyDescriptors(item);
-    if (array) {
-      const length = descriptors.length.value as number;
-      check(keys.length === length + 1, 'invalid_paper_input', 'Input arrays must be dense');
-      return Array.from({ length }, (_, index) => {
-        const field = descriptors[String(index)];
-        check(
-          field && Object.hasOwn(field, 'value') && field.enumerable,
-          'invalid_paper_input',
-          'Input fields cannot be accessors',
-        );
-        return copy(field.value, depth + 1);
-      });
-    }
-    return Object.fromEntries(
-      Object.entries(descriptors).map(([key, field]) => {
-        check(
-          Object.hasOwn(field, 'value') && field.enumerable,
-          'invalid_paper_input',
-          'Input fields cannot be accessors',
-        );
-        return [key, copy(field.value, depth + 1)];
-      }),
-    );
-  };
-  const result = schema.safeParse(copy(value));
-  check(result.success, 'invalid_paper_input', 'Living paper input does not match its schema');
-  return result.data;
-}
+export const parse = <T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown) =>
+  parsed(schema, value, 'invalid_paper_input', { nodes: 20_000, depth: 8 });

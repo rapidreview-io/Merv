@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { canonical, createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,11 +20,7 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '../packages/code/src/service.js';
 import { KnowledgeService } from '../packages/knowledge/src/index.js';
-import {
-  canonicalKnowledge,
-  knowledgeCaptureSchema,
-  parseKnowledgeInput,
-} from '../packages/knowledge/src/input.js';
+import { knowledgeCaptureSchema, parseKnowledgeInput } from '../packages/knowledge/src/input.js';
 import {
   MervError,
   type ArtifactInput,
@@ -391,7 +387,7 @@ test('Knowledge inventories real records and freezes every terminal attempt, rou
   assert.equal(
     corpus.manifestHash,
     createHash('sha256')
-      .update(canonicalKnowledge({ formatVersion: 1, selection: corpus.selection }))
+      .update(canonical({ formatVersion: 1, selection: corpus.selection }))
       .digest('hex'),
   );
   assert.equal(
@@ -799,7 +795,7 @@ test('Knowledge input bounds reject accessors, proxies and sparse arrays without
   await assert.rejects(async () => await f.knowledge.get(f.reader, 'bad id'), {
     code: 'invalid_knowledge_input',
   });
-  assert.equal(canonicalKnowledge({ '\u00e9': 1, z: 2, Z: 3 }), '{"Z":3,"z":2,"é":1}');
+  assert.equal(canonical({ '\u00e9': 1, z: 2, Z: 3 }), '{"Z":3,"z":2,"é":1}');
 });
 
 test('Historical session capture reference resolves for current readers without reauthorizing the former source', async (t) => {

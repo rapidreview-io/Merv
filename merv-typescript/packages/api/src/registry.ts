@@ -1,4 +1,4 @@
-import { filterAsync, sound } from '@merv/contracts';
+import { filterAsync, plain } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
 import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
@@ -348,7 +348,7 @@ export class ToolRegistry implements Tools {
     this.open();
     const entry = this.entries.get(name);
     if (!entry) throw new ApiError('unknown_tool', `Unknown tool: ${name}`, 404);
-    sound(input);
+    input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       await this.scope.require(caller, 'read');

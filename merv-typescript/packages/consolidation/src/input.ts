@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check } from '@merv/contracts';
+import { parsed } from '@merv/contracts';
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const createSchema = z
@@ -35,14 +35,5 @@ export const submitSchema = z
     requestId: id,
   })
   .strict();
-export function parse<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
-  const result = schema.safeParse(input);
-  check(
-    result.success,
-    'invalid_consolidation_input',
-    result.success
-      ? ''
-      : result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
-  );
-  return result.data;
-}
+export const parse = <T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> =>
+  parsed(schema, input, 'invalid_consolidation_input');

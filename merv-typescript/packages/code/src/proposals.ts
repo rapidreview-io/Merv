@@ -20,7 +20,7 @@ import {
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { CodeCommands, CodeProposal, CodeProposalInput, CodeProposals } from './types.js';
-import { canonicalCode, parseCodeInput } from './input.js';
+import { parseCodeInput } from './input.js';
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const data = z.record(z.unknown()).transform((value) => value as Data);
@@ -172,7 +172,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
       409,
     );
     const inputHash = createHash('sha256')
-      .update(canonicalCode({ format: 1, input, admission }))
+      .update(canonical({ format: 1, input, admission }))
       .digest('hex');
     const previous = await tx.get<Row>(
       'SELECT proposal_json,input_hash FROM code_proposals WHERE project_id=? AND session_id=? AND request_id=?',
@@ -245,7 +245,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
       provenance: input.provenance,
       admission,
     };
-    const content = canonicalCode(manifest);
+    const content = canonical(manifest);
     const manifestHash = createHash('sha256').update(content).digest('hex');
     await this.scope.require(caller, 'write', tx);
     await this.sessions.validate(caller, admission.tool, admission.input);
@@ -274,7 +274,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
     await this.sessions.validate(caller, admission.tool, admission.input);
     const { format: _format, ...facts } = manifest;
     const proposal: CodeProposal = { ...facts, manifestHash, manifestArtifact };
-    const encoded = canonicalCode(proposal);
+    const encoded = canonical(proposal);
     await tx.run(
       'INSERT INTO code_proposals(id,project_id,instance_id,revision,session_id,request_id,input_hash,proposal_json) VALUES(?,?,?,?,?,?,?,?)',
       proposal.id,
