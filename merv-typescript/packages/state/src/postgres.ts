@@ -123,6 +123,7 @@ export class PostgresState extends StateStore {
 CREATE TABLE IF NOT EXISTS component_migrations(component TEXT NOT NULL, version INTEGER NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(component,version));
 CREATE TABLE IF NOT EXISTS events(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, project_id TEXT NOT NULL, actor_id TEXT NOT NULL, type TEXT NOT NULL, subject_id TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_project ON events(project_id,id);
+CREATE INDEX IF NOT EXISTS events_subject ON events(project_id,subject_id,type,id);
 CREATE OR REPLACE FUNCTION merv_events_immutable() RETURNS TRIGGER LANGUAGE plpgsql AS $merv$
 BEGIN RAISE EXCEPTION 'Events are immutable and retained'; END;
 $merv$;

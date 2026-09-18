@@ -134,8 +134,9 @@ export const uiPlugin = {
         description:
           'Read everything the home page draws in one answer: the project, its records, the people who own them, and the gate every unfinished workflow stands at.',
         inputSchema: z.object({}).strict(),
-        // Composes read-only tools that each take their own snapshot; unscoped so they read in parallel.
-        readOnly: false,
+        // One snapshot for every part: sequential reads on one connection cost tens of
+        // milliseconds; parallel parts each queued on the writer lock cost seconds.
+        readOnly: true,
         handler: async (caller: Caller) =>
           await homeRead(
             ctx.tools,

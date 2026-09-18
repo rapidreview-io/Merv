@@ -60,8 +60,9 @@ export async function homeRead(
   read: (caller: Caller, rowId: string, params?: Record<string, unknown>) => Promise<Json>,
   caller: Caller,
 ): Promise<Json> {
-  // The parts are independent read-only tools, each in its own snapshot scope, so they
-  // read in parallel; this tool is not itself scoped, or they would share one connection.
+  // The parts are independent read-only tools. This tool runs in one snapshot scope, so
+  // they share its connection and their queries queue on it in turn; that costs tens of
+  // milliseconds, where a scope of their own each would queue on the writer lock.
   const parts = await Promise.all(
     PARTS.map(async ([key, tool]) => [
       key,

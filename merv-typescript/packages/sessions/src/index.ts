@@ -292,6 +292,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       return 'transactionId' in sql ? fn(sql as Transaction) : await this.state.transaction(fn);
     });
   }
+  /**
+   * The same handle on a read-only snapshot: admission checks only read, and a worker
+   * makes several of them per tool call, so none of them may queue on the writer lock.
+   */
+  private async reading<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
+    this.ensureOpen();
+    return await this.state.snapshot(() => this.transaction(fn));
+  }
   private async row(tx: Transaction, id: string): Promise<Row> {
     const row = await tx.get<Row>('SELECT * FROM worker_sessions WHERE id=?', id);
     check(row, 'session_not_found', 'Session not found', 404);
@@ -1273,7 +1281,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
     if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
-    const names = await this.transaction(async (tx) => {
+    const names = await this.reading(async (tx) => {
       const session = await this.session(caller, tx);
       return new Set(session.execution.policy.tools.map((tool) => tool.name));
     });
@@ -1320,7 +1328,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     input: Data,
     read?: boolean,
   ): Promise<SessionInvocation> {
-    const prepared = await this.transaction(
+    const prepared = await this.reading(
       async (tx) => await this.admit(caller, tool, clone(input), tx, undefined, read),
     );
     this.ensureOpen();
@@ -1355,7 +1363,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     return invocation;
   }
   async validate(caller: Caller, tool: string, input: Data): Promise<void> {
-    await this.transaction(async (tx) => {
+    await this.reading(async (tx) => {
       const state = caller.session?.invocationId
         ? this.invocationIds.get(caller.session.invocationId)
         : undefined;
