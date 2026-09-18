@@ -382,6 +382,18 @@ export class RecipeContextBuilder implements ContextBuilder {
     // Keep DTOs detached from caller inputs and providers that cache artifact metadata.
     return structuredClone({ ...body, hash: digest(body) });
   }
+  async mode(
+    caller: Caller,
+    ids: string[],
+    room: number,
+    tx: Transaction,
+  ): Promise<'auto' | 'references'> {
+    const documents = await mapAsync(ids, async (id) => await this.artifacts.get(caller, id, tx));
+    const inline = documents
+      .filter((a) => a.mediaType.startsWith('text/') || a.mediaType === 'application/json')
+      .reduce((n, a) => n + a.size, 0);
+    return inline > room ? 'references' : 'auto';
+  }
   async get(caller: Caller, id: string): Promise<ContextPackage> {
     check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
     const actor = await this.scope.require(caller, 'read');

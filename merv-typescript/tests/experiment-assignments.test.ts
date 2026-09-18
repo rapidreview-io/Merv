@@ -92,6 +92,7 @@ async function fixture(t: TestContext) {
     role: ExperimentAttach['role'],
     content: string,
     caller = source,
+    path = `${role}.md`,
   ) => {
     const artifact = await artifacts.create(caller, {
       title: role,
@@ -104,7 +105,7 @@ async function fixture(t: TestContext) {
       attemptIndex: experiment.attempt.index,
       artifactId: artifact.id,
       role,
-      path: `${role}.md`,
+      path,
       ...(role === 'result' ? { resultFormat: 'qualitative' as const } : {}),
       requestId: request(),
     });
@@ -319,6 +320,29 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(packet.execution.readOnly, true);
   assert.match(packet.context!.prompt, /returnTo planned.*running/s);
   assert.match(packet.context!.prompt, /same held-out examples/);
+});
+
+test('a results review whose evidence outgrows the recipe lists it for the reviewer to read', async (t) => {
+  const f = await fixture(t);
+  const running = await f.verdict((await f.design(await f.create())).experiment, 'pass');
+  await f.workflows.begin(f.source, {
+    instanceId: running.id,
+    expectedRevision: running.workflow.revision,
+  });
+  for (let part = 0; part < 12; part++)
+    await f.attach(
+      running,
+      'result',
+      `# Observations ${part}\n\n${'row,value\n'.repeat(1_500)}`,
+      f.source,
+      `result-${part}.md`,
+    );
+  await f.attach(running, 'report', report);
+  const assessment = await f.transition(running, 'submit_results');
+  const packet = await f.workflows.assignment(f.reviewer, assessment.id);
+  assert.equal(packet.context!.type, 'experiment.attempt_review');
+  assert.match(packet.context!.prompt, /Bytes are not included/);
+  assert.doesNotMatch(packet.context!.prompt, /row,value/);
 });
 
 test('dispatch and activation read metadata only; fixed grants do not depend on complete draft evidence', async (t) => {

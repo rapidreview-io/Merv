@@ -682,7 +682,17 @@ DROP TABLE experiment_leases_backup;`,
         ? { approvedPlan: { artifactIds: inputs.approvedArtifacts, mode: 'auto' as const } }
         : {}),
       ...(inputs.evidenceArtifacts.length
-        ? { evidence: { artifactIds: inputs.evidenceArtifacts, mode: 'auto' as const } }
+        ? {
+            evidence: {
+              artifactIds: inputs.evidenceArtifacts,
+              mode: await this.host.contextBuilder.mode(
+                context.caller,
+                inputs.evidenceArtifacts,
+                96_000,
+                context.tx,
+              ),
+            },
+          }
         : {}),
       ...(inputs.review ? { assessment: { text: JSON.stringify(inputs.review) } } : {}),
     };

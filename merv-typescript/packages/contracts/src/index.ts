@@ -999,6 +999,14 @@ export interface ContextRegistration {
 export interface ContextBuilder {
   register(definition: TaskTypeDefinition): Promise<ContextRegistration>;
   get(caller: Caller, contextId: string): Promise<ContextPackage>;
+  /** Text documents are embedded while they leave the recipe `room` for the rest of the
+   *  context; past that they are listed and the reader opens them itself. */
+  mode(
+    caller: Caller,
+    ids: string[],
+    room: number,
+    tx: Transaction,
+  ): Promise<'auto' | 'references'>;
 }
 export interface TaskContext {
   taskId: string;
