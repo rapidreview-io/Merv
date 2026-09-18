@@ -60,10 +60,6 @@ async function fixture(t: TestContext) {
   return { state, scope, operator, producer, reader, artifacts, workflows, tasks, create };
 }
 
-function metadata({ guidance: _guidance, ...record }: Task): TaskRecord {
-  return record;
-}
-
 test('Task records include all states in stable order without reading bytes or evaluating guidance', async (t) => {
   const f = await fixture(t);
   const first = await f.create('First input');
@@ -79,10 +75,10 @@ test('Task records include all states in stable order without reading bytes or e
   t.mock.method(f.artifacts, 'read', () => assert.fail('A record must not read artifact bytes'));
   t.mock.method(f.workflows, 'evaluate', () => assert.fail('A record must not evaluate guidance'));
   const records = await f.tasks.records(f.reader);
-  assert.deepEqual(records, interactive.map(metadata));
+  assert.deepEqual(records, interactive);
   assert.deepEqual(
     await f.tasks.record(f.reader, first.id),
-    metadata(interactive.find((task) => task.id === first.id)!),
+    interactive.find((task) => task.id === first.id)!,
   );
   assert.deepEqual(
     new Set(records.map((task) => task.workflow.state)),
@@ -188,7 +184,7 @@ test('Record reads reject expired and foreign transaction handles', async (t) =>
   }
 });
 
-test('Interactive Task get/list still evaluate guidance while returned records are detached', async (t) => {
+test('Interactive Task get evaluates guidance, the list carries records, and returned records are detached', async (t) => {
   const f = await fixture(t);
   const task = await f.create('Interactive input');
   const originalEvaluate = f.workflows.evaluate.bind(f.workflows);
@@ -196,13 +192,15 @@ test('Interactive Task get/list still evaluate guidance while returned records a
   const interactive = await f.tasks.get(f.reader, task.id);
   assert.equal(evaluate.mock.callCount(), 1);
   assert.deepEqual(interactive.guidance, await originalEvaluate(f.reader, task.id));
-  assert.deepEqual(await f.tasks.list(f.reader), [interactive]);
-  assert.equal(evaluate.mock.callCount(), 2);
+  const { guidance: _guidance, ...listed }: Task = interactive;
+  assert.deepEqual(await f.tasks.list(f.reader), [listed satisfies TaskRecord]);
+  // A list is one read per row, never one guidance evaluation per row.
+  assert.equal(evaluate.mock.callCount(), 1);
   const record = await f.tasks.record(f.reader, task.id);
   const original = structuredClone(record);
   record.checks.push('A caller cannot mutate stored checks.');
   record.workflow.data.untrusted = true;
   record.contextInputs.injected = ['art_unknown'];
   assert.deepEqual(await f.tasks.record(f.reader, task.id), original);
-  assert.equal(evaluate.mock.callCount(), 2);
+  assert.equal(evaluate.mock.callCount(), 1);
 });

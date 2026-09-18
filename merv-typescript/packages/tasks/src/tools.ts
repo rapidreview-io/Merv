@@ -99,7 +99,7 @@ export const taskToolsPlugin = {
       },
       {
         name: 'task.list',
-        description: 'List tasks in the current project.',
+        description: 'List the tasks in the current project as records; task.get adds your guidance.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller: Caller) => await ctx.tasks.list(caller),

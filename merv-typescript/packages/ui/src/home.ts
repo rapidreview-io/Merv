@@ -106,7 +106,15 @@ const KEEP: Record<string, string[]> = {
 };
 /** The map shows a summary of each record's prose; the record's page has all of it. */
 const brief = (value: Json): Json =>
-  typeof value === 'string' && value.length > 400 ? `${clip(value, 399)}…` : value;
+  typeof value === 'string' && value.length > 400
+    ? `${clip(value, 399)}…`
+    : Array.isArray(value)
+      ? value.map((item) =>
+          item && typeof item === 'object' && !Array.isArray(item) && 'text' in item
+            ? Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'text'))
+            : item,
+        )
+      : value;
 const pick = (record: Json, keys: string[]): Json =>
   record && typeof record === 'object' && !Array.isArray(record)
     ? Object.fromEntries(

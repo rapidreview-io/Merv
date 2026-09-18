@@ -1361,7 +1361,7 @@ export interface Tasks {
   checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint>;
   create(caller: Caller, input: TaskCreate): Promise<Task>;
   get(caller: Caller, taskId: string): Promise<Task>;
-  list(caller: Caller): Promise<Task[]>;
+  list(caller: Caller): Promise<TaskRecord[]>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, taskId: string): Promise<ProcessGraph>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;

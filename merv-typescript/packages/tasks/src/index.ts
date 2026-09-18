@@ -1436,7 +1436,8 @@ DROP TABLE task_leases_backup;`,
       });
     });
   }
-  async list(caller: Caller): Promise<Task[]> {
+  /** The records; guidance is per reader and per moment, so task.get carries it. */
+  async list(caller: Caller): Promise<TaskRecord[]> {
     await this.scope.require(caller, 'read');
     return await this.state.transaction(
       async (sql) =>
@@ -1445,7 +1446,7 @@ DROP TABLE task_leases_backup;`,
             'SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id',
             caller.projectId,
           ),
-          async (row) => await this.hydrate(caller, row, sql),
+          async (row) => await this.projectRecord(caller, row, sql),
         ),
     );
   }
