@@ -928,6 +928,9 @@ export class ReflectionService implements Reflections {
                 },
                 check: async (c: WorkflowCheckContext) => {
                   await this.admit(c);
+                  // A verdict needs the claim; before it, start_review is the step.
+                  const wave = await this.row(c.caller, c.snapshot.id, c.tx);
+                  await this.reviews.checkSubmit(c.caller, wave.review_id!, undefined, c.tx);
                 },
               },
               {

@@ -467,7 +467,7 @@ DROP TABLE task_leases_backup;`,
         revision,
       )),
       'task_leased',
-      'An active worker owns this revision; release it before interactive production',
+      'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
       409,
     );
   }
@@ -882,20 +882,18 @@ DROP TABLE task_leases_backup;`,
           );
           for (const id of ids) await this.artifacts.get(caller, id, tx);
         }
+        // The brief renders the title and each check on its own numbered line.
+        const line = (value: unknown) =>
+          typeof value === 'string' && visible(value) && !/[\r\n]/.test(value);
         check(
-          typeof input.title === 'string' &&
-            visible(input.title) &&
-            typeof input.goal === 'string' &&
-            visible(input.goal),
+          line(input.title) && typeof input.goal === 'string' && visible(input.goal),
           'invalid_brief',
-          'Task title and goal must be nonempty',
+          'Task title must be one nonempty line and the goal nonempty',
         );
         check(
-          Array.isArray(input.checks) &&
-            input.checks.length > 0 &&
-            input.checks.every((item) => typeof item === 'string' && visible(item)),
+          Array.isArray(input.checks) && input.checks.length > 0 && input.checks.every(line),
           'invalid_checks',
-          'Task requires at least one nonempty Done-when check',
+          'Task requires at least one nonempty single-line Done-when check',
         );
         check(
           new Set(input.checks.map(normalized)).size === input.checks.length,
@@ -1299,7 +1297,7 @@ DROP TABLE task_leases_backup;`,
     check(
       workflow.revision === input.expectedRevision,
       'revision_conflict',
-      'Task changed before assignment operation',
+      `Expected revision ${input.expectedRevision}, found ${workflow.revision}`,
       409,
     );
     if (input.purpose === 'review') {

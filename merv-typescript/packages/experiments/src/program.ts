@@ -132,7 +132,7 @@ function paperContext(documents: PaperWorkspace['documents'], room = 40_000) {
 
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 4,
+  version: 5,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
     instructions: instructions[state],
@@ -367,7 +367,7 @@ DROP TABLE experiment_leases_backup;`,
       check(
         !(await this.activeLease(experiment, tx)),
         'experiment_leased',
-        'An active worker owns this revision; release it before interactive production',
+        'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
         409,
       );
     }

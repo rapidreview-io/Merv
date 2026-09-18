@@ -13,6 +13,7 @@ interface Published {
   note: string;
   definitions: (Row & { name: string; version: number })[];
   policies: (Row & { workflow: string; version: number; state: string })[];
+  recipes: (Row & { type: string; version: number; hash: string })[];
 }
 
 const published = JSON.parse(
@@ -36,7 +37,10 @@ test('registered workflow definitions and execution policies match every version
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const { definitions, policies } = await app.ctx.state.read(async (sql) => ({
+  const { definitions, policies, recipes } = await app.ctx.state.read(async (sql) => ({
+    recipes: await sql.all<{ type: string; version: number; hash: string }>(
+      'SELECT type,version,hash FROM context_recipes',
+    ),
     definitions: await sql.all<{ name: string; version: number; fingerprint: string }>(
       'SELECT name,version,fingerprint FROM wf_definitions',
     ),
@@ -56,6 +60,20 @@ test('registered workflow definitions and execution policies match every version
   for (const row of published.definitions) {
     const key = `${row.name}@${row.version}`;
     assert.equal(registeredDefinitions.get(key), row.fingerprint, remedy(key, 'definition', row));
+  }
+  const registeredRecipes = new Map(recipes.map((row) => [`${row.type}@${row.version}`, row.hash]));
+  // Only the current recipe version registers, so a published older version is not rechecked;
+  // every registered version must be listed, and a listed published version must be unchanged.
+  const listedRecipes = new Map(
+    published.recipes.map((row) => [`${row.type}@${row.version}`, row]),
+  );
+  for (const [key, hash] of registeredRecipes) {
+    const row = listedRecipes.get(key);
+    assert.ok(
+      row,
+      `context recipe ${key} is not listed in tests/fixtures/published-policies.json; add it with its hash ${hash} and published: false until it ships`,
+    );
+    assert.equal(hash, row.hash, remedy(key, 'context recipe', row));
   }
   for (const row of published.policies) {
     const key = `${row.workflow}@${row.version}/${row.state}`;

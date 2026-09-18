@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-16, plus the experiment@3/@4 rows this release publishes for the first time (published: false until it ships). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release.",
+  "note": "Production truth as of 2026-09-16, plus the experiment@3/@4 rows this release publishes for the first time (published: false until it ships). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way: recipes lists production's hashes as of 2026-09-18 13:55Z.",
   "definitions": [
     {
       "name": "consolidation",
@@ -365,6 +365,200 @@
       "version": 4,
       "state": "running",
       "fingerprint": "6e698abc07bae5520280e25a3797f8bb1717f264e7222b42c1e50862c08d01d4",
+      "published": false
+    }
+  ],
+  "recipes": [
+    {
+      "type": "consolidation.consolidating",
+      "version": 2,
+      "hash": "faab8e25ef068a34fd6e02c48937b2d6d5c809ef3257f64f8706027763f5e391",
+      "published": true
+    },
+    {
+      "type": "consolidation.consolidation_review",
+      "version": 2,
+      "hash": "533e66dcb903737669f981f4c80c5fc2ca90ac48f49ee64f6f45b8fd8d7184e5",
+      "published": true
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 2,
+      "hash": "6b0094ab96ad6712758beb94975a62fdcdf53ea8878f53aff5d173c16f0d417c",
+      "published": true
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 3,
+      "hash": "9e42bcbd9076ebf797adadd92f5c9a8ab36ce5b17c8e5dfa9a315868e1140162",
+      "published": true
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 4,
+      "hash": "8ab5d0cc017ef3a771e9593398e2e830147e4df7f2708d6431b80dfc5a4da661",
+      "published": true
+    },
+    {
+      "type": "experiment.design",
+      "version": 2,
+      "hash": "708064d54cf52c3939c3b94669d809b16413965bb506cbfc1b17ddffea5f279b",
+      "published": true
+    },
+    {
+      "type": "experiment.design",
+      "version": 3,
+      "hash": "6d1a3c12517c5f7c6d65cf9c15e7f6748c2b684e3e5c6b63298ae4e25736f9d1",
+      "published": true
+    },
+    {
+      "type": "experiment.design",
+      "version": 4,
+      "hash": "592d9c9501dbe7b4a6dc2ce628e1176f1aebfdd198cbf54750076b1e56d6a1df",
+      "published": true
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 2,
+      "hash": "dc3b2a00449468a977dcf5150256376468ac963d67311c15abffcfe02f3cd048",
+      "published": true
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 3,
+      "hash": "9e7b20c7d6e7646b88b582c3577323ae4910507852e97f10d2f93a63117682e0",
+      "published": true
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 4,
+      "hash": "1857be949cd9f03ea0eb0416cab7808001a02f4baff68f4a45435c9a89c4e04b",
+      "published": true
+    },
+    {
+      "type": "experiment.execute",
+      "version": 2,
+      "hash": "88bec8a35b078941cee0af9fbfd017b75eed514d172e6cbb2125c4d296f8a7a2",
+      "published": true
+    },
+    {
+      "type": "experiment.execute",
+      "version": 3,
+      "hash": "c08f8f093f2971997a9e8908a0851f8b3b82be5e79af32996808514a54ab77de",
+      "published": true
+    },
+    {
+      "type": "experiment.execute",
+      "version": 4,
+      "hash": "db4e009a30b7a731b571bcc3e82ed5ffc83625e3ab83e415e3338276ae25af95",
+      "published": true
+    },
+    {
+      "type": "experiment.plan",
+      "version": 1,
+      "hash": "428e80d81ef12470df7957710d93d6ea65058c20bfa91b444c3e165151fee7de",
+      "published": true
+    },
+    {
+      "type": "project.reflection",
+      "version": 1,
+      "hash": "c9263585eeb1989d16cf93695d75a0f3a29704c93863a6b84bb1bc672b530ce2",
+      "published": true
+    },
+    {
+      "type": "reflection.lens",
+      "version": 2,
+      "hash": "5c6f8f8de77f37468d9c2358579c797545ea5c7a27f670c0e287a8f89c5c4f38",
+      "published": true
+    },
+    {
+      "type": "reflection.lens",
+      "version": 3,
+      "hash": "2d33110e9b3f60e3f95d83b3ea135a093ff68245ede7615cac591ba746b531a5",
+      "published": true
+    },
+    {
+      "type": "reflection.lens",
+      "version": 4,
+      "hash": "8b45ab6ea54bbec21c2879200f7396a692e538d282d9cb702ca25a90bba2d333",
+      "published": true
+    },
+    {
+      "type": "reflection.review",
+      "version": 2,
+      "hash": "a0709564f899c8cad3a3cd1fda98fafa7a8926428f0947ca0a8cbc8e9130d43c",
+      "published": true
+    },
+    {
+      "type": "reflection.review",
+      "version": 3,
+      "hash": "7f82bcfe04968bb04e5f93502b370362e177069838f2efdd0d0082b9ce46ace7",
+      "published": true
+    },
+    {
+      "type": "reflection.review",
+      "version": 4,
+      "hash": "cbae81e4c8f04facd44688cd388d547f981eb7c35875ec91904049148913044c",
+      "published": true
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 2,
+      "hash": "fe8e01cc77e0f62b6042b278d59a853d3f8e354c8a22588dcdae6e9e911b99bf",
+      "published": true
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 3,
+      "hash": "30d054026deb4155d728ad947790fd193b6d6fcc849488af77e5c640792763cf",
+      "published": true
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 4,
+      "hash": "825b45c54946953a09ee95410e6e8aa6cee1b08c982cbddf1fb63f2a9140dacf",
+      "published": true
+    },
+    {
+      "type": "task.review",
+      "version": 1,
+      "hash": "700a9c7a5281ab218ee5c3674fcdedb97b006154e289015ae3201e8c1cf8d824",
+      "published": true
+    },
+    {
+      "type": "task.review",
+      "version": 2,
+      "hash": "9e741983c2423d52a0f3bb19f1d7e834f7ee1628c6419aaa0ced28bafba4c4e8",
+      "published": true
+    },
+    {
+      "type": "task.work",
+      "version": 1,
+      "hash": "9e0a7ea7d61cf27290c4dd9ecc5b0396a94055e35758b6272056b7f929fecac9",
+      "published": true
+    },
+    {
+      "type": "experiment.design",
+      "version": 5,
+      "hash": "e8704ebfcc3aa27b9a02305bce49f915cfd2d918d7f21ec4d06e0e5f34cb72d7",
+      "published": false
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 5,
+      "hash": "310068031ba37032535ed186f01775b1ac28d7a71e42cb470a5b77797495f8b9",
+      "published": false
+    },
+    {
+      "type": "experiment.execute",
+      "version": 5,
+      "hash": "58c56c4e9091c298a4455c191c3d9664f54fe55d6dd225032032920cb73c4742",
+      "published": false
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 5,
+      "hash": "b3f5f38b860c8c41129b38b57c01a99c6149b3a3aff520e74398ce00fd3f860d",
       "published": false
     }
   ]

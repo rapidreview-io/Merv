@@ -335,7 +335,7 @@ export class ExperimentService implements Experiments {
         check(
           experiment.attempt.index === input.attemptIndex,
           'attempt_conflict',
-          'The experiment attempt changed',
+          `Expected attempt ${input.attemptIndex}, the current attempt is ${experiment.attempt.index}`,
           409,
         );
         await this.program.assertProducer(caller, experiment, tx);

@@ -59,9 +59,22 @@ export const taskToolsPlugin = {
           'Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs; project.reflection requires experiments and projectKnowledge.',
         inputSchema: z
           .object({
-            title: z.string().min(1).max(300),
+            title: z
+              .string()
+              .min(1)
+              .max(300)
+              .regex(/^[^\r\n]*$/, 'A title is one line'),
             goal: z.string().min(1).max(16000),
-            checks: z.array(z.string().min(1).max(2000)).min(1).max(20),
+            checks: z
+              .array(
+                z
+                  .string()
+                  .min(1)
+                  .max(2000)
+                  .regex(/^[^\r\n]*$/, 'A check is one line'),
+              )
+              .min(1)
+              .max(20),
             briefId: id.optional(),
             type: z.string().min(1).optional(),
             typeVersion: z.number().int().positive().optional(),
