@@ -1134,6 +1134,9 @@ async function main(options: Options) {
       if (process.env.CODEX_HOME !== undefined) childEnv.CODEX_HOME = process.env.CODEX_HOME;
       if (process.env.CLAUDE_CONFIG_DIR !== undefined)
         childEnv.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+      // Claude Code's MCP handshake and tool calls wait as long as Codex's were allowed to.
+      childEnv.MCP_TIMEOUT = '120000';
+      childEnv.MCP_TOOL_TIMEOUT = '600000';
       if (network && options.sandboxesTokenEnv) {
         const grant = process.env[options.sandboxesTokenEnv];
         assert.ok(grant, `No sandboxes grant in ${options.sandboxesTokenEnv}`);

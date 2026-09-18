@@ -494,6 +494,11 @@ export function buildLaunch(
     env: {
       ...safeEnvironment,
       ...bearers,
+      // The handshake waits behind the server's writer queue under load, as it did for
+      // Codex; a server that lists no tools in time looks connected and useless.
+      ...(profile.harness === 'claude'
+        ? { MCP_TIMEOUT: '120000', MCP_TOOL_TIMEOUT: '600000' }
+        : {}),
       [mcpUrlVariable]: url,
       [sessionTokenVariable]: request.secret,
     },
