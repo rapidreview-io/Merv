@@ -93,7 +93,7 @@ function RailRow({
 function useNeedsYou(rows: Row[]): number {
   const { actor } = useSession();
   const home = useHome();
-  return standingOf(rows, home.data, actor.id, () => undefined).yours.length;
+  return standingOf(rows, home.data, actor, () => undefined).yours.length;
 }
 
 function useTheme() {

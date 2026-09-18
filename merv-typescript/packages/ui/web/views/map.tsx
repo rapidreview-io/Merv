@@ -371,7 +371,7 @@ export function MapView({ shell }: { shell: ShellData }) {
   const data = home.data;
   const named = namesOf(data?.actors);
   const github = useGitHub(!!codeRow);
-  const lines = standingOf(rows, data, session.actor.id, named);
+  const lines = standingOf(rows, data, session.actor, named);
 
   const selected = params.get('object');
   const select = (id: string) => {

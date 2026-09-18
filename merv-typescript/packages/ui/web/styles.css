@@ -974,6 +974,7 @@ select.input,
   flex-direction: column;
   gap: 4px;
   font-size: var(--text-base);
+  overflow-wrap: anywhere;
 }
 
 /* Documents and posts. --------------------------------------------------- */

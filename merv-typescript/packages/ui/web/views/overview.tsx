@@ -181,9 +181,14 @@ const openWork = (home: HomeData | undefined): [string, Open[]][] => [
 export function standingOf(
   rows: Row[],
   home: HomeData | undefined,
-  me: string,
+  viewer: { id: string; role: string },
   named: Named,
 ): Lines {
+  const me = viewer.id;
+  // An unclaimed review is somebody's move only if they may claim it: a reviewer or an
+  // operator, and never the work's own producer.
+  const mayClaim = (review: { producerId: string }) =>
+    ['reviewer', 'operator'].includes(viewer.role) && review.producerId !== me;
   const gate = new Map((home?.workflows?.workflows ?? []).map((item) => [item.instanceId, item]));
   const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [] };
   for (const [kind, items] of openWork(home)) {
@@ -220,7 +225,7 @@ export function standingOf(
         subject?.name ?? home?.tasks?.find((item) => item.id === review.subjectId)?.title;
       const kind = KIND[subject?.workflow.state ?? ''] ?? 'Review';
       const held = review.reviewerId;
-      const mine = review.status === 'requested' || held === me;
+      const mine = review.status === 'requested' ? mayClaim(review) : held === me;
       const how = !held
         ? 'waiting for a reviewer to claim it'
         : held === me
@@ -282,7 +287,7 @@ export function OverviewView({ shell }: { shell: ShellData }) {
   const session = useSession();
   const rows = shell.rows;
   const home = useHome();
-  const lines = standingOf(rows, home.data, session.actor.id, namesOf(home.data?.actors));
+  const lines = standingOf(rows, home.data, session.actor, namesOf(home.data?.actors));
   return (
     <div className="page-stage overview">
       <h1 className="page-title">Now</h1>

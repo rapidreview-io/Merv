@@ -37,6 +37,7 @@ export type MapReview = {
   subjectId: string;
   status: string;
   reviewerId: string | null;
+  producerId: string;
   verdict: string | null;
   createdAt: string;
 };
