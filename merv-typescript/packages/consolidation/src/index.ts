@@ -665,13 +665,13 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       input.verdict === 'pass' || !input.returnTo || input.returnTo === 'consolidating',
       'invalid_review_return',
       'Consolidation review can return only to consolidating',
-      409,
+      400,
     );
     check(
       input.verdict !== 'pass' || !input.returnTo,
       'invalid_review_return',
       'Passing reviews do not accept returnTo',
-      409,
+      400,
     );
     if (caller.session) await this.lease(caller, record, tx);
     await this.reviews.checkSubmit(caller, review.id, input, tx);

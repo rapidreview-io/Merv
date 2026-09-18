@@ -203,8 +203,13 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
         caller.projectId,
       );
       check(row, 'research_not_found', 'Research cycle was not found in this project', 404);
+      // The selection is what the cycle waits on now, not what it was created with.
+      const children = [row.reflection_id, row.consolidation_id];
       return {
         ...JSON.parse(row.record),
+        researchDependencies: (await this.workflows.dependencies(caller, id, tx)).dependencies
+          .map((item) => item.id)
+          .filter((item) => !children.includes(item)),
         workflow: await this.workflows.get(caller, id, tx),
         problem: row.problem ? JSON.parse(row.problem) : null,
         reflectionId: row.reflection_id,
@@ -384,28 +389,27 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
-      check(
-        ['defining', 'researching'].includes(record.workflow.state),
-        'invalid_transition',
-        'A cycle is replanned before it reflects',
-        409,
-      );
-      const children = [record.reflectionId, record.consolidationId];
-      const current = (await this.workflows.dependencies(caller, record.id, tx)).dependencies
-        .map((item) => item.id)
-        .filter((id) => !children.includes(id));
-      await this.handles.get(record.workflow.version)!.addDependencies(
-        caller,
-        {
-          instanceId: record.id,
-          expectedRevision: input.expectedRevision,
-          dependsOn: input.dependsOn.filter((id) => !current.includes(id)),
-          drop: current.filter((id) => !input.dependsOn.includes(id)),
-          requestId: this.request(caller, input.requestId, 'replan'),
-        },
-        tx,
-      );
-      return await this.get(caller, record.id, tx);
+      return await this.command(caller, 'replan', input, tx, async () => {
+        check(
+          ['defining', 'researching'].includes(record.workflow.state),
+          'invalid_transition',
+          'A cycle is replanned before it reflects',
+          409,
+        );
+        const current = record.researchDependencies;
+        await this.handles.get(record.workflow.version)!.addDependencies(
+          caller,
+          {
+            instanceId: record.id,
+            expectedRevision: input.expectedRevision,
+            dependsOn: input.dependsOn.filter((id) => !current.includes(id)),
+            drop: current.filter((id) => !input.dependsOn.includes(id)),
+            requestId: this.request(caller, input.requestId, 'replan'),
+          },
+          tx,
+        );
+        return await this.get(caller, record.id, tx);
+      });
     });
   }
 

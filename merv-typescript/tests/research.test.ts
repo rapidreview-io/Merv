@@ -388,6 +388,19 @@ test('research owner authorization, project scoping, selected prerequisite succe
   );
   record = await replan([selected.id]);
   assert.equal(record.workflow.revision, widened.workflow.revision + 1);
+  // The record reports the live selection, and a repeated replan replays its answer.
+  assert.deepEqual(record.researchDependencies, [selected.id]);
+  const again = {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    dependsOn: [],
+    requestId: f.id(),
+  };
+  assert.deepEqual(
+    await f.research.replan(f.owner, again),
+    await f.research.replan(f.owner, again),
+  );
+  record = await replan([selected.id]);
   assert.deepEqual(
     (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.map((i) => i.id),
     [selected.id],

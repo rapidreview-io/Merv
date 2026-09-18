@@ -101,11 +101,14 @@ export const experimentTransitionSchema = z
         path: ['paperChangesArtifactId'],
         message: 'Paper edits belong to the experiment results submission',
       });
-    if (['abandon', 'mark_failed'].includes(input.transition) && !input.evidence?.reason)
+    if (
+      ['abandon', 'mark_failed', 'retry_running'].includes(input.transition) &&
+      !input.evidence?.reason
+    )
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['evidence', 'reason'],
-        message: 'Ending an experiment requires a reason',
+        message: 'Ending or retrying an experiment requires a specific reason',
       });
     if (
       ['submit_design', 'submit_results'].includes(input.transition) &&
@@ -120,13 +123,7 @@ export const experimentTransitionSchema = z
   })
   .transform((input): ExperimentTransition => {
     if (input.transition === 'retry_running')
-      return {
-        ...input,
-        evidence: {
-          reason: input.evidence?.reason ?? 'infrastructure failure',
-          detail: input.evidence?.detail ?? '',
-        },
-      };
+      return { ...input, evidence: { ...input.evidence, detail: input.evidence?.detail ?? '' } };
     if (input.evidence && Object.keys(input.evidence).length) return input;
     const { evidence: _empty, ...rest } = input;
     return rest;

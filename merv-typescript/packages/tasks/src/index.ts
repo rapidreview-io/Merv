@@ -1525,11 +1525,13 @@ DROP TABLE task_leases_backup;`,
       'invalid_delivery',
       'Delivery requires a nonempty list of distinct artifacts',
     );
-    check(
-      !input.artifactIds.includes(row.brief_id),
-      'invalid_delivery',
-      'The brief cannot serve as the delivery',
+    // No task's brief is a delivery, this task's least of all.
+    const briefs = await tx.all<{ brief_id: string }>(
+      `SELECT brief_id FROM tasks WHERE project_id=? AND brief_id IN (${input.artifactIds.map(() => '?').join(',')})`,
+      caller.projectId,
+      ...input.artifactIds,
     );
+    check(briefs.length === 0, 'invalid_delivery', 'A task brief cannot serve as a delivery');
     const artifacts = await mapAsync(
       input.artifactIds,
       async (id) => await this.artifacts.get(caller, id, tx),
@@ -1775,7 +1777,10 @@ DROP TABLE task_leases_backup;`,
             subjectRevision: moved.revision,
             producerId: caller.actorId,
             administrativeActorId: row.producer_id,
-            ...(caller.session ? { pinnedInputIds: [row.brief_id] } : {}),
+            // The owner who directed a worker is no more independent of its delivery than the worker.
+            ...(caller.session
+              ? { pinnedInputIds: [row.brief_id], excludedActorIds: [row.producer_id] }
+              : {}),
             artifactIds: [row.brief_id, ...deliveryIds],
             criteria: checks,
             ...(row.evidence_version === 2 ? { formatVersion: 2 as const } : {}),

@@ -57,11 +57,21 @@ test('input normalization is idempotent across tool and core parsing', () => {
   });
   assert.equal(attached.resultFormat, 'json');
   assert.deepEqual(parseExperimentInput(experimentAttachSchema, attached), attached);
+  // A retry names its own reason; none is invented for it.
+  assert.throws(
+    () =>
+      parseExperimentInput(experimentTransitionSchema, {
+        ...mutation,
+        transition: 'retry_running',
+      }),
+    { code: 'invalid_experiment_input' },
+  );
   const retried = parseExperimentInput(experimentTransitionSchema, {
     ...mutation,
     transition: 'retry_running',
+    evidence: { reason: 'The host restarted mid-run' },
   });
-  assert.deepEqual(retried.evidence, { reason: 'infrastructure failure', detail: '' });
+  assert.deepEqual(retried.evidence, { reason: 'The host restarted mid-run', detail: '' });
   assert.deepEqual(parseExperimentInput(experimentTransitionSchema, retried), retried);
   assert.deepEqual(
     parseExperimentInput(experimentTransitionSchema, {

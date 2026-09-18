@@ -48,7 +48,12 @@ export const scopeToolsPlugin = {
         .object({
           name: z.string().min(1).max(200),
           role: z.enum(['operator', 'producer', 'reviewer', 'reader']),
-          expiresAt: z.string().datetime({ precision: 3 }).nullable().optional(),
+          expiresAt: z
+            .string()
+            .datetime({ precision: 3 })
+            .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
+            .nullable()
+            .optional(),
         })
         .strict(),
       async (c: any, i: any) => await ctx.scope.issueActor(c, i),
@@ -66,7 +71,12 @@ export const scopeToolsPlugin = {
       z
         .object({
           actorId: z.string().min(1),
-          expiresAt: z.string().datetime({ precision: 3 }).nullable().optional(),
+          expiresAt: z
+            .string()
+            .datetime({ precision: 3 })
+            .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
+            .nullable()
+            .optional(),
         })
         .strict(),
       async (c: any, i: any) => await ctx.scope.issueActorCredential(c, i),
@@ -77,7 +87,12 @@ export const scopeToolsPlugin = {
       z
         .object({
           credentialId: z.string().min(1),
-          expiresAt: z.string().datetime({ precision: 3 }).nullable().optional(),
+          expiresAt: z
+            .string()
+            .datetime({ precision: 3 })
+            .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
+            .nullable()
+            .optional(),
         })
         .strict(),
       async (c: any, i: any) => await ctx.scope.rotateCredential(c, i),
