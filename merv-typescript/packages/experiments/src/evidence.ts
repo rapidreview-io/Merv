@@ -11,7 +11,7 @@ import {
 } from '@merv/contracts';
 import { experimentIdSchema, experimentPathSchema } from './input.js';
 
-export const evidenceByteLimit = 16_000;
+export const evidenceByteLimit = 64_000;
 function error(condition: unknown, message: string): asserts condition {
   check(condition, 'invalid_experiment_evidence', message);
 }
@@ -24,7 +24,7 @@ const arrayBuffer = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer
 export function decodeEvidence(bytes: Uint8Array): string {
   error(!types.isProxy(bytes) && types.isUint8Array(bytes), 'Evidence must be UTF-8 bytes');
   const size = byteLength.call(bytes) as number;
-  error(size > 0 && size <= evidenceByteLimit, 'Evidence must contain 1–16000 bytes');
+  error(size > 0 && size <= evidenceByteLimit, 'Evidence must contain 1–64000 bytes');
   const view = Buffer.from(arrayBuffer.call(bytes), byteOffset.call(bytes), size);
   error(isUtf8(view), 'Evidence must contain valid UTF-8');
   const text = view.toString('utf8');
@@ -36,7 +36,7 @@ function boundedText(text: string): string {
   error(typeof text === 'string', 'Evidence must be text');
   error(
     Buffer.byteLength(text, 'utf8') <= evidenceByteLimit,
-    'Evidence must contain 1–16000 bytes',
+    'Evidence must contain 1–64000 bytes',
   );
   return decodeEvidence(Buffer.from(text, 'utf8'));
 }

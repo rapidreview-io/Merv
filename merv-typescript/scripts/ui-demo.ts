@@ -17,14 +17,15 @@ import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
  * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
  * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
  * project, which publishes its own sidebar rows and its two tools from the service's manifest;
- * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. `npm run fake:sandboxes` serves
+ * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. MERV_DEMO_CONFIG names another
+ * plugin configuration, for a demo on Postgres. `npm run fake:sandboxes` serves
  * all of it on port 3210. Without MERV_SANDBOXES_URL the demo composes exactly as before.
  */
 async function main() {
   const directory = process.env.MERV_DEMO_DIR ?? mkdtempSync(join(tmpdir(), 'merv-ui-demo-'));
   const app = await createApp({
     directory,
-    configFile: defaultConfigFile,
+    configFile: process.env.MERV_DEMO_CONFIG ?? defaultConfigFile,
     port: Number(process.env.PORT ?? 3081),
   });
   const url = app.ctx.api.url!;

@@ -211,8 +211,8 @@ test('plain JSON boundary refuses cycles, sparse arrays, symbols, dangerous keys
 });
 
 test('retained evidence uses exact UTF-8 byte bounds and never caller byte accessors', () => {
-  assert.equal(decodeEvidence(Buffer.from('é'.repeat(8000))).length, 8000);
-  invalidEvidence(() => decodeEvidence(Buffer.from('é'.repeat(8001))));
+  assert.equal(decodeEvidence(Buffer.from('é'.repeat(32_000))).length, 32_000);
+  invalidEvidence(() => decodeEvidence(Buffer.from('é'.repeat(32_001))));
   invalidEvidence(() => decodeEvidence(Buffer.from([0xc3, 0x28])));
   invalidEvidence(() => decodeEvidence(Buffer.alloc(0)));
   invalidEvidence(() => decodeEvidence(Buffer.from('  \n')));
