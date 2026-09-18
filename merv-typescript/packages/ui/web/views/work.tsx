@@ -144,7 +144,8 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
     {},
     { every: 8000 },
   );
-  const reviews = useTool<Review[]>(rowOf('reviews') ? 'review.list' : null);
+  // Review clauses move with the record beside the list: a claim or a verdict must show.
+  const reviews = useTool<Review[]>(rowOf('reviews') ? 'review.list' : null, {}, { every: 8000 });
   const cycles = useTool<ResearchRecord[]>(cyclesRow ? 'research.list' : null);
   // The cycle the head shows is the one the narrowing means.
   const cycle = cycles.data?.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
