@@ -162,7 +162,7 @@ function useRowKeys(frame: { current: HTMLDivElement | null }) {
       const step = letter || (at >= 0 ? arrow : 0);
       if (!step || !links.length) return;
       // With no cursor yet, movement carries on from the row already open.
-      const from = at >= 0 ? at : links.findIndex((link) => !!link.querySelector('.row-open'));
+      const from = at >= 0 ? at : links.findIndex((link) => link.classList.contains('row-open'));
       const next = from < 0 ? (step > 0 ? 0 : links.length - 1) : from + step;
       links[Math.min(links.length - 1, Math.max(0, next))]?.focus();
       event.preventDefault();

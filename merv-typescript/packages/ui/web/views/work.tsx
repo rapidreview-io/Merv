@@ -129,7 +129,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
  * Work page, and the left pane of every record it opens, so a record's siblings
  * stay on screen beside it.
  */
-export function WorkList({ shell }: { shell: ShellData }) {
+export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string }) {
   const { actor } = useSession();
   const nameOf = useActorNames();
   const [kind, setKind] = useState<string>('');
@@ -146,7 +146,8 @@ export function WorkList({ shell }: { shell: ShellData }) {
   );
   const reviews = useTool<Review[]>(rowOf('reviews') ? 'review.list' : null);
   const cycles = useTool<ResearchRecord[]>(cyclesRow ? 'research.list' : null);
-  const cycle = currentCycle(cycles.data);
+  // The cycle the head shows is the one the narrowing means.
+  const cycle = cycles.data?.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
   const inCycle = new Set([
     ...(cycle?.researchDependencies ?? []),
@@ -293,9 +294,16 @@ export function WorkList({ shell }: { shell: ShellData }) {
 }
 
 /** The cycle that frames the wave: what it is called, where it stands, its one move. */
-function CycleHead({ shell }: { shell: ShellData }) {
+function CycleHead({
+  shell,
+  chosen,
+  onChoose,
+}: {
+  shell: ShellData;
+  chosen?: string;
+  onChoose: (id: string) => void;
+}) {
   const { actor } = useSession();
-  const [chosen, setChosen] = useState<string>();
   const cyclesRow = shell.rows.find((row) => row.view.kind === 'research');
   const cycles = useTool<ResearchRecord[]>(
     cyclesRow ? 'research.list' : null,
@@ -334,7 +342,7 @@ function CycleHead({ shell }: { shell: ShellData }) {
                 type="button"
                 className="btn-text"
                 aria-pressed={item.id === cycle.id}
-                onClick={() => setChosen(item.id)}
+                onClick={() => onChoose(item.id)}
               >
                 {item.name} <span className="state-n">{words(item.workflow.state)}</span>
               </button>
@@ -347,13 +355,14 @@ function CycleHead({ shell }: { shell: ShellData }) {
 }
 
 export function WorkView({ shell }: { shell: ShellData }) {
+  const [chosen, setChosen] = useState<string>();
   return (
     <>
       {/* The cycle stands where every other page's title line stands. */}
       <div className="page-lede">
-        <CycleHead shell={shell} />
+        <CycleHead shell={shell} chosen={chosen} onChoose={setChosen} />
       </div>
-      <WorkList shell={shell} />
+      <WorkList shell={shell} chosen={chosen} />
     </>
   );
 }
