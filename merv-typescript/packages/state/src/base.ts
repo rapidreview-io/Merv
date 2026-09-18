@@ -207,6 +207,10 @@ export abstract class StateStore implements State {
    * snapshot, take no writer lock, and are refused if they write. Inside an existing
    * scope it simply runs the function there.
    */
+  get readScope(): boolean {
+    return !!this.context.getStore()?.readOnly;
+  }
+
   async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
     // SQLite hands out one serialised connection, so a scope held across a handler would
     // deadlock anything the handler waits on; the writer lock this avoids is Postgres's.

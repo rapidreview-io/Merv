@@ -512,6 +512,15 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     }
     return session;
   }
+  /** The record moved by this worker's own hand: its handoff landed. */
+  private async handedOff(session: Session, tx: Transaction): Promise<boolean> {
+    const moved = await tx.get<{ actor_id: string }>(
+      'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
+      session.instanceId,
+      session.expectedRevision + 1,
+    );
+    return moved?.actor_id === session.actorId;
+  }
   private async reconcile(session: Session, tx: Transaction): Promise<MervError | undefined> {
     if (!live(session)) return new MervError('session_closed', 'Session is closed', 401);
     try {
@@ -521,14 +530,9 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       const failure = safeError(error);
       if (failure.status >= 500) return failure;
       // The record moved by this worker's own hand: that is its handoff, not a conflict.
-      const moved =
-        failure.code === 'revision_conflict'
-          ? await tx.get<{ actor_id: string }>(
-              'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
-              session.instanceId,
-              session.expectedRevision + 1,
-            )
-          : undefined;
+      const handoff =
+        failure.code === 'session_completed' ||
+        (failure.code === 'revision_conflict' && (await this.handedOff(session, tx)));
       // A poll on a read snapshot reports the closure it found; the sweep records it.
       const close = async (
         ...rest: Parameters<typeof this.closeSession> extends [Session, ...infer R] ? R : never
@@ -539,7 +543,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           if (!(error instanceof MervError) || error.code !== 'read_only_scope') throw error;
         }
       };
-      if (failure.code !== 'session_completed' && moved?.actor_id !== session.actorId) {
+      if (!handoff) {
         await close(failure.code, tx);
         return failure;
       }
@@ -1256,16 +1260,19 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       'invalid_reason',
       'Release reason must be 1–200 characters',
     );
-    return await this.transaction(
-      async (tx) =>
-        await this.closeSession(
-          await this.controlled(caller, input.sessionId, input.runnerId, tx),
-          input.reason ?? 'released',
-          tx,
-          'released',
-          input.outcome,
-        ),
-    );
+    return await this.transaction(async (tx) => {
+      const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
+      // A session whose handoff already landed is recorded as that, whoever releases it.
+      if (live(session) && (await this.handedOff(session, tx)))
+        return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      return await this.closeSession(
+        session,
+        input.reason ?? 'released',
+        tx,
+        'released',
+        input.outcome,
+      );
+    });
   }
   async authenticate(token: string): Promise<Caller> {
     check(

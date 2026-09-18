@@ -369,6 +369,8 @@ export interface State {
   read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T>;
   /** A read-only snapshot scope: nested component transactions never take the writer lock. */
   snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
+  /** Whether the current async context is inside such a snapshot, where nothing may write. */
+  readonly readScope: boolean;
   assertTransaction(tx: Transaction): void;
   migrate(component: string, migrations: Migration[]): Promise<void>;
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;

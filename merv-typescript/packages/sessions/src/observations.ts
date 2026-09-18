@@ -77,6 +77,9 @@ export class AgentObservations {
   }
 
   async start(id: string, executionId: string, tool: string, input: unknown): Promise<void> {
+    // A read tool's nested reads are part of the call already recorded, and a read scope
+    // could not record them anyway.
+    if (this.state.readScope) return;
     await this.state.transaction(
       async (tx) =>
         await tx.run(
@@ -91,6 +94,7 @@ export class AgentObservations {
   }
 
   async finish(id: string, status: 'succeeded' | 'failed', result?: unknown): Promise<void> {
+    if (this.state.readScope) return;
     const now = this.clock();
     await this.state.transaction(async (tx) => {
       const row = await tx.get<{ started_at: string }>(

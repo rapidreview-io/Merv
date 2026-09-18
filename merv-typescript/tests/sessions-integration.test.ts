@@ -33,7 +33,8 @@ async function fixture(t: TestContext, postgres = false) {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  config.plugins = config.plugins.filter((entry) => entry.id !== 'ui' && !entry.id.endsWith('-ui'));
+  // The UI's tools nest other reads; the page shell serves no assets here.
+  config.plugins = config.plugins.filter((entry) => entry.id !== 'ui-web');
   config.plugins.find((entry) => entry.id === 'identity')!.config = {
     supabaseUrl: 'https://sessions.example.test',
     mode: 'hs256',
@@ -194,6 +195,11 @@ async function reviewFlow(t: TestContext, postgres = false) {
   assert.ok(catalog.includes('task.list'));
   for (const name of ['actor.create', 'task.create', 'workflow.begin'])
     assert.ok(!catalog.includes(name), name);
+  // A worker's page reads nest other reads inside one snapshot; they answer, unrecorded.
+  const shell = await f.call<{ project: { id: string } }>(worker, 'ui.shell', {});
+  assert.equal(shell.project.id, f.project.id);
+  const home = await f.call<{ tasks: unknown[] | null }>(worker, 'ui.home', {});
+  assert.ok(Array.isArray(home.tasks) && home.tasks.length >= 1);
   const artifact = await f.call<Artifact>(worker, 'artifact.create', {
     title: 'Worker result',
     content: 'The evidence records an independently verifiable result: 7 × 6 = 42.',
