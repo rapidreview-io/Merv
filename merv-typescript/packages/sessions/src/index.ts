@@ -498,7 +498,13 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         source: session.source,
       },
     });
-    // Exact program cleanup is replayed durably after this commit, including if its provider is unloaded.
+    // The program releases the lease now while it is loaded, so the record is free the moment
+    // the halt answers; the durable event replays the same cleanup if the provider was away.
+    try {
+      await this.workflows.releaseLease(session.lease, { reason }, tx);
+    } catch (error) {
+      if (!(error instanceof MervError)) throw error;
+    }
     return session;
   }
   private async reconcile(session: Session, tx: Transaction): Promise<MervError | undefined> {
