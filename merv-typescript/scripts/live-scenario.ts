@@ -349,15 +349,19 @@ export function parseBrief(markdown: string): Brief {
       );
       const { trajectory, reviewRounds } = deriveTrajectory(kind, expectedRounds(body));
       const needsNetwork = /path B\/C|network on|needs \*\*network|\bnetwork\b/i.test(body);
+      const git = /\*\*`?workspace`?:?\*\*:?\s*`?git`?/i.test(body);
       const common = {
         kind,
         name: key,
         dependsOn,
-        ...(/\*\*`?workspace`?:?\*\*:?\s*`?git`?/i.test(body) ? { workspace: 'git' as const } : {}),
+        ...(git ? { workspace: 'git' as const } : {}),
         testedClaims,
         trajectory,
         reviewRounds,
-        networkStages: kind === 'experiment' ? ['running'] : needsNetwork ? ['in_progress'] : [],
+        // A Git experiment runs on the runner, which holds the repository checkout and
+        // executes its commits; the harness's own launcher has neither.
+        networkStages:
+          kind === 'experiment' ? (git ? [] : ['running']) : needsNetwork ? ['in_progress'] : [],
         defects: plantedDefects(body),
       };
       if (kind === 'task') {
