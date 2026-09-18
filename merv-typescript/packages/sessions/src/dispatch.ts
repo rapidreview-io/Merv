@@ -124,7 +124,8 @@ interface DispatchRow {
 interface Hooks {
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
-  close(session: Session, reason: string, tx: Transaction): Promise<Session>;
+  /** Close a live session; false when its record had already moved and the reconcile closed it. */
+  close(session: Session, reason: string, tx: Transaction): Promise<boolean>;
   /** Read inside the status transaction, so agents and leases are one snapshot. */
   agents(caller: Caller, tx: Transaction): Promise<AgentSummary[]>;
 }
@@ -273,7 +274,7 @@ export class SessionDispatch {
       for (const row of rows) {
         const session: Session = JSON.parse(row.session_json);
         if (session.status !== 'offered' && session.status !== 'active') continue;
-        await this.hooks.close(session, input.reason ?? 'operator_halt', tx);
+        if (!(await this.hooks.close(session, input.reason ?? 'operator_halt', tx))) continue;
         halted++;
         await recorded(this.state, tx, caller, 'session.halted', session.id, {
           sessionId: session.id,

@@ -221,8 +221,13 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           {
             prepare: async (caller) => await this.prepareControl(caller),
             offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx),
-            close: async (session, reason, tx) =>
-              await this.closeSession(session, reason, tx, 'released', 'halted'),
+            close: async (session, reason, tx) => {
+              // A session whose record already moved is closed by what moved it, not by the halt.
+              const closed = await this.reconcile(session, tx);
+              if (closed) return false;
+              await this.closeSession(session, reason, tx, 'released', 'halted');
+              return true;
+            },
             agents: async (caller, tx) => await this.agentSummaries(caller, tx),
           },
           this.clock,
@@ -534,7 +539,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           if (!(error instanceof MervError) || error.code !== 'read_only_scope') throw error;
         }
       };
-      if (moved?.actor_id !== session.actorId) {
+      if (failure.code !== 'session_completed' && moved?.actor_id !== session.actorId) {
         await close(failure.code, tx);
         return failure;
       }

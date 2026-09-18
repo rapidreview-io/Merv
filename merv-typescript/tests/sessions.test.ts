@@ -543,9 +543,10 @@ test('one invocation may finish its own handoff transaction, while later calls a
     code: 'session_invocation',
   });
   // The record moved by the worker's own hand: the session ends as a completed handoff,
-  // and a retry of the lost handoff answer is told so rather than sent to refresh.
+  // whichever path meets it first; a halt that finds it so halts nothing.
+  assert.equal((await f.sessions.halt(f.owner, { sessionId: session.id })).halted, 0);
   await assert.rejects(async () => await f.sessions.authenticate(token), {
-    code: 'session_completed',
+    code: 'session_closed',
   });
   const done = await f.sessions.get(f.source, session.id);
   assert.equal(done.status, 'released');

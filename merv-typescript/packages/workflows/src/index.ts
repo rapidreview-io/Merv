@@ -921,12 +921,29 @@ export class WorkflowsService implements Workflows {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const snapshot = await this.readSnapshot(tx, caller.projectId, target.instanceId);
-      check(
-        snapshot.revision === target.expectedRevision,
-        'revision_conflict',
-        'Workflow changed; refresh execution metadata before dispatch',
-        409,
-      );
+      if (snapshot.revision !== target.expectedRevision) {
+        // The record moved by this caller's own hand: its handoff landed, and a second copy of
+        // the same call has nothing left to do.
+        const moved = caller.session
+          ? await tx.get<{ actor_id: string }>(
+              'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
+              target.instanceId,
+              target.expectedRevision + 1,
+            )
+          : undefined;
+        check(
+          moved?.actor_id !== caller.actorId,
+          'session_completed',
+          'Your handoff already moved this record; this session has ended',
+          409,
+        );
+        check(
+          false,
+          'revision_conflict',
+          'Workflow changed; refresh execution metadata before dispatch',
+          409,
+        );
+      }
       const registration = this.definition(snapshot.workflow, snapshot.version);
       check(
         !registration.definition.terminal.includes(snapshot.state),
