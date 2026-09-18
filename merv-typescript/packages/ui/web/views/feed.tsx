@@ -98,7 +98,6 @@ const SAID: Record<string, (event: Event, agent?: string) => { subject?: string;
     subject: event.subjectId,
     said: `is now ${words(text(event.data.to) ?? 'changed')}`,
   }),
-  'agent.registered': (_event, agent) => ({ said: `${agent ?? 'An agent'} joined the project` }),
   'session.offered': (event, agent) => ({
     subject: text(event.data.instanceId),
     said: `went to ${agent ?? 'an agent'}`,
