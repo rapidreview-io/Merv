@@ -119,22 +119,10 @@ function SignIn({
     setBusy(true);
     setError(undefined);
     setAuthMode('local');
+    // Storing the credential is the sign-in: the app checks it and reports the outcome.
     setToken(token);
-    try {
-      await accountRequest<Account>('/account');
-      setValue('');
-      onSignedIn();
-    } catch (error) {
-      // The credential was not accepted: say so, and keep it in the field for correction.
-      setToken(null);
-      setError(
-        error instanceof ApiError && error.status === 401
-          ? 'That credential was not accepted.'
-          : message(error),
-      );
-    } finally {
-      setBusy(false);
-    }
+    setValue('');
+    onSignedIn();
   };
   return (
     <main className="signin">
@@ -336,6 +324,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     | (AccountSession & { error?: string })
   >(hasToken() ? { phase: 'checking' } : { phase: 'anonymous' });
   const [attempt, setAttempt] = useState(0);
+  const phase = useRef(state.phase);
+  phase.current = state.phase;
   const epoch = useScopeVersion();
   const accountVersion = useRef(identityVersion());
   const reload = () => setAttempt((n) => n + 1);
@@ -373,13 +363,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () =>
       onAccessLost((error) => {
         if (error.status === 401) {
-          // A refused credential on the sign-in form is that form's own message.
+          // A credential being checked reports its own refusal; a session that had one ended.
+          if (phase.current === 'anonymous' || phase.current === 'checking') return;
           setAuthMode('local');
-          setState((old) =>
-            old.phase === 'anonymous'
-              ? old
-              : { phase: 'anonymous', error: 'Your session ended. Sign in again.' },
-          );
+          setState({ phase: 'anonymous', error: 'Your session ended. Sign in again.' });
         } else {
           setProject(null);
           setAttempt((n) => n + 1);
@@ -406,7 +393,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             ['scope_changed', 'membership_required'].includes(error.code))
         )
           return;
-        setState({ phase: 'anonymous', error: message(error) });
+        // The message first: dropping the credential changes the scope, and the run that
+        // change starts keeps an anonymous state as it finds it.
+        setState({
+          phase: 'anonymous',
+          error:
+            error instanceof ApiError && error.status === 401
+              ? 'That credential was not accepted.'
+              : message(error),
+        });
+        setToken(null);
       });
     return () => {
       cancelled = true;
@@ -426,10 +422,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         client={auth?.client}
         configuration={auth?.configuration}
         initialError={state.error}
-        onSignedIn={() => {
-          navigate('/', { replace: true });
-          reload();
-        }}
+        // Storing a credential changes the scope, and that alone starts the check.
+        onSignedIn={() => navigate('/', { replace: true })}
       />
     );
   const choose = (id: string) => {
