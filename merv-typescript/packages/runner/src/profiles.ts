@@ -356,7 +356,8 @@ function claudeArgs(
   return [
     '--print',
     '--output-format',
-    'json',
+    'stream-json',
+    '--verbose',
     '--no-session-persistence',
     '--setting-sources',
     '',

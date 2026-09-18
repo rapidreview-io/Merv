@@ -883,6 +883,13 @@ async function main(options: Options) {
     const TERMINAL = new Set(['done', 'complete', 'failed', 'abandoned', 'cancelled']);
     let divergenceLogged = false;
     const held = new Map<string, number>();
+    // SIGUSR1 drains the run: nothing more is launched or dispatched, the workers that
+    // are running finish their handoff, and the process exits so a restart loses nothing.
+    let draining = false;
+    process.once('SIGUSR1', () => {
+      draining = true;
+      log({ draining: true });
+    });
     let dispatch: boolean | undefined;
     const setDispatch = async (enabled: boolean) => {
       if (dispatch === enabled) return;
@@ -979,9 +986,10 @@ async function main(options: Options) {
         const record = recordRevision.get(entry.brief.name);
         return record === undefined || leased.has(`${entry.id}:${record}`);
       });
-      await setDispatch(blocking.length === 0);
+      await setDispatch(!draining && blocking.length === 0);
 
       for (const entry of blocking) {
+        if (draining) break;
         const state = entry.states.at(-1)!;
         if (pauses.get(entry.brief.name)!.get(state) !== 'harness') continue;
         // The producing round: how many times the record has entered this state, read
@@ -1023,6 +1031,7 @@ async function main(options: Options) {
 
       if ([...observed.values()].every((entry) => entry.finished)) break;
       const snapshot = runner.snapshot();
+      if (draining && !snapshot.launches.some((item) => item.status === 'running')) break;
       const line = JSON.stringify({
         runner: snapshot.state,
         error: snapshot.lastError,
@@ -1039,7 +1048,7 @@ async function main(options: Options) {
     await setDispatch(false);
 
     // ---- Feed: the brief's entries, posted by the source credential. ----
-    if (!divergence)
+    if (!divergence && !draining)
       for (const [index, post] of brief.feed.entries()) {
         if (post.after && !observed.get(post.after.split(':')[0])?.finished) continue;
         const created = await call('feed.post', {
@@ -1153,7 +1162,8 @@ async function main(options: Options) {
       const claudeArgs = [
         '--print',
         '--output-format',
-        'json',
+        'stream-json',
+        '--verbose',
         '--no-session-persistence',
         '--setting-sources',
         '',
