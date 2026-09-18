@@ -16,7 +16,6 @@ import {
   identityVersion,
   onAccessLost,
   resolveAccountSession,
-  scopeVersion,
   setProject,
   setToken,
   useScopeVersion,
@@ -121,16 +120,18 @@ function SignIn({
     setError(undefined);
     setAuthMode('local');
     setToken(token);
-    const epoch = scopeVersion();
     try {
       await accountRequest<Account>('/account');
       setValue('');
       onSignedIn();
     } catch (error) {
-      if (scopeVersion() === epoch) {
-        setToken(null);
-        setError(message(error));
-      }
+      // The credential was not accepted: say so, and keep it in the field for correction.
+      setToken(null);
+      setError(
+        error instanceof ApiError && error.status === 401
+          ? 'That credential was not accepted.'
+          : message(error),
+      );
     } finally {
       setBusy(false);
     }
@@ -372,8 +373,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () =>
       onAccessLost((error) => {
         if (error.status === 401) {
+          // A refused credential on the sign-in form is that form's own message.
           setAuthMode('local');
-          setState({ phase: 'anonymous', error: 'Your session ended. Sign in again.' });
+          setState((old) =>
+            old.phase === 'anonymous'
+              ? old
+              : { phase: 'anonymous', error: 'Your session ended. Sign in again.' },
+          );
         } else {
           setProject(null);
           setAttempt((n) => n + 1);
