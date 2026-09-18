@@ -700,6 +700,40 @@ export class ExperimentService implements Experiments {
     }
     return { evidence, figureIds, exhibit };
   }
+  /** A Git result is submitted from the attached running worker whose final capture is pending. */
+  private async finalCaptureRef(
+    caller: Caller,
+    experiment: Experiment,
+    stage: 'design' | 'results',
+    tx: Transaction,
+  ): Promise<CodeCaptureRef | undefined> {
+    if (stage !== 'results' || experiment.workspace !== 'git') return undefined;
+    check(
+      caller.session,
+      'session_required',
+      'Git result submission requires its actual worker session',
+      403,
+    );
+    check(this.code, 'code_unavailable', 'Code captures are unavailable', 503);
+    const ref: CodeCaptureRef = { kind: 'session-final', sessionId: caller.session.id };
+    const capture = await this.code.capture(caller, ref, tx),
+      p = capture.provenance;
+    check(
+      capture.status === 'pending' &&
+        p.hostRef &&
+        p.projectId === experiment.projectId &&
+        p.instanceId === experiment.id &&
+        p.revision === experiment.workflow.revision &&
+        p.actorId === caller.actorId &&
+        p.workflow.state === 'running' &&
+        programWorkspace(p.workflow.version) === 'git' &&
+        !p.readOnly,
+      'experiment_capture_provenance',
+      'Submit from the exact attached running Git worker before final capture',
+      409,
+    );
+    return ref;
+  }
   private async submit(
     caller: Caller,
     experiment: Experiment,
@@ -713,33 +747,7 @@ export class ExperimentService implements Experiments {
       stage,
       tx,
     );
-    let codeCaptureRef: CodeCaptureRef | undefined;
-    if (stage === 'results' && experiment.workspace === 'git') {
-      check(
-        caller.session,
-        'session_required',
-        'Git result submission requires its actual worker session',
-        403,
-      );
-      check(this.code, 'code_unavailable', 'Code captures are unavailable', 503);
-      codeCaptureRef = { kind: 'session-final', sessionId: caller.session.id };
-      const capture = await this.code.capture(caller, codeCaptureRef, tx),
-        p = capture.provenance;
-      check(
-        capture.status === 'pending' &&
-          p.hostRef &&
-          p.projectId === experiment.projectId &&
-          p.instanceId === experiment.id &&
-          p.revision === experiment.workflow.revision &&
-          p.actorId === caller.actorId &&
-          p.workflow.state === 'running' &&
-          programWorkspace(p.workflow.version) === 'git' &&
-          !p.readOnly,
-        'experiment_capture_provenance',
-        'Submit from the exact attached running Git worker before final capture',
-        409,
-      );
-    }
+    const codeCaptureRef = await this.finalCaptureRef(caller, experiment, stage, tx);
     if (exhibit?.willPin) {
       const artifact = await this.artifacts.create(
         caller,
@@ -1195,6 +1203,7 @@ export class ExperimentService implements Experiments {
         await this.workflows.checkDependencies(caller, experiment.id, tx);
         if (typeof context.input?.paperChangesArtifactId === 'string')
           await this.paper.validate(caller, context.input.paperChangesArtifactId, tx);
+        if (caller.session) await this.finalCaptureRef(caller, experiment, 'results', tx);
       }
       await this.prepareSubmission(
         caller,

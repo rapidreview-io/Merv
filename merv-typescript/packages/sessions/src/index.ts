@@ -545,7 +545,11 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       };
       if (!handoff) {
         await close(failure.code, tx);
-        return failure;
+        // Time says expired; a record moved by another hand says the session ended, so a
+        // worker is not sent to refresh and retry into a closed session.
+        return failure.code === 'revision_conflict'
+          ? new MervError('session_closed', `This session has ended: ${failure.message}`, 401)
+          : failure;
       }
       await close('handoff', tx, 'released', 'completed');
       return new MervError(
@@ -1265,9 +1269,15 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     );
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      // A session whose handoff already landed is recorded as that, whoever releases it.
+      // A session whose handoff already landed is recorded as that, whoever releases it; a
+      // completed outcome is what the handoff proves, never what a release claims.
       if (live(session) && (await this.handedOff(session, tx)))
         return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      check(
+        input.outcome !== 'completed',
+        'invalid_outcome',
+        'A completed outcome is recorded by the worker’s own handoff, not by a release',
+      );
       return await this.closeSession(
         session,
         input.reason ?? 'released',

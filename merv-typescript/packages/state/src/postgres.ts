@@ -173,15 +173,20 @@ END $merv$;`);
       throw databaseError(error);
     }
     let discard = false;
-    const query = async (sql: string, params: SqlValue[] = []): Promise<QueryResult> => {
-      try {
-        return await client.query(
-          postgresParameters(sql, params.length),
-          params.map((value) => (value instanceof Uint8Array ? Buffer.from(value) : value)),
-        );
-      } catch (error) {
+    // Sibling reads of one snapshot arrive together; one connection runs them in turn.
+    let tail: Promise<unknown> = Promise.resolve();
+    const query = (sql: string, params: SqlValue[] = []): Promise<QueryResult> => {
+      const next = tail.then(
+        async () =>
+          await client.query(
+            postgresParameters(sql, params.length),
+            params.map((value) => (value instanceof Uint8Array ? Buffer.from(value) : value)),
+          ),
+      );
+      tail = next.catch(() => undefined);
+      return next.catch((error) => {
         throw databaseError(error);
-      }
+      });
     };
     try {
       try {

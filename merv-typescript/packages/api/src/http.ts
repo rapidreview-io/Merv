@@ -294,7 +294,7 @@ function projectSelection(...selections: unknown[]): string | undefined {
 function pathSegment(value: string): string {
   try {
     const decoded = decodeURIComponent(value);
-    if (!decoded.trim() || decoded.includes('/')) throw new Error();
+    if (!decoded.trim() || decoded.includes('/') || decoded.includes('\0')) throw new Error();
     return decoded;
   } catch {
     throw new ApiError('invalid_input', 'Malformed resource identifier');

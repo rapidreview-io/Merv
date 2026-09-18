@@ -770,6 +770,8 @@ export class ReflectionService implements Reflections {
           instanceId: context.snapshot.id,
           revision: context.snapshot.revision,
           actorId: context.caller.actorId,
+          // Who directed this worker: no more independent of its lens than the worker is.
+          sourceId: context.source.actorId,
           reviewId: review?.id ?? null,
           claimId: review?.claimId ?? null,
         };
@@ -1136,11 +1138,20 @@ export class ReflectionService implements Reflections {
               ]),
             ],
             pinnedInputIds,
-            // Lens authors, the owner and the authority that directed a worker's synthesis
-            // are none of them independent of it.
+            // Lens authors, whoever directed a lens worker, the owner and the authority that
+            // directed a worker's synthesis are none of them independent of it.
             excludedActorIds: [
               ...new Set([
                 ...lenses.map((lens) => lens.producer_id!),
+                ...(
+                  await tx.all<{ receipt: string }>(
+                    `SELECT receipt FROM reflection_leases WHERE project_id=? AND instance_id IN (${lenses.map(() => '?').join(',')})`,
+                    caller.projectId,
+                    ...lenses.map((lens) => lens.id),
+                  )
+                )
+                  .map((row) => (JSON.parse(row.receipt) as { sourceId?: string }).sourceId)
+                  .filter((id): id is string => typeof id === 'string'),
                 ...(caller.session
                   ? [wave.owner_id, (await this.scope.authorityActor(caller, tx)).id]
                   : []),
