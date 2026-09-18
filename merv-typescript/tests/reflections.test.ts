@@ -142,20 +142,26 @@ test('reflection uses live research, joins five independent ordinary workflows, 
     { code: 'workflow_creation_paused' },
   );
   const lensWorker = await f.actor('Independent lens', 'operator');
-  const emptySummary = await f.app.ctx.artifacts.create(lensWorker, {
-    title: 'Empty summary',
-    content: '# Summary\n\n# Evidence\nThis is evidence, not a summary.',
-  });
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.reflections.submitLens(lensWorker, {
-        lensId: wave.lenses[0]!.id,
-        artifactId: emptySummary.id,
-        expectedRevision: 0,
-        requestId: 'invalid-summary',
-      }),
-    { code: 'reflection_summary_required' },
-  );
+  // A blank Summary is refused whether or not a blank line separates it from the next heading.
+  for (const [index, content] of [
+    '# Summary\n\n# Evidence\nThis is evidence, not a summary.',
+    '# Summary\n# Evidence\nThis is evidence, not a summary.',
+  ].entries()) {
+    const emptySummary = await f.app.ctx.artifacts.create(lensWorker, {
+      title: 'Empty summary',
+      content,
+    });
+    await assert.rejects(
+      async () =>
+        await f.app.ctx.reflections.submitLens(lensWorker, {
+          lensId: wave.lenses[0]!.id,
+          artifactId: emptySummary.id,
+          expectedRevision: 0,
+          requestId: `invalid-summary-${index}`,
+        }),
+      { code: 'reflection_summary_required' },
+    );
+  }
   const artifact = await f.create(lensWorker, 'First');
   await f.app.ctx.reflections.submitLens(lensWorker, {
     lensId: wave.lenses[0]!.id,

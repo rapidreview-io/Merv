@@ -324,6 +324,8 @@ export class SessionDispatch {
     );
     input = parsed.data;
     return await this.state.transaction(async (tx) => {
+      // A runner is a durable presence that will take work: registering one is a write.
+      await this.scope.require(caller, 'write', tx);
       const owner = await this.owner(caller, tx);
       const old = await tx.get<RunnerRow>(
         'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',

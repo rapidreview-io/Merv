@@ -325,6 +325,16 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     }
     if (stage === 'researching' || stage === 'reflecting')
       this.requireCapability('reflections', checks);
+    // Only one wave reflects at a time; the cycle's own, just started, is not another.
+    if (stage === 'researching') {
+      const open = await this.use('reflections', checks, (service) => service.open(caller, tx));
+      check(
+        !open || open === record.reflectionId,
+        'reflection_open',
+        'Complete the current reflection before starting another',
+        409,
+      );
+    }
     if (stage === 'consolidating' || (stage === 'reflecting' && this.needsConsolidation(record)))
       this.requireCapability('consolidation', checks);
     await this.workflows.checkDependencies(caller, record.id, tx);
@@ -395,7 +405,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
               service.create(
                 caller,
                 {
-                  title: `${record.name}: reflection`,
+                  title: `${record.name.slice(0, 288)}: reflection`,
                   requestId: this.request(caller, input.requestId, 'reflection'),
                 },
                 tx,
@@ -444,7 +454,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
                     reflection.experimentIds ??
                     reflection.corpus?.selection.experiments.map((e) => e.id) ??
                     [],
-                  name: `${record.name}: consolidation`,
+                  name: `${record.name.slice(0, 185)}: consolidation`,
                   workspace: record.consolidationWorkspace,
                   dependsOn: [record.reflectionId!, ...record.consolidationDependencies],
                   requestId: this.request(caller, input.requestId, 'consolidation'),

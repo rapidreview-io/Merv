@@ -198,8 +198,9 @@ export class AgentDirectory {
     await this.require(agent, tx);
     return agent;
   }
-  async require(agent: Agent, tx: Transaction): Promise<void> {
-    check(agent.status === 'active', 'agent_retired', 'Agent has been retired', 401);
+  /** The agent's own call answers 401; a controller naming a retired agent gets a conflict. */
+  async require(agent: Agent, tx: Transaction, status = 401): Promise<void> {
+    check(agent.status === 'active', 'agent_retired', 'Agent has been retired', status);
     await this.scope.requireDelegation(agent.source, 'read', tx);
   }
   async findToken(secret: string, tx: Transaction): Promise<boolean> {

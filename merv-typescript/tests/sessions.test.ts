@@ -537,6 +537,11 @@ test('one invocation may finish its own handoff transaction, while later calls a
     code: 'session_invocation',
   });
   await assert.rejects(async () => await f.sessions.authenticate(token));
+  // The record moved by the worker's own hand: the session ends as a completed handoff.
+  const done = await f.sessions.get(f.source, session.id);
+  assert.equal(done.status, 'released');
+  assert.equal(done.outcome, 'completed');
+  assert.equal(done.closeReason, 'handoff');
 
   const next = await f.offer(),
     second = await f.sessions.authenticate(next.token),

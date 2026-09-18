@@ -37,6 +37,12 @@ export const submitSchema = z
   .strict();
 export function parse<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
   const result = schema.safeParse(input);
-  check(result.success, 'invalid_consolidation_input', result.success ? '' : result.error.message);
+  check(
+    result.success,
+    'invalid_consolidation_input',
+    result.success
+      ? ''
+      : result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+  );
   return result.data;
 }

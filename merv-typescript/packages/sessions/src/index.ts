@@ -511,7 +511,19 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       return;
     } catch (error) {
       const failure = safeError(error);
-      if (failure.status < 500) await this.closeSession(session, failure.code, tx);
+      if (failure.status >= 500) return failure;
+      // The record moved by this worker's own hand: that is its handoff, not a conflict.
+      const moved =
+        failure.code === 'revision_conflict'
+          ? await tx.get<{ actor_id: string }>(
+              'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
+              session.instanceId,
+              session.expectedRevision + 1,
+            )
+          : undefined;
+      if (moved?.actor_id === session.actorId)
+        await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      else await this.closeSession(session, failure.code, tx);
       return failure;
     }
   }
@@ -622,7 +634,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           tx,
           false,
         );
-    await this.directory.require(agent, tx);
+    await this.directory.require(agent, tx, 409);
     check(
       agent.runnerId === input.runnerId,
       'agent_forbidden',
@@ -730,7 +742,11 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent> {
     await this.prepareControl(caller);
-    return await this.transaction(async (tx) => await this.directory.create(caller, input, tx));
+    return await this.transaction(async (tx) => {
+      // An agent is a new actor of the project: registering one is a write.
+      await this.scope.require(caller, 'write', tx);
+      return await this.directory.create(caller, input, tx);
+    });
   }
   private async currentAgentExecution(agent: Agent, tx: Transaction): Promise<Session | null> {
     const row = await tx.get<Row>(
@@ -1424,17 +1440,22 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       );
       // Observation storage yields too; recheck authorization before invoking the tool.
       await this.validate(invocation.caller, invocation.tool, state.input);
-      // A session's own assignment is the frozen one it was offered; any other record's
-      // assignment is read the way anyone reads it.
+      // A session has one assignment, the frozen one it was offered; another record's
+      // assignment is an admission of somebody else, so the question is refused by name.
       const own =
         invocation.tool === 'workflow.assignment'
           ? await this.transaction(async (tx) => await this.session(invocation.caller, tx))
           : undefined;
       const asked = (state.input as { instanceId?: string }).instanceId;
-      const result =
-        own && (asked === undefined || asked === own.instanceId)
-          ? (clone(own.assignment) as T)
-          : await handler(invocation.caller, clone(state.input));
+      check(
+        !own || asked === undefined || asked === own.instanceId,
+        'execution_arguments_forbidden',
+        `This session's assignment is ${own?.instanceId}; read another record with workflow.status_and_next`,
+        403,
+      );
+      const result = own
+        ? (clone(own.assignment) as T)
+        : await handler(invocation.caller, clone(state.input));
       // MCP may return a tool error without throwing. Native values have no such envelope.
       const failed =
         invocation.tool.startsWith('_') &&

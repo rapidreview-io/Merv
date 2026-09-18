@@ -1095,12 +1095,13 @@ export class ProjectScope implements Scope {
         'self_revoke',
         'Cannot revoke your own operator credential',
       );
+      // Revoking twice records nothing twice.
       const r = await tx.run(
-        'UPDATE actors SET active=0 WHERE id=? AND project_id=?',
+        'UPDATE actors SET active=0 WHERE id=? AND project_id=? AND active=1',
         actorId,
         caller.projectId,
       );
-      check(r.changes, 'not_found', 'Actor not found', 404);
+      if (!r.changes) return;
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
         actorId: caller.actorId,

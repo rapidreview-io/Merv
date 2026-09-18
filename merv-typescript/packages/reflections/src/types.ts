@@ -95,6 +95,8 @@ export interface Reflections {
   ): Promise<ReflectionLens>;
   submit(caller: Caller, input: ReflectionSubmit, tx?: Transaction): Promise<Reflection>;
   approved(caller: Caller, id: string, tx?: Transaction): Promise<ApprovedReflection>;
+  /** The wave still open in the project, if any: only one reflects at a time. */
+  open(caller: Caller, tx: Transaction): Promise<string | undefined>;
   close(): void;
 }
 declare module 'cordis' {

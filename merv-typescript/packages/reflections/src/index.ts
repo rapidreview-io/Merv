@@ -357,10 +357,7 @@ export class ReflectionService implements Reflections {
       check(!caller.session, 'forbidden', 'Create waves outside an assigned worker', 403);
       return await this.command(caller, 'create', input, tx, async () => {
         check(
-          !(await tx.get(
-            'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
-            caller.projectId,
-          )),
+          !(await this.open(caller, tx)),
           'reflection_open',
           'Complete the current reflection before starting another',
           409,
@@ -1038,7 +1035,7 @@ export class ReflectionService implements Reflections {
         const text = (await this.artifacts.read(caller, artifact.id)).content;
         check(
           Boolean(
-            /(?:^|\n)#{1,6}[ \t]+Summary[ \t]*\r?\n([\s\S]*?)(?=\n#{1,6}[ \t]|\s*$)/i
+            /(?:^|\n)#{1,6}[ \t]+Summary[ \t]*\r?\n([\s\S]*?)(?=(?<=\n)#{1,6}[ \t]|\n#{1,6}[ \t]|\s*$)/i
               .exec(text)?.[1]
               ?.trim(),
           ),
@@ -1098,13 +1095,14 @@ export class ReflectionService implements Reflections {
       return await this.command(caller, 'submit', input, tx, async () => {
         const wave = await this.row(caller, input.reflectionId, tx);
         const snapshot = await this.workflows.get(caller, wave.id, tx);
-        await this.admit({ caller, snapshot, tx });
+        // A wave that moved on answers with the conflict, not with the next state's rules.
         check(
           snapshot.revision === input.expectedRevision,
           'revision_conflict',
           'Reflection changed; refresh its assignment',
           409,
         );
+        await this.admit({ caller, snapshot, tx });
         check(
           input.reportArtifactId !== input.changeSpecArtifactId,
           'distinct_evidence_required',
@@ -1242,8 +1240,8 @@ export class ReflectionService implements Reflections {
       await this.reviews.submit(caller, input, tx);
       if (route === 'approved') {
         const submission = JSON.parse(wave.submission!) as Submission;
-        if (submission.paperProposal)
-          await this.paper.accept(
+        if (submission.paperProposal) {
+          const publications = await this.paper.accept(
             caller,
             {
               proposalId: submission.paperProposal.id,
@@ -1252,6 +1250,18 @@ export class ReflectionService implements Reflections {
             },
             tx,
           );
+          // The wave's copy of its proposal carries the acceptance the paper now records.
+          submission.paperProposal.acceptance = {
+            reviewId: review.id,
+            reviewerId: caller.actorId,
+            publications,
+          };
+          await tx.run(
+            'UPDATE reflections SET submission=? WHERE id=?',
+            JSON.stringify(submission),
+            wave.id,
+          );
+        }
         const approved: ApprovedReflection = {
           id: wave.id,
           projectId: wave.project_id,
@@ -1301,6 +1311,14 @@ export class ReflectionService implements Reflections {
       );
       return await this.get(caller, wave.id, tx);
     });
+  }
+  async open(caller: Caller, tx: Transaction): Promise<string | undefined> {
+    return (
+      await tx.get<{ id: string }>(
+        'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
+        caller.projectId,
+      )
+    )?.id;
   }
   async approved(
     caller: Caller,
