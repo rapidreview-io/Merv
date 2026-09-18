@@ -303,3 +303,36 @@ test(
     await closing;
   },
 );
+
+test(
+  'PostgreSQL snapshot scopes run sibling reads side by side, each in its own transaction context',
+  postgres,
+  async (t) => {
+    const { state } = await fixture(t);
+    await state.transaction(async (tx) => await state.appendEvent(tx, event));
+    // A page's parts are independent read-only tools sharing one snapshot: none of them may
+    // see another's transaction as its own nesting, and each may assert its own handle.
+    const heads = await state.snapshot(async () =>
+      Promise.all(
+        Array.from({ length: 6 }, async () =>
+          state.transaction(async (tx) => {
+            state.assertTransaction(tx);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            return (await state.events(event.projectId)).length;
+          }),
+        ),
+      ),
+    );
+    assert.deepEqual(heads, [1, 1, 1, 1, 1, 1]);
+    await assert.rejects(
+      state.snapshot(() =>
+        state.transaction((tx) => state.transaction(async () => tx.transactionId)),
+      ),
+      { code: 'nested_transaction' },
+    );
+    await assert.rejects(
+      state.snapshot(() => state.transaction(async (tx) => await state.appendEvent(tx, event))),
+      { code: 'read_only_scope' },
+    );
+  },
+);

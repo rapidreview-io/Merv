@@ -136,7 +136,9 @@ export abstract class StateStore implements State {
     );
     if (current?.readOnly) {
       // Every read-only tool runs in a snapshot scope, so the reads behind a page never
-      // wait on the writer lock; a write attempted there is a bug and is refused.
+      // wait on the writer lock; a write attempted there is a bug and is refused. Sibling
+      // reads of one page run side by side on the snapshot, each in its own async context,
+      // so one part's read is never another part's nested transaction.
       check(
         current.live && !this.closed,
         'transaction_closed',
@@ -150,12 +152,8 @@ export abstract class StateStore implements State {
         },
         transactionId: Symbol('read'),
       };
-      current.transaction = tx;
-      try {
-        return await fn(tx);
-      } finally {
-        current.transaction = undefined;
-      }
+      const own = Object.create(current, { transaction: { value: tx } }) as Context;
+      return await this.context.run(own, () => fn(tx));
     }
     if (current) {
       check(
