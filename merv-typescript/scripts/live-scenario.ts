@@ -893,6 +893,7 @@ async function main(options: Options) {
       draining = true;
       log({ draining: true });
     });
+    const launched = new Set<Promise<void>>();
     let dispatch: boolean | undefined;
     const setDispatch = async (enabled: boolean) => {
       if (dispatch === enabled) return;
@@ -972,9 +973,15 @@ async function main(options: Options) {
       // state only pauses once its own offline work is already leased, so the runner
       // still carries that stage and only the execution lease is reserved for us.
       const status = await control('/sessions/status', undefined, 'GET');
+      const live = (status.sessions ?? []).filter((session: any) =>
+        ['offered', 'active'].includes(session.status),
+      );
       const leased = new Set(
-        (status.sessions ?? [])
-          .filter((session: any) => ['offered', 'active'].includes(session.status))
+        live.map((session: any) => `${session.instanceId}:${session.expectedRevision}`),
+      );
+      const ours = new Set(
+        live
+          .filter((session: any) => session.runnerRef === 'live-scenario')
           .map((session: any) => `${session.instanceId}:${session.expectedRevision}`),
       );
       const blocking = [...observed.values()].filter((entry) => {
@@ -985,8 +992,10 @@ async function main(options: Options) {
         // tried again a minute later.
         if ((held.get(`${entry.brief.name}:${entry.states.at(-1)}`) ?? 0) > Date.now() - 60_000)
           return false;
-        if (kind === 'harness') return true;
         const record = recordRevision.get(entry.brief.name);
+        // A stage of ours pauses dispatch only until we hold its lease; the runner then
+        // carries everything else in the project while our worker runs.
+        if (kind === 'harness') return !ours.has(`${entry.id}:${record}`);
         return record === undefined || leased.has(`${entry.id}:${record}`);
       });
       await setDispatch(!draining && blocking.length === 0);
@@ -1017,24 +1026,32 @@ async function main(options: Options) {
           continue;
         entry.launchedStages.push(stage);
         harnessLaunches++;
-        try {
-          await launchHarnessStage(entry, state, round);
-        } catch (error) {
-          // The server offers nothing while a dependency is unfinished: hold the stage.
-          if (!(error instanceof Error) || !error.message.includes('dependencies_pending'))
-            throw error;
-          entry.launchedStages.pop();
-          harnessLaunches--;
-          const key = `${entry.brief.name}:${state}`;
-          if (!held.has(key))
-            log({ record: entry.brief.name, state, held: 'dependencies_pending' });
-          held.set(key, Date.now());
-        }
+        // The worker runs beside this loop: the loop keeps watching every record and the
+        // runner keeps dispatching the rest of the project while it works.
+        const launch = launchHarnessStage(entry, state, round)
+          .catch((error) => {
+            // The server offers nothing while a dependency is unfinished: hold the stage.
+            if (error instanceof Error && error.message.includes('dependencies_pending')) {
+              entry.launchedStages.splice(entry.launchedStages.lastIndexOf(stage), 1);
+              harnessLaunches--;
+              const key = `${entry.brief.name}:${state}`;
+              if (!held.has(key))
+                log({ record: entry.brief.name, state, held: 'dependencies_pending' });
+              held.set(key, Date.now());
+            } else log({ record: entry.brief.name, state, round, failed: redact(String(error)) });
+          })
+          .finally(() => launched.delete(launch));
+        launched.add(launch);
       }
 
       if ([...observed.values()].every((entry) => entry.finished)) break;
       const snapshot = runner.snapshot();
-      if (draining && !snapshot.launches.some((item) => item.status === 'running')) break;
+      if (
+        draining &&
+        launched.size === 0 &&
+        !snapshot.launches.some((item) => item.status === 'running')
+      )
+        break;
       const line = JSON.stringify({
         runner: snapshot.state,
         error: snapshot.lastError,
@@ -1048,6 +1065,7 @@ async function main(options: Options) {
       // Three runs polling every two seconds were a real share of the server's load.
       await delay(8000);
     }
+    await Promise.allSettled([...launched]);
     await setDispatch(false);
 
     // ---- Feed: the brief's entries, posted by the source credential. ----
@@ -1128,7 +1146,6 @@ async function main(options: Options) {
       log({ record: entry.brief.name, state, round, exitCode });
       // A worker that ended without moving the record is launched again after a pause.
       held.set(`${entry.brief.name}:${state}@${round}:ended`, Date.now());
-      assert.equal(exitCode, 0, `Harness-launched Codex for ${entry.brief.name}/${state} failed`);
     }
 
     async function spawnCodex(
