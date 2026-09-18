@@ -541,25 +541,25 @@
       "type": "experiment.design",
       "version": 5,
       "hash": "e8704ebfcc3aa27b9a02305bce49f915cfd2d918d7f21ec4d06e0e5f34cb72d7",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design_review",
       "version": 5,
       "hash": "310068031ba37032535ed186f01775b1ac28d7a71e42cb470a5b77797495f8b9",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.execute",
       "version": 5,
       "hash": "58c56c4e9091c298a4455c191c3d9664f54fe55d6dd225032032920cb73c4742",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 5,
       "hash": "b3f5f38b860c8c41129b38b57c01a99c6149b3a3aff520e74398ce00fd3f860d",
-      "published": false
+      "published": true
     }
   ]
 }
