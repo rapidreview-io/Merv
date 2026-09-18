@@ -538,7 +538,20 @@ export class GitWorkspaceManager {
         '--porcelain',
         '--untracked-files=all',
       ]);
-      if (row.read_only && status.trim()) throw new WorkspaceError('workspace_readonly_dirty');
+      // A reviewer may compute in a checkout that is about to be removed: its untracked
+      // scratch goes with it, and nothing later reuses the path. What a read-only lease may
+      // never do is change the thing it is judging, which the HEAD check and the tracked-file
+      // lines below still refuse. A retained checkout keeps the strict rule, because the next
+      // launch inherits whatever is left behind.
+      if (row.read_only) {
+        const dirty = policy.retain
+          ? status.trim()
+          : status
+              .split('\n')
+              .filter((line) => line.trim() && !line.startsWith('??'))
+              .join('\n');
+        if (dirty) throw new WorkspaceError('workspace_readonly_dirty');
+      }
       if (!row.read_only) {
         if (status.trim()) {
           const changed = await this.checkoutGit(row, [

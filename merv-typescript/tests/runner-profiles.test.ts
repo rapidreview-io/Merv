@@ -4,6 +4,7 @@ import { inspect } from 'node:util';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import {
   buildLaunch,
@@ -38,7 +39,7 @@ const command: RunnerProfile = {
   enabled: true,
   parallelism: 1,
 };
-function request(readOnly = false): LaunchRequest {
+function request(readOnly = false, workspace?: WorkflowWorkspacePolicy): LaunchRequest {
   const target = {
     instanceId: 'instance_fixture',
     projectId: 'project_fixture',
@@ -91,6 +92,7 @@ function request(readOnly = false): LaunchRequest {
       references: {},
       policy: {
         readOnly,
+        ...(workspace ? { workspace } : {}),
         tools: [
           { name: 'task.get', alternatives: [{}] },
           { name: 'task.checkpoint', alternatives: [{}] },
@@ -306,10 +308,26 @@ test('Codex disables exact repository SKILL.md paths using literal config withou
 });
 
 test('read-only Codex still receives explicitly authorized protocol writes, while command refuses the lease', () => {
+  // readOnly is about the record. A reviewer on scratch space may run what it is judging.
   const spec = buildLaunch(codex, request(true), safeEnv);
-  assert.equal(spec.args[spec.args.indexOf('--sandbox') + 1], 'read-only');
+  assert.equal(spec.args[spec.args.indexOf('--sandbox') + 1], 'workspace-write');
+  assert.match(spec.stdin, /workspace is yours to compute in/);
   assert.match(config(spec.args).mcp_servers, /task.checkpoint/);
-  assert.match(spec.stdin, /filesystem is read-only/);
+  // A checkout the next launch inherits is the thing under review and stays sealed.
+  const retained = buildLaunch(
+    codex,
+    request(true, {
+      mode: 'persistent',
+      namespace: 'consolidations',
+      base: 'central',
+      perBase: true,
+      retain: true,
+      advancesCentral: false,
+    }),
+    safeEnv,
+  );
+  assert.equal(retained.args[retained.args.indexOf('--sandbox') + 1], 'read-only');
+  assert.match(retained.stdin, /filesystem is read-only/);
   assert.throws(() => buildLaunch(command, request(true), safeEnv), {
     code: 'unsupported_read_only',
   });
@@ -332,10 +350,43 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
     request(true),
     safeEnv,
   );
-  assert.equal(reviewer.args[reviewer.args.indexOf('--tools') + 1], 'Read,Glob,Grep');
+  assert.equal(
+    reviewer.args[reviewer.args.indexOf('--tools') + 1],
+    'Read,Glob,Grep,Bash,Write,Edit',
+  );
+  // The verdict is still the only thing this lease writes to Merv: no further server rides
+  // along, and the Merv manifest is the read-only one the policy published.
   assert.equal(
     reviewer.args[reviewer.args.indexOf('--allowedTools') + 1],
-    'Read,Glob,Grep,mcp__merv',
+    'Read,Glob,Grep,Bash,Write,Edit,mcp__merv',
+  );
+  const codeReviewer = buildLaunch(
+    claude,
+    request(true, {
+      mode: 'persistent',
+      namespace: 'consolidations',
+      base: 'central',
+      perBase: true,
+      retain: true,
+      advancesCentral: false,
+    }),
+    safeEnv,
+  );
+  assert.equal(codeReviewer.args[codeReviewer.args.indexOf('--tools') + 1], 'Read,Glob,Grep');
+  // A checkout that is thrown away afterwards is free to compute in.
+  const ephemeral = buildLaunch(
+    claude,
+    request(true, {
+      mode: 'ephemeral',
+      namespace: 'consolidation-reviews',
+      base: 'reference:code',
+      retain: false,
+    }),
+    safeEnv,
+  );
+  assert.equal(
+    ephemeral.args[ephemeral.args.indexOf('--tools') + 1],
+    'Read,Glob,Grep,Bash,Write,Edit',
   );
   assert.equal(reviewer.args[reviewer.args.indexOf('--model') + 1], 'claude-opus-5');
   assert.equal(reviewer.args[reviewer.args.indexOf('--effort') + 1], 'high');

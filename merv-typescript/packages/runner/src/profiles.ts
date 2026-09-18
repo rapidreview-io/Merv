@@ -2,7 +2,7 @@ import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import { check, MervError } from '@merv/contracts';
+import { check, effectiveWorkspace, MervError } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import type { RunnerProfile } from './types.js';
 export type { RunnerProfile } from './types.js';
@@ -250,7 +250,7 @@ function codexArgs(
     '--ephemeral',
     '--skip-git-repo-check',
     '--sandbox',
-    request.session.execution.policy.readOnly ? 'read-only' : 'workspace-write',
+    sealed(request.session) ? 'read-only' : 'workspace-write',
     '--json',
     '--color',
     'never',
@@ -349,7 +349,7 @@ function claudeArgs(
   url: string,
 ): string[] {
   const readOnly = request.session.execution.policy.readOnly;
-  const builtIn = readOnly
+  const builtIn = sealed(request.session)
     ? ['Read', 'Glob', 'Grep']
     : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'];
   const servers = readOnly ? [] : (profile.servers ?? []);
@@ -412,6 +412,18 @@ function protectLogging(spec: LaunchSpec): LaunchSpec {
   return spec;
 }
 
+/**
+ * A lease with nowhere to work. `readOnly` describes the RECORD — a reviewer writes its verdict
+ * and nothing else — and that is no reason to take the machine away: a reviewer that cannot run
+ * the script it is judging can only ever report that the script looks coherent. Scratch space
+ * and a checkout that is discarded afterwards are both free to compute in; the workspace a
+ * later launch inherits is not, because what is left behind would reach the next worker.
+ */
+const sealed = (session: LaunchRequest['session']): boolean => {
+  const workspace = effectiveWorkspace(session.execution.policy);
+  return session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain;
+};
+
 /** Pure launch preparation. The supervisor owns availability checks, spawning and teardown. */
 export function buildLaunch(
   profileInput: RunnerProfile,
@@ -471,9 +483,11 @@ export function buildLaunch(
     // then invent what the project already holds. The list binds writes; reads are open.
     'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it — the project summary and records, the other tasks and their deliveries, the experiments and their plans and results, the claims, the reviews, the feed and the living paper.',
     'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
-    session.execution.policy.readOnly
-      ? 'The local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'
-      : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
+    sealed(session)
+      ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'
+      : session.execution.policy.readOnly
+        ? 'The workspace is yours to compute in. Run what you are judging: execute the script, recompute a hash, reproduce a number, and say in your verdict what you reproduced yourself and what you took on trust. Nothing you write there is recorded; your verdict is the only thing this lease writes.'
+        : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
     ...(profile.harness === 'claude'
       ? [
           'This session ends the moment you give a final reply, and nothing wakes it later: there is no timer, no callback and no next turn. To wait for remote work, wait inside this session (a shell sleep loop that checks again), then finish the handoff before you reply.',

@@ -292,6 +292,35 @@ test('read-only work refuses dirty files, staged changes and unexpected HEAD wit
   assert.equal(readFileSync(join(handle.path, 'new.txt'), 'utf8'), 'unexpected\n');
 });
 
+test('a reviewer computes in a checkout it is about to lose, and still cannot change what it reviews', async (t) => {
+  const f = setup(t),
+    record = f.reserve('review');
+  // Not retained: the worktree is removed at release, so untracked scratch goes with it.
+  const handle = await f.manager.prepare(
+    record,
+    f.session(record.id, f.policy({ retain: false }), { readOnly: true }),
+  );
+  f.stop(record.id);
+  writeFileSync(join(handle.path, 'rerun.py'), 'print(1)\n');
+  writeFileSync(join(handle.path, 'out.json'), '{"reproduced": true}\n');
+  const captured = await f.manager.capture(record);
+  assert.equal(captured?.headOid, handle.snapshot!.headOid);
+  assert.equal(captured?.stats.commitCount, 0);
+  assert.equal(f.git(handle.path, 'rev-parse', 'HEAD'), handle.snapshot!.headOid);
+
+  const second = f.reserve('review-2');
+  const changed = await f.manager.prepare(
+    second,
+    f.session(second.id, f.policy({ retain: false }), {
+      readOnly: true,
+      instanceId: 'instance-reviewed',
+    }),
+  );
+  f.stop(second.id);
+  writeFileSync(join(changed.path, 'seed.txt'), 'edited by the reviewer\n');
+  await assert.rejects(f.manager.capture(second), /workspace_readonly_dirty/);
+});
+
 test('uncertain ownership never releases a persistent checkout and branch/commondir tampering is refused', async (t) => {
   const f = setup(t),
     record = f.reserve('uncertain');
