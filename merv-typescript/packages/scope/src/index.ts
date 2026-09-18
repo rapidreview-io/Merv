@@ -899,7 +899,8 @@ export class ProjectScope implements Scope {
   async actorCredentials(caller: Caller, actorId = caller.actorId): Promise<ActorCredential[]> {
     return await this.state.transaction(async (tx) => {
       await this.require(caller, actorId === caller.actorId ? 'read' : 'admin', tx);
-      this.legacyAdministration(caller);
+      // A read of one's own metadata is not administration; a session or key holds none.
+      if (actorId !== caller.actorId) this.legacyAdministration(caller);
       await this.actorRow(tx, caller.projectId, actorId);
       return (
         await tx.all<CredentialRow>(

@@ -71,7 +71,7 @@ export const TASK_TYPES: TaskTypeDefinition[] = [
   },
   {
     name: 'task.review',
-    version: 1,
+    version: 2,
     kind: 'review',
     recipe: {
       instructions:
@@ -90,7 +90,7 @@ export const TASK_TYPES: TaskTypeDefinition[] = [
       ],
       maxChars: 96000,
       outputInstructions:
-        'Submit pass, needs_changes or fail with verification notes through review.submit. Include the current review ID, claimId, expectedRevision and a stable request ID. Do not modify the producer’s evidence.',
+        'Submit pass, needs_changes or fail through review.submit with the current review ID, claimId, expectedRevision and a stable request ID: verification notes, a plain single-paragraph synopsis of 40–420 characters without entity IDs or Markdown, and one finding per numbered criterion (met, not_met, not_verified or waived, with the pinned evidenceIds you checked and your notes). Do not modify the producer’s evidence.',
     },
   },
 ];

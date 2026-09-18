@@ -1066,7 +1066,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
-    const key = purpose === 'review' ? 'task.review@1' : `${task.type}@${task.typeVersion}`;
+    const key = purpose === 'review' ? 'task.review@2' : `${task.type}@${task.typeVersion}`;
     const type = this.types.get(key);
     check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
     return type;
