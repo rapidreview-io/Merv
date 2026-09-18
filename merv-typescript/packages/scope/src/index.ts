@@ -1068,7 +1068,7 @@ export class ProjectScope implements Scope {
       (
         await sql.all<ActorRow>(
           `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-          LEFT JOIN member_actors m ON m.actor_id=a.id WHERE a.project_id=? ORDER BY a.id`,
+          LEFT JOIN member_actors m ON m.actor_id=a.id WHERE a.project_id=? ORDER BY a.active DESC,a.role,a.name,a.id`,
           caller.projectId,
         )
       ).map(actor),
