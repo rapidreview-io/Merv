@@ -553,6 +553,8 @@ DROP TABLE task_leases_backup;`,
           requiresDependencies: true,
           check: async (context) => {
             await this.workflowAssignmentFacts(context);
+            const { caller, snapshot, tx } = context;
+            await this.unleased(caller, snapshot.id, snapshot.revision, tx);
           },
           build: async (context) => await this.workflowAssignment(context),
           execution: taskExecutionPolicy('work'),
@@ -1344,10 +1346,9 @@ DROP TABLE task_leases_backup;`,
           'Claim the review before using its assignment',
           403,
         );
+        check(input.claimId, 'invalid_input', 'A review assignment names its claimId');
         check(
-          review.claimId === input.claimId &&
-            !!input.claimId &&
-            review.subjectRevision === workflow.revision,
+          review.claimId === input.claimId && review.subjectRevision === workflow.revision,
           'stale_claim',
           'Assignment must identify the current review claim',
           409,
@@ -1868,10 +1869,15 @@ DROP TABLE task_leases_backup;`,
           409,
         );
         check(
-          current.revision === input.expectedRevision &&
-            review.subjectRevision === current.revision,
+          review.subjectRevision === current.revision,
           'revision_conflict',
           'Task changed since the review snapshot was pinned',
+          409,
+        );
+        check(
+          current.revision === input.expectedRevision,
+          'revision_conflict',
+          `Expected revision ${input.expectedRevision}, found ${current.revision}`,
           409,
         );
         await this.reviews.checkSubmit(caller, input.reviewId, input, tx);

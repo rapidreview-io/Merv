@@ -519,10 +519,10 @@ test('Task contexts freeze the Introduction at lease offer and retain saved pack
     saved,
     'A saved ordinary context replays without rebuilding live Introduction',
   );
-  assert.match(
-    (await app.ctx.workflows.assignment(source, task.id)).context!.prompt,
-    /INTRO_AFTER_OFFER_942/,
-  );
+  // While the worker holds the revision, the source is told so instead of a fresh assignment.
+  await assert.rejects(async () => await app.ctx.workflows.assignment(source, task.id), {
+    code: 'task_leased',
+  });
   async function workerContext(requestId: string) {
     const worker = await app.ctx.sessions.authenticate(secret);
     const invocation = await app.ctx.sessions.prepare(worker, 'task.context', { requestId });

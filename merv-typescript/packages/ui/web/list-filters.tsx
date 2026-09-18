@@ -364,7 +364,8 @@ export function ListPage<T extends { id: string }>({
                   {opens ? (
                     <Link
                       className={cx('row-link', item.id === filter.openId && 'row-open')}
-                      to={item.id}
+                      // Beside an open record the list sits under that record's route.
+                      to={filter.openId === undefined ? item.id : `../${item.id}`}
                     >
                       {body}
                     </Link>

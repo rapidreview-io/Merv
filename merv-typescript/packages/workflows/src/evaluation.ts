@@ -407,8 +407,9 @@ export async function decision(
   let candidates = result.actions.filter((action, index) =>
     query.action ? action.action === query.action : rules[index].suggested !== false,
   );
-  // Guidance checks admission only. Building a packet may itself read guidance.
-  if (assignment) {
+  // Guidance checks admission only. Building a packet may itself read guidance. A worker
+  // received its assignment with its lease and holds no workflow.begin, so none is offered.
+  if (assignment && !context.caller.session) {
     const begin: WorkflowActionStatus = {
       action: 'begin',
       tool: 'workflow.begin',

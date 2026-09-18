@@ -197,7 +197,12 @@ export class SessionDispatch {
     return new Date(this.clock()).toISOString();
   }
   private async ordinary(caller: Caller, permission: 'read' | 'admin', tx: Transaction) {
-    check(!caller.session, 'forbidden', 'Leased workers cannot control dispatch or runners', 403);
+    check(
+      !caller.session,
+      'forbidden',
+      'Leased workers cannot read or control project dispatch',
+      403,
+    );
     return await this.scope.require(caller, permission, tx);
   }
   private async owner(caller: Caller, tx: Transaction) {

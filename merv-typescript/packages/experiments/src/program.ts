@@ -94,14 +94,14 @@ const handoffs: Record<ActiveState, string> = {
   design_review:
     'Submit through review.submit with the current reviewId, claimId and expectedRevision. Supply verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo. Either needs_changes or fail returns to planned; returnTo may be omitted or planned. A design rejection creates a new attempt. Stop after the verdict.',
   running:
-    'Retain result and report artifacts and attach them to this attempt. Verify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. Include any Methods/Results changes as an application/json artifact with documents: [{kind, expectedRevision, changes: [{id, title, content}]}], using the supplied current paper revisions. Pass its ID as paperChangesArtifactId in this same submit_results call; the existing reviewer will assess and accept those edits with the results. If no paper change is warranted, explain why in the report. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
+    'Retain result and report artifacts and attach them to this attempt. The report is a UTF-8 markdown document with Summary, Results, Deviations from plan and Conclusion sections, and it names the pinned metrics exhibit by its filename. Verify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. Include any Methods/Results changes as an application/json artifact with documents: [{kind, expectedRevision, changes: [{id, title, content}]}], using the supplied current paper revisions. Pass its ID as paperChangesArtifactId in this same submit_results call; the existing reviewer will assess and accept those edits with the results. If no paper change is warranted, explain why in the report. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
   experiment_review:
     'Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
 };
 
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 3,
+  version: 4,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
     instructions: instructions[state],
@@ -987,6 +987,10 @@ DROP TABLE experiment_leases_backup;`,
       tool: 'experiment.transition',
       instruction,
       requiresDependencies,
+      // Ending or retrying takes a reason under evidence; the guidance says so before the call.
+      ...(['retry_running', 'abandon', 'mark_failed'].includes(name)
+        ? { requiredInput: ['evidence'] }
+        : {}),
       suggested: !['retry_running', 'abandon', 'mark_failed'].includes(name),
       arguments: (context: WorkflowCheckContext): Data => ({
         ...argumentsFor(context),

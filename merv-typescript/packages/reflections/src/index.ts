@@ -1153,10 +1153,12 @@ export class ReflectionService implements Reflections {
             producerId: caller.actorId,
             administrativeActorId: wave.owner_id,
             artifactIds: [
-              submission.report.id,
-              submission.changeSpec.id,
-              ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
-              ...pinnedInputIds,
+              ...new Set([
+                submission.report.id,
+                submission.changeSpec.id,
+                ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
+                ...pinnedInputIds,
+              ]),
             ],
             pinnedInputIds,
             excludedActorIds: lenses.map((lens) => lens.producer_id!),

@@ -792,7 +792,9 @@ export class ExperimentService implements Experiments {
           tx,
         )
       : null;
-    if (paperProposal) artifactIds.push(paperProposal.artifact.id);
+    // The change artifact may already be attached as evidence; a review pins each once.
+    if (paperProposal && !artifactIds.includes(paperProposal.artifact.id))
+      artifactIds.push(paperProposal.artifact.id);
     const review = await this.reviews.request(
       caller,
       {
@@ -960,6 +962,7 @@ export class ExperimentService implements Experiments {
           { ...verdict, requestId: `experiment:review:${caller.actorId}:${input.requestId}` },
           tx,
         );
+        // The submission is a snapshot: the paper itself records the acceptance.
         if (input.verdict === 'pass' && submission.paperProposal)
           await this.paper.accept(
             caller,

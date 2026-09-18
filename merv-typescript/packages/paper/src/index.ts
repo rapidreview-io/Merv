@@ -237,7 +237,7 @@ export class PaperService implements Paper {
     check(
       before.revision === input.expectedRevision,
       'paper_revision_conflict',
-      'The document changed; prepare and review a new proposal against its current revision',
+      `Expected revision ${input.expectedRevision}, found ${before.revision}; work against the current one`,
       409,
     );
     const sections = structuredClone(before.sections);

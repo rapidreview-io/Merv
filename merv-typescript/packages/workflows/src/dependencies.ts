@@ -167,7 +167,7 @@ export function requireDependencies(dependencies: WorkflowDependency[]): void {
     false,
     failed.length ? 'dependency_failed' : 'dependencies_pending',
     failed.length
-      ? `A dependency has ended without succeeding: ${names}. End this work or replan its dependencies.`
+      ? `A dependency has ended without succeeding: ${names}. End this work; a research cycle may reselect its work with research.replan.`
       : `Work is waiting on unfinished dependencies: ${names}.`,
     409,
   );
