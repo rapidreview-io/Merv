@@ -157,7 +157,7 @@ function ArtifactList() {
       noun="files"
       placeholder="Title, type or person"
       filter={filter}
-      rows={[...filter.rows].reverse()}
+      rows={filter.rows}
       opens
       emptyTitle="No files"
       // A file has no state; what it stands as is its type, its exact weight and its keeper.

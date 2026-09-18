@@ -87,7 +87,17 @@ async function fixture(t: TestContext) {
       ),
     );
     knowledge = await createService(
-      new KnowledgeService(state, scope, claims, tasks, experiments, artifacts, reviews, code),
+      new KnowledgeService(
+        state,
+        scope,
+        claims,
+        tasks,
+        experiments,
+        artifacts,
+        reviews,
+        workflows,
+        code,
+      ),
     );
   };
   const close = async () => {

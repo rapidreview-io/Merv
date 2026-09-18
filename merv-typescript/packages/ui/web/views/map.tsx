@@ -364,7 +364,6 @@ export function MapView({ shell }: { shell: ShellData }) {
   const sessionsRow = rowOf('sessions');
   const mountsRow = rowOf('connections');
   const filesRow = rowOf('artifacts');
-  const feedRow = rowOf('feed');
   const archiveRow = rowOf('legacy-history');
   const codeRow = rowOf('code');
   // The whole page in one answer; the rail asks for the same one and joins this request.
@@ -502,7 +501,6 @@ export function MapView({ shell }: { shell: ShellData }) {
           tiles={tiles(
             filesRow && tile('files', data?.files?.length ?? EM, filesRow.path),
             filesRow && tile('retained', data?.files ? bytes(retained) : EM, filesRow.path),
-            feedRow && tile('posts', data?.posts?.length ?? EM, feedRow.path),
             archiveRow && !!archive && tile('earlier records', archive, archiveRow.path),
           )}
         />

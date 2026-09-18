@@ -15,6 +15,7 @@ import {
   type State,
   type Tasks,
   type Transaction,
+  type Workflows,
 } from '@merv/contracts';
 import type { Claims } from '@merv/claims/types';
 import type { Experiments, ExperimentSubmission } from '@merv/experiments/types';
@@ -76,6 +77,7 @@ export class KnowledgeService implements Knowledge {
     private experiments: Experiments,
     private artifacts: Artifacts,
     private reviews: Reviews,
+    private workflows: Pick<Workflows, 'get'>,
     private code: Code | undefined,
   ) {
     this.initialize = async () => {
@@ -439,17 +441,25 @@ export class KnowledgeService implements Knowledge {
           })
         : missing('claim');
     }
-    if (kind === 'task' || kind === 'work-item') {
-      const task = await this.optional(async () => await this.tasks.record(caller, id, tx));
-      if (task)
-        return resolved('task', {
-          label: task.title,
-          revision: task.workflow.revision,
-          state: task.workflow.state,
-        });
-      if (kind === 'task') return missing('task');
+    if (kind === 'work-item') {
+      // A work item is whatever program its instance runs; only tasks and experiments resolve.
+      const snapshot = await this.optional(async () => await this.workflows.get(caller, id, tx));
+      if (!snapshot) return missing(null);
+      if (snapshot.workflow !== 'task' && snapshot.workflow !== 'experiment')
+        return { ref, status: 'unsupported', kind: null, id };
+      kind = snapshot.workflow;
     }
-    if (kind === 'experiment' || kind === 'work-item') {
+    if (kind === 'task') {
+      const task = await this.optional(async () => await this.tasks.record(caller, id, tx));
+      return task
+        ? resolved('task', {
+            label: task.title,
+            revision: task.workflow.revision,
+            state: task.workflow.state,
+          })
+        : missing('task');
+    }
+    if (kind === 'experiment') {
       const experiment = await this.optional(
         async () => await this.experiments.get(caller, id, tx),
       );
@@ -459,7 +469,7 @@ export class KnowledgeService implements Knowledge {
             revision: experiment.workflow.revision,
             state: experiment.workflow.state,
           })
-        : missing(kind === 'work-item' ? null : 'experiment');
+        : missing('experiment');
     }
     if (kind === 'artifact') {
       const artifact = await this.optional(async () => await this.artifacts.get(caller, id, tx));
@@ -511,7 +521,7 @@ export class KnowledgeService implements Knowledge {
 
 export const knowledgePlugin = {
   name: 'merv-knowledge',
-  inject: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews'],
+  inject: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
@@ -523,6 +533,7 @@ export const knowledgePlugin = {
           ctx.experiments,
           ctx.artifacts,
           ctx.reviews,
+          ctx.workflows,
           undefined,
         ),
       );

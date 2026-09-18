@@ -4,11 +4,7 @@ import { check } from '@merv/contracts';
 
 const text = z.string().max(16000).trim();
 export const claimIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-const requestId = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim().length > 0);
+const requestId = z.string().trim().min(1).max(200);
 export const claimStatusSchema = z.enum([
   'draft',
   'active',

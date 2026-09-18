@@ -48,7 +48,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.list',
-      'List immutable artifacts in this project.',
+      'List this project’s immutable artifacts, newest first (at most 1,000).',
       z.object({}).strict(),
       async (c: any) => await ctx.artifacts.list(c),
       true,

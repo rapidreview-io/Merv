@@ -67,7 +67,8 @@ export class ArtifactStore implements Artifacts {
         'invalid_encoding',
         'Invalid base64 content',
       );
-    const mediaType = input.mediaType ?? 'text/markdown';
+    // Media types are case-insensitive; one spelling keeps every text/ test honest.
+    const mediaType = (input.mediaType ?? 'text/markdown').toLowerCase();
     check(
       /^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(mediaType) && mediaType.length <= 150,
       'invalid_media_type',
@@ -190,7 +191,7 @@ export class ArtifactStore implements Artifacts {
     return await this.state.read(async (sql) =>
       (
         await sql.all(
-          'SELECT * FROM artifacts WHERE project_id=? ORDER BY created_at,id LIMIT 1000',
+          'SELECT * FROM artifacts WHERE project_id=? ORDER BY created_at DESC,id DESC LIMIT 1000',
           caller.projectId,
         )
       ).map(fromRow),

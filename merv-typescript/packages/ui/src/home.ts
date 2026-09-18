@@ -12,7 +12,6 @@ const PARTS: [string, string][] = [
   ['reviews', 'review.list'],
   ['cycles', 'research.list'],
   ['files', 'artifact.list'],
-  ['posts', 'feed.list'],
   // Without an instance, this one answers for every workflow in the project at once.
   ['workflows', 'workflow.status_and_next'],
 ];
@@ -102,7 +101,6 @@ const KEEP: Record<string, string[]> = {
   reviews: ['id', 'subjectId', 'status', 'reviewerId', 'verdict', 'createdAt'],
   cycles: ['id', 'name', 'ownerId', 'workflow'],
   files: ['size'],
-  posts: ['id', 'authorId', 'body', 'createdAt'],
   reflections: ['id', 'title', 'ownerId', 'experimentIds', 'workflow'],
   connections: ['state'],
 };

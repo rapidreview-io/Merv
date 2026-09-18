@@ -489,7 +489,7 @@ export class ProjectScope implements Scope {
         new Date(value).toISOString() === value &&
         value > time,
       'invalid_expiry',
-      'Credential expiry must be a future canonical UTC timestamp or null',
+      'Credential expiry must be a future canonical UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ) or null',
     );
     return value;
   }
@@ -511,7 +511,7 @@ export class ProjectScope implements Scope {
     check(
       typeof name === 'string' && name.trim().length > 0 && name.length <= 200,
       'invalid_actor',
-      'Actor needs a name of at most 200 characters',
+      'Actor needs a nonblank name of at most 200 characters',
     );
     check(roles.includes(role), 'invalid_role', 'Unknown actor role');
     const value: Actor = { id: newId('actor'), projectId, name: name.trim(), role, active: true };
