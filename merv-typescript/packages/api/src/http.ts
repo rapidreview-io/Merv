@@ -531,9 +531,15 @@ export class ApiServer {
       json(res, 200, this.identity?.configuration() ?? { enabled: false });
       return;
     }
-    // Every other GET is a read (the GitHub callback above is the one that writes; an
-    // agent's own routes may activate its lease), so it runs in a snapshot scope.
-    if (req.method === 'GET' && this.options.snapshot && !path.startsWith('/sessions/self'))
+    // Every other GET is a read, so it runs in a snapshot scope. Two families are not:
+    // an agent's own routes may activate its lease, and Code's GitHub routes sweep expired
+    // OAuth flows, claim token refreshes and complete the callback.
+    if (
+      req.method === 'GET' &&
+      this.options.snapshot &&
+      !path.startsWith('/sessions/self') &&
+      !path.startsWith('/code/')
+    )
       return await this.options.snapshot(() => this.route(req, res, url, path));
     return await this.route(req, res, url, path);
   }
