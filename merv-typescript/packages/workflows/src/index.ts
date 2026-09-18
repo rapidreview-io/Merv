@@ -503,9 +503,22 @@ export class WorkflowsService implements Workflows {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       check(!source.session, 'forbidden', 'A leased worker cannot schedule assignments', 403);
+      // Only a state with a lease rule can be a candidate; finished work never is, and it is
+      // most of a project's history.
+      const leasable = [
+        ...new Set(
+          [...this.registrations.values()].flatMap((registration) =>
+            (registration.policy?.assignments ?? [])
+              .filter((rule) => rule.lease && rule.execution)
+              .map((rule) => rule.state),
+          ),
+        ),
+      ];
+      if (!leasable.length) return [];
       const rows = await tx.all<InstanceRow>(
-        'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
+        `SELECT * FROM wf_instances WHERE project_id=? AND state IN (${leasable.map(() => '?').join(',')}) ORDER BY created_at,id`,
         source.projectId,
+        ...leasable,
       );
       const candidates: WorkflowDispatchCandidate[] = [];
       for (const row of rows) {
