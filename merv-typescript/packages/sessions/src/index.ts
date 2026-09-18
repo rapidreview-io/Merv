@@ -815,7 +815,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async agentSelf(token: string) {
     await this.sweep();
-    return await this.transaction(async (tx) => {
+    // A status poll only reads; scanning every instance for candidates must not hold the lock.
+    return await this.reading(async (tx) => {
       const agent = await this.directory.authenticate(token, tx);
       const busy = new Set(
         (
@@ -835,9 +836,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     });
   }
   async assignAgent(token: string, input: AgentAssignment): Promise<Session> {
-    const agent = await this.transaction(
-      async (tx) => await this.directory.authenticate(token, tx),
-    );
+    const agent = await this.reading(async (tx) => await this.directory.authenticate(token, tx));
     // The connection credential stays fixed. Each execution has a distinct, undisclosed credential.
     const secret = `ms_${createHash('sha256')
       .update(canonical({ token, requestId: input.requestId }))
