@@ -542,8 +542,11 @@ test('one invocation may finish its own handoff transaction, while later calls a
   await assert.rejects(async () => await f.scope.require(prepared.caller, 'read'), {
     code: 'session_invocation',
   });
-  await assert.rejects(async () => await f.sessions.authenticate(token));
-  // The record moved by the worker's own hand: the session ends as a completed handoff.
+  // The record moved by the worker's own hand: the session ends as a completed handoff,
+  // and a retry of the lost handoff answer is told so rather than sent to refresh.
+  await assert.rejects(async () => await f.sessions.authenticate(token), {
+    code: 'session_completed',
+  });
   const done = await f.sessions.get(f.source, session.id);
   assert.equal(done.status, 'released');
   assert.equal(done.outcome, 'completed');

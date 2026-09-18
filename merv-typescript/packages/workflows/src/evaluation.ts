@@ -286,7 +286,7 @@ export async function evaluateAction(
       result.blockers.push({
         code: 'input_required',
         status: 400,
-        message: `Supply ${result.requiredInput.join(', ')} when calling ${rule.tool}.`,
+        message: `Supply ${result.requiredInput.join(', ')} and a stable requestId when calling ${rule.tool}.`,
       });
     }
   } catch (error) {

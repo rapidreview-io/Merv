@@ -260,6 +260,10 @@ test('synopses must be bounded plain prose and generic review observations must 
       `# ${'x'.repeat(40)}`,
       `Use \`code\` ${'x'.repeat(40)}`,
       `new\u2028line ${'x'.repeat(40)}`,
+      `**The note** names the learning rate but cites no source ${'x'.repeat(20)}`,
+      `- a bullet that ${'x'.repeat(40)}`,
+      `1. a numbered item that ${'x'.repeat(40)}`,
+      `see [the plan](art_1) for ${'x'.repeat(40)}`,
     ]) {
       const input = { ...valid, synopsis } as ReviewSubmit;
       await assert.rejects(async () => await f.reviews.checkSubmit(f.reviewer, claimed.id, input), {

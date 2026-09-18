@@ -611,6 +611,19 @@ test('experiment results include reviewed paper edits without an extra assignmen
         ],
       }),
     });
+    // A preflight sees the change artifact's refusals before the submission is made.
+    const preflight = await f.workflows.evaluate(f.producer, e.id, {
+      action: 'submit_results',
+      input: {
+        experimentId: e.id,
+        transition: 'submit_results',
+        expectedRevision: e.workflow.revision,
+        paperChangesArtifactId: 'art_nope',
+      },
+    });
+    const preflighted = preflight.actions.find((item) => item.action === 'submit_results')!;
+    assert.equal(preflighted.status, 'blocked');
+    assert.equal(preflighted.blockers[0]?.code, 'not_found');
     e = await f.experiments.transition(f.producer, {
       experimentId: e.id,
       transition: 'submit_results',

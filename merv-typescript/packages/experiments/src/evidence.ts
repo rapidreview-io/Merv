@@ -60,7 +60,10 @@ function parseJson(text: string): Json {
   try {
     value = JSON.parse(text);
   } catch {
-    error(false, 'Evidence is not valid JSON');
+    error(
+      false,
+      'Result is not valid JSON; attach a non-JSON result with resultFormat qualitative',
+    );
   }
   return safeJson(value);
 }

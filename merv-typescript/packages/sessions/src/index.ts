@@ -518,10 +518,16 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
               session.expectedRevision + 1,
             )
           : undefined;
-      if (moved?.actor_id === session.actorId)
-        await this.closeSession(session, 'handoff', tx, 'released', 'completed');
-      else await this.closeSession(session, failure.code, tx);
-      return failure;
+      if (moved?.actor_id !== session.actorId) {
+        await this.closeSession(session, failure.code, tx);
+        return failure;
+      }
+      await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      return new MervError(
+        'session_completed',
+        'This session’s handoff completed and the session has ended; its record moved on',
+        401,
+      );
     }
   }
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {

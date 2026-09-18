@@ -140,7 +140,12 @@ const sessionOfferInput = z
     expectedRevision: z.number().int().nonnegative(),
     runnerId: nonblank,
     requestId: nonblank,
-    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
+    secret: z
+      .string()
+      .regex(
+        /^ms_[A-Za-z0-9_-]{43}$/,
+        'A session secret is ms_ followed by 43 base64url characters',
+      ),
     hardDeadlineSeconds: z.number().int().positive().optional(),
   })
   .strict();

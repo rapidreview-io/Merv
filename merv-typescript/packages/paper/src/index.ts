@@ -418,12 +418,11 @@ export class PaperService implements Paper {
       });
     });
   }
-  async propose(caller: Caller, value: PaperPropose, tx: Transaction): Promise<PaperProposal> {
+  /** The parsed, currently applicable edits in a change artifact the caller authored. */
+  async validate(caller: Caller, artifactId: string, tx: Transaction) {
     this.open();
     this.state.assertTransaction(tx);
-    await this.scope.require(caller, 'write', tx);
-    const input = parse(proposeSchema, value);
-    const artifact = await this.artifacts.get(caller, input.artifactId, tx);
+    const artifact = await this.artifacts.get(caller, artifactId, tx);
     const authored = caller.session
       ? (await this.artifacts.authored(caller, tx)).some((a) => a.id === artifact.id)
       : artifact.createdBy === caller.actorId;
@@ -458,6 +457,12 @@ export class PaperService implements Paper {
       before: await this.current(caller, edit.kind, tx),
     }));
     for (const { edit, before } of documents) await this.edited(caller, edit, before, tx);
+    return { artifact, documents };
+  }
+  async propose(caller: Caller, value: PaperPropose, tx: Transaction): Promise<PaperProposal> {
+    await this.scope.require(caller, 'write', tx);
+    const input = parse(proposeSchema, value);
+    const { artifact, documents } = await this.validate(caller, input.artifactId, tx);
     const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
       const a = await this.artifacts.get(caller, id, tx);
       return { id: a.id, hash: a.hash };

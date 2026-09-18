@@ -95,8 +95,8 @@ export function validateAssessment(
         visible(input.synopsis) &&
         input.synopsis.trim().length >= 40 &&
         input.synopsis.trim().length <= 420 &&
-        !/[\r\n\u2028\u2029`]/u.test(input.synopsis) &&
-        !input.synopsis.trimStart().startsWith('#') &&
+        !/[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(input.synopsis) &&
+        !/^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(input.synopsis) &&
         !/\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
           input.synopsis,
         ),

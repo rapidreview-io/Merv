@@ -1180,6 +1180,8 @@ export class ExperimentService implements Experiments {
         );
         this.approved(experiment);
         await this.workflows.checkDependencies(caller, experiment.id, tx);
+        if (typeof context.input?.paperChangesArtifactId === 'string')
+          await this.paper.validate(caller, context.input.paperChangesArtifactId, tx);
       }
       await this.prepareSubmission(
         caller,

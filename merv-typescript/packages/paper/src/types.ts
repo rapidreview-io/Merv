@@ -20,6 +20,8 @@ export interface Paper {
   cite(caller: Caller, input: PaperCite, tx?: Transaction): Promise<PaperCitation>;
   /** Trusted scientific owner integration; not exposed as an independently callable tool. */
   propose(caller: Caller, input: PaperPropose, tx: Transaction): Promise<PaperProposal>;
+  /** Parse a change artifact against the current paper without proposing it. */
+  validate(caller: Caller, artifactId: string, tx: Transaction): Promise<unknown>;
   /** The owning workflow checks and submits its exact review in the same transaction. */
   accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]>;
   close(): void;
