@@ -459,7 +459,11 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
             tests={testsOf(claim.id)}
             changes={changesOf(claim.id)}
             writable={writable}
-            reload={claims.reload}
+            reload={() => {
+              claims.reload();
+              // The card's history is drawn from activity; an edit adds to it.
+              activity.reload();
+            }}
           />
         ),
       }}

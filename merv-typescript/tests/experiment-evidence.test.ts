@@ -284,8 +284,12 @@ test('explicit result format distinguishes any valid JSON including null from qu
   ])
     assert.deepEqual(parseResult(JSON.stringify(value), 'json'), value);
   assert.equal(parseResult('Observed no meaningful difference.', 'qualitative'), null);
-  for (const text of ['{', 'NaN', '1e999', '{"score":1e999}'])
+  for (const text of ['{', 'NaN', '1e999', '{"score":1e999}', '{"big":12345678901234567890}'])
     invalidEvidence(() => parseResult(text, 'json'));
+  // A large value written with an exponent is a double already and reads back as written.
+  assert.deepEqual(parseResult('{"big":1.2345678901234567e19}', 'json'), {
+    big: 1.2345678901234567e19,
+  });
   assert.equal(shouldPinExhibit([{ resultFormat: 'json' }]), true);
   assert.equal(shouldPinExhibit([{ resultFormat: 'qualitative' }]), false);
 });

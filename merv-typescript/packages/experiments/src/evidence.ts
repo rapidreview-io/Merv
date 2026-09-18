@@ -58,8 +58,21 @@ function parseJson(text: string): Json {
   boundedText(text);
   let value: unknown;
   try {
-    value = JSON.parse(text);
-  } catch {
+    // An integer JSON can write but a double cannot hold would be read back changed.
+    value = JSON.parse(text, (_key, item, context?: { source?: string }) => {
+      if (
+        typeof item === 'number' &&
+        !Number.isSafeInteger(item) &&
+        /^-?\d+$/.test(context?.source ?? '')
+      )
+        throw new RangeError(context!.source);
+      return item;
+    });
+  } catch (cause) {
+    error(
+      !(cause instanceof RangeError),
+      `Results must use integers up to 2^53−1; ${(cause as Error).message} would be read back changed, so write it as a string`,
+    );
     error(
       false,
       'Result is not valid JSON; attach a non-JSON result with resultFormat qualitative',

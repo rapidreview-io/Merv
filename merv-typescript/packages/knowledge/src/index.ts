@@ -469,9 +469,13 @@ export class KnowledgeService implements Knowledge {
     }
     if (kind === 'review') {
       const review = await this.optional(async () => await this.reviews.get(caller, id, tx));
+      // A review is named by the work it judges, as a person would name it.
+      const subject = review
+        ? await this.optional(async () => await this.workflows.get(caller, review.subjectId, tx))
+        : undefined;
       return review
         ? resolved('review', {
-            label: review.subjectId,
+            label: `Review of ${String(subject?.data.title ?? subject?.data.name ?? review.subjectId)}`,
             revision: review.subjectRevision,
             state: review.status,
             hash: review.snapshotHash,
