@@ -748,6 +748,11 @@ async function main(options: Options) {
           },
           'claim.create': async () =>
             (await call('claim.list', {})).find((c: any) => c.statement === input.statement),
+          // The cycle depends on every record, so a record added since changes its input.
+          'research.create': async () => {
+            const found = (await call('research.list', {})).find((r: any) => r.name === input.name);
+            return found && (await call('research.get', { researchId: found.id }));
+          },
         };
         const found = existing[tool] ? await existing[tool]() : undefined;
         assert.ok(found, `${tool} replayed with different input and no existing record matched`);
