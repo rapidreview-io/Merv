@@ -98,7 +98,7 @@ const KEEP: Record<string, string[]> = {
     'dependencies',
     'workflow',
   ],
-  reviews: ['id', 'subjectId', 'status', 'reviewerId', 'producerId', 'verdict', 'createdAt'],
+  reviews: ['id', 'subjectId', 'status', 'reviewerId', 'claimable', 'verdict', 'createdAt'],
   cycles: ['id', 'name', 'ownerId', 'workflow'],
   files: ['size'],
   reflections: ['id', 'title', 'ownerId', 'experimentIds', 'workflow'],

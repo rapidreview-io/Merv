@@ -651,24 +651,54 @@ export class ReviewService implements Reviews {
     });
   }
 
+  /**
+   * The three clauses checkStart applies, answered for the reader so that no client has to
+   * restate them: the permission, the producer, and the immutable contributor exclusions.
+   */
+  private async claimableBy(
+    caller: Caller,
+    reviews: ReviewRequest[],
+    tx?: Transaction,
+  ): Promise<ReviewRequest[]> {
+    if (!reviews.some((review) => review.status === 'requested')) return reviews;
+    const reviewer =
+      !!caller.actorId &&
+      (await this.scope.eligible(caller.projectId, caller.actorId, 'review', tx));
+    return reviews.map((review) => ({
+      ...review,
+      claimable:
+        reviewer &&
+        review.status === 'requested' &&
+        review.producerId !== caller.actorId &&
+        !(review.excludedActorIds ?? []).includes(caller.actorId!),
+    }));
+  }
+
   async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
     await this.scope.require(caller, 'read', transaction);
     if (transaction) {
       this.state.assertTransaction(transaction);
-      return hydrate(await this.row(transaction, caller, reviewId));
+      const row = hydrate(await this.row(transaction, caller, reviewId));
+      return (await this.claimableBy(caller, [row], transaction))[0]!;
     }
-    return await this.state.read(async (sql) => hydrate(await this.row(sql, caller, reviewId)));
+    return await this.state.read(async (sql) => {
+      const row = hydrate(await this.row(sql, caller, reviewId));
+      return (await this.claimableBy(caller, [row]))[0]!;
+    });
   }
 
   async list(caller: Caller): Promise<ReviewRequest[]> {
     await this.scope.require(caller, 'read');
     return await this.state.read(async (sql) =>
-      (
-        await sql.all<ReviewRow>(
-          'SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at, id',
-          caller.projectId,
-        )
-      ).map(hydrate),
+      await this.claimableBy(
+        caller,
+        (
+          await sql.all<ReviewRow>(
+            'SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at, id',
+            caller.projectId,
+          )
+        ).map(hydrate),
+      ),
     );
   }
 

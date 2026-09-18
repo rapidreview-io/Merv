@@ -1,5 +1,5 @@
-import { clip, visible, mapAsync } from '@merv/contracts';
-import { FiberState, type Context } from 'cordis';
+import { clip, pluginState, visible, mapAsync } from '@merv/contracts';
+import type { Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { check, type Caller, type Json } from '@merv/contracts';
@@ -16,14 +16,6 @@ export interface PluginState {
   name: string;
   state: 'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
 }
-const states: Record<FiberState, PluginState['state']> = {
-  [FiberState.PENDING]: 'pending',
-  [FiberState.LOADING]: 'loading',
-  [FiberState.ACTIVE]: 'active',
-  [FiberState.FAILED]: 'failed',
-  [FiberState.DISPOSED]: 'disposed',
-  [FiberState.UNLOADING]: 'unloading',
-};
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 
 /** Sidebar rows registered by feature adapters; a disposed registration disappears immediately. */
@@ -109,7 +101,7 @@ export const uiPlugin = {
         state: entry.disabled
           ? 'disabled'
           : entry.fiber
-            ? (states[entry.fiber.state] ?? 'failed')
+            ? pluginState(entry.fiber.state)
             : 'failed',
       }));
     };

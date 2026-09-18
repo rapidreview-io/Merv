@@ -9,7 +9,7 @@ export type {
 import { createHash, randomUUID } from 'node:crypto';
 import { types } from 'node:util';
 import type { z } from 'zod';
-import 'cordis';
+import { FiberState } from 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
@@ -527,6 +527,18 @@ export async function releasedLease(
     row.id,
   );
 }
+/** Cordis fiber states as a composition reports them; an unknown state reads as failed. */
+export type PluginRunState =
+  'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
+const runStates: Record<number, PluginRunState> = {
+  [FiberState.PENDING]: 'pending',
+  [FiberState.LOADING]: 'loading',
+  [FiberState.ACTIVE]: 'active',
+  [FiberState.FAILED]: 'failed',
+  [FiberState.DISPOSED]: 'disposed',
+  [FiberState.UNLOADING]: 'unloading',
+};
+export const pluginState = (state: number): PluginRunState => runStates[state] ?? 'failed';
 export function eventSource(caller: Caller): Data {
   return caller.session
     ? { source: { kind: 'session', sessionId: caller.session.id } }
@@ -1102,6 +1114,8 @@ export interface ReviewRequest {
   pinnedInputIds?: string[];
   /** Immutable contributor exclusions in addition to the primary producer. Omitted for legacy reviews. */
   excludedActorIds?: string[];
+  /** Whether the reader of this answer may claim it now. Present on reads, not on writes. */
+  claimable?: boolean;
   criteria: string[];
   formatVersion: 1 | 2;
   snapshotHash: string;

@@ -28,7 +28,7 @@ export interface Review {
   id: string;
   subjectId: string;
   subjectRevision: number;
-  producerId: string;
+  claimable?: boolean;
   artifactIds: string[];
   criteria: string[];
   formatVersion: 1 | 2;

@@ -2,7 +2,7 @@ import { Context, FiberState, type Fiber } from 'cordis';
 import Loader from '@cordisjs/plugin-loader';
 import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { check } from '@merv/contracts';
+import { check, pluginState } from '@merv/contracts';
 import type {} from '@merv/api';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
 
@@ -17,15 +17,6 @@ export interface PluginStatus {
   required: boolean;
   missingDependencies: string[];
 }
-
-const states: Record<FiberState, PluginStatus['state']> = {
-  [FiberState.PENDING]: 'pending',
-  [FiberState.LOADING]: 'loading',
-  [FiberState.ACTIVE]: 'active',
-  [FiberState.FAILED]: 'failed',
-  [FiberState.DISPOSED]: 'disposed',
-  [FiberState.UNLOADING]: 'unloading',
-};
 
 /** Composition and readiness policy only. Cordis owns the dependency graph and its lifecycle. */
 export async function createApp(options: AppOptions) {
@@ -68,7 +59,7 @@ export async function createApp(options: AppOptions) {
               : fiber && failed.has(fiber)
                 ? 'failed'
                 : fiber
-                  ? (states[fiber.state] ?? 'failed')
+                  ? pluginState(fiber.state)
                   : 'failed';
         return {
           id: entry.id,
