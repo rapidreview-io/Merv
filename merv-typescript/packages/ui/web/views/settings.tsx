@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTool } from '../api';
 import { KV, LoadState, StatusPill, Table, col, cx } from '../components';
 import { ThreeStates } from '../states';
@@ -214,6 +214,7 @@ export function SettingsView(props: ViewProps) {
           <Route path="connections" element={<Connections {...props} />} />
           <Route path="plugins" element={<Plugins {...props} />} />
           <Route path="session" element={<SessionSection />} />
+          <Route path="*" element={<Navigate to="." replace />} />
         </Routes>
       </div>
     </div>

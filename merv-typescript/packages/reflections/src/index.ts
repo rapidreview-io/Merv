@@ -952,8 +952,31 @@ export class ReflectionService implements Reflections {
                 tool: 'review.submit',
                 instruction:
                   'Verify the pinned synthesis; pass or return to synthesizing/reflection.',
+                arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
+                  const wave = await this.row(caller, snapshot.id, tx);
+                  const review = await this.reviews.get(caller, wave.review_id!, tx);
+                  return {
+                    reviewId: review.id,
+                    ...(review.claimId ? { claimId: review.claimId } : {}),
+                    expectedRevision: snapshot.revision,
+                  };
+                },
                 check: async (c: WorkflowCheckContext) => {
                   await this.admit(c);
+                },
+              },
+              {
+                name: 'start_review',
+                states: ['in_review'],
+                tool: 'review.start',
+                instruction: 'Claim this exact independent reflection review.',
+                arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => ({
+                  reviewId: (await this.row(caller, snapshot.id, tx)).review_id!,
+                }),
+                check: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
+                  const wave = await this.row(caller, snapshot.id, tx);
+                  check(wave.review_id, 'stale_review', 'Reflection review is missing', 409);
+                  await this.reviews.checkStart(caller, wave.review_id, tx);
                 },
               },
             ]),

@@ -513,16 +513,24 @@ function Desk({
           ? { text: `The synopsis needs ${40 - said.length} more characters.` }
           : said.length > 420
             ? { text: `The synopsis is ${said.length - 420} characters too long.` }
-            : !verdict
-              ? { text: 'Choose a verdict.' }
-              : verdict === 'pass' && objection >= 0
-                ? {
-                    text: 'A passing verdict needs every criterion met or waived.',
-                    at: objection + 1,
-                  }
-                : verdict !== 'pass' && routes.length > 0 && !returnTo
-                  ? { text: 'Choose where the work returns.' }
-                  : undefined;
+            : /[\r\n\u2028\u2029`]/u.test(synopsis) || said.startsWith('#')
+              ? {
+                  text: 'The synopsis is one plain paragraph: no line breaks, backticks or headings.',
+                }
+              : /\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
+                    synopsis,
+                  )
+                ? { text: 'The synopsis names things in words, not by their identifiers.' }
+                : !verdict
+                  ? { text: 'Choose a verdict.' }
+                  : verdict === 'pass' && objection >= 0
+                    ? {
+                        text: 'A passing verdict needs every criterion met or waived.',
+                        at: objection + 1,
+                      }
+                    : verdict !== 'pass' && routes.length > 0 && !returnTo
+                      ? { text: 'Choose where the work returns.' }
+                      : undefined;
   return (
     <div className="stack">
       <textarea

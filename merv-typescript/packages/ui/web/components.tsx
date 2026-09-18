@@ -488,6 +488,9 @@ export function ResearchCommand({
       typeof value.id === 'string' &&
       (input.kind === undefined || value.kind === input.kind),
     onSuccess: onSaved,
+    // The record moved under the control: what it shows is stale, not the click wrong.
+    conflictCode: 'revision_conflict',
+    onConflict: onSaved,
   });
   if (!available && !command.locked) return null;
   return (
