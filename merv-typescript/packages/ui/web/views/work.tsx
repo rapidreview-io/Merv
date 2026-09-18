@@ -197,11 +197,12 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
     of === 'cycle'
       ? items.filter((item) => item.named).length
       : items.filter((item) => item.kind === of).length;
-  // The first narrowing: which kind of work, and the work this cycle itself names.
+  // The first narrowing: which kind of work, and the work this cycle itself names. A
+  // narrowing in force stays on screen even when it matches nothing, so it can be undone.
   const narrowings = [
     ['tasks', 'Tasks'],
     ['experiments', 'Experiments'],
-    ...(counted('cycle') ? [['cycle', 'In this cycle']] : []),
+    ...(counted('cycle') || kind === 'cycle' ? [['cycle', 'In this cycle']] : []),
   ] as [string, string][];
   const shown = filter.rows.filter(
     (item) => !kind || (kind === 'cycle' ? item.named : item.kind === kind),
@@ -219,7 +220,14 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
       load={load}
       noun="work"
       placeholder="Name, question or person"
-      filter={filter}
+      filter={{
+        ...filter,
+        filtering: filter.filtering || !!kind,
+        clear() {
+          filter.clear();
+          setKind('');
+        },
+      }}
       rows={shown}
       narrow={
         items.length > 0 && (

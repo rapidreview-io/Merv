@@ -876,7 +876,16 @@ function PaperPage({ row, shell }: ViewProps) {
     ...new Set(proposals.flatMap((proposal) => proposal.evidence.map((file) => file.id))),
   ];
   const written = docs.flatMap((doc) => doc.current.sections);
-  const characters = written.reduce((size, item) => size + item.content.length, 0);
+  // The limits are per document (100 sections, 160,000 characters); the fullest one is shown.
+  const fullest = docs.reduce(
+    (most, doc) => {
+      const size = doc.current.sections.reduce((sum, item) => sum + item.content.length, 0);
+      return size > most.characters
+        ? { kind: doc.kind, characters: size, sections: doc.current.sections.length }
+        : most;
+    },
+    { kind: '', characters: 0, sections: 0 },
+  );
   // Every revision each document retained, once, newest first when they are read.
   const revisions = new Map<string, { doc: DocView; revision: PaperRevision }>();
   for (const doc of docs)
@@ -1108,9 +1117,14 @@ function PaperPage({ row, shell }: ViewProps) {
       details={
         <KV
           rows={[
-            ['Sections', `${written.length} of 100`],
+            ['Sections', `${written.length}`],
             ['Citations', `${citations.length}`],
-            ['Characters', `${characters.toLocaleString()} of 160,000`],
+            [
+              'Fullest document',
+              fullest.kind
+                ? `${fullest.kind}: ${fullest.characters.toLocaleString()} of 160,000 characters, ${fullest.sections} of 100 sections`
+                : '—',
+            ],
           ]}
         />
       }
