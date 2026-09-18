@@ -100,7 +100,7 @@ export class ConsolidationService implements Consolidation {
     private artifacts: Artifacts,
     private workflows: Workflows,
     private reviews: Reviews,
-    private contextBuilder: ContextBuilder,
+    contextBuilder: ContextBuilder,
     private code: Code,
   ) {
     this.initialize = async () => {

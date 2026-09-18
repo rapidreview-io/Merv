@@ -92,7 +92,7 @@ export class ExperimentService implements Experiments {
     private readonly artifacts: Artifacts,
     private readonly workflows: Workflows,
     private readonly reviews: Reviews,
-    private readonly contextBuilder: ContextBuilder,
+    contextBuilder: ContextBuilder,
     private readonly claims: Claims,
     private code: Pick<Code, 'capture'> | undefined,
     private readonly paper: Paper,
