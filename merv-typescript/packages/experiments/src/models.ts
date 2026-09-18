@@ -1,14 +1,6 @@
 import type { PaperProposal } from '@merv/paper/models';
 import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
 
-export type ExperimentStatus =
-  | 'planned'
-  | 'design_review'
-  | 'running'
-  | 'experiment_review'
-  | 'complete'
-  | 'abandoned'
-  | 'failed';
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'exhibit';
 /** Retired roles stay readable: stored rows predate the 2026-09-16 graph retirement. */
 export type StoredExperimentRole = ExperimentRole | 'graph';

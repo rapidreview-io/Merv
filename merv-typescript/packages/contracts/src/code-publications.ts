@@ -1,5 +1,5 @@
 import type { Caller } from './index.js';
-import type { GitHubPullDetails, GitHubPullRequest } from './github-models.js';
+import type { GitHubPullDetails } from './github-models.js';
 import { z } from 'zod';
 
 import type { CodePublication } from './code-publication-models.js';

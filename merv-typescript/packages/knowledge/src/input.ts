@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { check } from '@merv/contracts';
 
 export const knowledgeIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-export const knowledgeRecordsSchema = z.object({}).strict();
 export const knowledgeCaptureSchema = z
   .object({
     requestId: z

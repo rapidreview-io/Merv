@@ -7,7 +7,6 @@ import type {
   RemoteToolDefinition,
   RemoteToolDescription,
   ToolCatalog,
-  ToolDefinition,
   ToolDescription,
   ToolInvocation,
   Tools,

@@ -41,10 +41,6 @@ export interface PaperEdit {
   expectedRevision: number;
   changes: PaperPatch['changes'];
 }
-/** JSON content of the change artifact submitted with an experiment or reflection. */
-export interface PaperChanges {
-  documents: PaperEdit[];
-}
 export interface PaperPublication {
   id: string;
   projectId: string;

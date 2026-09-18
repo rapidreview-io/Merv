@@ -132,11 +132,6 @@ export const experimentTransitionSchema = z
     return rest;
   });
 
-export type ExperimentCreateInput = z.output<typeof experimentCreateSchema>;
-export type ExperimentAttachInput = z.output<typeof experimentAttachSchema>;
-export type ExperimentTransitionInput = z.output<typeof experimentTransitionSchema>;
-export type ExperimentResultFormat = z.output<typeof resultFormatSchema>;
-
 /** Detach bounded data before any parser can inspect getters, proxies or serializers. */
 export function copyExperimentJson(
   input: unknown,

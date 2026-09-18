@@ -98,7 +98,6 @@ interface LeaseRow {
   claim_id: string | null;
   released_at: string | null;
 }
-const plain = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
 const requestKey = (caller: Caller, operation: string, requestId: string) =>
   `reflection:${digest({ actorId: caller.actorId, operation, requestId })}`;
 const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({

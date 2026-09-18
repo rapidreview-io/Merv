@@ -16,7 +16,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { CodeProposal } from './types.js';
-import { CodeGitHubService, type GitHubBinding } from './github.js';
+import { CodeGitHubService } from './github.js';
 import type { CodeTransportService } from './transport.js';
 import { parseCodeInput } from './input.js';
 

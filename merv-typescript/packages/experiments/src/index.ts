@@ -29,7 +29,6 @@ import type { Code, CodeCaptureRef } from '@merv/code/types';
 import type {
   Experiment,
   ExperimentAttach,
-  ExperimentAttempt,
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
