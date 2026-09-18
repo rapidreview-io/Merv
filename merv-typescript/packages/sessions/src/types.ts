@@ -144,6 +144,8 @@ export interface SessionObservationProvenance {
 export interface SessionWorkspaceObservation {
   provenance: SessionObservationProvenance;
   workspaceMode: 'none' | 'ephemeral' | 'persistent';
+  /** Whether the session can still deliver a workspace result. */
+  live: boolean;
   workspace: SessionWorkspaceRecord | null;
   observedAt: string | null;
   eventId: number | null;

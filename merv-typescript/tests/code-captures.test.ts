@@ -123,7 +123,7 @@ async function fixture(t: TestContext) {
   const reader = await issue('reader'),
     admin = await issue('operator');
   let sequence = 0;
-  async function offer() {
+  async function offer(attach = true) {
     const instance = await handle.start(source, {
       workflow: definition.name,
       requestId: `instance-${++sequence}`,
@@ -141,7 +141,7 @@ async function fixture(t: TestContext) {
       runnerId: session.runnerId,
       hostRef: `launch-${sequence}`,
     };
-    await app.ctx.sessions.attach(source, { ...control, workspace: attachment });
+    if (attach) await app.ctx.sessions.attach(source, { ...control, workspace: attachment });
     return { session, control, caller: await app.ctx.sessions.authenticate(secret) };
   }
   return {
@@ -379,6 +379,15 @@ test('Capture reads compose with an existing transaction and retain legacy final
     'A commit tree must not be guessed onto a legacy final report',
   );
   assert.equal(Object.hasOwn(result, 'parentOid'), false);
+});
+
+test('A final capture of a session halted before any host attached is failed, not pending forever', async (t) => {
+  const f = await fixture(t);
+  const { session } = await f.offer(false);
+  const ref = { kind: 'session-final' as const, sessionId: session.id };
+  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
+  await f.app.ctx.sessions.halt(f.source, { sessionId: session.id });
+  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'failed');
 });
 
 test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched command/session provenance', async (t) => {

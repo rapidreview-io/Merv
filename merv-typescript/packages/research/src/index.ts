@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { clip, createService, recorded, replayed } from '@merv/contracts';
+import { clip, createService, recorded, replayed, visible } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -313,7 +313,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
       .documents.problem.current;
     check(
       ['problem', 'scope', 'goals', 'constraints'].every((id) =>
-        problem.sections.some((section) => section.id === id && !!section.content.trim()),
+        problem.sections.some((section) => section.id === id && visible(section.content)),
       ),
       'research_definition_required',
       'Fill the problem, scope, goals and constraints before starting research',

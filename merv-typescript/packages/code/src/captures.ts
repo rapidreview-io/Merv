@@ -33,11 +33,15 @@ export class CodeCaptureReader {
       const observation = await this.sessions.workspaceObservation(caller, ref.sessionId, tx);
       return {
         ref,
+        // A released session's host may still post its final workspace; a session that ended
+        // before any host attached never will.
         status: observation.workspace?.result
           ? 'ready'
           : observation.workspaceMode === 'none'
             ? 'none'
-            : 'pending',
+            : observation.live || observation.provenance.hostRef !== null
+              ? 'pending'
+              : 'failed',
         provenance: observation.provenance,
         workspace: observation.workspace?.result ?? null,
         observedAt: observation.observedAt,

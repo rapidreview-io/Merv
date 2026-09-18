@@ -987,6 +987,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           readOnly: session.execution.policy.readOnly,
         },
         workspaceMode: effectiveWorkspace(session.execution.policy).mode,
+        live: live(session),
         workspace: workspace
           ? {
               attachment: JSON.parse(workspace.attachment_json),
