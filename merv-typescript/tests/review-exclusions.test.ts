@@ -99,7 +99,16 @@ test('pinned contributors cannot claim or submit synthesis review; independent r
       code: 'review_independence',
     });
   }
+  // A list tells its reader which reviews are its move, so no client has to restate the rule
+  // and get it wrong: an excluded contributor was once shown "your move" and refused on the
+  // click, because the page compared the producer alone.
+  const listed = async (caller: Caller) =>
+    (await f.reviews.list(caller)).find((entry) => entry.id === review.id)?.claimable;
+  for (const caller of [f.lensA, f.lensB, f.producer]) assert.equal(await listed(caller), false);
+  assert.equal(await listed(f.reviewer), true);
   const claimed = await f.reviews.start(f.reviewer, review.id);
+  // Claimed is nobody's to claim, including the reviewer holding it.
+  assert.equal(await listed(f.reviewer), false);
   for (const caller of [f.lensA, f.lensB])
     await assert.rejects(async () => await f.reviews.checkSubmit(caller, review.id), {
       code: 'review_independence',
