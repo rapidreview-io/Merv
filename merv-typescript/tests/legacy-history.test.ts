@@ -434,18 +434,13 @@ test('archive rows and receipt roll back together on a mid-import storage failur
   assert.equal((await importLegacyHistory(app.ctx.state, snapshot)).counts.reviews, 1);
 });
 
-test('only verified human members can read; expired authority is rechecked after asynchronous reads', async (t) => {
+test('every project reader reads the archive; expired authority is rechecked after asynchronous reads', async (t) => {
   const { app, snapshot, reader, caller, machine } = await fixture(t);
   await importLegacyHistory(app.ctx.state, snapshot);
-  for (const unauthorized of [
-    machine,
-    { actorId: caller.actorId, projectId: caller.projectId },
-    { ...caller, session: {} } as Caller,
-  ])
-    await assert.rejects(
-      reader.list(unauthorized, { sourceId: snapshot.sourceId, type: 'experiments' }),
-      { code: 'legacy_history_member_required' },
-    );
+  assert.ok(
+    (await reader.list(machine, { sourceId: snapshot.sourceId, type: 'experiments' })).records
+      .length,
+  );
   await assert.rejects(
     reader.list(caller, { sourceId: snapshot.sourceId, type: 'actors' as LegacyHistoryType }),
     { code: 'invalid_legacy_history_query' },

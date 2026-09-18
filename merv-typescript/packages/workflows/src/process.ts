@@ -78,10 +78,11 @@ export function processGraph(source: {
       current: state === decision.state,
       entries: arrivals.length,
       firstEnteredAt:
-        arrivals[0]?.at ??
         (state === definition.initial
-          ? (history.find((row) => row.fromState === null)?.createdAt ?? null)
-          : null),
+          ? history.find((row) => row.fromState === null)?.createdAt
+          : undefined) ??
+        arrivals[0]?.at ??
+        null,
       blockers: state === decision.state ? decision.blockers : [],
     };
   });

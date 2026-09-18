@@ -57,7 +57,7 @@ export const reviewToolsPlugin = {
               .max(128)
               .regex(/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/)
               .optional(),
-            notes: z.string().min(1),
+            notes: z.string().min(1).max(16000),
             synopsis: z.string().min(1).max(420).optional(),
             findings: z
               .array(

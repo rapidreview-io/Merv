@@ -527,12 +527,6 @@ export class WorkflowsService implements Workflows {
                 }),
               )
             : `${snapshot.workflow}: ${snapshot.state}`;
-          check(
-            typeof label === 'string' && label.trim().length > 0 && label.length <= 1000,
-            'invalid_workflow_policy',
-            'Dispatch labels must contain 1–1000 characters',
-            500,
-          );
           await this.checkContext(
             { caller: source, snapshot, tx },
             'Dispatch callbacks must not change the workflow instance',

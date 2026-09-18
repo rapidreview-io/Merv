@@ -1263,19 +1263,13 @@ function parse<T extends z.ZodTypeAny>(schema: T, input: unknown): z.infer<T> {
   check(result.success, 'invalid_legacy_history_query', 'History query is invalid');
   return result.data;
 }
-/** Human project membership only. Archive reads cannot widen an agent's assignment authority. */
+/** Anyone who reads the project reads its archive; the archive widens nothing else. */
 export class LegacyHistoryReader {
   constructor(
     private readonly state: State,
     private readonly scope: Pick<Scope, 'require'>,
   ) {}
   private async authorize(caller: Caller) {
-    check(
-      caller.human && !caller.session && !caller.key && !caller.credentialId,
-      'legacy_history_member_required',
-      'History requires a verified human project member',
-      403,
-    );
     await this.scope.require(caller, 'read');
   }
   async summary(caller: Caller, input: { sourceId: string }) {

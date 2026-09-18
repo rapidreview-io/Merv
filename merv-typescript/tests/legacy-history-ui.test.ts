@@ -129,9 +129,10 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
     projectName: 'Machine only',
     actorName: 'Operator',
   });
+  // A key reads its project's archive; this project has none.
   assert.equal(
     (await request({ action: 'summary' }, machine.project.id, machine.token)).status,
-    403,
+    404,
   );
   await fiber.dispose();
   assert.equal((await request({ action: 'summary' })).status, 404);

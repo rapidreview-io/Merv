@@ -1045,7 +1045,7 @@ DROP TABLE experiment_leases_backup;`,
         };
       },
       actions: [
-        action('submit_design', ['planned'], handoffs.planned),
+        action('submit_design', ['planned'], handoffs.planned, true),
         action('submit_results', ['running'], handoffs.running, true),
         action(
           'retry_running',
