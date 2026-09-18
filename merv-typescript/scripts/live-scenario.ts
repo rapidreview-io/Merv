@@ -856,6 +856,18 @@ async function main(options: Options) {
           parallelism: 2,
           ...(options.model ? { model: options.model } : {}),
           ...(options.effort ? { effort: options.effort } : {}),
+          // A Git experiment runs on the runner; its data still lives in project storage.
+          ...(options.harness === 'claude' && options.sandboxesUrl && options.sandboxesTokenEnv
+            ? {
+                servers: [
+                  {
+                    name: 'sandboxes',
+                    url: options.sandboxesUrl,
+                    bearerEnv: options.sandboxesTokenEnv,
+                  },
+                ],
+              }
+            : {}),
         },
       ],
     });

@@ -339,6 +339,25 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
   );
   assert.equal(reviewer.args[reviewer.args.indexOf('--model') + 1], 'claude-opus-5');
   assert.equal(reviewer.args[reviewer.args.indexOf('--effort') + 1], 'high');
+  // A further server rides along for workers only, its bearer named by variable.
+  const withStorage = {
+    ...claude,
+    servers: [{ name: 'sandboxes', url: 'https://sandboxes.example/mcp', bearerEnv: 'SBX_TOKEN' }],
+  };
+  const worker = buildLaunch(withStorage, request(), { ...safeEnv, SBX_TOKEN: 'sbxt_grant' });
+  const servers = JSON.parse(worker.args[worker.args.indexOf('--mcp-config') + 1]!).mcpServers;
+  assert.equal(servers.sandboxes.headers.Authorization, 'Bearer ${SBX_TOKEN}');
+  assert.equal(worker.env.SBX_TOKEN, 'sbxt_grant');
+  assert.match(worker.args[worker.args.indexOf('--allowedTools') + 1]!, /mcp__sandboxes$/);
+  const reading = buildLaunch(withStorage, request(true), { ...safeEnv, SBX_TOKEN: 'sbxt_grant' });
+  assert.equal(
+    JSON.parse(reading.args[reading.args.indexOf('--mcp-config') + 1]!).mcpServers.sandboxes,
+    undefined,
+  );
+  assert.equal(reading.env.SBX_TOKEN, undefined);
+  assert.throws(() => buildLaunch(withStorage, request(), safeEnv), {
+    code: 'invalid_runner_launch',
+  });
 });
 
 test('the child receives its session bearer but no inherited machine key, provider key or executable preload', () => {

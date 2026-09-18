@@ -10,7 +10,12 @@ interface ProfileBase {
 export type RunnerProfile = ProfileBase &
   (
     | { harness: 'codex'; model?: string; effort?: string }
-    | { harness: 'claude'; model?: string; effort?: string }
+    | {
+        harness: 'claude';
+        model?: string;
+        effort?: string;
+        servers?: { name: string; url: string; bearerEnv: string }[];
+      }
     | { harness: 'command'; args?: string[] }
   );
 

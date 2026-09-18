@@ -37,6 +37,19 @@ const profileSchema = z.discriminatedUnion('harness', [
       harness: z.literal('claude'),
       model: text.optional(),
       effort: text.optional(),
+      /** Further MCP servers beside Merv, each bearer named by the variable that holds it. */
+      servers: z
+        .array(
+          z
+            .object({
+              name: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+              url: z.string().url().max(2048),
+              bearerEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
+            })
+            .strict(),
+        )
+        .max(4)
+        .optional(),
     })
     .strict(),
   z
@@ -339,6 +352,7 @@ function claudeArgs(
   const builtIn = readOnly
     ? ['Read', 'Glob', 'Grep']
     : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'];
+  const servers = readOnly ? [] : (profile.servers ?? []);
   return [
     '--print',
     '--output-format',
@@ -355,12 +369,22 @@ function claudeArgs(
           url,
           headers: { Authorization: `Bearer \${${sessionTokenVariable}}` },
         },
+        ...Object.fromEntries(
+          servers.map((server) => [
+            server.name,
+            {
+              type: 'http',
+              url: server.url,
+              headers: { Authorization: `Bearer \${${server.bearerEnv}}` },
+            },
+          ]),
+        ),
       },
     }),
     '--tools',
     builtIn.join(','),
     '--allowedTools',
-    [...builtIn, 'mcp__merv'].join(','),
+    [...builtIn, 'mcp__merv', ...servers.map((server) => `mcp__${server.name}`)].join(','),
     '--dangerously-skip-permissions',
     '--model',
     profile.model ?? 'opus',
@@ -449,11 +473,29 @@ export function buildLaunch(
     JSON.stringify(session.assignment),
     '',
   ].join('\n');
+  // A further server's bearer travels the same way as Merv's: by name, from the
+  // runner's own environment, never as an argument.
+  const bearers: Record<string, string> = {};
+  if (profile.harness === 'claude' && !request.session.execution.policy.readOnly)
+    for (const server of profile.servers ?? []) {
+      const value = environment[server.bearerEnv];
+      check(
+        !!value,
+        'invalid_runner_launch',
+        `No bearer in ${server.bearerEnv} for ${server.name}`,
+      );
+      bearers[server.bearerEnv] = value;
+    }
   return protectLogging({
     executable: profile.executable,
     args,
     cwd: request.cwd,
     stdin,
-    env: { ...safeEnvironment, [mcpUrlVariable]: url, [sessionTokenVariable]: request.secret },
+    env: {
+      ...safeEnvironment,
+      ...bearers,
+      [mcpUrlVariable]: url,
+      [sessionTokenVariable]: request.secret,
+    },
   });
 }
