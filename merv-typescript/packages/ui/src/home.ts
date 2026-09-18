@@ -75,5 +75,53 @@ export async function homeRead(
       return [key, row ? await answer(async () => await read(caller, row.id, params)) : null];
     }),
   );
-  return Object.fromEntries([...parts, ...reads]) as Json;
+  return Object.fromEntries(
+    [...parts, ...reads].map(([key, value]) => [key, trim(key as string, value as Json)]),
+  ) as Json;
+}
+
+/**
+ * What the map draws of each record, and nothing else: the page polls this answer,
+ * and a project's full session history, findings and evidence were most of its weight.
+ * An absent key is an answer of null, kept as it is.
+ */
+const KEEP: Record<string, string[]> = {
+  actors: ['id', 'name', 'role', 'kind', 'active', 'sessionId'],
+  claims: ['id', 'statement', 'scope', 'status', 'confidence', 'updatedAt'],
+  experiments: ['id', 'name', 'intent', 'ownerId', 'testedClaimIds', 'workflow'],
+  tasks: [
+    'id',
+    'title',
+    'goal',
+    'producerId',
+    'acceptanceChecks',
+    'deliveryIds',
+    'dependencies',
+    'workflow',
+  ],
+  reviews: ['id', 'subjectId', 'status', 'reviewerId', 'verdict', 'createdAt'],
+  cycles: ['id', 'name', 'ownerId', 'workflow'],
+  files: ['size'],
+  posts: ['id', 'authorId', 'body', 'createdAt'],
+  reflections: ['id', 'title', 'ownerId', 'experimentIds', 'workflow'],
+  connections: ['state'],
+};
+const pick = (record: Json, keys: string[]): Json =>
+  record && typeof record === 'object' && !Array.isArray(record)
+    ? Object.fromEntries(keys.filter((key) => key in record).map((key) => [key, record[key]]))
+    : record;
+function trim(key: string, value: Json): Json {
+  const keys = KEEP[key];
+  if (keys && Array.isArray(value)) return value.map((item) => pick(item, keys));
+  if (key === 'sessions' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const { sessions: _sessions, agents, runners, ...rest } = value as Record<string, Json>;
+    return {
+      ...rest,
+      agents: Array.isArray(agents) ? agents.map((agent) => pick(agent, ['id', 'status'])) : agents,
+      runners: Array.isArray(runners)
+        ? runners.map((runner) => pick(runner, ['id', 'live']))
+        : runners,
+    };
+  }
+  return value;
 }
