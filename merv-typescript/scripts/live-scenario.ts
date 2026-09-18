@@ -710,8 +710,11 @@ async function main(options: Options) {
         return await again();
       }
       // A 5xx (a database timeout under load, a release swapping the server) is retried
-      // the same way; seven attempts span about a minute and a half.
-      return response.status >= 500 && attempt < 7 ? await again() : response;
+      // the same way, and so is a tool the booting server does not know yet; seven
+      // attempts span about a minute and a half.
+      const booting =
+        response.status === 404 && (await response.clone().text()).includes('unknown_tool');
+      return (response.status >= 500 || booting) && attempt < 7 ? await again() : response;
     };
     const request = async (path: string, body: unknown, method = 'POST'): Promise<any> => {
       const response = await send(path, {
