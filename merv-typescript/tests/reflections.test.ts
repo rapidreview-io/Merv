@@ -454,7 +454,8 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
   wave = (await f.app.ctx.tools.call('reflection.submit', caller, submission)) as Reflection;
   await f.app.ctx.sessions.releaseAgentAssignment(synthesisToken, execution.id);
   await f.app.ctx.domainEvents.drain();
-  assert.deepEqual(new Set(wave.review!.excludedActorIds), new Set(actors));
+  // Lens authors, and the owner who directed the synthesis worker, are excluded from its review.
+  assert.deepEqual(new Set(wave.review!.excludedActorIds), new Set([...actors, f.owner.actorId]));
   const reviewToken = token();
   await f.app.ctx.sessions.registerAgent(f.owner, {
     name: 'Independent review',

@@ -591,6 +591,12 @@ export class WorkflowsService implements Workflows {
         409,
       );
       const registration = this.definition(snapshot.workflow, snapshot.version);
+      check(
+        !registration.definition.terminal.includes(snapshot.state),
+        'workflow_ended',
+        `This work has ended as ${snapshot.state}; it takes no lease`,
+        409,
+      );
       const rule = registration.policy?.assignments?.find((rule) => rule.state === snapshot.state);
       check(
         rule?.lease && rule.execution,

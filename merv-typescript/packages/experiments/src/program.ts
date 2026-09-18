@@ -79,7 +79,7 @@ const recipeNames: Record<ActiveState, string> = {
 };
 const instructions: Record<ActiveState, string> = {
   planned:
-    'Design an experiment that can test its stated intent and linked claims. Distinguish the hypothesis from established evidence. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning may proceed before execution prerequisites finish.',
+    'Design an experiment that can test its stated intent and linked claims. Distinguish the hypothesis from established evidence. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
   design_review:
     'Independently test whether the exact pinned design can answer its research question. Examine controls, baselines, leakage, evaluation and feasibility. A structurally complete plan can still be scientifically unsound. Grade only the pinned submission.',
   running:

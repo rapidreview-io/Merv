@@ -613,6 +613,14 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             subjectRevision: moved.revision,
             producerId: caller.actorId,
             administrativeActorId: record.ownerId,
+            // Neither the owner nor the authority that directed a worker is independent of its work.
+            ...(caller.session
+              ? {
+                  excludedActorIds: [
+                    ...new Set([record.ownerId, (await this.scope.authorityActor(caller, tx)).id]),
+                  ],
+                }
+              : {}),
             artifactIds: reviewArtifacts,
             pinnedInputIds: [...new Set([...pinnedInputIds, ...sourceReports])],
             criteria,

@@ -883,6 +883,7 @@ export class ReflectionService implements Reflections {
                 transitions: ['submit'],
                 tool: 'reflection.submit_lens',
                 instruction: 'Submit your own immutable lens report.',
+                requiredInput: ['artifactId'],
                 arguments: ({ snapshot }: WorkflowCheckContext) => ({
                   lensId: snapshot.id,
                   expectedRevision: snapshot.revision,
@@ -899,6 +900,7 @@ export class ReflectionService implements Reflections {
                 transitions: ['submit'],
                 tool: 'reflection.submit',
                 instruction: 'Submit your report and change specification for independent review.',
+                requiredInput: ['reportArtifactId', 'changeSpecArtifactId'],
                 arguments: ({ snapshot }: WorkflowCheckContext) => ({
                   reflectionId: snapshot.id,
                   expectedRevision: snapshot.revision,
@@ -914,6 +916,7 @@ export class ReflectionService implements Reflections {
                 tool: 'review.submit',
                 instruction:
                   'Verify the pinned synthesis; pass or return to synthesizing/reflection.',
+                requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
                 arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
                   const wave = await this.row(caller, snapshot.id, tx);
                   const review = await this.reviews.get(caller, wave.review_id!, tx);
@@ -999,6 +1002,7 @@ export class ReflectionService implements Reflections {
             instanceId: lens.id,
             expectedRevision: input.expectedRevision,
             action: 'submit',
+            input: { ...input },
             requestId: requestKey(caller, 'lens-submit', input.requestId),
           },
           tx,
@@ -1081,6 +1085,7 @@ export class ReflectionService implements Reflections {
             instanceId: wave.id,
             expectedRevision: input.expectedRevision,
             action: 'submit',
+            input: { ...input },
             requestId: requestKey(caller, 'submit', input.requestId),
           },
           tx,
@@ -1116,7 +1121,16 @@ export class ReflectionService implements Reflections {
               ]),
             ],
             pinnedInputIds,
-            excludedActorIds: lenses.map((lens) => lens.producer_id!),
+            // Lens authors, the owner and the authority that directed a worker's synthesis
+            // are none of them independent of it.
+            excludedActorIds: [
+              ...new Set([
+                ...lenses.map((lens) => lens.producer_id!),
+                ...(caller.session
+                  ? [wave.owner_id, (await this.scope.authorityActor(caller, tx)).id]
+                  : []),
+              ]),
+            ],
             criteria: [
               ...(snapshot.version >= 2 ? REFLECTION_CRITERIA : LEGACY_CRITERIA),
               ...(submission.paperProposal
@@ -1192,6 +1206,7 @@ export class ReflectionService implements Reflections {
           instanceId: wave.id,
           expectedRevision: input.expectedRevision,
           action,
+          input: { ...input },
           requestId: requestKey(caller, 'review', input.requestId),
         },
         tx,

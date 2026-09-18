@@ -293,6 +293,9 @@ export function admitDispatch(
           );
           // Omitting a subset means selecting no resources, never all available resources.
           if (binding.kind === 'subset' && !Object.hasOwn(result, field)) result[field] = [];
+          // A choice among one reference is no choice: an omitted field takes it.
+          if (binding.kind === 'oneOf' && !Object.hasOwn(result, field) && values.length === 1)
+            result[field] = values[0]!;
           check(
             Object.hasOwn(result, field),
             'execution_arguments_forbidden',
@@ -350,7 +353,12 @@ export function executionDisplay(
       const candidates = tool.alternatives.map((alternative) => {
         const args: Data = {};
         for (const [field, binding] of Object.entries(alternative)) {
-          if (binding.kind === 'oneOf' || binding.kind === 'subset') continue;
+          if (binding.kind === 'oneOf') {
+            const values = execution.references[binding.name];
+            if (Array.isArray(values) && values.length === 1) args[field] = values[0]!;
+            continue;
+          }
+          if (binding.kind === 'subset') continue;
           try {
             args[field] = structuredClone(fixed(binding, execution)) as Data[string];
           } catch (error) {
