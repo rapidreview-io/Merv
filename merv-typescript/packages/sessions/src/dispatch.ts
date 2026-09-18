@@ -1,13 +1,13 @@
 import { postgresMigrations } from './dispatch.postgres.js';
 import { z } from 'zod';
 import {
+  recorded,
   canonical,
   mapAsync,
   MervError,
   check,
   digest,
   effectiveWorkspace,
-  eventSource,
   newId,
   type Caller,
   type Scope,
@@ -229,12 +229,8 @@ export class SessionDispatch {
       time,
       caller.actorId,
     );
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: 'session.dispatch_changed',
-      subjectId: caller.projectId,
-      data: { enabled, ...eventSource(caller) },
+    await recorded(this.state, tx, caller, 'session.dispatch_changed', caller.projectId, {
+      enabled,
     });
     return { enabled, updatedAt: time, updatedBy: caller.actorId };
   }
@@ -279,16 +275,9 @@ export class SessionDispatch {
         if (session.status !== 'offered' && session.status !== 'active') continue;
         await this.hooks.close(session, input.reason ?? 'operator_halt', tx);
         halted++;
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'session.halted',
-          subjectId: session.id,
-          data: {
-            sessionId: session.id,
-            reason: input.reason ?? 'operator_halt',
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'session.halted', session.id, {
+          sessionId: session.id,
+          reason: input.reason ?? 'operator_halt',
         });
       }
       return { halted };
@@ -381,13 +370,7 @@ export class SessionDispatch {
           JSON.stringify({ platforms: [] }),
           time,
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'session.runner_registered',
-          subjectId: id,
-          data: { runnerRef: id, ...eventSource(caller) },
-        });
+        await recorded(this.state, tx, caller, 'session.runner_registered', id, { runnerRef: id });
       }
       return await this.presence(
         (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', id))!,
@@ -430,16 +413,9 @@ export class SessionDispatch {
           JSON.stringify(parsed.data.settings),
           row.id,
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'session.runner_settings_changed',
-          subjectId: row.id,
-          data: {
-            runnerRef: row.id,
-            desiredVersion: row.desired_version + 1,
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'session.runner_settings_changed', row.id, {
+          runnerRef: row.id,
+          desiredVersion: row.desired_version + 1,
         });
       }
       return await this.presence(
@@ -781,18 +757,11 @@ export class SessionDispatch {
         runner.id,
         JSON.stringify(input.platform),
       );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'session.dispatched',
-        subjectId: session.id,
-        data: {
-          sessionId: session.id,
-          instanceId: session.instanceId,
-          runnerRef: runner.id,
-          platform: input.platform,
-          ...eventSource(caller),
-        },
+      await recorded(this.state, tx, caller, 'session.dispatched', session.id, {
+        sessionId: session.id,
+        instanceId: session.instanceId,
+        runnerRef: runner.id,
+        platform: input.platform,
       });
       return { session, reason: await decided('offered') };
     });

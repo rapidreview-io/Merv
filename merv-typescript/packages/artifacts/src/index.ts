@@ -1,9 +1,8 @@
-import { createService } from '@merv/contracts';
+import { recorded, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { isUtf8 } from 'node:buffer';
 import {
-  eventSource,
   check,
   newId,
   now,
@@ -104,12 +103,9 @@ export class ArtifactStore implements Artifacts {
         artifact.size,
         artifact.createdAt,
       );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'artifact.created',
-        subjectId: artifact.id,
-        data: { hash: artifact.hash, size: artifact.size, ...eventSource(caller) },
+      await recorded(this.state, tx, caller, 'artifact.created', artifact.id, {
+        hash: artifact.hash,
+        size: artifact.size,
       });
       return artifact;
     });

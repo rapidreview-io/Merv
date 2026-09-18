@@ -1,10 +1,9 @@
-import { mapAsync } from '@merv/contracts';
+import { recorded, mapAsync } from '@merv/contracts';
 import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
   digest,
-  eventSource,
   inTransaction,
   newId,
   now,
@@ -163,21 +162,6 @@ export class PaperService implements Paper {
       after: async () => await this.scope.require(caller, 'write', tx),
     });
   }
-  private async event(
-    caller: Caller,
-    type: string,
-    subjectId: string,
-    data: Data,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type,
-      subjectId,
-      data: { ...data, ...eventSource(caller) },
-    });
-  }
   private async revision(
     caller: Caller,
     before: PaperRevision,
@@ -197,13 +181,11 @@ export class PaperService implements Paper {
       after.revision,
       JSON.stringify(after),
     );
-    await this.event(
-      caller,
-      'paper.patched',
-      `${after.kind}:${after.revision}`,
-      { kind: after.kind, revision: after.revision, updateId: after.updateId },
-      tx,
-    );
+    await recorded(this.state, tx, caller, 'paper.patched', `${after.kind}:${after.revision}`, {
+      kind: after.kind,
+      revision: after.revision,
+      updateId: after.updateId,
+    });
   }
   private async edited(
     caller: Caller,
@@ -400,13 +382,10 @@ export class PaperService implements Paper {
           identifier,
           JSON.stringify(citation),
         );
-        await this.event(
-          caller,
-          'paper.cited',
-          citation.id,
-          { revision: citation.revision, identifier },
-          tx,
-        );
+        await recorded(this.state, tx, caller, 'paper.cited', citation.id, {
+          revision: citation.revision,
+          identifier,
+        });
         return citation;
       });
     });
@@ -472,13 +451,10 @@ export class PaperService implements Paper {
       caller.projectId,
       JSON.stringify(proposal),
     );
-    await this.event(
-      caller,
-      'paper.proposed',
-      proposal.id,
-      { source: { ...proposal.source }, artifactId: artifact.id },
-      tx,
-    );
+    await recorded(this.state, tx, caller, 'paper.proposed', proposal.id, {
+      source: { ...proposal.source },
+      artifactId: artifact.id,
+    });
     return proposal;
   }
   async accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]> {
@@ -558,7 +534,9 @@ export class PaperService implements Paper {
       JSON.stringify(acceptance),
       proposal.id,
     );
-    await this.event(caller, 'paper.accepted', proposal.id, { reviewId: input.reviewId }, tx);
+    await recorded(this.state, tx, caller, 'paper.accepted', proposal.id, {
+      reviewId: input.reviewId,
+    });
     return publications;
   }
 }

@@ -1,9 +1,8 @@
-import { createService, replayed } from '@merv/contracts';
+import { recorded, createService, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
-  eventSource,
   inTransaction,
   newId,
   now,
@@ -237,22 +236,15 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
     after: Claim,
     tx: Transaction,
   ): Promise<void> {
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: before ? 'claim.updated' : 'claim.created',
-      subjectId: after.id,
-      data: {
-        before: before
-          ? { status: before.status, confidence: before.confidence, revision: before.revision }
-          : null,
-        statement: after.statement,
-        scope: after.scope,
-        status: after.status,
-        confidence: after.confidence,
-        revision: after.revision,
-        ...eventSource(caller),
-      },
+    await recorded(this.state, tx, caller, before ? 'claim.updated' : 'claim.created', after.id, {
+      before: before
+        ? { status: before.status, confidence: before.confidence, revision: before.revision }
+        : null,
+      statement: after.statement,
+      scope: after.scope,
+      status: after.status,
+      confidence: after.confidence,
+      revision: after.revision,
     });
   }
   close(): void {

@@ -1,10 +1,9 @@
-import { mapAsync } from '@merv/contracts';
+import { recorded, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
 import {
-  eventSource,
   check,
   digest,
   inTransaction,
@@ -636,18 +635,11 @@ export class ReviewService implements Reviews {
         JSON.stringify(pinnedInputIds),
         ...(excludedActorIds === undefined ? [] : [JSON.stringify(excludedActorIds)]),
       );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'review.requested',
-        subjectId: id,
-        data: {
-          subjectId: input.subjectId,
-          subjectRevision: input.subjectRevision,
-          snapshotHash,
-          ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
-          ...eventSource(caller),
-        },
+      await recorded(this.state, tx, caller, 'review.requested', id, {
+        subjectId: input.subjectId,
+        subjectRevision: input.subjectRevision,
+        snapshotHash,
+        ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
       });
       return hydrate(await this.row(tx, caller, id));
     });
@@ -718,12 +710,9 @@ export class ReviewService implements Reviews {
         'Another reviewer already claimed this review',
         409,
       );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'review.started',
-        subjectId: reviewId,
-        data: { claimId, claimGeneration: current.claimGeneration + 1, ...eventSource(caller) },
+      await recorded(this.state, tx, caller, 'review.started', reviewId, {
+        claimId,
+        claimGeneration: current.claimGeneration + 1,
       });
       return hydrate(await this.row(tx, caller, reviewId));
     });
@@ -799,18 +788,11 @@ export class ReviewService implements Reviews {
           JSON.stringify(assessment.evidence),
           input.reviewId,
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'review.submitted',
-          subjectId: input.reviewId,
-          data: {
-            verdict: input.verdict,
-            ...(returnTo === undefined ? {} : { returnTo }),
-            subjectId: current.subjectId,
-            subjectRevision: current.subjectRevision,
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'review.submitted', input.reviewId, {
+          verdict: input.verdict,
+          ...(returnTo === undefined ? {} : { returnTo }),
+          subjectId: current.subjectId,
+          subjectRevision: current.subjectRevision,
         });
         return hydrate(await this.row(tx, caller, input.reviewId));
       });
@@ -825,13 +807,7 @@ export class ReviewService implements Reviews {
       if (row.status === 'superseded') return;
       check(row.status !== 'submitted', 'review_closed', 'A submitted verdict is immutable', 409);
       await tx.run("UPDATE reviews SET status = 'superseded' WHERE id = ?", reviewId);
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'review.superseded',
-        subjectId: reviewId,
-        data: { ...eventSource(caller) },
-      });
+      await recorded(this.state, tx, caller, 'review.superseded', reviewId, {});
     });
   }
   /** Trusted event reactions; neither restored access nor an inactive initiator cancels cleanup. */

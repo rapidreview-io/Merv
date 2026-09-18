@@ -1,10 +1,9 @@
-import { canonical, mapAsync } from '@merv/contracts';
+import { recorded, canonical, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import {
   check,
-  eventSource,
   inTransaction,
   newId,
   now,
@@ -333,18 +332,11 @@ export class KnowledgeService implements Knowledge {
         inputHash,
         snapshot.id,
       );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'knowledge.captured',
-        subjectId: snapshot.id,
-        data: {
-          manifestHash: snapshot.manifestHash,
-          sourceEventHead: snapshot.sourceEventHead,
-          taskIds: selection.tasks.map((task) => task.id),
-          experimentIds: selection.experiments.map((experiment) => experiment.id),
-          ...eventSource(caller),
-        },
+      await recorded(this.state, tx, caller, 'knowledge.captured', snapshot.id, {
+        manifestHash: snapshot.manifestHash,
+        sourceEventHead: snapshot.sourceEventHead,
+        taskIds: selection.tasks.map((task) => task.id),
+        experimentIds: selection.experiments.map((experiment) => experiment.id),
       });
       await this.scope.require(caller, 'write', tx);
       return structuredClone(snapshot);

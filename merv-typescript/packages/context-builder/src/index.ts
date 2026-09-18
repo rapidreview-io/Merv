@@ -1,10 +1,9 @@
-import { mapAsync } from '@merv/contracts';
+import { recorded, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
-  eventSource,
   check,
   digest,
   inTransaction,
@@ -255,18 +254,11 @@ export class RecipeContextBuilder implements ContextBuilder {
         inputHash,
         JSON.stringify(result),
       );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'context.built',
-        subjectId: result.id,
-        data: {
-          type: definition.name,
-          typeVersion: definition.version,
-          subjectId: input.subject.id,
-          hash: result.hash,
-          ...eventSource(caller),
-        },
+      await recorded(this.state, tx, caller, 'context.built', result.id, {
+        type: definition.name,
+        typeVersion: definition.version,
+        subjectId: input.subject.id,
+        hash: result.hash,
       });
       return result;
     });

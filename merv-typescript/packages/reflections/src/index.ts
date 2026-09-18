@@ -1,12 +1,11 @@
 import { everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
-import { createService, markdownSection, replayed } from '@merv/contracts';
+import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
   digest,
-  eventSource,
   inTransaction,
   now,
   type Artifact,
@@ -302,21 +301,6 @@ export class ReflectionService implements Reflections {
       hash: 'fingerprint',
     });
   }
-  private async emit(
-    caller: Caller,
-    subjectId: string,
-    type: string,
-    data: Data,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      subjectId,
-      type,
-      data: { ...data, ...eventSource(caller) },
-    });
-  }
   async create(
     caller: Caller,
     input: ReflectionCreate,
@@ -360,7 +344,9 @@ export class ReflectionService implements Reflections {
           '[]',
         );
         await this.createLenses(caller, await this.row(caller, workflow.id, tx), tx);
-        await this.emit(caller, workflow.id, 'reflection.created', { research: 'live' }, tx);
+        await recorded(this.state, tx, caller, 'reflection.created', workflow.id, {
+          research: 'live',
+        });
         return await this.get(caller, workflow.id, tx);
       });
     });
@@ -1064,13 +1050,11 @@ export class ReflectionService implements Reflections {
             tx,
           );
         }
-        await this.emit(
-          caller,
-          lens.id,
-          'reflection.lens_submitted',
-          { reflectionId: wave.id, attempt: wave.attempt, artifactId: artifact.id },
-          tx,
-        );
+        await recorded(this.state, tx, caller, 'reflection.lens_submitted', lens.id, {
+          reflectionId: wave.id,
+          attempt: wave.attempt,
+          artifactId: artifact.id,
+        });
         return await this.lens(caller, lens.id, tx);
       });
     });
@@ -1171,13 +1155,10 @@ export class ReflectionService implements Reflections {
           review.id,
           wave.id,
         );
-        await this.emit(
-          caller,
-          wave.id,
-          'reflection.submitted',
-          { reviewId: review.id, attempt: wave.attempt },
-          tx,
-        );
+        await recorded(this.state, tx, caller, 'reflection.submitted', wave.id, {
+          reviewId: review.id,
+          attempt: wave.attempt,
+        });
         return await this.get(caller, wave.id, tx);
       });
     });
@@ -1294,12 +1275,13 @@ export class ReflectionService implements Reflections {
         if (route === 'reflecting')
           await this.createLenses(caller, await this.row(caller, wave.id, tx), tx);
       }
-      await this.emit(
-        caller,
-        wave.id,
-        `reflection.${route === 'approved' ? 'approved' : 'returned'}`,
-        { reviewId: review.id, returnTo: route },
+      await recorded(
+        this.state,
         tx,
+        caller,
+        `reflection.${route === 'approved' ? 'approved' : 'returned'}`,
+        wave.id,
+        { reviewId: review.id, returnTo: route },
       );
       return await this.get(caller, wave.id, tx);
     });

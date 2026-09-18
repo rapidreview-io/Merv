@@ -1,11 +1,10 @@
-import { mapAsync } from '@merv/contracts';
+import { recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './proposals.postgres.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   canonical,
   check,
-  eventSource,
   newId,
   now,
   type Artifact,
@@ -286,21 +285,14 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
       inputHash,
       encoded,
     );
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: 'code.proposal_sealed',
-      subjectId: proposal.id,
-      data: {
-        commandId: command.id,
-        instanceId: session.instanceId,
-        proposalRevision: revision,
-        expectedRevision: session.expectedRevision,
-        policyHash: session.execution.policyHash,
-        manifestArtifactId: manifestArtifact.id,
-        manifestHash,
-        ...eventSource(caller),
-      },
+    await recorded(this.state, tx, caller, 'code.proposal_sealed', proposal.id, {
+      commandId: command.id,
+      instanceId: session.instanceId,
+      proposalRevision: revision,
+      expectedRevision: session.expectedRevision,
+      policyHash: session.execution.policyHash,
+      manifestArtifactId: manifestArtifact.id,
+      manifestHash,
     });
     return JSON.parse(encoded) as CodeProposal;
   }

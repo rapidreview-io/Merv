@@ -1,8 +1,7 @@
-import { createService } from '@merv/contracts';
+import { recorded, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
-  eventSource,
   check,
   effectiveWorkspace,
   inTransaction,
@@ -1010,18 +1009,11 @@ export class WorkflowsService implements Workflows {
       await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision)
     )[0];
     if (previous) return previous;
-    const event = await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: 'workflow.work_started',
-      subjectId: snapshot.id,
-      data: {
-        workflow: snapshot.workflow,
-        version: snapshot.version,
-        state: snapshot.state,
-        revision: snapshot.revision,
-        ...eventSource(caller),
-      },
+    const event = await recorded(this.state, tx, caller, 'workflow.work_started', snapshot.id, {
+      workflow: snapshot.workflow,
+      version: snapshot.version,
+      state: snapshot.state,
+      revision: snapshot.revision,
     });
     const workStart: WorkflowWorkStart = {
       instanceId: snapshot.id,
@@ -1828,21 +1820,14 @@ export class WorkflowsService implements Workflows {
       canonical(data),
       snapshot.updatedAt,
     );
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: 'workflow.transition',
-      subjectId: snapshot.id,
-      data: {
-        ...eventData,
-        workflow: snapshot.workflow,
-        version: snapshot.version,
-        revision: snapshot.revision,
-        action,
-        from,
-        to: snapshot.state,
-        ...eventSource(caller),
-      },
+    await recorded(this.state, tx, caller, 'workflow.transition', snapshot.id, {
+      ...eventData,
+      workflow: snapshot.workflow,
+      version: snapshot.version,
+      revision: snapshot.revision,
+      action,
+      from,
+      to: snapshot.state,
     });
   }
 

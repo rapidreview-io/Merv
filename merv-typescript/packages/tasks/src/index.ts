@@ -1,10 +1,9 @@
-import { mapAsync } from '@merv/contracts';
+import { recorded, mapAsync } from '@merv/contracts';
 import { clip, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
 import {
-  eventSource,
   check,
   digest,
   inTransaction,
@@ -1006,12 +1005,9 @@ DROP TABLE task_leases_backup;`,
           typeVersion,
           JSON.stringify(contextInputs),
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'task.created',
-          subjectId: workflow.id,
-          data: { briefId: brief.id, evidenceVersion: 2, ...eventSource(caller) },
+        await recorded(this.state, tx, caller, 'task.created', workflow.id, {
+          briefId: brief.id,
+          evidenceVersion: 2,
         });
         return await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
       });
@@ -1455,17 +1451,10 @@ DROP TABLE task_leases_backup;`,
           result.reviewId,
           JSON.stringify(result),
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'task.checkpoint_saved',
-          subjectId: task.id,
-          data: {
-            checkpointId: result.id,
-            purpose: input.purpose,
-            revision: result.revision,
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'task.checkpoint_saved', task.id, {
+          checkpointId: result.id,
+          purpose: input.purpose,
+          revision: result.revision,
         });
         return result;
       });
@@ -1713,13 +1702,7 @@ DROP TABLE task_leases_backup;`,
           tx,
         );
         if (reviewId) await this.reviews.supersede(caller, reviewId, tx);
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'task.failed',
-          subjectId: row.id,
-          data: { ...failure, ...eventSource(caller) },
-        });
+        await recorded(this.state, tx, caller, 'task.failed', row.id, { ...failure });
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
     });
@@ -1797,17 +1780,10 @@ DROP TABLE task_leases_backup;`,
           row.id,
           caller.projectId,
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'task.delivery_submitted',
-          subjectId: row.id,
-          data: {
-            reviewId: review.id,
-            snapshotHash: review.snapshotHash,
-            artifactIds: deliveryIds,
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'task.delivery_submitted', row.id, {
+          reviewId: review.id,
+          snapshotHash: review.snapshotHash,
+          artifactIds: deliveryIds,
         });
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
@@ -1857,18 +1833,11 @@ DROP TABLE task_leases_backup;`,
           row.id,
           caller.projectId,
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'task.review_reissued',
-          subjectId: row.id,
-          data: {
-            previousReviewId: previous.id,
-            reviewId: review.id,
-            reason: input.reason,
-            snapshotHash: review.snapshotHash,
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'task.review_reissued', row.id, {
+          previousReviewId: previous.id,
+          reviewId: review.id,
+          reason: input.reason,
+          snapshotHash: review.snapshotHash,
         });
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
@@ -1943,17 +1912,10 @@ DROP TABLE task_leases_backup;`,
           },
           tx,
         );
-        await this.state.appendEvent(tx, {
-          projectId: caller.projectId,
-          actorId: caller.actorId,
-          type: 'task.review_applied',
-          subjectId: row.id,
-          data: {
-            reviewId: submitted.id,
-            verdict: submitted.verdict,
-            action,
-            ...eventSource(caller),
-          },
+        await recorded(this.state, tx, caller, 'task.review_applied', row.id, {
+          reviewId: submitted.id,
+          verdict: submitted.verdict,
+          action,
         });
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
