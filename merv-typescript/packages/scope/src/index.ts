@@ -969,7 +969,15 @@ export class ProjectScope implements Scope {
         input.expiresAt === undefined ? previous.expires_at : input.expiresAt,
         time,
       );
-      if (target.id === caller.actorId) this.selfExpiry(expiresAt, previous.expires_at);
+      // A self-rotation extends neither the credential it replaces nor the one making the call.
+      if (target.id === caller.actorId) {
+        this.selfExpiry(expiresAt, previous.expires_at);
+        if (caller.credentialId !== undefined)
+          this.selfExpiry(
+            expiresAt,
+            (await this.credentialRow(tx, caller.projectId, caller.credentialId)).expires_at,
+          );
+      }
       const result = await tx.run(
         'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND project_id=? AND revoked_at IS NULL',
         time,
@@ -1035,7 +1043,7 @@ export class ProjectScope implements Scope {
     check(
       !row.user_issuer && !row.session_id,
       'member_actor',
-      'Member and session actors cannot receive independent actor credentials',
+      'Member and session actors carry no independent credentials; their membership or session governs them',
       403,
     );
   }
@@ -1043,7 +1051,7 @@ export class ProjectScope implements Scope {
     check(
       caller.key === undefined && caller.session === undefined,
       'forbidden',
-      'User keys cannot administer independent actor credentials or actors',
+      'User keys and worker sessions cannot administer independent actor credentials or actors',
       403,
     );
   }

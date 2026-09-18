@@ -607,6 +607,15 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
     );
   const rotated = await f.scope.rotateCredential(caller, { credentialId: short.credential.id });
   assert.equal(rotated.credential.expiresAt, shortDeadline);
+  // Nor can a short-lived caller rotate a longer credential of its own into a permanent one.
+  const lasting = await f.scope.issueActorCredential(f.operator, {
+    actorId: caller.actorId,
+    expiresAt: null,
+  });
+  await assert.rejects(
+    async () => await f.scope.rotateCredential(caller, { credentialId: lasting.credential.id }),
+    { code: 'self_expiry_extension', status: 403 },
+  );
   assert.equal(
     (await f.scope.authenticate(limited.token)).id,
     limited.actor.id,

@@ -173,6 +173,7 @@ export class AgentDirectory {
   async controlled(caller: Caller, id: string, tx: Transaction): Promise<Agent> {
     const source = await this.scope.delegationSource(caller, tx),
       agent = await this.get(id, tx);
+    check(agent.projectId === caller.projectId, 'agent_not_found', 'Agent not found', 404);
     check(
       digest(source) === digest(agent.source),
       'agent_forbidden',

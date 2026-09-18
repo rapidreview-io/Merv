@@ -232,9 +232,24 @@ export class FeedService implements Feed {
     let cursor = after;
     while (true) {
       const events = await this.state.events(caller.projectId, cursor);
-      const visible = events.filter(
-        (event) => !event.type.startsWith('actor.') && !event.type.startsWith('membership.'),
-      );
+      // Credential administration stays with operators: those events are dropped, and an
+      // event's source keeps only who acted, not the credential they held.
+      const visible = events
+        .filter(
+          (event) => !event.type.startsWith('actor.') && !event.type.startsWith('membership.'),
+        )
+        .map((event) => {
+          const { source } = event.data as { source?: { kind?: string; actorId?: string } };
+          return source
+            ? {
+                ...event,
+                data: {
+                  ...event.data,
+                  source: { kind: source.kind ?? '', actorId: source.actorId ?? '' },
+                },
+              }
+            : event;
+        });
       // State.events pages contain at most 1000 events. Do not signal exhaustion
       // merely because a complete page consists of private actor administration.
       if (visible.length > 0 || events.length < 1000) return visible;

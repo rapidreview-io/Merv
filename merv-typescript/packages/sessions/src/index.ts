@@ -62,6 +62,7 @@ const safeError = (error: unknown): MervError =>
     : new MervError('session_unavailable', 'Session validation is unavailable', 503);
 interface Row {
   id: string;
+  project_id: string;
   owner_hash: string;
   token_hash: string;
   fingerprint: string;
@@ -449,6 +450,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   ): Promise<Session> {
     const owner = await this.owner(caller, tx),
       row = await this.row(tx, id);
+    // Another project's session is not found here; another owner's is forbidden.
+    check(row.project_id === caller.projectId, 'session_not_found', 'Session not found', 404);
     check(
       row.owner_hash === owner.hash,
       'session_forbidden',
@@ -1420,11 +1423,16 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       );
       // Observation storage yields too; recheck authorization before invoking the tool.
       await this.validate(invocation.caller, invocation.tool, state.input);
-      const result =
+      // A session's own assignment is the frozen one it was offered; any other record's
+      // assignment is read the way anyone reads it.
+      const own =
         invocation.tool === 'workflow.assignment'
-          ? ((await this.transaction(async (tx) =>
-              clone((await this.session(invocation.caller, tx)).assignment),
-            )) as T)
+          ? await this.transaction(async (tx) => await this.session(invocation.caller, tx))
+          : undefined;
+      const asked = (state.input as { instanceId?: string }).instanceId;
+      const result =
+        own && (asked === undefined || asked === own.instanceId)
+          ? (clone(own.assignment) as T)
           : await handler(invocation.caller, clone(state.input));
       // MCP may return a tool error without throwing. Native values have no such envelope.
       const failed =
