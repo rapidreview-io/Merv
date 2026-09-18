@@ -860,6 +860,7 @@ async function main(options: Options) {
     const terminalState = (entry: Observed) => options.stopAfter ?? entry.brief.trajectory.at(-1)!;
     const TERMINAL = new Set(['done', 'complete', 'failed', 'abandoned', 'cancelled']);
     let divergenceLogged = false;
+    const held = new Map<string, number>();
     let dispatch: boolean | undefined;
     const setDispatch = async (enabled: boolean) => {
       if (dispatch === enabled) return;
@@ -948,6 +949,10 @@ async function main(options: Options) {
         if (entry.finished) return false;
         const kind = pauses.get(entry.brief.name)!.get(entry.states.at(-1)!);
         if (!kind) return false;
+        // A record the server holds for an unfinished dependency blocks nothing; it is
+        // tried again a minute later.
+        if ((held.get(`${entry.brief.name}:${entry.states.at(-1)}`) ?? 0) > Date.now() - 60_000)
+          return false;
         if (kind === 'harness') return true;
         const record = recordRevision.get(entry.brief.name);
         return record === undefined || leased.has(`${entry.id}:${record}`);
@@ -977,7 +982,19 @@ async function main(options: Options) {
           continue;
         entry.launchedStages.push(stage);
         harnessLaunches++;
-        await launchHarnessStage(entry, state, round);
+        try {
+          await launchHarnessStage(entry, state, round);
+        } catch (error) {
+          // The server offers nothing while a dependency is unfinished: hold the stage.
+          if (!(error instanceof Error) || !error.message.includes('dependencies_pending'))
+            throw error;
+          entry.launchedStages.pop();
+          harnessLaunches--;
+          const key = `${entry.brief.name}:${state}`;
+          if (!held.has(key))
+            log({ record: entry.brief.name, state, held: 'dependencies_pending' });
+          held.set(key, Date.now());
+        }
       }
 
       if ([...observed.values()].every((entry) => entry.finished)) break;
