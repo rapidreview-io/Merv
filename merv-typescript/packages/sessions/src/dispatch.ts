@@ -615,7 +615,9 @@ export class SessionDispatch {
     check(
       parsed.success,
       'invalid_dispatch_lease',
-      'Automatic leases need runner, platform, request and a generated session secret',
+      parsed.success
+        ? ''
+        : `Automatic lease input: ${parsed.error.issues.map((issue) => `${issue.path.join('.')} ${issue.message}`).join('; ')}`,
     );
     input = parsed.data;
     await this.hooks.prepare(caller);

@@ -1398,8 +1398,10 @@ DROP TABLE task_leases_backup;`,
   }
   async checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint> {
     return await this.state.transaction(async (tx) => {
-      const { task, review } = await this.assignment(caller, input, tx);
+      // The committed answer replays even after the task moved on; the assignment is
+      // checked only for a checkpoint that has yet to be written.
       return await this.command(tx, caller, input.requestId, 'checkpoint', input, async () => {
+        const { task, review } = await this.assignment(caller, input, tx);
         check(
           typeof input.notes === 'string' &&
             input.notes.trim().length > 0 &&
