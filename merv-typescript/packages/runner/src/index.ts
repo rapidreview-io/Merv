@@ -252,7 +252,9 @@ export class MachineRunner implements Runner {
           ...profile,
           enabled: desired.enabled,
           parallelism: desired.parallelism,
-          ...(profile.harness === 'codex' ? { model: desired.model, effort: desired.effort } : {}),
+          ...(profile.harness === 'codex' || profile.harness === 'claude'
+            ? { model: desired.model, effort: desired.effort }
+            : {}),
         };
         return validateProfile(candidate);
       });

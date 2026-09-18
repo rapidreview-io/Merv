@@ -34,6 +34,14 @@ const profileSchema = z.discriminatedUnion('harness', [
   z
     .object({
       ...common,
+      harness: z.literal('claude'),
+      model: text.optional(),
+      effort: text.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...common,
       harness: z.literal('command'),
       args: z
         .array(
@@ -313,6 +321,51 @@ function codexArgs(
   return args;
 }
 
+/**
+ * Claude Code headless. The same shape as the Codex launch: the Merv server alone, its
+ * bearer read from the process environment and never from an argument, no user or
+ * project settings, hooks, plugins or skills, and no permission prompts because there
+ * is nobody to answer them. A read-only lease keeps only the read tools; the server
+ * enforces the fixed manifest and argument bindings on every call either way.
+ */
+function claudeArgs(
+  profile: Extract<RunnerProfile, { harness: 'claude' }>,
+  request: LaunchRequest,
+  url: string,
+): string[] {
+  const readOnly = request.session.execution.policy.readOnly;
+  const builtIn = readOnly
+    ? ['Read', 'Glob', 'Grep']
+    : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'];
+  return [
+    '--print',
+    '--output-format',
+    'json',
+    '--no-session-persistence',
+    '--setting-sources',
+    '',
+    '--strict-mcp-config',
+    '--mcp-config',
+    JSON.stringify({
+      mcpServers: {
+        merv: {
+          type: 'http',
+          url,
+          headers: { Authorization: `Bearer \${${sessionTokenVariable}}` },
+        },
+      },
+    }),
+    '--tools',
+    builtIn.join(','),
+    '--allowedTools',
+    [...builtIn, 'mcp__merv'].join(','),
+    '--dangerously-skip-permissions',
+    '--model',
+    profile.model ?? 'opus',
+    ...(profile.effort !== undefined ? ['--effort', profile.effort] : []),
+  ];
+}
+
 function protectLogging(spec: LaunchSpec): LaunchSpec {
   const safe = () => ({
     executable: spec.executable,
@@ -380,7 +433,9 @@ export function buildLaunch(
   const args =
     profile.harness === 'codex'
       ? codexArgs(profile, request, url, safeEnvironment)
-      : [...(profile.args ?? [])];
+      : profile.harness === 'claude'
+        ? claudeArgs(profile, request, url)
+        : [...(profile.args ?? [])];
   const stdin = [
     'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
     'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',

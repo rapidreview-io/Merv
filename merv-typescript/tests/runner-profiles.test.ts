@@ -23,6 +23,13 @@ const codex: RunnerProfile = {
   enabled: true,
   parallelism: 2,
 };
+const claude: RunnerProfile = {
+  name: 'local-claude',
+  harness: 'claude',
+  executable: '/opt/bin/claude',
+  enabled: true,
+  parallelism: 2,
+};
 const command: RunnerProfile = {
   name: 'worker',
   harness: 'command',
@@ -128,9 +135,11 @@ function config(args: string[]): Record<string, string> {
 
 test('profiles admit supported local launch shapes and reject unsupported or executable-changing extras', () => {
   assert.deepEqual(validateProfile(codex), codex);
+  assert.deepEqual(validateProfile(claude), claude);
   assert.deepEqual(validateProfile(command), command);
   for (const bad of [
-    { ...codex, harness: 'claude' },
+    { ...codex, harness: 'gemini' },
+    { ...claude, args: ['--resume'] },
     { ...codex, args: ['--dangerously-bypass-approvals-and-sandbox'] },
     { ...codex, env: { OPENAI_API_KEY: 'must-not-print' } },
     { ...command, model: 'ignored-model' },
@@ -304,6 +313,32 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   assert.throws(() => buildLaunch(command, request(true), safeEnv), {
     code: 'unsupported_read_only',
   });
+});
+
+test('Claude Code runs headless on the Merv server alone, reads its bearer from the environment, and keeps only read tools on a read-only lease', () => {
+  const spec = buildLaunch(claude, request(), safeEnv);
+  assert.equal(spec.executable, '/opt/bin/claude');
+  assert.ok(spec.args.includes('--print') && spec.args.includes('--strict-mcp-config'));
+  const config = JSON.parse(spec.args[spec.args.indexOf('--mcp-config') + 1]!);
+  assert.deepEqual(Object.keys(config.mcpServers), ['merv']);
+  assert.equal(config.mcpServers.merv.headers.Authorization, 'Bearer ${MERV_AGENT_SESSION_TOKEN}');
+  assert.ok(!JSON.stringify(spec.args).includes(secret));
+  assert.equal(spec.env.MERV_AGENT_SESSION_TOKEN, secret);
+  assert.equal(spec.args[spec.args.indexOf('--model') + 1], 'opus');
+  assert.equal(spec.args[spec.args.indexOf('--tools') + 1], 'Read,Glob,Grep,Bash,Write,Edit');
+  assert.match(spec.stdin, /Frozen assignment/);
+  const reviewer = buildLaunch(
+    { ...claude, model: 'claude-opus-5', effort: 'high' },
+    request(true),
+    safeEnv,
+  );
+  assert.equal(reviewer.args[reviewer.args.indexOf('--tools') + 1], 'Read,Glob,Grep');
+  assert.equal(
+    reviewer.args[reviewer.args.indexOf('--allowedTools') + 1],
+    'Read,Glob,Grep,mcp__merv',
+  );
+  assert.equal(reviewer.args[reviewer.args.indexOf('--model') + 1], 'claude-opus-5');
+  assert.equal(reviewer.args[reviewer.args.indexOf('--effort') + 1], 'high');
 });
 
 test('the child receives its session bearer but no inherited machine key, provider key or executable preload', () => {

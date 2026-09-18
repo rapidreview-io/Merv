@@ -20,8 +20,8 @@ const RUN_ID = randomBytes(4).toString('hex');
  *   node --import tsx scripts/live-scenario.ts --brief <file> --out <dir> \
  *     [--base-url <url> --project <projectId> --token-env <ENV_NAME>] [--local] \
  *     [--only <name>[,<name>]] [--stop-after <state>] [--max-rounds <n>] \
- *     [--timeout-minutes <n>] [--github] \
- *     [--model <codex model>] [--effort <codex effort>] \
+ *     [--timeout-minutes <n>] [--github] [--harness codex|claude] \
+ *     [--model <model>] [--effort <effort>] \
  *     [--sandboxes-url <MCP endpoint, e.g. https://sandboxes.example/mcp> --sandboxes-token-env <ENV_NAME>]
  *
  * The machine key is read only from the environment variable named by --token-env
@@ -563,6 +563,8 @@ interface Options {
   sandboxesUrl?: string;
   /** The runner fetches the project's linked GitHub repository for Git-workspace records. */
   github?: boolean;
+  /** Which agent CLI does the work: Codex (the default) or Claude Code. */
+  harness: 'codex' | 'claude';
   sandboxesTokenEnv?: string;
 }
 
@@ -615,6 +617,7 @@ function parseArgs(argv: string[]): Options {
     effort: values.get('effort'),
     sandboxesUrl: values.get('sandboxes-url'),
     github: flags.has('github'),
+    harness: (values.get('harness') ?? 'codex') as 'codex' | 'claude',
     sandboxesTokenEnv: values.get('sandboxes-token-env'),
   };
 }
@@ -843,9 +846,12 @@ async function main(options: Options) {
       ...(options.github ? { workspace: { github: true as const } } : {}),
       profiles: [
         {
-          name: 'scenario-codex',
-          harness: 'codex',
-          executable: process.env.MERV_CODEX_BIN ?? 'codex',
+          name: `scenario-${options.harness}`,
+          harness: options.harness,
+          executable:
+            options.harness === 'claude'
+              ? (process.env.MERV_CLAUDE_BIN ?? 'claude')
+              : (process.env.MERV_CODEX_BIN ?? 'codex'),
           enabled: true,
           parallelism: 2,
           ...(options.model ? { model: options.model } : {}),
@@ -1120,7 +1126,55 @@ async function main(options: Options) {
         childEnv[options.sandboxesTokenEnv] = grant;
         if (!secrets.includes(grant)) secrets.push(grant);
       }
-      const args = [
+      // Claude Code headless: the same isolation in its own terms. Both servers, each
+      // bearer read from the environment; no user settings, hooks or plugins; read-only
+      // leases keep the read tools; nobody answers permission prompts, so none are asked.
+      const claudeArgs = [
+        '--print',
+        '--output-format',
+        'json',
+        '--no-session-persistence',
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--mcp-config',
+        JSON.stringify({
+          mcpServers: {
+            merv: {
+              type: 'http',
+              url: `${baseUrl}/mcp`,
+              headers: { Authorization: 'Bearer ${MERV_AGENT_SESSION_TOKEN}' },
+            },
+            ...(network && options.sandboxesUrl && options.sandboxesTokenEnv
+              ? {
+                  sandboxes: {
+                    type: 'http',
+                    url: options.sandboxesUrl,
+                    headers: { Authorization: `Bearer \${${options.sandboxesTokenEnv}}` },
+                  },
+                }
+              : {}),
+          },
+        }),
+        '--tools',
+        (session.execution.policy.readOnly
+          ? ['Read', 'Glob', 'Grep']
+          : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit', 'WebFetch']
+        ).join(','),
+        '--allowedTools',
+        [
+          ...(session.execution.policy.readOnly
+            ? ['Read', 'Glob', 'Grep']
+            : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit', 'WebFetch']),
+          'mcp__merv',
+          ...(network && options.sandboxesUrl ? ['mcp__sandboxes'] : []),
+        ].join(','),
+        '--dangerously-skip-permissions',
+        '--model',
+        options.model ?? 'opus',
+        ...(options.effort ? ['--effort', options.effort] : []),
+      ];
+      const codexArgs = [
         'exec',
         '--ignore-user-config',
         '--ignore-rules',
@@ -1216,10 +1270,13 @@ async function main(options: Options) {
         ...(options.effort ? ['-c', `model_reasoning_effort=${quote(options.effort)}`] : []),
         '-',
       ];
-      const child = spawn(process.env.MERV_CODEX_BIN ?? 'codex', args, {
-        env: childEnv,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      const child = spawn(
+        options.harness === 'claude'
+          ? (process.env.MERV_CLAUDE_BIN ?? 'claude')
+          : (process.env.MERV_CODEX_BIN ?? 'codex'),
+        options.harness === 'claude' ? claudeArgs : codexArgs,
+        { cwd: workspace, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] },
+      );
       const stem = join(options.out, 'launches', `${entry.brief.name}-${stage}`);
       mkdirSync(join(options.out, 'launches'), { recursive: true, mode: 0o700 });
       const chunks: string[] = [];

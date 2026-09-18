@@ -8,7 +8,11 @@ interface ProfileBase {
 }
 /** Trusted machine configuration. Remote settings can only tune documented fields. */
 export type RunnerProfile = ProfileBase &
-  ({ harness: 'codex'; model?: string; effort?: string } | { harness: 'command'; args?: string[] });
+  (
+    | { harness: 'codex'; model?: string; effort?: string }
+    | { harness: 'claude'; model?: string; effort?: string }
+    | { harness: 'command'; args?: string[] }
+  );
 
 /** Local machine configuration. Remote settings can tune profiles, never replace executables. */
 export interface RunnerConfig {
