@@ -237,7 +237,7 @@ function compose(workspace: PaperWorkspace): DocView[] {
       rows: rows.map((row, index) => ({
         ...row,
         n: `${at + 1}.${index + 1}`,
-        anchor: `${kind}-${slug(row.section.title)}`,
+        anchor: `${kind}-${slug(row.section.title)}-${row.section.id.slice(-6)}`,
         published: moved.has(row.section.id),
       })),
     };
@@ -791,6 +791,10 @@ function PaperPage({ row, shell }: ViewProps) {
   const { citations, proposals } = workspace.data;
   const open = proposals.filter((proposal) => !proposal.acceptance);
   const writable = actor.role === 'operator' || actor.role === 'producer';
+  // paper.patch edits problem and literature by hand; methods and results change only
+  // through an experiment's or a reflection's review, and problem's four sections are fixed.
+  const editable = (kind: string) => writable && (kind === 'problem' || kind === 'literature');
+  const extendable = (kind: string) => writable && kind === 'literature';
   const literature = workspace.data.documents.literature.current;
 
   /** A source this page cannot name is left out, never printed as its identifier. */
@@ -913,7 +917,7 @@ function PaperPage({ row, shell }: ViewProps) {
                 <h3 className="doc-h">
                   <span className="dn">{doc.n}</span>
                   {labels[doc.kind]}
-                  {writable && !editing && (
+                  {extendable(doc.kind) && !editing && (
                     <button
                       type="button"
                       className="btn-text"
@@ -942,7 +946,7 @@ function PaperPage({ row, shell }: ViewProps) {
                       from={attribution(doc, item)}
                       markers={doc.kind === 'literature' && <Markers section={item.section.id} />}
                       edit={
-                        writable &&
+                        editable(doc.kind) &&
                         !editing && (
                           <button
                             type="button"
