@@ -395,6 +395,19 @@ export abstract class StateStore implements State {
       ).map(eventFromRow),
     );
   }
+  /** The newest page, oldest first: what a reader without a cursor wants. */
+  async latestEvents(projectId: string): Promise<StoredEvent[]> {
+    return this.read(async (sql) =>
+      (
+        await sql.all<EventRow>(
+          'SELECT * FROM events WHERE project_id=? ORDER BY id DESC LIMIT 1000',
+          projectId,
+        )
+      )
+        .reverse()
+        .map(eventFromRow),
+    );
+  }
 
   async close(): Promise<void> {
     check(

@@ -225,17 +225,22 @@ export class FeedService implements Feed {
     );
   }
 
-  async activity(caller: Caller, after = 0): Promise<StoredEvent[]> {
+  async activity(caller: Caller, after?: number): Promise<StoredEvent[]> {
     const actor = await this.scope.require(caller, 'read');
     check(
-      Number.isSafeInteger(after) && after >= 0,
+      after === undefined || (Number.isSafeInteger(after) && after >= 0),
       'invalid_cursor',
       'after must be a nonnegative event ID',
     );
-    if (actor.role === 'operator') return await this.state.events(caller.projectId, after);
+    // Without a cursor the newest page answers; a cursor pages forward from it.
+    const page = async (cursor?: number) =>
+      cursor === undefined
+        ? await this.state.latestEvents(caller.projectId)
+        : await this.state.events(caller.projectId, cursor);
+    if (actor.role === 'operator') return await page(after);
     let cursor = after;
     while (true) {
-      const events = await this.state.events(caller.projectId, cursor);
+      const events = await page(cursor);
       // Credential administration stays with operators: those events are dropped, and an
       // event's source keeps only who acted, not the credential they held.
       const visible = events
@@ -250,7 +255,7 @@ export class FeedService implements Feed {
         });
       // State.events pages contain at most 1000 events. Do not signal exhaustion
       // merely because a complete page consists of private actor administration.
-      if (visible.length > 0 || events.length < 1000) return visible;
+      if (visible.length > 0 || events.length < 1000 || cursor === undefined) return visible;
       const next = events.at(-1)!.id;
       check(next > cursor, 'invalid_event_cursor', 'Activity event cursor failed to advance', 500);
       cursor = next;

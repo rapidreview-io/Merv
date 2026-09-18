@@ -52,7 +52,7 @@ export const feedToolsPlugin = {
       {
         name: 'feed.activity',
         description:
-          'Read durable activity events for the current project. after is an exclusive event ID cursor, independent of the feed post sequence.',
+          'Read durable activity events for the current project: the newest 1,000 without a cursor, or the 1,000 after the exclusive event ID cursor `after`, which is independent of the feed post sequence.',
         inputSchema: z.object({ after: z.number().int().nonnegative().optional() }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { after?: number }) =>

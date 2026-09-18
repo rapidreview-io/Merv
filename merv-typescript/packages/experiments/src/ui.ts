@@ -1,4 +1,5 @@
 import type { Context } from 'cordis';
+import { check } from '@merv/contracts';
 import type { Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
@@ -19,7 +20,12 @@ export const experimentsUiPlugin = {
         // One record, with the gate it stands at: the process graph is derived from the
         // same record, so the page reads both in one answer rather than two.
         read: async (caller, params) => {
-          const id = String(params?.id ?? '');
+          const id = params?.id;
+          check(
+            typeof id === 'string' && id.length > 0,
+            'invalid_input',
+            'params.id names the record',
+          );
           return JSON.parse(
             JSON.stringify({
               experiment: await experiments.get(caller, id),

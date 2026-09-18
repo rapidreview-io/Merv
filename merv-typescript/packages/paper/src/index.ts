@@ -3,6 +3,7 @@ import { createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
+  sound,
   digest,
   eventSource,
   inTransaction,
@@ -462,7 +463,8 @@ export class PaperService implements Paper {
     } catch {
       check(false, 'invalid_paper_input', 'Paper changes must be a UTF-8 JSON artifact');
     }
-    const changes = parse(changesSchema, json);
+    // Text reaching the paper through an artifact obeys the rule every direct write does.
+    const changes = parse(changesSchema, sound(json));
     check(
       new Set(changes.documents.map((d) => d.kind)).size === changes.documents.length,
       'invalid_paper_input',

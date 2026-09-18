@@ -1274,6 +1274,16 @@ export class ExperimentService implements Experiments {
       sequence,
       JSON.stringify(evidence),
     );
+    // A plan and a report are one document each: a newer one at another path replaces the
+    // earlier, so an attempt is never stuck with two current plans and no way to choose.
+    if (role === 'plan' || role === 'report')
+      await tx.run(
+        'DELETE FROM experiment_slots WHERE experiment_id=? AND attempt_index=? AND role=? AND path<>?',
+        experiment.id,
+        experiment.attempt.index,
+        role,
+        path,
+      );
     await tx.run(
       'INSERT INTO experiment_slots(experiment_id,attempt_index,role,path,evidence_id) VALUES(?,?,?,?,?) ON CONFLICT(experiment_id,attempt_index,role,path) DO UPDATE SET evidence_id=excluded.evidence_id',
       experiment.id,

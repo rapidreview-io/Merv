@@ -951,6 +951,12 @@ DROP TABLE task_leases_backup;`,
           'invalid_brief',
           'The brief must contain valid UTF-8 text',
         );
+        // The brief is embedded whole in every work context: it must leave the recipe room.
+        check(
+          document.content.length <= 32_000,
+          'invalid_brief',
+          'The brief (goal and checks) must fit 32,000 characters',
+        );
         const text = normalized(document.content);
         check(
           text.includes(normalized(input.goal)) &&

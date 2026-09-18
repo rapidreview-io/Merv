@@ -177,6 +177,7 @@ export interface State {
   migrate(component: string, migrations: Migration[]): Promise<void>;
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;
   events(projectId: string, after?: number): Promise<StoredEvent[]>;
+  latestEvents(projectId: string): Promise<StoredEvent[]>;
   eventBatch(after: number, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
   eventHead(tx?: Transaction): Promise<number>;
   onEventsCommitted(listener: () => void): () => void;

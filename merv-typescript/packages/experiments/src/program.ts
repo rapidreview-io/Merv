@@ -28,7 +28,7 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
-import type { Paper } from '@merv/paper/types';
+import type { Paper, PaperRevision, PaperWorkspace } from '@merv/paper/types';
 import type { Claims } from '@merv/claims/types';
 import type { Code, CodeCapture } from '@merv/code/types';
 import type { Experiment, ExperimentEvidence } from './types.js';
@@ -98,6 +98,38 @@ const handoffs: Record<ActiveState, string> = {
   experiment_review:
     'Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
 };
+
+/**
+ * The paper as a worker needs it in its frozen context: every document's revision and
+ * sections, with the text while it fits the room a recipe leaves for the rest. A section
+ * past that names its size, and the worker reads it with paper.read; a paper that grew
+ * within its own limits must never make an experiment impossible to assign.
+ */
+function paperContext(documents: PaperWorkspace['documents'], room = 40_000) {
+  let left = room;
+  const brief = (document: PaperRevision): PaperRevision => ({
+    ...document,
+    sections: document.sections.map((section) => {
+      const kept = section.content.length <= left;
+      if (kept) left -= section.content.length;
+      return kept
+        ? section
+        : { ...section, content: `(${section.content.length} characters; read with paper.read)` };
+    }),
+  });
+  return Object.fromEntries(
+    Object.entries(documents).map(([kind, document]) => [
+      kind,
+      {
+        current: brief(document.current),
+        published: document.published && {
+          ...document.published,
+          document: brief(document.published.document),
+        },
+      },
+    ]),
+  );
+}
 
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
@@ -561,7 +593,7 @@ DROP TABLE experiment_leases_backup;`,
         ...(experiment.workspace === 'git'
           ? { workspace: 'git', codeCapture: await this.reviewCapture(caller, experiment, tx) }
           : {}),
-        paper: (await this.host.paper.read(caller, tx)).documents,
+        paper: paperContext((await this.host.paper.read(caller, tx)).documents),
         paperProposal:
           experiment.submissions.find((s) => s.reviewId === review?.id)?.paperProposal ?? null,
         paperChangesFormat: {

@@ -438,4 +438,9 @@ test('Feed activity advances past full hidden pages to reach later visible event
   const operatorPage = await f.feed.activity(f.operator, after);
   assert.equal(operatorPage.length, 1000);
   assert.ok(operatorPage.every((event) => event.type === 'actor.created'));
+  // Without a cursor the newest page answers, so a reader is never stuck at the oldest one.
+  const latest = await f.feed.activity(f.operator);
+  assert.equal(latest.length, 1000);
+  assert.equal(latest.at(-1)!.subjectId, post.id);
+  assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
 });
