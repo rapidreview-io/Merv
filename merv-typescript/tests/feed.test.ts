@@ -443,4 +443,17 @@ test('Feed activity advances past full hidden pages to reach later visible event
   assert.equal(latest.length, 1000);
   assert.equal(latest.at(-1)!.subjectId, post.id);
   assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
+  // A burst of private events after the last visible one does not blank a reader's newest page.
+  await f.state.transaction(async (tx) => {
+    for (let index = 0; index < 2000; index++) {
+      await f.state.appendEvent(tx, {
+        projectId: f.operator.projectId,
+        actorId: f.operator.actorId,
+        type: 'actor.created',
+        subjectId: `later-${index}`,
+        data: { name: `Hidden actor ${index}`, role: 'reader' },
+      });
+    }
+  });
+  assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
 });

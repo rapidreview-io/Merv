@@ -42,7 +42,7 @@ export const feedToolsPlugin = {
           'Read project posts in ascending sequence order. after is an exclusive post sequence cursor; limit defaults to 50 and is capped at 100.',
         inputSchema: z
           .object({
-            after: z.number().int().nonnegative().optional(),
+            after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
             limit: z.number().int().min(1).max(100).optional(),
           })
           .strict(),
@@ -53,7 +53,9 @@ export const feedToolsPlugin = {
         name: 'feed.activity',
         description:
           'Read durable activity events for the current project: the newest 1,000 without a cursor, or the 1,000 after the exclusive event ID cursor `after`, which is independent of the feed post sequence.',
-        inputSchema: z.object({ after: z.number().int().nonnegative().optional() }).strict(),
+        inputSchema: z
+          .object({ after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() })
+          .strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { after?: number }) =>
           await feed.activity(caller, input.after),

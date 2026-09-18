@@ -1853,9 +1853,15 @@ DROP TABLE task_leases_backup;`,
         const row = await this.row(tx, caller, review.subjectId);
         const current = await this.workflows.get(caller, row.id, tx);
         check(
-          row.review_id === review.id && current.state === 'in_review',
+          row.review_id === review.id,
           'stale_review',
           'This review no longer belongs to the current task submission',
+          409,
+        );
+        check(
+          current.state === 'in_review',
+          'review_closed',
+          `This review has ended; the task is ${current.state}`,
           409,
         );
         check(

@@ -1,8 +1,7 @@
-import { createService } from '@merv/contracts';
+import { recorded, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
-  eventSource,
   check,
   digest,
   inTransaction,
@@ -156,12 +155,9 @@ export class FeedService implements Feed {
         artifactIds: [...artifactIds],
         createdAt,
       };
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'feed.posted',
-        subjectId: id,
-        data: { sequence: post.sequence, artifactIds: post.artifactIds, ...eventSource(caller) },
+      await recorded(this.state, tx, caller, 'feed.posted', id, {
+        sequence: post.sequence,
+        artifactIds: post.artifactIds,
       });
       await tx.run(
         'INSERT INTO feed_requests (project_id, author_id, request_id, input_hash, response_json) VALUES (?, ?, ?, ?, ?)',
@@ -206,7 +202,7 @@ export class FeedService implements Feed {
     check(
       Number.isSafeInteger(after) && after >= 0,
       'invalid_cursor',
-      'after must be a nonnegative integer',
+      'after must be a nonnegative integer at most 2^53-1',
     );
     check(
       Number.isSafeInteger(limit) && limit >= 1 && limit <= 100,
@@ -230,13 +226,14 @@ export class FeedService implements Feed {
     check(
       after === undefined || (Number.isSafeInteger(after) && after >= 0),
       'invalid_cursor',
-      'after must be a nonnegative event ID',
+      'after must be a nonnegative event ID at most 2^53-1',
     );
-    // Without a cursor the newest page answers; a cursor pages forward from it.
-    const page = async (cursor?: number) =>
-      cursor === undefined
-        ? await this.state.latestEvents(caller.projectId)
-        : await this.state.events(caller.projectId, cursor);
+    // Without a cursor the newest page answers and older pages follow; a cursor pages forward.
+    const forward = after !== undefined;
+    const page = async (edge?: number) =>
+      forward
+        ? await this.state.events(caller.projectId, edge)
+        : await this.state.latestEvents(caller.projectId, edge);
     if (actor.role === 'operator') return await page(after);
     let cursor = after;
     while (true) {
@@ -253,11 +250,16 @@ export class FeedService implements Feed {
           const { credentialId: _c, keyId: _k, membershipId: _m, expiresAt: _e, ...who } = source;
           return { ...event, data: { ...event.data, source: who as Data } };
         });
-      // State.events pages contain at most 1000 events. Do not signal exhaustion
-      // merely because a complete page consists of private actor administration.
-      if (visible.length > 0 || events.length < 1000 || cursor === undefined) return visible;
-      const next = events.at(-1)!.id;
-      check(next > cursor, 'invalid_event_cursor', 'Activity event cursor failed to advance', 500);
+      // Pages hold at most 1000 events. Do not signal exhaustion merely because a
+      // complete page consists of private actor administration.
+      if (visible.length > 0 || events.length < 1000) return visible;
+      const next = forward ? events.at(-1)!.id : events[0]!.id;
+      check(
+        cursor === undefined || (forward ? next > cursor : next < cursor),
+        'invalid_event_cursor',
+        'Activity event cursor failed to advance',
+        500,
+      );
       cursor = next;
     }
   }

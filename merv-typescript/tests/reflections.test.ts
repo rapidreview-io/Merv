@@ -197,6 +197,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   );
   wave = await f.synthesize(wave);
   assert.equal(wave.workflow.state, 'in_review');
+  await assert.rejects(async () => await f.synthesize(wave), { code: 'reflection_in_review' });
   await assert.rejects(async () => await f.app.ctx.workflows.assignment(lensWorker, wave.id), {
     code: 'review_independence',
   });

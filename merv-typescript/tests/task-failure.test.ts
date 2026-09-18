@@ -375,7 +375,7 @@ test('producer and operator withdrawal close requested or claimed reviews and fe
         await assert.rejects(
           async () => await f.app.ctx.tasks.submitReview(f.reviewer.caller, late),
           {
-            code: 'stale_review',
+            code: 'review_closed',
           },
         );
         await assert.rejects(async () => await f.app.ctx.reviews.submit(f.reviewer.caller, late), {

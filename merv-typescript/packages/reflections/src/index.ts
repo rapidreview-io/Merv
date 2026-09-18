@@ -1076,6 +1076,12 @@ export class ReflectionService implements Reflections {
           'Reflection changed; refresh its assignment',
           409,
         );
+        check(
+          snapshot.state !== 'in_review',
+          'reflection_in_review',
+          'Reflection is under review; synthesis returns only with the verdict',
+          409,
+        );
         await this.admit({ caller, snapshot, tx });
         check(
           input.reportArtifactId !== input.changeSpecArtifactId,
