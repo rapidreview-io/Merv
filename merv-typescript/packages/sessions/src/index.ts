@@ -524,11 +524,21 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
               session.expectedRevision + 1,
             )
           : undefined;
+      // A poll on a read snapshot reports the closure it found; the sweep records it.
+      const close = async (
+        ...rest: Parameters<typeof this.closeSession> extends [Session, ...infer R] ? R : never
+      ) => {
+        try {
+          await this.closeSession(session, ...rest);
+        } catch (error) {
+          if (!(error instanceof MervError) || error.code !== 'read_only_scope') throw error;
+        }
+      };
       if (moved?.actor_id !== session.actorId) {
-        await this.closeSession(session, failure.code, tx);
+        await close(failure.code, tx);
         return failure;
       }
-      await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      await close('handoff', tx, 'released', 'completed');
       return new MervError(
         'session_completed',
         'This session’s handoff completed and the session has ended; its record moved on',

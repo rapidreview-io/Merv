@@ -222,6 +222,16 @@ async function reviewFlow(t: TestContext, postgres = false) {
   assert.equal(pinned.producerId, work.session.actorId);
   assert.ok(pinned.artifactIds.includes(f.task.briefId));
   assert.ok(pinned.artifactIds.includes(artifact.id));
+  // A poll right after the handoff runs on a read snapshot and still reports the closure.
+  const polled = await f.http<{ session: Session }>(
+    `/sessions/${work.session.id}`,
+    f.key.token,
+    undefined,
+    f.project.id,
+  );
+  assert.equal(polled.status, 200, JSON.stringify(polled.body));
+  assert.equal(polled.body.session.status, 'released');
+  assert.equal(polled.body.session.outcome, 'completed');
 
   const review = await f.offer(delivered);
   assert.equal(review.session.source.actorId, work.session.source.actorId);
