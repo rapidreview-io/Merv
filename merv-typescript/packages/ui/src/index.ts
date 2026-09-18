@@ -1,4 +1,4 @@
-import { mapAsync } from '@merv/contracts';
+import { visible, mapAsync } from '@merv/contracts';
 import { FiberState, type Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -38,7 +38,7 @@ export class UiRegistry implements Ui {
       'Row id must be lowercase letters, digits, dashes',
     );
     check(
-      typeof row.label === 'string' && row.label.trim().length > 0 && row.label.length <= 40,
+      typeof row.label === 'string' && visible(row.label) && row.label.length <= 40,
       'invalid_row',
       'Row label must contain 1–40 characters',
     );
@@ -88,10 +88,7 @@ export const uiPlugin = {
   name: 'merv-ui',
   Config: z
     .object({
-      assets: z
-        .string()
-        .refine((path) => path.trim().length > 0)
-        .optional(),
+      assets: z.string().refine(visible).optional(),
     })
     .strict()
     .default({}),

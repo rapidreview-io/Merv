@@ -1,4 +1,4 @@
-import { recorded, mapAsync } from '@merv/contracts';
+import { visible, recorded, mapAsync } from '@merv/contracts';
 import { clip, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -836,7 +836,7 @@ DROP TABLE task_leases_backup;`,
     fn: () => T | Promise<T>,
   ): Promise<T> {
     check(
-      typeof requestId === 'string' && requestId.trim().length > 0,
+      typeof requestId === 'string' && visible(requestId),
       'invalid_request',
       'requestId is required',
     );
@@ -1399,9 +1399,7 @@ DROP TABLE task_leases_backup;`,
       return await this.command(tx, caller, input.requestId, 'checkpoint', input, async () => {
         const { task, review } = await this.assignment(caller, input, tx);
         check(
-          typeof input.notes === 'string' &&
-            input.notes.trim().length > 0 &&
-            input.notes.length <= 16000,
+          typeof input.notes === 'string' && visible(input.notes) && input.notes.length <= 16000,
           'invalid_checkpoint',
           'Checkpoint notes must contain 1–16000 characters',
         );
@@ -1636,9 +1634,7 @@ DROP TABLE task_leases_backup;`,
     );
     check(
       !input ||
-        (typeof input.reason === 'string' &&
-          input.reason.trim().length > 0 &&
-          input.reason.length <= 16000),
+        (typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 16000),
       'invalid_reason',
       'A specific reason of 1–16000 characters is required to mark a task failed',
     );
@@ -1900,6 +1896,16 @@ DROP TABLE task_leases_backup;`,
                     : input.synopsis?.trim() || input.notes
                   : null,
               revisionContext: input.verdict === 'pass' ? null : input.notes,
+              ...(input.verdict === 'fail'
+                ? {
+                    failure: {
+                      reason: input.synopsis?.trim() || input.notes,
+                      actorId: caller.actorId,
+                      createdAt: now(),
+                      reviewId: input.reviewId,
+                    } satisfies TaskFailure,
+                  }
+                : {}),
             },
           },
           tx,

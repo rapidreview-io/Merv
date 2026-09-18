@@ -1,4 +1,5 @@
 import {
+  visible,
   check,
   type Data,
   type ReviewFinding,
@@ -74,7 +75,7 @@ export function validateEvidence(value: unknown): Data {
   const evidence = JSON.parse(encoded) as Data;
   check(
     evidence.outcome === undefined ||
-      (typeof evidence.outcome === 'string' && evidence.outcome.trim().length > 0),
+      (typeof evidence.outcome === 'string' && visible(evidence.outcome)),
     'invalid_evidence',
     'Review evidence.outcome must be a nonempty string when supplied',
   );
@@ -91,6 +92,7 @@ export function validateAssessment(
   if (review.formatVersion === 2 || input.synopsis !== undefined) {
     check(
       typeof input.synopsis === 'string' &&
+        visible(input.synopsis) &&
         input.synopsis.trim().length >= 40 &&
         input.synopsis.trim().length <= 420 &&
         !/[\r\n\u2028\u2029`]/u.test(input.synopsis) &&
@@ -139,7 +141,7 @@ export function validateAssessment(
       'Finding status must be met, not_met, not_verified, or waived',
     );
     check(
-      typeof item.notes === 'string' && item.notes.trim().length > 0 && item.notes.length <= 16000,
+      typeof item.notes === 'string' && visible(item.notes) && item.notes.length <= 16000,
       'invalid_findings',
       `Criterion ${item.criterionNumber} needs assessment notes (1–16000 characters)`,
     );

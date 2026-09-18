@@ -1,6 +1,7 @@
 import { postgresMigrations } from './user-keys.postgres.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  visible,
   check,
   newId,
   type Actor,
@@ -298,9 +299,7 @@ export class UserKeys {
     check(
       input.label === undefined ||
         input.label === null ||
-        (typeof input.label === 'string' &&
-          input.label.trim().length > 0 &&
-          input.label.length <= 120),
+        (typeof input.label === 'string' && visible(input.label) && input.label.length <= 120),
       'invalid_label',
       'Key label must contain 1–120 characters or be null',
     );

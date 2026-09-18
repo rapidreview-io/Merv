@@ -1,4 +1,4 @@
-import { createService, mapAsync } from '@merv/contracts';
+import { visible, createService, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { postgresMigrations } from './index.postgres.js';
 import { createHash } from 'node:crypto';
@@ -52,10 +52,7 @@ const permission = (role: Session['role']): Permission =>
   role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const text = (value: unknown, max = 200) =>
-  typeof value === 'string' &&
-  value.trim().length > 0 &&
-  value.length <= max &&
-  !value.includes('\0');
+  typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');
 const safeError = (error: unknown): MervError =>
   error instanceof MervError
     ? error

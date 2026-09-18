@@ -1,3 +1,4 @@
+import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
@@ -126,11 +127,7 @@ export const taskToolsPlugin = {
           .object({
             taskId: id,
             expectedRevision: z.number().int().nonnegative(),
-            reason: z
-              .string()
-              .min(1)
-              .max(16000)
-              .refine((value) => value.trim().length > 0),
+            reason: z.string().min(1).max(16000).refine(visible),
             requestId,
           })
           .strict(),

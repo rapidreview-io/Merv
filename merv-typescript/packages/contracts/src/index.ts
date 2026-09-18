@@ -12,6 +12,7 @@ import type { z } from 'zod';
 import 'cordis';
 
 export type { Json, Data } from './data.js';
+export { clip, visible } from './text.js';
 export { sessionWorkspaceSchema } from './workspace.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
@@ -109,9 +110,6 @@ export function check(
 ): asserts condition {
   if (!condition) throw new MervError(code, message, status);
 }
-/** At most `max` UTF-16 units, never ending in half a surrogate pair. */
-export const clip = (text: string, max: number) =>
-  text.length > max ? text.slice(0, max).replace(/\p{Surrogate}$/u, '') : text;
 export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-', '')}`;
 export const now = () => new Date().toISOString();
 export type Limits = { depth?: number; nodes?: number; bytes?: number; keys?: 'json' | 'any' };

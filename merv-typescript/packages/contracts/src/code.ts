@@ -1,3 +1,4 @@
+import { visible } from './text.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
 
@@ -54,7 +55,7 @@ const message = z
   .string()
   .min(1)
   .max(2000)
-  .refine((value) => value.trim().length > 0 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value));
+  .refine((value) => visible(value) && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value));
 export const codeCommitInputSchema = z
   .object({ expectedHead: oid, message, requestId: id })
   .strict();

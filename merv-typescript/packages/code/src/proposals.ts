@@ -1,4 +1,4 @@
-import { recorded, mapAsync } from '@merv/contracts';
+import { visible, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './proposals.postgres.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -30,9 +30,7 @@ const inputSchema = z
       .string()
       .min(1)
       .max(12000)
-      .refine(
-        (value) => value.trim().length > 0 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value),
-      ),
+      .refine((value) => visible(value) && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)),
     artifactIds: z.array(identifier).min(1).max(64),
     pinnedInputIds: z.array(identifier).max(64).default([]),
     provenance: data.default({}),

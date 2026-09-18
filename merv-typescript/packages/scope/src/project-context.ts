@@ -1,7 +1,13 @@
 import { postgresMigrations } from './project-context.postgres.js';
 import { types } from 'node:util';
 import { z } from 'zod';
-import { check, type Migration, type Project, type ProjectContextUpdate } from '@merv/contracts';
+import {
+  visible,
+  check,
+  type Migration,
+  type Project,
+  type ProjectContextUpdate,
+} from '@merv/contracts';
 
 export interface ProjectRow {
   id: string;
@@ -49,11 +55,7 @@ export const projectContextUpdateSchema = z
   .object({
     summary: summaryText.transform((text) => text.trim()),
     expectedSummary: summaryText,
-    requestId: z
-      .string()
-      .min(1)
-      .max(256)
-      .refine((value) => value.trim().length > 0),
+    requestId: z.string().min(1).max(256).refine(visible),
   })
   .strict();
 

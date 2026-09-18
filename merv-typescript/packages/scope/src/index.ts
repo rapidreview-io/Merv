@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { visible, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
@@ -387,7 +387,7 @@ export class ProjectScope implements Scope {
         typeof input.sessionId === 'string' &&
         input.sessionId.length > 0 &&
         typeof input.name === 'string' &&
-        input.name.trim().length > 0 &&
+        visible(input.name) &&
         input.name.length <= 200,
       'invalid_session_actor',
       'Session actors need a name, lease and non-operator role',
@@ -509,7 +509,7 @@ export class ProjectScope implements Scope {
     expiresAt?: string | null,
   ): Promise<IssuedActorCredential> {
     check(
-      typeof name === 'string' && name.trim().length > 0 && name.length <= 200,
+      typeof name === 'string' && visible(name) && name.length <= 200,
       'invalid_actor',
       'Actor needs a nonblank name of at most 200 characters',
     );
@@ -559,7 +559,7 @@ export class ProjectScope implements Scope {
   async bootstrap(input: { projectName: string; actorName: string }) {
     check(
       typeof input.projectName === 'string' &&
-        input.projectName.trim().length > 0 &&
+        visible(input.projectName) &&
         input.projectName.length <= 200,
       'invalid_project',
       'Project needs a name of at most 200 characters',

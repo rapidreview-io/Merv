@@ -1,3 +1,4 @@
+import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from './types.js';
 import { z } from 'zod';
@@ -35,7 +36,7 @@ export const apiPlugin = {
     .object({
       host: z
         .string()
-        .refine((host) => host.trim().length > 0, 'API host must be nonblank')
+        .refine((host) => visible(host), 'API host must be nonblank')
         .optional(),
       port: z.number().int().min(0).max(65535).optional(),
       maxBodyBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),

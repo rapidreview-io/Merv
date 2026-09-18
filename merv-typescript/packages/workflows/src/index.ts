@@ -1,4 +1,4 @@
-import { recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -532,7 +532,7 @@ export class WorkflowsService implements Workflows {
               )
             : `${snapshot.workflow}: ${snapshot.state}`;
           check(
-            typeof label === 'string' && label.trim().length > 0,
+            typeof label === 'string' && visible(label),
             'invalid_workflow_policy',
             'Dispatch labels must be nonempty',
             500,
@@ -842,9 +842,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<void> {
     await inTransaction(this.state, transaction, async (tx) => {
       check(
-        typeof input.reason === 'string' &&
-          input.reason.trim().length > 0 &&
-          input.reason.length <= 500,
+        typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 500,
         'invalid_reason',
         'Lease release requires a bounded reason',
       );
@@ -1861,7 +1859,7 @@ export class WorkflowsService implements Workflows {
 
   private requestId(value: string): void {
     check(
-      typeof value === 'string' && value.trim().length > 0 && value.length <= 256,
+      typeof value === 'string' && visible(value) && value.length <= 256,
       'invalid_request',
       'A request id of 1–256 characters is required',
     );

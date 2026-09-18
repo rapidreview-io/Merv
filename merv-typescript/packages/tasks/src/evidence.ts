@@ -1,4 +1,4 @@
-import { check, type TaskConfirmation } from '@merv/contracts';
+import { visible, check, type TaskConfirmation } from '@merv/contracts';
 
 export const acceptanceChecks = (checks: string[]) =>
   checks.map((text, index) => ({ number: index + 1, text }));
@@ -63,7 +63,7 @@ export function validateConfirmations(
       'Confirmation status must be met or not_met',
     );
     check(
-      typeof item.notes === 'string' && item.notes.trim().length > 0 && item.notes.length <= 2000,
+      typeof item.notes === 'string' && visible(item.notes) && item.notes.length <= 2000,
       'invalid_confirmations',
       `Check ${item.checkNumber} needs notes explaining the evidence or unmet condition (1–2000 characters)`,
     );

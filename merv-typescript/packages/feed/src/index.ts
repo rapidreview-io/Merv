@@ -1,4 +1,4 @@
-import { recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -95,7 +95,7 @@ export class FeedService implements Feed {
       );
       check(
         typeof input.requestId === 'string' &&
-          input.requestId.trim().length > 0 &&
+          visible(input.requestId) &&
           input.requestId.length <= 200,
         'invalid_request',
         'requestId must contain 1–200 characters',
@@ -117,14 +117,14 @@ export class FeedService implements Feed {
         return JSON.parse(old.response_json) as FeedPost;
       }
       check(
-        typeof input.body === 'string' && input.body.trim().length > 0 && input.body.length <= 8000,
+        typeof input.body === 'string' && visible(input.body) && input.body.length <= 8000,
         'invalid_body',
         'Post body must be nonblank and at most 8000 characters',
       );
       const artifactIds = input.artifactIds === undefined ? [] : input.artifactIds;
       check(
         Array.isArray(artifactIds) &&
-          artifactIds.every((id) => typeof id === 'string' && id.trim().length > 0),
+          artifactIds.every((id) => typeof id === 'string' && visible(id)),
         'invalid_attachments',
         'Attachments are artifact IDs',
       );
@@ -173,11 +173,7 @@ export class FeedService implements Feed {
 
   async get(caller: Caller, postId: string): Promise<FeedPost> {
     await this.scope.require(caller, 'read');
-    check(
-      typeof postId === 'string' && postId.trim().length > 0,
-      'invalid_post',
-      'A post ID is required',
-    );
+    check(typeof postId === 'string' && visible(postId), 'invalid_post', 'A post ID is required');
     const row = await this.state.read(
       async (sql) =>
         await sql.get<PostRow>(

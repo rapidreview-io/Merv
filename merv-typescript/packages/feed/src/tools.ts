@@ -1,3 +1,4 @@
+import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
@@ -21,7 +22,7 @@ export const feedToolsPlugin = {
               .string()
               .min(1)
               .max(8000)
-              .refine((body) => body.trim().length > 0, 'Post body must be nonblank'),
+              .refine((body) => visible(body), 'Post body must be nonblank'),
             artifactIds: z.array(z.string().min(1)).max(10).optional(),
             requestId: z.string().min(1).max(200),
           })

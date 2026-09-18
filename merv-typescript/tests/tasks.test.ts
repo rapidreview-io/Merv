@@ -408,20 +408,31 @@ test('brief and delivery gates enforce scope, authorship, check coverage, and fa
       ),
     );
     await f.reviews.start(f.reviewer, pending.reviewId!);
-    assert.equal(
-      (
+    await assert.rejects(
+      async () =>
         await f.tasks.submitReview(f.reviewer, {
           ...reviewedFindings(await f.reviews.get(f.operator, pending.reviewId!)),
           reviewId: pending.reviewId!,
           claimId: (await f.reviews.get(f.operator, pending.reviewId!)).claimId!,
           verdict: 'fail',
-          notes: 'Goal cannot be achieved within scope.',
+          notes: '\u200b\u200b',
           expectedRevision: pending.workflow.revision,
-          requestId: 'fail',
-        })
-      ).workflow.state,
-      'failed',
+          requestId: 'invisible',
+        }),
+      code('invalid_notes'),
     );
+    const failed = await f.tasks.submitReview(f.reviewer, {
+      ...reviewedFindings(await f.reviews.get(f.operator, pending.reviewId!)),
+      reviewId: pending.reviewId!,
+      claimId: (await f.reviews.get(f.operator, pending.reviewId!)).claimId!,
+      verdict: 'fail',
+      notes: 'Goal cannot be achieved within scope.',
+      expectedRevision: pending.workflow.revision,
+      requestId: 'fail',
+    });
+    assert.equal(failed.workflow.state, 'failed');
+    assert.equal(failed.failure?.reviewId, pending.reviewId);
+    assert.equal(failed.failure?.actorId, f.reviewer.actorId);
   } finally {
     await f.cleanup();
   }

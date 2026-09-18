@@ -1,4 +1,4 @@
-import { everyAsync } from '@merv/contracts';
+import { visible, everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
 import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -987,7 +987,7 @@ export class ReflectionService implements Reflections {
       );
     const read = await this.artifacts.read(caller, id);
     check(
-      read.encoding === 'utf8' && read.content.trim().length > 0,
+      read.encoding === 'utf8' && visible(read.content),
       'reflection_text_required',
       'Reflection evidence must be nonempty UTF-8 text',
     );

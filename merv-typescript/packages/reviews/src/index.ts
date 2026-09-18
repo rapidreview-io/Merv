@@ -1,4 +1,4 @@
-import { recorded, mapAsync } from '@merv/contracts';
+import { visible, recorded, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -409,7 +409,7 @@ export class ReviewService implements Reviews {
     fn: () => ReviewRequest | Promise<ReviewRequest>,
   ): Promise<ReviewRequest> {
     check(
-      typeof requestId === 'string' && requestId.trim().length > 0,
+      typeof requestId === 'string' && visible(requestId),
       'invalid_request',
       'requestId is required',
     );
@@ -756,7 +756,7 @@ export class ReviewService implements Reviews {
           'Verdict must be pass, needs_changes, or fail',
         );
         check(
-          typeof input.notes === 'string' && input.notes.trim().length > 0,
+          typeof input.notes === 'string' && visible(input.notes),
           'invalid_notes',
           'A verdict must include assessment notes',
         );

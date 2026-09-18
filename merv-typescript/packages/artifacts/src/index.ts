@@ -1,4 +1,4 @@
-import { recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { isUtf8 } from 'node:buffer';
@@ -50,7 +50,7 @@ export class ArtifactStore implements Artifacts {
   async create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact> {
     await this.scope.require(caller, 'write', tx);
     check(
-      typeof input.title === 'string' && input.title.trim().length > 0 && input.title.length <= 300,
+      typeof input.title === 'string' && visible(input.title) && input.title.length <= 300,
       'invalid_artifact',
       'Artifact requires a title of at most 300 characters',
     );

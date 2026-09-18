@@ -1,7 +1,14 @@
 import { isUtf8 } from 'node:buffer';
 import { types } from 'node:util';
 import { z } from 'zod';
-import { check, markdownSection, plain, visibleMarkdown, type Json } from '@merv/contracts';
+import {
+  visible,
+  check,
+  markdownSection,
+  plain,
+  visibleMarkdown,
+  type Json,
+} from '@merv/contracts';
 import { experimentIdSchema, experimentPathSchema } from './input.js';
 
 export const evidenceByteLimit = 16_000;
@@ -21,7 +28,7 @@ export function decodeEvidence(bytes: Uint8Array): string {
   const view = Buffer.from(arrayBuffer.call(bytes), byteOffset.call(bytes), size);
   error(isUtf8(view), 'Evidence must contain valid UTF-8');
   const text = view.toString('utf8');
-  error(text.trim().length > 0, 'Evidence must not be empty');
+  error(visible(text), 'Evidence must not be empty');
   return text;
 }
 

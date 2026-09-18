@@ -1,4 +1,4 @@
-import { mapAsync } from '@merv/contracts';
+import { visible, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './memberships.postgres.js';
 import {
   check,
@@ -293,13 +293,13 @@ export class Memberships {
     input: { name: string; requestId: string },
   ): Promise<Project> {
     check(
-      typeof input.name === 'string' && input.name.trim().length > 0 && input.name.length <= 200,
+      typeof input.name === 'string' && visible(input.name) && input.name.length <= 200,
       'invalid_project',
       'Project needs a name of at most 200 characters',
     );
     check(
       typeof input.requestId === 'string' &&
-        input.requestId.trim().length > 0 &&
+        visible(input.requestId) &&
         input.requestId.length <= 256,
       'invalid_request',
       'A request id of 1–256 characters is required',
@@ -606,7 +606,7 @@ export class Memberships {
       check(
         options &&
           typeof options.repairReason === 'string' &&
-          options.repairReason.trim().length > 0 &&
+          visible(options.repairReason) &&
           options.repairReason.length <= 2000,
         'invalid_repair_reason',
         'Local ownership repair requires a reason of 1–2000 characters',

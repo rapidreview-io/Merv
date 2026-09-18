@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check } from '@merv/contracts';
+import { visible, check } from '@merv/contracts';
 import { SqliteState } from './sqlite.js';
 import { PostgresState } from './postgres.js';
 
@@ -12,7 +12,7 @@ const Config = z.union([
   z
     .object({
       backend: z.literal('sqlite').optional(),
-      path: z.string().refine((path) => path.trim().length > 0, 'State path must be nonblank'),
+      path: z.string().refine((path) => visible(path), 'State path must be nonblank'),
     })
     .strict(),
   z

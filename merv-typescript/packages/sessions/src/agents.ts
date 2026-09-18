@@ -1,6 +1,7 @@
 import { postgresMigrations } from './agents.postgres.js';
 import { createHash } from 'node:crypto';
 import {
+  visible,
   check,
   digest,
   newId,
@@ -82,7 +83,7 @@ export class AgentDirectory {
     check(
       input &&
         typeof input.name === 'string' &&
-        input.name.trim().length > 0 &&
+        visible(input.name) &&
         input.name.length <= 200 &&
         typeof input.runnerId === 'string' &&
         input.runnerId.length > 0 &&
@@ -235,7 +236,7 @@ export class AgentDirectory {
   async reset(agent: Agent, reason: string, tx: Transaction): Promise<Agent> {
     await this.require(agent, tx);
     check(
-      typeof reason === 'string' && reason.trim().length > 0 && reason.length <= 200,
+      typeof reason === 'string' && visible(reason) && reason.length <= 200,
       'invalid_reason',
       'Context reset requires a short reason',
     );
