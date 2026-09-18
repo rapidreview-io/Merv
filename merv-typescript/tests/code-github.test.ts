@@ -418,7 +418,7 @@ test('denied authorization returns to Merv and consumes the flow; empty state ca
   });
   assert.equal(
     await f.service.callback({ cookie, state, error: 'access_denied' }),
-    `${config.origin}/ui/code?github=denied`,
+    `${config.origin}/ui/settings/integrations?github=denied`,
   );
   await assert.rejects(f.service.callback({ cookie, state, code: 'synthetic' }), {
     code: 'github_flow',
@@ -569,7 +569,10 @@ test('actual HTTP routes authenticate Merv, keep callback cookies out of JSON, a
   });
   assert.equal(redirected.status, 303);
   assert.equal(redirected.headers.get('referrer-policy'), 'no-referrer');
-  assert.equal(redirected.headers.get('location'), `${config.origin}/ui/code?github=complete`);
+  assert.equal(
+    redirected.headers.get('location'),
+    `${config.origin}/ui/settings/integrations?github=complete`,
+  );
   const finished = await fetch(`${url}/code/github/finish`, {
     method: 'POST',
     headers: { ...headers, cookie },

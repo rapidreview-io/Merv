@@ -304,7 +304,8 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         );
         check(result.changes === 1, 'github_flow', 'GitHub callback was already used', 409);
       });
-      return `${client.origin}/ui/code?github=${input.error ? 'denied' : 'complete'}`;
+      // Back to the page that finishes the flow: the connection lives under Settings.
+      return `${client.origin}/ui/settings/integrations?github=${input.error ? 'denied' : 'complete'}`;
     });
   }
   finish(caller: Caller, cookie: string) {
