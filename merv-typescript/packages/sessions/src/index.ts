@@ -928,7 +928,11 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async agentObservation(caller: Caller, agentId: string) {
     this.ensureOpen();
-    check(text(agentId), 'invalid_agent', 'An agent identifier is required');
+    check(
+      text(agentId, 200),
+      'invalid_agent',
+      'An agent identifier of 1–200 characters is required',
+    );
     return await this.observations.read(caller, agentId);
   }
   async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {

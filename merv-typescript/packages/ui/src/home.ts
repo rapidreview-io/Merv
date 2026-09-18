@@ -1,4 +1,4 @@
-import { clip, type Caller, type Json } from '@merv/contracts';
+import { clip, type Caller, type Data, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
@@ -124,6 +124,32 @@ const pick = (record: Json, keys: string[]): Json =>
 function trim(key: string, value: Json): Json {
   const keys = KEEP[key];
   if (keys && Array.isArray(value)) return value.map((item) => pick(item, keys));
+  // The map draws each paper document's sections and whether it is published; the page
+  // itself reads the paper, with its citations and proposals and every section in full.
+  if (key === 'paper' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const documents = (value as { documents?: Record<string, Json> }).documents;
+    return {
+      documents: Object.fromEntries(
+        Object.entries(documents ?? {}).map(([kind, document]) => {
+          const { current, published } = document as Record<string, Json>;
+          return [
+            kind,
+            {
+              current: {
+                ...(pick(current, ['kind', 'revision', 'updatedAt', 'updatedBy']) as Data),
+                sections: Array.isArray((current as Record<string, Json>)?.sections)
+                  ? ((current as Record<string, Json>).sections as Json[]).map((section) =>
+                      pick(section, ['id', 'title', 'content']),
+                    )
+                  : [],
+              },
+              published: published ? pick(published as Json, ['publication']) : (published ?? null),
+            },
+          ];
+        }),
+      ),
+    };
+  }
   if (key === 'sessions' && value && typeof value === 'object' && !Array.isArray(value)) {
     const { sessions: _sessions, agents, runners, ...rest } = value as Record<string, Json>;
     return {

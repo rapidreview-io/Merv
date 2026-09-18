@@ -312,8 +312,11 @@ test('Feed cursor pages and activity preserve project boundaries and survive reo
     body: 'After another project’s post.',
     requestId: 'last',
   });
-  const first = await f.feed.list(f.reader);
-  assert.equal(first.length, 50);
+  // Without a cursor the newest page answers, oldest first within it: what a reader opens on.
+  const newest = await f.feed.list(f.reader);
+  assert.equal(newest.length, 50);
+  assert.deepEqual(newest, [...records.slice(6), final]);
+  const first = await f.feed.list(f.reader, { after: 0, limit: 50 });
   assert.deepEqual(first, records.slice(0, 50));
   const rest = await f.feed.list(f.reader, { after: first.at(-1)!.sequence, limit: 100 });
   assert.deepEqual(rest, [...records.slice(50), final]);

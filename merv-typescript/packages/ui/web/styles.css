@@ -986,6 +986,8 @@ select.input,
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
+  overflow-wrap: anywhere;
+  min-width: 0;
   padding: 8px 0;
   font-size: var(--text-sm);
   border-bottom: 1px solid var(--line);
@@ -1759,6 +1761,7 @@ select.input,
 }
 .record-prose {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* List rows. -------------------------------------------------------------- */
@@ -2527,6 +2530,8 @@ html[data-theme='dark'] .paper {
    column, so it runs the height of the document rather than of the outline. */
 .paper-body {
   min-width: 0;
+  /* A section's prose, a URL and a long author name all wrap inside the column. */
+  overflow-wrap: anywhere;
   padding-left: 32px;
   border-left: 1px solid var(--line);
   font-size: var(--text-md);
@@ -2661,6 +2666,7 @@ del.cut {
   font-variant-numeric: tabular-nums;
 }
 .ledger .ref-name {
+  overflow-wrap: anywhere;
   font-size: var(--text-md);
   color: var(--text);
 }

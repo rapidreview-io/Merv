@@ -205,14 +205,22 @@ export class FeedService implements Feed {
       'invalid_limit',
       'limit must be an integer from 1 to 100',
     );
+    // Without a cursor the newest page answers, oldest first within it; a cursor pages forward.
     return await this.state.read(async (sql) =>
-      (
-        await sql.all<PostRow>(
-          'SELECT * FROM feed_posts WHERE project_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?',
-          caller.projectId,
-          after,
-          limit,
-        )
+      (input.after === undefined
+        ? (
+            await sql.all<PostRow>(
+              'SELECT * FROM feed_posts WHERE project_id = ? ORDER BY sequence DESC LIMIT ?',
+              caller.projectId,
+              limit,
+            )
+          ).reverse()
+        : await sql.all<PostRow>(
+            'SELECT * FROM feed_posts WHERE project_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?',
+            caller.projectId,
+            after,
+            limit,
+          )
       ).map(hydrate),
     );
   }

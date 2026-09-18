@@ -68,9 +68,10 @@ function useRecordNames(rows: Row[]): Map<string, Named> {
 }
 
 /** A name you can click where the id resolved, and nothing at all where it did not. */
+/** An id no list names stays the author's text: a post reads as it was written. */
 function Name({ id, names }: { id: string; names: Map<string, Named> }) {
   const found = names.get(id);
-  if (!found) return null;
+  if (!found) return <span className="mono">{id}</span>;
   return found.to ? <Link to={found.to}>{found.name}</Link> : <span>{found.name}</span>;
 }
 
@@ -175,18 +176,12 @@ export function FeedView({ shell }: ViewProps) {
   const names = useRecordNames(shell.rows);
   const nameOf = useActorNames();
   const events = useTool<Event[]>('feed.activity', {}, { every: 6000 });
-  // feed.list pages forward from the first post ever written, so the newest
-  // page is found through the feed.posted events, which carry the sequence.
-  const head = (events.data ?? []).reduce(
-    (last, event) =>
-      event.type === 'feed.posted' ? Math.max(last, Number(event.data.sequence) || 0) : last,
-    0,
-  );
-  const posts = useTool<Post[]>(
-    'feed.list',
-    { after: Math.max(0, head - POSTS), limit: POSTS },
-    { every: 6000 },
-  );
+  // Both tools answer their newest page without a cursor, which is this column.
+  const posts = useTool<Post[]>('feed.list', { limit: POSTS }, { every: 6000 });
+  const named = (event: Event) => {
+    const { subject } = SAID[event.type]!(event);
+    return subject === undefined || names.has(subject);
+  };
   const entries = [
     ...(posts.data ?? []).map((post) => ({
       id: post.id,
@@ -195,7 +190,8 @@ export function FeedView({ shell }: ViewProps) {
       node: <Entry key={post.id} post={post} names={names} author={nameOf(post.authorId)} />,
     })),
     ...(events.data ?? [])
-      .filter((event) => SAID[event.type])
+      // A line names its subject; an event whose subject this page cannot name is not a line.
+      .filter((event) => SAID[event.type] && named(event))
       .slice(-LINES)
       .map((event) => {
         const agent = nameOf(text(event.data.workerActorId));

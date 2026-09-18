@@ -40,7 +40,7 @@ export const feedToolsPlugin = {
       {
         name: 'feed.list',
         description:
-          'Read project posts in ascending sequence order. after is an exclusive post sequence cursor; limit defaults to 50 and is capped at 100.',
+          'Read project posts in ascending sequence order: the newest page without a cursor, or the page after the exclusive post sequence cursor `after`. limit defaults to 50 and is capped at 100.',
         inputSchema: z
           .object({
             after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),

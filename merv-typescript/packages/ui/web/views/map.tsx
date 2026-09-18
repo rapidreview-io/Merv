@@ -332,7 +332,7 @@ function Running({ nodes, shapes }: { nodes: MapNode[]; shapes?: WorkflowShape[]
 }
 
 /** Whose move the open work is, in three numbers, one click from the line itself. */
-function Now({ lines }: { lines: Lines }) {
+function Now({ lines, known }: { lines: Lines; known: boolean }) {
   const { yours, agent, nobody, unknown } = lines;
   return (
     <div className="map-now">
@@ -343,7 +343,8 @@ function Now({ lines }: { lines: Lines }) {
         waiting: [...nobody, ...unknown],
       }).map(([label, lines]) => (
         <Link className="map-now-count" key={label} to="/now">
-          <b>{lines.length}</b> {label}
+          {/* A count not yet read is the em dash, never a zero. */}
+          <b>{known ? lines.length : EM}</b> {label}
         </Link>
       ))}
       <Link className="map-now-all" to="/now">
@@ -437,7 +438,7 @@ export function MapView({ shell }: { shell: ShellData }) {
         </p>
       )}
       <Running nodes={newest(pool.filter(running), (node) => node.at)} shapes={shell.workflows} />
-      <Now lines={lines} />
+      <Now lines={lines} known={!!data} />
       <div className="map-band">
         <Plane
           title="Workflows"
@@ -499,8 +500,21 @@ export function MapView({ shell }: { shell: ShellData }) {
           title="Data"
           index={3}
           tiles={tiles(
-            filesRow && tile('files', data?.files?.length ?? EM, filesRow.path),
-            filesRow && tile('retained', data?.files ? bytes(retained) : EM, filesRow.path),
+            // The list carries the newest thousand: at the cap the count is a floor, not a total.
+            filesRow &&
+              tile(
+                'files',
+                data?.files ? `${data.files.length}${data.files.length >= 1000 ? '+' : ''}` : EM,
+                filesRow.path,
+              ),
+            filesRow &&
+              tile(
+                'retained',
+                data?.files
+                  ? `${data.files.length >= 1000 ? 'at least ' : ''}${bytes(retained)}`
+                  : EM,
+                filesRow.path,
+              ),
             archiveRow && !!archive && tile('earlier records', archive, archiveRow.path),
           )}
         />

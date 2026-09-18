@@ -1,4 +1,4 @@
-import { visible, mapAsync } from '@merv/contracts';
+import { clip, visible, mapAsync } from '@merv/contracts';
 import { FiberState, type Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -79,7 +79,10 @@ export class UiRegistry implements Ui {
 
   async read(caller: Caller, rowId: string, params?: Record<string, unknown>): Promise<Json> {
     const row = this.entries.get(rowId);
-    check(row?.read, 'row_unreadable', `Row has no readable data: ${rowId}`, 404);
+    // A row this composition does not have and a row that carries no read read differently,
+    // under the one code a client already knows.
+    check(row, 'row_unreadable', `No row named ${clip(String(rowId), 80)} in this project`, 404);
+    check(row.read, 'row_unreadable', `Row has no readable data: ${row.id}`, 404);
     return await row.read(caller, params);
   }
 }
@@ -148,7 +151,7 @@ export const uiPlugin = {
         name: 'ui.read',
         description: 'Read the data a sidebar row owns when it has no dedicated domain tool.',
         inputSchema: z
-          .object({ rowId: z.string().min(1), params: z.record(z.unknown()).optional() })
+          .object({ rowId: z.string().min(1).max(200), params: z.record(z.unknown()).optional() })
           .strict(),
         readOnly: true,
         handler: async (

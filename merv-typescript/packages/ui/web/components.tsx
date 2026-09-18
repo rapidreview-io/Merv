@@ -589,7 +589,8 @@ export const useArtifacts = () => {
  * A pinned file read where it is cited: the summary opens the body in place and
  * costs nothing until it is opened, and /artifacts/:id stays a destination —
  * reachable from the opened head — rather than the only way to read a file.
- * A file this page cannot name is left out rather than named by its identifier.
+ * A file the one list did not name (it carries the newest thousand) is still shown and
+ * still opens, named by the tail of its identifier rather than silently dropped.
  */
 export function Evidence({
   artifactId,
@@ -603,11 +604,11 @@ export function Evidence({
   meta?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  if (label === undefined && !artifact?.title) return null;
+  const naming = label ?? artifact?.title ?? `File …${artifactId.slice(-6)}`;
   return (
     <details className="crit-file" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
-        {label ?? artifact?.title}
+        {naming}
         {meta && artifact && (
           <span className="faint">
             {' '}
