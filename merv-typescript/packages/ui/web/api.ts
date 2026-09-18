@@ -296,6 +296,8 @@ export interface Loaded<T> {
  * for the missing flash.
  */
 const LAST = new Map<string, { data: unknown; loadedAt: string }>();
+/** Every mounted read of one key: a reload from any of them asks again for all of them. */
+const WATCHERS = new Map<string, Set<() => void>>();
 /** An answer the boot already holds, kept so the page that needs it does not ask again. */
 export const remember = (name: string, data: unknown) =>
   LAST.set(`${scopeEpoch}:${name}:{}`, { data, loadedAt: new Date().toISOString() });
@@ -397,7 +399,20 @@ export function useTool<T>(
     // The serialized key captures the input object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, tick, options.every]);
-  const reload = useCallback(() => setTick((n) => n + 1), []);
+  useEffect(() => {
+    if (!key) return;
+    const bump = () => setTick((n) => n + 1);
+    const watchers = WATCHERS.get(key) ?? new Set<() => void>();
+    watchers.add(bump);
+    WATCHERS.set(key, watchers);
+    return () => {
+      watchers.delete(bump);
+      if (!watchers.size) WATCHERS.delete(key);
+    };
+  }, [key]);
+  const reload = useCallback(() => {
+    for (const bump of WATCHERS.get(latest.current ?? '') ?? [() => setTick((n) => n + 1)]) bump();
+  }, []);
   const current = state.key === key;
   // Before this mount's own read lands, the page shows what the last one saw.
   const kept = current || !key ? undefined : LAST.get(key);

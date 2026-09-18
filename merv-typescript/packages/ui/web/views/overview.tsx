@@ -48,12 +48,18 @@ const when = (iso: string) => (
   </time>
 );
 
-/** The instruction, blockers that do not repeat it, then what it waits on by name. */
-const sentences = ({ instruction, blockers, dependencies }: WorkflowDecision) => {
+/**
+ * The instruction, blockers that do not repeat it, then what it waits on by name. A record
+ * in an agent's hands says whose: the refusals the viewer would meet are not its story.
+ */
+const sentences = (
+  { instruction, blockers, dependencies }: WorkflowDecision,
+  withWhom?: string | undefined,
+) => {
   // The dependency line only adds names the instruction does not already carry.
   const waits = dependencies.filter((item) => !item.settled && !instruction.includes(item.name));
   const on = waits.map((item) => `${item.name} (${item.state})`).join(', ');
-  return [instruction, ...blockers.map((item) => item.message)]
+  return (withWhom ? [`With ${withWhom}.`] : [instruction, ...blockers.map((item) => item.message)])
     .concat(waits.length ? `Waiting on ${on}…` : [])
     .filter((text, index, all) => !!text && all.indexOf(text) === index);
 };
@@ -194,7 +200,10 @@ export function standingOf(
           to: `${row.path}/${item.id}`,
           at: item.workflow.updatedAt,
           mine,
-          says: sentences(decision),
+          says: sentences(
+            decision,
+            bucket === 'agent' ? (named(item.owner) ?? 'its producer') : undefined,
+          ),
         });
     }
   }
