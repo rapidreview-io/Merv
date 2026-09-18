@@ -86,10 +86,10 @@ export class AgentDirectory {
         visible(input.name) &&
         input.name.length <= 200 &&
         typeof input.runnerId === 'string' &&
-        input.runnerId.length > 0 &&
+        visible(input.runnerId) &&
         input.runnerId.length <= 200 &&
         typeof input.requestId === 'string' &&
-        input.requestId.length > 0 &&
+        visible(input.requestId) &&
         input.requestId.length <= 256 &&
         sessionToken.test(input.secret),
       'invalid_agent',
