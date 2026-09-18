@@ -789,6 +789,14 @@ DROP TABLE task_leases_backup;`,
   }
   private async projectRecord(caller: Caller, row: TaskRow, tx?: Transaction): Promise<TaskRecord> {
     const workflow = await this.workflows.get(caller, row.id, tx);
+    // The instance data repeats the brief the record already carries; it is not sent twice.
+    const {
+      title: _title,
+      goal: _goal,
+      checks: _checks,
+      deliveryConfirmations: _confirmations,
+      ...data
+    } = workflow.data;
     return {
       id: row.id,
       projectId: row.project_id,
@@ -804,7 +812,7 @@ DROP TABLE task_leases_backup;`,
       briefId: row.brief_id,
       deliveryIds: JSON.parse(row.delivery_ids),
       reviewId: row.review_id,
-      workflow,
+      workflow: { ...workflow, data },
       workStarts: await this.workflows.workStarts(caller, row.id, tx),
       failure: (workflow.data.failure as unknown as TaskFailure | undefined) ?? null,
       ...(await this.workflows.dependencies(caller, row.id, tx)),
