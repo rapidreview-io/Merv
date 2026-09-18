@@ -39,7 +39,11 @@ export abstract class StateStore implements State {
   private closing?: Promise<void>;
   private closed = false;
 
-  protected abstract connect<T>(fn: (connection: Connection) => Promise<T>): Promise<T>;
+  /** Reads take a connection of their own kind, so writers queued on the lock never starve a page. */
+  protected abstract connect<T>(
+    fn: (connection: Connection) => Promise<T>,
+    mode?: 'write' | 'read',
+  ): Promise<T>;
   protected abstract begin(connection: Connection): Promise<void>;
   /** A read-only transaction: a consistent snapshot that takes no writer lock. */
   protected abstract beginRead(connection: Connection): Promise<void>;
@@ -194,7 +198,7 @@ export abstract class StateStore implements State {
         } finally {
           scope.live = false;
         }
-      }),
+      }, 'read'),
     );
   }
 
@@ -228,7 +232,7 @@ export abstract class StateStore implements State {
         } finally {
           scope.live = false;
         }
-      }),
+      }, 'read'),
     );
   }
 

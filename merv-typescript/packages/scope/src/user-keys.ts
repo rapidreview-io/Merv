@@ -288,7 +288,7 @@ export class UserKeys {
         input.label === null ||
         (typeof input.label === 'string' && visible(input.label) && input.label.length <= 120),
       'invalid_label',
-      'Key label must contain 1–120 characters or be null',
+      'Key label must be nonblank text of 1–120 characters or null',
     );
     return await this.state.transaction(async (tx) => {
       const human = await this.members.human(principal, tx);

@@ -295,7 +295,7 @@ export class Memberships {
     check(
       typeof input.name === 'string' && visible(input.name) && input.name.length <= 200,
       'invalid_project',
-      'Project needs a name of at most 200 characters',
+      'Project needs a nonblank name of at most 200 characters',
     );
     check(
       typeof input.requestId === 'string' &&

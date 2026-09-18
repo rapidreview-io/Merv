@@ -232,7 +232,7 @@ export async function replayed<T>(
       visible(input.requestId) &&
       input.requestId.length <= 200,
     'invalid_request_id',
-    'A stable requestId of 1–200 characters is required',
+    'A stable requestId of 1–200 characters with visible text is required',
   );
   const hash = digest({ operation, input });
   const previous = await tx.get<{ hash: string; result: string }>(

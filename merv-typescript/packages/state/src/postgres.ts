@@ -7,6 +7,8 @@ export interface PostgresConfig {
   connectionString: string;
   schema?: string;
   maxConnections?: number;
+  /** Connections kept for reads; the rest serve writers waiting on the state lock. */
+  readConnections?: number;
   connectionTimeoutMs?: number;
   statementTimeoutMs?: number;
   lockTimeoutMs?: number;
@@ -40,12 +42,15 @@ function databaseError(error: unknown): MervError {
     );
   if (code === '57014' || code === '55P03')
     return new MervError('state_timeout', 'Database operation timed out', 503);
+  if (/timeout exceeded when trying to connect/.test((error as Error)?.message ?? ''))
+    return new MervError('state_busy', 'Every database connection is in use; retry shortly', 503);
   return new MervError('state_unavailable', 'PostgreSQL operation failed', 503);
 }
 
 export class PostgresState extends StateStore {
   readonly dialect = 'postgres' as const;
   private readonly pool: Pool;
+  private readonly readers: Pool;
   private readonly schema: string;
 
   private constructor(config: PostgresConfig) {
@@ -63,6 +68,7 @@ export class PostgresState extends StateStore {
     );
     for (const value of [
       config.maxConnections,
+      config.readConnections,
       config.connectionTimeoutMs,
       config.statementTimeoutMs,
       config.lockTimeoutMs,
@@ -89,20 +95,26 @@ export class PostgresState extends StateStore {
       'invalid_config',
       'Configure PostgreSQL TLS through the ssl option',
     );
-    this.pool = new Pool({
-      connectionString: config.connectionString,
-      max: config.maxConnections ?? 10,
-      connectionTimeoutMillis: config.connectionTimeoutMs ?? 5000,
-      statement_timeout: config.statementTimeoutMs ?? 30000,
-      lock_timeout: config.lockTimeoutMs ?? 5000,
-      ssl: config.ssl ?? false,
-      types: {
-        getTypeParser: (oid, format) =>
-          oid === 20 && format !== 'binary' ? safeInteger : types.getTypeParser(oid, format),
-      },
-    });
-    // Idle clients can emit errors outside a query. pg removes them; later requests reconnect.
-    this.pool.on('error', () => undefined);
+    const pool = (max: number) => {
+      const created = new Pool({
+        connectionString: config.connectionString,
+        max,
+        connectionTimeoutMillis: config.connectionTimeoutMs ?? 10000,
+        statement_timeout: config.statementTimeoutMs ?? 30000,
+        lock_timeout: config.lockTimeoutMs ?? 5000,
+        ssl: config.ssl ?? false,
+        types: {
+          getTypeParser: (oid, format) =>
+            oid === 20 && format !== 'binary' ? safeInteger : types.getTypeParser(oid, format),
+        },
+      });
+      // Idle clients can emit errors outside a query. pg removes them; later requests reconnect.
+      created.on('error', () => undefined);
+      return created;
+    };
+    // Writers queue on the state lock holding their connection; reads answer from their own pool.
+    this.pool = pool(config.maxConnections ?? 10);
+    this.readers = pool(config.readConnections ?? 6);
   }
 
   static async open(config: PostgresConfig): Promise<PostgresState> {
@@ -150,10 +162,13 @@ END $merv$;`);
     }
   }
 
-  protected async connect<T>(fn: (connection: Connection) => Promise<T>): Promise<T> {
+  protected async connect<T>(
+    fn: (connection: Connection) => Promise<T>,
+    mode: 'write' | 'read' = 'write',
+  ): Promise<T> {
     let client: PoolClient;
     try {
-      client = await this.pool.connect();
+      client = await (mode === 'read' ? this.readers : this.pool).connect();
     } catch (error) {
       throw databaseError(error);
     }
@@ -218,6 +233,6 @@ END $merv$;`);
   }
 
   protected async shutdown(): Promise<void> {
-    await this.pool.end();
+    await Promise.all([this.pool.end(), this.readers.end()]);
   }
 }

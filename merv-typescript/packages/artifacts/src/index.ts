@@ -50,9 +50,14 @@ export class ArtifactStore implements Artifacts {
   async create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact> {
     await this.scope.require(caller, 'write', tx);
     check(
-      typeof input.title === 'string' && visible(input.title) && input.title.length <= 300,
+      typeof input.title === 'string' && input.title.length <= 300,
       'invalid_artifact',
       'Artifact requires a title of at most 300 characters',
+    );
+    check(
+      visible(input.title),
+      'invalid_artifact',
+      'Artifact requires a title with visible characters',
     );
     check(typeof input.content === 'string', 'invalid_artifact', 'Content must be a string');
     check(

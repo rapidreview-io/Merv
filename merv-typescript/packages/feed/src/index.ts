@@ -98,7 +98,7 @@ export class FeedService implements Feed {
           visible(input.requestId) &&
           input.requestId.length <= 200,
         'invalid_request',
-        'requestId must contain 1–200 characters',
+        'requestId must contain 1–200 characters with visible text',
       );
       const hash = digest(input);
       const old = await tx.get<{ input_hash: string; response_json: string }>(

@@ -6,7 +6,13 @@ export const experimentIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{
 const requestId = z.string().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const attempt = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const prose = z.string().max(16000).trim();
+const prose = (min = 0) =>
+  z
+    .string()
+    .max(16000)
+    .trim()
+    .min(min)
+    .refine((value) => value === '' || visible(value), 'Text must contain visible characters');
 const ids = z
   .array(experimentIdSchema)
   .max(100)
@@ -33,8 +39,8 @@ export const experimentCreateSchema = z
       .min(3)
       .max(48)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
-    intent: prose.min(1),
-    details: prose.default(''),
+    intent: prose(1),
+    details: prose().default(''),
     testedClaimIds: ids.default([]),
     dependsOn: ids.default([]),
     workspace: z.enum(['none', 'git']).optional(),
@@ -84,7 +90,7 @@ export const experimentTransitionSchema = z
     expectedRevision: revision,
     requestId,
     evidence: z
-      .object({ reason: prose.min(1).optional(), detail: prose.optional() })
+      .object({ reason: prose(1).optional(), detail: prose().optional() })
       .strict()
       .optional(),
   })

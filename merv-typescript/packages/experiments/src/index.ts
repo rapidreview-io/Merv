@@ -347,6 +347,8 @@ export class ExperimentService implements Experiments {
           'This evidence role is not writable in the current state',
           409,
         );
+        // Evidence is written against the work this experiment depends on, like the step itself.
+        await this.workflows.checkDependencies(caller, experiment.id, tx);
         const artifact = await this.artifacts.get(caller, input.artifactId, tx);
         const inherited = await this.program.pinnedRecovery(caller, experiment, tx);
         check(

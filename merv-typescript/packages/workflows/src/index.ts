@@ -1867,7 +1867,7 @@ export class WorkflowsService implements Workflows {
     check(
       typeof value === 'string' && visible(value) && value.length <= 256,
       'invalid_request',
-      'A request id of 1–256 characters is required',
+      'A nonblank request id of 1–256 characters is required',
     );
   }
 

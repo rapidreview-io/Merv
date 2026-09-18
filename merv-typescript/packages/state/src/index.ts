@@ -24,7 +24,8 @@ const Config = z.union([
         .regex(/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/)
         .default('merv'),
       maxConnections: z.number().int().positive().max(100).default(10),
-      connectionTimeoutMs: z.number().int().positive().default(5000),
+      readConnections: z.number().int().positive().max(100).default(6),
+      connectionTimeoutMs: z.number().int().positive().default(10000),
       statementTimeoutMs: z.number().int().positive().default(30000),
       lockTimeoutMs: z.number().int().positive().default(5000),
       ssl: z
