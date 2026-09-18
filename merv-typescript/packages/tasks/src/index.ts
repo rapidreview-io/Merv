@@ -1,4 +1,4 @@
-import { releasedLease, visible, recorded, mapAsync } from '@merv/contracts';
+import { excludedFromReview, releasedLease, visible, recorded, mapAsync } from '@merv/contracts';
 import { clip, createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -294,6 +294,14 @@ DROP TABLE task_leases_backup;`,
       label: async ({ caller, snapshot, tx }) => (await this.row(tx, caller, snapshot.id)).title,
       role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> =>
         await this.leaseRole(context),
+      excludes: async ({ caller, snapshot, tx }, actorId) => {
+        const row = await this.row(tx, caller, snapshot.id);
+        return (
+          snapshot.state === 'in_review' &&
+          !!row.review_id &&
+          excludedFromReview(await this.reviews.get(caller, row.review_id, tx), actorId)
+        );
+      },
       acquire: async (context) => await this.acquireLease(context),
       check: async ({ caller, snapshot, tx }, receipt) => {
         const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);

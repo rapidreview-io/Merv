@@ -68,6 +68,12 @@ test('one agent can produce successive tasks and review other work, but cannot r
   await assert.rejects(async () => await assign(submitted, 'self-review'), {
     code: 'review_independence',
   });
+  // What the agent is refused it is not offered: its own delivery's review is not available.
+  assert.ok(
+    !(await app.ctx.sessions.agentSelf(token)).available.some(
+      (item) => item.instanceId === first.id,
+    ),
+  );
   assert.equal((await app.ctx.sessions.agentSelf(token)).current, null);
   const second = await createTask('second');
   const b = await assign(second, 'work-second');

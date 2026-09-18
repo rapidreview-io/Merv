@@ -1,4 +1,4 @@
-import { releasedLease, mapAsync } from '@merv/contracts';
+import { excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
@@ -871,6 +871,17 @@ DROP TABLE experiment_leases_backup;`,
   private leaseHooks(): NonNullable<WorkflowAssignmentRule['lease']> {
     return {
       label: async (context) => (await this.facts(context)).name,
+      excludes: async (context, actorId) => {
+        const experiment = await this.facts(context);
+        return (
+          !!experiment.reviewId &&
+          reviewing(experiment.workflow.state) &&
+          excludedFromReview(
+            await this.host.reviews.get(context.caller, experiment.reviewId, context.tx),
+            actorId,
+          )
+        );
+      },
       role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => {
         check(!context.caller.session, 'forbidden', 'A leased worker cannot delegate work', 403);
         const experiment = await this.facts(context);

@@ -498,6 +498,7 @@ export class WorkflowsService implements Workflows {
   async dispatchCandidates(
     source: Caller,
     transaction?: Transaction,
+    worker?: string,
   ): Promise<WorkflowDispatchCandidate[]> {
     this.assertOpen();
     return await inTransaction(this.state, transaction, async (tx) => {
@@ -555,6 +556,12 @@ export class WorkflowsService implements Workflows {
             'Dispatch callbacks must not change the workflow instance',
           );
           this.requireActive(registration);
+          if (
+            worker &&
+            rule.lease.excludes &&
+            (await rule.lease.excludes(readContext({ caller: source, snapshot, tx }), worker))
+          )
+            continue;
           candidates.push({
             instanceId: snapshot.id,
             projectId: source.projectId,

@@ -1,4 +1,4 @@
-import { releasedLease, visible, mapAsync } from '@merv/contracts';
+import { excludedFromReview, releasedLease, visible, mapAsync } from '@merv/contracts';
 import { createService, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -807,6 +807,17 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     return {
       label: async (context) =>
         (await this.get(context.caller, context.snapshot.id, context.tx)).name,
+      excludes: async (context, actorId) => {
+        const record = await this.get(context.caller, context.snapshot.id, context.tx);
+        return (
+          context.snapshot.state === 'consolidation_review' &&
+          !!record.reviewId &&
+          excludedFromReview(
+            await this.reviews.get(context.caller, record.reviewId, context.tx),
+            actorId,
+          )
+        );
+      },
       role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => {
         check(!context.caller.session, 'forbidden', 'An assigned worker cannot delegate work', 403);
         const record = await this.get(context.caller, context.snapshot.id, context.tx);

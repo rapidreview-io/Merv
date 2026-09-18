@@ -1,4 +1,4 @@
-import { releasedLease, visible, everyAsync } from '@merv/contracts';
+import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
 import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -723,6 +723,18 @@ export class ReflectionService implements Reflections {
       label: async (context) => {
         const { wave, lens } = await this.current(context);
         return `${wave.title}: ${lens?.perspective ?? context.snapshot.state}`;
+      },
+      excludes: async (context, actorId) => {
+        const { wave, lens } = await this.current(context);
+        return (
+          !lens &&
+          context.snapshot.state === 'in_review' &&
+          !!wave.review_id &&
+          excludedFromReview(
+            await this.reviews.get(context.caller, wave.review_id, context.tx),
+            actorId,
+          )
+        );
       },
       role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => {
         check(!context.caller.session, 'forbidden', 'A worker cannot delegate assignments', 403);

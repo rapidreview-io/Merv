@@ -449,6 +449,11 @@ export interface SessionAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
 /** A domain's event as every domain records it: who, what, on which record, from where. */
+/** A review's producer and its excluded contributors cannot be its reviewer. */
+export const excludedFromReview = (
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds'>,
+  actorId: string,
+) => review.producerId === actorId || (review.excludedActorIds ?? []).includes(actorId);
 export const recorded = async (
   state: Pick<State, 'appendEvent'>,
   tx: Transaction,
@@ -862,6 +867,8 @@ export interface WorkflowAssignmentRule {
     /** Optional metadata-only queue label; never render assignment context here. */
     label?(context: WorkflowCheckContext): string | Promise<string>;
     role(context: WorkflowCheckContext): Role | Promise<Role>;
+    /** Whether this worker actor would be refused the assignment, so it is never offered it. */
+    excludes?(context: WorkflowCheckContext, actorId: string): boolean | Promise<boolean>;
     acquire(
       context: WorkflowCheckContext & { source: Caller; leaseId: string },
     ): Data | Promise<Data>;
@@ -990,7 +997,12 @@ export interface WorkflowReadReferences {
 export interface Workflows {
   registerReadReferences(provider: WorkflowReadReferences): () => void;
   /** Metadata-only, project-scoped readiness. Does not reserve work or render assignment bytes. */
-  dispatchCandidates(source: Caller, tx?: Transaction): Promise<WorkflowDispatchCandidate[]>;
+  /** Candidates a source may dispatch; with `worker`, only those that worker may take. */
+  dispatchCandidates(
+    source: Caller,
+    tx?: Transaction,
+    worker?: string,
+  ): Promise<WorkflowDispatchCandidate[]>;
   leaseRole(source: Caller, target: WorkflowExecutionTarget, tx?: Transaction): Promise<Role>;
   offerLease(
     source: Caller,

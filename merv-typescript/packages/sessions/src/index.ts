@@ -831,7 +831,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         ).map((row) => `${row.instance_id}:${row.revision}`),
       );
       const available = (
-        await this.workflows.dispatchCandidates(sourceCaller(agent.source), tx)
+        await this.workflows.dispatchCandidates(sourceCaller(agent.source), tx, agent.actorId)
       ).filter(
         (item) =>
           item.role !== 'operator' && !busy.has(`${item.instanceId}:${item.expectedRevision}`),
