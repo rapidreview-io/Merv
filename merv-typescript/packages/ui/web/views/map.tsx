@@ -333,14 +333,14 @@ function Running({ nodes, shapes }: { nodes: MapNode[]; shapes?: WorkflowShape[]
 
 /** Whose move the open work is, in three numbers, one click from the line itself. */
 function Now({ lines }: { lines: Lines }) {
-  const { yours, agent, nobody } = lines;
+  const { yours, agent, nobody, unknown } = lines;
   return (
     <div className="map-now">
       <h2 className="plane-title">Now</h2>
       {Object.entries({
         'need you': yours,
         'with an agent': agent,
-        'waiting on a dependency': nobody,
+        waiting: [...nobody, ...unknown],
       }).map(([label, lines]) => (
         <Link className="map-now-count" key={label} to="/now">
           <b>{lines.length}</b> {label}

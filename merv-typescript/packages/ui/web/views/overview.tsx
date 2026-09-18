@@ -68,6 +68,8 @@ const whose = (decision: WorkflowDecision, mine: boolean): Whose | null => {
   const codes = decision.blockers.map((blocker) => blocker.code);
   if (!codes.length) return null;
   if (mine && codes.includes('input_required')) return 'yours';
+  // A prerequisite that ended without succeeding is the owner's decision, nobody's wait.
+  if (codes.includes('dependency_failed')) return mine ? 'yours' : 'unknown';
   if (codes.some((code) => ROLE.includes(code))) return 'agent';
   if (codes.includes('dependencies_pending')) return 'nobody';
   return 'unknown';
