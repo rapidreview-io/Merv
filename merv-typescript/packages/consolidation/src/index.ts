@@ -1,11 +1,10 @@
 import { mapAsync } from '@merv/contracts';
-import { createService, replayed } from '@merv/contracts';
+import { createService, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
   digest,
-  eventSource,
   inTransaction,
   newId,
   now,
@@ -1076,13 +1075,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     return await replayed(tx, 'consolidation_commands', caller, operation, input, execute);
   }
   private async event(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: `consolidation.${type}`,
-      subjectId: id,
-      data: { ...data, ...eventSource(caller) },
-    });
+    await recorded(this.state, tx, caller, `consolidation.${type}`, id, data);
   }
   withdrawReviewOwner() {
     this.withdrawReview?.();

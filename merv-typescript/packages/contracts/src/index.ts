@@ -302,6 +302,22 @@ export type DelegationSource = { actorId: string; projectId: string } & (
 export interface SessionAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
+/** A domain's event as every domain records it: who, what, on which record, from where. */
+export const recorded = async (
+  state: Pick<State, 'appendEvent'>,
+  tx: Transaction,
+  caller: Caller,
+  type: string,
+  subjectId: string,
+  data: Data,
+) =>
+  await state.appendEvent(tx, {
+    projectId: caller.projectId,
+    actorId: caller.actorId,
+    type,
+    subjectId,
+    data: { ...data, ...eventSource(caller) },
+  });
 /** Audit provenance only. Authority is still rechecked by Scope inside the operation. */
 export function eventSource(caller: Caller): Data {
   return caller.session

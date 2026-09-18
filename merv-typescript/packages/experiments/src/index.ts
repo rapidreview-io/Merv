@@ -1,11 +1,10 @@
 import { mapAsync, filterAsync } from '@merv/contracts';
-import { createService, replayed } from '@merv/contracts';
+import { createService, recorded, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
 import {
   check,
   digest,
-  eventSource,
   inTransaction,
   newId,
   now,
@@ -1306,20 +1305,8 @@ export class ExperimentService implements Experiments {
         await this.scope.require(caller, operation === 'submit_review' ? 'review' : 'write', tx),
     });
   }
-  private async record(
-    caller: Caller,
-    type: string,
-    id: string,
-    data: Data,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: `experiment.${type}`,
-      subjectId: id,
-      data: { ...data, ...eventSource(caller) },
-    });
+  private async record(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
+    await recorded(this.state, tx, caller, `experiment.${type}`, id, data);
   }
   withdrawReviewOwner(): void {
     this.releaseReviewOwner?.();

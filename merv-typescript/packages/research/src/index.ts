@@ -1,11 +1,10 @@
 import { mapAsync } from '@merv/contracts';
-import { createService, replayed } from '@merv/contracts';
+import { createService, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
   digest,
-  eventSource,
   inTransaction,
   now,
   type Caller,
@@ -653,13 +652,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     return await replayed(tx, 'research_commands', caller, operation, input, execute);
   }
   private async event(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
-    await this.state.appendEvent(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      type: `research.${type}`,
-      subjectId: id,
-      data: { ...data, ...eventSource(caller) },
-    });
+    await recorded(this.state, tx, caller, `research.${type}`, id, data);
   }
   close() {
     if (this.closed) return;

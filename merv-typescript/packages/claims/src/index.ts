@@ -3,7 +3,6 @@ import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
-  digest,
   eventSource,
   inTransaction,
   newId,
