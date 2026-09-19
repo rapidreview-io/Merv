@@ -8,6 +8,8 @@ import { createApp } from '../src/app.js';
 interface Row {
   fingerprint: string;
   published: boolean;
+  /** Deliberately no longer registered: the records written under it are unreadable now. */
+  retired?: boolean;
 }
 interface Published {
   note: string;
@@ -57,8 +59,19 @@ test('registered workflow definitions and execution policies match every version
   const registeredPolicies = new Map(
     policies.map((row) => [`${row.workflow}@${row.version}/${row.state}`, row.fingerprint]),
   );
+  // A version marked retired is one the code has deliberately stopped registering, so the
+  // records written under it are no longer readable. Its row stays here as history: production
+  // still holds it, and it must never come back under a different fingerprint.
   for (const row of published.definitions) {
     const key = `${row.name}@${row.version}`;
+    if (row.retired) {
+      assert.equal(
+        registeredDefinitions.has(key),
+        false,
+        `definition ${key} is marked retired but is registered again. Either drop the retirement or publish it as a new version.`,
+      );
+      continue;
+    }
     assert.equal(registeredDefinitions.get(key), row.fingerprint, remedy(key, 'definition', row));
   }
   const registeredRecipes = new Map(recipes.map((row) => [`${row.type}@${row.version}`, row.hash]));
@@ -77,6 +90,14 @@ test('registered workflow definitions and execution policies match every version
   }
   for (const row of published.policies) {
     const key = `${row.workflow}@${row.version}/${row.state}`;
+    if (row.retired) {
+      assert.equal(
+        registeredPolicies.has(key),
+        false,
+        `execution policy ${key} is marked retired but is registered again.`,
+      );
+      continue;
+    }
     assert.equal(
       registeredPolicies.get(key),
       row.fingerprint,

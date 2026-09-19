@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-19. A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here.",
+  "note": "Production truth as of 2026-09-19. A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint.",
   "definitions": [
     {
       "name": "consolidation",
@@ -29,7 +29,8 @@
       "name": "reflection",
       "version": 1,
       "fingerprint": "1e676bc081355c3d915ab20784049ec8d62101159fcc17832936148cf484a3c7",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "reflection",
@@ -41,7 +42,8 @@
       "name": "reflection.lens",
       "version": 1,
       "fingerprint": "c25f7d0923d072dfa1ef3fa2d43c1adc3bd85732ca924202a944407802ea1e84",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "reflection.lens",
@@ -176,21 +178,24 @@
       "version": 1,
       "state": "in_review",
       "fingerprint": "4a807a59b24a855388d9861e9d36af0e63aa1a7dfa07475b475571485aa54b64",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "reflection",
       "version": 1,
       "state": "reflecting",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "reflection",
       "version": 1,
       "state": "synthesizing",
       "fingerprint": "fd06356d97e2a6db8c23ce5d8154a2de6f1ed19ea19bc0e7e294a0896f659cbf",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "reflection",
@@ -218,7 +223,8 @@
       "version": 1,
       "state": "reflecting",
       "fingerprint": "0d8d9beae7ccf28ebad746b0e86834db4893b552e83671f57cd29559438e4195",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "reflection.lens",

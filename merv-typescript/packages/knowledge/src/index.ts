@@ -1,12 +1,9 @@
-import { recorded, canonical, mapAsync } from '@merv/contracts';
+import { canonical, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
-import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import {
   check,
   inTransaction,
-  newId,
-  now,
   type Artifacts,
   type Caller,
   type Reviews,
@@ -29,10 +26,8 @@ import type {
   KnowledgeReference,
   KnowledgeReferenceKind,
   KnowledgeSelection,
-  KnowledgeSnapshot,
 } from './types.js';
 import {
-  knowledgeCaptureSchema,
   knowledgeIdSchema,
   knowledgeReferencesSchema,
   parseKnowledgeInput,
@@ -42,7 +37,6 @@ import { migrateKnowledge } from './storage.js';
 export type * from './types.js';
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const hash = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 const publication = (): KnowledgePublication => ({
   status: 'none',
   reflection: null,
@@ -275,96 +269,6 @@ export class KnowledgeService implements Knowledge {
     });
   }
 
-  async capture(
-    caller: Caller,
-    value: { requestId: string },
-    transaction?: Transaction,
-  ): Promise<KnowledgeSnapshot> {
-    this.open();
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const input = parseKnowledgeInput(knowledgeCaptureSchema, value);
-      const inputHash = hash({ operation: 'capture', formatVersion: 1, input });
-      const old = await tx.get<{ input_hash: string; snapshot_id: string }>(
-        'SELECT input_hash,snapshot_id FROM knowledge_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-        caller.projectId,
-        caller.actorId,
-        input.requestId,
-      );
-      if (old) {
-        check(
-          old.input_hash === inputHash,
-          'request_conflict',
-          'requestId was already used with different knowledge input',
-          409,
-        );
-        const result = await this.get(caller, old.snapshot_id, tx);
-        await this.scope.require(caller, 'write', tx);
-        return result;
-      }
-      const selection = await this.selection(caller, tx);
-      const snapshot: KnowledgeSnapshot = {
-        id: newId('corpus'),
-        projectId: caller.projectId,
-        formatVersion: 1,
-        createdBy: caller.actorId,
-        createdAt: now(),
-        sourceEventHead: await this.state.eventHead(tx),
-        selection,
-        manifestHash: hash({ formatVersion: 1, selection }),
-      };
-      await this.scope.require(caller, 'write', tx);
-      await tx.run(
-        'INSERT INTO knowledge_snapshots(id,project_id,created_by,created_at,format_version,manifest_hash,record) VALUES(?,?,?,?,?,?,?)',
-        snapshot.id,
-        snapshot.projectId,
-        snapshot.createdBy,
-        snapshot.createdAt,
-        snapshot.formatVersion,
-        snapshot.manifestHash,
-        canonical(snapshot),
-      );
-      await tx.run(
-        'INSERT INTO knowledge_commands(project_id,actor_id,request_id,input_hash,snapshot_id) VALUES(?,?,?,?,?)',
-        caller.projectId,
-        caller.actorId,
-        input.requestId,
-        inputHash,
-        snapshot.id,
-      );
-      await recorded(this.state, tx, caller, 'knowledge.captured', snapshot.id, {
-        manifestHash: snapshot.manifestHash,
-        sourceEventHead: snapshot.sourceEventHead,
-        taskIds: selection.tasks.map((task) => task.id),
-        experimentIds: selection.experiments.map((experiment) => experiment.id),
-      });
-      await this.scope.require(caller, 'write', tx);
-      return structuredClone(snapshot);
-    });
-  }
-
-  async get(
-    caller: Caller,
-    snapshotId: string,
-    transaction?: Transaction,
-  ): Promise<KnowledgeSnapshot> {
-    this.open();
-    check(
-      typeof snapshotId === 'string' && knowledgeIdSchema.safeParse(snapshotId).success,
-      'invalid_knowledge_input',
-      'A valid corpus ID is required',
-    );
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const row = await tx.get<{ record: string }>(
-        'SELECT record FROM knowledge_snapshots WHERE id=? AND project_id=?',
-        snapshotId,
-        caller.projectId,
-      );
-      check(row, 'knowledge_not_found', 'Corpus snapshot not found in this project', 404);
-      return JSON.parse(row.record) as KnowledgeSnapshot;
-    });
-  }
 
   async resolve(
     caller: Caller,

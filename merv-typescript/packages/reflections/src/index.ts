@@ -26,13 +26,6 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
-import {
-  REFLECTION_WORKFLOW as LEGACY_PARENT,
-  LENS_WORKFLOW as LEGACY_CHILD,
-  RECIPES as LEGACY_RECIPES,
-  LENSES as LEGACY_LENSES,
-  REFLECTION_CRITERIA as LEGACY_CRITERIA,
-} from './legacy.js';
 import type { Paper, PaperProposal } from '@merv/paper/types';
 import {
   LENSES,
@@ -151,20 +144,20 @@ export class ReflectionService implements Reflections {
         },
       ]);
       try {
-        for (const recipe of [...LEGACY_RECIPES, ...RECIPES])
+        for (const recipe of RECIPES)
           this.contexts.set(
             `${recipe.name}@${recipe.version}`,
             await contextBuilder.register(recipe),
           );
-        for (const definition of [LEGACY_CHILD, LENS_WORKFLOW])
+        for (const definition of [LENS_WORKFLOW])
           this.children.set(
             definition.version,
-            await workflows.register(definition, this.policy(true, definition.version >= 2)),
+            await workflows.register(definition, this.policy(true, true)),
           );
-        for (const definition of [LEGACY_PARENT, REFLECTION_WORKFLOW])
+        for (const definition of [REFLECTION_WORKFLOW])
           this.parents.set(
             definition.version,
-            await workflows.register(definition, this.policy(false, definition.version >= 2)),
+            await workflows.register(definition, this.policy(false, true)),
           );
         this.releaseOwner = reviews.registerSubmitOwner({
           id: 'reflections',
@@ -352,7 +345,7 @@ export class ReflectionService implements Reflections {
   }
   private async createLenses(caller: Caller, row: WaveRow, tx: Transaction): Promise<void> {
     const version = (await this.workflows.get(caller, row.id, tx)).version;
-    for (const lens of version >= 2 ? LENSES : LEGACY_LENSES) {
+    for (const lens of LENSES) {
       const workflow = await this.children.get(version)!.start(
         caller,
         {
@@ -507,16 +500,11 @@ export class ReflectionService implements Reflections {
   }
   private async inputs(context: WorkflowCheckContext): Promise<Record<string, ContextInput>> {
     const { wave, lens } = await this.current(context);
-    const corpus = JSON.parse(wave.corpus) as Reflection['corpus'];
     const submission = wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
     const review =
       context.snapshot.state === 'in_review' && wave.review_id
         ? await this.reviews.get(context.caller, wave.review_id, context.tx)
         : null;
-    const sources =
-      corpus?.selection.artifacts
-        .filter((entry) => entry.status === 'retained')
-        .map((entry) => entry.id) ?? [];
     const lenses = (await this.lensRows(wave, context.tx))
       .filter((entry) => entry.artifact)
       .map((entry) => (JSON.parse(entry.artifact!) as Artifact).id);
@@ -530,35 +518,10 @@ export class ReflectionService implements Reflections {
           ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
         }),
       },
-      ...(corpus
-        ? {
-            corpus: {
-              text: JSON.stringify({
-                corpus,
-                paper: JSON.parse(wave.paper),
-                ...(!lens
-                  ? {
-                      currentPaper: (await this.paper.read(context.caller, context.tx)).documents,
-                      paperProposal: submission?.paperProposal ?? null,
-                    }
-                  : {}),
-              }),
-            },
-          }
-        : {
-            research: {
-              text: 'Read current research with project.records, task.get, experiment.get_state and paper.read. Inspect source evidence with artifact.read and its reviews with review.get. Existing work can progress during this wave; revisit relevant records before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.',
-            },
-          }),
-      ...(sources.length ? { sources: { artifactIds: sources, mode: 'references' as const } } : {}),
-      ...(!lens
-        ? {
-            lenses: {
-              artifactIds: lenses,
-              mode: corpus ? ('auto' as const) : ('references' as const),
-            },
-          }
-        : {}),
+      research: {
+        text: 'Read current research with project.records, task.get, experiment.get_state and paper.read. Inspect source evidence with artifact.read and its reviews with review.get. Existing work can progress during this wave; revisit relevant records before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.',
+      },
+      ...(!lens ? { lenses: { artifactIds: lenses, mode: 'references' as const } } : {}),
       ...(review && submission
         ? {
             submission: {
@@ -567,18 +530,18 @@ export class ReflectionService implements Reflections {
                 submission.changeSpec.id,
                 ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
               ],
-              mode: corpus ? ('auto' as const) : ('references' as const),
+              mode: 'references' as const,
             },
             assessment: { text: JSON.stringify(review) },
           }
         : {}),
       feedback: {
         text: JSON.stringify({
-          previousReviews: corpus
-            ? JSON.parse(wave.feedback)
-            : (JSON.parse(wave.feedback) as { id: string; synopsis: string; notes: string }[])
-                .slice(-1)
-                .map(({ id, synopsis }) => ({ id, synopsis })),
+          previousReviews: (
+            JSON.parse(wave.feedback) as { id: string; synopsis: string; notes: string }[]
+          )
+            .slice(-1)
+            .map(({ id, synopsis }) => ({ id, synopsis })),
           recovery: review?.recovery ?? null,
         }),
       },
@@ -632,8 +595,7 @@ export class ReflectionService implements Reflections {
     const inputs = context.caller.session
       ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipes = context.snapshot.version >= 2 ? RECIPES : LEGACY_RECIPES;
-    const recipe = recipes.find((entry) => entry.name === `reflection.${stage}`)!;
+    const recipe = RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
     const preview = await this.contexts
       .get(`${recipe.name}@${recipe.version}`)!
       .preview(
@@ -1158,7 +1120,7 @@ export class ReflectionService implements Reflections {
               ]),
             ],
             criteria: [
-              ...(snapshot.version >= 2 ? REFLECTION_CRITERIA : LEGACY_CRITERIA),
+              ...REFLECTION_CRITERIA,
               ...(submission.paperProposal
                 ? [
                     'The proposed paper edits faithfully synthesize the cited research evidence and preserve its limitations.',

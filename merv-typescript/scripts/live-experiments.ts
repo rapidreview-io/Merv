@@ -389,20 +389,19 @@ try {
       capturedObservationsMatch: true,
     };
   }
-  // This is an owner-side corpus integration check after the actual program completed.
-  // No model claims to have performed Reflection, publication, or claim assessment.
-  const corpus = await app.ctx.knowledge.capture(source, { requestId: 'completed-native-corpus' });
-  assert.equal(corpus.selection.publication.status, 'none');
-  assert.equal(corpus.selection.project.summary, introduction);
-  assert.deepEqual(corpus.selection.claims, [claim]);
-  assert.equal(corpus.selection.experiments.length, 1);
-  assert.deepEqual(corpus.selection.experiments[0], final);
+  // An owner-side check that the live record reads back what the program wrote. No model
+  // claims to have performed Reflection, publication, or claim assessment.
+  const records = await app.ctx.knowledge.records(source);
+  assert.equal(records.publication.status, 'none');
+  assert.equal(records.project.summary, introduction);
+  assert.deepEqual(records.claims, [claim]);
+  assert.equal(records.experiments.length, 1);
+  assert.deepEqual(records.experiments[0], final);
   if (gitProof) {
-    const selected = corpus.selection.captures.find(
-      (entry) => entry.ref.kind === 'session-final' && entry.ref.sessionId === sessions[2].id,
-    );
-    assert.ok(selected?.status === 'observed');
-    assert.deepEqual(selected.capture, gitProof.capture);
+    const observed = await app.ctx.knowledge.resolve(source, [
+      `session-final:${sessions[2].id}`,
+    ]);
+    assert.equal(observed[0]?.status, 'resolved');
   }
   const walk = (path: string): string[] =>
     readdirSync(path, { withFileTypes: true }).flatMap((entry) =>
@@ -629,10 +628,11 @@ try {
     introduction,
     frozenIntroductionsVerified: 4,
     git: gitProof,
-    corpus: {
-      performedBy: 'fixture-owner-after-native-terminal',
-      snapshot: corpus,
-      publication: 'none',
+    records: {
+      readBy: 'fixture-owner-after-native-terminal',
+      experiments: records.experiments.length,
+      claims: records.claims.length,
+      publication: records.publication.status,
     },
     freshAgents: 4,
     successfulCalls: calls.length,
