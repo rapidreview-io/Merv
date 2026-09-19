@@ -130,12 +130,22 @@ function paperContext(documents: PaperWorkspace['documents'], room = 40_000) {
   );
 }
 
+/**
+ * What a worker may look at. The assignment's own tool list reads as the boundary of it: over
+ * one project, 22 of 22 task and experiment workers made no project-level read, while every
+ * worker whose recipe named these tools used them.
+ */
+const reading =
+  ' Everything this project holds is readable from this assignment, whether or not it is named below: project.records, task.get, experiment.get_state, paper.read, review.get and artifact.read answer for anything in this project — the other experiments and their plans and results, the tasks and their deliveries, the claims, the reviews and the feed. Read the project before you settle anything it may already have settled, and say what you reused and what you chose yourself.';
+const verifying =
+  ' Open what you are judging rather than judging the summary of it: artifact.read returns the retained bytes of everything pinned to this submission, and a criterion you mark met on text you were handed rather than evidence you opened yourself says so in its notes.';
+
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 5,
+  version: 6,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
-    instructions: instructions[state],
+    instructions: instructions[state] + reading + (reviewing(state) ? verifying : ''),
     outputInstructions: handoffs[state],
     maxChars: 160_000,
     sections: [

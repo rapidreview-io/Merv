@@ -854,7 +854,7 @@ DROP TABLE task_leases_backup;`,
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'create', input, async () => {
         const typeName = input.type ?? 'task.work',
-          typeVersion = input.typeVersion ?? 1;
+          typeVersion = input.typeVersion ?? this.newestType(typeName);
         const type = this.types.get(`${typeName}@${typeVersion}`)?.definition;
         check(
           type?.kind === 'work',
@@ -1047,8 +1047,21 @@ DROP TABLE task_leases_backup;`,
     });
   }
 
+  /**
+   * A task created without an explicit version takes the newest recipe published for its type;
+   * an existing task keeps the version it was created with, whose recipe stays registered.
+   */
+  private newestType(name: string): number {
+    let newest = 1;
+    for (const key of this.types.keys()) {
+      const at = key.lastIndexOf('@');
+      if (key.slice(0, at) === name) newest = Math.max(newest, Number(key.slice(at + 1)));
+    }
+    return newest;
+  }
+
   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
-    const key = purpose === 'review' ? 'task.review@2' : `${task.type}@${task.typeVersion}`;
+    const key = purpose === 'review' ? 'task.review@3' : `${task.type}@${task.typeVersion}`;
     const type = this.types.get(key);
     check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
     return type;
