@@ -180,9 +180,13 @@ export class ArtifactStore implements Artifacts {
     );
     const bytes = await this.blobs.get(caller.projectId, artifact.hash);
     await this.get(caller, artifactId);
+    // A text answer has to be one the caller could send back. Tool input refuses NUL in text,
+    // so bytes carrying it come back as base64 even though they decode as UTF-8; otherwise a
+    // read of this artifact could never be written again.
     const encoding =
       (artifact.mediaType.startsWith('text/') || artifact.mediaType === 'application/json') &&
-      isUtf8(bytes)
+      isUtf8(bytes) &&
+      !bytes.includes(0)
         ? ('utf8' as const)
         : ('base64' as const);
     return { artifact, content: bytes.toString(encoding), encoding };

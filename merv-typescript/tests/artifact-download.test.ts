@@ -217,4 +217,21 @@ test('Disk advertises no direct download capability and retains ordinary inline 
     app.ctx.tools.call('artifact.read', caller, { artifactId: artifact.id, mode: 'download' }),
     { code: 'download_unsupported' },
   );
+  // Text carrying NUL decodes as UTF-8 but cannot be written back, so it is read as base64
+  // and the answer round-trips to an identical artifact.
+  const binary = await app.ctx.artifacts.create(caller, {
+    title: 'NUL bytes',
+    content: Buffer.from('a\0b').toString('base64'),
+    encoding: 'base64',
+    mediaType: 'text/plain',
+  });
+  const read = await app.ctx.artifacts.read(caller, binary.id);
+  assert.equal(read.encoding, 'base64');
+  const again = await app.ctx.artifacts.create(caller, {
+    title: 'NUL bytes again',
+    content: read.content,
+    encoding: read.encoding,
+    mediaType: 'text/plain',
+  });
+  assert.equal(again.hash, binary.hash);
 });
