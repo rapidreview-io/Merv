@@ -545,8 +545,10 @@ test('one invocation may finish its own handoff transaction, while later calls a
   // The record moved by the worker's own hand: the session ends as a completed handoff,
   // whichever path meets it first; a halt that finds it so halts nothing.
   assert.equal((await f.sessions.halt(f.owner, { sessionId: session.id })).halted, 0);
+  // And it keeps saying so. A worker retrying a handoff whose response was lost has only
+  // this refusal to tell it the work committed.
   await assert.rejects(async () => await f.sessions.authenticate(token), {
-    code: 'session_closed',
+    code: 'session_completed',
   });
   const done = await f.sessions.get(f.source, session.id);
   assert.equal(done.status, 'released');
@@ -1125,6 +1127,8 @@ test('a continuing agent keeps its identity and credential across explicit assig
   await assert.rejects(async () => await f.scope.require(callerA, 'read'), {
     code: 'session_closed',
   });
+  // Released because the agent was reassigned, not because its handoff landed: the refusal
+  // says closed, and its reason travels in the message.
   await assert.rejects(
     f.sessions.run(delayed, () => {
       throw new Error('Old handler must not run');

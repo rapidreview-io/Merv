@@ -48,6 +48,24 @@ export type * from './types.js';
 const tokenPattern = /^ms_[A-Za-z0-9_-]{43}$/;
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
+/**
+ * Why a session that has already ended is refusing. The reason survives the first refusal
+ * because a worker whose response was lost has nothing else to go on: retrying its handoff
+ * must keep telling it the handoff landed, rather than degrading to "closed" and leaving it
+ * unable to tell a committed delivery from a halt.
+ */
+const ended = (session: Session): MervError =>
+  session.closeReason === 'handoff'
+    ? new MervError(
+        'session_completed',
+        'This session’s handoff completed and the session has ended; its record moved on',
+        401,
+      )
+    : new MervError(
+        'session_closed',
+        session.closeReason ? `Session is closed: ${session.closeReason}` : 'Session is closed',
+        401,
+      );
 const permission = (role: Session['role']): Permission =>
   role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -522,7 +540,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     return moved?.actor_id === session.actorId;
   }
   private async reconcile(session: Session, tx: Transaction): Promise<MervError | undefined> {
-    if (!live(session)) return new MervError('session_closed', 'Session is closed', 401);
+    if (!live(session)) return ended(session);
     try {
       await this.valid(session, tx);
       return;
