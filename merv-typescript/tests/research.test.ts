@@ -10,6 +10,10 @@ import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchRecord } from '../packages/research/src/types.js';
 import type { Caller, ReviewApplication, WorkflowDefinition } from '@merv/contracts';
 import type { Reflection } from '@merv/reflections/types';
+import {
+  CONSOLIDATION_LIMITS,
+  createSchema as consolidationCreateSchema,
+} from '../packages/consolidation/src/input.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-research-'));
@@ -501,6 +505,24 @@ test('persisted v2 research retains report-only consolidation and exact replay t
       .map((entry) => entry.id)
       .sort(),
     [record.reflectionId!, record.consolidationId!].sort(),
+  );
+});
+
+test('a consolidation can hold every prerequisite a cycle is allowed to give it', () => {
+  // research.create takes up to 100 consolidationDependsOn and the advance adds the cycle's
+  // own reflection, so a child cap of 100 made a 100-prerequisite cycle refuse its own
+  // consolidation on every attempt while reporting the advance ready.
+  const parse = (value: unknown) =>
+    consolidationCreateSchema.safeParse({
+      sourceArtifactIds: ['art_1'],
+      name: 'Child',
+      requestId: 'r',
+      dependsOn: value,
+    });
+  assert.equal(parse(Array.from({ length: 101 }, (_, i) => `wf_${i}`)).success, true);
+  assert.equal(
+    parse(Array.from({ length: CONSOLIDATION_LIMITS.dependsOn + 1 }, (_, i) => `wf_${i}`)).success,
+    false,
   );
 });
 

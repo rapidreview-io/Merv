@@ -38,6 +38,7 @@ import type {
   ConsolidationSubmit,
 } from './types.js';
 import {
+  CONSOLIDATION_LIMITS,
   createSchema,
   endChoiceSchema,
   endSchema,
@@ -118,6 +119,7 @@ interface LeaseRow {
 
 /** A domain program over Workflows; it owns no scheduler, identity, Git transport or model call. */
 export class ConsolidationService implements Consolidation {
+  readonly limits = CONSOLIDATION_LIMITS;
   private closed = false;
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<ActiveState, ContextRegistration>();

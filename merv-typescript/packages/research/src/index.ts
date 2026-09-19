@@ -321,6 +321,47 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     );
     return problem;
   }
+  /**
+   * Exactly what this cycle would hand its consolidation. Built once, so the readiness check
+   * measures the thing the advance will actually create rather than an estimate of it.
+   */
+  private async consolidationSelection(
+    caller: Caller,
+    record: ResearchRecord,
+    checks: BindingChecks,
+    tx: Transaction,
+  ): Promise<{ sourceArtifactIds: string[]; experimentIds: string[]; dependsOn: string[] }> {
+    const reflection = await this.use('reflections', checks, (service) =>
+      service.approved(caller, record.reflectionId!, tx),
+    );
+    // Live research is selected at this handoff, not asserted to be part of the earlier
+    // reflection approval. Consolidation reviews it itself.
+    const sources = reflection.corpus
+      ? null
+      : await this.use('knowledge', checks, (service) => service.researchReferences(caller, tx));
+    return {
+      sourceArtifactIds: [
+        ...new Set([
+          reflection.report.id,
+          // Legacy waves approved before the 2026-09-16 ruling still pin an authored graph.
+          ...(reflection.graph ? [reflection.graph.id] : []),
+          reflection.changeSpec.id,
+          ...reflection.lenses.map((lens) => lens.artifact.id),
+          ...(sources?.artifacts ?? []),
+          ...(reflection.corpus?.selection.artifacts ?? []).flatMap((entry) =>
+            entry.status === 'retained' ? [entry.artifact.id] : [],
+          ),
+        ]),
+      ],
+      experimentIds:
+        sources?.experiments ??
+        reflection.experimentIds ??
+        reflection.corpus?.selection.experiments.map((e) => e.id) ??
+        [],
+      dependsOn: [record.reflectionId!, ...record.consolidationDependencies],
+    };
+  }
+
   private async ready(
     caller: Caller,
     record: ResearchRecord,
@@ -360,6 +401,19 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
       );
       if (this.needsConsolidation(record) && !reflection.corpus)
         this.requireCapability('knowledge', checks);
+      // A cycle that cannot compose its consolidation must say so here. Reported ready and
+      // refused on every attempt, it is a dead end with no way out and nothing to read.
+      if (this.needsConsolidation(record)) {
+        const selection = await this.consolidationSelection(caller, record, checks, tx);
+        const limits = await this.use('consolidation', checks, async (service) => service.limits);
+        for (const [field, limit] of Object.entries(limits))
+          check(
+            selection[field as keyof typeof selection].length <= limit,
+            'consolidation_selection_too_large',
+            `This cycle would hand consolidation ${selection[field as keyof typeof selection].length} ${field}, and at most ${limit} are allowed. Reduce the cycle's selection with research.replan, or finish it without consolidation.`,
+            409,
+          );
+      }
     }
     if (stage === 'consolidating') {
       check(
@@ -474,37 +528,14 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
             );
             // Live research is selected at this handoff, not asserted to be part
             // of the earlier reflection approval. Consolidation reviews it itself.
-            const sources = reflection.corpus
-              ? null
-              : await this.use('knowledge', checks, (service) =>
-                  service.researchReferences(caller, tx),
-                );
-            const sourceArtifactIds = [
-              ...new Set([
-                reflection.report.id,
-                // Legacy waves approved before the 2026-09-16 ruling still pin an authored graph.
-                ...(reflection.graph ? [reflection.graph.id] : []),
-                reflection.changeSpec.id,
-                ...reflection.lenses.map((lens) => lens.artifact.id),
-                ...(sources?.artifacts ?? []),
-                ...(reflection.corpus?.selection.artifacts ?? []).flatMap((entry) =>
-                  entry.status === 'retained' ? [entry.artifact.id] : [],
-                ),
-              ]),
-            ];
+            const selection = await this.consolidationSelection(caller, record, checks, tx);
             const work = await this.use('consolidation', checks, (service) =>
               service.create(
                 caller,
                 {
-                  sourceArtifactIds,
-                  experimentIds:
-                    sources?.experiments ??
-                    reflection.experimentIds ??
-                    reflection.corpus?.selection.experiments.map((e) => e.id) ??
-                    [],
+                  ...selection,
                   name: `${clip(record.name, 185)}: consolidation`,
                   workspace: record.consolidationWorkspace,
-                  dependsOn: [record.reflectionId!, ...record.consolidationDependencies],
                   requestId: this.request(caller, input.requestId, 'consolidation'),
                 },
                 tx,

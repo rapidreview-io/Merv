@@ -7,6 +7,12 @@ export interface ConsolidationDecision {
   decision: 'retain' | 'adapt' | 'drop' | 'no_code';
   rationale: string;
 }
+/** What one consolidation may carry; the numbers live beside the schemas that enforce them. */
+export interface ConsolidationLimits {
+  sourceArtifactIds: number;
+  experimentIds: number;
+  dependsOn: number;
+}
 export interface ConsolidationCreate {
   sourceArtifactIds: string[];
   /** The decision scope selected by the originating workflow. */
@@ -67,6 +73,8 @@ export interface ConsolidationRecord {
   } | null;
 }
 export interface Consolidation {
+  /** What one consolidation may carry, so a parent can check before it composes one. */
+  readonly limits: ConsolidationLimits;
   create(
     caller: Caller,
     input: ConsolidationCreate,
