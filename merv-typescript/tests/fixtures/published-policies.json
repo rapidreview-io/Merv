@@ -91,19 +91,19 @@
       "name": "consolidation",
       "version": 3,
       "fingerprint": "78f2ca469cc720dd72ccbb72c07ca0a4121ddd184c9d37bc830510cdd6120875",
-      "published": false
+      "published": true
     },
     {
       "name": "consolidation",
       "version": 4,
       "fingerprint": "1f6ae351f818e77a286ac3f20878584eb1db7bde6ec3efa7912b65bdf8b3e298",
-      "published": false
+      "published": true
     },
     {
       "name": "research",
       "version": 4,
       "fingerprint": "7d20f91f0a6eca7f43c185384d5bd2215ed75b70088db17149ae9c51aef0bb05",
-      "published": false
+      "published": true
     }
   ],
   "policies": [
@@ -396,56 +396,56 @@
       "version": 3,
       "state": "consolidating",
       "fingerprint": "5c2113d194f6d114d4eb04821c2b50bac5936d38e3f395af2b9021a1ec745697",
-      "published": false
+      "published": true
     },
     {
       "workflow": "consolidation",
       "version": 3,
       "state": "consolidation_review",
       "fingerprint": "4077ba59723a18f0c35e1aa7d3896268540ff2d2bfc1a03e7ee915416b84cdf4",
-      "published": false
+      "published": true
     },
     {
       "workflow": "consolidation",
       "version": 4,
       "state": "consolidating",
       "fingerprint": "352cf88d6b0d91732b3c9cb432fed490e31d52b3be964766e1e0f2cf4a132b13",
-      "published": false
+      "published": true
     },
     {
       "workflow": "consolidation",
       "version": 4,
       "state": "consolidation_review",
       "fingerprint": "72a42eb3bed47b7a29b997322226f002a97e5c0e4f503185fc8c07ff6a0a65f6",
-      "published": false
+      "published": true
     },
     {
       "workflow": "research",
       "version": 4,
       "state": "consolidating",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
-      "published": false
+      "published": true
     },
     {
       "workflow": "research",
       "version": 4,
       "state": "defining",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
-      "published": false
+      "published": true
     },
     {
       "workflow": "research",
       "version": 4,
       "state": "reflecting",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
-      "published": false
+      "published": true
     },
     {
       "workflow": "research",
       "version": 4,
       "state": "researching",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
-      "published": false
+      "published": true
     }
   ],
   "recipes": [
