@@ -57,7 +57,14 @@ export const endSchema = z
     requestId: id,
   })
   .strict();
-/** What the caller decides when ending one; the record and revision are bound by the engine. */
-export const endChoiceSchema = endSchema.pick({ outcome: true, reason: true });
+/**
+ * What the caller decides when ending one; the record and revision are bound by the engine.
+ * Not strict: a preflight legitimately carries the bound fields alongside the choice, and
+ * refusing them there would report an action blocked that the call then accepts.
+ */
+export const endChoiceSchema = z.object({
+  outcome: z.enum(['abandoned', 'failed']),
+  reason: text(16000),
+});
 export const parse = <T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> =>
   parsed(schema, input, 'invalid_consolidation_input');

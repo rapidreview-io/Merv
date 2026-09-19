@@ -511,6 +511,13 @@ test('persisted v2 research retains report-only consolidation and exact replay t
 
 test('a research cycle that cannot reach an answer can be ended', async (t) => {
   const f = await fixture(t);
+  // A preflight carries the bound fields beside the choice; refusing them there would report
+  // an action blocked that the call then accepts.
+  const preflight = async (id: string, revision: number) =>
+    await f.app.ctx.workflows.evaluate(f.owner, id, {
+      action: 'end',
+      input: { researchId: id, expectedRevision: revision, outcome: 'abandoned', reason: 'No.' },
+    });
   const cycle = await f.research.create(f.owner, {
     name: 'A question that cannot be answered',
     dependsOn: [],
@@ -521,6 +528,7 @@ test('a research cycle that cannot reach an answer can be ended', async (t) => {
     guidance.actions.some((action) => action.action === 'end'),
     'a cycle offers a way to end from every stage before complete',
   );
+  assert.equal((await preflight(cycle.id, cycle.workflow.revision)).nextAction?.action, 'end');
   const ended = await f.research.end(f.owner, {
     researchId: cycle.id,
     expectedRevision: cycle.workflow.revision,

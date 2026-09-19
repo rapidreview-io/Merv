@@ -27,8 +27,15 @@ export const endSchema = advanceSchema
     reason: z.string().trim().min(1).max(16000).refine(visible),
   })
   .strict();
-/** What the caller decides when ending one; the cycle and revision are bound by the engine. */
-export const endChoiceSchema = endSchema.pick({ outcome: true, reason: true });
+/**
+ * What the caller decides when ending one; the cycle and revision are bound by the engine.
+ * Not strict: a preflight legitimately carries the bound fields alongside the choice, and
+ * refusing them there would report an action blocked that the call then accepts.
+ */
+export const endChoiceSchema = z.object({
+  outcome: z.enum(['abandoned', 'failed']),
+  reason: z.string().trim().min(1).max(16000).refine(visible),
+});
 export const getSchema = z.object({ researchId: id }).strict();
 export const listSchema = z.object({}).strict();
 export const parse = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> =>

@@ -677,6 +677,16 @@ test('new attempts reset the execution clock while execution repair retains its 
   const started = (await f.experiments.get(f.source, experiment.id)).attempt.startedAt;
   assert.ok(started);
   const approval = experiment.attempt.approvedSubmissionId;
+  // Asking whether a retry is ready is answered against the call: it needs the reason for
+  // the interruption, exactly as the tool does.
+  assert.ok(
+    (
+      await f.workflows.evaluate(f.source, experiment.id, {
+        action: 'retry_running',
+        input: { expectedRevision: experiment.workflow.revision, evidence: {} },
+      })
+    ).blockers.some((blocker) => blocker.code === 'reason_required'),
+  );
   experiment = await f.transition(experiment, 'retry_running');
   assert.equal(experiment.attempt.index, 1);
   assert.equal(experiment.attempt.startedAt, started);

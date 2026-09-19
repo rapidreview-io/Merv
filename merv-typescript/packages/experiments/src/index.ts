@@ -1212,13 +1212,23 @@ export class ExperimentService implements Experiments {
         tx,
       );
     }
-    if (action === 'retry_running')
+    if (action === 'retry_running') {
       check(
         experiment.workflow.state === 'running',
         'invalid_transition',
         'retry_running is available only during execution',
         409,
       );
+      // The submission requires the interruption's reason under evidence, as ending does.
+      // Without this, guidance answered `ready` for a retry the tool then refused.
+      if (context.input)
+        check(
+          typeof (context.input.evidence as Data | undefined)?.reason === 'string' &&
+            !!(context.input.evidence as Data).reason,
+          'reason_required',
+          'Retrying an experiment requires the reason for the interruption',
+        );
+    }
   }
   private revision(experiment: Experiment, expected: number): void {
     check(
