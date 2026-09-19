@@ -229,6 +229,13 @@ export class WorkflowsService implements Workflows {
       'The captured workflow registration has been withdrawn',
       409,
     );
+    // The project overview is asked for by leaving the instance out. A fixed binding would
+    // fill it in and answer for this worker's own record instead — a narrower question than
+    // the one asked, and the only read a session cannot otherwise express.
+    if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(input, 'instanceId')) {
+      await this.scope.require(caller, 'read', tx);
+      return { tool, input: structuredClone(input) };
+    }
     try {
       return admitDispatch(execution, tool, input);
     } catch (error) {

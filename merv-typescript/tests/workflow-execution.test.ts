@@ -53,6 +53,10 @@ const manifest = (): WorkflowExecutionPolicy => ({
       alternatives: [{ artifactIds: { kind: 'subset', name: 'taskArtifacts' } }],
     },
     { name: 'claim', alternatives: [{ claimId: { kind: 'reference', name: 'claim' } }] },
+    {
+      name: 'workflow.status_and_next',
+      alternatives: [{ instanceId: { kind: 'target', field: 'instanceId' } }],
+    },
     { name: '_nisa.search', alternatives: [{}] },
     {
       name: 'paired',
@@ -197,6 +201,33 @@ test('fixed execution is metadata-only, detached and independent of exit readine
       code: 'execution_tool_forbidden',
     },
   );
+});
+
+test('an overview asked of the whole project is not narrowed to the session own record', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  const execution = await f.workflows.execution(f.caller, {
+    instanceId: f.instance.id,
+    expectedRevision: 0,
+  });
+  const asked = dispatch(execution, 'workflow.status_and_next', {});
+  // Leaving the instance out asks what the whole project is doing. Filling it in from the
+  // binding would answer for this worker's own record — a different question.
+  assert.deepEqual((await f.workflows.authorizeDispatch(f.caller, { ...asked, read: true })).input, {});
+  // Named, the instance still has to be this worker's own.
+  assert.deepEqual(
+    (
+      await f.workflows.authorizeDispatch(f.caller, {
+        ...dispatch(execution, 'workflow.status_and_next', { instanceId: f.instance.id }),
+        read: true,
+      })
+    ).input,
+    { instanceId: f.instance.id },
+  );
+  // Without the read mark the published binding holds, and fills what was left out.
+  assert.deepEqual((await f.workflows.authorizeDispatch(f.caller, asked)).input, {
+    instanceId: f.instance.id,
+  });
 });
 
 test('whole-value bindings inject exact fields, preserve input, and keep OR alternatives separate', async (t) => {
