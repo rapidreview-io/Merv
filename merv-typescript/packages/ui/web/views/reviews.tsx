@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
-import { useTool, type Loaded } from '../api';
+import { refreshTools, useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
@@ -422,6 +422,7 @@ function Controls({
     onSuccess: () => {
       onDone();
       guidance.reload();
+      refreshTools('review.list', 'task.list', 'experiment.list');
     },
   });
   if (!guidance.data) return <LoadState loading={guidance.loading} error={guidance.error} />;
@@ -492,7 +493,10 @@ function Desk({
   const command = useCommand<{ id: string }>({
     tool: 'review.submit',
     validate: (value) => !!value && typeof value.id === 'string',
-    onSuccess: onDone,
+    onSuccess: () => {
+      onDone();
+      refreshTools('review.list', 'task.list', 'experiment.list');
+    },
   });
   const drafts = review.criteria.map((_, index) => values[index + 1] ?? BLANK);
   const said = synopsis.trim();

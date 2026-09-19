@@ -347,6 +347,17 @@ async function shared<T>(
  * stops entirely while the tab is hidden and catches up once on return, so a backgrounded
  * page costs nothing; both rules live here rather than in any view.
  */
+/**
+ * Refresh every mounted read of these tools, whatever input each was given. A page that has
+ * just changed a record says so, rather than leaving the lists beside it to notice on their
+ * own poll: a verdict left the Work row reading IN REVIEW for seven seconds after the record
+ * itself said the task had failed.
+ */
+export function refreshTools(...names: string[]): void {
+  for (const [key, watchers] of WATCHERS)
+    if (names.some((name) => key.includes(`:${name}:`))) for (const bump of watchers) bump();
+}
+
 export function useTool<T>(
   name: string | null,
   input: Record<string, unknown> = {},
