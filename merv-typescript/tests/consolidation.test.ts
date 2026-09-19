@@ -492,6 +492,23 @@ test('additional workflow dependencies block assignment and submission until sat
   assert.equal((await f.offer(record)).session.assignment.workflow, 'consolidation');
 });
 
+test('a Git consolidation tells its owner that submission needs a worker commit', async (t) => {
+  const f = await fixture(t);
+  const required = async (record: ConsolidationRecord) =>
+    (await f.workflows.evaluate(f.owner, record.id)).actions.find(
+      (action) => action.action === 'submit',
+    )?.requiredInput;
+  // In Git mode the submission also needs the commandId of this worker's own successful
+  // code.commit, and only a leased worker can obtain one; an owner told to supply a report
+  // and decisions alone is told half the story and refused for the other half.
+  assert.deepEqual(await required(await f.create('git')), [
+    'reportArtifactId',
+    'decisions',
+    'commandId',
+  ]);
+  assert.deepEqual(await required(await f.create('none')), ['reportArtifactId', 'decisions']);
+});
+
 test('a consolidation whose prerequisite ends without succeeding can still be ended', async (t) => {
   const f = await fixture(t);
   const dependency = await f.prior.start(f.owner, {

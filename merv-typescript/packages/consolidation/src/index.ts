@@ -1087,7 +1087,13 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           tool: 'consolidation.submit',
           instruction: instructions.consolidating,
           requiresDependencies: true,
-          requiredInput: ['reportArtifactId', 'decisions'],
+          // Git mode also needs the commandId of this worker's own successful code.commit,
+          // and only a leased worker can obtain one. Saying so here is the difference between
+          // an owner reading "supply a report and decisions" and being told what it cannot do.
+          requiredInput: async (context: WorkflowCheckContext) =>
+            GIT.has(context.snapshot.version)
+              ? ['reportArtifactId', 'decisions', 'commandId']
+              : ['reportArtifactId', 'decisions'],
           arguments: (context) => ({
             consolidationId: context.snapshot.id,
             expectedRevision: context.snapshot.revision,
