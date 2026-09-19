@@ -670,12 +670,12 @@ export class ProjectScope implements Scope {
         403,
       );
       if (row.session_id) {
-        check(
-          row.active && (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id,
-          'forbidden',
-          'Worker actors require their live session authority',
-          403,
-        );
+        const own = (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id;
+        // A session halted while this call was in flight has already retired its actor. Tell
+        // the worker its session ended, the way its next call will, rather than that it lacks
+        // a permission and might usefully try something else.
+        check(row.active || !own, 'session_closed', 'Session is closed', 401);
+        check(own, 'forbidden', 'Worker actors require their live session authority', 403);
         // A worker's authority is checked several times per tool call and only read, so
         // it is read on a snapshot: outside any scope that takes no writer lock.
         if (!('transactionId' in sql))

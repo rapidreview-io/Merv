@@ -170,7 +170,9 @@ export function CriterionRows({
                                   })
                                 }
                               />
-                              {artifacts.get(id)?.title}
+                              {/* The list is capped at the newest files; an older pinned one is
+                                  still citable, so name it the way Evidence does. */}
+                              {artifacts.get(id)?.title ?? `File …${id.slice(-6)}`}
                             </label>
                           ))}
                         </div>

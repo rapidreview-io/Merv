@@ -100,7 +100,10 @@ export class FeedService implements Feed {
         'invalid_request',
         'requestId must contain 1–200 characters with visible text',
       );
-      const hash = digest(input);
+      // Two descriptions of the same post — artifactIds omitted, or given as the empty default
+      // it would take anyway — are one request. Hash the post that gets written, not the words
+      // used to ask for it, and still honour a receipt written under the older hash.
+      const hash = digest({ ...input, artifactIds: input.artifactIds ?? [] });
       const old = await tx.get<{ input_hash: string; response_json: string }>(
         'SELECT input_hash, response_json FROM feed_requests WHERE project_id = ? AND author_id = ? AND request_id = ?',
         caller.projectId,
@@ -109,7 +112,7 @@ export class FeedService implements Feed {
       );
       if (old) {
         check(
-          old.input_hash === hash,
+          old.input_hash === hash || old.input_hash === digest(input),
           'request_conflict',
           'requestId was already used with different input',
           409,

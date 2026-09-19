@@ -126,6 +126,10 @@ test('standalone Feed admits reviewers, scopes communication, and validates arti
 
 test('Feed preserves exact content, deduplicates per actor, and rechecks permission on retries', async (t) => {
   const f = await fixture(t);
+  const evidence = await f.artifacts.create(f.producer, {
+    title: 'Attachment',
+    content: 'A file this post could have carried.',
+  });
   const input = { body: '  Original message\nwith whitespace.  ', requestId: 'shared-key' };
   const post = await f.feed.post(f.producer, input);
   assert.equal(post.body, input.body);
@@ -139,8 +143,11 @@ test('Feed preserves exact content, deduplicates per actor, and rechecks permiss
     async () => await f.feed.post(f.producer, { ...input, body: 'Changed.' }),
     code('request_conflict'),
   );
+  // The same post described either way — artifactIds omitted, or the empty default spelled
+  // out — is one request, and its receipt comes back rather than a conflict.
+  assert.deepEqual(await f.feed.post(f.producer, { ...input, artifactIds: [] }), post);
   await assert.rejects(
-    async () => await f.feed.post(f.producer, { ...input, artifactIds: [] }),
+    async () => await f.feed.post(f.producer, { ...input, artifactIds: [evidence.id] }),
     code('request_conflict'),
   );
   const reviewerPost = await f.feed.post(f.reviewer, input);

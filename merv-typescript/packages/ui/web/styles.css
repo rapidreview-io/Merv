@@ -1743,6 +1743,15 @@ select.input,
   font-size: var(--text-sm);
   color: var(--muted);
 }
+/* A record's own name is as long as its author made it; the line wraps rather than
+   carrying its time off the side of the page. */
+.feed-line > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.feed-line > :last-child {
+  flex: none;
+}
 
 /* Experiment record. ------------------------------------------------------ */
 .ev-role {

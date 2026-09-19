@@ -167,7 +167,7 @@ function ArtifactList() {
           <ThreeStates
             meta={
               <>
-                <span className="mono">{a.mediaType}</span> · {bytes(a.size)} ·{' '}
+                <span className="mono wrap">{a.mediaType}</span> · {bytes(a.size)} ·{' '}
                 {nameOf(a.createdBy)} · <Ago at={a.createdAt} />
               </>
             }
