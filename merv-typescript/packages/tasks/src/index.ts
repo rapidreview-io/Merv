@@ -849,8 +849,8 @@ DROP TABLE task_leases_backup;`,
     return result;
   }
 
-  async create(caller: Caller, input: TaskCreate): Promise<Task> {
-    return await this.state.transaction(async (tx) => {
+  async create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task> {
+    return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'create', input, async () => {
         const typeName = input.type ?? 'task.work',

@@ -86,6 +86,35 @@ async function fixture() {
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 
+test('a task can be created inside a caller\u2019s transaction and rolls back with it', async () => {
+  const f = await fixture();
+  try {
+    // A wave materialized from one approved decision creates its records together or not at
+    // all, so task creation has to compose into the caller's transaction like every other.
+    await assert.rejects(
+      async () =>
+        await f.state.transaction(async (tx) => {
+          const task = await f.tasks.create(
+            f.producer,
+            {
+              title: 'Composed',
+              goal: 'Build an adder.',
+              checks: ['Adds two numbers.'],
+              requestId: 'composed',
+            },
+            tx,
+          );
+          assert.ok(task.id);
+          throw new Error('Abandon the wave');
+        }),
+      /Abandon the wave/,
+    );
+    assert.equal((await f.tasks.list(f.producer)).length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('task loop pins evidence, routes needs_changes and pass, and deduplicates mutations', async () => {
   const f = await fixture();
   try {

@@ -1373,7 +1373,7 @@ export interface Tasks {
   registerType(definition: TaskTypeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;
   checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint>;
-  create(caller: Caller, input: TaskCreate): Promise<Task>;
+  create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task>;
   get(caller: Caller, taskId: string): Promise<Task>;
   list(caller: Caller): Promise<TaskRecord[]>;
   /** The derived process graph, so a record page reads its gate with the record. */
