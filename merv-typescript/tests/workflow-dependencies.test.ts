@@ -157,6 +157,12 @@ test('registered dependency semantics gate designated actions, guide failure rec
     'working',
     'Failed upstream must not mutate downstream',
   );
+  // Its only remaining move ends it, so the project overview must not call it ready: nothing
+  // is dispatched for work like this, and it waits for its owner.
+  const overview = await workflows.overview(caller);
+  assert.ok(overview.stalled.includes(downstream.id));
+  assert.ok(!overview.ready.includes(downstream.id));
+  assert.ok(!overview.blocked.includes(downstream.id));
   await experiment.transition(caller, {
     instanceId: downstream.id,
     expectedRevision: 0,

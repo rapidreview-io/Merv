@@ -121,6 +121,12 @@ export interface WorkflowOverview {
   projectId: string;
   ready: string[];
   blocked: string[];
+  /**
+   * Work that can no longer pursue its own purpose: every action still open to it ends it.
+   * A prerequisite that failed leaves its dependants here, and nothing is dispatched for
+   * them — they wait for their owner to end them, or for a cycle to replan around them.
+   */
+  stalled: string[];
   terminal: string[];
   unavailable: string[];
   workflows: WorkflowDecision[];

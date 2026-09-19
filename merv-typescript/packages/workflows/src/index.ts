@@ -1175,13 +1175,41 @@ export class WorkflowsService implements Workflows {
         rows,
         async (row) => await this.evaluate(caller, row.id, {}, tx),
       );
+      // An action that leads to a terminal state ends the work rather than advancing it. A
+      // record whose every open action does that is not ready for anything: it is waiting for
+      // its owner. Calling it ready is what makes a stuck project look busy.
+      const ending = (item: WorkflowDecision): boolean => {
+        const { definition } = this.definition(item.workflow, item.version);
+        const ends = new Set(definition.terminal);
+        const open = item.actions.filter((action) => action.status !== 'blocked');
+        return (
+          open.length > 0 &&
+          open.every((action) =>
+            definition.edges.some((edge) => edge.action === action.action && ends.has(edge.to)),
+          )
+        );
+      };
+      const stalled = new Set(
+        workflows
+          .filter((item) => item.available && !item.terminal && ending(item))
+          .map((item) => item.instanceId),
+      );
       return {
         projectId: caller.projectId,
         workflows,
-        ready: workflows.filter((item) => item.nextAction).map((item) => item.instanceId),
-        blocked: workflows
-          .filter((item) => item.available && !item.terminal && !item.nextAction)
+        ready: workflows
+          .filter((item) => item.nextAction && !stalled.has(item.instanceId))
           .map((item) => item.instanceId),
+        blocked: workflows
+          .filter(
+            (item) =>
+              item.available &&
+              !item.terminal &&
+              !item.nextAction &&
+              !stalled.has(item.instanceId),
+          )
+          .map((item) => item.instanceId),
+        stalled: [...stalled],
         terminal: workflows.filter((item) => item.terminal).map((item) => item.instanceId),
         unavailable: workflows
           .filter((item) => !item.available && !item.terminal)
