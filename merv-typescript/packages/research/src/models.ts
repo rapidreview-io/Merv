@@ -16,6 +16,11 @@ export interface ResearchAdvance {
   requestId: string;
 }
 /** The cycle's selected work, reselected whole: what is missing is added, what is left out is dropped. */
+/** Ending a cycle that cannot reach an answer. Terminal; the reason is recorded. */
+export interface ResearchEnd extends ResearchAdvance {
+  outcome: 'abandoned' | 'failed';
+  reason: string;
+}
 export interface ResearchReplan extends ResearchAdvance {
   dependsOn: string[];
 }

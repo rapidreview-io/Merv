@@ -123,7 +123,7 @@ test('Research boots with only State, Scope and Workflows and reports the missin
   const record = await f.create();
   assert.equal(f.app.status().find(({ id }) => id === 'research')!.state, 'active');
   assert.deepEqual(await f.research.list(f.owner), [record]);
-  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 3);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 4);
   assert.match(
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
     /paper_unavailable/,

@@ -12,6 +12,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkflowCheckContext,
   type WorkflowDefinition,
   type WorkflowPolicy,
   type Workflows,
@@ -24,10 +25,19 @@ import type {
   Research,
   ResearchAdvance,
   ResearchCreate,
+  ResearchEnd,
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
-import { advanceSchema, createSchema, getSchema, parse, replanSchema } from './input.js';
+import {
+  advanceSchema,
+  createSchema,
+  endChoiceSchema,
+  endSchema,
+  getSchema,
+  parse,
+  replanSchema,
+} from './input.js';
 export type * from './types.js';
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 type Stage = (typeof stages)[number];
@@ -110,21 +120,34 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
         },
       ]);
       try {
-        // Existing cycles keep their immutable state machine; only new cycles may skip consolidation.
-        for (const version of [2, 3]) {
+        // Existing cycles keep their immutable state machine; only new cycles may skip
+        // consolidation, and only version 4 can be ended before it reaches an answer.
+        for (const version of [2, 3, 4]) {
+          const ends = version >= 4;
           this.handles.set(
             version,
             await workflows.register(
               {
                 ...definition,
                 version,
-                edges:
-                  version === 2
-                    ? definition.edges
-                    : [
-                        ...definition.edges,
-                        { from: 'reflecting', action: 'complete', to: 'complete' },
-                      ],
+                ...(ends
+                  ? {
+                      states: [...definition.states, 'abandoned', 'failed'],
+                      terminal: [...definition.terminal, 'abandoned', 'failed'],
+                    }
+                  : {}),
+                edges: [
+                  ...definition.edges,
+                  ...(version >= 3
+                    ? [{ from: 'reflecting' as const, action: 'complete', to: 'complete' }]
+                    : []),
+                  ...(ends
+                    ? stages.slice(0, -1).flatMap((from) => [
+                        { from, action: 'abandon', to: 'abandoned' },
+                        { from, action: 'mark_failed', to: 'failed' },
+                      ])
+                    : []),
+                ],
               },
               this.policy(version),
             ),
@@ -157,24 +180,48 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
           })),
         };
       },
-      actions: stages.slice(0, -1).map((stage) => ({
-        name: `advance_${stage}`,
-        states: [stage],
-        transitions:
-          version === 3 && stage === 'reflecting' ? ['advance', 'complete'] : ['advance'],
-        tool: 'research.advance',
-        instruction: instructions[stage],
-        requiresDependencies: stage !== 'defining',
-        arguments: (context) => ({
-          researchId: context.snapshot.id,
-          expectedRevision: context.snapshot.revision,
-        }),
-        check: async (context) => {
-          const record = await this.get(context.caller, context.snapshot.id, context.tx);
-          await this.authorize(context.caller, record, context.tx);
-          await this.ready(context.caller, record, context.tx);
-        },
-      })),
+      actions: [
+        ...(version >= 4
+          ? [
+              {
+                name: 'end',
+                states: [...stages.slice(0, -1)],
+                transitions: ['abandon', 'mark_failed'],
+                tool: 'research.end',
+                instruction:
+                  'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal.',
+                requiredInput: ['outcome', 'reason'],
+                arguments: (context: WorkflowCheckContext) => ({
+                  researchId: context.snapshot.id,
+                  expectedRevision: context.snapshot.revision,
+                }),
+                check: async (context: WorkflowCheckContext) => {
+                  const record = await this.get(context.caller, context.snapshot.id, context.tx);
+                  await this.authorize(context.caller, record, context.tx);
+                  if (context.input) parse(endChoiceSchema, context.input);
+                },
+              },
+            ]
+          : []),
+        ...stages.slice(0, -1).map((stage) => ({
+          name: `advance_${stage}`,
+          states: [stage],
+          transitions:
+            version >= 3 && stage === 'reflecting' ? ['advance', 'complete'] : ['advance'],
+          tool: 'research.advance',
+          instruction: instructions[stage],
+          requiresDependencies: stage !== 'defining',
+          arguments: (context: WorkflowCheckContext) => ({
+            researchId: context.snapshot.id,
+            expectedRevision: context.snapshot.revision,
+          }),
+          check: async (context: WorkflowCheckContext) => {
+            const record = await this.get(context.caller, context.snapshot.id, context.tx);
+            await this.authorize(context.caller, record, context.tx);
+            await this.ready(context.caller, record, context.tx);
+          },
+        })),
+      ],
     };
   }
 
@@ -256,11 +303,11 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
         // Validate every prerequisite in this project even if consolidation starts much later.
         for (const id of [...input.dependsOn, ...input.consolidationDependsOn])
           await this.workflows.get(caller, id, tx);
-        const workflow = await this.handles.get(3)!.start(
+        const workflow = await this.handles.get(4)!.start(
           caller,
           {
             workflow: 'research',
-            version: 3,
+            version: 4,
             requestId: this.request(caller, input.requestId, 'create'),
             dependsOn: input.dependsOn,
             data: { name: input.name },
@@ -460,6 +507,52 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
             drop: current.filter((id) => !input.dependsOn.includes(id)),
             requestId: this.request(caller, input.requestId, 'replan'),
           },
+          tx,
+        );
+        return await this.get(caller, record.id, tx);
+      });
+    });
+  }
+
+  /**
+   * End a cycle that cannot reach an answer. Its children keep their own records and their
+   * own endings; what ends here is the coordination. Before version 4 a cycle had no terminal
+   * state but `complete`, so one whose work could not finish stayed where it stopped for good.
+   */
+  async end(
+    caller: Caller,
+    value: ResearchEnd,
+    transaction?: Transaction,
+  ): Promise<ResearchRecord> {
+    this.open();
+    const input = parse(endSchema, value);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      const record = await this.get(caller, input.researchId, tx);
+      await this.authorize(caller, record, tx);
+      return await this.command(caller, 'end', input, tx, async () => {
+        const handle = this.handles.get(record.workflow.version);
+        check(
+          handle && record.workflow.version >= 4,
+          'research_version_unavailable',
+          'This cycle was started on a workflow version with no ending transition',
+          409,
+        );
+        const moved = await handle!.transition(
+          caller,
+          {
+            instanceId: record.id,
+            expectedRevision: input.expectedRevision,
+            action: input.outcome === 'failed' ? 'mark_failed' : 'abandon',
+            input: { outcome: input.outcome, reason: input.reason },
+            requestId: this.request(caller, input.requestId, 'end'),
+          },
+          tx,
+        );
+        await this.event(
+          caller,
+          'ended',
+          record.id,
+          { from: record.workflow.state, to: moved.state, reason: input.reason },
           tx,
         );
         return await this.get(caller, record.id, tx);

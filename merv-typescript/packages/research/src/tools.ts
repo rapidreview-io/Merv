@@ -3,8 +3,15 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { ResearchCreate, ResearchAdvance, ResearchReplan } from './types.js';
-import { createSchema, getSchema, listSchema, advanceSchema, replanSchema } from './input.js';
+import type { ResearchCreate, ResearchAdvance, ResearchEnd, ResearchReplan } from './types.js';
+import {
+  createSchema,
+  endSchema,
+  getSchema,
+  listSchema,
+  advanceSchema,
+  replanSchema,
+} from './input.js';
 export const researchToolsPlugin = {
   name: 'merv-research-tools',
   inject: ['research', 'tools'],
@@ -57,6 +64,13 @@ export const researchToolsPlugin = {
         inputSchema: replanSchema,
         handler: async (caller: Caller, input: ResearchReplan) =>
           await research.replan(caller, input),
+      },
+      {
+        name: 'research.end',
+        description:
+          'Owner: end a research cycle that cannot reach an answer, as abandoned when the question is no longer worth pursuing or failed when it was pursued and cannot be completed. Its reflection and consolidation keep their own records and are ended separately. Requires a specific reason and the current revision. This is terminal.',
+        inputSchema: endSchema,
+        handler: async (caller: Caller, input: ResearchEnd) => await research.end(caller, input),
       },
       {
         name: 'research.advance',

@@ -284,7 +284,8 @@ test('new no-code research completes after approved reflection without consolida
   await f.reflect(record);
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'complete');
-  assert.equal(record.workflow.version, 3);
+  // 4 is 3 with a way out: a cycle that cannot reach an answer can be ended.
+  assert.equal(record.workflow.version, 4);
   assert.equal(record.consolidationId, null);
   assert.equal((await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.length, 1);
   assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 0);
@@ -505,6 +506,39 @@ test('persisted v2 research retains report-only consolidation and exact replay t
       .map((entry) => entry.id)
       .sort(),
     [record.reflectionId!, record.consolidationId!].sort(),
+  );
+});
+
+test('a research cycle that cannot reach an answer can be ended', async (t) => {
+  const f = await fixture(t);
+  const cycle = await f.research.create(f.owner, {
+    name: 'A question that cannot be answered',
+    dependsOn: [],
+    requestId: 'endable',
+  });
+  const guidance = await f.app.ctx.workflows.evaluate(f.owner, cycle.id);
+  assert.ok(
+    guidance.actions.some((action) => action.action === 'end'),
+    'a cycle offers a way to end from every stage before complete',
+  );
+  const ended = await f.research.end(f.owner, {
+    researchId: cycle.id,
+    expectedRevision: cycle.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'The question stopped being worth pursuing before any work was selected.',
+    requestId: 'end-it',
+  });
+  assert.equal(ended.workflow.state, 'abandoned');
+  assert.equal((await f.app.ctx.workflows.evaluate(f.owner, cycle.id)).terminal, true);
+  assert.ok((await f.app.ctx.workflows.overview(f.owner)).terminal.includes(cycle.id));
+  await assert.rejects(
+    async () =>
+      await f.research.advance(f.owner, {
+        researchId: cycle.id,
+        expectedRevision: ended.workflow.revision,
+        requestId: 'advance-after-end',
+      }),
+    { code: 'invalid_transition' },
   );
 });
 

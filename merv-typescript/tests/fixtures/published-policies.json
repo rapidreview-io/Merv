@@ -98,6 +98,12 @@
       "version": 4,
       "fingerprint": "1f6ae351f818e77a286ac3f20878584eb1db7bde6ec3efa7912b65bdf8b3e298",
       "published": false
+    },
+    {
+      "name": "research",
+      "version": 4,
+      "fingerprint": "7d20f91f0a6eca7f43c185384d5bd2215ed75b70088db17149ae9c51aef0bb05",
+      "published": false
     }
   ],
   "policies": [
@@ -411,6 +417,34 @@
       "version": 4,
       "state": "consolidation_review",
       "fingerprint": "72a42eb3bed47b7a29b997322226f002a97e5c0e4f503185fc8c07ff6a0a65f6",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 4,
+      "state": "consolidating",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 4,
+      "state": "defining",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 4,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 4,
+      "state": "researching",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
       "published": false
     }
   ],
