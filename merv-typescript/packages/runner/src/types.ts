@@ -44,6 +44,12 @@ export interface RunnerSnapshot {
     | 'stopping'
     | 'stopped';
   lastError?: string;
+  /**
+   * Why the server last declined to hand this runner work. A runner with a queue behind it
+   * and project dispatch switched off is indistinguishable from one with nothing to do, and
+   * that silence has cost more than one person an hour of looking at a healthy idle runner.
+   */
+  lastDeclined?: string;
   pendingRequests: number;
   launches: {
     id: string;

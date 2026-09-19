@@ -159,6 +159,13 @@ test(
     const runner = f.make();
     await runner.start();
     assert.equal(runner.snapshot().launches.length, 0, 'Dispatch is off by default');
+    // And says so. An idle runner with a queue behind it looks exactly like one with
+    // nothing to do, which is an hour of anyone's time the first time they meet it.
+    await until(
+      () => runner.snapshot().lastDeclined === 'dispatch_disabled',
+      runner,
+      'the runner reporting why it was given nothing',
+    );
     await f.enabled(true);
     await until(
       () => childResults(f.runnerDirectory).length === 1,

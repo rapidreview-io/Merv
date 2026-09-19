@@ -113,6 +113,7 @@ export class MachineRunner implements Runner {
   private readonly ledger: LocalLedger;
   private readonly host: ProcessHost;
   private readonly workspaces: GitWorkspaceManager;
+  private lastDeclined?: string;
   private profiles: RunnerProfile[];
   private appliedVersion = 0;
   private readonly clock: () => number;
@@ -340,9 +341,11 @@ export class MachineRunner implements Runner {
       });
     const session = result.session;
     if (session === null) {
+      this.lastDeclined = result.reason;
       this.ledger.completeRequest(pending.platform.name, pending.requestId);
       return;
     }
+    this.lastDeclined = undefined;
     check(
       session.runnerId === this.ledger.runnerId,
       'invalid_control_response',
@@ -601,6 +604,7 @@ export class MachineRunner implements Runner {
       runnerId: this.ledger.runnerId,
       state: this.state,
       ...(this.lastError ? { lastError: this.lastError } : {}),
+      ...(this.lastDeclined ? { lastDeclined: this.lastDeclined } : {}),
       pendingRequests: this.stopped
         ? this.finalPendingRequests
         : this.ledger.pendingRequests().length,
