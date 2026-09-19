@@ -268,10 +268,11 @@ export class ExperimentService implements Experiments {
         for (const id of input.testedClaimIds) await this.claims.get(caller, id, tx);
         for (const id of input.dependsOn) {
           const dependency = await this.workflows.get(caller, id, tx);
+          // An ordering between two experiments is a task in between (founder, 2026-09-18).
           check(
-            ['task', 'experiment'].includes(dependency.workflow),
+            dependency.workflow === 'task',
             'invalid_dependency',
-            'Experiment prerequisites must be tasks or experiments',
+            'Experiment prerequisites must be tasks; order two experiments with a task between them',
           );
         }
         const owner = await this.scope.authorityActor(caller, tx);

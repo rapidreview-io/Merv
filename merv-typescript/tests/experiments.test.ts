@@ -414,6 +414,11 @@ test('Active cap, name uniqueness and same-project dependencies/claims fail atom
   const f = await fixture(t);
   const initial = await f.create('Case-name');
   await assert.rejects(async () => await f.create('case-NAME'), code('experiment_name_conflict'));
+  // An ordering between two experiments is a task in between (founder, 2026-09-18).
+  await assert.rejects(
+    async () => await f.create('Chained', { dependsOn: [initial.id] }),
+    code('invalid_dependency'),
+  );
   const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' }),
     caller = { actorId: other.actor.id, projectId: other.project.id };
   const foreign = await f.claims.create(caller, { statement: 'Foreign', requestId: 'foreign' });
