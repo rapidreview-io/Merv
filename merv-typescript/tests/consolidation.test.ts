@@ -543,6 +543,10 @@ test('a consolidation whose prerequisite ends without succeeding can still be en
     'the guidance that says to end this work offers a way to end it',
   );
   // Ending is all it can do, so the project reports it as stalled rather than as ready.
+  // Its prerequisite died, so the engine names the gate and offers the ending action; the
+  // project reports it as stalled rather than as ready.
+  assert.equal(stuck.currentGate, 'dependency_failed');
+  assert.equal(stuck.nextAction?.action, 'end');
   assert.ok((await f.workflows.overview(f.owner)).stalled.includes(record.id));
   const ended = await f.consolidation.end(f.owner, {
     consolidationId: record.id,

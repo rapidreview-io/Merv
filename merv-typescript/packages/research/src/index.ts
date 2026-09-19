@@ -180,6 +180,8 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
           })),
         };
       },
+      // A cycle whose selected work cannot succeed is ended, not advanced.
+      ...(version >= 4 ? { dependencyFailureAction: 'end' } : {}),
       actions: [
         ...(version >= 4
           ? [
@@ -187,6 +189,9 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
                 name: 'end',
                 states: [...stages.slice(0, -1)],
                 transitions: ['abandon', 'mark_failed'],
+                // Never the suggested move: ending is what you reach for when the work cannot
+                // go on, and the engine offers it by name when a prerequisite has died.
+                suggested: false,
                 tool: 'research.end',
                 instruction:
                   'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal.',

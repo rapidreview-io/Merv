@@ -995,6 +995,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
   private policy(version: number): Parameters<Workflows['register']>[1] {
     return {
       successStates: ['complete'],
+      // When a prerequisite ends without succeeding, ending this work is the move; the engine
+      // offers it as the next action and names the gate dependency_failed.
+      ...(ENDABLE.has(version) ? { dependencyFailureAction: 'end' } : {}),
       describe: async (context) => {
         const record = await this.get(context.caller, context.snapshot.id, context.tx);
         return {
@@ -1151,6 +1154,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
                 name: 'end',
                 states: ['consolidating', 'consolidation_review'],
                 transitions: ['abandon', 'mark_failed'],
+                // Never the suggested move: ending is what you reach for when the work cannot
+                // go on, and the engine offers it by name when a prerequisite has died.
+                suggested: false,
                 tool: 'consolidation.end',
                 instruction:
                   'End this consolidation when it cannot continue: abandoned when the work is no longer wanted, failed when it was attempted and cannot be completed. Requires a specific reason. This is terminal.',

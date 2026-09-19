@@ -1175,30 +1175,15 @@ export class WorkflowsService implements Workflows {
         rows,
         async (row) => await this.evaluate(caller, row.id, {}, tx),
       );
-      // An action that leads to a terminal state ends the work rather than advancing it. A
-      // record whose every open action does that is not ready for anything: it is waiting for
-      // its owner. Calling it ready is what makes a stuck project look busy.
-      const ending = (item: WorkflowDecision): boolean => {
-        const { definition, policy } = this.definition(item.workflow, item.version);
-        const ends = new Set(definition.terminal);
-        // A rule's transitions are its edges; its own name need not be one of them.
-        const edges = (name: string) => {
-          const rule = policy?.actions?.find((entry) => entry.name === name);
-          return rule?.transitions ?? [name];
-        };
-        const open = item.actions.filter((action) => action.status !== 'blocked');
-        return (
-          open.length > 0 &&
-          open.every((action) =>
-            edges(action.action).every((transition) =>
-              definition.edges.some((edge) => edge.action === transition && ends.has(edge.to)),
-            ),
-          )
-        );
-      };
+      // Work whose prerequisite ended without succeeding: the engine resolves that gate
+      // itself, to the ending action its program declares. Such a record is not ready for
+      // anything and nothing will be dispatched for it, and counting it as ready is what
+      // makes a project with nothing left to do look busy.
       const stalled = new Set(
         workflows
-          .filter((item) => item.available && !item.terminal && ending(item))
+          .filter(
+            (item) => item.available && !item.terminal && item.currentGate === 'dependency_failed',
+          )
           .map((item) => item.instanceId),
       );
       return {
