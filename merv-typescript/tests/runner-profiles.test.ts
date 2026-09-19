@@ -194,11 +194,17 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
     assert.equal(settings[`features.${feature}`], 'false');
   assert.equal(settings.web_search, '"disabled"');
   assert.equal(settings['skills.config'], '[]');
-  assert.match(
-    settings.mcp_servers,
-    /enabled_tools=\["task.get","task.checkpoint","_nisa.search"\]/,
-  );
+  // The manifest's own tools, plus the reads every worker may make. Codex is launched with
+  // an explicit allowlist, so without these a Codex worker cannot see the project reads its
+  // recipe tells it to use, while a Claude worker in the same role can.
+  const enabled = JSON.parse(
+    /enabled_tools=(\[[^\]]*\])/.exec(settings.mcp_servers)![1]!,
+  ) as string[];
+  assert.deepEqual(enabled.slice(0, 3), ['task.get', 'task.checkpoint', '_nisa.search']);
+  for (const read of ['project.records', 'paper.read', 'experiment.get_state', 'feed.list'])
+    assert.ok(enabled.includes(read), read);
   assert.match(settings.mcp_servers, /"task.checkpoint"=\{approval_mode="approve"\}/);
+  assert.match(settings.mcp_servers, /"project.records"=\{approval_mode="approve"\}/);
   assert.match(settings.mcp_servers, /url="http:\/\/127.0.0.1:8080\/mcp"/);
   assert.match(settings.mcp_servers, /bearer_token_env_var="MERV_AGENT_SESSION_TOKEN"/);
   assert.match(settings.mcp_servers, /required=true/);

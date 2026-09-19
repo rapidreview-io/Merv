@@ -173,6 +173,30 @@ export function collectRepositorySkillPaths(cwd: string): string[] {
   }
 }
 
+/**
+ * The reads every leased worker may make, whatever its assignment names. The server admits
+ * any read inside the project and lists them all to a session, and the work recipes tell a
+ * worker to use them — but Codex is launched with an explicit `enabled_tools` allowlist built
+ * from the write manifest, so a Codex worker could not see the tools its own brief named.
+ * Claude workers have always had them: they are launched with the whole `mcp__merv` prefix.
+ */
+const PROJECT_READS = [
+  'project.get',
+  'project.records',
+  'claim.list',
+  'task.list',
+  'task.get',
+  'experiment.list',
+  'experiment.get_state',
+  'review.list',
+  'review.get',
+  'feed.list',
+  'paper.read',
+  'artifact.list',
+  'artifact.get',
+  'artifact.read',
+] as const;
+
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';
 export const mcpUrlVariable = 'MERV_MCP_URL';
 const runtimeVariables = [
@@ -237,7 +261,12 @@ function codexArgs(
   url: string,
   safeEnvironment: Record<string, string>,
 ): string[] {
-  const tools = [...new Set(request.session.execution.policy.tools.map((tool) => tool.name))];
+  const tools = [
+    ...new Set([
+      ...request.session.execution.policy.tools.map((tool) => tool.name),
+      ...PROJECT_READS,
+    ]),
+  ];
   check(
     tools.every((name) => /^[A-Za-z0-9_.-]{1,128}$/.test(name)),
     'invalid_runner_launch',
