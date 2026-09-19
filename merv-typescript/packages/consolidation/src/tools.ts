@@ -1,8 +1,8 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { ConsolidationCreate, ConsolidationSubmit } from './types.js';
-import { createSchema, getSchema, listSchema, submitSchema } from './input.js';
+import type { ConsolidationCreate, ConsolidationEnd, ConsolidationSubmit } from './types.js';
+import { createSchema, endSchema, getSchema, listSchema, submitSchema } from './input.js';
 export const consolidationToolsPlugin = {
   name: 'merv-consolidation-tools',
   inject: ['consolidation', 'tools'],
@@ -41,6 +41,14 @@ export const consolidationToolsPlugin = {
         inputSchema: submitSchema,
         handler: async (caller: Caller, input: ConsolidationSubmit) =>
           await service.submit(caller, input),
+      },
+      {
+        name: 'consolidation.end',
+        description:
+          'Owner: end a consolidation that cannot continue, as abandoned when the work is no longer wanted or failed when it was attempted and cannot be completed. The usual cause is a prerequisite that ended without succeeding, which leaves submission refused. Requires a specific reason and the current revision. This is terminal.',
+        inputSchema: endSchema,
+        handler: async (caller: Caller, input: ConsolidationEnd) =>
+          await service.end(caller, input),
       },
     ])
       ctx.effect(() => ctx.tools.register(tool));

@@ -35,5 +35,16 @@ export const submitSchema = z
     requestId: id,
   })
   .strict();
+export const endSchema = z
+  .object({
+    consolidationId: id,
+    expectedRevision: z.number().int().min(0),
+    outcome: z.enum(['abandoned', 'failed']),
+    reason: text(16000),
+    requestId: id,
+  })
+  .strict();
+/** What the caller decides when ending one; the record and revision are bound by the engine. */
+export const endChoiceSchema = endSchema.pick({ outcome: true, reason: true });
 export const parse = <T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> =>
   parsed(schema, input, 'invalid_consolidation_input');

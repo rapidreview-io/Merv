@@ -1179,13 +1179,20 @@ export class WorkflowsService implements Workflows {
       // record whose every open action does that is not ready for anything: it is waiting for
       // its owner. Calling it ready is what makes a stuck project look busy.
       const ending = (item: WorkflowDecision): boolean => {
-        const { definition } = this.definition(item.workflow, item.version);
+        const { definition, policy } = this.definition(item.workflow, item.version);
         const ends = new Set(definition.terminal);
+        // A rule's transitions are its edges; its own name need not be one of them.
+        const edges = (name: string) => {
+          const rule = policy?.actions?.find((entry) => entry.name === name);
+          return rule?.transitions ?? [name];
+        };
         const open = item.actions.filter((action) => action.status !== 'blocked');
         return (
           open.length > 0 &&
           open.every((action) =>
-            definition.edges.some((edge) => edge.action === action.action && ends.has(edge.to)),
+            edges(action.action).every((transition) =>
+              definition.edges.some((edge) => edge.action === transition && ends.has(edge.to)),
+            ),
           )
         );
       };
@@ -1203,10 +1210,7 @@ export class WorkflowsService implements Workflows {
         blocked: workflows
           .filter(
             (item) =>
-              item.available &&
-              !item.terminal &&
-              !item.nextAction &&
-              !stalled.has(item.instanceId),
+              item.available && !item.terminal && !item.nextAction && !stalled.has(item.instanceId),
           )
           .map((item) => item.instanceId),
         stalled: [...stalled],

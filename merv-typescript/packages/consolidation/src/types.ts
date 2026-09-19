@@ -26,6 +26,14 @@ export interface ConsolidationSubmit {
   commandId?: string;
   requestId: string;
 }
+/** Ending a consolidation that cannot continue. Terminal; the reason is recorded. */
+export interface ConsolidationEnd {
+  consolidationId: string;
+  expectedRevision: number;
+  outcome: 'abandoned' | 'failed';
+  reason: string;
+  requestId: string;
+}
 export interface ConsolidationSubmission {
   id: string;
   revision: number;
@@ -71,6 +79,7 @@ export interface Consolidation {
     input: ConsolidationSubmit,
     tx?: Transaction,
   ): Promise<ConsolidationRecord>;
+  end(caller: Caller, input: ConsolidationEnd, tx?: Transaction): Promise<ConsolidationRecord>;
   approved(caller: Caller, id: string, tx?: Transaction): Promise<ConsolidationRecord>;
   close(): void;
 }

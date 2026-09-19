@@ -71,9 +71,13 @@ async function fixture(t: TestContext, github = false) {
     name: 'approved-reflection-fixture',
     version: 1,
     initial: 'working',
-    states: ['working', 'complete'],
-    terminal: ['complete'],
-    edges: [{ from: 'working', action: 'finish', to: 'complete' }],
+    states: ['working', 'complete', 'abandoned'],
+    terminal: ['complete', 'abandoned'],
+    edges: [
+      { from: 'working', action: 'finish', to: 'complete' },
+      // A prerequisite that ends without succeeding, so a dependant meets dependency_failed.
+      { from: 'working', action: 'give_up', to: 'abandoned' },
+    ],
   };
   const fixturePolicy = {
     successStates: ['complete'],
@@ -84,6 +88,14 @@ async function fixture(t: TestContext, github = false) {
         transitions: ['finish'],
         tool: 'fixture.finish',
         instruction: 'Complete fixture.',
+        check: async () => {},
+      },
+      {
+        name: 'give_up',
+        states: ['working'],
+        transitions: ['give_up'],
+        tool: 'fixture.give_up',
+        instruction: 'Abandon fixture.',
         check: async () => {},
       },
     ],
@@ -478,6 +490,65 @@ test('additional workflow dependencies block assignment and submission until sat
     requestId: 'finish-extra',
   });
   assert.equal((await f.offer(record)).session.assignment.workflow, 'consolidation');
+});
+
+test('a consolidation whose prerequisite ends without succeeding can still be ended', async (t) => {
+  const f = await fixture(t);
+  const dependency = await f.prior.start(f.owner, {
+    workflow: 'approved-reflection-fixture',
+    requestId: 'doomed',
+  });
+  const record = await f.create('none', [dependency.id]);
+  await f.prior.transition(f.owner, {
+    instanceId: dependency.id,
+    expectedRevision: 0,
+    action: 'give_up',
+    requestId: 'give-up',
+  });
+  // Submitting and being assigned are both refused, and rightly so.
+  await assert.rejects(
+    async () => await f.consolidation.submit(f.producer, await f.input(record)),
+    {
+      code: 'dependency_failed',
+    },
+  );
+  await assert.rejects(async () => await f.offer(record), { code: 'dependency_failed' });
+  const stuck = await f.workflows.evaluate(f.owner, record.id);
+  assert.ok(
+    stuck.actions.some(
+      (action) =>
+        action.action === 'submit' &&
+        action.blockers.some((blocker) => blocker.code === 'dependency_failed'),
+    ),
+  );
+  assert.ok(
+    stuck.actions.some((action) => action.action === 'end'),
+    'the guidance that says to end this work offers a way to end it',
+  );
+  // Ending is all it can do, so the project reports it as stalled rather than as ready.
+  assert.ok((await f.workflows.overview(f.owner)).stalled.includes(record.id));
+  const ended = await f.consolidation.end(f.owner, {
+    consolidationId: record.id,
+    expectedRevision: stuck.revision,
+    outcome: 'abandoned',
+    reason: 'Its prerequisite was abandoned, so there is nothing left to consolidate.',
+    requestId: f.id(),
+  });
+  assert.equal(ended.workflow.state, 'abandoned');
+  assert.equal((await f.workflows.evaluate(f.owner, record.id)).terminal, true);
+  assert.ok((await f.workflows.overview(f.owner)).terminal.includes(record.id));
+  // A reader cannot end one, and a second end replays rather than moving it again.
+  await assert.rejects(
+    async () =>
+      await f.consolidation.end(f.owner, {
+        consolidationId: record.id,
+        expectedRevision: ended.workflow.revision,
+        outcome: 'failed',
+        reason: 'Already ended.',
+        requestId: f.id(),
+      }),
+    { code: 'invalid_transition' },
+  );
 });
 
 test('leased workers receive frozen context, bounded artifact tools, and recovered independent review ownership', async (t) => {

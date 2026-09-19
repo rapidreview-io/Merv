@@ -33,10 +33,18 @@ import type {
   Consolidation,
   ConsolidationCreate,
   ConsolidationRecord,
+  ConsolidationEnd,
   ConsolidationSubmission,
   ConsolidationSubmit,
 } from './types.js';
-import { createSchema, getSchema, parse, submitSchema } from './input.js';
+import {
+  createSchema,
+  endChoiceSchema,
+  endSchema,
+  getSchema,
+  parse,
+  submitSchema,
+} from './input.js';
 export type * from './types.js';
 
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
@@ -53,6 +61,29 @@ const definition: WorkflowDefinition = {
     { from: 'consolidation_review', action: 'revise', to: 'consolidating' },
   ],
 };
+/**
+ * Versions 1 and 2 have no way out. A consolidation whose prerequisite ends without
+ * succeeding can neither submit nor begin — both refuse with dependency_failed — and its own
+ * guidance tells it to end work it has no action to end with, so it sits in `consolidating`
+ * for good. Versions 3 and 4 carry the same work with an ending edge from either live state,
+ * as tasks and experiments have always had. The published versions keep their exact shape.
+ */
+const endable: WorkflowDefinition = {
+  ...definition,
+  states: [...definition.states, 'abandoned', 'failed'],
+  terminal: [...definition.terminal, 'abandoned', 'failed'],
+  edges: [
+    ...definition.edges,
+    ...(['consolidating', 'consolidation_review'] as const).flatMap((from) => [
+      { from, action: 'abandon', to: 'abandoned' },
+      { from, action: 'mark_failed', to: 'failed' },
+    ]),
+  ],
+};
+/** The versions that can be ended; older instances keep the workflow they were started on. */
+const ENDABLE = new Set([3, 4]);
+/** Versions pair off by workspace, not by age: 1 and 3 carry no repository, 2 and 4 do. */
+const GIT = new Set([2, 4]);
 const criteria = [
   'Every frozen experiment has an explicit retain, adapt, drop or no-code decision justified by the pinned source artifacts and evidence.',
   'The consolidated result implements the pinned source artifacts without silently replacing its research conclusions or source corpus.',
@@ -152,10 +183,13 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             }),
           );
         }
-        for (const version of [1, 2])
+        for (const version of [1, 2, 3, 4])
           this.handles.set(
             version,
-            await workflows.register({ ...definition, version }, this.policy(version)),
+            await workflows.register(
+              { ...(ENDABLE.has(version) ? endable : definition), version },
+              this.policy(version),
+            ),
           );
         this.withdrawReview = reviews.registerSubmitOwner({
           id: 'consolidation',
@@ -270,11 +304,11 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             `${id} is not an experiment`,
             404,
           );
-        const workflow = await this.handles.get(input.workspace === 'git' ? 2 : 1)!.start(
+        const workflow = await this.handles.get(input.workspace === 'git' ? 4 : 3)!.start(
           caller,
           {
             workflow: 'consolidation',
-            version: input.workspace === 'git' ? 2 : 1,
+            version: input.workspace === 'git' ? 4 : 3,
             requestId: `consolidation:${caller.actorId}:${input.requestId}`,
             dependsOn: [...new Set(input.dependsOn)],
             data: { name: input.name },
@@ -355,6 +389,16 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       409,
     );
     return row;
+  }
+  /**
+   * Who may end this consolidation. Unlike producing, it is available from either live state
+   * and does not ask whether the dependencies are satisfied — an unsatisfiable dependency is
+   * the usual reason to end one — but a live worker still owns its record until it lets go.
+   */
+  private async owner(caller: Caller, record: ConsolidationRecord, tx: Transaction) {
+    await this.scope.require(caller, 'write', tx);
+    if (caller.session) await this.lease(caller, record, tx);
+    else if (caller.actorId !== record.ownerId) await this.scope.require(caller, 'admin', tx);
   }
   private async producer(caller: Caller, record: ConsolidationRecord, tx: Transaction) {
     await this.scope.require(caller, 'write', tx);
@@ -549,6 +593,45 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     });
     return { report, evidence };
   }
+  /**
+   * End a consolidation that cannot continue. The usual reason is a prerequisite that ended
+   * without succeeding, which leaves submitting and beginning both refused; before versions 3
+   * and 4 there was no move left at all and the record stayed in `consolidating` for good.
+   */
+  async end(
+    caller: Caller,
+    value: ConsolidationEnd,
+    transaction?: Transaction,
+  ): Promise<ConsolidationRecord> {
+    this.open();
+    const input = parse(endSchema, value);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      return await this.command(caller, 'end', input, tx, async () => {
+        const record = await this.get(caller, input.consolidationId, tx);
+        check(
+          ENDABLE.has(record.workflow.version),
+          'consolidation_not_endable',
+          'This consolidation was started on a workflow version with no ending transition',
+          409,
+        );
+        await this.owner(caller, record, tx);
+        await this.handles.get(record.workflow.version)!.transition(
+          caller,
+          {
+            instanceId: record.id,
+            expectedRevision: input.expectedRevision,
+            action: input.outcome === 'failed' ? 'mark_failed' : 'abandon',
+            input: own({ outcome: input.outcome, reason: input.reason }),
+            requestId: `consolidation:end:${caller.actorId}:${input.requestId}`,
+          },
+          tx,
+        );
+        return await this.get(caller, record.id, tx);
+      });
+    });
+  }
+
   async submit(
     caller: Caller,
     value: ConsolidationSubmit,
@@ -754,26 +837,27 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       alternatives: [bindings],
     });
     const reviewing = state === 'consolidation_review';
+    // 3 and 4 are 1 and 2 with a way out, so each keeps its partner's environment exactly.
+    const git = GIT.has(version);
     return {
       readOnly: reviewing,
-      workspace:
-        version === 1
-          ? { mode: 'none' }
-          : reviewing
-            ? {
-                mode: 'ephemeral',
-                namespace: 'consolidation-reviews',
-                base: 'reference:code',
-                retain: false,
-              }
-            : {
-                mode: 'persistent',
-                namespace: 'consolidations',
-                base: 'central',
-                perBase: true,
-                retain: true,
-                advancesCentral: false,
-              },
+      workspace: !git
+        ? { mode: 'none' }
+        : reviewing
+          ? {
+              mode: 'ephemeral',
+              namespace: 'consolidation-reviews',
+              base: 'reference:code',
+              retain: false,
+            }
+          : {
+              mode: 'persistent',
+              namespace: 'consolidations',
+              base: 'central',
+              perBase: true,
+              retain: true,
+              advancesCentral: false,
+            },
       tools: [
         grant('workflow.status_and_next', { instanceId: target('instanceId') }),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
@@ -798,8 +882,16 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
                 reportArtifactId: oneOf('artifacts'),
                 evidenceArtifactIds: { kind: 'subset' as const, name: 'artifacts' },
               }),
-              ...(version === 2 ? [grant('code.commit'), grant('code.operation')] : []),
+              ...(git ? [grant('code.commit'), grant('code.operation')] : []),
             ]),
+        ...(ENDABLE.has(version)
+          ? [
+              grant('consolidation.end', {
+                consolidationId: target('instanceId'),
+                expectedRevision: target('revision'),
+              }),
+            ]
+          : []),
       ],
     };
   }
@@ -933,7 +1025,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             reviews: [...new Set([...record.submissions.map((s) => s.reviewId)])],
             ...(review ? { reviewId: review.id } : {}),
             ...(review?.claimId ? { claimId: review.claimId } : {}),
-            ...(version === 2 && state === 'consolidation_review'
+            ...(GIT.has(version) && state === 'consolidation_review'
               ? { code: submission!.proposal!.receipt.headOid }
               : {}),
           };
@@ -1045,6 +1137,28 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             } else await this.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
           },
         },
+        ...(ENDABLE.has(version)
+          ? [
+              {
+                name: 'end',
+                states: ['consolidating', 'consolidation_review'],
+                transitions: ['abandon', 'mark_failed'],
+                tool: 'consolidation.end',
+                instruction:
+                  'End this consolidation when it cannot continue: abandoned when the work is no longer wanted, failed when it was attempted and cannot be completed. Requires a specific reason. This is terminal.',
+                requiredInput: ['outcome', 'reason'],
+                arguments: (context: WorkflowCheckContext) => ({
+                  consolidationId: context.snapshot.id,
+                  expectedRevision: context.snapshot.revision,
+                }),
+                check: async (context: WorkflowCheckContext) => {
+                  const record = await this.get(context.caller, context.snapshot.id, context.tx);
+                  await this.owner(context.caller, record, context.tx);
+                  if (context.input) parse(endChoiceSchema, context.input);
+                },
+              },
+            ]
+          : []),
         {
           name: 'start_review',
           states: ['consolidation_review'],

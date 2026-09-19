@@ -546,7 +546,8 @@ test('consolidation workspace and extra prerequisites are forwarded to the exact
   record = await f.advance(record);
   const child = await f.app.ctx.consolidation.get(f.owner, record.consolidationId!);
   assert.equal(child.workspace, 'git');
-  assert.equal(child.workflow.version, 2);
+  // 4 is the Git workflow with a way out of a failed prerequisite; 2 was the same without one.
+  assert.equal(child.workflow.version, 4);
   assert.deepEqual(
     (await f.app.ctx.workflows.dependencies(f.owner, child.id)).dependencies
       .map((d) => d.id)
