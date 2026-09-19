@@ -171,6 +171,15 @@ test('reflection uses live research, joins five independent ordinary workflows, 
         }),
       { code: 'reflection_summary_required' },
     );
+    // And asking whether that submission is ready gives the same answer the call would.
+    assert.ok(
+      (
+        await f.app.ctx.workflows.evaluate(lensWorker, wave.lenses[0]!.id, {
+          action: 'submit',
+          input: { artifactId: emptySummary.id, expectedRevision: 0 },
+        })
+      ).blockers.some((blocker) => blocker.code === 'reflection_summary_required'),
+    );
   }
   const artifact = await f.create(lensWorker, 'First');
   await f.app.ctx.reflections.submitLens(lensWorker, {

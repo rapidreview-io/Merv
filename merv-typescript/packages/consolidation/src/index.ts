@@ -1104,11 +1104,13 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           check: async (context) => {
             const record = await this.get(context.caller, context.snapshot.id, context.tx);
             await this.producer(context.caller, record, context.tx);
+            // Guidance never asks for a requestId, so a preflight does not carry one; demanding
+            // it here reported the submission blocked when the call would have accepted it.
             if (context.input)
               await this.validateSubmission(
                 context.caller,
                 record,
-                parse(submitSchema, context.input),
+                parse(submitSchema, { requestId: 'preflight', ...context.input }),
                 context.tx,
               );
           },

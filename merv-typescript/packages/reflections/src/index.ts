@@ -866,6 +866,21 @@ export class ReflectionService implements Reflections {
                 }),
                 check: async (c: WorkflowCheckContext) => {
                   await this.admit(c);
+                  // The report is what the submission is about, so a question about the
+                  // submission looks at it: an answer of ready for a report that is missing,
+                  // written by somebody else, or has no Summary is an answer about nothing.
+                  const artifactId = c.input?.artifactId;
+                  if (typeof artifactId === 'string' && artifactId) {
+                    const artifact = await this.author(c.caller, artifactId, c.tx);
+                    check(
+                      markdownSection(
+                        (await this.artifacts.read(c.caller, artifact.id)).content,
+                        'Summary',
+                      ),
+                      'reflection_summary_required',
+                      'Lens report requires a nonempty Summary section',
+                    );
+                  }
                 },
               },
             ]
@@ -904,9 +919,15 @@ export class ReflectionService implements Reflections {
                 },
                 check: async (c: WorkflowCheckContext) => {
                   await this.admit(c);
-                  // A verdict needs the claim; before it, start_review is the step.
+                  // A verdict needs the claim; before it, start_review is the step. A proposed
+                  // verdict is checked as the verdict, so ready means the call will take it.
                   const wave = await this.row(c.caller, c.snapshot.id, c.tx);
-                  await this.reviews.checkSubmit(c.caller, wave.review_id!, undefined, c.tx);
+                  await this.reviews.checkSubmit(
+                    c.caller,
+                    wave.review_id!,
+                    c.input as Parameters<Reviews['checkSubmit']>[2],
+                    c.tx,
+                  );
                 },
               },
               {
