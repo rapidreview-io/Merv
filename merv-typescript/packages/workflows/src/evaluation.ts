@@ -254,16 +254,6 @@ export async function evaluateAction(
     blockers: [],
   };
   try {
-    await rule.check(context);
-    if (rule.requiresDependencies) {
-      check(
-        context.dependencies !== undefined,
-        'invalid_workflow_policy',
-        'Dependency checks require an engine context',
-        500,
-      );
-      requireDependencies(context.dependencies);
-    }
     result.arguments = rule.arguments ? await rule.arguments(context) : {};
     check(
       result.arguments && typeof result.arguments === 'object' && !Array.isArray(result.arguments),
@@ -273,6 +263,25 @@ export async function evaluateAction(
     );
     // Validate and detach returned data before exposing it to a caller.
     result.arguments = JSON.parse(canonical(result.arguments));
+    // A leased worker's call is made with these arguments bound over whatever it typed, so a
+    // question about that call is answered against the same thing: a reviewer asking whether
+    // submit_review was ready was told its claim was stale, because the claim is bound rather
+    // than typed, while the call it was asking about succeeded. Nobody else has bindings, so
+    // for every other caller the question is answered against exactly what it typed.
+    await rule.check(
+      context.caller.session && context.input !== undefined
+        ? { ...context, input: { ...context.input, ...(result.arguments as object) } }
+        : context,
+    );
+    if (rule.requiresDependencies) {
+      check(
+        context.dependencies !== undefined,
+        'invalid_workflow_policy',
+        'Dependency checks require an engine context',
+        500,
+      );
+      requireDependencies(context.dependencies);
+    }
     const requiredInput =
       typeof rule.requiredInput === 'function'
         ? await rule.requiredInput(context)

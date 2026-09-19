@@ -116,4 +116,22 @@ test('one agent can produce successive tasks and review other work, but cannot r
     3,
     'Refused self-review created no execution',
   );
+  // A leased reviewer asking whether its submission is ready is answered against the call it
+  // would make: reviewId, claimId and expectedRevision are bound to the lease rather than
+  // typed, so the question must not come back saying the claim is stale.
+  await app.ctx.reviews.start(reviewer, reviewTask.reviewId!);
+  const asked = await app.ctx.workflows.evaluate(reviewer, independent.id, {
+    action: 'submit_review',
+    input: {
+      verdict: 'pass',
+      notes: 'Checked the delivered proof against the criterion.',
+      synopsis: 'The delivered proof observes the sum independently and satisfies the criterion.',
+      requestId: 'leased-preflight',
+    },
+  });
+  assert.equal(
+    asked.blockers.some((blocker) => blocker.code === 'stale_claim'),
+    false,
+    'A bound claim is not a stale one',
+  );
 });
