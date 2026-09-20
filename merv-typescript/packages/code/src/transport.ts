@@ -211,6 +211,7 @@ export class CodeTransportService {
     return { row, binding, target, pushId };
   }
   async grant(caller: Caller, value: CodeTransportInput): Promise<CodeTransportGrant> {
+    caller = structuredClone(caller);
     const input = parseCodeInput(codeTransportInputSchema, value);
     const { row, binding, target } = await this.prepare(caller, input);
     let cleanup: (() => Promise<void>) | undefined;
@@ -242,6 +243,7 @@ export class CodeTransportService {
     }
   }
   async verify(caller: Caller, value: CodeTransportInput) {
+    caller = structuredClone(caller);
     const input = parseCodeInput(codeTransportInputSchema, value);
     check(input.operation !== 'fetch', 'invalid_code_input', 'Only a push has a remote receipt');
     const { binding, target, pushId } = await this.prepare(caller, input);

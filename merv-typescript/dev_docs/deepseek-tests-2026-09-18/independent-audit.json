@@ -1,0 +1,596 @@
+{
+  "auditedAt": "2026-09-18T01:26:32.082Z",
+  "runs": [
+    {
+      "run": "user-keys-v2",
+      "workflows": [
+        {
+          "id": "wf_8a028c9943b04ab8b42aa7681df75008",
+          "workflow": "task",
+          "state": "done",
+          "revision": 2
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review_0599e4172a014d15bfbd7058ce734cb9",
+          "subject_id": "wf_8a028c9943b04ab8b42aa7681df75008",
+          "subject_revision": 1,
+          "status": "submitted",
+          "producer_id": "actor_5170592f6fd340478d7a3599120e769d",
+          "reviewer_id": "actor_2c27b5331a724387ad042b867e407648",
+          "verdict": "pass",
+          "return_to": null,
+          "artifact_ids": "[\"art_2f75602e65f740dc961e9a56b6fc9855\",\"art_17b2e3a4c14840b995eda064c7bc0121\",\"art_ae41dbb03d8e42418bb055297f662698\"]"
+        }
+      ],
+      "starts": [
+        {
+          "instance_id": "wf_8a028c9943b04ab8b42aa7681df75008",
+          "revision": 0,
+          "actor_id": "actor_5170592f6fd340478d7a3599120e769d"
+        },
+        {
+          "instance_id": "wf_8a028c9943b04ab8b42aa7681df75008",
+          "revision": 1,
+          "actor_id": "actor_2c27b5331a724387ad042b867e407648"
+        }
+      ],
+      "sessions": [],
+      "calls": [],
+      "verifiedArtifacts": [
+        {
+          "id": "art_2f75602e65f740dc961e9a56b6fc9855",
+          "sha256": "8dfb66d03d79821bc34b3d47000541c93f693d29522be730b5271b5add34cd44",
+          "bytes": 586
+        },
+        {
+          "id": "art_17b2e3a4c14840b995eda064c7bc0121",
+          "sha256": "4de8d43ce1fc1676f5bc0625dca014f4a2e21c4ef2a9bd23f716d1a7c0feb667",
+          "bytes": 760
+        },
+        {
+          "id": "art_ae41dbb03d8e42418bb055297f662698",
+          "sha256": "c99d412f741dcac4896f78e3509b345eeb68c916d35f640f3a541140b5dbf933",
+          "bytes": 988
+        }
+      ]
+    },
+    {
+      "run": "dispatch-v2",
+      "workflows": [
+        {
+          "id": "wf_c3af1cfd0c3242fdb9692c54cc058625",
+          "workflow": "task",
+          "state": "done",
+          "revision": 2
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review_1f18bc66e61e43599cc7055debc73016",
+          "subject_id": "wf_c3af1cfd0c3242fdb9692c54cc058625",
+          "subject_revision": 1,
+          "status": "submitted",
+          "producer_id": "actor_43d0d559d00f44ca8377dbbbf995cb6c",
+          "reviewer_id": "actor_84c8fee959c64ba7bdfa8fdbf8066049",
+          "verdict": "pass",
+          "return_to": null,
+          "artifact_ids": "[\"art_dee555cea2f54a9db5554e9a1f84e911\",\"art_a7bbdff649144669b7f804268fb5d74f\",\"art_62099b61ccd34e84b8b68aae07c95d7e\"]"
+        }
+      ],
+      "starts": [
+        {
+          "instance_id": "wf_c3af1cfd0c3242fdb9692c54cc058625",
+          "revision": 0,
+          "actor_id": "actor_43d0d559d00f44ca8377dbbbf995cb6c"
+        },
+        {
+          "instance_id": "wf_c3af1cfd0c3242fdb9692c54cc058625",
+          "revision": 1,
+          "actor_id": "actor_84c8fee959c64ba7bdfa8fdbf8066049"
+        }
+      ],
+      "sessions": [
+        {
+          "id": "session_ae8008a95092451ab345e684a96bd567",
+          "instance_id": "wf_c3af1cfd0c3242fdb9692c54cc058625",
+          "revision": 0,
+          "actor_id": "actor_43d0d559d00f44ca8377dbbbf995cb6c",
+          "status": "expired"
+        },
+        {
+          "id": "session_3e65c9befdc5441ca354b38861db5038",
+          "instance_id": "wf_c3af1cfd0c3242fdb9692c54cc058625",
+          "revision": 1,
+          "actor_id": "actor_84c8fee959c64ba7bdfa8fdbf8066049",
+          "status": "expired"
+        }
+      ],
+      "calls": [
+        {
+          "tool": "artifact.create",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "artifact.get",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "artifact.read",
+          "status": "succeeded",
+          "count": 4
+        },
+        {
+          "tool": "review.start",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "review.submit",
+          "status": "failed",
+          "count": 1
+        },
+        {
+          "tool": "review.submit",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "task.context",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "task.get",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "succeeded",
+          "count": 2
+        }
+      ],
+      "verifiedArtifacts": [
+        {
+          "id": "art_dee555cea2f54a9db5554e9a1f84e911",
+          "sha256": "0b212939d2821031f0ac05549bbce31454554fe7fcfd255ceb44f998c7c0d4d5",
+          "bytes": 686
+        },
+        {
+          "id": "art_a7bbdff649144669b7f804268fb5d74f",
+          "sha256": "fd0fe3549698ac57a68fb62623a78ec79fbd2bc467a3d383776f5933eacefb92",
+          "bytes": 3447
+        },
+        {
+          "id": "art_62099b61ccd34e84b8b68aae07c95d7e",
+          "sha256": "28dad6ec150764128fb9d20df1c15fa5e03c04b153ec82d25b4788ddb729ad53",
+          "bytes": 1770
+        }
+      ]
+    },
+    {
+      "run": "dispatch-replication",
+      "workflows": [
+        {
+          "id": "wf_7aad917d48694ecc8b7f4559a9ab393f",
+          "workflow": "task",
+          "state": "done",
+          "revision": 2
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review_82610c32fd7c441d9b03b54c82863378",
+          "subject_id": "wf_7aad917d48694ecc8b7f4559a9ab393f",
+          "subject_revision": 1,
+          "status": "submitted",
+          "producer_id": "actor_51eea39a93e74fd3b77e4afe66aa2b28",
+          "reviewer_id": "actor_0d1abcbdf9124a23839dd97053297408",
+          "verdict": "pass",
+          "return_to": null,
+          "artifact_ids": "[\"art_34d9c06d2d744e5b89c6230ebecab659\",\"art_5b10d562fa0c46d887955f3d6969e9c6\",\"art_42809cf328d4438b8900c16072da4706\"]"
+        }
+      ],
+      "starts": [
+        {
+          "instance_id": "wf_7aad917d48694ecc8b7f4559a9ab393f",
+          "revision": 0,
+          "actor_id": "actor_51eea39a93e74fd3b77e4afe66aa2b28"
+        },
+        {
+          "instance_id": "wf_7aad917d48694ecc8b7f4559a9ab393f",
+          "revision": 1,
+          "actor_id": "actor_0d1abcbdf9124a23839dd97053297408"
+        }
+      ],
+      "sessions": [
+        {
+          "id": "session_3c730dd6da65438d9d3c5e26020c925f",
+          "instance_id": "wf_7aad917d48694ecc8b7f4559a9ab393f",
+          "revision": 0,
+          "actor_id": "actor_51eea39a93e74fd3b77e4afe66aa2b28",
+          "status": "expired"
+        },
+        {
+          "id": "session_aa1203503d534ad4b838921ac9a40918",
+          "instance_id": "wf_7aad917d48694ecc8b7f4559a9ab393f",
+          "revision": 1,
+          "actor_id": "actor_0d1abcbdf9124a23839dd97053297408",
+          "status": "expired"
+        }
+      ],
+      "calls": [
+        {
+          "tool": "artifact.create",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "artifact.get",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "artifact.read",
+          "status": "succeeded",
+          "count": 5
+        },
+        {
+          "tool": "review.get",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "review.start",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "review.submit",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "task.context",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "task.get",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "task.submit_delivery",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "succeeded",
+          "count": 2
+        }
+      ],
+      "verifiedArtifacts": [
+        {
+          "id": "art_34d9c06d2d744e5b89c6230ebecab659",
+          "sha256": "0b212939d2821031f0ac05549bbce31454554fe7fcfd255ceb44f998c7c0d4d5",
+          "bytes": 686
+        },
+        {
+          "id": "art_5b10d562fa0c46d887955f3d6969e9c6",
+          "sha256": "34a6e3a374330cdc2039a484bf2ae924f27f6b91fb78317c3ac0723beaeb6448",
+          "bytes": 3696
+        },
+        {
+          "id": "art_42809cf328d4438b8900c16072da4706",
+          "sha256": "6c3f37102b321c87ab92ce8b1a68e41c668f67c568ada427456cb11077596394",
+          "bytes": 1204
+        }
+      ]
+    },
+    {
+      "run": "experiments-git-v2",
+      "workflows": [
+        {
+          "id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "workflow": "experiment",
+          "state": "complete",
+          "revision": 4
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review_2ee19c134b8d423b8102d9ca4ce5feae",
+          "subject_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "subject_revision": 1,
+          "status": "submitted",
+          "producer_id": "actor_3e7d18e3a17d4729ba41f3e3a3b38a6f",
+          "reviewer_id": "actor_5d3e71566b1842f892052642ba3f4f5f",
+          "verdict": "pass",
+          "return_to": null,
+          "artifact_ids": "[\"art_9bb23cb78a9a4ec8acb9e6b0e07dfdbb\"]"
+        },
+        {
+          "id": "review_dad647fb83a14a6eb3062e33000893c6",
+          "subject_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "subject_revision": 3,
+          "status": "submitted",
+          "producer_id": "actor_90a1852a59d44cf4811c132083a0d2dc",
+          "reviewer_id": "actor_a5a563b0aa7b4bd09c92885f9c1a7578",
+          "verdict": "pass",
+          "return_to": null,
+          "artifact_ids": "[\"art_9bb23cb78a9a4ec8acb9e6b0e07dfdbb\",\"art_f95455a8538049918dc2b083f3be7de7\",\"art_c33c1c78f35a4c59a9f300d85ed291b4\",\"art_7b131ce86e5c4182a7f2bc5cb5495e28\",\"art_8e989bfd83514d108e3e98efc160055b\"]"
+        }
+      ],
+      "starts": [
+        {
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 0,
+          "actor_id": "actor_3e7d18e3a17d4729ba41f3e3a3b38a6f"
+        },
+        {
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 1,
+          "actor_id": "actor_5d3e71566b1842f892052642ba3f4f5f"
+        },
+        {
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 2,
+          "actor_id": "actor_90a1852a59d44cf4811c132083a0d2dc"
+        },
+        {
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 3,
+          "actor_id": "actor_a5a563b0aa7b4bd09c92885f9c1a7578"
+        }
+      ],
+      "sessions": [
+        {
+          "id": "session_c6690a6185bb478ba0d134c49cce7174",
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 0,
+          "actor_id": "actor_3e7d18e3a17d4729ba41f3e3a3b38a6f",
+          "status": "expired"
+        },
+        {
+          "id": "session_290a98f5d27d4416a59caa3f0e323169",
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 1,
+          "actor_id": "actor_5d3e71566b1842f892052642ba3f4f5f",
+          "status": "expired"
+        },
+        {
+          "id": "session_593e7943d2c1436b8224c3bfb145320e",
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 2,
+          "actor_id": "actor_90a1852a59d44cf4811c132083a0d2dc",
+          "status": "expired"
+        },
+        {
+          "id": "session_701a13e16e4f41a1badddfe781b75195",
+          "instance_id": "wf_0121e6c2cf774cacac67334d6f34e717",
+          "revision": 3,
+          "actor_id": "actor_a5a563b0aa7b4bd09c92885f9c1a7578",
+          "status": "expired"
+        }
+      ],
+      "calls": [
+        {
+          "tool": "artifact.create",
+          "status": "succeeded",
+          "count": 4
+        },
+        {
+          "tool": "artifact.read",
+          "status": "succeeded",
+          "count": 7
+        },
+        {
+          "tool": "experiment.attach",
+          "status": "succeeded",
+          "count": 3
+        },
+        {
+          "tool": "experiment.exhibit",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "experiment.get_state",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "experiment.transition",
+          "status": "failed",
+          "count": 1
+        },
+        {
+          "tool": "experiment.transition",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "review.get",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "review.submit",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "workflow.assignment",
+          "status": "succeeded",
+          "count": 1
+        },
+        {
+          "tool": "workflow.status_and_next",
+          "status": "succeeded",
+          "count": 2
+        }
+      ],
+      "verifiedArtifacts": [
+        {
+          "id": "art_9bb23cb78a9a4ec8acb9e6b0e07dfdbb",
+          "sha256": "6b378dae4a181beaa31e614dd42722700152a01d7a17aa486d3e4ac3500a5b24",
+          "bytes": 11100
+        },
+        {
+          "id": "art_f95455a8538049918dc2b083f3be7de7",
+          "sha256": "80e4742502be0acc723238b7b7f286c6edc5e6e4a3e2c70ccece5f58a158e578",
+          "bytes": 4676
+        },
+        {
+          "id": "art_c33c1c78f35a4c59a9f300d85ed291b4",
+          "sha256": "ccd00449baa7b051f7f850da957e8ca53407849ed454b99fdfd9a98ac13bf63f",
+          "bytes": 6955
+        },
+        {
+          "id": "art_8e989bfd83514d108e3e98efc160055b",
+          "sha256": "538ba222e4decb6ab698b6cc71e73465459b681120fe1626e837668dc9fb1b7f",
+          "bytes": 2825
+        },
+        {
+          "id": "art_7b131ce86e5c4182a7f2bc5cb5495e28",
+          "sha256": "88924707700346658a6c8a491ee0ca9463d3303597d767d5730c2220e42e5d63",
+          "bytes": 5820
+        }
+      ],
+      "calculation": {
+        "artifactId": "art_f95455a8538049918dc2b083f3be7de7",
+        "trainingCount": 3,
+        "heldOutCount": 5,
+        "slope": 2,
+        "intercept": 1,
+        "baselineMae": 8,
+        "candidateMae": 0,
+        "independentlyRecomputed": true
+      }
+    },
+    {
+      "run": "review-returns",
+      "workflows": [
+        {
+          "id": "wf_420a5d7b233941d49e4c0f722af813d3",
+          "workflow": "native-review-returns",
+          "state": "planned",
+          "revision": 1
+        },
+        {
+          "id": "wf_e4491fe4f72b4c8caa2c415c254ea839",
+          "workflow": "native-review-returns",
+          "state": "running",
+          "revision": 1
+        }
+      ],
+      "reviews": [
+        {
+          "id": "review_5e64a63a72cb4241af5ffcb27764fcfe",
+          "subject_id": "wf_420a5d7b233941d49e4c0f722af813d3",
+          "subject_revision": 0,
+          "status": "submitted",
+          "producer_id": "actor_47045503f6a24d3c9312168060d25e0b",
+          "reviewer_id": "actor_f6b98ad0b3b44a5ca367a17177e1df0c",
+          "verdict": "fail",
+          "return_to": "planned",
+          "artifact_ids": "[\"art_db924de4e8dd4df4aa18116d7976247d\"]"
+        },
+        {
+          "id": "review_bc22f006243d47d691680ce7daf406c9",
+          "subject_id": "wf_e4491fe4f72b4c8caa2c415c254ea839",
+          "subject_revision": 0,
+          "status": "submitted",
+          "producer_id": "actor_47045503f6a24d3c9312168060d25e0b",
+          "reviewer_id": "actor_a334c035186642f784bf4d3c3204e128",
+          "verdict": "needs_changes",
+          "return_to": "running",
+          "artifact_ids": "[\"art_9ce6b954534d4dce9d64ae8489080bee\",\"art_0f04320feb1e43d894bc0479a6ecdc7d\"]"
+        }
+      ],
+      "starts": [
+        {
+          "instance_id": "wf_420a5d7b233941d49e4c0f722af813d3",
+          "revision": 0,
+          "actor_id": "actor_f6b98ad0b3b44a5ca367a17177e1df0c"
+        },
+        {
+          "instance_id": "wf_e4491fe4f72b4c8caa2c415c254ea839",
+          "revision": 0,
+          "actor_id": "actor_a334c035186642f784bf4d3c3204e128"
+        }
+      ],
+      "sessions": [
+        {
+          "id": "session_7c4fc77ad96d47dab4e50daab5859680",
+          "instance_id": "wf_420a5d7b233941d49e4c0f722af813d3",
+          "revision": 0,
+          "actor_id": "actor_f6b98ad0b3b44a5ca367a17177e1df0c",
+          "status": "expired"
+        },
+        {
+          "id": "session_769bfac4dec943a7a735eddcffa1dbd9",
+          "instance_id": "wf_e4491fe4f72b4c8caa2c415c254ea839",
+          "revision": 0,
+          "actor_id": "actor_a334c035186642f784bf4d3c3204e128",
+          "status": "expired"
+        }
+      ],
+      "calls": [
+        {
+          "tool": "artifact.read",
+          "status": "succeeded",
+          "count": 3
+        },
+        {
+          "tool": "review.get",
+          "status": "succeeded",
+          "count": 2
+        },
+        {
+          "tool": "review.submit",
+          "status": "succeeded",
+          "count": 2
+        }
+      ],
+      "verifiedArtifacts": [
+        {
+          "id": "art_db924de4e8dd4df4aa18116d7976247d",
+          "sha256": "4f3cd4a60ef1571fe310bfdca271b37b8ad972a6228f12ff3769af8cc28b33c0",
+          "bytes": 477
+        },
+        {
+          "id": "art_9ce6b954534d4dce9d64ae8489080bee",
+          "sha256": "795c33dff5c5e494a3cc906471dd4bbc340c2f2199d075bde567cf3998647b83",
+          "bytes": 434
+        },
+        {
+          "id": "art_0f04320feb1e43d894bc0479a6ecdc7d",
+          "sha256": "01d8ca18548d72d2c92f44b4fcf161a49c9d3c5d3de83f41541d2d576828a0ce",
+          "bytes": 642
+        }
+      ]
+    }
+  ]
+}

@@ -164,10 +164,14 @@ const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) 
 test('fixed execution is metadata-only, detached and independent of exit readiness or assignment rendering', async (t) => {
   const f = await fixture();
   t.after(f.close);
-  const initial = await f.workflows.execution(f.caller, {
+  const caller = { ...f.caller };
+  const resolving = f.workflows.execution(caller, {
     instanceId: f.instance.id,
     expectedRevision: 0,
   });
+  caller.actorId = 'replacement';
+  const initial = await resolving;
+  assert.equal(initial.actorId, f.caller.actorId);
   const assignment = await f.workflows.assignment(f.caller, f.instance.id);
   assert.deepEqual(assignment.execution.policy, initial.policy);
   assert.deepEqual(
@@ -191,7 +195,10 @@ test('fixed execution is metadata-only, detached and independent of exit readine
     throw new Error('No guidance during authority checks');
   };
   const head = await f.state.eventHead();
-  const admitted = await f.workflows.authorizeDispatch(f.caller, dispatch(stable, 'native.write'));
+  Object.assign(caller, f.caller);
+  const admitting = f.workflows.authorizeDispatch(caller, dispatch(stable, 'native.write'));
+  caller.actorId = 'replacement';
+  const admitted = await admitting;
   assert.equal(admitted.input.expectedRevision, 0);
   assert.equal(await f.state.eventHead(), head);
   assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), []);
@@ -213,7 +220,10 @@ test('an overview asked of the whole project is not narrowed to the session own 
   const asked = dispatch(execution, 'workflow.status_and_next', {});
   // Leaving the instance out asks what the whole project is doing. Filling it in from the
   // binding would answer for this worker's own record — a different question.
-  assert.deepEqual((await f.workflows.authorizeDispatch(f.caller, { ...asked, read: true })).input, {});
+  assert.deepEqual(
+    (await f.workflows.authorizeDispatch(f.caller, { ...asked, read: true })).input,
+    {},
+  );
   // Named, the instance still has to be this worker's own.
   assert.deepEqual(
     (
@@ -530,18 +540,24 @@ test('malformed declarations, unsafe keys, accessors and sparse arrays fail befo
   t.after(f.close);
   const badArray = new Array(1);
   (badArray as unknown as { extra: string }).extra = 'hidden-hole';
-  const accessor = Object.defineProperty({}, 'value', {
-    enumerable: true,
-    get() {
-      throw new Error('Getter must not execute');
-    },
-  });
+  const unexpected = () => {
+    throw new Error('Validation must not execute caller code');
+  };
+  const accessor = Object.defineProperty({}, 'value', { enumerable: true, get: unexpected });
+  const trapped = new Proxy({}, { ownKeys: unexpected });
+  const foreignArray = Object.setPrototypeOf([], { map: unexpected });
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
   const badBindings = [
     { kind: 'literal' },
     { kind: 'literal', value: undefined },
     { kind: 'literal', value: badArray },
     { kind: 'literal', value: accessor },
     { kind: 'literal', value: new Date() },
+    ...[trapped, foreignArray, revoked.proxy, Object.create(null)].map((value) => ({
+      kind: 'literal',
+      value,
+    })),
     { kind: 'target', field: 'missing' },
     { kind: 'target', field: 'revision', unknown: true },
   ];

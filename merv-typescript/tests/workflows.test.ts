@@ -42,10 +42,19 @@ const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 
 test('durable graph transitions record exact command responses, history, and events once', async (t) => {
-  const { state, workflows, caller } = await setup();
+  const { state, scope, workflows, caller } = await setup();
   t.after(async () => await state.close());
+  const replacement = (await scope.issueActor(caller, { name: 'Replacement', role: 'producer' }))
+    .actor;
+  const pendingCaller = { ...caller };
   const start = { workflow: 'approval', requestId: 'start-1', data: { title: 'A', untouched: 1 } };
-  const initial = await workflows.start(caller, start);
+  const requestedStart = structuredClone(start);
+  const starting = workflows.start(pendingCaller, start);
+  pendingCaller.actorId = replacement.id;
+  Object.assign(start, { workflow: 'changed', requestId: 'changed' });
+  start.data.title = 'Changed';
+  const initial = await starting;
+  Object.assign(start, requestedStart);
   assert.equal(initial.revision, 0);
   const command = {
     instanceId: initial.id,
@@ -54,7 +63,14 @@ test('durable graph transitions record exact command responses, history, and eve
     requestId: 'submit-1',
     data: { submitted: true },
   };
-  const submitted = await workflows.transition(caller, command);
+  const requestedTransition = structuredClone(command);
+  Object.assign(pendingCaller, caller);
+  const transitioning = workflows.transition(pendingCaller, command);
+  pendingCaller.actorId = replacement.id;
+  Object.assign(command, { action: 'changed', requestId: 'changed', expectedRevision: 99 });
+  command.data.submitted = false;
+  const submitted = await transitioning;
+  Object.assign(command, requestedTransition);
   assert.equal(submitted.state, 'review');
   assert.deepEqual(submitted.data, { title: 'A', untouched: 1, submitted: true });
   const finished = await workflows.transition(caller, {
@@ -68,6 +84,10 @@ test('durable graph transitions record exact command responses, history, and eve
   assert.deepEqual(await workflows.transition(caller, command), submitted);
   assert.equal((await workflows.get(caller, initial.id)).revision, 2);
   assert.equal((await workflows.history(caller, initial.id)).length, 3);
+  assert.deepEqual(
+    (await workflows.history(caller, initial.id)).map((entry) => entry.actorId),
+    [caller.actorId, caller.actorId, caller.actorId],
+  );
   assert.equal(
     (await state.events(caller.projectId)).filter((event) => event.type === 'workflow.transition')
       .length,
@@ -204,6 +224,31 @@ test('all project reads and mutation replays check actor scope and permission', 
   const initial = await workflows.start(caller, { workflow: 'approval', requestId: 'start' });
   const foreign = await scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
   const other: Caller = { actorId: foreign.actor.id, projectId: foreign.project.id };
+  for (const method of [
+    'get',
+    'history',
+    'evaluate',
+    'dependencies',
+    'workStarts',
+    'process',
+    'list',
+    'overview',
+  ] as const) {
+    await t.test(method, async () => {
+      const pendingCaller = { ...other };
+      const reading =
+        method === 'list' || method === 'overview'
+          ? workflows[method](pendingCaller)
+          : workflows[method](pendingCaller, initial.id);
+      Object.assign(pendingCaller, caller);
+      if (method === 'list') assert.deepEqual(await reading, []);
+      else if (method === 'overview') {
+        const result = (await reading) as Awaited<ReturnType<typeof workflows.overview>>;
+        assert.equal(result.projectId, other.projectId);
+        assert.deepEqual(result.workflows, []);
+      } else await assert.rejects(reading, code('not_found'));
+    });
+  }
   await assert.rejects(async () => await workflows.get(other, initial.id), code('not_found'));
   await assert.rejects(async () => await workflows.history(other, initial.id), code('not_found'));
   assert.equal((await workflows.list(other)).length, 0);
@@ -335,15 +380,26 @@ test('graph validation and defensive copies prevent changing installed behavior'
     async () => await workflows.start(caller, { workflow: 'approval', requestId: '', data: {} }),
     code('invalid_request'),
   );
-  await assert.rejects(
-    async () =>
-      await workflows.start(caller, {
-        workflow: 'approval',
-        requestId: 'nan',
-        data: { value: NaN },
-      }),
-    /finite JSON/,
-  );
+  let callbacks = 0;
+  const unexpected = () => {
+    callbacks++;
+    return [];
+  };
+  const before = await state.eventHead();
+  for (const data of [
+    Object.defineProperty({}, 'value', { enumerable: true, get: unexpected }),
+    { value: NaN },
+    new Proxy({}, { ownKeys: unexpected }),
+    { value: Object.setPrototypeOf([1], { map: unexpected }) },
+  ]) {
+    await assert.rejects(
+      async () =>
+        await workflows.start(caller, { workflow: 'approval', requestId: 'invalid-data', data }),
+      { code: 'invalid_data', status: 400 },
+    );
+    assert.equal(callbacks, 0);
+  }
+  assert.equal(await state.eventHead(), before);
 });
 
 test('real Cordis dependency activation and disposal preserve database state', async (t) => {

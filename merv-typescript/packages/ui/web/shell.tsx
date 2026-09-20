@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool } from './api';
 import { useSession } from './session';
-import { cx, kindOf } from './components';
-import { RowIcon } from './icons';
+import { cx } from './components';
+import { ChevronsIcon, RowIcon, SidebarIcon, SwitchIcon } from './icons';
 import { signedInEmail } from './auth';
-import { personName } from './views/people';
-import { buildNavigation, topRows } from './navigation';
+import { initials, personName } from './views/people';
+import { accountLines, buildNavigation, documentTitle, headed, topRows } from './navigation';
+import { stepped } from './record-picker';
 import { standingOf } from './views/overview';
 import { useHome } from './views/map-data';
 
@@ -14,34 +15,6 @@ import type { Row, ShellData } from './shell-types';
 export type { RowStatus, Row, PluginState, ShellData, WorkflowShape } from './shell-types';
 
 export const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
-
-/** One frame for every glyph the shell draws: the same stroked 24-unit grid. */
-const Icon = ({ size = 18, children }: { size?: number; children: ReactNode }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    {children}
-  </svg>
-);
-export const IconSidebar = () => (
-  <Icon>
-    <rect x="3.5" y="4.5" width="17" height="15" rx="2.2" />
-    <path d="M9.5 4.5v15" />
-  </Icon>
-);
-const IconSwitch = () => (
-  <Icon size={16}>
-    <path d="M4 9h15l-4-4M20 15H5l4 4" />
-  </Icon>
-);
 
 /** A row published by a remote service names its own glyph; every other row is its view kind. */
 const iconOf = (row: Row) => (typeof row.view.icon === 'string' ? row.view.icon : row.view.kind);
@@ -69,11 +42,19 @@ function RailRow({
   count?: number;
   sick?: Row;
 }) {
+  const counted = count !== undefined && count > 0;
   return (
-    <Link to={to} className={cx('rail-row', active && 'active')} title={sick?.status.detail}>
+    <Link
+      to={to}
+      className={cx('rail-row', active && 'active')}
+      aria-current={active ? 'page' : undefined}
+      // A bare number beside a word is heard as one token; the count says what it counts.
+      aria-label={counted ? `${label}, ${count} ${count === 1 ? 'needs' : 'need'} you` : undefined}
+      title={sick?.status.detail}
+    >
       <RowIcon name={icon} />
       <span className="rail-row-label">{label}</span>
-      {count !== undefined && count > 0 && <span className="rail-count">{count}</span>}
+      {counted && <span className="rail-count">{count}</span>}
       {sick && (
         <span
           className={cx('rail-dot', sick.status.state)}
@@ -112,15 +93,6 @@ function useTheme() {
   return { theme, toggle: () => apply(theme === 'dark' ? 'light' : 'dark') };
 }
 
-/** Up to two initials for the avatar; a name that yields none keeps the dot. */
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]!.toUpperCase())
-    .join('') || '·';
-
 function AccountFoot() {
   const { actor, signOut } = useSession();
   // A person is named, never identified: a directory name that is an id names nobody.
@@ -128,13 +100,32 @@ function AccountFoot() {
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLButtonElement>(null);
+  const items = () => [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+  // It says it is a menu, so it is operated as one: the cursor goes to its first item
+  // as it opens, the arrows and Home and End move between the items, Escape gives the
+  // cursor back to the row, and Tab or a click elsewhere leaves and shuts it.
   useEffect(() => {
     if (!open) return;
+    items()[0]?.focus();
     const close = (event: MouseEvent) => {
       if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') {
+        setOpen(false);
+        row.current?.focus();
+      } else if (event.key === 'Tab') setOpen(false);
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        const all = items();
+        const at = stepped(
+          all.indexOf(document.activeElement as HTMLElement),
+          all.length,
+          event.key,
+        );
+        all[at]?.focus();
+        event.preventDefault();
+      }
     };
     document.addEventListener('mousedown', close);
     document.addEventListener('keydown', key);
@@ -143,38 +134,57 @@ function AccountFoot() {
       document.removeEventListener('keydown', key);
     };
   }, [open]);
+  // The role is a second line only where it says something the name did not.
+  const [name, role] = accountLines(who, actor.role);
+  const said = [name, role].filter(Boolean).join(' · ');
   return (
     <div className="account-foot" ref={ref}>
+      {/* The whole row is the control: the avatar, the name and the caret are its face. */}
+      <button
+        type="button"
+        ref={row}
+        className="account-row"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account: ${said}`}
+        title={said}
+      >
+        <span className="account-avatar" aria-hidden="true">
+          {initials(who)}
+        </span>
+        <span className="account-who">
+          <span className="account-name">{name}</span>
+          {role && <span className="account-role">{role}</span>}
+        </span>
+        <ChevronsIcon className="account-caret" />
+      </button>
       {open && (
-        <div className="account-menu" role="menu">
-          <div className="account-menu-head">{[who, actor.role].filter(Boolean).join(' · ')}</div>
-          <button type="button" className="account-menu-item" onClick={toggle}>
+        // The row it opens from already says whose menu this is, so the menu does not.
+        // It is drawn over the row and written after it, so the keyboard meets them in order.
+        <div className="account-menu" role="menu" aria-label="Account">
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="account-menu-item"
+            onClick={toggle}
+          >
             Theme · {theme}
           </button>
-          <div className="account-menu-sep" />
+          <div className="account-menu-sep" role="separator" />
           {/* Keys are a setting, and live under Settings › Keys with the rest. */}
-          <button type="button" className="account-menu-item" onClick={signOut}>
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="account-menu-item"
+            onClick={signOut}
+          >
             Sign out
           </button>
         </div>
       )}
-      <button
-        type="button"
-        className="account-row"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        <span className="account-avatar" aria-hidden="true">
-          {initials(who ?? '')}
-        </span>
-        <span className="account-who" title={[who, actor.role].filter(Boolean).join(' · ')}>
-          {who && <span className="account-name">{who}</span>}
-          <span className="account-role">{actor.role}</span>
-        </span>
-        <span className="account-caret" aria-hidden="true">
-          ▾
-        </span>
-      </button>
     </div>
   );
 }
@@ -201,7 +211,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           title={`Hide sidebar (${SIDEBAR_KB})`}
           aria-label="Hide sidebar"
         >
-          <IconSidebar />
+          <SidebarIcon size={18} />
         </button>
       </div>
       <div className="rail-project">
@@ -215,7 +225,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
             title="Switch project"
             aria-label="Switch project"
           >
-            <IconSwitch />
+            <SwitchIcon />
           </button>
         )}
       </div>
@@ -233,8 +243,8 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           />
         ))}
         {buildNavigation(rows).map((section) => (
-          <div className="rail-group" key={section.id}>
-            <h3 className="rail-group-head">{section.label}</h3>
+          <div className="rail-group" key={section.id} role="group" aria-label={section.label}>
+            {headed(section) && <h3 className="rail-group-head">{section.label}</h3>}
             {section.rows.map((row) => (
               <RailRow
                 key={row.id}
@@ -267,22 +277,36 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   );
 }
 
+/** Settings is one place with rooms, not a list with records: every room is still Settings. */
+const roomy = (row: Row) => row.view.kind === 'settings';
+
 /**
  * The page header the shell owns: the collection you are in, and nothing to
  * click. Navigation is the rail's job alone now, so no eyebrow and no siblings.
+ * A record's page names itself, so the line stands on a row's index route alone —
+ * and over every room of a place that has rooms.
  */
 export function TitleLine({ rows }: { rows: Row[] }) {
   const { pathname } = useLocation();
-  const current = pathname === '/' ? undefined : rows.find((row) => row.path === pathname);
+  const current =
+    pathname === '/'
+      ? undefined
+      : rows.find(
+          (row) => row.path === pathname || (roomy(row) && pathname.startsWith(`${row.path}/`)),
+        );
   if (!current) return null;
   return (
     <header className="page-lede">
       <h1 className="lede-line">
         <span className="lede-here">{current.label}</span>
         {/* A counted row says its total, a measured zero included; a row that
-            reports none says nothing rather than drawing a slot it cannot fill. */}
+            reports none says nothing rather than drawing a slot it cannot fill. The
+            space is a real one, so the name and the number are heard as two words. */}
         {current.status.count === undefined ? null : (
-          <span className="lede-count">{current.status.count}</span>
+          <>
+            {' '}
+            <span className="lede-count">{current.status.count}</span>
+          </>
         )}
       </h1>
     </header>
@@ -313,6 +337,35 @@ export function ShellFrame({
   const main = useRef<HTMLElement>(null);
   const topbar = useRef<HTMLElement>(null);
   const previousPath = useRef(location.pathname);
+  // Hiding the rail takes its hide button off the page, and showing it takes the edge
+  // button away: the cursor crosses to the control that undoes what was just done,
+  // rather than falling back to the top of the document.
+  const edge = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (wasOpen.current === open) return;
+    wasOpen.current = open;
+    const held = document.activeElement;
+    if (held && held !== document.body && !navigation.current?.contains(held)) return;
+    if (open) navigation.current?.querySelector<HTMLElement>('.sidebar-hide')?.focus();
+    else edge.current?.focus();
+  }, [open]);
+  // The document is titled by the page's own h1, whoever draws it and whenever its
+  // record arrives: a view never has to say its name a second time for the tab.
+  useEffect(() => {
+    const page = main.current;
+    if (!page) return;
+    const name = () => {
+      const heading = page.querySelector('h1');
+      const said = (heading?.querySelector('.lede-here') ?? heading)?.textContent ?? undefined;
+      const title = documentTitle(said, project.name);
+      if (document.title !== title) document.title = title;
+    };
+    const watch = new MutationObserver(name);
+    watch.observe(page, { subtree: true, childList: true, characterData: true });
+    name();
+    return () => watch.disconnect();
+  }, [project.name]);
   useEffect(() => {
     setMobileOpen(false);
     if (previousPath.current !== location.pathname && navigationType !== 'POP') {
@@ -399,7 +452,7 @@ export function ShellFrame({
           aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           onClick={() => setMobileOpen((v) => !v)}
         >
-          <IconSidebar />
+          <SidebarIcon size={18} />
         </button>
         <span className="topbar-title" title={project.id}>
           {project.name}
@@ -440,13 +493,14 @@ export function ShellFrame({
       {!open && (
         <button
           type="button"
+          ref={edge}
           className="sb-edge"
           onClick={onShow}
           title={`Show sidebar (${SIDEBAR_KB})`}
           aria-label="Show sidebar"
         >
           <span className="sb-edge-glyph">
-            <IconSidebar />
+            <SidebarIcon size={18} />
           </span>
         </button>
       )}

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
-import { Ago, KV, StatusPill, kindStyle, words } from '../components';
-import { useSession } from '../session';
-import { useActorNames } from './people';
+import { Ago, KV, Short, StatusPill, Summary, kindStyle, words } from '../components';
+import { ExternalIcon } from '../icons';
 import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
 
 /**
@@ -65,24 +64,22 @@ export function usePublications() {
   return { rows, error, reload: load };
 }
 
-const oid = (value: string) => (
-  <span className="mono" title={value}>
-    {value.slice(0, 12)}
-  </span>
-);
-
 export function GitHubPublications({
   rows,
   error,
   reload,
+  operator,
+  named,
 }: {
   rows: CodePublication[];
   error: string;
   reload(): Promise<void>;
+  /** True where the reader may sync and merge: an operator signed in as a person. */
+  operator: boolean;
+  /** Who reviewed and who merged, by name; nobody is named by an identifier. */
+  named(id: string | null | undefined): string | undefined;
 }) {
   const epoch = useScopeVersion();
-  const { actor, account } = useSession();
-  const named = useActorNames();
   const [details, setDetails] = useState<Record<string, GitHubPullDetails | null>>({});
   const [failed, setFailed] = useState('');
   const [busy, setBusy] = useState(false);
@@ -124,7 +121,6 @@ export function GitHubPublications({
       if (epoch === scopeVersion()) setBusy(false);
     }
   };
-  const operator = actor.role === 'operator' && account.kind === 'user';
   const row = (p: CodePublication) => {
     const d = details[p.proposalId] ?? null;
     const merged = !!p.pull?.merged;
@@ -228,7 +224,10 @@ export function GitHubPublications({
               </>
             )}
             {d.pull.base.sha !== p.baseOid && (
-              <span>The base has advanced since this proposal started.</span>
+              <span className="status status--warn">
+                <span className="status-dot" aria-hidden="true" />
+                Base advanced
+              </span>
             )}
           </div>
         )}
@@ -237,9 +236,9 @@ export function GitHubPublications({
           (confirm === p.proposalId ? (
             <div role="alertdialog" aria-label="Confirm reviewed merge" className="pr-guard stack">
               <p>
-                Merge {oid(p.headOid)} into <strong>{p.baseBranch}</strong> using a merge commit?
-                GitHub checks and branch protection apply. The base may advance concurrently; GitHub
-                does not offer an atomic base lock.
+                Merge <Short value={p.headOid} /> into <strong>{p.baseBranch}</strong> using a merge
+                commit? GitHub checks and branch protection apply. The base may advance
+                concurrently; GitHub does not offer an atomic base lock.
               </p>
               <div className="cluster">
                 <button className="btn" disabled={busy} onClick={() => setConfirm('')}>
@@ -279,20 +278,21 @@ export function GitHubPublications({
           ))}
         {p.pull && (
           <div className="pr-line">
-            <a className="pr-out" href={p.pull.url} target="_blank" rel="noreferrer">
-              Open pull request on GitHub →
+            <a className="pr-out cluster" href={p.pull.url} target="_blank" rel="noreferrer">
+              Open on GitHub
+              <ExternalIcon size={14} />
             </a>
           </div>
         )}
         <details className="pr-details">
-          <summary>Details</summary>
+          <Summary>Details</Summary>
           <KV
             rows={[
               ['Repository', p.repository],
-              ['Reviewed head', oid(p.headOid)],
-              [p.merge ? 'Base at merge' : 'Base', oid(d?.pull.base.sha ?? p.baseOid)],
-              !!p.pull?.mergeCommitSha && ['Merge commit', oid(p.pull.mergeCommitSha)],
-              ['Manifest SHA-256', oid(p.manifestHash)],
+              ['Reviewed head', <Short value={p.headOid} />],
+              [p.merge ? 'Base at merge' : 'Base', <Short value={d?.pull.base.sha ?? p.baseOid} />],
+              !!p.pull?.mergeCommitSha && ['Merge commit', <Short value={p.pull.mergeCommitSha} />],
+              ['Manifest SHA-256', <Short value={p.manifestHash} />],
               ['Published branch', <span className="mono">{p.branch}</span>],
             ]}
           />
@@ -303,7 +303,9 @@ export function GitHubPublications({
   return (
     <section className="stack" aria-label="Pull requests">
       <div className="cluster cluster--between">
-        <h2 className="section-title">Pull requests</h2>
+        <h2 className="section-title">
+          Pull requests <span className="section-n">{rows.length}</span>
+        </h2>
         {!!rows.length && operator && (
           <button
             className="btn"
@@ -320,11 +322,7 @@ export function GitHubPublications({
         )}
       </div>
       {(error || failed) && <p role="alert">{error || failed}</p>}
-      {rows.length ? (
-        <div className="rows">{rows.map(row)}</div>
-      ) : (
-        <p className="muted">No pull requests yet</p>
-      )}
+      {rows.length > 0 && <div className="rows">{rows.map(row)}</div>}
     </section>
   );
 }

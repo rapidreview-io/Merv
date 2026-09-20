@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
   type FormEvent,
@@ -24,7 +25,7 @@ import {
   type Account,
   type AccountSession,
 } from './api';
-import { Failure, Field } from './components';
+import { Failure, Field, SearchField, Summary } from './components';
 import { browserAuth, setAuthMode, type AuthConfiguration } from './auth';
 
 export type { Actor, Project, Account } from './api';
@@ -63,11 +64,14 @@ const message = (error: unknown) => (error instanceof Error ? error.message : 'R
 function SignIn({
   client,
   configuration,
+  onAttempt,
   onSignedIn,
   initialError,
 }: {
   client?: SupabaseClient;
   configuration?: AuthConfiguration;
+  /** The person has handed something over: only from here on can a refusal be theirs. */
+  onAttempt(): void;
   onSignedIn(): void;
   initialError?: string;
 }) {
@@ -76,10 +80,18 @@ function SignIn({
   const [password, setPassword] = useState('');
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
-  useEffect(() => setError(initialError), [initialError]);
+  const refusal = useId();
+  const credential = useRef<HTMLFormElement>(null);
+  // A refused credential brings the page back with its field emptied: the cursor goes
+  // back into it, and the field names the refusal as what is wrong with it.
+  useEffect(() => {
+    setError(initialError);
+    if (initialError) credential.current?.querySelector('input')?.focus();
+  }, [initialError]);
   const passwordSignIn = async (event: FormEvent) => {
     event.preventDefault();
     if (!client) return;
+    onAttempt();
     setBusy(true);
     setError(undefined);
     setAuthMode('shared');
@@ -95,6 +107,7 @@ function SignIn({
   };
   const googleSignIn = async () => {
     if (!client) return;
+    onAttempt();
     setBusy(true);
     setError(undefined);
     setAuthMode('shared');
@@ -116,6 +129,7 @@ function SignIn({
       setError('Paste a bearer token or a credential file.');
       return;
     }
+    onAttempt();
     setBusy(true);
     setError(undefined);
     setAuthMode('local');
@@ -124,70 +138,78 @@ function SignIn({
     setValue('');
     onSignedIn();
   };
+  // A secret on one line: nothing corrects it, completes it or shows it, and a pasted
+  // credential file still lands whole, because a paste into one line only loses its newlines.
+  const local = (
+    <form onSubmit={localSignIn} className="identity-form" ref={credential}>
+      <Field
+        label="Bearer credential"
+        className="mono"
+        type="password"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? refusal : undefined}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        value={value}
+        onChange={setValue}
+      />
+      <p className="signin-help">
+        A local actor credential or a machine key
+        {configuration?.enabled ? ', or a shared-account access token' : ''}. It stays in this tab.
+      </p>
+      <button type="submit" className="btn btn--primary" disabled={busy}>
+        Continue
+      </button>
+    </form>
+  );
   return (
     <main className="signin">
-      <section className="signin-card card">
+      <section className="signin-card">
         <div className="signin-wordmark">merv</div>
         <h1 className="signin-title">Sign in</h1>
-        <p className="signin-help">Your research, evidence and agents in one workspace.</p>
         {client && (
-          <>
-            <p className="signin-help">Use your shared research account.</p>
-            <form onSubmit={passwordSignIn} className="identity-form">
-              <Field
-                label="Email"
-                className="input"
-                type="email"
-                autoComplete="username"
-                required
-                value={email}
-                onChange={setEmail}
-              />
-              <Field
-                label="Password"
-                className="input"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={setPassword}
-              />
-              <button className="btn btn--primary" disabled={busy} type="submit">
-                Sign in
-              </button>
-              <button
-                className="btn"
-                disabled={busy}
-                type="button"
-                onClick={() => void googleSignIn()}
-              >
-                Continue with Google
-              </button>
-            </form>
-          </>
-        )}
-        <details open={!client} className="identity-local">
-          <summary>Use a bearer credential</summary>
-          <p className="signin-help">
-            Paste a local actor credential or a machine key
-            {configuration?.enabled ? ' or an existing shared-account access token' : ''}. It stays
-            in this tab.
-          </p>
-          <form onSubmit={localSignIn} className="identity-form">
-            <textarea
-              className="textarea mono"
-              rows={4}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              aria-label="Bearer credential"
-              spellCheck={false}
+          <form onSubmit={passwordSignIn} className="identity-form">
+            <Field
+              label="Email"
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={setEmail}
             />
-            <button type="submit" className="btn btn--primary" disabled={busy}>
-              Continue
+            <Field
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={setPassword}
+            />
+            <button className="btn btn--primary" disabled={busy} type="submit">
+              Sign in
+            </button>
+            <button
+              className="btn"
+              disabled={busy}
+              type="button"
+              onClick={() => void googleSignIn()}
+            >
+              Continue with Google
             </button>
           </form>
-        </details>
-        <Failure message={error} />
+        )}
+        {/* Where a credential is the only way in it is the form; beside an account it folds away. */}
+        {client ? (
+          <details className="identity-local">
+            <Summary>Use a bearer credential</Summary>
+            {local}
+          </details>
+        ) : (
+          local
+        )}
+        <Failure message={error} id={refusal} />
       </section>
     </main>
   );
@@ -235,7 +257,7 @@ function Projects({
   };
   return (
     <main className="signin signin--projects">
-      <section className="signin-card card">
+      <section className="signin-card">
         <div className="signin-wordmark">merv</div>
         <h1 className="signin-title">Choose a project</h1>
         {account.projects.length === 0 && (
@@ -246,16 +268,7 @@ function Projects({
           </p>
         )}
         {account.projects.length > 0 && (
-          <label className="project-search">
-            Find a project
-            <input
-              className="input"
-              type="search"
-              placeholder="Search by name or ID"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </label>
+          <SearchField label="Find a project by name or ID" value={search} onChange={setSearch} />
         )}
         <div className="identity-form project-choices" aria-label="Available projects">
           {projects.map((project) => (
@@ -273,7 +286,7 @@ function Projects({
         )}
         {account.kind === 'user' && (
           <details className="identity-local" open={account.projects.length === 0}>
-            <summary>Create a project</summary>
+            <Summary>Create a project</Summary>
             <form onSubmit={create} className="identity-form">
               <label>
                 New project
@@ -302,11 +315,11 @@ function Projects({
         </div>
         {account.kind === 'user' && (
           <details className="identity-local">
-            <summary>Account details</summary>
+            <Summary>Account details</Summary>
             <p className="signin-help">
               Share this account ID with a project administrator to be added to their project.
             </p>
-            <code className="history-hash">{account.user.subject}</code>
+            <code>{account.user.subject}</code>
           </details>
         )}
       </section>
@@ -327,6 +340,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const phase = useRef(state.phase);
   phase.current = state.phase;
   const epoch = useScopeVersion();
+  // A credential this tab was still holding from an earlier visit is not something the
+  // person just offered: when it is refused the sign-in page opens and accuses nobody.
+  const attempted = useRef(false);
   const accountVersion = useRef(identityVersion());
   const reload = () => setAttempt((n) => n + 1);
   useEffect(() => {
@@ -395,12 +411,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           return;
         // The message first: dropping the credential changes the scope, and the run that
         // change starts keeps an anonymous state as it finds it.
+        const refused = error instanceof ApiError && error.status === 401;
         setState({
           phase: 'anonymous',
-          error:
-            error instanceof ApiError && error.status === 401
+          error: !refused
+            ? message(error)
+            : attempted.current
               ? 'That credential was not accepted.'
-              : message(error),
+              : undefined,
         });
         setToken(null);
       });
@@ -422,6 +440,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         client={auth?.client}
         configuration={auth?.configuration}
         initialError={state.error}
+        onAttempt={() => {
+          attempted.current = true;
+        }}
         // Storing a credential changes the scope, and that alone starts the check.
         onSignedIn={() => navigate('/', { replace: true })}
       />

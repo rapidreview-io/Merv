@@ -72,6 +72,7 @@ export class CodePublicationService implements CodePublicationApi {
     return row;
   }
   async enqueue(caller: Caller, proposal: CodeProposal, tx: Transaction) {
+    ({ caller, proposal } = structuredClone({ caller, proposal }));
     this.state.assertTransaction(tx);
     if (!proposal.receipt.repositoryId.startsWith('github:')) return;
     const binding = await this.transport.bindingForProposal(proposal.producer.sessionId, tx);
@@ -118,6 +119,7 @@ export class CodePublicationService implements CodePublicationApi {
     verdict: NonNullable<CodePublication['review']>['verdict'],
     tx: Transaction,
   ) {
+    ({ caller, proposal } = structuredClone({ caller, proposal }));
     this.state.assertTransaction(tx);
     if (!proposal.receipt.repositoryId.startsWith('github:')) return;
     await this.scope.require(caller, 'review', tx);
@@ -153,6 +155,7 @@ export class CodePublicationService implements CodePublicationApi {
     );
   }
   async publications(caller: Caller) {
+    caller = structuredClone(caller);
     return this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return (
@@ -221,15 +224,19 @@ export class CodePublicationService implements CodePublicationApi {
       409,
     );
   }
+  private async owned(caller: Caller, id: string, lock: string, tx: Transaction) {
+    const row = await this.row(caller, id, tx);
+    check(
+      row.lock_id === lock && row.lock_until !== null && row.lock_until > now(),
+      'publication_busy',
+      'Publication reconciliation expired or was superseded',
+      409,
+    );
+    return row;
+  }
   private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
     return this.state.transaction(async (tx) => {
-      const current = await this.row(caller, row.proposal_id, tx);
-      check(
-        current.lock_id === lock,
-        'publication_busy',
-        'Publication reconciliation was superseded',
-        409,
-      );
+      const current = await this.owned(caller, row.proposal_id, lock, tx);
       await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
       const record = this.decode(current);
       this.pinned(record, pull);
@@ -250,6 +257,7 @@ export class CodePublicationService implements CodePublicationApi {
     });
   }
   async syncPublications(caller: Caller) {
+    caller = structuredClone(caller);
     check(
       !caller.session,
       'session_forbidden',
@@ -353,6 +361,7 @@ export class CodePublicationService implements CodePublicationApi {
               }
               await this.save(caller, row, lock, pull);
             },
+            (tx) => this.owned(caller, row.proposal_id, lock, tx),
           );
         });
       } catch {
@@ -362,6 +371,7 @@ export class CodePublicationService implements CodePublicationApi {
     return this.publications(caller);
   }
   async publicationDetails(caller: Caller, proposalId: string) {
+    caller = structuredClone(caller);
     const { proposalId: id } = parseCodeInput(codePublicationIdSchema, { proposalId });
     const row = await this.state.transaction((tx) => this.row(caller, id, tx)),
       publication = this.decode(row);
@@ -383,6 +393,7 @@ export class CodePublicationService implements CodePublicationApi {
     return { publication: { ...publication, pull: details.pull }, details };
   }
   async mergePublication(caller: Caller, value: CodePublicationMerge) {
+    caller = structuredClone(caller);
     const input = parseCodeInput(codePublicationMergeSchema, value);
     await this.scope.require(caller, 'admin');
     check(
@@ -493,6 +504,7 @@ export class CodePublicationService implements CodePublicationApi {
           );
           return this.save(caller, row, lock, pull);
         },
+        (tx) => this.owned(caller, row.proposal_id, lock, tx),
       );
     });
   }

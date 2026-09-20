@@ -84,6 +84,49 @@ test('local ledger binds identity, persists exact retry inputs without bearers, 
     session: { source: { credentialId: 'credential-id' } },
   });
   assert.equal(second.get(record.id)?.metadata.attached, true);
+  let callbacks = 0;
+  const disguised = ['ordinary value'];
+  Object.defineProperty(disguised, 'toJSON', {
+    value() {
+      callbacks++;
+      return [pending.secret];
+    },
+  });
+  const accessor = Object.defineProperty({}, 'profile', {
+    enumerable: true,
+    get() {
+      callbacks++;
+      return callbacks === 1 ? 'ordinary value' : pending.secret;
+    },
+  });
+  for (const metadata of [{ profile: disguised }, accessor]) {
+    assert.throws(() =>
+      ledger.reserve({
+        id: 'unsafe',
+        sessionId: 'unsafe',
+        deadline: record.deadline,
+        metadata,
+      }),
+    );
+    assert.throws(() => ledger.updateMetadata(record.id, metadata));
+  }
+  assert.equal(callbacks, 0);
+  assert.equal(ledger.get('unsafe'), undefined);
+  assert.equal(second.get(record.id)?.metadata.attached, true);
+  assert.throws(() =>
+    ledger.request(
+      { name: 'unsafe', harness: 'codex' },
+      Object.defineProperty({}, 'hardDeadlineSeconds', {
+        enumerable: true,
+        get() {
+          callbacks++;
+          return 300;
+        },
+      }),
+    ),
+  );
+  assert.equal(callbacks, 0);
+  assert.equal(ledger.pendingRequests().length, 1);
   for (const file of readdirSync(directory).filter((file) => file.startsWith('ledger.sqlite'))) {
     assert.equal(statSync(join(directory, file)).mode & 0o077, 0);
     assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(pending.secret)));

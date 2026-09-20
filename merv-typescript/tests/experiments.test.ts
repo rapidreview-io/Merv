@@ -191,6 +191,26 @@ async function fixture(t: TestContext) {
     },
   };
 }
+test('Experiment reads retain their caller while pending', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const foreign = { projectId: other.project.id, actorId: other.actor.id };
+  for (const method of ['get', 'list', 'exhibit', 'process'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...(method === 'process' ? f.producer : foreign) };
+      const reading =
+        method === 'list'
+          ? f.experiments.list(caller)
+          : f.experiments[method](caller, experiment.id);
+      Object.assign(caller, method === 'process' ? foreign : f.producer);
+      if (method === 'list') assert.deepEqual(await reading, []);
+      else if (method === 'process') await reading;
+      else await assert.rejects(reading, code('experiment_not_found'));
+    });
+  }
+});
+
 test('Experiments run both independent gates, pin exact evidence/exhibit, and leave Claims unchanged', async (t) => {
   const f = await fixture(t),
     claim = await f.claims.create(f.producer, {
@@ -302,7 +322,21 @@ test('Immutable role/path versions, strict attempt/revision and actual submittin
     async () => await f.transition(e, 'submit_design'),
     code('invalid_experiment_evidence'),
   );
-  const second = await f.attach(e, 'plan', plan);
+  const caller = { ...f.producer };
+  const input: ExperimentAttach = {
+    experimentId: e.id,
+    attemptIndex: 1,
+    expectedRevision: 0,
+    artifactId: (await f.artifacts.create(f.producer, { title: 'Plan', content: plan })).id,
+    role: 'plan',
+    path: 'plan.md',
+    requestId: f.id(),
+  };
+  const attaching = f.experiments.attach(caller, input);
+  Object.assign(caller, f.operator);
+  input.path = 'replacement.md';
+  const second = await attaching;
+  assert.equal(second.path, 'plan.md');
   const current = await f.experiments.get(f.producer, e.id);
   assert.equal(current.evidence.length, 2);
   assert.equal(current.evidence[0].current, false);
@@ -367,8 +401,15 @@ test('Immutable role/path versions, strict attempt/revision and actual submittin
 test('Command receipts replay exact results across reload and rollback all composed writes', async (t) => {
   const f = await fixture(t);
   const input = { name: 'Replay', intent: 'Replay after interruption.', requestId: 'stable' };
-  const e = await f.experiments.create(f.producer, input),
+  const caller = { ...f.producer },
+    request = { ...input };
+  const creating = f.experiments.create(caller, request);
+  Object.assign(caller, f.otherProducer);
+  request.name = 'Replacement';
+  const e = await creating,
     events = (await f.state.events(f.operator.projectId)).length;
+  assert.equal(e.createdBy, f.producer.actorId);
+  assert.equal(e.name, input.name);
   assert.deepEqual(await f.experiments.create(f.producer, input), e);
   assert.equal((await f.state.events(f.operator.projectId)).length, events);
   // What waits on an experiment names it, so the instance carries the name.
@@ -378,8 +419,20 @@ test('Command receipts replay exact results across reload and rollback all compo
     code('request_conflict'),
   );
   await f.attach(e, 'plan', plan);
-  const submitted = await f.transition(e, 'submit_design'),
+  const transition: ExperimentTransition = {
+    experimentId: e.id,
+    expectedRevision: e.workflow.revision,
+    transition: 'submit_design',
+    requestId: f.id(),
+  };
+  Object.assign(caller, f.producer);
+  const transitioning = f.experiments.transition(caller, transition);
+  Object.assign(caller, f.otherProducer);
+  transition.transition = 'abandon';
+  transition.evidence = { reason: 'Replacement reason' };
+  const submitted = await transitioning,
     snapshot = submitted.submissions[0];
+  assert.equal(submitted.workflow.state, 'design_review');
   const old = await f.reload();
   await assert.rejects(
     async () => await old.get(f.producer, e.id),
@@ -400,7 +453,12 @@ test('Command receipts replay exact results across reload and rollback all compo
   assert.equal((await f.state.events(f.operator.projectId)).length, count);
   assert.equal((await f.reviews.get(f.reviewer, submitted.reviewId!)).status, 'started');
   assert.equal((await f.experiments.get(f.producer, e.id)).workflow.state, 'design_review');
-  const accepted = await f.reviews.apply(f.reviewer, application);
+  const reviewInput = structuredClone(application);
+  Object.assign(caller, f.reviewer);
+  const accepting = f.experiments.submitReview(caller, reviewInput);
+  Object.assign(caller, f.operator);
+  reviewInput.reviewId = 'replacement-review';
+  const accepted = await accepting;
   assert.deepEqual(await f.reviews.apply(f.reviewer, application), accepted);
   await assert.rejects(
     async () =>

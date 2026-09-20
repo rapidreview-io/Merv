@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+import os, sys, json
+base='/Users/guraltoo/Documents/dev/proj/experiments/Merv/merv-typescript'
+launcher=base+'/dev_docs/deepseek-tests-2026-09-18/codex-deepseek'
+args=sys.argv[1:]
+workspace=args[args.index('-C')+1]
+policy=args[args.index('--sandbox')+1]
+settings=[
+ '-c','mcp_servers.merv_files.command='+json.dumps('/Users/guraltoo/.nvm/versions/node/v22.13.1/bin/node'),
+ '-c','mcp_servers.merv_files.args='+json.dumps(['--import',base+'/node_modules/tsx/dist/loader.mjs',base+'/dev_docs/flash-research-2026-09-18/file-tools.ts',workspace,policy]),
+ '-c','mcp_servers.merv_files.env_vars=["MERV_AGENT_SESSION_TOKEN"]',
+ '-c','mcp_servers.merv_files.required=true',
+ '-c','mcp_servers.merv_files.startup_timeout_sec=120',
+ '-c','mcp_servers.merv_files.default_tools_approval_mode="approve"'
+]
+# Append after the runner's complete mcp_servers override, before stdin marker.
+position=len(args)-1 if args[-1]=='-' else len(args)
+args[position:position]=settings
+os.execv(launcher,[launcher,*args])

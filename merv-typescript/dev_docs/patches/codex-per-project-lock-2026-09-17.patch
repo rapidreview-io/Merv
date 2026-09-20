@@ -1,0 +1,1168 @@
+diff --git a/merv-typescript/packages/artifacts/src/index.ts b/merv-typescript/packages/artifacts/src/index.ts
+index fa1848f3..5f747d1e 100644
+--- a/merv-typescript/packages/artifacts/src/index.ts
++++ b/merv-typescript/packages/artifacts/src/index.ts
+@@ -111,7 +111,7 @@ export class ArtifactStore implements Artifacts {
+         data: { hash: artifact.hash, size: artifact.size, ...eventSource(caller) },
+       });
+       return artifact;
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {
+     await this.scope.require(caller, 'read', tx);
+@@ -151,7 +151,7 @@ export class ArtifactStore implements Artifacts {
+           caller.session.id,
+         )
+       ).map(fromRow);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   get downloadSupported() {
+     return typeof this.blobs.download === 'function';
+diff --git a/merv-typescript/packages/claims/src/index.ts b/merv-typescript/packages/claims/src/index.ts
+index 51e7fb6f..82164d5c 100644
+--- a/merv-typescript/packages/claims/src/index.ts
++++ b/merv-typescript/packages/claims/src/index.ts
+@@ -131,7 +131,7 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
+         await this.record(caller, null, claim, tx);
+         return claim;
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async update(caller: Caller, value: ClaimUpdate, transaction?: Transaction): Promise<Claim> {
+@@ -181,7 +181,7 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
+         await this.record(caller, before, after, tx);
+         return after;
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async get(caller: Caller, claimId: string, transaction?: Transaction): Promise<Claim> {
+diff --git a/merv-typescript/packages/contracts/src/index.ts b/merv-typescript/packages/contracts/src/index.ts
+index ecc79874..ab547691 100644
+--- a/merv-typescript/packages/contracts/src/index.ts
++++ b/merv-typescript/packages/contracts/src/index.ts
+@@ -139,6 +139,12 @@ export interface Sql {
+ }
+ export interface Transaction extends Sql {
+   readonly transactionId: symbol;
++  /** Undefined means schema-wide serialization. */
++  readonly projectId?: string;
++}
++export interface TransactionOptions {
++  /** Opt in only when every read/write invariant belongs to this project. */
++  projectId?: string;
+ }
+ export interface Migration {
+   /** Rebuild tables transactionally, checking all foreign keys before commit. */
+@@ -159,11 +165,11 @@ export interface StoredEvent {
+ }
+ export interface State {
+   readonly dialect: 'sqlite' | 'postgres';
+-  transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
++  transaction<T>(fn: (tx: Transaction) => T | Promise<T>, options?: TransactionOptions): Promise<T>;
+   read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T>;
+   /** A read-only snapshot scope: nested component transactions never take the writer lock. */
+   snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
+-  assertTransaction(tx: Transaction): void;
++  assertTransaction(tx: Transaction, projectId?: string): void;
+   migrate(component: string, migrations: Migration[]): Promise<void>;
+   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;
+   events(projectId: string, after?: number): Promise<StoredEvent[]>;
+@@ -194,12 +200,13 @@ export async function inTransaction<T>(
+   state: State,
+   tx: Transaction | undefined,
+   fn: (tx: Transaction) => T | Promise<T>,
++  options?: TransactionOptions,
+ ): Promise<T> {
+   if (tx) {
+-    state.assertTransaction(tx);
++    state.assertTransaction(tx, options?.projectId);
+     return await fn(tx);
+   }
+-  return await state.transaction(fn);
++  return await state.transaction(fn, options);
+ }
+ export interface Blobs {
+   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
+diff --git a/merv-typescript/packages/experiments/src/index.ts b/merv-typescript/packages/experiments/src/index.ts
+index bd846efb..bc759407 100644
+--- a/merv-typescript/packages/experiments/src/index.ts
++++ b/merv-typescript/packages/experiments/src/index.ts
+@@ -224,7 +224,7 @@ export class ExperimentService implements Experiments {
+         reviewId: row.review_id,
+         conclusion: row.conclusion,
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async list(caller: Caller, transaction?: Transaction): Promise<Experiment[]> {
+     this.open();
+@@ -237,7 +237,7 @@ export class ExperimentService implements Experiments {
+         ),
+         async (row) => await this.get(caller, row.id, tx),
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async create(
+     caller: Caller,
+@@ -319,7 +319,7 @@ export class ExperimentService implements Experiments {
+         );
+         return await this.get(caller, workflow.id, tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async attach(
+     caller: Caller,
+@@ -395,7 +395,7 @@ export class ExperimentService implements Experiments {
+         );
+         return association;
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private current(experiment: Experiment, roles: string[]): ExperimentEvidence[] {
+     return experiment.evidence.filter(
+@@ -546,7 +546,7 @@ export class ExperimentService implements Experiments {
+         409,
+       );
+       return await this.buildExhibit(caller, experiment, tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async transition(
+     caller: Caller,
+@@ -624,7 +624,7 @@ export class ExperimentService implements Experiments {
+         );
+         return await this.get(caller, experiment.id, tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   /** Read-only exit gates shared by guidance and the command writer. */
+   private async prepareSubmission(
+@@ -1026,7 +1026,7 @@ export class ExperimentService implements Experiments {
+         );
+         return await this.get(caller, experiment.id, tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private async checkReview(
+     caller: Caller,
+diff --git a/merv-typescript/packages/feed/src/index.ts b/merv-typescript/packages/feed/src/index.ts
+index 16b72d56..2e91a323 100644
+--- a/merv-typescript/packages/feed/src/index.ts
++++ b/merv-typescript/packages/feed/src/index.ts
+@@ -168,7 +168,7 @@ export class FeedService implements Feed {
+         JSON.stringify(post),
+       );
+       return post;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async get(caller: Caller, postId: string): Promise<FeedPost> {
+diff --git a/merv-typescript/packages/knowledge/src/index.ts b/merv-typescript/packages/knowledge/src/index.ts
+index 21be9be1..c2a8acb0 100644
+--- a/merv-typescript/packages/knowledge/src/index.ts
++++ b/merv-typescript/packages/knowledge/src/index.ts
+@@ -110,7 +110,7 @@ export class KnowledgeService implements Knowledge {
+       };
+       await this.scope.require(caller, 'read', tx);
+       return structuredClone(result);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async optional<T>(read: () => T | Promise<T>): Promise<T | null> {
+@@ -273,7 +273,7 @@ export class KnowledgeService implements Knowledge {
+           .filter((entry) => terminalExperiments.has(entry.workflow.state))
+           .map((entry) => entry.id),
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async capture(
+@@ -348,7 +348,7 @@ export class KnowledgeService implements Knowledge {
+       });
+       await this.scope.require(caller, 'write', tx);
+       return structuredClone(snapshot);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async get(
+@@ -371,7 +371,7 @@ export class KnowledgeService implements Knowledge {
+       );
+       check(row, 'knowledge_not_found', 'Corpus snapshot not found in this project', 404);
+       return JSON.parse(row.record) as KnowledgeSnapshot;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async resolve(
+@@ -389,7 +389,7 @@ export class KnowledgeService implements Knowledge {
+       );
+       await this.scope.require(caller, 'read', tx);
+       return structuredClone(result);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async reference(
+diff --git a/merv-typescript/packages/research/src/index.ts b/merv-typescript/packages/research/src/index.ts
+index 7b656a3e..7d5bb516 100644
+--- a/merv-typescript/packages/research/src/index.ts
++++ b/merv-typescript/packages/research/src/index.ts
+@@ -182,7 +182,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+       );
+       checks.forEach((check) => check());
+       return result;
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private open() {
+     check(!this.closed, 'research_unavailable', 'Research is unavailable', 503);
+@@ -205,7 +205,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+         reflectionId: row.reflection_id,
+         consolidationId: row.consolidation_id,
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async list(caller: Caller, transaction?: Transaction): Promise<ResearchRecord[]> {
+     this.open();
+@@ -220,7 +220,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+         ),
+         async (row) => await this.get(caller, row.id, tx),
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async create(
+     caller: Caller,
+@@ -282,7 +282,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+         );
+         return await this.get(caller, workflow.id, tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private async authorize(caller: Caller, record: ResearchRecord, tx: Transaction) {
+     await this.scope.require(caller, 'write', tx);
+@@ -501,7 +501,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
+       });
+       checks.forEach((check) => check());
+       return result;
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private bind<K extends keyof Capabilities>(name: K, value: Capabilities[K]): () => void {
+     this.open();
+diff --git a/merv-typescript/packages/reviews/src/index.ts b/merv-typescript/packages/reviews/src/index.ts
+index 378594a8..1720bc7c 100644
+--- a/merv-typescript/packages/reviews/src/index.ts
++++ b/merv-typescript/packages/reviews/src/index.ts
+@@ -382,7 +382,7 @@ export class ReviewService implements Reviews {
+       current();
+       await this.scope.require(caller, 'review', tx);
+       return result;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   close(): void {
+@@ -475,7 +475,7 @@ export class ReviewService implements Reviews {
+         403,
+       );
+       return await this.saveRequest(caller, input, tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async reissue(
+@@ -511,7 +511,7 @@ export class ReviewService implements Reviews {
+         },
+         tx,
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async requireAdministration(
+@@ -698,7 +698,7 @@ export class ReviewService implements Reviews {
+       );
+       if (row.status === 'started') await this.requireLiveClaim(row, tx);
+       return hydrate(row);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async start(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
+@@ -726,7 +726,7 @@ export class ReviewService implements Reviews {
+         data: { claimId, claimGeneration: current.claimGeneration + 1, ...eventSource(caller) },
+       });
+       return hydrate(await this.row(tx, caller, reviewId));
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async checkSubmit(
+@@ -774,7 +774,7 @@ export class ReviewService implements Reviews {
+         validateAssessment(hydrate(row), input);
+       }
+       return hydrate(row);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async submit(
+@@ -814,7 +814,7 @@ export class ReviewService implements Reviews {
+         });
+         return hydrate(await this.row(tx, caller, input.reviewId));
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async supersede(caller: Caller, reviewId: string, transaction?: Transaction): Promise<void> {
+@@ -832,7 +832,7 @@ export class ReviewService implements Reviews {
+         subjectId: reviewId,
+         data: { ...eventSource(caller) },
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   /** Trusted event reactions; neither restored access nor an inactive initiator cancels cleanup. */
+   async releaseClaim(
+diff --git a/merv-typescript/packages/scope/src/index.ts b/merv-typescript/packages/scope/src/index.ts
+index c4146fe7..f112bacb 100644
+--- a/merv-typescript/packages/scope/src/index.ts
++++ b/merv-typescript/packages/scope/src/index.ts
+@@ -658,7 +658,7 @@ export class ProjectScope implements Scope {
+     );
+   }
+   async require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor> {
+-    if (tx) this.state.assertTransaction(tx);
++    if (tx) this.state.assertTransaction(tx, caller.projectId);
+     const lookup = async (sql: Sql) => {
+       const row = await sql.get<ActorRow>(
+         `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
+diff --git a/merv-typescript/packages/sessions/src/dispatch.ts b/merv-typescript/packages/sessions/src/dispatch.ts
+index 272ced62..35f0fdd4 100644
+--- a/merv-typescript/packages/sessions/src/dispatch.ts
++++ b/merv-typescript/packages/sessions/src/dispatch.ts
+@@ -233,7 +233,7 @@ export class SessionDispatch {
+     return await this.state.transaction(async (tx) => {
+       await this.ordinary(caller, 'admin', tx);
+       return await this.set(caller, input.enabled, tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async halt(
+     caller: Caller,
+@@ -278,7 +278,7 @@ export class SessionDispatch {
+         });
+       }
+       return { halted };
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private async presence(row: RunnerRow, tx: Transaction): Promise<RunnerPresence> {
+     let authorized = true;
+@@ -377,7 +377,7 @@ export class SessionDispatch {
+         (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', id))!,
+         tx,
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async setRunnerSettings(
+     caller: Caller,
+@@ -430,7 +430,7 @@ export class SessionDispatch {
+         (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', row.id))!,
+         tx,
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private async candidates(caller: Caller, tx: Transaction) {
+     const live = new Set(
+@@ -525,7 +525,7 @@ export class SessionDispatch {
+         queue: queue.slice(0, 200),
+         queueTotal: queue.length,
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+   private async admitRunner(
+     ownerHash: string,
+diff --git a/merv-typescript/packages/sessions/src/index.ts b/merv-typescript/packages/sessions/src/index.ts
+index 37effdb1..35412e7f 100644
+--- a/merv-typescript/packages/sessions/src/index.ts
++++ b/merv-typescript/packages/sessions/src/index.ts
+@@ -19,6 +19,7 @@ import {
+   type Scope,
+   type State,
+   type Transaction,
++  type TransactionOptions,
+   type WorkflowExecution,
+   type Workflows,
+ } from '@merv/contracts';
+@@ -283,11 +284,18 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+   private ensureOpen(): void {
+     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
+   }
+-  private async transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
++  private async transaction<T>(
++    fn: (tx: Transaction) => T | Promise<T>,
++    options?: TransactionOptions,
++  ): Promise<T> {
+     this.ensureOpen();
+     return await this.state.read(async (sql) => {
+       this.ensureOpen();
+-      return 'transactionId' in sql ? fn(sql as Transaction) : await this.state.transaction(fn);
++      if ('transactionId' in sql) {
++        this.state.assertTransaction(sql as Transaction, options?.projectId);
++        return fn(sql as Transaction);
++      }
++      return await this.state.transaction(fn, options);
+     });
+   }
+   private async row(tx: Transaction, id: string): Promise<Row> {
+@@ -742,13 +750,13 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+   }
+   async agents(caller: Caller): Promise<AgentStatus[]> {
+     return await this.transaction(async (tx) =>
+-      mapAsync(await this.directory.list(caller, tx), (agent) => this.agentStatus(agent, tx)),
++      mapAsync(await this.directory.list(caller, tx), (agent) => this.agentStatus(agent, tx)), { projectId: caller.projectId },
+     );
+   }
+   async agent(caller: Caller, agentId: string): Promise<AgentStatus> {
+     return await this.transaction(
+       async (tx) =>
+-        await this.agentStatus(await this.directory.controlled(caller, agentId, tx), tx),
++        await this.agentStatus(await this.directory.controlled(caller, agentId, tx), tx), { projectId: caller.projectId },
+     );
+   }
+   async retireAgent(caller: Caller, agentId: string): Promise<Agent> {
+@@ -757,7 +765,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+       const current = await this.currentAgentExecution(agent, tx);
+       if (current) await this.closeSession(current, 'agent_retired', tx, 'released', 'halted');
+       return await this.directory.retire(agent, 'agent_retired', tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async agentSelf(token: string) {
+     await this.sweep();
+@@ -858,7 +866,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+         "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
+         caller.projectId,
+       ))!.n;
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async agentObservation(caller: Caller, agentId: string) {
+     this.ensureOpen();
+@@ -954,7 +962,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+         eventId: event?.id ?? null,
+       };
+     };
+-    return transaction ? await read(transaction) : await this.transaction(read);
++    return transaction ? await read(transaction) : await this.transaction(read, { projectId: caller.projectId });
+   }
+   async list(caller: Caller): Promise<Session[]> {
+     return await this.transaction(async (tx) => {
+@@ -968,7 +976,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+         ),
+         (row) => this.decode(row, tx),
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async get(caller: Caller, sessionId: string): Promise<Session> {
+     const result = await this.transaction(async (tx) => {
+@@ -976,7 +984,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+       const error = await this.reconcile(session, tx);
+       // A poll reports durable closure to its controller, but provider outages are retryable.
+       return error && error.status >= 500 ? { error } : { session };
+-    });
++    }, { projectId: caller.projectId });
+     if (result.error) throw result.error;
+     return result.session!;
+   }
+@@ -1140,7 +1148,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+         },
+       });
+       return session;
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
+     return await this.controlMutation(caller, input, async (session, tx) => {
+@@ -1167,7 +1175,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+       if (error) return { error };
+       await mutate(session, tx);
+       return { session };
+-    });
++    }, { projectId: caller.projectId });
+     if (result.error) throw result.error;
+     return result.session!;
+   }
+@@ -1199,7 +1207,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+           tx,
+           'released',
+           input.outcome,
+-        ),
++        ), { projectId: caller.projectId },
+     );
+   }
+   async authenticate(token: string): Promise<Caller> {
+@@ -1261,7 +1269,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+       check(caller.session, 'session_required', 'Session authority is required', 401);
+       await this.scope.require(caller, 'read', tx);
+       return await this.decode(await this.row(tx, caller.session.id), tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   /** Tool names per session, read once: a policy is frozen at offer, and the tool listing
+    *  asks about every registered tool, which under load meant one locked transaction each. */
+@@ -1273,7 +1281,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+     const names = await this.transaction(async (tx) => {
+       const session = await this.session(caller, tx);
+       return new Set(session.execution.policy.tools.map((tool) => tool.name));
+-    });
++    }, { projectId: caller.projectId });
+     if (id) {
+       if (this.toolNames.size >= 1000) this.toolNames.clear();
+       this.toolNames.set(id, { names, at: this.clock() });
+@@ -1312,7 +1320,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+   }
+   async prepare(caller: Caller, tool: string, input: Data): Promise<SessionInvocation> {
+     const prepared = await this.transaction(
+-      async (tx) => await this.admit(caller, tool, clone(input), tx),
++      async (tx) => await this.admit(caller, tool, clone(input), tx), { projectId: caller.projectId },
+     );
+     this.ensureOpen();
+     const invocationId = newId('invocation');
+@@ -1377,7 +1385,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+         state.input = clone(input);
+         state.validated = true;
+       }
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async run<T>(
+     invocation: SessionInvocation,
+diff --git a/merv-typescript/packages/state/src/base.ts b/merv-typescript/packages/state/src/base.ts
+index 4175adb3..03cb26f8 100644
+--- a/merv-typescript/packages/state/src/base.ts
++++ b/merv-typescript/packages/state/src/base.ts
+@@ -9,6 +9,7 @@ import {
+   type State,
+   type StoredEvent,
+   type Transaction,
++  type TransactionOptions,
+ } from '@merv/contracts';
+ 
+ export interface Connection {
+@@ -40,7 +41,8 @@ export abstract class StateStore implements State {
+   private closed = false;
+ 
+   protected abstract connect<T>(fn: (connection: Connection) => Promise<T>): Promise<T>;
+-  protected abstract begin(connection: Connection): Promise<void>;
++  protected abstract begin(connection: Connection, options?: TransactionOptions): Promise<void>;
++  protected async beginEvents(_connection: Connection): Promise<void> {}
+   /** A read-only transaction: a consistent snapshot that takes no writer lock. */
+   protected abstract beginRead(connection: Connection): Promise<void>;
+   protected abstract shutdown(): Promise<void>;
+@@ -91,12 +93,17 @@ export abstract class StateStore implements State {
+   private async transact<T>(
+     connection: Connection,
+     fn: (tx: Transaction) => T | Promise<T>,
++    options?: TransactionOptions,
+   ): Promise<T> {
+     const scope = this.scope(connection);
+-    const tx: Transaction = { ...scope.sql, transactionId: Symbol('transaction') };
++    const tx: Transaction = {
++      ...scope.sql,
++      transactionId: Symbol('transaction'),
++      projectId: options?.projectId,
++    };
+     scope.transaction = tx;
+     try {
+-      await this.begin(connection);
++      await this.begin(connection, options);
+       const value = await this.context.run(scope, () => fn(tx));
+       scope.live = false;
+       await connection.exec('COMMIT');
+@@ -127,7 +134,17 @@ export abstract class StateStore implements State {
+     }
+   }
+ 
+-  async transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
++  async transaction<T>(
++    fn: (tx: Transaction) => T | Promise<T>,
++    options?: TransactionOptions,
++  ): Promise<T> {
++    check(
++      options?.projectId === undefined ||
++        (typeof options.projectId === 'string' && options.projectId.trim().length > 0),
++      'invalid_project',
++      'Transaction project must be nonempty',
++    );
++    options = { projectId: options?.projectId };
+     const current = this.context.getStore();
+     check(
+       !current?.transaction,
+@@ -170,12 +187,12 @@ export abstract class StateStore implements State {
+       );
+       current.childTransaction = true;
+       try {
+-        return await this.transact(current.connection, fn);
++        return await this.transact(current.connection, fn, options);
+       } finally {
+         current.childTransaction = false;
+       }
+     }
+-    return this.operation(() => this.connect((connection) => this.transact(connection, fn)));
++    return this.operation(() => this.connect((connection) => this.transact(connection, fn, options)));
+   }
+ 
+   async read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T> {
+@@ -234,13 +251,18 @@ export abstract class StateStore implements State {
+     );
+   }
+ 
+-  assertTransaction(tx: Transaction): void {
++  assertTransaction(tx: Transaction, projectId?: string): void {
+     const current = this.context.getStore();
+     check(
+       current?.live && !this.closed && current.transaction === tx,
+       'invalid_transaction',
+       'Transaction must belong to this active state store and request',
+     );
++    check(
++      projectId === undefined || tx.projectId === undefined || tx.projectId === projectId,
++      'transaction_project_mismatch',
++      'Transaction is locked for a different project',
++    );
+   }
+ 
+   async migrate(component: string, migrations: Migration[]): Promise<void> {
+@@ -330,8 +352,11 @@ export abstract class StateStore implements State {
+     tx: Transaction,
+     event: Omit<StoredEvent, 'id' | 'createdAt'>,
+   ): Promise<StoredEvent> {
+-    this.assertTransaction(tx);
++    this.assertTransaction(tx, event.projectId);
+     check(!this.context.getStore()?.readOnly, 'read_only_scope', 'A read scope cannot write', 409);
++    const scope = this.context.getStore()!;
++    // Allocate global event IDs only after earlier event writers have committed.
++    if (!scope.eventWritten) await this.beginEvents(scope.connection);
+     const createdAt = now();
+     const row = await tx.get<{ id: number }>(
+       'INSERT INTO events(project_id,actor_id,type,subject_id,data_json,created_at) VALUES(?,?,?,?,?,?) RETURNING id',
+diff --git a/merv-typescript/packages/state/src/postgres.ts b/merv-typescript/packages/state/src/postgres.ts
+index ce3f7563..289114fe 100644
+--- a/merv-typescript/packages/state/src/postgres.ts
++++ b/merv-typescript/packages/state/src/postgres.ts
+@@ -1,5 +1,5 @@
+ import { Pool, types, type PoolClient, type QueryResult } from 'pg';
+-import { check, MervError, type SqlValue } from '@merv/contracts';
++import { check, MervError, type SqlValue, type TransactionOptions } from '@merv/contracts';
+ import { StateStore, type Connection } from './base.js';
+ import { postgresParameters } from './parameters.js';
+ 
+@@ -203,13 +203,29 @@ END $merv$;`);
+     }
+   }
+ 
+-  protected async begin(connection: Connection): Promise<void> {
++  protected async begin(connection: Connection, options?: TransactionOptions): Promise<void> {
+     await connection.exec('BEGIN');
+-    // Preserve SQLite's writer serialization and commit-ordered event IDs across app instances.
++    // Global/default writers exclude ALL project writers, including older app instances.
++    // Always take the schema gate first; never upgrade a project transaction to global.
++    const projectId = options?.projectId;
+     await connection.get(
+-      'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, 0))',
++      `SELECT pg_catalog.pg_advisory_xact_lock${projectId === undefined ? '' : '_shared'}(pg_catalog.hashtextextended(?, 0))`,
+       [`merv-state:${this.schema}`],
+     );
++    if (projectId !== undefined)
++      await connection.get(
++        'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, 0))',
++        [`merv-state:${this.schema}:${projectId}`],
++      );
++  }
++
++  protected async beginEvents(connection: Connection): Promise<void> {
++    // DurableEvents uses a schema-wide cursor. Keep event IDs commit-ordered while
++    // allowing independent project work before the first append to run concurrently.
++    await connection.get(
++      'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, 0))',
++      [`merv-events:${this.schema}`],
++    );
+   }
+ 
+   protected async beginRead(connection: Connection): Promise<void> {
+diff --git a/merv-typescript/packages/tasks/src/index.ts b/merv-typescript/packages/tasks/src/index.ts
+index 3e12b15e..5f0fbc53 100644
+--- a/merv-typescript/packages/tasks/src/index.ts
++++ b/merv-typescript/packages/tasks/src/index.ts
+@@ -983,14 +983,14 @@ DROP TABLE task_leases_backup;`,
+         });
+         return await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async get(caller: Caller, taskId: string): Promise<Task> {
+     return await this.state.transaction(async (tx) => {
+       await this.scope.require(caller, 'read', tx);
+       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async process(caller: Caller, taskId: string): Promise<ProcessGraph> {
+     return await this.workflows.process(caller, taskId);
+@@ -999,7 +999,7 @@ DROP TABLE task_leases_backup;`,
+     return await inTransaction(this.state, transaction, async (tx) => {
+       await this.scope.require(caller, 'read', tx);
+       return await this.projectRecord(caller, await this.row(tx, caller, taskId), tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async records(caller: Caller, transaction?: Transaction): Promise<TaskRecord[]> {
+     return await inTransaction(this.state, transaction, async (tx) => {
+@@ -1011,7 +1011,7 @@ DROP TABLE task_leases_backup;`,
+         ),
+         async (row) => await this.projectRecord(caller, row, tx),
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async context(caller: Caller, input: TaskContext): Promise<ContextPackage> {
+     return await this.state.transaction(async (tx) => {
+@@ -1038,7 +1038,7 @@ DROP TABLE task_leases_backup;`,
+         },
+         tx,
+       );
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
+@@ -1453,7 +1453,7 @@ DROP TABLE task_leases_backup;`,
+         });
+         return result;
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+   async list(caller: Caller): Promise<Task[]> {
+     await this.scope.require(caller, 'read');
+@@ -1465,7 +1465,7 @@ DROP TABLE task_leases_backup;`,
+             caller.projectId,
+           ),
+           async (row) => await this.hydrate(caller, row, sql),
+-        ),
++        ), { projectId: caller.projectId },
+     );
+   }
+ 
+@@ -1703,7 +1703,7 @@ DROP TABLE task_leases_backup;`,
+         });
+         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task> {
+@@ -1789,7 +1789,7 @@ DROP TABLE task_leases_backup;`,
+         });
+         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async reissueReview(caller: Caller, input: TaskReissue): Promise<Task> {
+@@ -1850,7 +1850,7 @@ DROP TABLE task_leases_backup;`,
+         });
+         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async submitReview(caller: Caller, input: TaskReview, transaction?: Transaction): Promise<Task> {
+@@ -1930,7 +1930,7 @@ DROP TABLE task_leases_backup;`,
+         });
+         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
+       });
+-    });
++    }, { projectId: caller.projectId });
+   }
+ }
+ 
+diff --git a/merv-typescript/packages/workflows/src/index.ts b/merv-typescript/packages/workflows/src/index.ts
+index ee74a82d..e8bd4241 100644
+--- a/merv-typescript/packages/workflows/src/index.ts
++++ b/merv-typescript/packages/workflows/src/index.ts
+@@ -468,7 +468,7 @@ export class WorkflowsService implements Workflows {
+         this.assertOpen();
+       }
+       return result;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async assignment(
+@@ -557,7 +557,7 @@ export class WorkflowsService implements Workflows {
+             item.registrationId,
+         )
+         .sort((left, right) => Number(right.readOnly) - Number(left.readOnly));
+-    });
++    }, { projectId: source.projectId });
+   }
+ 
+   async leaseRole(
+@@ -599,7 +599,7 @@ export class WorkflowsService implements Workflows {
+       );
+       this.requireActive(registration);
+       return role;
+-    });
++    }, { projectId: source.projectId });
+   }
+ 
+   async offerLease(
+@@ -677,7 +677,7 @@ export class WorkflowsService implements Workflows {
+       await this.checkContext(context, 'Lease acquisition must not transition the workflow');
+       this.requireActive(registration);
+       return { lease, assignment, execution };
+-    });
++    }, { projectId: source.projectId });
+   }
+ 
+   async checkLease(
+@@ -723,7 +723,7 @@ export class WorkflowsService implements Workflows {
+       const checked = await this.executionInternal(worker, target, tx);
+       this.requireActive(registration);
+       return checked;
+-    });
++    }, { projectId: worker.projectId });
+   }
+ 
+   async activateLease(
+@@ -747,7 +747,7 @@ export class WorkflowsService implements Workflows {
+       );
+       this.requireActive(registration);
+       return started;
+-    });
++    }, { projectId: worker.projectId });
+   }
+ 
+   async authorizeLeaseDispatch(
+@@ -809,7 +809,7 @@ export class WorkflowsService implements Workflows {
+       );
+       this.requireActive(registration);
+       return await this.admitRead(worker, { ...frozen, references }, input.tool, input.input, tx);
+-    });
++    }, { projectId: worker.projectId });
+   }
+ 
+   async releaseLease(
+@@ -864,7 +864,7 @@ export class WorkflowsService implements Workflows {
+     return await inTransaction(this.state, transaction, async (tx) => {
+       const execution = await this.executionInternal(caller, dispatch, tx);
+       return await this.admitRead(caller, execution, dispatch.tool, dispatch.input, tx);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async executionInternal(
+@@ -944,7 +944,7 @@ export class WorkflowsService implements Workflows {
+         policy: structuredClone(rule.execution),
+         references,
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment> {
+@@ -966,7 +966,7 @@ export class WorkflowsService implements Workflows {
+       await this.scope.require(caller, 'read', tx);
+       await this.readSnapshot(tx, caller.projectId, instanceId);
+       return await readWorkStarts(tx, caller.projectId, instanceId);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   /** Metadata-only activation shared by interactive begin and leased authentication. */
+@@ -1096,7 +1096,7 @@ export class WorkflowsService implements Workflows {
+         revision: snapshot.revision,
+         workStart,
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async overview(caller: Caller): Promise<WorkflowOverview> {
+@@ -1123,7 +1123,7 @@ export class WorkflowsService implements Workflows {
+           .filter((item) => !item.available && !item.terminal)
+           .map((item) => item.instanceId),
+       };
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async dependencies(
+@@ -1136,7 +1136,7 @@ export class WorkflowsService implements Workflows {
+       await this.scope.require(caller, 'read', tx);
+       await this.readSnapshot(tx, caller.projectId, instanceId);
+       return await relations(tx, caller.projectId, instanceId);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
+@@ -1160,7 +1160,7 @@ export class WorkflowsService implements Workflows {
+     return await inTransaction(this.state, tx, async (transaction) => {
+       await this.scope.require(caller, 'read', transaction);
+       return await this.readSnapshot(transaction, caller.projectId, instanceId);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async list(caller: Caller): Promise<WorkflowSnapshot[]> {
+@@ -1173,7 +1173,7 @@ export class WorkflowsService implements Workflows {
+           caller.projectId,
+         )
+       ).map(this.snapshot);
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   async history(caller: Caller, instanceId: string): Promise<WorkflowHistoryEntry[]> {
+@@ -1208,7 +1208,7 @@ export class WorkflowsService implements Workflows {
+         data: JSON.parse(row.data_json) as Data,
+         createdAt: row.created_at,
+       }));
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async startInternal(
+@@ -1311,7 +1311,7 @@ export class WorkflowsService implements Workflows {
+       );
+       this.requireActive(registered);
+       return snapshot;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async transitionInternal(
+@@ -1432,7 +1432,7 @@ export class WorkflowsService implements Workflows {
+       );
+       this.requireActive(registered);
+       return after;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async addDependenciesInternal(
+@@ -1522,7 +1522,7 @@ export class WorkflowsService implements Workflows {
+       );
+       this.requireActive(owner);
+       return after;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private async upgradeInternal(
+@@ -1652,7 +1652,7 @@ export class WorkflowsService implements Workflows {
+       this.requireActive(target);
+       this.requireActive(sourceRegistration);
+       return after;
+-    });
++    }, { projectId: caller.projectId });
+   }
+ 
+   private definition(name: string, version?: number): Registration {
+diff --git a/merv-typescript/tests/state-postgres.test.ts b/merv-typescript/tests/state-postgres.test.ts
+index a942973e..18763bce 100644
+--- a/merv-typescript/tests/state-postgres.test.ts
++++ b/merv-typescript/tests/state-postgres.test.ts
+@@ -1,10 +1,10 @@
+ import assert from 'node:assert/strict';
+ import { randomUUID } from 'node:crypto';
+ import test, { type TestContext } from 'node:test';
+-import { Pool } from 'pg';
++import { Pool, type PoolClient } from 'pg';
+ import { PostgresState, statePlugin } from '@merv/state';
+ import { postgresParameters } from '@merv/state/parameters';
+-import type { Transaction } from '@merv/contracts';
++import { inTransaction, type Transaction } from '@merv/contracts';
+ 
+ const connectionString = process.env.MERV_TEST_POSTGRES_URL;
+ const postgres = { skip: !connectionString };
+@@ -70,6 +70,64 @@ test('State config retains local path and requires explicit verified TLS setting
+   );
+ });
+ 
++test('PostgreSQL project locks retain the schema gate and defer global event serialization', async (t) => {
++  const queries: { sql: string; params: unknown[] }[] = [];
++  t.mock.method(Pool.prototype, 'connect', async () => ({
++    query: async (sql: string, params: unknown[] = []) => {
++      queries.push({ sql, params });
++      return { rows: [{ exists: 1, id: 1 }], command: sql, rowCount: 1 };
++    },
++    release() {},
++  }) as unknown as PoolClient);
++  const state = await PostgresState.open({
++    connectionString: 'postgres://unused/unused',
++    schema: 'lock_test',
++  });
++  t.after(() => state.close());
++  const locks = () => queries.filter(({ sql }) => sql.includes('pg_advisory_xact_lock'));
++  const lock = (key: string, shared = false) => ({
++    sql: `SELECT pg_catalog.pg_advisory_xact_lock${shared ? '_shared' : ''}(pg_catalog.hashtextextended($1, 0))`,
++    params: [key],
++  });
++  assert.deepEqual(locks(), [lock('merv-state:lock_test')], 'Initialization stays exclusive');
++  for (const projectId of [undefined, 'project', 'other']) {
++    queries.length = 0;
++    // Exercise the path that reuses a read connection, as Sessions does.
++    await state.read(() => state.transaction(async (tx) => {
++      assert.equal(tx.projectId, projectId);
++      assert.equal(queries.some(({ sql }) => sql === 'BEGIN'), true);
++      assert.deepEqual(locks(), [
++        lock('merv-state:lock_test', projectId !== undefined),
++        ...(projectId === undefined ? [] : [lock(`merv-state:lock_test:${projectId}`)]),
++      ]);
++      if (projectId !== undefined) {
++        await assert.rejects(inTransaction(state, tx, () => undefined, { projectId: 'wrong' }), {
++          code: 'transaction_project_mismatch',
++        });
++        await assert.rejects(state.appendEvent(tx, { ...event, projectId: 'wrong' }), {
++          code: 'transaction_project_mismatch',
++        });
++      }
++      await state.appendEvent(tx, { ...event, projectId: projectId ?? 'project' });
++      await state.appendEvent(tx, { ...event, projectId: projectId ?? 'project' });
++      assert.deepEqual(locks().at(-1), lock('merv-events:lock_test'));
++      assert.equal(locks().filter(({ params }) => params[0] === 'merv-events:lock_test').length, 1);
++      const eventLock = queries.findIndex(({ params }) => params[0] === 'merv-events:lock_test');
++      assert.ok(queries.findIndex(({ sql }) => sql.startsWith('INSERT INTO events')) > eventLock);
++    }, { projectId }));
++    assert.equal(queries.at(-1)!.sql, 'COMMIT');
++  }
++  queries.length = 0;
++  await state.snapshot(() => state.transaction(async (tx) => {
++    await tx.get('SELECT 1');
++    await assert.rejects(state.appendEvent(tx, event), { code: 'read_only_scope' });
++  }, { projectId: 'project' }));
++  assert.deepEqual(locks(), [], 'Read snapshots still bypass writer locks');
++  await assert.rejects(state.transaction(() => undefined, { projectId: '' }), {
++    code: 'invalid_project',
++  });
++});
++
+ test(
+   'PostgreSQL boots in a pre-created owned schema without database CREATE privilege',
+   postgres,
+@@ -281,6 +339,82 @@ test(
+   },
+ );
+ 
++test('PostgreSQL project writers overlap but exclude same-project and global writers', postgres, async (t) => {
++  const { state, schema } = await fixture(t);
++  const other = await PostgresState.open({
++    connectionString: connectionString!, schema, lockTimeoutMs: 30, maxConnections: 1,
++  });
++  t.after(() => other.close());
++  for (const projectId of ['project', undefined]) {
++    const entered = deferred(), release = deferred();
++    const held = state.transaction(async () => {
++      entered.resolve();
++      await release.promise;
++    }, { projectId });
++    try {
++      await entered.promise;
++      if (projectId !== undefined) {
++        const saved = await other.transaction(
++          (tx) => other.appendEvent(tx, { ...event, projectId: 'other' }),
++          { projectId: 'other' },
++        );
++        assert.ok(saved.id > 0, 'Another project commits while the first writer is still open');
++      }
++      await assert.rejects(other.transaction(() => undefined, { projectId: 'project' }), {
++        code: 'state_timeout',
++      });
++      await assert.rejects(other.transaction(() => undefined), { code: 'state_timeout' });
++    } finally {
++      release.resolve();
++      await held;
++    }
++    // Timed-out BEGINs release both the connection and any shared schema gate.
++    await other.transaction(() => undefined, { projectId: 'project' });
++    await other.transaction(() => undefined);
++  }
++});
++
++test('PostgreSQL project event appends remain globally commit-ordered, including rollback gaps', postgres, async (t) => {
++  const { state, schema } = await fixture(t);
++  const other = await PostgresState.open({
++    connectionString: connectionString!, schema, lockTimeoutMs: 30,
++  });
++  t.after(() => other.close());
++  const entered = deferred(), release = deferred();
++  const first = state.transaction(async (tx) => {
++    const saved = await state.appendEvent(tx, event);
++    entered.resolve();
++    await release.promise;
++    return saved;
++  }, { projectId: 'project' });
++  let secondEntered = false;
++  try {
++    await entered.promise;
++    await assert.rejects(other.transaction(async (tx) => {
++      secondEntered = true;
++      await other.appendEvent(tx, { ...event, projectId: 'other' });
++    }, { projectId: 'other' }), { code: 'state_timeout' });
++    assert.equal(secondEntered, true, 'The other project waits only when it appends an event');
++    assert.equal(await other.eventHead(), 0);
++    assert.deepEqual(await other.eventBatch(0, 10), []);
++  } finally {
++    release.resolve();
++    await first;
++  }
++  const one = await first;
++  await assert.rejects(other.transaction(async (tx) => {
++    await other.appendEvent(tx, { ...event, projectId: 'other' });
++    throw new Error('rollback');
++  }, { projectId: 'other' }), /rollback/);
++  const two = await other.transaction(
++    (tx) => other.appendEvent(tx, { ...event, projectId: 'other' }),
++    { projectId: 'other' },
++  );
++  assert.ok(two.id > one.id + 1);
++  assert.deepEqual((await state.eventBatch(one.id, 10)).map(({ id }) => id), [two.id]);
++  assert.equal(await state.eventHead(), two.id);
++});
++
+ test(
+   'PostgreSQL disposal drains admitted async work before closing its pool',
+   postgres,

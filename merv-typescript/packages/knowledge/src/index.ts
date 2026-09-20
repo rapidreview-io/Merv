@@ -27,11 +27,7 @@ import type {
   KnowledgeReferenceKind,
   KnowledgeSelection,
 } from './types.js';
-import {
-  knowledgeIdSchema,
-  knowledgeReferencesSchema,
-  parseKnowledgeInput,
-} from './input.js';
+import { knowledgeIdSchema, knowledgeReferencesSchema, parseKnowledgeInput } from './input.js';
 import { migrateKnowledge } from './storage.js';
 
 export type * from './types.js';
@@ -58,6 +54,7 @@ const missingCodes = new Set([
 /** Owns selection and immutable snapshots; domain services continue to own every source record. */
 export class KnowledgeService implements Knowledge {
   private closed = false;
+  private codeBinding?: symbol;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -80,16 +77,24 @@ export class KnowledgeService implements Knowledge {
     check(!this.closed, 'knowledge_unavailable', 'Knowledge is unavailable', 503);
   }
   bindCode(code: Code): () => void {
+    this.open();
+    const binding = Symbol('code');
+    this.codeBinding = binding;
     this.code = code;
     return () => {
+      if (this.codeBinding !== binding) return;
+      this.codeBinding = undefined;
       this.code = undefined;
     };
   }
   close(): void {
     this.closed = true;
+    this.codeBinding = undefined;
+    this.code = undefined;
   }
 
   async records(caller: Caller, transaction?: Transaction): Promise<KnowledgeRecords> {
+    caller = structuredClone(caller);
     this.open();
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
@@ -253,8 +258,10 @@ export class KnowledgeService implements Knowledge {
   }
 
   async researchReferences(caller: Caller, transaction?: Transaction) {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const selection = await this.selection(caller, tx, true);
+      await this.scope.require(caller, 'read', tx);
       return {
         artifacts: selection.artifacts.flatMap((entry) =>
           entry.status === 'retained' ? [entry.id] : [],
@@ -269,12 +276,12 @@ export class KnowledgeService implements Knowledge {
     });
   }
 
-
   async resolve(
     caller: Caller,
     refs: string[],
     transaction?: Transaction,
   ): Promise<KnowledgeReference[]> {
+    caller = structuredClone(caller);
     this.open();
     const input = parseKnowledgeInput(knowledgeReferencesSchema, { refs });
     return await inTransaction(this.state, transaction, async (tx) => {

@@ -79,6 +79,7 @@ export class CodeService extends CodeCommandService implements Code {
     return this.network(() => this.transport.verify(caller, input));
   }
   override async completeCommand(caller: Caller, value: CodeCommandCompletion) {
+    caller = structuredClone(caller);
     const input = parseCodeInput(codeCommandCompletionSchema, value);
     const complete = async (tx: Transaction) => {
       await this.transport.requireCheckpoint(input, tx);
@@ -94,6 +95,7 @@ export class CodeService extends CodeCommandService implements Code {
     binding: Parameters<CodeProposalService['seal']>[2],
     tx: Transaction,
   ) {
+    caller = structuredClone(caller);
     const proposal = await this.proposalStore.seal(caller, input, binding, tx);
     await this.publicationStore.enqueue(caller, proposal, tx);
     return proposal;

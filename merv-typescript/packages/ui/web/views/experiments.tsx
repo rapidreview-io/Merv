@@ -11,12 +11,14 @@ import {
   KV,
   LoadState,
   RecordPage,
+  StatusPill,
   cx,
   relativeTime,
-  stamp,
+  timeRows,
   useArtifacts,
   words,
 } from '../components';
+import { Markdown, RecordText, useRecordNames } from '../markdown';
 import { Gate } from '../process';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import { type Review } from './reviews';
@@ -76,10 +78,11 @@ function EvidenceFiles({
 }
 
 /**
- * The same three facts a row of the wave states, in the same grammar: what the
- * machinery did, what an independent reader decided, what the science came to.
- * None is derived from another — a passing verdict is not an outcome — and a fact
- * the record does not carry yet is left out rather than named as missing.
+ * What a row of the wave states beside its state, in the same grammar: what an
+ * independent reader decided and what the science came to. Neither is derived from
+ * the other — a passing verdict is not an outcome — and a fact the record does not
+ * carry yet is left out rather than named as missing. The state itself stands
+ * beside the title, where every record's does, so it is not said again here.
  */
 function StandingLine({
   experiment: e,
@@ -93,11 +96,12 @@ function StandingLine({
   reviewer: ReactNode;
 }) {
   const said = reviewClause(review, reviewer);
+  const outcome = firstSentence(e.conclusion);
+  if (!said && !outcome) return null;
   return (
     <ThreeStates
-      execution={e.workflow.state}
       review={said ?? undefined}
-      outcome={firstSentence(e.conclusion) ? { detail: firstSentence(e.conclusion) } : undefined}
+      outcome={outcome ? { detail: outcome } : undefined}
       meta={said ? stage : undefined}
     />
   );
@@ -157,14 +161,21 @@ function ExperimentRecord({
   const figures = e.submissions.at(-1)?.figureIds ?? [];
   const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
   const ended = ['failed', 'abandoned'].includes(e.workflow.state);
+  // The header already says a conclusion of one sentence; History holds one that says more.
+  const concluded = !!e.conclusion && e.conclusion.trim() !== firstSentence(e.conclusion);
+  const names = useRecordNames(e.intent);
   return (
     <RecordPage
       back={<Link to={WORK.path}>← Work</Link>}
       kind="experiments"
       name={e.name}
+      state={<StatusPill value={e.workflow.state} />}
+      // The question it was opened to answer, as a task's goal stands under its title.
       standing={
         <>
-          <span className="question">{e.intent}</span>
+          <span>
+            <RecordText text={e.intent} names={names} />
+          </span>
           <StandingLine
             experiment={e}
             review={newest}
@@ -181,7 +192,11 @@ function ExperimentRecord({
             <EvidenceFiles evidence={currentEvidence} figures={figures} />
             {shown && (
               <figure className="stack">
-                <pre className="doc doc--inline">{shown.content}</pre>
+                {/\.(md|markdown)$/i.test(shown.path) ? (
+                  <Markdown source={shown.content} />
+                ) : (
+                  <pre className="doc doc--inline">{shown.content}</pre>
+                )}
                 <figcaption className="muted">{shown.path}</figcaption>
               </figure>
             )}
@@ -189,12 +204,12 @@ function ExperimentRecord({
         ) : undefined
       }
       history={
-        e.conclusion || e.submissions.length ? (
+        concluded || e.submissions.length ? (
           <>
-            {e.conclusion && (
+            {concluded && (
               <>
                 <h3 className="ev-role">{ended ? 'Why this experiment ended' : 'Conclusion'}</h3>
-                <p className="record-prose">{e.conclusion}</p>
+                <Markdown source={e.conclusion!} />
               </>
             )}
             <Rounds experiment={e} reviews={mine} />
@@ -214,16 +229,9 @@ function ExperimentRecord({
           </>
         ) : undefined
       }
+      description={e.details ? <Markdown source={e.details} /> : undefined}
       details={
-        <>
-          {e.details && <p className="record-prose">{e.details}</p>}
-          <KV
-            rows={[
-              ['Owner', nameOf(e.ownerId)],
-              ['Created', stamp(e.createdAt)],
-            ]}
-          />
-        </>
+        <KV rows={[['Owner', nameOf(e.ownerId)], ...timeRows(e.createdAt, e.workflow.updatedAt)]} />
       }
     />
   );

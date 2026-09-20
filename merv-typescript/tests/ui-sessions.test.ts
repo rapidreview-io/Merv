@@ -9,6 +9,7 @@ import { click, jump, mount, serve, settle, text, unmount } from './ui-render.js
 
 const { createElement } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
+const { act } = await import('react-dom/test-utils');
 const { AgentsPage } = await import('../packages/ui/web/views/sessions.js');
 
 const row = {
@@ -103,20 +104,86 @@ test('the page states its subject without a click, in one liveness vocabulary', 
   await mount(page());
   const shown = text();
   for (const fact of [
-    'Automatic dispatch',
-    '1 live now',
+    'Dispatch',
+    // How much a section holds stands beside its name: one runner of three, one lease, live.
+    'Runners 1 of 3',
+    'Leases 1 · 1 live',
     'Sweep weight decay',
     'lab-01',
     'Weight-decay researcher',
     // The runner says why its last lease request got nothing.
     'declined',
     'capacity full',
-    // The queue names whose eligibility it reports, not a fleet backlog.
-    'Eligible for this identity',
+    'Ready to assign 0',
   ])
     assert.ok(shown.includes(fact), `${fact} is not on the page: ${shown.slice(0, 800)}`);
+  // The queue names whose eligibility it reports, not a fleet backlog, where a pointer asks.
+  assert.ok(document.querySelector('h2[title="Eligible for this identity"]'));
   assert.ok(!shown.includes('Operations'), 'the subject must not sit behind a fold');
   assert.ok(!shown.includes('Extend'), 'no control the system cannot honour');
+});
+
+test('state is carried by elements: a pill, one control, counts, and never a sentence', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.read', () =>
+    read({
+      dispatch: { enabled: false, updatedAt: null, updatedBy: null },
+      runners: [],
+      runnerTotal: 0,
+      sessions: [{ ...status().sessions[0], label: 'Work: Sweep weight decay' }],
+      queue: [
+        {
+          instanceId: 'wf_2',
+          expectedRevision: 0,
+          label: 'Review: Check training configuration',
+          role: 'reviewer',
+          state: 'in_review',
+        },
+      ],
+      queueTotal: 1,
+    }),
+  );
+  await mount(page());
+  const shown = text();
+  // Paused is a pill, and the one control beside it says the state it will set.
+  assert.ok(shown.includes('paused'), shown.slice(0, 400));
+  const toggles = [...document.querySelectorAll('button')].filter((button) =>
+    /dispatch/i.test(button.textContent ?? ''),
+  );
+  assert.deepEqual(
+    toggles.map((button) => [button.textContent, button.classList.contains('btn--primary')]),
+    [['Start dispatch', true]],
+  );
+  // Halting every lease is the secondary, guarded control, in the refusal's colour.
+  assert.ok(document.querySelector('.act-danger > button')?.textContent === 'Halt all leases');
+  // An empty section is its name and a zero.
+  assert.ok(shown.includes('Runners 0'), shown.slice(0, 400));
+  assert.ok(shown.includes('Ready to assign 1'), shown.slice(0, 600));
+  // The purpose a lease is labelled with for its agent is dropped: the role says it.
+  assert.ok(shown.includes('Check training configuration'), shown);
+  for (const gone of [
+    'Work: ',
+    'Review: ',
+    'Agent’s move',
+    'Your move',
+    'No runner',
+    'eligible for this identity',
+    'this project has offered',
+    'Revision',
+  ])
+    assert.ok(!shown.includes(gone), `“${gone}” is still on the page: ${shown.slice(0, 900)}`);
+});
+
+test('running dispatch offers a pause that is not dressed as the primary', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.read', () => read());
+  await mount(page());
+  assert.ok(text().includes('running'), text().slice(0, 300));
+  const pause = [...document.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Pause dispatch',
+  );
+  assert.ok(pause && !pause.classList.contains('btn--primary'));
+  assert.ok(!text().includes('Start dispatch'));
 });
 
 test('a clock that jumps cannot lapse a lease the read never saw', async (t) => {
@@ -228,4 +295,76 @@ test('halt-all names every live lease under the click, past this read’s window
   assert.ok(shown.includes('Halt 240 live leases'), `the guard under-counted: ${shown}`);
   assert.ok(shown.includes('239 more'), shown);
   assert.ok(shown.includes('released back to the queue'), 'the guard promises no synchrony');
+});
+
+test('work ready to assign is named by a link as tall as a target', async (t) => {
+  t.after(unmount);
+  const tasks = { ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } };
+  serve('/tools/task.list', { body: { result: [{ id: 'wf_2' }] } });
+  serve('/tools/ui.read', () =>
+    read({
+      queue: [
+        {
+          instanceId: 'wf_2',
+          expectedRevision: 0,
+          label: 'Work: Check training configuration',
+          role: 'producer',
+          state: 'in_progress',
+        },
+      ],
+      queueTotal: 1,
+    }),
+  );
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/sessions'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(AgentsPage as any, {
+        row,
+        shell: { rows: [row, tasks], plugins: [] },
+        me: 'me',
+      }),
+    ),
+  );
+  await settle(20);
+  // It stands alone in its cell, so it is a control: the shared class grows its target.
+  const link = document.querySelector<HTMLAnchorElement>('[aria-label="Ready to assign"] a')!;
+  assert.equal(link.getAttribute('href'), '/tasks/wf_2');
+  assert.equal(link.textContent, 'Check training configuration');
+  assert.ok(link.classList.contains('hit'));
+});
+
+test('choosing an agent brings its panel to the top of the view, and again once it has loaded', async (t) => {
+  t.after(unmount);
+  const seen: [string, unknown][] = [];
+  const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+  proto.scrollIntoView = function (this: HTMLElement, options: unknown) {
+    seen.push([this.id, options]);
+  };
+  t.after(() => delete proto.scrollIntoView);
+  serve('/tools/ui.read', () => read());
+  serve('/sessions/agents/agent_1/observation', {
+    body: {
+      agent: status().agents[0],
+      assignments: [],
+      toolCalls: [],
+      toolCallTotal: 0,
+      tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
+      tokenAccounting: { kind: 'estimate', method: 'test' },
+    },
+  });
+  await mount(page());
+  // The lease over the list names the same agent, so the row is found by what it is.
+  const opener = document.querySelector<HTMLButtonElement>('.agent-select')!;
+  await act(async () => opener.click());
+  await settle(20);
+  // A page cannot scroll past its own foot, and the panel is one line tall until it is read.
+  assert.deepEqual(seen, [
+    ['agent-detail', { block: 'start' }],
+    ['agent-detail', { block: 'start' }],
+  ]);
+  assert.equal(document.activeElement?.id, 'agent-detail-title');
+  assert.equal(opener.getAttribute('aria-controls'), 'agent-detail');
+  assert.equal(opener.getAttribute('aria-expanded'), 'true');
 });

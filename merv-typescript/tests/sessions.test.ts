@@ -15,6 +15,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext, legacySchema = false, postgres = false) {
@@ -23,6 +24,7 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
     brokenBuild = false,
     largeBuild = false;
   let buildHook: ((tx: Transaction) => void | Promise<void>) | undefined;
+  let leaseCheckHook: (() => void | Promise<void>) | undefined;
   const schema = `merv_sessions_${randomUUID().replaceAll('-', '')}`;
   const state = postgres
     ? await PostgresState.open({ connectionString: process.env.MERV_TEST_POSTGRES_URL!, schema })
@@ -113,6 +115,7 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
             return { leaseId };
           },
           check: async ({ caller, tx }, receipt) => {
+            await leaseCheckHook?.();
             check(
               await tx.get(
                 'SELECT id FROM reservations WHERE id=? AND actor_id=? AND live=1',
@@ -230,6 +233,9 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
     onBuild(hook: (tx: Transaction) => void | Promise<void>) {
       buildHook = hook;
     },
+    onLeaseCheck(hook: () => void | Promise<void>) {
+      leaseCheckHook = hook;
+    },
     async reload() {
       handle.dispose();
       handle = await workflows.register(definition, policy());
@@ -250,7 +256,22 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
 
 test('offers reserve one worker, store only the digest, bind receipts to source and runner, and cannot issue worker tokens', async (t) => {
   const f = await fixture(t),
-    { input, token, session } = await f.offer();
+    token = secret();
+  const input = {
+    instanceId: (await f.instance()).id,
+    expectedRevision: 0,
+    runnerId: 'runner',
+    requestId: 'offer',
+    secret: token,
+  };
+  const supplied = { ...input },
+    source = { ...f.source };
+  const offering = f.sessions.offer(source, supplied);
+  Object.assign(source, f.owner);
+  Object.assign(supplied, { runnerId: 'replacement', secret: secret() });
+  const session = await offering;
+  assert.equal(session.source.actorId, f.source.actorId);
+  assert.equal(session.runnerId, input.runnerId);
   assert.equal(session.status, 'offered');
   assert.notEqual(session.actorId, f.source.actorId);
   assert.equal(session.source.kind, 'actor');
@@ -275,11 +296,11 @@ test('offers reserve one worker, store only the digest, bind receipts to source 
     async () => await f.sessions.heartbeat(f.source, { sessionId: session.id, runnerId: 'runner' }),
     { code: 'session_not_active' },
   );
-  const attached = await f.sessions.attach(f.source, {
-    sessionId: session.id,
-    runnerId: 'runner',
-    hostRef: 'host-a',
-  });
+  const attachment = { sessionId: session.id, runnerId: 'runner', hostRef: 'host-a' };
+  const pendingAttachment = f.sessions.attach(f.source, attachment);
+  Object.assign(attachment, { sessionId: 'missing', runnerId: 'other', hostRef: '' });
+  const attached = await pendingAttachment;
+  assert.equal(attached.hostRef, 'host-a');
   assert.equal(attached.activatedAt, null);
   await assert.rejects(
     async () =>
@@ -334,7 +355,10 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     1,
   );
   f.advance(60_000);
-  const beat = await f.sessions.heartbeat(f.source, { sessionId: session.id, runnerId: 'runner' });
+  const heartbeat = { sessionId: session.id, runnerId: 'runner' };
+  const pendingHeartbeat = f.sessions.heartbeat(f.source, heartbeat);
+  Object.assign(heartbeat, { sessionId: 'missing', runnerId: 'other' });
+  const beat = await pendingHeartbeat;
   assert.equal(Date.parse(beat.expiresAt), f.time() + 14_400_000);
   assert.ok(beat.expiresAt <= beat.hardDeadline);
   f.advance(14_400_001);
@@ -572,8 +596,16 @@ test('one invocation may finish its own handoff transaction, while later calls a
 test('frozen references survive reload, a prepared generation does not, and cancellation removes invocation authority', async (t) => {
   const f = await fixture(t),
     { token } = await f.offer();
-  const caller = await f.sessions.authenticate(token),
-    prepared = await f.sessions.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
+  const caller = await f.sessions.authenticate(token);
+  const input = { artifactId: 'frozen-artifact', options: { format: 'original' } };
+  const pending = f.sessions.prepare(caller, 'artifact.read', input);
+  input.artifactId = 'other-artifact';
+  input.options.format = 'changed';
+  const prepared = await pending;
+  assert.deepEqual(prepared.input, {
+    artifactId: 'frozen-artifact',
+    options: { format: 'original' },
+  });
   await assert.rejects(
     async () => await f.sessions.prepare(caller, 'artifact.read', { artifactId: 'other-artifact' }),
     { code: 'execution_arguments_forbidden' },
@@ -588,7 +620,29 @@ test('frozen references survive reload, a prepared generation does not, and canc
   const next = await f.sessions.prepare(restored, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
-  await f.sessions.validate(next.caller, next.tool, next.input);
+  const parsed = { ...next.input, options: { format: 'parsed' } };
+  const validatingCaller = structuredClone(next.caller);
+  const validating = f.sessions.validate(validatingCaller, next.tool, parsed);
+  validatingCaller.session!.invocationId = 'missing';
+  parsed.options.format = 'changed';
+  await validating;
+  await f.sessions.validate(next.caller, next.tool, {
+    ...next.input,
+    options: { format: 'parsed' },
+  });
+  let getters = 0;
+  const unsafe = Object.defineProperty({ options: { format: 'parsed' } }, 'artifactId', {
+    enumerable: true,
+    get() {
+      getters++;
+      return 'frozen-artifact';
+    },
+  });
+  for (const method of ['prepare', 'validate'] as const)
+    await assert.rejects(f.sessions[method](next.caller, next.tool, unsafe), {
+      code: 'invalid_input',
+    });
+  assert.equal(getters, 0);
   await f.sessions.cancel(next);
   await assert.rejects(async () => await f.sessions.validate(next.caller, next.tool, next.input), {
     code: 'session_invocation',
@@ -600,6 +654,53 @@ test('frozen references survive reload, a prepared generation does not, and canc
     f.sessions.run(forged, () => {}),
     { code: 'session_invocation' },
   );
+});
+
+test('session metadata and tool preparation cannot adopt a replacement worker', async (t) => {
+  const f = await fixture(t),
+    { token } = await f.offer();
+  const worker = await f.sessions.authenticate(token);
+  for (const method of ['describe', 'allowsTool', 'prepare'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...structuredClone(worker), actorId: 'missing' };
+      const pending =
+        method === 'describe'
+          ? f.sessions.describe(caller)
+          : method === 'allowsTool'
+            ? f.sessions.allowsTool(caller, 'artifact.read')
+            : f.sessions.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
+      Object.assign(caller, worker);
+      await assert.rejects(pending, { code: 'forbidden' });
+    });
+  }
+});
+
+test('tool policy replacement fences real session invocations and cleanup releases original authority', async (t) => {
+  const f = await fixture(t),
+    { token } = await f.offer();
+  const caller = await f.sessions.authenticate(token);
+  const access = new ExactToolPolicy(f.scope);
+  const dispose = access.registerSessions(f.sessions);
+  const prepared = await access.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
+  await access.validate(prepared.caller, prepared.tool, prepared.input);
+  dispose();
+  access.registerSessions(f.sessions);
+  let calls = 0;
+  await assert.rejects(
+    access.run(prepared, () => ++calls),
+    { code: 'session_unavailable' },
+  );
+  assert.equal(calls, 0);
+  await access.cancel(prepared);
+  await assert.rejects(f.sessions.validate(prepared.caller, prepared.tool, prepared.input), {
+    code: 'session_invocation',
+  });
+  const fresh = await access.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
+  try {
+    assert.equal(await access.run(fresh, () => ++calls), 1);
+  } finally {
+    await access.cancel(fresh);
+  }
 });
 
 test('failed packet construction rolls back worker creation and domain reservation', async (t) => {
@@ -736,6 +837,32 @@ const autoInput = (requestId = randomBytes(10).toString('hex')) => ({
   platform: { name: 'codex', harness: 'codex' as const },
 });
 
+test('dispatch controls and observations retain their original authorization', async (t) => {
+  const f = await fixture(t),
+    { session } = await f.offer();
+  const runner = await f.sessions.heartbeatRunner(f.source, presenceInput);
+  const operations: Record<string, (caller: Caller) => Promise<unknown>> = {
+    setDispatch: (caller) => f.sessions.setDispatch(caller, { enabled: true }),
+    halt: (caller) => f.sessions.halt(caller, { sessionId: session.id }),
+    setRunnerSettings: (caller) =>
+      f.sessions.setRunnerSettings(caller, { runnerId: runner.id, settings: { platforms: [] } }),
+    projectStatus: (caller) => f.sessions.projectStatus(caller),
+    liveSessionCount: (caller) => f.sessions.liveSessionCount(caller),
+    workspaceObservation: (caller) => f.sessions.workspaceObservation(caller, session.id),
+    agentObservation: (caller) => f.sessions.agentObservation(caller, session.agentId!),
+  };
+  for (const [name, operation] of Object.entries(operations)) {
+    await t.test(name, async () => {
+      const caller = { ...f.owner, actorId: 'missing' };
+      const pending = operation(caller);
+      Object.assign(caller, f.owner);
+      await assert.rejects(pending, { code: 'forbidden' });
+    });
+  }
+  assert.equal((await f.sessions.get(f.source, session.id)).status, 'offered');
+  assert.equal((await f.sessions.projectStatus(f.owner)).dispatch.enabled, false);
+});
+
 test('automatic dispatch moves past a candidate whose offer cannot be built', async (t) => {
   const f = await fixture(t);
   await f.instance();
@@ -774,8 +901,15 @@ test('automatic dispatch defaults off, pauses only new offers, and halt never re
   await assert.rejects(async () => await f.sessions.setDispatch(f.source, { enabled: true }), {
     code: 'forbidden',
   });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  const offered = (await f.sessions.lease(f.source, input)).session!;
+  const dispatch = { enabled: true };
+  const pendingDispatch = f.sessions.setDispatch(f.owner, dispatch);
+  dispatch.enabled = false;
+  assert.equal((await pendingDispatch).enabled, true);
+  const source = { ...f.source };
+  const pendingLease = f.sessions.lease(source, input);
+  Object.assign(source, f.owner);
+  const offered = (await pendingLease).session!;
+  assert.equal(offered.source.actorId, f.source.actorId);
   const worker = await f.sessions.authenticate(input.secret);
   await f.sessions.setDispatch(f.owner, { enabled: false });
   assert.equal((await f.scope.require(worker, 'write')).id, offered.actorId);
@@ -794,7 +928,11 @@ test('automatic dispatch defaults off, pauses only new offers, and halt never re
   assert.equal((await f.scope.require(f.source, 'write')).active, true);
   const next = (await f.sessions.lease(f.source, autoInput())).session!;
   assert.notEqual(next.actorId, offered.actorId);
-  assert.equal((await f.sessions.halt(f.owner, { sessionId: next.id })).halted, 1);
+  const halt = { sessionId: next.id, reason: 'stop this session' };
+  const pendingHalt = f.sessions.halt(f.owner, halt);
+  Object.assign(halt, { sessionId: undefined, reason: 'changed' });
+  assert.equal((await pendingHalt).halted, 1);
+  assert.equal((await f.sessions.get(f.source, next.id)).closeReason, 'stop this session');
   assert.equal(
     (await f.sessions.projectStatus(f.owner)).dispatch.enabled,
     true,
@@ -852,13 +990,30 @@ test('automatic leases need fresh source-bound presence, count offered capacity,
 test('server desired settings remain authoritative even when a runner claims they were applied', async (t) => {
   const f = await fixture(t);
   await f.instance();
-  const runner = await f.sessions.heartbeatRunner(f.source, presenceInput);
+  const source = { ...f.source };
+  const pendingPresence = f.sessions.heartbeatRunner(source, presenceInput);
+  Object.assign(source, f.owner);
+  const runner = await pendingPresence;
+  const registration = (await f.state.events(f.owner.projectId)).find(
+    (event) => event.type === 'session.runner_registered' && event.subjectId === runner.id,
+  )!;
+  assert.equal(registration.actorId, f.source.actorId);
   await f.sessions.setDispatch(f.owner, { enabled: true });
   const settings = {
     platforms: [{ name: 'codex', enabled: true, model: 'approved-model', parallelism: 1 }],
   };
-  const desired = await f.sessions.setRunnerSettings(f.owner, { runnerId: runner.id, settings });
+  const tuning = { runnerId: runner.id, settings: structuredClone(settings) };
+  const pendingSettings = f.sessions.setRunnerSettings(f.owner, tuning);
+  tuning.runnerId = 'missing';
+  tuning.settings.platforms[0].name = 'unknown';
+  const desired = await pendingSettings;
+  assert.deepEqual(desired.desiredSettings, settings);
   assert.equal(desired.desiredVersion, 1);
+  const unknown = structuredClone(tuning);
+  unknown.runnerId = runner.id;
+  const pendingUnknown = f.sessions.setRunnerSettings(f.owner, unknown);
+  unknown.settings.platforms[0].name = 'codex';
+  await assert.rejects(pendingUnknown, { code: 'unknown_platform' });
   assert.equal((await f.sessions.lease(f.source, autoInput())).reason, 'settings_pending');
   await f.sessions.heartbeatRunner(f.source, { ...presenceInput, appliedVersion: 1 });
   await assert.rejects(async () => await f.sessions.lease(f.source, autoInput()), {
@@ -1053,7 +1208,14 @@ test('a continuing agent keeps its identity and credential across explicit assig
     requestId: 'agent',
     secret: token,
   };
-  const agent = await f.sessions.registerAgent(f.source, registration);
+  const supplied = { ...registration },
+    source = { ...f.source };
+  const registering = f.sessions.registerAgent(source, supplied);
+  Object.assign(source, f.owner);
+  Object.assign(supplied, { name: 'Replacement', secret: secret() });
+  const agent = await registering;
+  assert.equal(agent.source.actorId, f.source.actorId);
+  assert.equal(agent.name, registration.name);
   assert.deepEqual(await f.sessions.registerAgent(f.source, registration), agent);
   assert.equal((await f.sessions.agentSelf(token)).current, null);
   await assert.rejects(async () => await f.sessions.authenticate(token), { code: 'agent_idle' });
@@ -1063,7 +1225,11 @@ test('a continuing agent keeps its identity and credential across explicit assig
   const first = await f.instance(),
     second = await f.instance();
   const firstInput = { instanceId: first.id, expectedRevision: 0, requestId: 'first' };
-  const a = await f.sessions.assignAgent(token, firstInput);
+  const assignmentInput = { ...firstInput };
+  const assigning = f.sessions.assignAgent(token, assignmentInput);
+  Object.assign(assignmentInput, { instanceId: second.id, requestId: 'replacement' });
+  const a = await assigning;
+  assert.equal(a.instanceId, first.id);
   assert.equal(a.agentId, agent.id);
   assert.equal(a.actorId, agent.actorId);
   const callerA = await f.sessions.authenticate(token);
@@ -1174,6 +1340,67 @@ test('a continuing agent keeps its identity and credential across explicit assig
       await f.state.read(async (sql) => await sql.all('SELECT * FROM agents')),
     ).includes(token),
   );
+});
+
+test('agent reads and retirement retain the original controlling source', async (t) => {
+  const f = await fixture(t);
+  const agent = await f.sessions.registerAgent(f.source, {
+    name: 'Owned agent',
+    runnerId: 'external',
+    requestId: 'agent',
+    secret: secret(),
+  });
+  for (const method of ['agents', 'agent', 'retireAgent'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...f.owner };
+      const pending =
+        method === 'agents' ? f.sessions.agents(caller) : f.sessions[method](caller, agent.id);
+      Object.assign(caller, f.source);
+      if (method === 'agents') assert.deepEqual(await pending, []);
+      else await assert.rejects(pending, { code: 'agent_forbidden' });
+    });
+  }
+  assert.equal((await f.sessions.agent(f.source, agent.id)).agent.status, 'active');
+});
+
+test('session reads and controls retain the original controlling source', async (t) => {
+  for (const method of ['list', 'get', 'attach', 'heartbeat', 'release'] as const) {
+    await t.test(method, async (t) => {
+      const f = await fixture(t),
+        { session, token } = await f.offer();
+      await f.sessions.authenticate(token);
+      const caller = { ...f.owner };
+      const control = { sessionId: session.id, runnerId: 'runner', hostRef: 'host' };
+      const pending =
+        method === 'list'
+          ? f.sessions.list(caller)
+          : method === 'get'
+            ? f.sessions.get(caller, session.id)
+            : f.sessions[method](caller, control);
+      Object.assign(caller, f.source);
+      if (method === 'list') assert.deepEqual(await pending, []);
+      else await assert.rejects(pending, { code: 'session_forbidden' });
+      assert.equal((await f.sessions.get(f.source, session.id)).status, 'active');
+    });
+  }
+});
+
+test('release retains its validated reason, outcome and session while pending', async (t) => {
+  const f = await fixture(t),
+    { session } = await f.offer();
+  const input = {
+    sessionId: session.id,
+    runnerId: 'runner',
+    reason: 'launch stopped',
+    outcome: 'launch_failed' as const,
+  };
+  const pending = f.sessions.release(f.source, input);
+  Object.assign(input, { sessionId: 'missing', runnerId: 'other', reason: '', outcome: 'invalid' });
+  const released = await pending;
+  assert.equal(released.id, session.id);
+  assert.equal(released.status, 'released');
+  assert.equal(released.closeReason, 'launch stopped');
+  assert.equal(released.outcome, 'launch_failed');
 });
 
 test('source revocation retires even an idle continuing agent; failed assignment does not leak ownership or alter identity', async (t) => {
@@ -1514,3 +1741,39 @@ test(
     await assert.rejects(f.sessions.agentSelf(token), { code: 'agent_retired' });
   },
 );
+
+for (const boundary of ['offer expiry', 'hard deadline'] as const) {
+  test(`activation refuses a lease that crosses its ${boundary} during acquisition checks`, async (t) => {
+    const f = await fixture(t);
+    const { token, session } = await f.offer();
+    let checks = 0;
+    f.onLeaseCheck(() => {
+      // Reconciliation checks first; activation checks the lease again.
+      if (++checks === 2)
+        f.advance(
+          Date.parse(boundary === 'offer expiry' ? session.expiresAt : session.hardDeadline) -
+            f.time(),
+        );
+    });
+    await assert.rejects(f.sessions.authenticate(token), { code: 'session_expired', status: 401 });
+    assert.equal(checks, 2);
+    assert.deepEqual(await f.workflows.workStarts(f.source, session.instanceId), []);
+    assert.equal(
+      (await f.state.events(session.projectId)).filter(
+        (event) => event.type === 'session.activated',
+      ).length,
+      0,
+    );
+    const closed = await f.sessions.get(f.source, session.id);
+    assert.equal(closed.status, 'expired');
+    assert.equal(closed.closeReason, 'session_expired');
+    assert.equal(
+      await f.state.read(
+        async (sql) =>
+          (await sql.get<{ live: number }>('SELECT live FROM reservations WHERE id=?', session.id))!
+            .live,
+      ),
+      0,
+    );
+  });
+}

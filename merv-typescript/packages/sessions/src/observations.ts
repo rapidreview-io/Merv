@@ -122,6 +122,7 @@ export class AgentObservations {
   }
 
   async read(caller: Caller, agentId: string): Promise<AgentObservation> {
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       check(!caller.session, 'session_forbidden', 'Workers cannot browse other agents', 403);

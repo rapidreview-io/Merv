@@ -222,6 +222,73 @@ async function fixture(t: TestContext) {
   };
 }
 
+test('Research requests retain their admitted caller and reflection inputs', async (t) => {
+  for (const method of ['get', 'list'] as const) {
+    await t.test(method, async (t) => {
+      const f = await fixture(t);
+      const record = await f.create();
+      const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+      const caller = { projectId: other.project.id, actorId: other.actor.id };
+      const authorize = f.app.ctx.scope.require.bind(f.app.ctx.scope);
+      t.mock.method(f.app.ctx.scope, 'require', async (...args: Parameters<typeof authorize>) => {
+        const result = await authorize(...args);
+        Object.assign(caller, f.owner);
+        return result;
+      });
+      if (method === 'get')
+        await assert.rejects(f.research.get(caller, record.id), { code: 'research_not_found' });
+      else assert.deepEqual(await f.research.list(caller), []);
+    });
+  }
+  for (const method of ['advance', 'replan', 'end'] as const) {
+    await t.test(method, async (t) => {
+      const f = await fixture(t);
+      await f.definition();
+      const record = await f.create();
+      const caller = await f.issue('producer');
+      const get = f.research.get.bind(f.research);
+      t.mock.method(f.research, 'get', async (...args: Parameters<typeof get>) => {
+        const result = await get(...args);
+        Object.assign(caller, f.owner);
+        return result;
+      });
+      const input = {
+        researchId: record.id,
+        expectedRevision: record.workflow.revision,
+        requestId: f.id(),
+      };
+      const changing =
+        method === 'advance'
+          ? f.research.advance(caller, input)
+          : method === 'replan'
+            ? f.research.replan(caller, { ...input, dependsOn: [] })
+            : f.research.end(caller, { ...input, outcome: 'abandoned', reason: 'Stop this cycle' });
+      await assert.rejects(changing, { code: 'forbidden' });
+      assert.equal((await get(f.owner, record.id)).workflow.revision, record.workflow.revision);
+    });
+  }
+  await t.test('creation', async (t) => {
+    const f = await fixture(t);
+    const producer = await f.issue('producer');
+    const caller = { ...f.owner };
+    const creating = f.research.create(caller, { name: 'Original', requestId: f.id() });
+    Object.assign(caller, producer);
+    assert.equal((await creating).ownerId, f.owner.actorId);
+  });
+  await t.test('reflection creation', async (t) => {
+    const f = await fixture(t);
+    const producer = await f.issue('producer');
+    const caller = { ...f.owner };
+    const input = { title: 'Original reflection', requestId: f.id() };
+    const reflecting = f.research.startReflection(caller, input);
+    Object.assign(caller, producer);
+    input.title = 'Replacement reflection';
+    const reflection = await reflecting;
+    assert.equal(reflection.ownerId, f.owner.actorId);
+    assert.equal(reflection.title, 'Original reflection');
+  });
+});
+
 test('failed Research activation releases its earlier workflow registration', async (t) => {
   const f = await fixture(t);
   f.research.close();

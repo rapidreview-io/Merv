@@ -82,15 +82,21 @@ function validateBinding(input: CredentialBinding): CredentialBinding {
 
 class CredentialSnapshot implements ResolvedCredential {
   #headers: Readonly<Record<string, string>>;
+  #current: () => void;
   constructor(
     readonly identityKey: string,
     headers: Record<string, string>,
+    current: () => void,
   ) {
     this.#headers = Object.freeze({ ...headers });
+    this.#current = current;
     Object.freeze(this);
   }
   headers(): Readonly<Record<string, string>> {
     return this.#headers;
+  }
+  assertCurrent(): void {
+    this.#current();
   }
   toJSON(): { identityKey: string } {
     return { identityKey: this.identityKey };
@@ -139,12 +145,11 @@ export class EnvironmentCredentials implements CredentialProvider {
       'A valid mount ID is required',
     );
     const authority = caller.session ? await this.#scope.authorityActor(caller) : undefined;
-    const binding = this.#bindings.get(
-      bindingKey(
-        authority ? { actorId: authority.id, projectId: authority.projectId } : caller,
-        mountId,
-      ),
+    const selection = bindingKey(
+      authority ? { actorId: authority.id, projectId: authority.projectId } : caller,
+      mountId,
     );
+    const binding = this.#bindings.get(selection);
     check(
       binding,
       'credential_forbidden',
@@ -178,10 +183,31 @@ export class EnvironmentCredentials implements CredentialProvider {
       'A Merv bearer credential cannot be used for an upstream service',
       503,
     );
+    // Local-token validation yields to storage. Do not return a snapshot of a
+    // binding or secret that was withdrawn while that validation was pending.
+    check(
+      this.#bindings.get(selection) === binding &&
+        process.env[binding.secretRef.slice(4)] === secret,
+      'credential_changed',
+      'Upstream credential changed during resolution',
+      409,
+    );
     const identityKey = `credential_${digest({ ...binding, secret })}`;
-    return new CredentialSnapshot(identityKey, {
-      ...binding.headers,
-      authorization: `Bearer ${secret}`,
-    });
+    return new CredentialSnapshot(
+      identityKey,
+      { ...binding.headers, authorization: `Bearer ${secret}` },
+      () => {
+        const current = this.#bindings.get(selection);
+        const currentSecret = current && process.env[current.secretRef.slice(4)];
+        check(
+          current &&
+            typeof currentSecret === 'string' &&
+            `credential_${digest({ ...current, secret: currentSecret })}` === identityKey,
+          'credential_changed',
+          'Upstream credential changed before dispatch',
+          409,
+        );
+      },
+    );
   }
 }

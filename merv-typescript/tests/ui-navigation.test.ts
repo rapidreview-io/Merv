@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildNavigation, topRows } from '../packages/ui/web/navigation.js';
-import type { Row } from '../packages/ui/web/shell-types.js';
+import {
+  accountLines,
+  buildNavigation,
+  documentTitle,
+  dormantOwner,
+  headed,
+  topRows,
+} from '../packages/ui/web/navigation.js';
+import type { PluginState, Row } from '../packages/ui/web/shell-types.js';
 
 const row = (id: string, kind: string, group: string, order: number, path = `/${id}`): Row => ({
   id,
@@ -122,4 +129,90 @@ test('plugin removal removes only its rows and re-addition restores navigation w
   assert.deepEqual(buildNavigation([extension, artifacts, tasks, feed]), initial);
   assert.deepEqual(buildNavigation([]), []);
   assert.deepEqual(buildNavigation([row('settings', 'settings', 'settings', 100)]), []);
+});
+
+test('a heading is drawn only where it names more than its one row already says', () => {
+  const labelled = (
+    id: string,
+    kind: string,
+    group: string,
+    order: number,
+    label: string,
+  ): Row => ({
+    ...row(id, kind, group, order),
+    label,
+  });
+  const sections = buildNavigation([
+    labelled('claims', 'claims', 'work', 15, 'Claims'),
+    labelled('artifacts', 'artifacts', 'work', 21, 'Files'),
+    labelled('sessions', 'sessions', 'work', 25, 'Sessions'),
+    labelled('feed', 'feed', 'activity', 30, 'Feed'),
+  ]);
+  assert.deepEqual(
+    sections.map((section) => [section.label, headed(section)]),
+    [
+      ['Research', true],
+      // One row, and a different word from its heading: the heading still says something.
+      ['Agents', true],
+      // Feed over Feed says the same word twice, so the row stands alone.
+      ['Feed', false],
+    ],
+  );
+  // The comparison is of words, not of bytes; a second row brings the heading back.
+  const feed = {
+    id: 'activity',
+    label: 'Feed',
+    rows: [labelled('feed', 'feed', 'activity', 30, ' feed ')],
+  };
+  assert.equal(headed(feed), false);
+  feed.rows.push(labelled('digest', 'feed', 'activity', 31, 'Digest'));
+  assert.equal(headed(feed), true);
+  assert.equal(headed({ id: 'empty', label: 'Empty', rows: [] }), true);
+});
+
+test('the account row prints the role only where it adds to the name', () => {
+  assert.deepEqual(accountLines('Operator', 'operator'), ['Operator']);
+  assert.deepEqual(accountLines('Ada Lovelace', 'operator'), ['Ada Lovelace', 'Operator']);
+  assert.deepEqual(accountLines('ada@example.org', 'reviewer'), ['ada@example.org', 'Reviewer']);
+  // An account nobody named is known by its role, written as a person writes it.
+  assert.deepEqual(accountLines(undefined, 'operator'), ['Operator']);
+});
+
+test('the document is titled by its page, its project and the app, each said once', () => {
+  assert.equal(documentTitle('Work', 'Grokking replication'), 'Work · Grokking replication · Merv');
+  // Home's heading is the project's name, and a page still loading has no heading yet.
+  assert.equal(
+    documentTitle('Grokking replication', 'Grokking replication'),
+    'Grokking replication · Merv',
+  );
+  assert.equal(documentTitle(undefined, 'Grokking replication'), 'Grokking replication · Merv');
+  assert.equal(documentTitle('  ', 'Merv'), 'Merv');
+});
+
+test('a missing page speaks of a plugin only where the shell can show one that is not active', () => {
+  const kinds = ['feed', 'claims', 'settings'];
+  const plugin = (id: string, state: string, name = `@merv/${id}`): PluginState => ({
+    id,
+    name,
+    state,
+  });
+  const rows = [row('claims', 'claims', 'work', 15)];
+  const plugins = [plugin('claims-ui', 'active'), plugin('feed-ui', 'disabled')];
+  assert.equal(dormantOwner('/feed', kinds, rows, plugins)?.id, 'feed-ui');
+  assert.equal(dormantOwner('/feed/post_1', kinds, rows, plugins)?.id, 'feed-ui');
+  // An entry is named by whoever configured it; the module it loads says what it is.
+  assert.equal(
+    dormantOwner('/feed', kinds, rows, [plugin('stream', 'failed', '@merv/feed/ui')])?.id,
+    'stream',
+  );
+  // A mistyped address, a kind this build cannot draw, a kind whose row is registered
+  // and a plugin that is running are none of them a plugin's absence.
+  assert.equal(dormantOwner('/nope', kinds, rows, plugins), undefined);
+  assert.equal(dormantOwner('/', kinds, rows, plugins), undefined);
+  assert.equal(
+    dormantOwner('/telemetry', kinds, rows, [plugin('telemetry-ui', 'disabled')]),
+    undefined,
+  );
+  assert.equal(dormantOwner('/claims/claim_1/extra', kinds, rows, plugins), undefined);
+  assert.equal(dormantOwner('/feed', kinds, rows, [plugin('feed-ui', 'active')]), undefined);
 });

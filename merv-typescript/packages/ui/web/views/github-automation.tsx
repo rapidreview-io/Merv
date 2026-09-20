@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
+import { StatusPill } from '../components';
 
 export function GitHubAutomation({
   status,
@@ -44,16 +45,19 @@ export function GitHubAutomation({
   };
   return (
     <section className="stack" aria-label="Repository automation">
-      <div>
+      {/* What agents may do is a pill, and the branch they do it against wears the branch's own. */}
+      <div className="cluster">
         <h3>Repository automation</h3>
-        <p className="muted">
-          {status.automation === 'off'
-            ? 'Off'
-            : status.automation === 'read'
-              ? 'Read only'
-              : 'Read and publish'}
-          {status.baseBranch ? ` · Base: ${status.baseBranch}` : ''}
-        </p>
+        <StatusPill
+          value={
+            status.automation === 'off'
+              ? 'off'
+              : status.automation === 'read'
+                ? 'read only'
+                : 'read and publish'
+          }
+        />
+        {status.baseBranch && <span className="branch branch--ref">{status.baseBranch}</span>}
       </div>
       {!status.automationConfigured && (
         <p className="muted">

@@ -1,0 +1,17 @@
+{
+  "origin": "Independent operator diagnostic, not a new experiment or pre-registered result.",
+  "draws": 10000,
+  "seed": 20260918,
+  "counts": {
+    "exact_integer_below_3pp": 2386,
+    "direct_ratio_float_below_3pp": 2386,
+    "difference_of_accuracies_below_3pp": 2392,
+    "exactly_3pp": 13
+  },
+  "interpretation": "A fraction of bootstrap draws below a threshold depends on exact tie handling. It is not a posterior probability of the true effect. These are post-hoc quantities and do not alter the primary point estimate or intervals.",
+  "unregistered_group_order_comparison": {
+    "group_order": "first appearance, not the frozen sorted order",
+    "below_3pp_count": 2432,
+    "one_sided_5th_percentile": 0.004098360655737654
+  }
+}

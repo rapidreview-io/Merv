@@ -1,5 +1,7 @@
 import { check } from '@merv/contracts';
 
+const identifierPart = /[a-zA-Z0-9_$\u0080-\uffff]/;
+
 /** Bind markers only: SQL strings, identifiers, comments and function bodies stay intact. */
 export function postgresParameters(sql: string, expected: number): string {
   let result = '';
@@ -10,7 +12,7 @@ export function postgresParameters(sql: string, expected: number): string {
     const char = sql[i];
     if (char === "'" || char === '"') {
       const escaped =
-        char === "'" && /[eE]/.test(sql[i - 1] ?? '') && !/[a-zA-Z0-9_$]/.test(sql[i - 2] ?? '');
+        char === "'" && /[eE]/.test(sql[i - 1] ?? '') && !identifierPart.test(sql[i - 2] ?? '');
       i++;
       while (i < sql.length) {
         if (escaped && sql[i] === '\\') {
@@ -23,8 +25,8 @@ export function postgresParameters(sql: string, expected: number): string {
         }
       }
     } else if (sql.startsWith('--', i)) {
-      const end = sql.indexOf('\n', i + 2);
-      i = end < 0 ? sql.length : end + 1;
+      const end = sql.slice(i + 2).search(/[\r\n]/);
+      i = end < 0 ? sql.length : i + end + 3;
     } else if (sql.startsWith('/*', i)) {
       i += 2;
       let depth = 1;
@@ -37,8 +39,10 @@ export function postgresParameters(sql: string, expected: number): string {
           i += 2;
         } else i++;
       }
-    } else if (char === '$') {
-      const delimiter = /^(\$[a-zA-Z_][a-zA-Z0-9_]*\$|\$\$)/.exec(sql.slice(i))?.[0];
+    } else if (char === '$' && !identifierPart.test(sql[i - 1] ?? '')) {
+      const delimiter = /^(\$[a-zA-Z_\u0080-\uffff][a-zA-Z0-9_\u0080-\uffff]*\$|\$\$)/.exec(
+        sql.slice(i),
+      )?.[0];
       if (delimiter) {
         const end = sql.indexOf(delimiter, i + delimiter.length);
         i = end < 0 ? sql.length : end + delimiter.length;

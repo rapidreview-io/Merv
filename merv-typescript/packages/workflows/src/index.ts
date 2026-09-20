@@ -46,6 +46,7 @@ import type {
   ProcessGraph,
 } from '@merv/contracts';
 import { processGraph } from './process.js';
+import { workflowJson } from './json.js';
 import { canonical, fingerprint, validateDefinition } from './definition.js';
 import {
   checkAssignment,
@@ -57,6 +58,7 @@ import {
 import { buildAssignment, readWorkStarts } from './assignments.js';
 import {
   admitDispatch,
+  dispatchInput,
   executionDisplay,
   executionFingerprint,
   executionReferences,
@@ -415,6 +417,7 @@ export class WorkflowsService implements Workflows {
   /** Computed from records on every read; a stored copy could only drift from them. */
   async process(caller: Caller, instanceId: string): Promise<ProcessGraph> {
     this.assertOpen();
+    caller = structuredClone(caller);
     const decision = await this.evaluate(caller, instanceId);
     const definition = this.catalog().find(
       (item) => item.name === decision.workflow && item.version === decision.version,
@@ -435,10 +438,11 @@ export class WorkflowsService implements Workflows {
   async evaluate(
     caller: Caller,
     instanceId: string,
-    query: WorkflowEvaluationInput = {},
+    { ...query }: WorkflowEvaluationInput = {},
     transaction?: Transaction,
   ): Promise<WorkflowDecision> {
     this.assertOpen();
+    caller = structuredClone(caller);
     check(
       query.input === undefined || typeof query.action === 'string',
       'invalid_input',
@@ -507,6 +511,7 @@ export class WorkflowsService implements Workflows {
     transaction?: Transaction,
     worker?: string,
   ): Promise<WorkflowDispatchCandidate[]> {
+    source = structuredClone(source);
     this.assertOpen();
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
@@ -605,9 +610,10 @@ export class WorkflowsService implements Workflows {
 
   async leaseRole(
     source: Caller,
-    target: WorkflowExecutionTarget,
+    { ...target }: WorkflowExecutionTarget,
     transaction?: Transaction,
   ): Promise<Role> {
+    source = structuredClone(source);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       const snapshot = await this.readSnapshot(tx, source.projectId, target.instanceId);
@@ -654,9 +660,10 @@ export class WorkflowsService implements Workflows {
   async offerLease(
     source: Caller,
     worker: Caller,
-    target: WorkflowExecutionTarget & { leaseId: string },
+    { ...target }: WorkflowExecutionTarget & { leaseId: string },
     transaction?: Transaction,
   ): Promise<WorkflowLeaseOffer> {
+    ({ source, worker } = structuredClone({ source, worker }));
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       await this.scope.require(worker, 'read', tx);
@@ -734,6 +741,8 @@ export class WorkflowsService implements Workflows {
     lease: WorkflowLease,
     transaction?: Transaction,
   ): Promise<WorkflowExecution> {
+    worker = structuredClone(worker);
+    lease = workflowJson(lease, 'invalid_lease', 400);
     return await inTransaction(this.state, transaction, async (tx) => {
       check(
         worker.actorId === lease.actorId &&
@@ -780,6 +789,8 @@ export class WorkflowsService implements Workflows {
     lease: WorkflowLease,
     transaction?: Transaction,
   ): Promise<WorkflowWorkStart> {
+    worker = structuredClone(worker);
+    lease = workflowJson(lease, 'invalid_lease', 400);
     return await inTransaction(this.state, transaction, async (tx) => {
       const execution = await this.checkLease(worker, lease, tx);
       const registration = this.definition(lease.workflow, lease.version);
@@ -803,9 +814,13 @@ export class WorkflowsService implements Workflows {
     worker: Caller,
     lease: WorkflowLease,
     frozen: WorkflowExecution,
-    input: { tool: string; input: Data; read?: boolean },
+    { ...input }: { tool: string; input: Data; read?: boolean },
     transaction?: Transaction,
   ): Promise<WorkflowDispatchAdmission> {
+    worker = structuredClone(worker);
+    lease = workflowJson(lease, 'invalid_lease', 400);
+    frozen = workflowJson(frozen, 'invalid_execution_target', 400);
+    input.input = dispatchInput(input.input);
     return await inTransaction(this.state, transaction, async (tx) => {
       const current = await this.checkLease(worker, lease, tx);
       check(
@@ -870,9 +885,10 @@ export class WorkflowsService implements Workflows {
 
   async releaseLease(
     lease: WorkflowLease,
-    input: { reason: string },
+    { ...input }: { reason: string },
     transaction?: Transaction,
   ): Promise<void> {
+    lease = executionMetadata(lease);
     await inTransaction(this.state, transaction, async (tx) => {
       check(
         typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 500,
@@ -887,7 +903,7 @@ export class WorkflowsService implements Workflows {
         'The pinned lease release authority is unavailable',
         503,
       );
-      await rule.lease.release({ lease: executionMetadata(lease), reason: input.reason, tx });
+      await rule.lease.release({ lease, reason: input.reason, tx });
       this.requireActive(registration);
     });
   }
@@ -902,9 +918,10 @@ export class WorkflowsService implements Workflows {
 
   async authorizeDispatch(
     caller: Caller,
-    dispatch: WorkflowExecutionDispatch,
+    { ...dispatch }: WorkflowExecutionDispatch,
     transaction?: Transaction,
   ): Promise<WorkflowDispatchAdmission> {
+    caller = structuredClone(caller);
     check(
       typeof dispatch.policyHash === 'string' &&
         /^[0-9a-f]{64}$/.test(dispatch.policyHash) &&
@@ -915,6 +932,7 @@ export class WorkflowsService implements Workflows {
       'invalid_execution_target',
       'A captured policy hash, registration generation and tool are required',
     );
+    dispatch.input = dispatchInput(dispatch.input);
     return await inTransaction(this.state, transaction, async (tx) => {
       const execution = await this.executionInternal(caller, dispatch, tx);
       return await this.admitRead(
@@ -930,10 +948,13 @@ export class WorkflowsService implements Workflows {
 
   private async executionInternal(
     caller: Caller,
-    target: WorkflowExecutionTarget &
+    {
+      ...target
+    }: WorkflowExecutionTarget &
       Partial<Pick<WorkflowExecutionDispatch, 'registrationId' | 'policyHash'>>,
     transaction?: Transaction,
   ): Promise<WorkflowExecution> {
+    caller = structuredClone(caller);
     this.assertOpen();
     check(
       typeof target.instanceId === 'string' && target.instanceId.length > 0,
@@ -1040,6 +1061,7 @@ export class WorkflowsService implements Workflows {
     transaction?: Transaction,
   ): Promise<WorkflowWorkStart[]> {
     this.assertOpen();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
@@ -1096,6 +1118,7 @@ export class WorkflowsService implements Workflows {
     transaction?: Transaction,
   ): Promise<WorkflowAssignment> {
     this.assertOpen();
+    caller = structuredClone(caller);
     check(
       typeof instanceId === 'string' && instanceId.length > 0,
       'invalid_instance',
@@ -1172,6 +1195,7 @@ export class WorkflowsService implements Workflows {
 
   async overview(caller: Caller): Promise<WorkflowOverview> {
     this.assertOpen();
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const rows = await tx.all<{ id: string }>(
@@ -1220,6 +1244,7 @@ export class WorkflowsService implements Workflows {
     transaction?: Transaction,
   ): ReturnType<Workflows['dependencies']> {
     this.assertOpen();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
@@ -1245,6 +1270,7 @@ export class WorkflowsService implements Workflows {
 
   async get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot> {
     this.assertOpen();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, tx, async (transaction) => {
       await this.scope.require(caller, 'read', transaction);
       return await this.readSnapshot(transaction, caller.projectId, instanceId);
@@ -1253,6 +1279,7 @@ export class WorkflowsService implements Workflows {
 
   async list(caller: Caller): Promise<WorkflowSnapshot[]> {
     this.assertOpen();
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return (
@@ -1266,6 +1293,7 @@ export class WorkflowsService implements Workflows {
 
   async history(caller: Caller, instanceId: string): Promise<WorkflowHistoryEntry[]> {
     this.assertOpen();
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
@@ -1301,11 +1329,12 @@ export class WorkflowsService implements Workflows {
 
   private async startInternal(
     caller: Caller,
-    input: WorkflowStart,
+    { ...input }: WorkflowStart,
     tx?: Transaction,
     owner?: Registration,
   ): Promise<WorkflowSnapshot> {
     this.assertOpen();
+    caller = structuredClone(caller);
     this.requestId(input.requestId);
     check(
       typeof input.workflow === 'string' && input.workflow.length > 0,
@@ -1404,11 +1433,12 @@ export class WorkflowsService implements Workflows {
 
   private async transitionInternal(
     caller: Caller,
-    input: WorkflowTransition,
+    { ...input }: WorkflowTransition,
     tx?: Transaction,
     owner?: Registration,
   ): Promise<WorkflowSnapshot> {
     this.assertOpen();
+    caller = structuredClone(caller);
     this.requestId(input.requestId);
     check(
       typeof input.instanceId === 'string' && input.instanceId.length > 0,
@@ -1525,11 +1555,12 @@ export class WorkflowsService implements Workflows {
 
   private async addDependenciesInternal(
     caller: Caller,
-    input: WorkflowAddDependencies,
+    { ...input }: WorkflowAddDependencies,
     owner: Registration,
     transaction?: Transaction,
   ): Promise<WorkflowSnapshot> {
     this.assertOpen();
+    caller = structuredClone(caller);
     this.requestId(input.requestId);
     check(
       typeof input.instanceId === 'string' && input.instanceId.length > 0,
@@ -1618,11 +1649,12 @@ export class WorkflowsService implements Workflows {
 
   private async upgradeInternal(
     caller: Caller,
-    input: WorkflowUpgrade,
+    { ...input }: WorkflowUpgrade,
     target: Registration,
     tx?: Transaction,
   ): Promise<WorkflowSnapshot> {
     this.assertOpen();
+    caller = structuredClone(caller);
     this.requestId(input.requestId);
     check(
       typeof input.instanceId === 'string' && input.instanceId.length > 0,
@@ -1933,17 +1965,13 @@ export class WorkflowsService implements Workflows {
   }
 
   private data(value?: Data): Data {
-    const data = value ?? {};
+    const data = workflowJson(value ?? {}, 'invalid_data', 400);
     check(
-      typeof data === 'object' &&
-        data !== null &&
-        !Array.isArray(data) &&
-        Object.getPrototypeOf(data) === Object.prototype,
+      typeof data === 'object' && data !== null && !Array.isArray(data),
       'invalid_data',
       'Workflow data must be a JSON object',
     );
-    // Detach external references so returned data cannot alter committed snapshots.
-    return JSON.parse(canonical(data)) as Data;
+    return data;
   }
 
   close(): void {

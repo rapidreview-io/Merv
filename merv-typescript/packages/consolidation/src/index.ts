@@ -209,8 +209,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       }
     };
   }
-  private open() {
+  private capture(caller: Caller): Caller {
     check(!this.closed, 'consolidation_unavailable', 'Consolidation is unavailable', 503);
+    return structuredClone(caller);
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<Row> {
     const row = await tx.get<Row>(
@@ -243,7 +244,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     return stored;
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<ConsolidationRecord> {
-    this.open();
+    caller = this.capture(caller);
     parse(getSchema, { consolidationId: id });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
@@ -263,7 +264,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     });
   }
   async list(caller: Caller, transaction?: Transaction): Promise<ConsolidationRecord[]> {
-    this.open();
+    caller = this.capture(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
@@ -282,7 +283,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     value: ConsolidationCreate,
     transaction?: Transaction,
   ): Promise<ConsolidationRecord> {
-    this.open();
+    caller = this.capture(caller);
     const input = parse(createSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -349,16 +350,14 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     id: string,
     transaction?: Transaction,
   ): Promise<ConsolidationRecord> {
-    return await inTransaction(this.state, transaction, async (tx) => {
-      const record = await this.get(caller, id, tx);
-      check(
-        record.workflow.state === 'complete' && record.completion,
-        'consolidation_not_approved',
-        'An independently approved consolidation is required',
-        409,
-      );
-      return record;
-    });
+    const record = await this.get(caller, id, transaction);
+    check(
+      record.workflow.state === 'complete' && record.completion,
+      'consolidation_not_approved',
+      'An independently approved consolidation is required',
+      409,
+    );
+    return record;
   }
   private revision(record: ConsolidationRecord, expected: number) {
     check(
@@ -605,7 +604,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     value: ConsolidationEnd,
     transaction?: Transaction,
   ): Promise<ConsolidationRecord> {
-    this.open();
+    caller = this.capture(caller);
     const input = parse(endSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -639,7 +638,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     value: ConsolidationSubmit,
     transaction?: Transaction,
   ): Promise<ConsolidationRecord> {
-    this.open();
+    caller = this.capture(caller);
     const input = parse(submitSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -779,7 +778,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     input: ReviewApplication,
     tx: Transaction,
   ): Promise<ConsolidationRecord> {
-    this.open();
+    caller = this.capture(caller);
     await this.scope.require(caller, 'review', tx);
     return await this.command(caller, 'review', input, tx, async () => {
       const review = await this.reviews.get(caller, input.reviewId, tx);

@@ -167,6 +167,17 @@ test('artifacts retain exact bytes, reject mutation, scope reads and detect corr
       await artifacts.get({ actorId: other.actor.id, projectId: other.project.id }, value.id),
     /not found/,
   );
+  const pendingCaller = { ...caller };
+  const creating = artifacts.create(pendingCaller, {
+    title: 'Pinned',
+    content: 'Original project',
+  });
+  pendingCaller.actorId = other.actor.id;
+  pendingCaller.projectId = other.project.id;
+  const pinned = await creating;
+  assert.equal(pinned.projectId, caller.projectId);
+  assert.equal(pinned.createdBy, caller.actorId);
+  assert.equal((await artifacts.read(caller, pinned.id)).content, 'Original project');
   await assert.rejects(async () => await blobs.get('../escape', value.hash), /namespace/);
   await assert.rejects(
     async () =>
@@ -189,6 +200,52 @@ test('artifacts retain exact bytes, reject mutation, scope reads and detect corr
     'tampered',
   );
   await assert.rejects(async () => await artifacts.read(caller, value.id), /integrity/);
+});
+test('artifact queries retain the project checked during authorization', async (t) => {
+  const { artifacts, caller, scope } = await fixture(t);
+  const own = await artifacts.create(caller, { title: 'Own', content: 'Own evidence' });
+  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const secret = await artifacts.create(
+    { actorId: other.actor.id, projectId: other.project.id },
+    { title: 'Private', content: 'Other project evidence' },
+  );
+  const changing = { ...caller };
+  const authorize = scope.require.bind(scope);
+  t.mock.method(scope, 'require', async (...args: Parameters<typeof authorize>) => {
+    const actor = await authorize(...args);
+    changing.projectId = other.project.id;
+    return actor;
+  });
+  await assert.rejects(artifacts.get(changing, secret.id), { code: 'not_found' });
+  changing.projectId = caller.projectId;
+  assert.deepEqual(await artifacts.list(changing), [own]);
+});
+test('artifact reads cannot replace a revoked caller while storage is pending', async (t) => {
+  const { artifacts, blobs, caller, state, scope } = await fixture(t);
+  const artifact = await artifacts.create(caller, { title: 'Evidence', content: 'Retained' });
+  for (const mode of ['read', 'download'] as const) {
+    const reader = await scope.issueActor(caller, { name: mode, role: 'reader' });
+    const changing = { actorId: reader.actor.id, projectId: caller.projectId };
+    const replace = async () => {
+      await scope.revokeActor(caller, reader.actor.id);
+      changing.actorId = caller.actorId;
+    };
+    const store = await createService(
+      new ArtifactStore(state, scope, {
+        put: blobs.put.bind(blobs),
+        get: async (namespace, hash) => {
+          const bytes = await blobs.get(namespace, hash);
+          await replace();
+          return bytes;
+        },
+        download: async () => {
+          await replace();
+          return { url: 'https://storage.example/download', expiresAt: '2099-01-01T00:00:00.000Z' };
+        },
+      }),
+    );
+    await assert.rejects(store[mode](changing, artifact.id), { code: 'forbidden' });
+  }
 });
 test('Cordis activates independent components from declared dependencies and unwinds provider withdrawal', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'merv-cordis-'));

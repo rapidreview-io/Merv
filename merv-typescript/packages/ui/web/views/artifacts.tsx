@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { call, useScopeVersion, useTool } from '../api';
-import { Ago, KV, LoadState, RecordPage, stamp } from '../components';
+import { Ago, KV, LoadState, RecordPage, Short, timeRows } from '../components';
+import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { ThreeStates } from '../states';
+import { MAX_READ, Markdown } from '../markdown';
 import { useSession } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
@@ -31,6 +32,44 @@ export const bytes = (n: number) =>
     : n < 1_048_576
       ? `${(n / 1024).toFixed(1)} KB`
       : `${(n / 1_048_576).toFixed(1)} MB`;
+
+/** artifact.create keeps a file of one byte to this many, and nothing outside that. */
+export const MAX_FILE = 2_000_000;
+/** What the end of a name says of a file the browser could not type. */
+const ENDING_TYPES: [RegExp, string][] = [
+  [/\.(md|markdown|mdx)$/i, 'text/markdown'],
+  [/\.json$/i, 'application/json'],
+  [/\.csv$/i, 'text/csv'],
+  [/\.tsv$/i, 'text/tab-separated-values'],
+  [/\.(txt|log|jsonl|ndjson|ya?ml|toml|py|r|sh|tex|rst|diff|patch)$/i, 'text/plain'],
+];
+const MEDIA_TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
+/** Bytes as base64, a stretch at a time: one call takes far fewer arguments than a file has bytes. */
+const base64 = (data: Uint8Array) => {
+  let binary = '';
+  for (let at = 0; at < data.length; at += 0x8000)
+    binary += String.fromCharCode(...data.subarray(at, at + 0x8000));
+  return btoa(binary);
+};
+/**
+ * A file from the reader's own disk, as artifact.create takes it. The bytes travel as
+ * base64 whatever they are, so nothing here guesses at an encoding and the server
+ * keeps exactly what was chosen. The type is the browser's word for it; where the
+ * browser has none the end of the name says it, because a file retained as text is
+ * one the app can read in place, and what neither names is plain bytes.
+ */
+export async function fileInput(file: File) {
+  const said = file.type.toLowerCase().split(';')[0]!.trim();
+  return {
+    title: file.name.trim().slice(0, 300) || 'File',
+    content: base64(new Uint8Array(await file.arrayBuffer())),
+    encoding: 'base64',
+    mediaType: MEDIA_TYPE.test(said)
+      ? said
+      : (ENDING_TYPES.find(([ending]) => ending.test(file.name))?.[1] ??
+        'application/octet-stream'),
+  };
+}
 
 /** URLs are issued on demand and discarded when their account/project or artifact changes. */
 function ArtifactDownload({ artifactId }: { artifactId: string }) {
@@ -94,13 +133,112 @@ function ArtifactDownload({ artifactId }: { artifactId: string }) {
   );
 }
 
-function InlineArtifact({ artifactId }: { artifactId: string }) {
+/** What a media type is called by a person, where the subtype alone would not say it. */
+const TYPE_NAMES: Record<string, string> = {
+  'text/markdown': 'Markdown',
+  'text/x-markdown': 'Markdown',
+  'text/plain': 'Text',
+  'text/csv': 'CSV',
+  'text/tab-separated-values': 'TSV',
+  'text/javascript': 'JavaScript',
+  'application/javascript': 'JavaScript',
+  'application/json': 'JSON',
+  'application/jsonl': 'JSON Lines',
+  'application/x-ndjson': 'JSON Lines',
+  'application/x-ipynb+json': 'Notebook',
+  'application/octet-stream': 'Binary',
+  'application/zip': 'ZIP archive',
+  'application/gzip': 'Gzip archive',
+  'application/x-tar': 'Tar archive',
+  'image/svg+xml': 'SVG image',
+};
+/** A type that says nothing of the kind leaves the end of the name to say it. */
+const ENDING_NAMES: [RegExp, string][] = [
+  [/\.(md|markdown|mdx)$/i, 'Markdown'],
+  [/\.(jsonl|ndjson)$/i, 'JSON Lines'],
+  [/\.json$/i, 'JSON'],
+  [/\.csv$/i, 'CSV'],
+  [/\.tsv$/i, 'TSV'],
+  [/\.ya?ml$/i, 'YAML'],
+  [/\.ipynb$/i, 'Notebook'],
+  [/\.py$/i, 'Python'],
+  [/\.log$/i, 'Log'],
+];
+const VAGUE = new Set(['', 'text/plain', 'application/octet-stream']);
+
+export interface FileType {
+  /** The short human word for it: Markdown, JSON, PNG image. */
+  label: string;
+  icon: IconName;
+  /** How the body is read where it is shown: as a document, as indented JSON, or as it is. */
+  reads: 'markdown' | 'json' | 'text';
+}
+/**
+ * What a file is, said once for the list, the record and the document head: a glyph
+ * and a short word instead of the media type, which stays in hover titles for whoever
+ * needs the machine's name for it. A type nobody listed is named from its own subtype
+ * (`image/png` is a PNG image, `text/x-python` is Python), so nothing reads as a MIME string.
+ */
+export function fileType(file: { mediaType?: string | null; title?: string | null }): FileType {
+  const type = (file.mediaType ?? '').toLowerCase().split(';')[0]!.trim();
+  const name = file.title ?? '';
+  const ending = VAGUE.has(type) && ENDING_NAMES.find(([pattern]) => pattern.test(name))?.[1];
+  const [family = '', subtype = ''] = type.split('/');
+  const bare = subtype.replace(/^(x-|vnd\.)/, '').replace(/\+\w+$/, '');
+  const word = bare.length <= 4 ? bare.toUpperCase() : bare[0]!.toUpperCase() + bare.slice(1);
+  const derived = /\+json$/.test(subtype)
+    ? 'JSON'
+    : /\+xml$/.test(subtype)
+      ? 'XML'
+      : ['image', 'audio', 'video', 'font'].includes(family) && word
+        ? `${word} ${family}`
+        : word.replaceAll(/[._-]+/g, ' ') || 'File';
+  const label = ending || TYPE_NAMES[type] || derived;
+  return {
+    label,
+    icon: fileIcon(type, name),
+    reads: label === 'Markdown' ? 'markdown' : label === 'JSON' ? 'json' : 'text',
+  };
+}
+
+/** The glyph says the type; the word for it is its name and its hover title. */
+const TypeGlyph = ({ type, size }: { type: FileType; size?: number }) => (
+  <span className="file-glyph" role="img" aria-label={type.label} title={type.label}>
+    <Icon name={type.icon} size={size} />
+  </span>
+);
+
+/** JSON as a person reads it; what does not parse stays exactly as it was written. */
+function indented(content: string): string {
+  try {
+    return JSON.stringify(JSON.parse(content), null, 2);
+  } catch {
+    return content;
+  }
+}
+
+function InlineArtifact({
+  artifactId,
+  reads,
+}: {
+  artifactId: string;
+  reads: FileType['reads'] | 'source';
+}) {
   const read = useTool<ArtifactContent>('artifact.read', { artifactId });
+  const content = read.data?.encoding === 'utf8' ? read.data.content : undefined;
+  const shown = useMemo(
+    () => (content !== undefined && reads === 'json' ? indented(content) : content),
+    [content, reads],
+  );
   if (!read.data) return <LoadState loading={read.loading} error={read.error} />;
-  return read.data.encoding === 'utf8' ? (
-    <pre className="doc">{read.data.content}</pre>
+  if (shown === undefined)
+    return <div className="empty">Binary file · {bytes(read.data.artifact.size)}</div>;
+  return reads === 'markdown' ? (
+    <div className="doc-read">
+      <Markdown source={shown} />
+    </div>
   ) : (
-    <div className="empty">Binary file · {bytes(read.data.artifact.size)}</div>
+    <pre className="doc">{shown}</pre>
   );
 }
 
@@ -112,33 +250,102 @@ function Take({ artifact }: { artifact: Artifact }) {
 }
 
 /**
- * Only small files enter the inline content path; a large one is taken from
- * storage by the control that sits with the file it copies.
+ * A file read where it stands. Only small files enter the inline content path; a
+ * large one is taken from storage by the control that sits with the file it copies.
+ * The head names the file by its glyph and its title, and keeps its weight quiet at
+ * the far end. Where something above it has already said the name, the head says the
+ * word for the type instead: the file's own page, whose heading is the title, and a
+ * cited file, whose disclosure is — that one keeps the way to the file's page as a
+ * glyph. A Markdown file is read as a document, and the one control on the head
+ * turns it back into the text its author typed.
  */
 export function ArtifactBody({
   artifactId,
   metadata,
+  named,
 }: {
   artifactId: string;
   metadata?: Artifact;
+  /** Who has already said the title: the file's own `page`, or the disclosure that `cited` it. */
+  named?: 'page' | 'cited';
 }) {
   const scope = useScopeVersion();
+  const [source, setSource] = useState(false);
   const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
   const artifact = metadata ?? meta.data;
   if (!artifact) return <LoadState loading={meta.loading} error={meta.error} />;
+  const type = fileType(artifact);
+  const inline = artifact.size <= 2_000_000;
   return (
     <div className="doc-frame">
       <div className="doc-head">
-        <Link to={`/artifacts/${artifact.id}`}>{artifact.title}</Link>
-        <span className="faint">
-          {artifact.mediaType} · {bytes(artifact.size)}
+        <span className="doc-name">
+          <TypeGlyph type={type} />
+          {named ? (
+            <span className="muted" title={artifact.mediaType}>
+              {type.label}
+            </span>
+          ) : (
+            <Link to={`/artifacts/${artifact.id}`}>{artifact.title}</Link>
+          )}
+        </span>
+        <span className="doc-tools">
+          <span className="faint tabular">{bytes(artifact.size)}</span>
+          {/* Past the length a document is read at, its source is already what is shown. */}
+          {inline && type.reads === 'markdown' && artifact.size <= MAX_READ && (
+            <button
+              type="button"
+              className="btn-icon"
+              aria-pressed={source}
+              aria-label="View source"
+              title="View source"
+              onClick={() => setSource(!source)}
+            >
+              <SourceIcon />
+            </button>
+          )}
+          {named === 'cited' && (
+            <Link
+              className="btn-icon"
+              to={`/artifacts/${artifact.id}`}
+              aria-label={`Open ${artifact.title}`}
+              title="Open file"
+            >
+              <ArrowRightIcon />
+            </Link>
+          )}
         </span>
       </div>
-      {artifact.size <= 2_000_000 && (
-        <InlineArtifact key={`${scope}:${artifactId}`} artifactId={artifactId} />
+      {inline && (
+        <InlineArtifact
+          key={`${scope}:${artifactId}`}
+          artifactId={artifactId}
+          reads={source ? 'source' : type.reads}
+        />
       )}
       <Take artifact={artifact} />
     </div>
+  );
+}
+
+/**
+ * A file's standing on a row: what it is, its exact weight, its keeper and its age, on
+ * one line that never breaks inside a fact. Beside an open record the list is a
+ * column wide, so the keeper's name is the one part that gives way, to an ellipsis;
+ * each separator belongs to the fact after it, so none is ever left hanging.
+ */
+function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
+  const type = fileType(file);
+  return (
+    <span className="file-meta">
+      <span className="file-type" title={file.mediaType}>
+        <Icon name={type.icon} size={14} />
+        {type.label}
+      </span>
+      <span className="tabular">{bytes(file.size)}</span>
+      {keeper && <span className="file-keeper">{keeper}</span>}
+      <Ago at={file.createdAt} />
+    </span>
   );
 }
 
@@ -148,7 +355,7 @@ function ArtifactList() {
   const { actor } = useSession();
   const filter = useListFilter(list.data, {
     mine: (a) => a.createdBy === actor.id,
-    labels: (a) => [a.title, a.mediaType, nameOf(a.createdBy)],
+    labels: (a) => [a.title, fileType(a).label, a.mediaType, nameOf(a.createdBy)],
     ids: (a) => [a.id, a.createdBy],
   });
   return (
@@ -163,16 +370,7 @@ function ArtifactList() {
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({
         name: <strong>{a.title}</strong>,
-        standing: (
-          <ThreeStates
-            meta={
-              <>
-                <span className="mono wrap">{a.mediaType}</span> · {bytes(a.size)} ·{' '}
-                {nameOf(a.createdBy)} · <Ago at={a.createdAt} />
-              </>
-            }
-          />
-        ),
+        standing: <FileMeta file={a} keeper={nameOf(a.createdBy)} />,
       })}
     />
   );
@@ -189,21 +387,21 @@ function ArtifactDetail({ row }: ViewProps) {
       </div>
     );
   const a = meta.data;
+  const author = nameOf(a.createdBy);
   return (
     <RecordPage
       back={<Link to={row.path}>← {row.label}</Link>}
       kind={row.view.kind}
       name={a.title}
       title="Document"
-      content={<ArtifactBody artifactId={a.id} metadata={a} />}
+      content={<ArtifactBody artifactId={a.id} metadata={a} named="page" />}
+      // What the file is and what it weighs stand on the head of the document above.
       details={
         <KV
           rows={[
-            ['Media type', <span className="mono">{a.mediaType}</span>],
-            ['Size', bytes(a.size)],
-            ['Hash', <span className="mono faint">{a.hash.slice(0, 16)}…</span>],
-            ['Created by', nameOf(a.createdBy)],
-            ['Created', stamp(a.createdAt)],
+            !!author && ['Author', author],
+            ...timeRows(a.createdAt),
+            ['Hash', <Short value={a.hash} copy="Copy hash" />],
           ]}
         />
       }

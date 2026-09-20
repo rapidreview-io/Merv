@@ -1,4 +1,4 @@
-import { visible, recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { isUtf8 } from 'node:buffer';
@@ -13,6 +13,7 @@ import {
   type Caller,
   type State,
   type Scope,
+  type Sql,
   type Blobs,
   type Transaction,
 } from '@merv/contracts';
@@ -48,6 +49,9 @@ export class ArtifactStore implements Artifacts {
     };
   }
   async create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact> {
+    caller = structuredClone(caller);
+    // Metadata must come from the same validated input as the bytes handed to storage.
+    input = plain<ArtifactInput>(input, 'invalid_artifact');
     await this.scope.require(caller, 'write', tx);
     check(
       typeof input.title === 'string' && input.title.length <= 300,
@@ -116,25 +120,20 @@ export class ArtifactStore implements Artifacts {
     });
   }
   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {
+    caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
-    const row = tx
-      ? await tx.get(
-          'SELECT * FROM artifacts WHERE id=? AND project_id=?',
-          artifactId,
-          caller.projectId,
-        )
-      : await this.state.read(
-          async (sql) =>
-            await sql.get(
-              'SELECT * FROM artifacts WHERE id=? AND project_id=?',
-              artifactId,
-              caller.projectId,
-            ),
-        );
+    const lookup = async (sql: Sql) =>
+      await sql.get(
+        'SELECT * FROM artifacts WHERE id=? AND project_id=?',
+        artifactId,
+        caller.projectId,
+      );
+    const row = await (tx ? lookup(tx) : this.state.read(lookup));
     check(row, 'not_found', 'Artifact not found in this project', 404);
     return fromRow(row);
   }
   async authored(caller: Caller, transaction?: Transaction): Promise<Artifact[]> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const actor = await this.scope.require(caller, 'read', tx);
       check(
@@ -159,6 +158,7 @@ export class ArtifactStore implements Artifacts {
     return typeof this.blobs.download === 'function';
   }
   async download(caller: Caller, artifactId: string) {
+    caller = structuredClone(caller);
     const artifact = await this.get(caller, artifactId);
     check(
       this.blobs.download,
@@ -172,6 +172,7 @@ export class ArtifactStore implements Artifacts {
     return { artifact, download };
   }
   async read(caller: Caller, artifactId: string) {
+    caller = structuredClone(caller);
     const artifact = await this.get(caller, artifactId);
     check(
       artifact.size <= 2_000_000,
@@ -192,6 +193,7 @@ export class ArtifactStore implements Artifacts {
     return { artifact, content: bytes.toString(encoding), encoding };
   }
   async list(caller: Caller): Promise<Artifact[]> {
+    caller = structuredClone(caller);
     await this.scope.require(caller, 'read');
     return await this.state.read(async (sql) =>
       (

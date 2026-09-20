@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "dispatchChecks": [
+    "Automatic dispatch starts disabled and creates no lease",
+    "producer: server selected the revision, retry retained one lease, pause preserved it",
+    "reviewer: server selected the revision, retry retained one lease, pause preserved it",
+    "Human operator can inspect machine-key jobs; done task is absent from the queue"
+  ]
+}

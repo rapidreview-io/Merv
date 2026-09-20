@@ -277,22 +277,22 @@ export class UserKeys {
       expiresAt?: string | null;
     },
   ): Promise<IssuedUserKey> {
-    const grantScope = input.grantScope === undefined ? 'project' : input.grantScope;
+    const { projectId, grantScope = 'project', label, expiresAt } = input;
     check(
       grantScope === 'project' || grantScope === 'account',
       'invalid_grant',
       'Unknown key grant',
     );
     check(
-      input.label === undefined ||
-        input.label === null ||
-        (typeof input.label === 'string' && visible(input.label) && input.label.length <= 120),
+      label === undefined ||
+        label === null ||
+        (typeof label === 'string' && visible(label) && label.length <= 120),
       'invalid_label',
       'Key label must be nonblank text of 1–120 characters or null',
     );
     return await this.state.transaction(async (tx) => {
       const human = await this.members.human(principal, tx);
-      const caller = await this.members.resolve(human, input.projectId, tx);
+      const caller = await this.members.resolve(human, projectId, tx);
       const time = this.time();
       const issued = await this.issue(
         tx,
@@ -300,8 +300,8 @@ export class UserKeys {
           owner: { issuer: human.user.issuer, subject: human.user.subject },
           projectId: caller.projectId,
           grantScope,
-          label: input.label?.trim() ?? null,
-          expiresAt: expiry(input.expiresAt, time),
+          label: label?.trim() ?? null,
+          expiresAt: expiry(expiresAt, time),
           previousId: null,
         },
         time,
@@ -343,7 +343,7 @@ export class UserKeys {
 
   async rotate(
     principal: Principal,
-    input: { keyId: string; expiresAt?: string | null },
+    { ...input }: { keyId: string; expiresAt?: string | null },
   ): Promise<IssuedUserKey> {
     return await this.state.transaction(async (tx) => {
       const previous = await this.owned(tx, principal, input.keyId);
@@ -353,7 +353,6 @@ export class UserKeys {
         'User key is already revoked or rotated',
         409,
       );
-      const time = this.time();
       let authorizationProject = previous.project_id;
       if (previous.grant_scope === 'account') {
         const membership = await tx.get<{ project_id: string }>(
@@ -372,6 +371,7 @@ export class UserKeys {
         authorizationProject = membership.project_id;
       }
       await this.members.resolve(principal, authorizationProject, tx);
+      const time = this.time();
       const expiresAt = expiry(
         input.expiresAt === undefined ? previous.expires_at : input.expiresAt,
         time,

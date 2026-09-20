@@ -11,21 +11,22 @@ import type {
 } from '@merv/contracts/types';
 import { accountRequest, useTool } from '../api';
 import {
-  ActorSplit,
   Ago,
   ConfirmAction,
   Countdown,
   KV,
   KindLabel,
   Live,
+  Ruled,
+  Stamp,
   StatusPill,
-  Table,
   col,
-  stamp,
+  cx,
   term,
   useNow,
   type KVRow,
 } from '../components';
+import { ArrowRightIcon } from '../icons';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 import {
@@ -39,9 +40,11 @@ import {
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
-import { AgentDetail, activity } from './agent-sessions-panel';
+import { AgentDetail, activity, workName } from './agent-sessions-panel';
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** How much of a list this read holds: all of it, or the newest part of a larger total. */
+const portion = (shown: number, total: number) => (total > shown ? `${shown} of ${total}` : total);
 const platformPhrase = (platform: NonNullable<SessionSummary['platform']>) =>
   [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
 /** What a runner offers, in its own order; a platform it has paused says so. */
@@ -50,14 +53,14 @@ const platformList = (platforms: RunnerPlatform[]) =>
     .map(
       (one) => `${one.name}${one.model ? ` · ${one.model}` : ''}${one.enabled ? '' : ' (paused)'}`,
     )
-    .join(', ') || 'None';
+    .join(', ') || <span className="ghost">—</span>;
 const workspacePhrase = ({ workspace, workspaceMode }: SessionSummary) => {
   if (!workspace)
     return workspaceMode === 'none' ? 'none · scratch' : `${term(workspaceMode)} · not attached`;
   const result = workspace.result;
   return [
     `${term(workspace.attachment.mode)} · ${result ? 'captured' : 'attached'}`,
-    (result ?? workspace.attachment).headOid,
+    (result ?? workspace.attachment).headOid.slice(0, 7),
     result && `${result.stats.filesChanged} changed files · ${result.stats.commitCount} commits`,
   ]
     .filter(Boolean)
@@ -116,10 +119,10 @@ function useHalt(path: string, reload: () => void, nothing: string) {
 /**
  * One lease, two lines on one grid: identity above, liveness below, and no fact
  * on both. The body is a toggle and nothing else, so what a person scans stays
- * on the row and the rest — the revision, the absolute lease stamps, the
- * platform — waits in the panel, whose first line is the link back to the work.
- * The guard, its answer and its busy label all belong to this row, so no lease's
- * failure is reported over another's.
+ * on the row and the rest — the absolute lease stamps, the platform — waits in
+ * the panel, whose first line is the link back to the work. The guard, its answer
+ * and its busy label all belong to this row, so no lease's failure is reported
+ * over another's.
  */
 function LeaseRow({
   session,
@@ -142,17 +145,17 @@ function LeaseRow({
 }) {
   const panelId = `lease-${session.id}`;
   const held = holding(session, now);
+  const work = workName(session.label);
   const halt = useHalt(
     `/sessions/${encodeURIComponent(session.id)}/halt`,
     reload,
     'Nothing was halted. This lease had already closed.',
   );
   const rows: KVRow[] = [
-    ['Revision', session.expectedRevision],
-    ['Offered', stamp(session.createdAt)],
-    !!session.activatedAt && ['Taken up', stamp(session.activatedAt)],
-    [held ? 'Lease expires' : 'Lease ran to', stamp(session.expiresAt)],
-    !!session.closedAt && ['Closed', stamp(session.closedAt)],
+    ['Offered', <Stamp at={session.createdAt} />],
+    !!session.activatedAt && ['Taken up', <Stamp at={session.activatedAt} />],
+    [held ? 'Lease expires' : 'Lease ran to', <Stamp at={session.expiresAt} />],
+    !!session.closedAt && ['Closed', <Stamp at={session.closedAt} />],
     !!session.platform && ['Platform', platformPhrase(session.platform)],
     ['Workspace', <span className="wrap">{workspacePhrase(session)}</span>],
   ];
@@ -160,15 +163,19 @@ function LeaseRow({
     <div className={`lease${open ? ' lease--open' : ''}`}>
       <button
         type="button"
-        className="lease-row"
+        className="ruled-row lease-row"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={onToggle}
       >
         <span className="wrap">{name ?? term(null)}</span>
-        <strong>{session.label}</strong>
-        <span className="muted">{term(session.role)}</span>
-        <Countdown to={held ? session.expiresAt : null} now={now} />
+        <strong>{work}</strong>
+        <span className="muted" data-label="Role">
+          {term(session.role)}
+        </span>
+        <span data-label="Expires">
+          <Countdown to={held ? session.expiresAt : null} now={now} />
+        </span>
       </button>
       <div className="lease-live">
         <Live of={leaseLiveness(session, now)} />
@@ -176,23 +183,25 @@ function LeaseRow({
       {open && (
         <div className="lease-panel stack" id={panelId}>
           {route && (
-            <Link className="cluster agent-help" to={route.to}>
+            <Link className="cluster agent-help hit" to={route.to}>
               <KindLabel kind={route.kind} />
-              <span>Open the record →</span>
+              Open record <ArrowRightIcon size={14} />
             </Link>
           )}
           <KV rows={rows} />
           {canManage && held && (
-            <ConfirmAction {...halt.guard('Halt lease')} title="Halt this lease?">
-              <p>
-                {name ?? 'An unnamed agent'} holds this lease on {session.label} as{' '}
-                {term(session.role)}. Halting closes it now; its runner must stop the worker itself.
-              </p>
-              <p className="muted">
-                The assignment is released back to the queue at revision {session.expectedRevision}.
-                No verdict, claim standing or review state changes.
-              </p>
-            </ConfirmAction>
+            <div className="act-danger">
+              <ConfirmAction {...halt.guard('Halt lease')} title="Halt this lease?">
+                <p>
+                  {name ?? 'An unnamed agent'} holds this lease on {work} as {term(session.role)}.
+                  Halting closes it now; its runner must stop the worker itself.
+                </p>
+                <p className="muted">
+                  The assignment is released back to the queue. No verdict, claim standing or review
+                  state changes.
+                </p>
+              </ConfirmAction>
+            </div>
           )}
           {halt.receipt}
         </div>
@@ -254,26 +263,19 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
         ? { to: `${experimentRow!.path}/${instanceId}`, kind: 'experiments' }
         : undefined;
   const agents = status?.agents ?? [];
+  const retired = agents.filter((agent) => agent.status === 'retired').length;
   const filter = useListFilter(agents, {
     stateOf: activity,
     labels: (agent) => [agent.name, agent.currentAssignment?.label],
     ids: (agent) => [agent.id],
   });
-  const offered = (status?.sessions ?? []).filter((session) => session.status === 'offered');
   const live = (status?.sessions ?? []).filter((session) => holding(session, now));
-  const waiting = [
-    status?.queueTotal &&
-      `${count(status.queueTotal, 'assignment', 'assignments')} eligible for this identity`,
-    offered.length && `${count(offered.length, 'lease', 'leases')} offered and not taken up`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
   // What an agent is on, named by its own record or, failing that, by the lease.
   const leases = new Map((status?.sessions ?? []).map((session) => [session.id, session]));
   const assigned = (agent: AgentSummary) => {
     const on = agent.currentAssignment ?? leases.get(agent.currentExecutionId ?? '');
     return agent.currentExecutionId
-      ? `${on?.label ?? 'Assignment execution'} · ${on?.role ?? ''} · `
+      ? `${on ? workName(on.label) : 'Assignment execution'} · ${on?.role ?? ''} · `
       : '';
   };
   const selectedAgent = agents.find((agent) => agent.id === selected);
@@ -296,82 +298,66 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
     )),
     col<RunnerPresence>('platforms', 'Platforms', (runner) => platformList(runner.platforms)),
     col<RunnerPresence>('capacity', 'Capacity', (runner) => runner.capacity),
-    col<RunnerPresence>('settings', 'Settings', (runner) =>
-      runner.desiredVersion > (runner.appliedVersion ?? 0) ? 'Pending acknowledgement' : 'Applied',
-    ),
+    col<RunnerPresence>('settings', 'Settings', (runner) => (
+      <StatusPill
+        value={runner.desiredVersion > (runner.appliedVersion ?? 0) ? 'pending' : 'applied'}
+      />
+    )),
   ];
   const eligible = [
-    col<WorkflowDispatchCandidate>('label', 'Work', (candidate) => (
-      <strong>{candidate.label}</strong>
+    col<WorkflowDispatchCandidate>('label', 'Work', (candidate) => {
+      const route = routeOf(candidate.instanceId);
+      const name = <strong>{workName(candidate.label)}</strong>;
+      // The name stands alone in its cell, so it is a control and is as tall as one.
+      return route ? (
+        <Link className="hit" to={route.to}>
+          {name}
+        </Link>
+      ) : (
+        name
+      );
+    }),
+    col<WorkflowDispatchCandidate>('gate', 'Gate', (candidate) => (
+      <StatusPill value={candidate.state} />
     )),
-    col<WorkflowDispatchCandidate>('gate', 'Gate', (candidate) => term(candidate.state)),
-    col<WorkflowDispatchCandidate>('role', 'Role', (candidate) => term(candidate.role)),
-    col<WorkflowDispatchCandidate>(
-      'revision',
-      'Revision',
-      (candidate) => candidate.expectedRevision,
-    ),
+    col<WorkflowDispatchCandidate>('role', 'Role', (candidate) => (
+      <span className="muted">{term(candidate.role)}</span>
+    )),
   ];
   return (
     <>
       {/* The page's subject is the page: dispatch, the machines, the leases and the
-          queue are what a person came for, so none of them waits behind a control. */}
+          queue are what a person came for, so none of them waits behind a control.
+          Each says how it stands in an element — a pill, a count beside its name,
+          rows — and a section holding nothing is its name and a zero. */}
       {status && (
         <div className="page-stage stack stack--lg sessions-ops">
-          <section className="stack">
-            <div className="cluster">
-              <strong>Automatic dispatch</strong>
-              <StatusPill value={status.dispatch.enabled ? 'enabled' : 'paused'} />
+          <section className="stack" aria-label="Dispatch">
+            <div className="dispatch">
+              <h2 className="section-title">Dispatch</h2>
+              <StatusPill value={status.dispatch.enabled ? 'running' : 'paused'} />
               {status.dispatch.updatedAt && (
-                <span className="faint">
-                  {status.dispatch.updatedBy === me ? 'set by you ' : 'set '}
+                <span className="faint agent-help">
+                  {status.dispatch.updatedBy === me && 'you · '}
                   <Ago at={status.dispatch.updatedAt} />
                 </span>
               )}
+              {/* One control, and it says the state it will set: starting is the page's
+                  one primary, and pausing what runs is never dressed as an invitation. */}
+              {status.canManage && (
+                <button
+                  type="button"
+                  className={cx('btn', !status.dispatch.enabled && 'btn--primary')}
+                  disabled={dispatch.busy}
+                  onClick={() => {
+                    setAlready(undefined);
+                    void dispatch.submit({ enabled: !status.dispatch.enabled });
+                  }}
+                >
+                  {status.dispatch.enabled ? 'Pause dispatch' : 'Start dispatch'}
+                </button>
+              )}
             </div>
-            <ActorSplit
-              agent={waiting ? <p>{waiting}.</p> : null}
-              you={
-                status.canManage ? (
-                  <div className="cluster">
-                    <button
-                      className="btn"
-                      disabled={dispatch.busy}
-                      onClick={() => {
-                        setAlready(undefined);
-                        void dispatch.submit({ enabled: !status.dispatch.enabled });
-                      }}
-                    >
-                      {status.dispatch.enabled ? 'Halt dispatch' : 'Start dispatch'}
-                    </button>
-                    {live.length > 0 && (
-                      <ConfirmAction
-                        {...haltAll.guard('Halt all leases')}
-                        title={`Halt ${count(liveCount, 'live lease', 'live leases')} and dispatch?`}
-                      >
-                        <ul className="guard-list">
-                          {live.map((session) => (
-                            <li key={session.id}>
-                              {session.label} · {term(session.role)} ·{' '}
-                              {agentName.get(session.agentId ?? '') ?? 'no agent yet'}
-                            </li>
-                          ))}
-                          {/* The guard names every lease under the click, including the
-                              ones past this read's 200-row window. */}
-                          {liveCount > live.length && <li>{liveCount - live.length} more</li>}
-                        </ul>
-                        <p className="muted">
-                          Each lease closes now and automatic dispatch stops, so nothing new is
-                          offered until you start it again; connected runners must stop their own
-                          workers. Each assignment is released back to the queue at its current
-                          revision. No verdict, claim standing or review state changes.
-                        </p>
-                      </ConfirmAction>
-                    )}
-                  </div>
-                ) : null
-              }
-            />
             {dispatch.error && (
               <p className="error-message" role="alert">
                 {dispatch.error}
@@ -382,37 +368,65 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                 {already}
               </p>
             )}
-            {haltAll.receipt}
           </section>
           <section className="stack">
-            <h2 className="section-title">Runners</h2>
-            {status.runners.length === 0 ? (
-              <p className="faint">No runner has reported its presence.</p>
-            ) : (
-              <>
-                {status.runnerTotal > status.runners.length && (
-                  <p className="list-totals muted">
-                    {status.runners.length} of {status.runnerTotal} runners, most recently seen
-                    first
-                  </p>
-                )}
-                <Table rows={status.runners} keyOf={(runner) => runner.id} columns={machines} />
-              </>
+            <h2 className="section-title">
+              Runners{' '}
+              <span className="section-n">
+                {portion(status.runners.length, status.runnerTotal)}
+              </span>
+            </h2>
+            {status.runners.length > 0 && (
+              <Ruled
+                label="Runners"
+                template="minmax(0, 1.3fr) minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 72px 104px"
+                rows={status.runners}
+                keyOf={(runner) => runner.id}
+                columns={machines}
+              />
             )}
           </section>
           <section className="stack">
-            <h2 className="section-title">Leases</h2>
-            <p className="list-totals muted">
-              {status.sessionTotal > status.sessions.length
-                ? `${status.sessions.length} of ${status.sessionTotal} leases this project has offered, live first`
-                : `${count(status.sessionTotal, 'lease', 'leases')} this project has offered`}{' '}
-              · {liveCount} live now
-            </p>
-            {status.sessions.length === 0 ? (
-              <p className="faint">No lease has been offered in this project.</p>
-            ) : (
-              <div className="lease-list">
-                <div className="lease-head">
+            <div className="cluster cluster--between">
+              <h2 className="section-title">
+                Leases{' '}
+                <span className="section-n">
+                  {portion(status.sessions.length, status.sessionTotal)} · {liveCount} live
+                </span>
+              </h2>
+              {/* What ends every lease at once stands with the leases it ends, in the
+                  refusal's colour, and asks before it acts. */}
+              {status.canManage && live.length > 0 && (
+                <div className="act-danger">
+                  <ConfirmAction
+                    {...haltAll.guard('Halt all leases')}
+                    title={`Halt ${count(liveCount, 'live lease', 'live leases')} and dispatch?`}
+                  >
+                    <ul className="guard-list">
+                      {live.map((session) => (
+                        <li key={session.id}>
+                          {workName(session.label)} · {term(session.role)} ·{' '}
+                          {agentName.get(session.agentId ?? '') ?? 'no agent yet'}
+                        </li>
+                      ))}
+                      {/* The guard names every lease under the click, including the
+                          ones past this read's 200-row window. */}
+                      {liveCount > live.length && <li>{liveCount - live.length} more</li>}
+                    </ul>
+                    <p className="muted">
+                      Each lease closes now and automatic dispatch stops, so nothing new is offered
+                      until you start it again; connected runners must stop their own workers. Each
+                      assignment is released back to the queue. No verdict, claim standing or review
+                      state changes.
+                    </p>
+                  </ConfirmAction>
+                </div>
+              )}
+            </div>
+            {haltAll.receipt}
+            {status.sessions.length > 0 && (
+              <div className="ruled lease-list">
+                <div className="ruled-head">
                   {['Agent', 'Work', 'Role', 'Expires'].map((head) => (
                     <span className="label" key={head}>
                       {head}
@@ -438,28 +452,37 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
             )}
           </section>
           <section className="stack">
-            {/* The queue is what this identity may lease, not the fleet's backlog:
-                the runner's own key sees its own. The heading says so. */}
-            <h2 className="section-title">Eligible for this identity · {status.queueTotal}</h2>
-            {status.queueTotal > status.queue.length && (
-              <p className="faint">Showing the first {status.queue.length}.</p>
-            )}
-            {status.queue.length === 0 ? (
-              <p className="faint">No work is eligible for this identity.</p>
-            ) : (
-              <Table
+            {/* The queue is what this identity may lease, not the fleet's backlog: the
+                runner's own key sees its own, and the heading's title says whose. */}
+            <h2 className="section-title" title="Eligible for this identity">
+              Ready to assign{' '}
+              <span className="section-n">{portion(status.queue.length, status.queueTotal)}</span>
+            </h2>
+            {status.queue.length > 0 && (
+              <Ruled
+                label="Ready to assign"
+                template="minmax(0, 1fr) 160px 104px 88px"
                 rows={status.queue}
                 keyOf={(candidate) => `${candidate.instanceId}:${candidate.expectedRevision}`}
                 columns={eligible}
               />
             )}
           </section>
-          <h2 className="section-title">Agents</h2>
+          {/* The number is the agents there are, as Home counts them; the ones that have
+              retired stay in the list under their own state word. */}
+          <h2 className="section-title">
+            Agents{' '}
+            <span className="section-n">
+              {agents.length - retired}
+              {retired > 0 && ` · ${retired} retired`}
+            </span>
+          </h2>
         </div>
       )}
       <ListPage
         load={state}
         noun="agents"
+        kind="sessions"
         placeholder="Agent or assignment"
         filter={filter}
         rows={[...filter.rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
@@ -482,9 +505,10 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
             <ThreeStates
               execution={activity(agent)}
               meta={
-                <>
+                // One clause, so it wraps as a sentence does rather than word from time.
+                <span>
                   {assigned(agent)}joined <Ago at={agent.createdAt} />
-                </>
+                </span>
               }
             />
           ),

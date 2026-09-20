@@ -19,7 +19,14 @@ test('automation is explicit, owner-bound and independent of ordinary token refr
     }),
     { code: 'github_owner' },
   );
-  const enabled = await f.enable();
+  const caller = structuredClone(f.caller);
+  const enabling = f.github.configureAutomation(caller, {
+    expectedRevision: 2,
+    mode: 'write',
+    baseBranch: 'main',
+  });
+  caller.actorId = 'missing';
+  const enabled = await enabling;
   const binding = await f.github.automation(
     f.reviewer,
     'read',
@@ -27,6 +34,14 @@ test('automation is explicit, owner-bound and independent of ordinary token refr
     async (_client, _token, binding) => binding,
   );
   assert.equal(binding.revision, enabled.revision);
+  await f.state.transaction(async (tx) => {
+    const source = structuredClone(f.caller),
+      selected = structuredClone(binding);
+    const checking = f.github.assertBinding(source, selected, tx, 'read');
+    source.actorId = 'missing';
+    selected.revision = 999;
+    await checking;
+  });
   const client = new GitHubClient(config, f.fetcher);
   t.after(() => client.close());
   await f.state.transaction(async (tx) => {
@@ -111,4 +126,44 @@ test('App JWTs mint only the selected repository and permission; tokens are not 
   await assert.rejects(client.installationToken(repository, true), { code: 'github_response' });
   assert.equal(f.calls.at(-1)?.path, '/installation/token');
   assert.equal(f.calls.at(-1)?.method, 'DELETE');
+});
+
+test('token cleanup remains available when automation is disabled during issuance', async (t) => {
+  const f = await githubFixture(t);
+  await f.enable();
+  f.control.badTokenScope = true;
+  f.control.before = async (path) => {
+    if (path === '/app/installations/17/access_tokens') {
+      f.control.before = undefined;
+      await f.github.configureAutomation(f.caller, {
+        expectedRevision: 3,
+        mode: 'off',
+        baseBranch: null,
+      });
+    }
+  };
+  await assert.rejects(
+    f.github.automation(f.reviewer, 'write', undefined, (client, _token, binding) =>
+      client.installationToken(binding.repository, true),
+    ),
+    { code: 'github_response' },
+  );
+  assert.equal(f.calls.at(-1)?.path, '/installation/token');
+  assert.equal(f.calls.at(-1)?.method, 'DELETE');
+  assert.equal((await f.github.branches(f.caller))[0].name, 'main');
+});
+
+test('GitHub browsing cannot switch to another caller while pending', async (t) => {
+  const f = await githubFixture(t);
+  for (const method of ['status', 'repositories', 'branches', 'pulls', 'pullDetails'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...structuredClone(f.caller), actorId: 'missing' };
+      const before = f.calls.length;
+      const pending =
+        method === 'pullDetails' ? f.github.pullDetails(caller, 1) : f.github[method](caller);
+      Object.assign(caller, f.caller);
+      await assert.rejects(pending, { code: 'membership_required' });
+      assert.equal(f.calls.length, before);
+    });
+  }
 });

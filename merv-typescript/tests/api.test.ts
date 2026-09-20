@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { Context } from 'cordis';
+import { request as httpRequest, type Server as HttpServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
@@ -152,6 +153,67 @@ test('native registration keeps validation paired with its description when the 
   });
   await assert.rejects(tools.call('echo', caller, { message: 7 }), /failed validation/);
   await tools.close();
+});
+
+test('native read protection stays paired with published metadata despite definition mutation', async (t) => {
+  const { scope, actors } = fixture();
+  let snapshots = 0;
+  const tools = new ToolRegistry(scope, undefined, async (run) => {
+    snapshots++;
+    return run();
+  });
+  t.after(() => tools.close());
+  const definition: ToolDefinition = {
+    name: 'private.read',
+    description: 'A protected read',
+    readOnly: true,
+    inputSchema: z.object({}).strict(),
+    handler: () => {
+      // Mutable native handlers are supported, but metadata changes must require registration.
+      definition.readOnly = false;
+      actors[0].active = false;
+      return { private: 'must not be returned after revocation' };
+    },
+  };
+  tools.register(definition);
+  definition.readOnly = false;
+  assert.equal((await tools.describe(caller))[0].annotations?.readOnlyHint, true);
+  await assert.rejects(tools.call(definition.name, caller, {}), { code: 'forbidden' });
+  assert.equal(snapshots, 1, 'the registered read must still execute in the read scope');
+});
+
+test('changing a native definition cannot turn a mutation into an unrestricted session read', async (t) => {
+  const { scope } = fixture();
+  const sessionCaller = { ...caller, session: { id: 'session_readonly' } };
+  const tools = new ToolRegistry(scope, {
+    allows: async () => false,
+    require: async () => {},
+    allowsTool: async (_caller, _name, read) => !!read,
+    prepare: async (caller, tool, input, read) => {
+      if (!read) throw new MervError('tool_forbidden', 'Session only permits reads', 403);
+      return { caller, tool, input };
+    },
+    validate: async () => {},
+    run: async (prepared, dispatch) => dispatch(prepared.caller, prepared.input),
+    cancel: async () => {},
+  });
+  t.after(() => tools.close());
+  let calls = 0;
+  const definition: ToolDefinition = {
+    name: 'private.write',
+    description: 'A mutation',
+    readOnly: false,
+    inputSchema: z.object({}).strict(),
+    handler: () => {
+      calls++;
+      return {};
+    },
+  };
+  tools.register(definition);
+  definition.readOnly = true;
+  assert.deepEqual(await tools.describe(sessionCaller), []);
+  await assert.rejects(tools.call(definition.name, sessionCaller, {}), { code: 'tool_forbidden' });
+  assert.equal(calls, 0);
 });
 
 test('Cordis dependency disposal drains a feature tool before closing its scope provider', async () => {
@@ -490,3 +552,200 @@ test('MCP shutdown drains a handler even after its client disconnects', async ()
   assert.equal(stopped, true);
   await tools.close();
 });
+
+test('disconnect during authentication cannot strand the later body reader or shutdown', async (t) => {
+  const { scope, tools } = fixture();
+  let entered!: () => void, release!: () => void, aborted!: () => void;
+  const authenticating = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const authentication = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const disconnected = new Promise<void>((resolve) => {
+    aborted = resolve;
+  });
+  const original = scope.authenticate.bind(scope);
+  t.mock.method(scope, 'authenticate', async (token: string) => {
+    entered();
+    await authentication;
+    return original(token);
+  });
+  const api = new ApiServer(scope, tools);
+  const url = await api.start();
+  // Observe the server-side abort, not just the client socket closing: the race requires
+  // IncomingMessage's abort event to occur before authentication releases the body reader.
+  (api as unknown as { server: HttpServer }).server.on('request', (request) => {
+    request.once('aborted', aborted);
+  });
+  const request = httpRequest(`${url}/tools/echo`, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer alice-token',
+      'content-type': 'application/json',
+      'content-length': '100',
+    },
+  });
+  request.on('error', () => {});
+  let stopping: Promise<void> | undefined;
+  t.after(async () => {
+    request.destroy();
+    release();
+    // A failing regression must not hang the whole runner on the very promise under test.
+    stopping ??= api.stop();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        stopping,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    await tools.close();
+  });
+  request.write('{');
+  await authenticating;
+  request.destroy();
+  await disconnected;
+  release();
+  stopping = api.stop();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      stopping.then(() => 'stopped'),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve('hung'), 500);
+      }),
+    ]);
+    assert.equal(
+      result,
+      'stopped',
+      'an already-aborted request must not wait for another abort event',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+test('concurrent API stops share one shutdown and allow a later restart', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  await api.start();
+  try {
+    const stopped = await Promise.allSettled([api.stop(), api.stop(), api.stop()]);
+    assert.deepEqual(
+      stopped.map((result) => result.status),
+      ['fulfilled', 'fulfilled', 'fulfilled'],
+    );
+    const url = await api.start();
+    assert.equal((await fetch(`${url}/health`)).status, 200);
+  } finally {
+    await api.stop();
+    await tools.close();
+  }
+});
+
+test('API stop during startup waits for listening and then closes the listener', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  try {
+    const starting = api.start();
+    const stopping = api.stop();
+    const results = await Promise.allSettled([starting, stopping]);
+    assert.deepEqual(
+      results.map((result) => result.status),
+      ['fulfilled', 'fulfilled'],
+    );
+    await assert.rejects(fetch(`${await starting}/health`));
+  } finally {
+    await api.stop();
+    await tools.close();
+  }
+});
+
+test('API shutdown tolerates failed startup and the same instance can retry', async () => {
+  const { scope, tools } = fixture();
+  const blocker = new ApiServer(scope, tools);
+  const occupied = await blocker.start();
+  const api = new ApiServer(scope, tools, { port: Number(new URL(occupied).port) });
+  try {
+    const starting = api.start();
+    const stopping = api.stop();
+    await assert.rejects(starting, { code: 'EADDRINUSE' });
+    await stopping;
+    await blocker.stop();
+    const url = await api.start();
+    assert.equal((await fetch(`${url}/health`)).status, 200);
+  } finally {
+    await Promise.all([blocker.stop(), api.stop()]);
+    await tools.close();
+  }
+});
+
+for (const endpoint of ['http', 'mcp'] as const) {
+  test(`${endpoint} rejects malformed UTF-8 before dispatching a mutation`, async (t) => {
+    const { scope, tools } = fixture();
+    const saved: string[] = [];
+    tools.register({
+      name: 'record',
+      description: 'Record the supplied text',
+      inputSchema: z.object({ message: z.string() }).strict(),
+      handler: (_caller, input) => {
+        saved.push(input.message as string);
+        return input;
+      },
+    });
+    const server = new ApiServer(scope, tools);
+    const url = await server.start();
+    t.after(async () => {
+      await server.stop();
+      await tools.close();
+    });
+    const envelope =
+      endpoint === 'http'
+        ? ['{"message":"', '"}']
+        : [
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"record","arguments":{"message":"',
+            '"}}}',
+          ];
+    const post = (bytes: Buffer) =>
+      fetch(`${url}/${endpoint === 'http' ? 'tools/record' : 'mcp'}`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer alice-token',
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: Buffer.concat([Buffer.from(envelope[0]!), bytes, Buffer.from(envelope[1]!)]),
+      });
+    for (const [name, bytes] of [
+      ['overlong encoding', [0xc0, 0xaf]],
+      ['encoded surrogate', [0xed, 0xa0, 0x80]],
+      ['incomplete sequence', [0xe2, 0x82]],
+    ] as const) {
+      await t.test(name, async () => {
+        const before = saved.length;
+        const response = await post(Buffer.from(bytes));
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).error.code, 'invalid_json');
+        assert.equal(saved.length, before, 'invalid bytes must not reach the mutation');
+      });
+    }
+    await t.test(
+      'valid multibyte text including a literal replacement character is retained',
+      async () => {
+        const message = 'Evidence: café 🌍 �';
+        const response = await post(Buffer.from(message));
+        assert.equal(response.status, 200);
+        const payload = await response.json();
+        const result =
+          endpoint === 'http' ? payload.result : JSON.parse(payload.result.content[0].text);
+        assert.equal(result.message, message);
+        assert.equal(saved.at(-1), message);
+      },
+    );
+  });
+}

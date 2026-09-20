@@ -13,6 +13,7 @@ import { useTool } from '../api';
 import {
   Ago,
   ConfirmAction,
+  CopyButton,
   Countdown,
   Failure,
   KV,
@@ -29,6 +30,7 @@ import {
 } from '../components';
 import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { elapsed, say, type Liveness } from '../liveness';
+import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { ProcessDiagram } from '../process';
 import { firstSentence } from '../states';
@@ -192,7 +194,8 @@ function CollectionList({ row }: ViewProps) {
     <ListPage
       load={read}
       noun={spec.noun.plural}
-      placeholder={`Search ${spec.noun.plural}`}
+      // A published row names its own glyph; the empty list wears it as the rail does.
+      kind={typeof row.view.icon === 'string' ? row.view.icon : undefined}
       filter={{
         ...filter,
         states: flagged.length
@@ -227,22 +230,12 @@ function CollectionList({ row }: ViewProps) {
 }
 
 /** The one place machine text appears, and it is there to be copied, not read. */
-function Copy({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () =>
-    void navigator.clipboard.writeText(text).then(
-      () => setCopied(true),
-      () => setCopied(false),
-    );
-  return (
-    <>
-      <span className="mono">{text}</span>
-      <button type="button" className="btn-text" onClick={copy}>
-        {copied ? 'Copied' : 'Copy'}
-      </button>
-    </>
-  );
-}
+const Copy = ({ text }: { text: string }) => (
+  <>
+    <span className="mono">{text}</span>
+    <CopyButton text={text} />
+  </>
+);
 
 const detailRow = (data: Json, detail: UiDetail): KVRow => {
   const value = at(data, detail.field);
@@ -284,7 +277,8 @@ function Act({ action, id, onDone }: { action: UiAction; id: string; onDone(): v
 /** One section of a record, in the shape its kind names: a paragraph, rows, a table, a ladder. */
 function Section({ section, ...facts }: { section: UiSection } & Facts) {
   const { data, states, now } = facts;
-  if (section.kind === 'text') return <p className="remote-text">{str(at(data, section.field))}</p>;
+  // A service writes its prose the way an agent writes a brief, so it is read the same way.
+  if (section.kind === 'text') return <Markdown source={str(at(data, section.field))} />;
   if (section.kind === 'kv')
     return <KV rows={section.rows.map((detail) => detailRow(data, detail))} />;
   const items = list(at(data, section.field));

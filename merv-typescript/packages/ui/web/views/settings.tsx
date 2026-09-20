@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTool } from '../api';
-import { KV, LoadState, StatusPill, Table, col, cx } from '../components';
+import { EmptyState, KV, LoadState, Ruled, StatusPill, Summary, col, cx } from '../components';
 import { ThreeStates } from '../states';
 import type { PluginState, Row } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
 import { KeysPanel } from './keys';
-import { PeopleView } from './people';
+import { NeedsAccount, PeopleView, personName } from './people';
 import { ProjectIntroduction } from './project-context';
 import type { ViewProps } from './index';
 
@@ -38,33 +38,110 @@ const SECTIONS = [
   ['session', 'Session'],
 ] as const;
 
-function Plugins({ shell }: ViewProps) {
+/** How a whole table stands, as one state word: every entry well, or how many are not. */
+function Health({
+  well,
+  ill,
+  unwell,
+  failed = 0,
+}: {
+  well: string;
+  ill: string;
+  unwell: number;
+  failed?: number;
+}) {
+  const tone = failed ? 'bad' : unwell ? 'warn' : 'ok';
   return (
-    <div className="page-stage stack stack--lg">
-      <section className="stack">
-        <h2 className="section-title">
-          Plugins · {shell.plugins.filter((plugin) => plugin.state === 'active').length} active
-        </h2>
-        {shell.plugins.length === 0 ? (
-          <div className="empty">No plugin table</div>
-        ) : (
-          <Table
-            rows={shell.plugins}
+    <span className={`status status--${tone}`}>
+      <span className="status-dot" aria-hidden="true" />
+      {failed ? `${failed} failed` : unwell ? `${unwell} ${ill}` : well}
+    </span>
+  );
+}
+
+/**
+ * A table that is diagnostics, folded: the summary says what it holds, how many,
+ * and how they stand, which is all a person needs until something is wrong. It
+ * opens itself when something is.
+ */
+function Fold({
+  title,
+  count,
+  health,
+  open,
+  children,
+}: {
+  title: string;
+  count: number;
+  health: ReactNode;
+  open: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="fold" open={open}>
+      {/* Real spaces between the three, so they are heard as a name, a number and a state. */}
+      <Summary>
+        <h2 className="section-title">{title}</h2> <span className="section-n">{count}</span>{' '}
+        {health}
+      </Summary>
+      {children}
+    </details>
+  );
+}
+
+/** What is not well is read first, in whichever table it stands. */
+const unwellFirst = <T,>(items: T[], well: (item: T) => boolean): T[] =>
+  [...items].sort((a, b) => Number(well(a)) - Number(well(b)));
+
+function Plugins({ shell }: ViewProps) {
+  const active = (plugin: PluginState) => plugin.state === 'active';
+  const ready = (row: Row) => (row.status.state ?? 'ready') === 'ready';
+  const off = shell.plugins.filter((plugin) => !active(plugin));
+  const failed = off.filter((plugin) => plugin.state === 'failed').length;
+  const degraded = shell.rows.filter((row) => !ready(row)).length;
+  return (
+    <div className="page-stage">
+      {shell.plugins.length > 0 && (
+        <Fold
+          title="Plugins"
+          count={shell.plugins.length}
+          open={off.length > 0}
+          health={
+            <Health
+              well="all active"
+              ill="not active"
+              unwell={off.length - failed}
+              failed={failed}
+            />
+          }
+        >
+          {/* How an entry stands is what the table is for, so it is never the column a
+              narrow page loses: under a phone's width each fact stands under the last. */}
+          <Ruled
+            label="Plugins"
+            template="minmax(0, 1fr) minmax(0, 1.6fr) 120px"
+            rows={unwellFirst(shell.plugins, active)}
             keyOf={(plugin) => plugin.id}
             columns={[
               col<PluginState>('id', 'Entry', (p) => <strong className="mono">{p.id}</strong>),
               col<PluginState>('name', 'Module', (p) => (
                 <span className="mono faint">{p.name}</span>
               )),
-              col<PluginState>('state', 'State', (p) => <StatusPill value={p.state} />, '120px'),
+              col<PluginState>('state', 'State', (p) => <StatusPill value={p.state} />),
             ]}
           />
-        )}
-      </section>
-      <section className="stack">
-        <h2 className="section-title">Sidebar rows</h2>
-        <Table
-          rows={shell.rows}
+        </Fold>
+      )}
+      <Fold
+        title="Sidebar rows"
+        count={shell.rows.length}
+        open={degraded > 0}
+        health={<Health well="all ready" ill="degraded" unwell={degraded} />}
+      >
+        <Ruled
+          label="Sidebar rows"
+          template="minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) 120px"
+          rows={unwellFirst(shell.rows, ready)}
           keyOf={(row) => row.id}
           columns={[
             col<Row>('label', 'Row', (row) => <strong>{row.label}</strong>),
@@ -77,7 +154,7 @@ function Plugins({ shell }: ViewProps) {
             )),
           ]}
         />
-      </section>
+      </Fold>
     </div>
   );
 }
@@ -87,37 +164,38 @@ function SessionSection() {
   const { actor, project, signOut } = useSession();
   return (
     <div className="page-stage stack">
-      <h2 className="section-title">Session</h2>
       <KV
         rows={[
           ['Project', project.name],
-          ['Actor', actor.name],
+          // A directory name that is an identifier names nobody, so the row is left out.
+          !!personName(actor.name) && ['Name', actor.name],
           ['Role', <StatusPill value={actor.role} />],
-          [
-            'Token',
-            <button type="button" className="btn btn--sm" onClick={signOut}>
-              Sign out of this tab
-            </button>,
-          ],
         ]}
       />
+      <div>
+        <button type="button" className="btn" onClick={signOut}>
+          Sign out
+        </button>
+      </div>
     </div>
   );
 }
 
-/** A section with nothing in it says so in one line, in the same place as its content. */
-const Nothing = ({ said }: { said: string }) => (
+/** A room with nothing in it: the glyph of what would be here, and a few words. */
+const Nothing = ({ icon, said }: { icon: string; said: string }) => (
   <div className="page-stage">
-    <div className="empty-state">
-      <h2>{said}</h2>
-    </div>
+    <EmptyState kind="settings" icon={icon} title={said} />
   </div>
 );
+
+/** The rooms that belong to a person's account, and so to no bearer credential. */
+const PERSONAL = ['members', 'keys'];
 
 /** Machine keys, read where every other setting is; the account menu only signs out. */
 function Keys() {
   const { account, project } = useSession();
-  if (account.kind !== 'user') return <Nothing said="Keys belong to an account" />;
+  if (account.kind !== 'user')
+    return <NeedsAccount icon="key" said="Sign in with an account to make keys" />;
   return <KeysPanel account={account} initialProjectId={project.id} />;
 }
 
@@ -128,7 +206,7 @@ function Keys() {
  */
 function Integrations({ shell }: ViewProps) {
   if (!shell.rows.some((row) => row.view.kind === 'code'))
-    return <Nothing said="No integrations" />;
+    return <Nothing icon="link" said="No integrations" />;
   return (
     <div className="page-stage stack stack--lg">
       <GitHubConnection />
@@ -151,10 +229,10 @@ function Connections({ shell }: ViewProps) {
   );
   const connecting = (mounts.data ?? []).some((mount) => mount.state === 'connecting');
   useEffect(() => setCadence(connecting ? 4000 : 15000), [connecting]);
-  if (!row || (mounts.data && !mounts.data.length)) return <Nothing said="No connections" />;
+  if (!row || (mounts.data && !mounts.data.length))
+    return <Nothing icon="connections" said="No connections" />;
   return (
     <div className="page-stage stack">
-      <h2 className="section-title">Connections</h2>
       <LoadState {...mounts} />
       <ul className="rows">
         {(mounts.data ?? []).map((mount) => (
@@ -180,11 +258,14 @@ function Connections({ shell }: ViewProps) {
 
 export function SettingsView(props: ViewProps) {
   const { pathname } = useLocation();
+  const { account } = useSession();
   const base = props.row.path;
+  // A room this sign-in can never use is not a place to send it.
+  const rooms = SECTIONS.filter(([slug]) => account.kind === 'user' || !PERSONAL.includes(slug));
   return (
     <div className="split settings">
       <nav className="split-list" aria-label="Settings">
-        {SECTIONS.map(([slug, label]) => {
+        {rooms.map(([slug, label]) => {
           const to = slug ? `${base}/${slug}` : base;
           return (
             <Link

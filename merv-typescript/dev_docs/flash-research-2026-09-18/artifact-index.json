@@ -1,0 +1,80 @@
+{
+  "exportedAt": "2026-09-18T05:48:19.518Z",
+  "projectId": "project_245947d7687247819a19330e3c09e916",
+  "reflectionId": "wf_8a158ccef3a64865af0da3d15643bc6c",
+  "reflectionReviewId": "review_f405ffcc87be473c98d0b7623be24ecf",
+  "artifacts": [
+    {
+      "id": "art_065693d5266a43c38b271ed88b266032",
+      "title": "Synthesis report — public-receipt-prompting-pilot: reflection (attempt 1, revision 4)",
+      "hash": "75d61c54aa1164cd2fc90c443f8cf5234b83da3d9bf4d19f82de2514043b75ca",
+      "size": 34140,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T05:40:00.570Z",
+      "file": "reflection-synthesis.md"
+    },
+    {
+      "id": "art_00b36146b0ae401fb508642f93691738",
+      "title": "Change specification — public-receipt-prompting-pilot reflection (attempt 1, revision 4)",
+      "hash": "6e39a14ae7e6f480393fb9fb4ec5a8da5f076bcdf9ade60371373768f8be2ddc",
+      "size": 22153,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T05:40:00.809Z",
+      "file": "reflection-changes.md"
+    },
+    {
+      "id": "art_15d707ce0bbf462e96478ad6ec36379c",
+      "title": "Proposed Methods and Results edits — public-receipt-prompting-pilot reflection (methods rev 1, results rev 1)",
+      "hash": "cbba13a6d0b8032663817e191cf076c7fdd8b50c6acb03692407fea5a8f0428d",
+      "size": 12039,
+      "media_type": "application/json",
+      "created_at": "2026-09-18T05:40:01.037Z",
+      "file": "reflection-paper-proposal.json"
+    },
+    {
+      "id": "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+      "title": "Evidence lens report — public-receipt-prompting-pilot (reflection attempt 1)",
+      "hash": "ae60ecca174d39b44e42c8200a88ec530e8fdcaff5a47dfba8f7cf03b4bffe36",
+      "size": 22061,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T03:18:49.816Z",
+      "file": "reflection-lenses/evidence.md"
+    },
+    {
+      "id": "art_d2df6a897b5b42149c1de4f1fa456cc3",
+      "title": "Methods lens report — public-receipt-prompting-pilot",
+      "hash": "8afd3c186d90caaf3da80371188c357249c4b6eeae6d6ed489b57258da7eef33",
+      "size": 17258,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T03:22:20.915Z",
+      "file": "reflection-lenses/methods.md"
+    },
+    {
+      "id": "art_cff0bd942c9345acb20fad1aa1c35735",
+      "title": "Reflection lens report — next_steps (public-receipt-prompting-pilot)",
+      "hash": "b71f66282c2981cf90dd6b0cadee5ad26854385f69da2d7da9cb404073def68f",
+      "size": 13008,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T03:27:16.909Z",
+      "file": "reflection-lenses/next_steps.md"
+    },
+    {
+      "id": "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+      "title": "Reflection lens report — synthesis: public-receipt-prompting-pilot",
+      "hash": "65d213d00ebfa84759bc6763613df54f3516d2aefcfe73ce40462454b9f586dd",
+      "size": 14758,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T03:21:54.954Z",
+      "file": "reflection-lenses/synthesis.md"
+    },
+    {
+      "id": "art_516f6c725fbc4adc840c24c4be974b57",
+      "title": "Theory lens report — public-receipt-prompting-pilot: explanatory model, assumptions, causal claims, rival explanations",
+      "hash": "7ccf29baf622b50b2a49bcf970458191144aeb56382c1e0080267d1accc7acff",
+      "size": 17599,
+      "media_type": "text/markdown",
+      "created_at": "2026-09-18T03:19:12.857Z",
+      "file": "reflection-lenses/theory.md"
+    }
+  ]
+}

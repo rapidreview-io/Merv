@@ -39,14 +39,18 @@ export class BlobOperations {
   private pending = new Set<Promise<unknown>>();
   private completion?: Promise<void>;
 
-  async run<T>(operation: () => Promise<T>): Promise<T> {
-    check(!this.closing, 'blobs_closed', 'Blob storage is unavailable', 503);
+  async run<T>(operation: () => Promise<T>, peers: readonly BlobOperations[] = []): Promise<T> {
+    // A copy owns both providers before yielding, including when source and
+    // destination are the same instance. Neither can close between admissions.
+    const owners = new Set([this, ...peers]);
+    for (const owner of owners)
+      check(!owner.closing, 'blobs_closed', 'Blob storage is unavailable', 503);
     const result = Promise.resolve().then(operation);
-    this.pending.add(result);
+    for (const owner of owners) owner.pending.add(result);
     try {
       return await result;
     } finally {
-      this.pending.delete(result);
+      for (const owner of owners) owner.pending.delete(result);
     }
   }
 

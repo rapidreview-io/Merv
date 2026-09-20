@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { types as nodeTypes } from 'node:util';
 import type { Context } from 'cordis';
 import {
   createService,
@@ -26,7 +27,7 @@ export class DurableEvents implements DomainEvents {
   private pendingIds = new Set<string>();
   private subscriptions = new Set<Promise<void>>();
   private admitted = new Map<EventConsumer, Promise<boolean>>();
-  private handlerContext = new AsyncLocalStorage<EventConsumer>();
+  private handlerContext = new AsyncLocalStorage<{ consumer: EventConsumer; live: boolean }>();
   private running?: Promise<void>;
   private initialization?: Promise<void>;
   private closing?: Promise<void>;
@@ -114,7 +115,8 @@ export class DurableEvents implements DomainEvents {
     return () => {
       if (this.consumers.get(consumer.id) === consumer) this.consumers.delete(consumer.id);
       // A handler may withdraw itself. It cannot wait for its own transaction to finish.
-      if (this.handlerContext.getStore() === consumer) return;
+      const handler = this.handlerContext.getStore();
+      if (handler?.live && handler.consumer === consumer) return;
       return this.admitted.get(consumer)?.then(
         () => {},
         () => {},
@@ -139,6 +141,7 @@ export class DurableEvents implements DomainEvents {
   }
 
   drain(): Promise<void> {
+    this.requireOutsideHandler();
     if (this.running) {
       this.wakeRequested = true;
       return this.running;
@@ -167,20 +170,30 @@ export class DurableEvents implements DomainEvents {
     for (const consumer of [...this.consumers.values()]) {
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
+        let attemptedCursor: number | undefined;
         try {
           const transaction = this.state.transaction(async (tx) => {
             const progress = (await tx.get<Progress>(
               'SELECT * FROM event_consumers WHERE id=?',
               consumer.id,
             ))!;
+            attemptedCursor = progress.cursor;
             if (progress.retry_at > Date.now()) return false;
             const event = (await this.state.eventBatch(progress.cursor, 1, tx))[0];
             if (!event) return false;
-            if (consumer.types.includes(event.type))
-              await this.handlerContext.run(consumer, () => consumer.handle(event, tx));
+            // A handler owns its argument, not the dispatcher's durable progress.
+            const cursor = event.id;
+            if (consumer.types.includes(event.type)) {
+              const frame = { consumer, live: true };
+              try {
+                await this.handlerContext.run(frame, () => consumer.handle(event, tx));
+              } finally {
+                frame.live = false;
+              }
+            }
             await tx.run(
               'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
-              event.id,
+              cursor,
               consumer.id,
             );
             return true;
@@ -201,15 +214,17 @@ export class DurableEvents implements DomainEvents {
               'SELECT * FROM event_consumers WHERE id=?',
               consumer.id,
             ))!;
+            if (row.cursor !== attemptedCursor) return;
             const delay = Math.min(30_000, 100 * 2 ** Math.min(row.attempts, 8));
+            // Failure handling must not invoke getters or proxy traps on an
+            // arbitrary thrown value and thereby strand every later consumer.
+            const field =
+              error && typeof error === 'object' && !nodeTypes.isProxy(error)
+                ? Object.getOwnPropertyDescriptor(error, 'code')
+                : undefined;
+            const value = field && Object.hasOwn(field, 'value') ? field.value : undefined;
             const code =
-              error &&
-              typeof error === 'object' &&
-              'code' in error &&
-              typeof error.code === 'string' &&
-              /^[a-z_]{1,80}$/.test(error.code)
-                ? error.code
-                : 'handler_failed';
+              typeof value === 'string' && /^[a-z_]{1,80}$/.test(value) ? value : 'handler_failed';
             await tx.run(
               'UPDATE event_consumers SET attempts=attempts+1,error=?,retry_at=? WHERE id=?',
               code,
@@ -237,7 +252,17 @@ export class DurableEvents implements DomainEvents {
     );
   }
 
+  private requireOutsideHandler(): void {
+    check(
+      !this.handlerContext.getStore()?.live,
+      'events_handler_active',
+      'Cannot drain or close Domain Events from an active event handler',
+      409,
+    );
+  }
+
   close(): Promise<void> {
+    this.requireOutsideHandler();
     if (this.closing) return this.closing;
     this.closed = true;
     this.unlisten();

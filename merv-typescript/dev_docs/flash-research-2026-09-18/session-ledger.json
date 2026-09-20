@@ -1,0 +1,304 @@
+{
+  "source": "Distinct thread.started IDs in retained Codex CLI JSONL logs.",
+  "configured_model": "deepseek-flash via codex-flash-research launcher",
+  "distinct_cli_sessions": 25,
+  "usage_caveat": "Reported token sums are incomplete: interrupted sessions and workers stopped after workflow handoff often lack a turn.completed usage record. These are not a billing total.",
+  "reported_usage_sum": {
+    "input_tokens": 31912359,
+    "cached_input_tokens": 31315584,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 464381,
+    "reasoning_output_tokens": 229220
+  },
+  "sessions": [
+    {
+      "thread_ids": [
+        "01a0b279-3877-78f3-bbe2-b5aa1eac2c83"
+      ],
+      "transcript": "interactive-reviews/review_1652f29f6cd94557bab696223516f4a0.jsonl",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 3816206,
+          "cached_input_tokens": 3731200,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 80313,
+          "reasoning_output_tokens": 45947
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b26f-4790-79d2-a852-22734e590810"
+      ],
+      "transcript": "interactive-reviews/review_7bd7b9552303402789145b90f6879f44.jsonl",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 2615233,
+          "cached_input_tokens": 2548480,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 64650,
+          "reasoning_output_tokens": 39074
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b243-789c-7633-b02f-a256697da04d"
+      ],
+      "transcript": "launches/data-and-evaluator-before-file-helper.jsonl",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b253-a4ec-7be3-a28f-c307f3607beb"
+      ],
+      "transcript": "launches/data-and-evaluator-in_progress-1.jsonl",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 5256953,
+          "cached_input_tokens": 5189888,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 63669,
+          "reasoning_output_tokens": 31435
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b264-b28d-7f40-9f61-069143bfc5aa"
+      ],
+      "transcript": "launches/prompt-generalization-running-1.jsonl",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 7598992,
+          "cached_input_tokens": 7522432,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 79621,
+          "reasoning_output_tokens": 28014
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b274-16ff-74a3-84a7-c2e0a20c5ad3"
+      ],
+      "transcript": "launches/prompt-generalization-running-2.jsonl",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 5832314,
+          "cached_input_tokens": 5732352,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 48764,
+          "reasoning_output_tokens": 19318
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b280-412b-7f41-9bb1-3a11814cf6fe"
+      ],
+      "transcript": "machine-18764/launches/1929a0dbfe407951aead8fcecb5f89ddcdc54dc69b80a3dc59397853dba30c7a/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b27f-2703-78e0-ac6f-f5483b6befc1"
+      ],
+      "transcript": "machine-18764/launches/311b3480709b3c57bf0d937fc1cc8a970d3ee0b7b73779c86cc7c6f373ebc3e3/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b28d-f14f-7951-9bbf-0608b18a69d5"
+      ],
+      "transcript": "machine-18764/launches/4545d00c562cb7618c5d760d598f0e946379f449ecdd3f32178d6e5c6385156f/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b286-3e6e-7ea1-a1c0-df1f023f90e2"
+      ],
+      "transcript": "machine-18764/launches/52aac9ae27098e5035089bd5582e302f0da26437d34f5d0de52817b70ae6c592/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b307-8e05-76b3-b341-2b5e80066288"
+      ],
+      "transcript": "machine-18764/launches/5b2b9270f971ddae3cf4579e72d32a87d5da19aa6d66ddc2c16f5cb573b0c038/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b259-229e-74a2-bf37-0ae4c850c02f"
+      ],
+      "transcript": "machine-18764/launches/6539c606acd288e753fb3d9c67d4dcd9a029c1cf780cade313ab5aacd704cf66/stdout.log",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 3729029,
+          "cached_input_tokens": 3630976,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 49582,
+          "reasoning_output_tokens": 24162
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b289-0e49-7400-976a-8d843de4c6dc"
+      ],
+      "transcript": "machine-18764/launches/72db0d48e4a1ee8b6e209d222c22cbe193ed58a17b839ab0c98e71a8ee04cb05/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b2fc-71c6-71c0-bd2c-e1843c2595fe"
+      ],
+      "transcript": "machine-18764/launches/74ce3c382d0fc15edbd564508d0734208b7be7e2571f55b4b139d4fdbecc6032/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b262-0eb5-70b3-ae36-78da9ff37fbe"
+      ],
+      "transcript": "machine-18764/launches/8e03c2b88c86eb9246d36aa72f2770dd11004c6a2b9b2ad06cac6096a8e74270/stdout.log",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 930984,
+          "cached_input_tokens": 893568,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 31300,
+          "reasoning_output_tokens": 20418
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b280-5fff-78c2-8f05-03959535a567"
+      ],
+      "transcript": "machine-18764/launches/8e084ea4cfd7370b04e82c94063d69b6bf555442356024f0488c2ac45b18740d/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b292-373b-72b2-9946-6e67948d9b6c"
+      ],
+      "transcript": "machine-18764/launches/97faa7bc0f8410365dec05eca233c094604ff619a6cf0186cdd7ae6fe9c3e15a/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b2f6-f35b-7a02-af14-c6e070acf27c"
+      ],
+      "transcript": "machine-18764/launches/99eb6a7ff2f3b4fcf8e6250c3f92b6eb6469aa4b41d5281a66aca18efaae59f0/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b2f1-15fa-7432-8d3c-c501a6793ad7"
+      ],
+      "transcript": "machine-18764/launches/9f83775f7cb53101bba00fa992efc193544f6550eb6ca1702fe35eef49dafb0b/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b27f-07fe-7a82-832d-c1b332051f3e"
+      ],
+      "transcript": "machine-18764/launches/b499b51813a6f13c2b69e3ffebe77122e9ba844210880d9cf622531d399e6f00/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b259-4379-78b2-90be-fd50a3d81bba"
+      ],
+      "transcript": "machine-18764/launches/b672706e3f32d611aa51b1f801caa31e83efcdd5c4116bf725e207bf5fae3386/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b286-9bae-7c43-a72c-86fef0cfe975"
+      ],
+      "transcript": "machine-18764/launches/bfe1dfa695553eb719bab8fe102ce7681e6e020184eba7db40b238c48c09268e/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b2ed-e9e1-7562-ac74-51adb6739c4a"
+      ],
+      "transcript": "machine-18764/launches/db2e2c3312710474c2973f983172e634605f9021fbfa03bdfddf9ffbcd8a945a/stdout.log",
+      "reported_turn_completions": 1,
+      "reported_usage": [
+        {
+          "input_tokens": 2132648,
+          "cached_input_tokens": 2066688,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 46482,
+          "reasoning_output_tokens": 20852
+        }
+      ],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b303-2887-7463-8b1d-1b9f20f3d9f2"
+      ],
+      "transcript": "machine-18764/launches/fb9a93c86c97b313c28815f99f6b67fd65751f50e4c5f51c04a127bd977c84a0/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    },
+    {
+      "thread_ids": [
+        "01a0b2e9-838d-7942-9722-a138183b8762"
+      ],
+      "transcript": "machine-18764/launches/ffdd26249c8597ac97ca075d3fa582de12453bf40fb3db8979f9057f89e11561/stdout.log",
+      "reported_turn_completions": 0,
+      "reported_usage": [],
+      "reported_turn_failures": []
+    }
+  ]
+}

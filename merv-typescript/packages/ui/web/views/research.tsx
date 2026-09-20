@@ -3,12 +3,11 @@ import type { ResearchRecord } from '@merv/research/models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { LoadState, RecordPage, StatusPill } from '../components';
-import { Gate } from '../process';
+import { Gate, Relations } from '../process';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import { useSession } from '../session';
-import { ResearchCommand } from './paper';
-import { WorkList } from './work';
+import { CycleMove, WorkList, needsDefinition } from './work';
 import type { ViewProps } from './index';
 
 /** How a cycle handles code, in the words the cycle itself was opened with. */
@@ -19,7 +18,7 @@ const consolidation = (record: ResearchRecord) =>
       ? 'Report consolidation (legacy cycle)'
       : 'No code changes';
 
-function CycleDetail({ row }: ViewProps) {
+function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   const { actor } = useSession();
   const cycle = useTool<ResearchRecord>('research.get', { researchId: id }, { every: 10000 });
@@ -33,6 +32,9 @@ function CycleDetail({ row }: ViewProps) {
   const record = cycle.data;
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && record.ownerId === actor.id);
+  const relations = process.data?.dependencies ?? [];
+  const waitsOn = relations.filter((item) => item.direction === 'depends_on');
+  const unblocks = relations.filter((item) => item.direction === 'required_by');
   return (
     <RecordPage
       back={<Link to={WORK.path}>← Work</Link>}
@@ -43,29 +45,39 @@ function CycleDetail({ row }: ViewProps) {
       act={
         <Gate graph={process.data} kind={row.view.kind}>
           {writable && (
-            <ResearchCommand
-              disabled={record.workflow.state === 'complete'}
-              tool="research.advance"
-              input={{ researchId: record.id, expectedRevision: record.workflow.revision }}
-              label="Start next step"
-              onSaved={() => {
-                cycle.reload();
-                process.reload();
-              }}
-            />
+            // The stack would stretch the one control to the pane's width.
+            <div className="cluster">
+              <CycleMove
+                cycle={record}
+                shell={shell}
+                undefinedYet={needsDefinition(process.data?.edges)}
+                onSaved={() => {
+                  cycle.reload();
+                  process.reload();
+                }}
+              />
+            </div>
           )}
         </Gate>
       }
+      // The phases this cycle has opened so far; the paper is a place of its own in the rail.
       related={
-        <div className="cluster">
-          <Link to="/paper">Living paper</Link>
-          {record.reflectionId && (
-            <Link to={`/reflections/${record.reflectionId}`}>Reflection</Link>
-          )}
-          {record.consolidationId && (
-            <Link to={`/consolidation/${record.consolidationId}`}>Consolidation</Link>
-          )}
-        </div>
+        (relations.length > 0 || record.reflectionId || record.consolidationId) && (
+          <>
+            <Relations title="Waits on" items={waitsOn} />
+            <Relations title="Unblocks" items={unblocks} />
+            {(record.reflectionId || record.consolidationId) && (
+              <div className="cluster">
+                {record.reflectionId && (
+                  <Link to={`/reflections/${record.reflectionId}`}>Reflection</Link>
+                )}
+                {record.consolidationId && (
+                  <Link to={`/consolidation/${record.consolidationId}`}>Consolidation</Link>
+                )}
+              </div>
+            )}
+          </>
+        )
       }
     />
   );

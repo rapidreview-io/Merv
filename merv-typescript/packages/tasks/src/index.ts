@@ -1,5 +1,5 @@
 import { excludedFromReview, releasedLease, visible, recorded, mapAsync } from '@merv/contracts';
-import { clip, createService } from '@merv/contracts';
+import { clip, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -148,6 +148,7 @@ const normalized = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').t
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 export class TaskService implements Tasks {
+  private closed = false;
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private types = new Map<
@@ -276,6 +277,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   dispose(): void {
+    this.closed = true;
     this.withdrawReviewOwner();
     for (const registration of this.registrations.values()) registration.dispose();
     this.registrations.clear();
@@ -737,6 +739,8 @@ DROP TABLE task_leases_backup;`,
   }
 
   async registerType(definition: TaskTypeDefinition): Promise<() => void> {
+    check(!this.closed, 'tasks_closed', 'Tasks is closed', 503);
+    definition = plain<TaskTypeDefinition>(definition, 'invalid_recipe');
     check(
       definition.kind !== 'work' ||
         ['task', 'brief'].every((key) =>
@@ -746,7 +750,9 @@ DROP TABLE task_leases_backup;`,
       'Work task recipes must require task and brief sections',
     );
     const context = await this.contextBuilder.register(definition);
-    const value = { definition: structuredClone(definition), context };
+    if (this.closed) context.dispose();
+    check(!this.closed, 'tasks_closed', 'Tasks closed during type registration', 503);
+    const value = { definition, context };
     const key = `${definition.name}@${definition.version}`;
     this.types.set(key, value);
     return () => {
@@ -850,6 +856,8 @@ DROP TABLE task_leases_backup;`,
   }
 
   async create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task> {
+    caller = structuredClone(caller);
+    input = plain<TaskCreate>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'create', input, async () => {
@@ -993,21 +1001,25 @@ DROP TABLE task_leases_backup;`,
   }
 
   async get(caller: Caller, taskId: string): Promise<Task> {
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
     });
   }
   async process(caller: Caller, taskId: string): Promise<ProcessGraph> {
+    caller = structuredClone(caller);
     return await this.workflows.process(caller, taskId);
   }
   async record(caller: Caller, taskId: string, transaction?: Transaction): Promise<TaskRecord> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await this.projectRecord(caller, await this.row(tx, caller, taskId), tx);
     });
   }
   async records(caller: Caller, transaction?: Transaction): Promise<TaskRecord[]> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
@@ -1020,6 +1032,7 @@ DROP TABLE task_leases_backup;`,
     });
   }
   async context(caller: Caller, input: TaskContext): Promise<ContextPackage> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await this.state.transaction(async (tx) => {
       const { task, review } = await this.assignment(caller, input, tx);
       const type = this.contextType(task, input.purpose);
@@ -1384,6 +1397,8 @@ DROP TABLE task_leases_backup;`,
     return { task: await this.hydrate(caller, row, tx), review };
   }
   async checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint> {
+    caller = structuredClone(caller);
+    input = plain<TaskCheckpointInput>(input);
     return await this.state.transaction(async (tx) => {
       // The committed answer replays even after the task moved on; the assignment is
       // checked only for a checkpoint that has yet to be written.
@@ -1451,17 +1466,7 @@ DROP TABLE task_leases_backup;`,
   }
   /** The records; guidance is per reader and per moment, so task.get carries it. */
   async list(caller: Caller): Promise<TaskRecord[]> {
-    await this.scope.require(caller, 'read');
-    return await this.state.transaction(
-      async (sql) =>
-        await mapAsync(
-          await sql.all<TaskRow>(
-            'SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id',
-            caller.projectId,
-          ),
-          async (row) => await this.projectRecord(caller, row, sql),
-        ),
-    );
+    return await this.records(caller);
   }
 
   private async checkDelivery({
@@ -1657,6 +1662,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   async markFailed(caller: Caller, input: TaskMarkFailed): Promise<Task> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'mark_failed', input, async () => {
@@ -1711,6 +1717,8 @@ DROP TABLE task_leases_backup;`,
   }
 
   async submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task> {
+    caller = structuredClone(caller);
+    input = plain<TaskDelivery>(input);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'submit_delivery', input, async () => {
@@ -1798,6 +1806,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   async reissueReview(caller: Caller, input: TaskReissue): Promise<Task> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'reissue_review', input, async () => {
@@ -1852,9 +1861,11 @@ DROP TABLE task_leases_backup;`,
   }
 
   async submitReview(caller: Caller, input: TaskReview, transaction?: Transaction): Promise<Task> {
+    caller = structuredClone(caller);
+    rejectReviewReturn(input);
+    input = plain<TaskReview>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
-      rejectReviewReturn(input);
       return await this.command(tx, caller, input.requestId, 'submit_review', input, async () => {
         const review = await this.reviews.get(caller, input.reviewId, tx);
         const row = await this.row(tx, caller, review.subjectId);

@@ -361,7 +361,10 @@ test('consolidation pins source artifacts without a Reflections service, exact e
       }),
     { code: 'consolidation_report' },
   );
-  const submitted = await f.consolidation.submit(f.producer, submission);
+  const caller = { ...f.producer };
+  const submitting = f.consolidation.submit(caller, submission);
+  Object.assign(caller, f.owner);
+  const submitted = await submitting;
   assert.equal(submitted.workflow.state, 'consolidation_review');
   assert.deepEqual(await f.consolidation.submit(f.producer, submission), submitted);
   await assert.rejects(
@@ -459,6 +462,23 @@ test('independent review returns only consolidation and seals the reviewed resul
     completed.submissions[1].id,
   );
   assert.deepEqual(await f.reviews.apply(f.reviewer, passed), completed);
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  for (const method of ['get', 'list', 'approved'] as const) {
+    await t.test(method, async () => {
+      const caller = {
+        actorId: other.actor.id,
+        projectId: other.project.id,
+        credentialId: other.credential.id,
+      };
+      const reading =
+        method === 'list'
+          ? f.consolidation.list(caller)
+          : f.consolidation[method](caller, record.id);
+      Object.assign(caller, f.owner);
+      if (method === 'list') assert.deepEqual(await reading, []);
+      else await assert.rejects(reading, { code: 'consolidation_not_found' });
+    });
+  }
   await assert.rejects(
     async () =>
       await f.state.transaction(
@@ -548,13 +568,16 @@ test('a consolidation whose prerequisite ends without succeeding can still be en
   assert.equal(stuck.currentGate, 'dependency_failed');
   assert.equal(stuck.nextAction?.action, 'end');
   assert.ok((await f.workflows.overview(f.owner)).stalled.includes(record.id));
-  const ended = await f.consolidation.end(f.owner, {
+  const caller = { ...f.owner };
+  const ending = f.consolidation.end(caller, {
     consolidationId: record.id,
     expectedRevision: stuck.revision,
     outcome: 'abandoned',
     reason: 'Its prerequisite was abandoned, so there is nothing left to consolidate.',
     requestId: f.id(),
   });
+  Object.assign(caller, f.reader);
+  const ended = await ending;
   assert.equal(ended.workflow.state, 'abandoned');
   assert.equal((await f.workflows.evaluate(f.owner, record.id)).terminal, true);
   assert.ok((await f.workflows.overview(f.owner)).terminal.includes(record.id));
@@ -778,7 +801,11 @@ test('creation composes in the caller transaction and project scopes and produce
     /roll back/,
   );
   assert.equal((await f.consolidation.list(f.owner)).length, 0);
-  const record = await f.consolidation.create(f.owner, input);
+  const caller = { ...f.owner };
+  const creating = f.consolidation.create(caller, input);
+  Object.assign(caller, f.producer);
+  const record = await creating;
+  assert.equal(record.ownerId, f.owner.actorId);
   const submitted = await f.consolidation.submit(f.owner, await f.input(record, f.owner));
   await assert.rejects(async () => await f.reviews.start(f.owner, submitted.reviewId!), {
     code: 'review_independence',

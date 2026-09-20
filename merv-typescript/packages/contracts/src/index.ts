@@ -113,12 +113,23 @@ export function check(
 }
 export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-', '')}`;
 export const now = () => new Date().toISOString();
-export type Limits = { depth?: number; nodes?: number; bytes?: number; keys?: 'json' | 'any' };
+export type Limits = {
+  depth?: number;
+  nodes?: number;
+  bytes?: number;
+  keys?: 'json' | 'any';
+  strings?: 'unicode' | 'json';
+  undefined?: 'omit' | 'reject' | 'omit-root';
+  nullPrototype?: boolean;
+};
 /**
  * A detached plain-JSON copy of an input, made without calling accessors: no proxies, foreign
  * prototypes, cycles, sparse arrays, symbol keys, non-finite numbers, NUL or lone surrogates;
  * bounded in depth, nodes and UTF-8 bytes; undefined fields omitted as JSON omits them. Names
- * that steer prototypes are refused unless `keys` is 'any'.
+ * that steer prototypes are refused unless `keys` is 'any'. `strings: 'json'` permits
+ * escaped NUL/surrogates; `undefined: 'reject'` refuses undefined instead of omitting it.
+ * `undefined: 'omit-root'` omits undefined root fields but rejects them in nested data.
+ * Set `nullPrototype: false` when only ordinary Object-prototype records are accepted.
  */
 export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: Limits = {}): T {
   const { depth: maxDepth = 64, nodes: maxNodes = Infinity, bytes: maxBytes = Infinity } = limits;
@@ -127,8 +138,10 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
   const active = new Set<object>();
   const refuse = (message: string): never => check(false, code, message) as never;
   const text = (item: string) => {
-    check(!item.includes('\0'), code, 'Text cannot contain NUL');
-    check(!/\p{Surrogate}/u.test(item), code, 'Text must be well-formed Unicode');
+    if (limits.strings !== 'json') {
+      check(!item.includes('\0'), code, 'Text cannot contain NUL');
+      check(!/\p{Surrogate}/u.test(item), code, 'Text must be well-formed Unicode');
+    }
     bytes += Buffer.byteLength(item, 'utf8');
     if (bytes > maxBytes) refuse('Input is too large');
     return item;
@@ -143,7 +156,9 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
     const array = Array.isArray(item);
     const prototype = Object.getPrototypeOf(item);
     if (
-      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
+      array
+        ? prototype !== Array.prototype
+        : prototype !== Object.prototype && (prototype !== null || limits.nullPrototype === false)
     )
       refuse('Input must contain plain objects and arrays');
     const keys = Reflect.ownKeys(item);
@@ -161,6 +176,7 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
     if (array) {
       const length = descriptors.length.value as number;
       if (
+        length > maxNodes - nodes ||
         keys.length !== length + 1 ||
         !Array.from({ length }, (_, index) => String(index)).every((key) =>
           Object.hasOwn(descriptors, key),
@@ -176,7 +192,11 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
         if (limits.keys !== 'any' && ['__proto__', 'prototype', 'constructor'].includes(key))
           refuse('Input contains a reserved field name');
         text(key);
-        if (field.value !== undefined)
+        if (
+          field.value !== undefined ||
+          limits.undefined === 'reject' ||
+          (limits.undefined === 'omit-root' && depth > 0)
+        )
           Object.defineProperty(record, key, {
             value: copy(field.value, depth + 1),
             enumerable: true,
@@ -189,7 +209,7 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
     active.delete(item);
     return result;
   };
-  return (value === undefined ? undefined : copy(value, 0)) as T;
+  return (value === undefined && limits.undefined !== 'reject' ? undefined : copy(value, 0)) as T;
 }
 /** Parse a detached copy of `value`; refusals carry `code` and name the failing fields. */
 export function parsed<T>(

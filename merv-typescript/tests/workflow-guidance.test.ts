@@ -50,15 +50,11 @@ test('a new program registers guidance and guards without engine cases; reads, p
     instrumentReady = true;
     assert.equal((await evaluate()).nextAction?.status, 'needs_input');
     const proposal = { reading: 10, expectedRevision: 0 };
-    assert.equal(
-      (
-        await app.ctx.workflows.evaluate(caller, instance.id, {
-          action: 'calibrate',
-          input: proposal,
-        })
-      ).nextAction?.status,
-      'ready',
-    );
+    const query = { action: 'calibrate', input: { ...proposal } };
+    const preflight = app.ctx.workflows.evaluate(caller, instance.id, query);
+    query.action = 'changed';
+    query.input.reading = 99;
+    assert.equal((await preflight).nextAction?.status, 'ready');
     assert.equal(
       await app.ctx.state.eventHead(),
       before,
@@ -123,6 +119,8 @@ test('a new program registers guidance and guards without engine cases; reads, p
       /every graph transition/,
     );
     const asyncGraph = { ...graph, name: 'async_policy' };
+    let description: unknown;
+    let descriptionReads = 0;
     await app.ctx.workflows.register(asyncGraph, {
       actions: [
         {
@@ -146,7 +144,16 @@ test('a new program registers guidance and guards without engine cases; reads, p
           'SELECT workflow FROM wf_instances WHERE id=?',
           snapshot.id,
         );
-        return { label: `Async ${row!.workflow}`, references: [] };
+        return (
+          description === undefined
+            ? {
+                label: `Async ${row!.workflow}`,
+                references: [],
+                gate: undefined,
+                waiting: undefined,
+              }
+            : description
+        ) as any;
       },
     });
     const asyncInstance = await app.ctx.workflows.start(caller, {
@@ -157,28 +164,88 @@ test('a new program registers guidance and guards without engine cases; reads, p
       (await app.ctx.workflows.evaluate(caller, asyncInstance.id)).label,
       'Async async_policy',
     );
+    const unexpectedDescriptionRead = () => {
+      descriptionReads++;
+      return [];
+    };
+    for (description of [
+      Object.defineProperty({ references: [] }, 'label', {
+        enumerable: true,
+        get: () => {
+          descriptionReads++;
+          return 'Changed';
+        },
+      }),
+      null,
+      { label: 'Invalid reference', references: [null] },
+      {
+        label: 'Proxy',
+        references: [
+          new Proxy(
+            { kind: 'test', id: 'id', label: 'Reference' },
+            { ownKeys: unexpectedDescriptionRead },
+          ),
+        ],
+      },
+      {
+        label: 'Custom array',
+        references: Object.setPrototypeOf([], {
+          every: () => true,
+          map: unexpectedDescriptionRead,
+        }),
+      },
+      {
+        label: 'Undefined reference metadata',
+        references: [{ kind: 'test', id: 'id', label: 'Reference', extra: undefined }],
+      },
+    ]) {
+      await assert.rejects(() => app.ctx.workflows.evaluate(caller, asyncInstance.id), {
+        code: 'invalid_workflow_policy',
+        status: 500,
+      });
+      assert.equal(descriptionReads, 0);
+    }
     const broken = { ...graph, name: 'broken_arguments' };
+    let args: any;
     await app.ctx.workflows.register(broken, {
-      actions: [{ ...policy.actions[0], arguments: () => null as any }],
+      actions: [{ ...policy.actions[0], arguments: () => args }],
     });
     const brokenInstance = await app.ctx.workflows.start(caller, {
       workflow: broken.name,
       requestId: 'broken-start',
     });
-    await assert.rejects(async () => await app.ctx.workflows.evaluate(caller, brokenInstance.id), {
-      code: 'invalid_workflow_policy',
-    });
-    await assert.rejects(
-      async () =>
-        await app.ctx.workflows.transition(caller, {
-          instanceId: brokenInstance.id,
-          expectedRevision: 0,
-          action: 'calibrate',
-          requestId: 'broken-act',
-          input: { reading: 10 },
-        }),
-      { code: 'invalid_workflow_policy' },
-    );
+    let callbacks = 0;
+    const unexpected = () => {
+      callbacks++;
+      return [];
+    };
+    for (args of [
+      null,
+      Object.defineProperty({}, 'value', { enumerable: true, get: unexpected }),
+      { value: NaN },
+      new Proxy({}, { ownKeys: unexpected }),
+      { value: Object.setPrototypeOf([1], { map: unexpected }) },
+    ]) {
+      await assert.rejects(
+        async () => await app.ctx.workflows.evaluate(caller, brokenInstance.id),
+        {
+          code: 'invalid_workflow_policy',
+          status: 500,
+        },
+      );
+      await assert.rejects(
+        async () =>
+          await app.ctx.workflows.transition(caller, {
+            instanceId: brokenInstance.id,
+            expectedRevision: 0,
+            action: 'calibrate',
+            requestId: 'broken-act',
+            input: { reading: 10 },
+          }),
+        { code: 'invalid_workflow_policy', status: 500 },
+      );
+      assert.equal(callbacks, 0);
+    }
     assert.equal((await app.ctx.workflows.get(caller, brokenInstance.id)).revision, 0);
   } finally {
     await app.stop();

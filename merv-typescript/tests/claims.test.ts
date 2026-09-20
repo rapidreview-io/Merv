@@ -149,7 +149,15 @@ test('Claims normalize creation, retain identity and list every lifecycle state 
 test('Claims replay normalized input and historical results after later updates and restart', async (t) => {
   const f = await fixture(t),
     input = seed();
-  const created = await f.claims.create(f.producer, input);
+  const caller = { ...f.producer },
+    pendingInput = { ...input };
+  const creating = f.claims.create(caller, pendingInput);
+  Object.assign(caller, f.operator);
+  pendingInput.statement = 'Changed while pending';
+  pendingInput.requestId = 'changed';
+  const created = await creating;
+  assert.equal(created.createdBy, f.producer.actorId);
+  assert.equal(created.statement, input.statement.trim());
   assert.deepEqual(
     await f.claims.create(f.producer, {
       ...input,
@@ -165,7 +173,14 @@ test('Claims replay normalized input and historical results after later updates 
     expectedRevision: 0,
     requestId: 'update',
   };
-  const one = await f.claims.update(f.producer, update);
+  Object.assign(caller, f.producer);
+  const pendingUpdate = { ...update };
+  const updating = f.claims.update(caller, pendingUpdate);
+  Object.assign(caller, f.operator);
+  pendingUpdate.expectedRevision = 99;
+  pendingUpdate.requestId = 'changed-update';
+  const one = await updating;
+  assert.equal(one.updatedBy, f.producer.actorId);
   const two = await f.claims.update(f.operator, {
     claimId: created.id,
     confidence: 'low',
@@ -223,6 +238,21 @@ test('Claims scope reads and writes, deny stale authority before replay, and enf
   const otherBoot = await f.scope.bootstrap({ projectName: 'Other tenant', actorName: 'Other' });
   const other = { actorId: otherBoot.actor.id, projectId: otherBoot.project.id };
   assert.deepEqual(await f.claims.list(other), []);
+  const authorize = f.scope.require.bind(f.scope);
+  const mutable = { ...other };
+  f.scope.require = async (...args) => {
+    const actor = await authorize(...args);
+    mutable.projectId = f.producer.projectId;
+    return actor;
+  };
+  try {
+    const got = await f.claims.get(mutable, created.id).catch((error) => error.code);
+    Object.assign(mutable, other);
+    const listed = await f.claims.list(mutable);
+    assert.deepEqual({ got, listed }, { got: 'claim_not_found', listed: [] });
+  } finally {
+    f.scope.require = authorize;
+  }
   await assert.rejects(async () => await f.claims.get(other, created.id), { status: 404 });
   await assert.rejects(
     async () =>

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useSession, type Actor } from '../session';
-import { term } from '../components';
+import { EmptyState, Submit, term } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 
@@ -10,6 +10,18 @@ const IDENTIFIER = /[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/;
 /** A name nobody wrote is not one: an identifier names nobody. */
 export const personName = (name: string | undefined) =>
   name && !IDENTIFIER.test(name) ? name : undefined;
+/**
+ * Up to two initials for the disc that stands for a person, in the rail's account
+ * row and beside a post: the first letters of the first two words, and a dot for
+ * somebody nobody can name.
+ */
+export const initials = (name: string | undefined) =>
+  (name ?? '')
+    .split(/[\s·]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]!.toUpperCase())
+    .join('') || '·';
 export const namesOf = (actors: Actor[] | null | undefined) => {
   const names = new Map((actors ?? []).map((actor) => [actor.id, actor.name]));
   return (id: string | null | undefined) => personName(id ? names.get(id) : undefined);
@@ -40,6 +52,30 @@ const mutationMessage = (error: unknown): string =>
     ? 'Keep at least one operator with a verified account. Another operator must sign in before the last verified operator can be removed or demoted.'
     : failure(error).message;
 
+/**
+ * Members and keys belong to a person's account. A session opened with a bearer
+ * credential has none, so Settings does not offer it those rooms; whoever arrives
+ * at one by its address is told what would open it, with the one step that leads
+ * there.
+ */
+export function NeedsAccount({ icon, said }: { icon: string; said: string }) {
+  const { signOut } = useSession();
+  return (
+    <div className="page-stage">
+      <EmptyState
+        kind="settings"
+        icon={icon}
+        title={said}
+        action={
+          <button type="button" className="btn" onClick={signOut}>
+            Sign out
+          </button>
+        }
+      />
+    </div>
+  );
+}
+
 export function PeopleView() {
   const { account, project, actor } = useSession();
   const human = account.kind === 'user';
@@ -54,6 +90,7 @@ export function PeopleView() {
   const [newRole, setNewRole] = useState<Role>('reader');
   const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
   const generation = useRef(0);
+  const heading = useId();
   const currentMember = members?.find(
     (member) => member.subject === subject && member.issuer === issuer,
   );
@@ -136,30 +173,24 @@ export function PeopleView() {
       if (current()) setBusy(false);
     }
   };
+  // What is pasted is the ID the person being added was shown; the space a paste
+  // drags along with it is nobody's mistake, so it is dropped and not complained of.
   const add = (event: FormEvent, close: () => void) => {
     event.preventDefault();
-    if (!newSubject || newSubject.trim() !== newSubject) {
-      setMutationError('Enter the exact account ID without surrounding spaces.');
-      return;
-    }
-    void mutate('POST', undefined, { subject: newSubject, role: newRole }, close);
+    const pasted = newSubject.trim();
+    if (pasted) void mutate('POST', undefined, { subject: pasted, role: newRole }, close);
   };
 
   // An account with no sign-in of its own has no memberships to manage; the
   // identities that own work are the Sessions page's own directory.
   if (!human)
-    return (
-      <div className="page-stage">
-        <div className="empty-state">
-          <h2>No memberships to manage</h2>
-        </div>
-      </div>
-    );
+    return <NeedsAccount icon="people" said="Sign in with an account to manage members" />;
 
   return (
     <ListPage
       load={{ loading, error: loadError, data: members }}
       noun="members"
+      kind="people"
       placeholder="Account ID"
       filter={filter}
       emptyTitle="No active memberships"
@@ -167,10 +198,14 @@ export function PeopleView() {
         label: 'New member',
         shown: canManage,
         form: (close) => (
-          <form className="identity-form card" onSubmit={(event) => add(event, close)}>
-            <h3 className="label">New member</h3>
+          <form
+            className="identity-form card"
+            aria-labelledby={heading}
+            onSubmit={(event) => add(event, close)}
+          >
+            <h2 id={heading}>New member</h2>
             <label>
-              Account ID
+              Their account ID
               <input
                 className="input mono"
                 value={newSubject}
@@ -179,6 +214,8 @@ export function PeopleView() {
                 disabled={busy}
                 autoComplete="off"
                 spellCheck={false}
+                // Nobody knows one by heart: it is shown to its owner, to be handed over.
+                placeholder="Paste the ID they see under Account details"
                 onChange={(event) => setNewSubject(event.target.value)}
               />
             </label>
@@ -197,9 +234,10 @@ export function PeopleView() {
                 ))}
               </select>
             </label>
-            <button className="btn btn--primary" disabled={busy} type="submit">
-              New member
-            </button>
+            <div>
+              {/* One lock serves every change on the page, so the word stays what it was. */}
+              <Submit disabled={busy || !newSubject.trim()} />
+            </div>
           </form>
         ),
       }}
@@ -232,7 +270,7 @@ export function PeopleView() {
                 ))}
               </select>
               <button
-                className="btn btn--sm"
+                className="btn"
                 disabled={busy || !draftRoles[member.id] || draftRoles[member.id] === member.role}
                 onClick={() =>
                   void mutate('PATCH', member.subject, { role: draftRoles[member.id] })
@@ -241,7 +279,7 @@ export function PeopleView() {
                 Edit role
               </button>
               <button
-                className="btn btn--sm"
+                className="btn"
                 disabled={busy}
                 onClick={() => void mutate('DELETE', member.subject)}
               >

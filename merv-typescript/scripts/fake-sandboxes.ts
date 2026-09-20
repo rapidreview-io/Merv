@@ -190,6 +190,7 @@ function record(seed: Seed): Json {
   const mark = (index: number) => (index < done ? 'done' : index === done ? 'here' : 'next');
   return {
     id: idOf(seed),
+    revision: 0,
     name,
     plugin,
     state,
@@ -274,14 +275,24 @@ async function change(
   if (!renewing) {
     // Deleting a machine that is already gone deletes nothing twice, so the record is the answer.
     if (!['deleting', 'stopped'].includes(state))
-      changed.set(id, { ...changed.get(id), state: 'deleting' });
+      changed.set(id, {
+        ...changed.get(id),
+        state: 'deleting',
+        revision: Number(current(seed).revision) + 1,
+      });
     return send(response, 202, current(seed));
   }
-  const body = (await read(request).catch(() => ({}))) as { lease_seconds?: unknown };
+  const body = (await read(request).catch(() => ({}))) as {
+    lease_seconds?: unknown;
+    expected_revision?: unknown;
+  };
   const seconds = body.lease_seconds;
   if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < 60)
     return fail(response, 400, 'validation', 'lease_seconds out of range');
-  if (!renewable.includes(state))
+  const latest = current(seed);
+  if (body.expected_revision !== undefined && body.expected_revision !== latest.revision)
+    return fail(response, 409, 'operation_state', 'sandbox changed concurrently; read it again');
+  if (!renewable.includes(String(latest.state)))
     return fail(
       response,
       409,
@@ -291,6 +302,7 @@ async function change(
   // The service renews to now + lease_seconds; it never adds to what is left.
   changed.set(id, {
     ...changed.get(id),
+    revision: Number(latest.revision) + 1,
     lease_expires_at: at(seconds / 60),
     lease_seconds: seconds,
   });

@@ -11,3 +11,8 @@ credentials.json
 credentials/
 !packages/credentials/
 .cordis/
+
+# Generated scenario execution data; retain the summary reports.
+/dev_docs/scenario-runs/*/launches/
+/dev_docs/scenario-runs/*/machine/
+/dev_docs/scenario-runs/*/workspaces/

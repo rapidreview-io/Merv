@@ -92,7 +92,21 @@ async function fixture(t: TestContext, timeoutMs = 1500, expectedCleanupFailure 
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  return { pool, upstream, a, a2, b, credentials, access, grants, bindings, envA, tokens, clients };
+  return {
+    pool,
+    upstream,
+    a,
+    a2,
+    b,
+    credentials,
+    access,
+    grants,
+    bindings,
+    envA,
+    tokens,
+    clients,
+    scope: app.ctx.scope,
+  };
 }
 
 test('same identity deduplicates concurrent connections; actors and projects receive independent upstream clients', async (t) => {
@@ -208,7 +222,9 @@ for (const change of ['grant', 'credential'] as const) {
       code: change === 'grant' ? 'tool_forbidden' : 'credential_changed',
     });
     assert.equal(upstream.callAttempts, 0);
-    assert.equal(clients[0].closeCalls, 1);
+    // Rotation can now fail the initialized notification itself; the SDK closes
+    // that failed handshake as well as the pool performing its own cleanup.
+    assert.ok(clients[0].closeCalls >= 1);
   });
 }
 
@@ -365,3 +381,124 @@ for (const phase of ['connect', 'call'] as const) {
     held.release();
   });
 }
+
+for (const change of ['remove', 'replace', 'rotate'] as const) {
+  test(`credential ${change} during final token validation prevents upstream dispatch`, async (t) => {
+    const f = await fixture(t);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const recognizes = f.scope.recognizesCredential.bind(f.scope);
+    let calls = 0;
+    t.mock.method(f.scope, 'recognizesCredential', async (secret: string) => {
+      const result = await recognizes(secret);
+      if (++calls === 2) {
+        enter();
+        await waiting;
+      }
+      return result;
+    });
+    const pending = f.pool.call(f.a, 'sandbox', 'mutate', {});
+    const rejected = assert.rejects(pending, { code: 'credential_changed' });
+    try {
+      await entered;
+      if (change === 'remove')
+        f.credentials.replace(f.bindings.filter((binding) => binding.actorId !== f.a.actorId));
+      else if (change === 'replace')
+        f.credentials.replace(
+          f.bindings.map((binding) => ({ ...binding, id: `${binding.id}-new` })),
+        );
+      else process.env[f.envA] = f.tokens.rotated;
+    } finally {
+      release();
+    }
+    await rejected;
+    assert.equal(f.upstream.callAttempts, 0, 'no mutation may reach the upstream server');
+    assert.equal(f.clients[0].closeCalls, 1, 'the stale privileged connection is retired');
+    if (change !== 'remove') {
+      await f.pool.call(f.a, 'sandbox', 'inspect', {});
+      assert.equal(f.upstream.callAttempts, 1, 'fresh admission uses the replacement credential');
+    }
+  });
+}
+
+for (const change of ['remove', 'replace', 'rotate'] as const) {
+  test(`credential ${change} during final grant check prevents upstream dispatch`, async (t) => {
+    const f = await fixture(t);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requireGrant = f.access.require.bind(f.access);
+    let calls = 0;
+    t.mock.method(f.access, 'require', async (...args: Parameters<typeof requireGrant>) => {
+      await requireGrant(...args);
+      if (++calls === 3) {
+        enter();
+        await waiting;
+      }
+    });
+    const pending = f.pool.call(f.a, 'sandbox', 'mutate', {});
+    const rejected = assert.rejects(pending, { code: 'credential_changed' });
+    try {
+      await entered;
+      if (change === 'remove') f.credentials.replace([]);
+      else if (change === 'replace')
+        f.credentials.replace(
+          f.bindings.map((binding) => ({ ...binding, id: `${binding.id}-new` })),
+        );
+      else process.env[f.envA] = f.tokens.rotated;
+    } finally {
+      release();
+    }
+    await rejected;
+    assert.equal(f.upstream.callAttempts, 0);
+    assert.equal(f.clients[0].closeCalls, 1);
+  });
+}
+
+test('credential rotation after SDK admission is fenced before the HTTP request', async (t) => {
+  const f = await fixture(t);
+  await f.pool.call(f.a, 'sandbox', 'inspect', {});
+  const client = f.clients[0].client;
+  const request = client.request.bind(client);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.mock.method(client, 'request', async (...args: Parameters<typeof request>) => {
+    enter();
+    await waiting;
+    return request(...args);
+  });
+  const pending = f.pool.call(f.a, 'sandbox', 'mutate', {});
+  const rejected = assert.rejects(pending);
+  try {
+    await entered;
+    process.env[f.envA] = f.tokens.rotated;
+  } finally {
+    release();
+  }
+  await rejected;
+  assert.equal(f.upstream.callAttempts, 1, 'only the earlier inspection reached upstream');
+  assert.equal(f.clients[0].closeCalls, 1);
+});
+
+test('equivalent binding replacement retains a usable cached transport', async (t) => {
+  const f = await fixture(t);
+  const first = await f.pool.call(f.a, 'sandbox', 'inspect', {});
+  f.credentials.replace(structuredClone(f.bindings));
+  const next = await f.pool.call(f.a, 'sandbox', 'inspect', {});
+  assert.equal(data(first).connectionId, data(next).connectionId);
+  assert.equal(f.upstream.initializeAttempts, 1);
+});

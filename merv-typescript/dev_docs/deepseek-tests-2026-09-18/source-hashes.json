@@ -1,0 +1,8 @@
+{
+  "scripts/live-codex.ts": "10ed1a0a5f44b9f44a177a39d35c1e1f77cf1836c23671bb214eacaf72b313d5",
+  "scripts/live-sessions.ts": "b0fecaf69d5ddb70ee559c415de57836b94fbdb3145b45520cb08850b4f55feb",
+  "scripts/live-experiments.ts": "f417a2834a08ea603d6cc98f3536dad365110a1b822c9a3b92ba347165bf8cce",
+  "scripts/live-review-returns.ts": "b8b47412237031cc7142628833f0fc5ea3e4ccdea31d892705b44bafe55bf3ff",
+  "scripts/live-evidence.ts": "f7eec844f7961c6dd1c04e5deeb042bf913bfd47018485612d38ca2d6b9c875c",
+  "package.json": "20216f89e64b50d93d30a91110610d68cf0ccd6b73ee42e00d88cc770285446d"
+}

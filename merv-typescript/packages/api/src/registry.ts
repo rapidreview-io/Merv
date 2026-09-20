@@ -311,7 +311,9 @@ export class ToolRegistry implements Tools {
 
   /** A native tool that only reads; a session may call every one of them. */
   private reads(entry: Entry): boolean {
-    return !entry.remote && 'readOnly' in entry.definition && !!entry.definition.readOnly;
+    // Like the compiled schema, authority belongs to the published registration. Native
+    // handlers may be instrumented, but mutating their definition must not change policy.
+    return !entry.remote && entry.description.annotations?.readOnlyHint === true;
   }
 
   private async visible(caller?: Caller): Promise<Entry[]> {
@@ -376,6 +378,14 @@ export class ToolRegistry implements Tools {
           const run = async () => await entry.definition.handler(activeCaller, parsed);
           const result =
             this.readScope && this.reads(entry) ? await this.readScope(run) : await run();
+          // Read handlers can wait for external storage while their PostgreSQL snapshot
+          // retains old permissions. Reauthorize after releasing that snapshot, before
+          // handing any bytes or signed URL to the caller. Mutations keep their own
+          // transactional authorization and may legitimately end their worker session.
+          if (this.reads(entry)) {
+            await this.scope.require(activeCaller, 'read');
+            await policy?.validate(activeCaller, name, parsed as Data);
+          }
           completed = entry.complete(result);
           return result;
         };

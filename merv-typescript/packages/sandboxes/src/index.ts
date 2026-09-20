@@ -101,6 +101,10 @@ export class SandboxService implements Sandboxes {
   #reachable = false;
   #detail = 'The sandboxes manifest has not been read yet';
   #reading?: Promise<void>;
+  #timer?: ReturnType<typeof setInterval>;
+  #closed = false;
+  #closing?: Promise<void>;
+  readonly #running = new Set<Promise<unknown>>();
 
   /**
    * `registered` reports whether a tool exists in this process; the plugin answers for the two
@@ -118,12 +122,43 @@ export class SandboxService implements Sandboxes {
     );
   }
 
-  /** Reads the manifest now and on a bounded cadence; the disposer stops the cadence. */
-  start(): () => void {
-    const timer = setInterval(() => void this.refresh().catch(() => undefined), this.#refreshMs);
-    timer.unref();
-    void this.refresh().catch(() => undefined);
-    return () => clearInterval(timer);
+  /** Reads the manifest on a bounded cadence; disposal retires and drains this instance. */
+  start(): () => Promise<void> {
+    check(!this.#closed, 'sandboxes_closed', 'The sandboxes service is closed', 503);
+    if (!this.#timer) {
+      this.#timer = setInterval(() => void this.refresh().catch(() => undefined), this.#refreshMs);
+      this.#timer.unref();
+      void this.refresh().catch(() => undefined);
+    }
+    return () => this.close();
+  }
+
+  /** Stop admission immediately; let already admitted operations finish their full protocol. */
+  close(): Promise<void> {
+    if (this.#closing) return this.#closing;
+    this.#closed = true;
+    clearInterval(this.#timer);
+    this.#timer = undefined;
+    this.#listeners.clear();
+    this.#reachable = false;
+    this.#detail = 'The sandboxes service is closed';
+    this.#closing = (async () => {
+      await Promise.allSettled([...this.#running]);
+      this.#rows = [];
+      this.#specs.clear();
+    })();
+    return this.#closing;
+  }
+
+  async #run<T>(operation: () => Promise<T>): Promise<T> {
+    check(!this.#closed, 'sandboxes_closed', 'The sandboxes service is closed', 503);
+    const pending = Promise.resolve().then(operation);
+    this.#running.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.#running.delete(pending);
+    }
   }
 
   rows(): SandboxRow[] {
@@ -135,13 +170,18 @@ export class SandboxService implements Sandboxes {
   }
 
   subscribe(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    check(!this.#closed, 'sandboxes_closed', 'The sandboxes service is closed', 503);
+    const registered = () => listener();
+    this.#listeners.add(registered);
+    return () => {
+      this.#listeners.delete(registered);
+    };
   }
 
   /** The cadence and an on-demand caller share one attempt rather than stampeding. */
   refresh(): Promise<void> {
-    this.#reading ??= this.#read().finally(() => (this.#reading = undefined));
+    if (this.#closed) return this.#run(async () => {});
+    this.#reading ??= this.#run(() => this.#read()).finally(() => (this.#reading = undefined));
     return this.#reading;
   }
 
@@ -150,6 +190,7 @@ export class SandboxService implements Sandboxes {
     let reached = false;
     let detail = 'merv-sandboxes is unreachable';
     for (const entry of this.#connections) {
+      if (this.#closed) return;
       try {
         const manifest = await this.#client.read(entry, '/v1/ui/manifest');
         // Every connection is the same service, so identical row ids describe one row.
@@ -160,6 +201,7 @@ export class SandboxService implements Sandboxes {
         detail = error instanceof Error ? error.message : detail;
       }
     }
+    if (this.#closed) return;
     if (!reached) {
       // Keep the last manifest: the row reports degraded rather than vanishing.
       this.#reachable = false;
@@ -184,23 +226,42 @@ export class SandboxService implements Sandboxes {
   }
 
   async extend(caller: Caller, input: SandboxExtend): Promise<Json> {
+    return this.#run(() => this.#extend(caller, input));
+  }
+
+  async #extend(caller: Caller, input: SandboxExtend): Promise<Json> {
     const entry = this.#connectionOf(caller);
     // A renewal is a total, not an increment: the service sets the lease to now + lease_seconds.
-    // So what is left is read and carried, and extending a machine can only lengthen its life.
+    // Carry the remaining lifetime and its revision together: the service must refuse a
+    // stale calculation rather than shortening a lease another client just extended.
     // The service publishes no maximum, so an over-long total is its refusal to give, not ours.
     const record = (await this.#client.read(entry, sandboxRoute(sandboxRecord, input.id))) as {
       lease_expires_at?: unknown;
+      revision?: unknown;
     } | null;
+    check(
+      typeof record?.revision === 'number' &&
+        Number.isSafeInteger(record.revision) &&
+        record.revision >= 0,
+      'sandbox_revision_unavailable',
+      'The sandbox service must return a record revision for safe lease extension',
+      502,
+    );
     const expires = Date.parse(String(record?.lease_expires_at ?? ''));
     const left = Number.isNaN(expires) ? 0 : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
     return withoutSecrets(
       await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), {
         lease_seconds: left + input.seconds,
+        expected_revision: record.revision,
       }),
     );
   }
 
   async release(caller: Caller, input: SandboxTarget): Promise<Json> {
+    return this.#run(() => this.#release(caller, input));
+  }
+
+  async #release(caller: Caller, input: SandboxTarget): Promise<Json> {
     const entry = this.#connectionOf(caller);
     const path = sandboxRoute(sandboxRecord, input.id);
     // The guard the browser shows is the retention confirmation the legacy tool asked for in a
@@ -211,6 +272,10 @@ export class SandboxService implements Sandboxes {
   }
 
   async read(caller: Caller, rowId: string, params: Record<string, unknown> = {}): Promise<Json> {
+    return this.#run(() => this.#readRow(caller, rowId, params));
+  }
+
+  async #readRow(caller: Caller, rowId: string, params: Record<string, unknown>): Promise<Json> {
     const spec = this.#specs.get(rowId);
     check(spec, 'row_unreadable', 'That row is not published by this service', 404);
     const entry = this.#connectionOf(caller);

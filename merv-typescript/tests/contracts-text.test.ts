@@ -30,6 +30,11 @@ test('plain() detaches bounded JSON and refuses what JSON cannot carry', () => {
     c: { d: true },
   });
   assert.equal(plain(undefined), undefined);
+  for (const value of [undefined, { x: undefined }]) refused(value, { undefined: 'reject' });
+  assert.deepEqual(plain({ x: undefined }, 'invalid_input', { undefined: 'omit-root' }), {});
+  refused({ nested: { x: undefined } }, { undefined: 'omit-root' });
+  const escaped = { value: '\0\ud800' };
+  assert.deepEqual(plain(escaped, 'invalid_input', { strings: 'json' }), escaped);
   const reserved = plain<Record<string, unknown>>(JSON.parse('{"__proto__":{"p":1}}'), 'x', {
     keys: 'any',
   });

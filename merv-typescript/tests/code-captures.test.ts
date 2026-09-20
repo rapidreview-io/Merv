@@ -188,11 +188,14 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
   await f.app.ctx.code.nextCommand(f.source, worker.control);
   assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
-  await f.app.ctx.code.completeCommand(f.source, {
+  const source = { ...f.source };
+  const completing = f.app.ctx.code.completeCommand(source, {
     ...worker.control,
     commandId: command.id,
     receipt: receipt(command),
   });
+  source.actorId = 'missing';
+  await completing;
   const expected = await f.app.ctx.code.capture(f.reader, ref);
   assert.equal(expected.status, 'ready');
   assert.deepEqual(expected.workspace, {
@@ -414,6 +417,16 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
   await assert.rejects(async () => await f.app.ctx.code.capture(caller, ref), {
     code: 'code_capture_not_found',
   });
+  for (const target of [ref, { kind: 'session-final' as const, sessionId: worker.session.id }]) {
+    await t.test(target.kind, async () => {
+      const source = { ...caller };
+      const pending = f.app.ctx.code.capture(source, target);
+      Object.assign(source, f.reader);
+      await assert.rejects(pending, {
+        code: target.kind === 'code-commit' ? 'code_capture_not_found' : 'session_not_found',
+      });
+    });
+  }
   await assert.rejects(
     async () =>
       await f.app.ctx.code.capture(f.reader, { ...ref, actorId: worker.caller.actorId } as never),

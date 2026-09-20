@@ -164,11 +164,24 @@ async function foundation(t: TestContext, storage?: State) {
 
 test('GitHub lives in Code: encrypted connection, user-authorized selection, project reference, and disconnect', async (t) => {
   const f = await foundation(t);
-  const { cookie, flow, begin } = await f.ready();
+  const startingCaller = structuredClone(f.caller);
+  const starting = f.service.begin(startingCaller, { expectedRevision: 0 });
+  startingCaller.actorId = 'missing';
+  const begin = await starting;
+  const cookie = begin.cookie.split(';')[0].slice('merv_github_flow='.length);
+  const flow = new URL(begin.url).searchParams.get('state')!;
+  const callback = { state: flow, code: 'synthetic-code', cookie };
+  const returning = f.service.callback(callback);
+  callback.cookie = 'changed';
+  callback.code = 'changed';
+  await returning;
   assert.match(begin.cookie, /HttpOnly; SameSite=Lax; Path=\/code\/github; Max-Age=600/);
   assert.equal(f.gh.calls.length, 0, 'public callback does not exchange credentials');
   assert.equal((await f.service.status(f.caller)).status, 'disconnected');
-  const connected = await f.service.finish(f.caller, cookie);
+  const finishingCaller = structuredClone(f.caller);
+  const finishing = f.service.finish(finishingCaller, cookie);
+  finishingCaller.actorId = 'missing';
+  const connected = await finishing;
   assert.equal(connected.revision, 1);
   assert.deepEqual(connected.user, user);
   assert.deepEqual(
@@ -199,11 +212,14 @@ test('GitHub lives in Code: encrypted connection, user-authorized selection, pro
     f.service.link(f.caller, { expectedRevision: 1, installationId: 17, repositoryId: 999 }),
     { code: 'github_repository_forbidden' },
   );
-  const linked = await f.service.link(f.caller, {
+  const linkingCaller = structuredClone(f.caller);
+  const linking = f.service.link(linkingCaller, {
     expectedRevision: 1,
     installationId: 17,
     repositoryId: 101,
   });
+  linkingCaller.actorId = 'missing';
+  const linked = await linking;
   assert.equal(linked.revision, 2);
   assert.equal(linked.repository?.id, 101);
   const data = await f.state.read(async (sql) =>
@@ -222,7 +238,12 @@ test('GitHub lives in Code: encrypted connection, user-authorized selection, pro
   const events = await f.state.events(f.project.id);
   assert.ok(events.some((e) => e.type === 'code.github.repository_linked'));
   assert.ok(!JSON.stringify(events).includes('ghu_'));
-  const detached = await f.service.disconnect(f.caller, { expectedRevision: 2 });
+  const disconnectingCaller = structuredClone(f.caller),
+    revision = { expectedRevision: 2 };
+  const disconnecting = f.service.disconnect(disconnectingCaller, revision);
+  disconnectingCaller.actorId = 'missing';
+  revision.expectedRevision = 999;
+  const detached = await disconnecting;
   assert.equal(detached.status, 'disconnected');
   assert.deepEqual(
     detached.repository,

@@ -51,8 +51,9 @@ export class PaperService implements Paper {
   close(): void {
     this.closed = true;
   }
-  private open(): void {
+  private capture(caller: Caller): Caller {
     check(!this.closed, 'paper_unavailable', 'Living paper is unavailable', 503);
+    return structuredClone(caller);
   }
   private async current(
     caller: Caller,
@@ -92,7 +93,7 @@ export class PaperService implements Paper {
     ).map((row) => JSON.parse(row.record));
   }
   async read(caller: Caller, transaction?: Transaction): Promise<PaperWorkspace> {
-    this.open();
+    caller = this.capture(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const documents = Object.fromEntries(
@@ -136,7 +137,7 @@ export class PaperService implements Paper {
     documentKind: PaperKind,
     transaction?: Transaction,
   ): Promise<PaperRevision[]> {
-    this.open();
+    caller = this.capture(caller);
     parse(kind, documentKind);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
@@ -316,7 +317,7 @@ export class PaperService implements Paper {
     value: PaperPatch,
     transaction?: Transaction,
   ): Promise<PaperRevision> {
-    this.open();
+    caller = this.capture(caller);
     const input = parse(patchSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -341,7 +342,7 @@ export class PaperService implements Paper {
     });
   }
   async cite(caller: Caller, value: PaperCite, transaction?: Transaction): Promise<PaperCitation> {
-    this.open();
+    caller = this.capture(caller);
     const input = parse(citeSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -420,7 +421,7 @@ export class PaperService implements Paper {
   }
   /** The parsed, currently applicable edits in a change artifact the caller authored. */
   async validate(caller: Caller, artifactId: string, tx: Transaction) {
-    this.open();
+    caller = this.capture(caller);
     this.state.assertTransaction(tx);
     const artifact = await this.artifacts.get(caller, artifactId, tx);
     const authored = caller.session
@@ -460,8 +461,9 @@ export class PaperService implements Paper {
     return { artifact, documents };
   }
   async propose(caller: Caller, value: PaperPropose, tx: Transaction): Promise<PaperProposal> {
-    await this.scope.require(caller, 'write', tx);
+    caller = this.capture(caller);
     const input = parse(proposeSchema, value);
+    await this.scope.require(caller, 'write', tx);
     const { artifact, documents } = await this.validate(caller, input.artifactId, tx);
     const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
       const a = await this.artifacts.get(caller, id, tx);
@@ -496,7 +498,8 @@ export class PaperService implements Paper {
     input: PaperAccept,
     tx: Transaction,
   ): Promise<{ proposal: PaperProposal; accepted: PaperPublication[] | null }> {
-    this.open();
+    caller = this.capture(caller);
+    input = structuredClone(input);
     this.state.assertTransaction(tx);
     await this.scope.require(caller, 'review', tx);
     const row = await tx.get<{ record: string; acceptance: string | null }>(
@@ -540,6 +543,8 @@ export class PaperService implements Paper {
     return { proposal, accepted: null };
   }
   async accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]> {
+    caller = this.capture(caller);
+    input = structuredClone(input);
     const { proposal, accepted } = await this.checkAccept(caller, input, tx);
     if (accepted) return accepted;
     const publications = await mapAsync(proposal.documents, async ({ edit }) => {

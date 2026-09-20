@@ -219,6 +219,10 @@ test('discovery uses the real source authority and transaction; revoked or cross
   const foreign = await f.scope.bootstrap({ projectName: 'Foreign', actorName: 'Other owner' });
   const foreignCaller: Caller = { actorId: foreign.actor.id, projectId: foreign.project.id };
   assert.deepEqual(await f.workflows.dispatchCandidates(foreignCaller), []);
+  const pendingCaller = { ...foreignCaller };
+  const discovering = f.workflows.dispatchCandidates(pendingCaller);
+  Object.assign(pendingCaller, f.source);
+  assert.deepEqual(await discovering, []);
   await assert.rejects(
     async () =>
       await f.workflows.dispatchCandidates({ ...producerCaller, projectId: foreign.project.id }),

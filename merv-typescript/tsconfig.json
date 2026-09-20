@@ -14,5 +14,18 @@
   },
   "include": ["packages/*/src/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
   "//": "The render harness and the views it mounts are browser code, compiled by the test runner against @merv/ui's own tsconfig; this server project has neither its DOM lib nor its JSX setting.",
-  "exclude": ["tests/ui-render.ts", "tests/ui-sessions.test.ts", "tests/ui-process.test.ts"]
+  "exclude": [
+    "tests/ui-render.ts",
+    "tests/ui-sessions.test.ts",
+    "tests/ui-process.test.ts",
+    "tests/ui-code.test.ts",
+    "tests/ui-feed.test.ts",
+    "tests/ui-foundation.test.ts",
+    "tests/ui-home.test.ts",
+    "tests/ui-keys.test.ts",
+    "tests/ui-markdown.test.ts",
+    "tests/ui-paper.test.ts",
+    "tests/ui-shell.test.ts",
+    "tests/ui-tasks.test.ts"
+  ]
 }

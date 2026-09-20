@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
+import { LoadState, StatusPill } from '../components';
 import { GitHubAutomation } from './github-automation';
 
 const request = <T,>(action = '', body?: unknown) =>
@@ -103,9 +104,15 @@ export function GitHubConnection() {
   const selected = repositories?.find((repo) => `${repo.installationId}:${repo.id}` === selection);
   return (
     <section className="stack" aria-label="GitHub repository">
-      <h2 className="section-title">GitHub repository</h2>
+      {/* How the connection stands is the pill beside its name, never a clause of a sentence. */}
+      <div className="cluster">
+        <h2 className="section-title">GitHub repository</h2>
+        {status && (
+          <StatusPill value={status.status === 'disconnected' ? 'not connected' : status.status} />
+        )}
+      </div>
       {error && <p role="alert">{error}</p>}
-      {!status && !error && <p className="faint">Loading…</p>}
+      {!status && !error && <LoadState loading />}
       {!status && error && (
         <button
           className="btn"
@@ -134,22 +141,13 @@ export function GitHubConnection() {
               </p>
             </div>
           ) : (
-            <p className="muted">No repository linked</p>
+            status.status !== 'disconnected' && <p className="muted">No repository linked</p>
           )}
           {!status.configured ? (
-            <p className="faint">GitHub connections are not configured on this server.</p>
+            <p className="faint">Not configured on this server</p>
           ) : (
             <>
-              {status.user && (
-                <p className="faint">
-                  Connected by {status.user.login}
-                  {status.status === 'needs_reconnect'
-                    ? ' · Reconnection required'
-                    : status.status === 'refreshing'
-                      ? ' · Refreshing access'
-                      : ''}
-                </p>
-              )}
+              {status.user && <p className="faint">Connected by {status.user.login}</p>}
               {status.canManage && (
                 <div className="cluster">
                   <button

@@ -1,6 +1,8 @@
+import { types as nodeTypes } from 'node:util';
 import {
   visible,
   check,
+  plain,
   type Data,
   type ReviewFinding,
   type ReviewRequest,
@@ -11,62 +13,20 @@ import {
 export function validateEvidence(value: unknown): Data {
   if (value === undefined) return {};
   check(
-    value && typeof value === 'object' && !Array.isArray(value),
+    value && typeof value === 'object' && !nodeTypes.isProxy(value) && !Array.isArray(value),
     'invalid_evidence',
     'Review evidence must be a JSON object',
   );
-  const ancestors = new Set<object>();
-  let nodes = 0;
-  const visit = (item: unknown, depth: number): void => {
-    check(++nodes <= 64000 && depth <= 32, 'invalid_evidence', 'Review evidence is too complex');
-    if (item === null || typeof item === 'string' || typeof item === 'boolean') return;
-    if (typeof item === 'number') {
-      check(
-        Number.isFinite(item),
-        'invalid_evidence',
-        'Review evidence must contain only finite JSON values',
-      );
-      return;
-    }
-    check(
-      item && typeof item === 'object' && !ancestors.has(item),
-      'invalid_evidence',
-      'Review evidence must contain only acyclic JSON values',
-    );
-    check(
-      Array.isArray(item) ||
-        Object.getPrototypeOf(item) === Object.prototype ||
-        Object.getPrototypeOf(item) === null,
-      'invalid_evidence',
-      'Review evidence must contain only plain JSON objects',
-    );
-    check(
-      Object.getOwnPropertySymbols(item).length === 0,
-      'invalid_evidence',
-      'Review evidence must contain only JSON keys',
-    );
-    ancestors.add(item);
-    if (Array.isArray(item)) {
-      check(
-        Object.keys(item).length === item.length,
-        'invalid_evidence',
-        'Review evidence arrays must have a value at every index',
-      );
-      for (const child of item) visit(child, depth + 1);
-    } else {
-      for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(item))) {
-        check(
-          'value' in descriptor && descriptor.enumerable,
-          'invalid_evidence',
-          'Review evidence must contain only ordinary JSON properties',
-        );
-        visit(descriptor.value, depth + 1);
-      }
-    }
-    ancestors.delete(item);
-  };
-  visit(value, 0);
-  const encoded = JSON.stringify(value);
+  const encoded = JSON.stringify(
+    plain(value, 'invalid_evidence', {
+      depth: 32,
+      nodes: 64000,
+      bytes: 64000,
+      keys: 'any',
+      strings: 'json',
+      undefined: 'reject',
+    }),
+  );
   check(
     Buffer.byteLength(encoded, 'utf8') <= 64000,
     'invalid_evidence',
@@ -82,12 +42,34 @@ export function validateEvidence(value: unknown): Data {
   return evidence;
 }
 
+/** Read the optional evidence field without invoking a getter on the submission itself. */
+export function evidenceFrom(input: { evidence?: unknown }): Data {
+  check(
+    input && typeof input === 'object' && !nodeTypes.isProxy(input),
+    'invalid_evidence',
+    'Review evidence must be an ordinary data field',
+  );
+  const prototype = Object.getPrototypeOf(input);
+  check(
+    prototype === Object.prototype || prototype === null,
+    'invalid_evidence',
+    'Review evidence must be an ordinary data field',
+  );
+  const field = Object.getOwnPropertyDescriptor(input, 'evidence');
+  check(
+    !field || (Object.hasOwn(field, 'value') && field.enumerable),
+    'invalid_evidence',
+    'Review evidence must be an ordinary data field',
+  );
+  return validateEvidence(field?.value);
+}
+
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */
 export function validateAssessment(
   review: Pick<ReviewRequest, 'formatVersion' | 'criteria' | 'artifactIds'>,
   input: Pick<ReviewSubmit, 'verdict' | 'synopsis' | 'findings' | 'evidence'>,
 ): { synopsis: string | null; findings: ReviewFinding[]; evidence: Data } {
-  const evidence = validateEvidence(input.evidence);
+  const evidence = evidenceFrom(input);
   let synopsis: string | null = null;
   if (review.formatVersion === 2 || input.synopsis !== undefined) {
     check(

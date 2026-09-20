@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { check, MervError, type Json } from '@merv/contracts';
 import type { SandboxConnection } from './types.js';
 
@@ -7,6 +8,34 @@ const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 /** The service's published error vocabulary: a lowercase token, never free text. */
 const errorCode = /^[a-z][a-z_]{0,39}$/;
 const bodyLimit = 4_000_000;
+
+/** Count decoded response bytes as they arrive, even with absent/compressed Content-Length. */
+async function boundedText(response: Response, limit: number): Promise<string> {
+  const length = Number(response.headers.get('content-length') ?? 0);
+  check(
+    Number.isSafeInteger(length) && length >= 0 && length <= limit,
+    'sandbox_unavailable',
+    'merv-sandboxes answered with an unusable body',
+    502,
+  );
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      check(size <= limit, 'sandbox_unavailable', 'The answer is too large', 502);
+      chunks.push(part.value);
+    }
+    return Buffer.concat(chunks, size).toString('utf8');
+  } finally {
+    // The transport's finally cancels unfinished bodies after this lock is released.
+    reader.releaseLock();
+  }
+}
 
 /** The one origin this plugin may call, taken from the operator's environment. */
 export function sandboxOrigin(value: unknown): string {
@@ -53,13 +82,13 @@ export function sandboxRoute(path: string, id?: string): string {
 /**
  * Authenticated, namespace-scoped transport to merv-sandboxes. Budget policy, accounting and
  * administration stay in the service; this reads published JSON and changes one named sandbox's
- * lease or life, nothing else. Each connection proves a consumer grant once, before its first
- * resource request.
+ * lease or life, nothing else. Each connection proves its current consumer grant before
+ * resource access; a replacement grant must establish its own identity.
  */
 export class SandboxClient {
   readonly #origin: string;
   readonly #timeoutMs: number;
-  readonly #consumers = new Set<string>();
+  readonly #consumers = new Map<string, string>();
 
   constructor(origin: string, timeoutMs = 15_000) {
     this.#origin = sandboxOrigin(origin);
@@ -72,8 +101,9 @@ export class SandboxClient {
 
   /** GET one route for one connection, after the connection's identity is established. */
   async read(connection: SandboxConnection, path: string): Promise<Json> {
-    await this.#prove(connection);
-    return await this.#send(connection, 'GET', path);
+    connection = { ...connection };
+    const secret = await this.#prove(connection);
+    return await this.#send(connection, secret, 'GET', path);
   }
 
   /** Change one sandbox, under the same proved grant. The body is the service's own request. */
@@ -83,13 +113,28 @@ export class SandboxClient {
     path: string,
     body: Json,
   ): Promise<Json> {
-    await this.#prove(connection);
-    return await this.#send(connection, method, path, body);
+    connection = { ...connection };
+    const secret = await this.#prove(connection);
+    return await this.#send(connection, secret, method, path, body);
   }
 
-  async #prove(connection: SandboxConnection): Promise<void> {
-    if (!this.#consumers.has(connection.projectId)) {
-      const identity = (await this.#send(connection, 'GET', '/v1/auth/me')) as Record<
+  #credential(connection: SandboxConnection): string {
+    const secret = process.env[connection.tokenEnv];
+    check(
+      typeof secret === 'string' && grant.test(secret),
+      'sandbox_credential_unavailable',
+      'The configured sandbox consumer grant is unavailable or malformed',
+      503,
+    );
+    return secret;
+  }
+
+  async #prove(connection: SandboxConnection): Promise<string> {
+    const secret = this.#credential(connection);
+    const key = JSON.stringify([connection.projectId, connection.namespace, connection.tokenEnv]);
+    const fingerprint = createHash('sha256').update(secret).digest('hex');
+    if (this.#consumers.get(key) !== fingerprint) {
+      const identity = (await this.#send(connection, secret, 'GET', '/v1/auth/me')) as Record<
         string,
         unknown
       >;
@@ -106,21 +151,22 @@ export class SandboxClient {
         'The grant does not select the configured namespace',
         403,
       );
-      this.#consumers.add(connection.projectId);
+      this.#consumers.set(key, fingerprint);
     }
+    return secret;
   }
 
   async #send(
     connection: SandboxConnection,
+    secret: string,
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: Json,
   ): Promise<Json> {
-    const secret = process.env[connection.tokenEnv];
     check(
-      typeof secret === 'string' && grant.test(secret),
-      'sandbox_credential_unavailable',
-      'The configured sandbox consumer grant is unavailable or malformed',
+      this.#credential(connection) === secret,
+      'sandbox_credential_changed',
+      'The configured sandbox grant changed before dispatch; retry with the current grant',
       503,
     );
     const url = new URL(sandboxRoute(path), this.#origin);
@@ -148,25 +194,28 @@ export class SandboxClient {
     } catch {
       throw new MervError('sandbox_unavailable', 'merv-sandboxes is unreachable', 503);
     }
-    const status = response.status;
-    if (status === 0 || (status >= 300 && status < 400))
-      throw new MervError('sandbox_redirect_refused', 'merv-sandboxes answered a redirect', 502);
-    if (status >= 400) throw await this.#refusal(status, response, body !== undefined);
-    const type = (response.headers.get('content-type') ?? '').split(';')[0].trim();
-    const length = Number(response.headers.get('content-length') ?? 0);
-    check(
-      type === 'application/json' && length <= bodyLimit,
-      'sandbox_unavailable',
-      'merv-sandboxes answered with an unusable body',
-      502,
-    );
     try {
-      const text = await response.text();
-      check(text.length <= bodyLimit, 'sandbox_unavailable', 'The answer is too large', 502);
-      return JSON.parse(text) as Json;
-    } catch (error) {
-      if (error instanceof MervError) throw error;
-      throw new MervError('sandbox_unavailable', 'merv-sandboxes answered invalid JSON', 502);
+      const status = response.status;
+      if (status === 0 || (status >= 300 && status < 400))
+        throw new MervError('sandbox_redirect_refused', 'merv-sandboxes answered a redirect', 502);
+      if (status >= 400) throw await this.#refusal(status, response, body !== undefined);
+      const type = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+      check(
+        type === 'application/json',
+        'sandbox_unavailable',
+        'merv-sandboxes answered with an unusable body',
+        502,
+      );
+      try {
+        return JSON.parse(await boundedText(response, bodyLimit)) as Json;
+      } catch (error) {
+        if (error instanceof MervError) throw error;
+        throw new MervError('sandbox_unavailable', 'merv-sandboxes answered invalid JSON', 502);
+      }
+    } finally {
+      // Rejected headers, redirects and undisclosed errors never leave an unread stream
+      // occupying a connection. Cancellation failures must not replace the public error.
+      await response.body?.cancel().catch(() => {});
     }
   }
 
@@ -193,8 +242,7 @@ export class SandboxClient {
 
   async #envelope(response: Response): Promise<{ code: string; message: string } | undefined> {
     try {
-      const text = await response.text();
-      if (text.length > 4096) return undefined;
+      const text = await boundedText(response, 4096);
       const error = (JSON.parse(text) as { error?: { code?: unknown; message?: unknown } }).error;
       const code = error?.code;
       return typeof code === 'string' && errorCode.test(code)

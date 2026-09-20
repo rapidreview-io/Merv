@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
-import { StatusPill, cx, kindStyle, words } from './components';
+import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
+import { KindLabel, StatusPill, cx, kindStyle, words } from './components';
 import type { WorkflowShape } from './shell-types';
 
 /**
@@ -300,6 +300,44 @@ export function RowDiagram({
   return <ProcessDiagram {...diagramOfShape(shape, workflow.state)} kind={kind} compact />;
 }
 
+/** The view kind a workflow's records are read under, which is also the route they open at. */
+const PLACE: Record<string, string> = {
+  task: 'tasks',
+  experiment: 'experiments',
+  research: 'research',
+  reflection: 'reflections',
+  consolidation: 'consolidation',
+};
+
+/**
+ * A record another one waits on, or holds up, on one line: its kind, its name as the
+ * way to it, and the state it stands at. The state is the whole of the outcome — what
+ * has succeeded, ended or is still moving says so in its own word and colour.
+ */
+export function Dependency({ item }: { item: WorkflowDependency }) {
+  const place = PLACE[item.workflow];
+  return (
+    <p className="cluster">
+      <KindLabel kind={place ?? item.workflow} />
+      {place ? <Link to={`/${place}/${item.id}`}>{item.name}</Link> : item.name}
+      <StatusPill value={item.state} />
+    </p>
+  );
+}
+
+/** One side of a record's relations — what it waits on, what it unblocks — or nothing. */
+export function Relations({ title, items }: { title: string; items: WorkflowDependency[] }) {
+  if (!items.length) return null;
+  return (
+    <>
+      <h3 className="ev-role">{title}</h3>
+      {items.map((item) => (
+        <Dependency key={item.id} item={item} />
+      ))}
+    </>
+  );
+}
+
 /**
  * The gate as the machine it is: the workflow drawn where the record stands in it, the
  * one control that moves it beside the drawing, and each unsettled prerequisite by name.
@@ -320,16 +358,7 @@ export function Gate({
       {graph?.dependencies
         .filter((item) => item.direction === 'depends_on' && (!item.settled || item.failed))
         .map((item) => (
-          <p className="muted" key={item.id}>
-            {['task', 'experiment'].includes(item.workflow) ? (
-              <Link to={`/${item.workflow === 'task' ? 'tasks' : 'experiments'}/${item.id}`}>
-                {item.name}
-              </Link>
-            ) : (
-              item.name
-            )}{' '}
-            <StatusPill value={item.state} />
-          </p>
+          <Dependency key={item.id} item={item} />
         ))}
       {children}
     </div>

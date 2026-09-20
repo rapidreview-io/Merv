@@ -112,13 +112,16 @@ export function newestReview<T extends ReviewFacts>(
 
 /**
  * The review clause: the verdict recorded against this record, or that nobody
- * has taken it up yet. A pass built on waivers carries the qualification, since
- * dropping it would let two exceptions read as an unqualified pass.
+ * has taken it up yet. The state pill beside it already says the record is in
+ * review, so an open review adds only what the pill cannot: whose hands it is in,
+ * or that it is in nobody's. A pass built on waivers carries the qualification,
+ * since dropping it would let two exceptions read as an unqualified pass.
  */
 export function reviewClause(review: ReviewFacts | undefined, reviewer?: ReactNode): Clause | null {
   if (!review) return null;
   if (review.status === 'requested') return { word: 'unclaimed' };
-  if (review.status === 'started') return { word: 'in review', detail: reviewer };
+  if (review.status === 'started')
+    return reviewer ? { detail: <>with {reviewer}</> } : { word: 'claimed' };
   if (review.status === 'superseded') return { word: 'superseded' };
   if (!review.verdict) return null;
   const findings = review.findings ?? [];

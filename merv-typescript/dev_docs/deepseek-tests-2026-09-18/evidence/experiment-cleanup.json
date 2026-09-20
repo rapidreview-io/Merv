@@ -1,0 +1,82 @@
+{
+  "workspaces": [
+    {
+      "launchId": "launch_a18441bc2ae912747a0b4bbdabc68994",
+      "sessionId": "session_c6690a6185bb478ba0d134c49cce7174",
+      "mode": "none",
+      "retain": true,
+      "status": "closed",
+      "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/ddc9994cd2f85487e6cb10b6e9edefb23043d2d19b409cf76523b5f74b945822/workspace",
+      "pathExists": true,
+      "headOid": null,
+      "treeOid": null
+    },
+    {
+      "launchId": "launch_da9835dfd0b6b97dc4cf9d60be65b3d9",
+      "sessionId": "session_290a98f5d27d4416a59caa3f0e323169",
+      "mode": "none",
+      "retain": true,
+      "status": "closed",
+      "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/33cfed60d661a4a53371b12713b0356c01b881b5ba6354bebb4af9e1ac0a7509/workspace",
+      "pathExists": true,
+      "headOid": null,
+      "treeOid": null
+    },
+    {
+      "launchId": "launch_ca2dcde5c7c3e564781a5e9ccca2331a",
+      "sessionId": "session_593e7943d2c1436b8224c3bfb145320e",
+      "mode": "persistent",
+      "retain": true,
+      "status": "closed",
+      "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/workspaces/checkouts/persistent/shared/experiments/project_028d0e77818a44c4ab04c9c09638bcb3/wf_0121e6c2cf774cacac67334d6f34e717",
+      "pathExists": true,
+      "headOid": "053808bc509509e0bd343441092b764e45e709f5",
+      "treeOid": "d5d473e756dcd434370362ca1c5a84eb5576a4ce"
+    },
+    {
+      "launchId": "launch_f1c44acf7c610079b32f2c30b1d7f83c",
+      "sessionId": "session_701a13e16e4f41a1badddfe781b75195",
+      "mode": "ephemeral",
+      "retain": false,
+      "status": "closed",
+      "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/workspaces/checkouts/ephemeral/experiment-reviews/project_028d0e77818a44c4ab04c9c09638bcb3/wf_0121e6c2cf774cacac67334d6f34e717/2ad42ba08ff6637825bd379a7ca82e854171e3c7fc5fcd8e43a6d3e4b812efd7",
+      "pathExists": false,
+      "headOid": "053808bc509509e0bd343441092b764e45e709f5",
+      "treeOid": "d5d473e756dcd434370362ca1c5a84eb5576a4ce"
+    }
+  ],
+  "launches": [
+    {
+      "id": "launch_a18441bc2ae912747a0b4bbdabc68994",
+      "sessionId": "session_c6690a6185bb478ba0d134c49cce7174",
+      "status": "stopped",
+      "reason": "controller_stop",
+      "releasePending": false
+    },
+    {
+      "id": "launch_da9835dfd0b6b97dc4cf9d60be65b3d9",
+      "sessionId": "session_290a98f5d27d4416a59caa3f0e323169",
+      "status": "stopped",
+      "reason": "controller_stop",
+      "releasePending": false
+    },
+    {
+      "id": "launch_ca2dcde5c7c3e564781a5e9ccca2331a",
+      "sessionId": "session_593e7943d2c1436b8224c3bfb145320e",
+      "status": "stopped",
+      "reason": "controller_stop",
+      "releasePending": false
+    },
+    {
+      "id": "launch_f1c44acf7c610079b32f2c30b1d7f83c",
+      "sessionId": "session_701a13e16e4f41a1badddfe781b75195",
+      "status": "stopped",
+      "reason": "controller_stop",
+      "releasePending": false
+    }
+  ],
+  "pendingRequests": 0,
+  "ownedSlots": 0,
+  "appStopped": true,
+  "cleanupErrors": 0
+}

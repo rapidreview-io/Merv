@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { check, mapAsync, MervError } from '@merv/contracts';
 import type {
   WorkflowActionRule,
@@ -10,9 +11,18 @@ import type {
   WorkflowAssignmentRule,
   WorkflowWorkStart,
 } from '@merv/contracts';
-import { canonical } from './definition.js';
+import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './dependencies.js';
 import { validateExecution } from './execution.js';
+
+const descriptionSchema = z.object({
+  label: z.string(),
+  gate: z.string().optional(),
+  waiting: z.string().optional(),
+  references: z.array(
+    z.object({ kind: z.string(), id: z.string(), label: z.string() }).passthrough(),
+  ),
+});
 
 const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
 // Match the public Tools naming contract, including reserved mounted namespaces.
@@ -222,22 +232,8 @@ export function validatePolicy(
 
 /** Never hand a callback the engine's mutable state or the caller's argument object. */
 export function readContext(context: WorkflowCheckContext): WorkflowCheckContext {
-  const freeze = <T>(value: T): T => {
-    if (value && typeof value === 'object') {
-      for (const child of Object.values(value)) freeze(child);
-      Object.freeze(value);
-    }
-    return value;
-  };
-  return Object.freeze({
-    ...context,
-    caller: freeze(structuredClone(context.caller)),
-    snapshot: freeze(structuredClone(context.snapshot)),
-    ...(context.dependencies === undefined
-      ? {}
-      : { dependencies: freeze(structuredClone(context.dependencies)) }),
-    ...(context.input === undefined ? {} : { input: freeze(structuredClone(context.input)) }),
-  });
+  const { tx, ...data } = context;
+  return Object.freeze({ ...freezeData(structuredClone(data)), tx });
 }
 
 export async function evaluateAction(
@@ -254,15 +250,13 @@ export async function evaluateAction(
     blockers: [],
   };
   try {
-    result.arguments = rule.arguments ? await rule.arguments(context) : {};
+    result.arguments = workflowJson(rule.arguments ? await rule.arguments(context) : {});
     check(
       result.arguments && typeof result.arguments === 'object' && !Array.isArray(result.arguments),
       'invalid_workflow_policy',
       'Workflow arguments must be a JSON object',
       500,
     );
-    // Validate and detach returned data before exposing it to a caller.
-    result.arguments = JSON.parse(canonical(result.arguments));
     // A leased worker's call is made with these arguments bound over whatever it typed, so a
     // question about that call is answered against the same thing: a reviewer asking whether
     // submit_review was ready was told its claim was stale, because the claim is bound rather
@@ -362,24 +356,22 @@ export async function decision(
   let gate: string | undefined;
   let waiting: string | undefined;
   if (policy?.describe) {
-    const description = await policy.describe(context);
+    const description = workflowJson(
+      await policy.describe(context),
+      'invalid_workflow_policy',
+      500,
+      {
+        undefined: 'omit-root',
+      },
+    );
     check(
-      typeof description.label === 'string' &&
-        (description.gate === undefined || typeof description.gate === 'string') &&
-        (description.waiting === undefined || typeof description.waiting === 'string') &&
-        Array.isArray(description.references) &&
-        description.references.every(
-          (ref) =>
-            typeof ref.kind === 'string' &&
-            typeof ref.id === 'string' &&
-            typeof ref.label === 'string',
-        ),
+      descriptionSchema.safeParse(description).success,
       'invalid_workflow_policy',
       'Invalid workflow description',
       500,
     );
     result.label = description.label;
-    result.references = JSON.parse(canonical(description.references));
+    result.references = description.references;
     gate = description.gate;
     waiting = description.waiting;
   }

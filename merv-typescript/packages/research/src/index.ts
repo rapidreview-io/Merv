@@ -232,6 +232,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
 
   async startReflection(caller: Caller, input: ReflectionCreate, tx?: Transaction) {
     this.open();
+    ({ caller, input } = structuredClone({ caller, input }));
     return await inTransaction(this.state, tx, async (transaction) => {
       const checks: BindingChecks = [];
       const result = await this.use('reflections', checks, (service) =>
@@ -246,6 +247,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<ResearchRecord> {
     this.open();
+    caller = structuredClone(caller);
     parse(getSchema, { researchId: id });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
@@ -271,6 +273,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
   }
   async list(caller: Caller, transaction?: Transaction): Promise<ResearchRecord[]> {
     this.open();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
@@ -290,6 +293,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     transaction?: Transaction,
   ): Promise<ResearchRecord> {
     this.open();
+    caller = structuredClone(caller);
     const input = parse(createSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -491,6 +495,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     value: ResearchReplan,
     transaction?: Transaction,
   ): Promise<ResearchRecord> {
+    caller = structuredClone(caller);
     const input = parse(replanSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
@@ -530,6 +535,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     transaction?: Transaction,
   ): Promise<ResearchRecord> {
     this.open();
+    caller = structuredClone(caller);
     const input = parse(endSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
@@ -571,6 +577,7 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     transaction?: Transaction,
   ): Promise<ResearchRecord> {
     this.open();
+    caller = structuredClone(caller);
     const input = parse(advanceSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);

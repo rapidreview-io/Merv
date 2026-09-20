@@ -682,3 +682,104 @@ test('a real pre-v4 database gains format defaults without rewriting immutable s
     await f.close();
   }
 });
+
+for (const shape of [
+  'array getter',
+  'array serializer',
+  'array prototype',
+  'nested proxy',
+  'revoked proxy',
+  'field getter',
+] as const) {
+  test(`review evidence refuses ${shape} without executing caller code`, async () => {
+    const f = await fixture();
+    try {
+      const claim = await f.reviews.start(f.reviewer, (await f.request()).id);
+      const valid = f.submit(claim);
+      let effects = 0;
+      let values: unknown = [1];
+      if (shape === 'array getter') {
+        values = Object.defineProperty([1], '0', {
+          enumerable: true,
+          get() {
+            effects++;
+            return effects === 1 ? 1 : NaN;
+          },
+        });
+      } else if (shape === 'array serializer') {
+        values = Object.defineProperty([1], 'toJSON', {
+          value() {
+            effects++;
+            return { injected: 'not the validated evidence' };
+          },
+        });
+      } else if (shape === 'array prototype') {
+        const prototype = Object.create(Array.prototype);
+        prototype[Symbol.iterator] = function* () {
+          effects++;
+          yield 1;
+        };
+        values = Object.setPrototypeOf([1], prototype);
+      } else if (shape === 'nested proxy') {
+        values = new Proxy(
+          { score: 1 },
+          {
+            getPrototypeOf(target) {
+              effects++;
+              return Reflect.getPrototypeOf(target);
+            },
+            get(target, property, receiver) {
+              effects++;
+              return Reflect.get(target, property, receiver);
+            },
+          },
+        );
+      } else if (shape === 'revoked proxy') {
+        const revoked = Proxy.revocable({ score: 1 }, {});
+        revoked.revoke();
+        values = revoked.proxy;
+      }
+      const input = { ...valid, evidence: { values } } as ReviewSubmit;
+      if (shape === 'field getter')
+        Object.defineProperty(input, 'evidence', {
+          enumerable: true,
+          get() {
+            effects++;
+            return { score: 1 };
+          },
+        });
+      const before = await f.durable();
+      await assert.rejects(f.reviews.checkSubmit(f.reviewer, claim.id, input), {
+        code: 'invalid_evidence',
+      });
+      assert.equal(effects, 0);
+      await assert.rejects(f.reviews.submit(f.reviewer, input), { code: 'invalid_evidence' });
+      assert.equal(effects, 0);
+      assert.deepEqual(await f.durable(), before);
+      assert.equal((await f.reviews.submit(f.reviewer, valid)).status, 'submitted');
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test('review evidence keeps its exact encoded byte limit after safe copying', async () => {
+  const f = await fixture();
+  try {
+    const claim = await f.reviews.start(f.reviewer, (await f.request()).id);
+    const input = f.submit(claim);
+    const room = 64000 - Buffer.byteLength(JSON.stringify({ value: '' }));
+    const evidence = { value: 'x'.repeat(room) };
+    await f.reviews.checkSubmit(f.reviewer, claim.id, { ...input, evidence });
+    await assert.rejects(
+      f.reviews.submit(f.reviewer, { ...input, evidence: { value: `${evidence.value}x` } }),
+      { code: 'invalid_evidence' },
+    );
+    assert.deepEqual(
+      (await f.reviews.submit(f.reviewer, { ...input, evidence })).evidence,
+      evidence,
+    );
+  } finally {
+    await f.close();
+  }
+});

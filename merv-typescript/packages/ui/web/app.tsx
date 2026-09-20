@@ -1,23 +1,46 @@
 import { useEffect, useState } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
-import { Sidebar, ShellFrame, TitleLine, useShell } from './shell';
-import { LoadState } from './components';
-import { viewFor } from './views';
+import { Sidebar, ShellFrame, TitleLine, useShell, type ShellData } from './shell';
+import { EmptyState, LoadState, StatusPill } from './components';
+import { Icon } from './icons';
+import { dormantOwner, humanizeGroup } from './navigation';
+import { VIEW_KINDS, viewFor } from './views';
 import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
 import { WorkView } from './views/work';
 
-function UnavailableRoute() {
-  const location = useLocation();
+/**
+ * An address nothing answers. A mistyped one is only that: a few words and the way
+ * home. The page speaks of a plugin in the one case the shell can show — the
+ * address opens with a view this build draws, and the plugin that registers it is
+ * in the lifecycle table in some state other than active.
+ */
+function NotFound({ shell }: { shell: ShellData }) {
+  const { pathname } = useLocation();
+  const place = pathname.split('/')[1] ?? '';
+  const owner = dormantOwner(pathname, VIEW_KINDS, shell.rows, shell.plugins);
   return (
     <div className="page-stage">
-      <div className="empty-state">
-        <h2>Nothing is registered at {location.pathname}</h2>
-        <p>
-          The plugin that owned this view is not active. Its rows return when it is enabled again.
-        </p>
-      </div>
+      <EmptyState
+        page
+        kind={owner ? place : undefined}
+        icon={owner ? place : 'search'}
+        title={owner ? `${humanizeGroup(place)} is switched off` : 'Page not found'}
+        hint={
+          owner && (
+            <>
+              <span className="mono">{owner.id}</span> <StatusPill value={owner.state} />
+            </>
+          )
+        }
+        action={
+          <Link className="btn" to="/">
+            <Icon name="home" />
+            Home
+          </Link>
+        }
+      />
     </div>
   );
 }
@@ -56,9 +79,11 @@ function Workspace() {
         onShow={() => setOpen(true)}
         sidebar={<Sidebar shell={shell.data} onHide={() => setOpen(false)} />}
       >
+        {/* A failed refresh keeps the rows that loaded, and says so in the one line every
+            stale read says it in. */}
         {shell.data && shell.error && (
-          <div className="page-stage" role="alert">
-            Navigation could not refresh: {shell.error.message}. Showing the last available views.
+          <div className="shell-stale">
+            <LoadState {...shell} />
           </div>
         )}
         {shell.data && <TitleLine rows={rows} />}
@@ -79,17 +104,11 @@ function Workspace() {
                 />
               );
             })}
-            <Route path="*" element={<UnavailableRoute />} />
+            <Route path="*" element={<NotFound shell={shell.data} />} />
           </Routes>
         ) : (
           <div className="page-stage">
             <LoadState loading={shell.loading} error={shell.error} />
-            {shell.error && shell.error.code === 'unknown_tool' && (
-              <p className="page-summary">
-                The UI plugin's shell tool is not registered; the bundle is being served by
-                something else.
-              </p>
-            )}
           </div>
         )}
       </ShellFrame>

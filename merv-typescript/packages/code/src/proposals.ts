@@ -112,7 +112,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
     binding: WorkflowDispatchAdmission,
     tx: Transaction,
   ): Promise<CodeProposal> {
-    this.ensureOpen();
+    caller = this.capture(caller);
     this.state.assertTransaction(tx);
     const input = parseCodeInput(inputSchema, value);
     const admission = parseCodeInput(admissionSchema, binding);
@@ -300,7 +300,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
     proposalId: string,
     transaction?: Transaction,
   ): Promise<CodeProposal> {
-    this.ensureOpen();
+    caller = this.capture(caller);
     const id = parseCodeInput(identifier, proposalId);
     return await this.read(caller, transaction, async (tx) => {
       const row = await tx.get<Row>(
@@ -317,7 +317,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
     instanceId?: string,
     transaction?: Transaction,
   ): Promise<CodeProposal[]> {
-    this.ensureOpen();
+    caller = this.capture(caller);
     const id = instanceId === undefined ? undefined : parseCodeInput(identifier, instanceId);
     return await this.read(caller, transaction, async (tx) => {
       return (
@@ -370,7 +370,8 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
   close(): void {
     this.closed = true;
   }
-  private ensureOpen(): void {
+  private capture(caller: Caller): Caller {
     check(!this.closed, 'code_unavailable', 'Code proposals are unavailable', 503);
+    return structuredClone(caller);
   }
 }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, digest, MervError } from '@merv/contracts';
+import { check, digest } from '@merv/contracts';
 import type {
   Sql,
   WorkflowAssignmentContent,
@@ -7,7 +7,7 @@ import type {
   WorkflowCheckContext,
   WorkflowWorkStart,
 } from '@merv/contracts';
-import { canonical } from './definition.js';
+import { workflowJson } from './json.js';
 
 const text = z.string().min(1);
 const identifier = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/);
@@ -69,17 +69,7 @@ export async function buildAssignment(
   rule: WorkflowAssignmentRule,
   context: WorkflowCheckContext,
 ): Promise<WorkflowAssignmentContent> {
-  const value = await rule.build(context);
-  let detached: unknown;
-  try {
-    detached = JSON.parse(canonical(value));
-  } catch {
-    throw new MervError(
-      'invalid_workflow_policy',
-      'Workflow assignments must contain only finite JSON values',
-      500,
-    );
-  }
+  const detached = workflowJson(await rule.build(context));
   const parsed = content.safeParse(detached);
   check(parsed.success, 'invalid_workflow_policy', 'Invalid workflow assignment packet', 500);
   const result = parsed.data;
@@ -97,7 +87,6 @@ export async function buildAssignment(
       500,
     );
   }
-  // canonical() already verified that unknown tool arguments are finite JSON.
   return result as WorkflowAssignmentContent;
 }
 

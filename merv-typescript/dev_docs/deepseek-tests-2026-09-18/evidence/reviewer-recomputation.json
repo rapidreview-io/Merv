@@ -1,0 +1,69 @@
+{
+  "threadId": "01a0b21d-5ded-7032-8c72-1d780428cede",
+  "sourceTranscript": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/2ad42ba08ff6637825bd379a7ca82e854171e3c7fc5fcd8e43a6d3e4b812efd7/stdout.log",
+  "sourceItemId": "item_20",
+  "proof": {
+    "checks": "all passed",
+    "training_count": 3,
+    "held_out_count": 5,
+    "slope": 2.0,
+    "intercept": 1.0,
+    "baseline": {
+      "prediction": -3.0,
+      "absoluteErrors": [
+        4.0,
+        6.0,
+        8.0,
+        10.0,
+        12.0
+      ],
+      "mae": 8.0
+    },
+    "candidate": {
+      "predictions": [
+        1.0,
+        3.0,
+        5.0,
+        7.0,
+        9.0
+      ],
+      "absoluteErrors": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mae": 0.0
+    },
+    "criterion": {
+      "operator": "<",
+      "candidate_mae_lt_baseline_mae": true,
+      "met": true
+    },
+    "retained_stdout_matches_reexecution": true,
+    "exhibit_data_and_source_hash_match": true,
+    "checkout_head": "053808bc509509e0bd343441092b764e45e709f5",
+    "checkout_tree": "d5d473e756dcd434370362ca1c5a84eb5576a4ce",
+    "checkout_head_matches_code_capture": true,
+    "checkout_tree_matches_code_capture": true,
+    "checkout_code_sha256": "d19d3c0cba7ce2926c3662e995f5033eaf8fa20077c5077175dec46326b4baf5",
+    "checkout_code_matches_retained": true,
+    "checkout_reexecution_matches_retained_stdout": true,
+    "checkout_observations_matches_retained_stdout": true,
+    "checkout_results_json_matches_retained_artifact_bytes": true,
+    "checkout_status_porcelain": [],
+    "workspace_entries": [
+      "calculate.py",
+      "observations.json",
+      "results.json"
+    ],
+    "pinned_artifact_blob_hashes_verified": {
+      "plan": "6b378dae4a181beaa31e614dd42722700152a01d7a17aa486d3e4ac3500a5b24",
+      "result": "80e4742502be0acc723238b7b7f286c6edc5e6e4a3e2c70ccece5f58a158e578",
+      "report": "ccd00449baa7b051f7f850da957e8ca53407849ed454b99fdfd9a98ac13bf63f",
+      "exhibit": "88924707700346658a6c8a491ee0ca9463d3303597d767d5730c2220e42e5d63",
+      "paper": "538ba222e4decb6ab698b6cc71e73465459b681120fe1626e837668dc9fb1b7f"
+    }
+  }
+}

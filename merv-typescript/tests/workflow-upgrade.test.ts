@@ -50,13 +50,21 @@ const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 
 test('a managed additive upgrade records an explicit revision without changing state, data or other instances', async (t) => {
-  const { state, workflows, caller, source, target, initial, command } = await setup();
+  const { state, scope, workflows, caller, source, target, initial, command } = await setup();
   t.after(async () => await state.close());
+  const replacement = (await scope.issueActor(caller, { name: 'Replacement', role: 'producer' }))
+    .actor;
   const untouched = await source.start(caller, { workflow: 'upgradeable', requestId: 'untouched' });
   const declarations = await state.read(
     async (sql) => await sql.all('SELECT * FROM wf_definitions ORDER BY version'),
   );
-  const upgraded = await target.upgrade(caller, command);
+  const requested = { ...command };
+  const pendingCaller = { ...caller };
+  const pending = target.upgrade(pendingCaller, command);
+  pendingCaller.actorId = replacement.id;
+  Object.assign(command, { instanceId: untouched.id, requestId: 'changed', fromVersion: 99 });
+  const upgraded = await pending;
+  Object.assign(command, requested);
   assert.equal(upgraded.version, 2);
   assert.equal(upgraded.revision, 1);
   assert.equal(upgraded.state, initial.state);

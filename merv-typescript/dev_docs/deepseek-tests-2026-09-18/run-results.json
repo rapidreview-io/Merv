@@ -1,0 +1,219 @@
+{
+  "createdAt": "2026-09-18T01:29:43.121010+00:00",
+  "gitCommit": "b9290878995ab7343138ecab28f632a7a4fbc8bb",
+  "model": "deepseek-flash",
+  "modelFamily": "DeepSeek V4.1 Flash",
+  "provider": "https://api.deepseek.com",
+  "reasoningEffort": "high",
+  "environment": "fresh local TypeScript Merv fixtures; synthetic data",
+  "rawRunDirectory": "/private/tmp/merv-deepseek-acceptance-20260918",
+  "runs": [
+    {
+      "name": "user-keys-v2",
+      "strictAcceptance": "passed",
+      "agents": [
+        "01a0b21a-4b7e-7ae1-8c27-b32af6816ea3",
+        "01a0b219-7d97-7ff0-8c14-f055d14e0e11",
+        "01a0b219-e7f9-7671-a9f5-dfb61d3c3a6f"
+      ],
+      "toolCalls": 43,
+      "successfulToolCalls": 40,
+      "toolErrors": [
+        {
+          "threadId": "01a0b21a-4b7e-7ae1-8c27-b32af6816ea3",
+          "itemId": "item_13",
+          "tool": "actor.create",
+          "errorCode": "forbidden",
+          "status": "failed",
+          "expectedNegativeProbe": true
+        },
+        {
+          "threadId": "01a0b219-7d97-7ff0-8c14-f055d14e0e11",
+          "itemId": "item_26",
+          "tool": "review.start",
+          "errorCode": "forbidden",
+          "status": "failed",
+          "expectedNegativeProbe": true
+        },
+        {
+          "threadId": "01a0b219-e7f9-7671-a9f5-dfb61d3c3a6f",
+          "itemId": "item_23",
+          "tool": "artifact.create",
+          "errorCode": "forbidden",
+          "status": "failed",
+          "expectedNegativeProbe": true
+        }
+      ],
+      "shellCommands": 0,
+      "nonzeroShellExits": 0,
+      "transcriptHashes": [
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/user-keys-v2/observer.jsonl",
+          "sha256": "85e18bb7032f2b99bae696c3da21a2a1f30633d7d05d37eecdc49414d29caa94"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/user-keys-v2/producer.jsonl",
+          "sha256": "bdff1f7bb5f2a58c2fb4c9fd992b244bc02f415f34a49a116bdb32b592936cc4"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/user-keys-v2/reviewer.jsonl",
+          "sha256": "cb75cef08cd06dca2dd8d62ab2c62cdea673045bf68921188ee9bafd30cf38cc"
+        }
+      ]
+    },
+    {
+      "name": "dispatch-v2",
+      "strictAcceptance": "failed",
+      "agents": [
+        "01a0b219-7d0c-7783-9231-9b9ee5bb469f",
+        "01a0b219-cef8-7352-b712-8b19c34b3194"
+      ],
+      "toolCalls": 18,
+      "successfulToolCalls": 17,
+      "toolErrors": [
+        {
+          "threadId": "01a0b219-cef8-7352-b712-8b19c34b3194",
+          "itemId": "item_13",
+          "tool": "review.submit",
+          "errorCode": "invalid_synopsis",
+          "status": "failed",
+          "expectedNegativeProbe": false
+        }
+      ],
+      "shellCommands": 0,
+      "nonzeroShellExits": 0,
+      "transcriptHashes": [
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/dispatch-v2/producer.jsonl",
+          "sha256": "0e95c889cf78f9b0cec83636a58f3664f76bfc2146d6dc1b597211bf42e535a3"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/dispatch-v2/reviewer.jsonl",
+          "sha256": "21f3fb1f9521be775890544c568ccf0c20713d585f1d6f21d1fdbd4eb46742ce"
+        }
+      ]
+    },
+    {
+      "name": "dispatch-replication",
+      "strictAcceptance": "passed",
+      "agents": [
+        "01a0b21d-1287-7511-9812-dc2279486f63",
+        "01a0b21d-5dc3-7a20-bbb5-5f5c7f67e447"
+      ],
+      "toolCalls": 19,
+      "successfulToolCalls": 19,
+      "toolErrors": [],
+      "shellCommands": 0,
+      "nonzeroShellExits": 0,
+      "transcriptHashes": [
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/dispatch-replication/producer.jsonl",
+          "sha256": "c3b19db9abde3fa9b7a0f56d52b4b19acc76e087078e435dcad7f9c4e7a1fee9"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/dispatch-replication/reviewer.jsonl",
+          "sha256": "39a56bfc3492498d928b5c969a2f502e823830e633b92656ed50b4846ef3f854"
+        }
+      ]
+    },
+    {
+      "name": "experiments-git-v2",
+      "strictAcceptance": "failed",
+      "agents": [
+        "01a0b21d-5ded-7032-8c72-1d780428cede",
+        "01a0b21a-66d0-7081-8d5f-d034fc1aceb8",
+        "01a0b21a-cb9c-7d90-8cf5-31672b22fdb7",
+        "01a0b219-84d2-79c1-989c-feab4756ab2e"
+      ],
+      "toolCalls": 28,
+      "successfulToolCalls": 26,
+      "toolErrors": [
+        {
+          "threadId": "01a0b21a-66d0-7081-8d5f-d034fc1aceb8",
+          "itemId": "item_6",
+          "tool": "review.submit",
+          "errorCode": "invalid_input",
+          "status": "failed",
+          "expectedNegativeProbe": false
+        },
+        {
+          "threadId": "01a0b219-84d2-79c1-989c-feab4756ab2e",
+          "itemId": "item_23",
+          "tool": "experiment.transition",
+          "errorCode": "request_conflict",
+          "status": "failed",
+          "expectedNegativeProbe": false
+        }
+      ],
+      "shellCommands": 26,
+      "nonzeroShellExits": 2,
+      "transcriptHashes": [
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/2ad42ba08ff6637825bd379a7ca82e854171e3c7fc5fcd8e43a6d3e4b812efd7/stdout.log",
+          "sha256": "f62346c436b8d54132ed9c67edcc6311208fe9c4fb04b535ccfddddf8b19fd1e"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/33cfed60d661a4a53371b12713b0356c01b881b5ba6354bebb4af9e1ac0a7509/stdout.log",
+          "sha256": "0c252bccdb9e74c21870878a04579dfe5992bee46aaae12bea64b6eff100e9ba"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/5c7c05477cf401a280649041676da03f91c28de07f73eb22e0be8ca75a832cc9/stdout.log",
+          "sha256": "632d4d70726c42677a0b2d7c4838b9a13c10a0428db0b2582028c941ac6cf4cb"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/experiments-git-v2/machine/launches/ddc9994cd2f85487e6cb10b6e9edefb23043d2d19b409cf76523b5f74b945822/stdout.log",
+          "sha256": "b810b92074294e775692102036adc1fd6bd31ee0d1553e4db908be9e4889bab8"
+        }
+      ]
+    },
+    {
+      "name": "review-returns",
+      "strictAcceptance": "passed",
+      "agents": [
+        "01a0b21b-23ff-7841-8beb-7c54f1ec478a",
+        "01a0b21b-4684-70e1-8f45-c2a84600418e"
+      ],
+      "toolCalls": 7,
+      "successfulToolCalls": 7,
+      "toolErrors": [],
+      "shellCommands": 0,
+      "nonzeroShellExits": 0,
+      "transcriptHashes": [
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/review-returns/machine/launches/0b91951346d7225a13647fd1244f7d522673a7bd24f0cc3ac361416ccae59f52/stdout.log",
+          "sha256": "e0403e3f229518db51591cac65eb233a11e231a64b7c80c8ad5600c8604135ee"
+        },
+        {
+          "path": "/private/tmp/merv-deepseek-acceptance-20260918/review-returns/machine/launches/c2f85e044a3134ca7272b19c9657c1f7b12ebd90b49d38e8564a7ee607991037/stdout.log",
+          "sha256": "c53faf42aa8562d6d07b394b751fb3bf3d2112567f039e1f6633ea1e78135b25"
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "freshDeepSeekAgents": 13,
+    "toolCalls": 115,
+    "successfulToolCalls": 109,
+    "expectedPermissionDenials": 3,
+    "recoveredUnexpectedToolErrors": 3,
+    "strictRunsPassed": 3,
+    "strictRunsFailed": 2
+  },
+  "setupFailures": {
+    "description": "Initial wrapper placed provider overrides before exec; CLI rejected deepseek-flash through ChatGPT/OpenAI. Corrected by passing provider overrides to exec. These never reached Merv tools.",
+    "directories": [
+      "user-keys",
+      "dispatch",
+      "experiments-git"
+    ],
+    "retained": true
+  },
+  "limitations": [
+    "No production Ledgerline access or changes.",
+    "Seventeen PostgreSQL tests and one Nisa cross-repository test skipped.",
+    "Synthetic local fixtures, not a model-quality benchmark or real fine-tuning study.",
+    "One unchanged dispatch replication; no statistical reliability claim.",
+    "Native runner stops after handoff, so complete model token usage is unavailable for its sessions.",
+    "Reviewer shell could read local server blob files; filesystem confidentiality was not established."
+  ]
+}

@@ -15,6 +15,7 @@ import type {
   WorkflowPolicy,
 } from '@merv/contracts';
 import { canonical, fingerprint } from './definition.js';
+import { freezeData, workflowJson } from './json.js';
 
 const field = z
   .string()
@@ -88,76 +89,16 @@ const referencesSchema = z.record(
 );
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Reject accessors, cycles and values JSON would silently erase at this provider boundary. */
 function json<T>(value: T, code: string, status: number, limit = 256_000): T {
-  let count = 0;
-  const ancestors = new Set<object>();
-  const visit = (item: unknown, depth: number): void => {
-    check(++count <= 16000 && depth <= 32, code, 'Execution metadata is too complex', status);
-    if (item === null || typeof item === 'string' || typeof item === 'boolean') return;
-    if (typeof item === 'number') {
-      check(Number.isFinite(item), code, 'Execution metadata must be finite JSON', status);
-      return;
-    }
-    check(
-      item && typeof item === 'object' && !ancestors.has(item),
-      code,
-      'Execution metadata must be acyclic JSON',
-      status,
-    );
-    check(
-      Array.isArray(item) || Object.getPrototypeOf(item) === Object.prototype,
-      code,
-      'Execution metadata must use plain JSON objects',
-      status,
-    );
-    ancestors.add(item);
-    const keys = Reflect.ownKeys(item);
-    check(
-      keys.every((key) => typeof key === 'string'),
-      code,
-      'Execution metadata cannot contain symbols',
-      status,
-    );
-    if (Array.isArray(item)) {
-      check(
-        item.length <= 16000 && keys.length === item.length + 1,
-        code,
-        'Execution arrays must be dense and contain no extra properties',
-        status,
-      );
-      for (let i = 0; i < item.length; i++)
-        check(Object.hasOwn(item, i), code, 'Execution arrays must be dense', status);
-    }
-    for (const key of keys) {
-      if (Array.isArray(item) && key === 'length') continue;
-      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-      check(
-        'value' in descriptor && descriptor.enumerable,
-        code,
-        'Execution metadata cannot contain accessors or hidden properties',
-        status,
-      );
-      visit(descriptor.value, depth + 1);
-    }
-    ancestors.delete(item);
-  };
-  visit(value, 0);
-  const encoded = canonical(value);
-  check(encoded.length <= limit, code, 'Input is too large', status);
-  return JSON.parse(encoded) as T;
+  return workflowJson(value, code, status, { depth: 32, nodes: 16000, limit });
+}
+
+export function dispatchInput<T>(value: T): T {
+  return json(value, 'invalid_input', 400, 4_000_000);
 }
 
 export function executionMetadata<T>(value: T): T {
   return json(value, 'invalid_workflow_policy', 500);
-}
-
-function freeze<T>(value: T): T {
-  if (value && typeof value === 'object') {
-    for (const child of Object.values(value)) freeze(child);
-    Object.freeze(value);
-  }
-  return value;
 }
 
 export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecutionPolicy {
@@ -189,7 +130,7 @@ export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecu
     'invalid_workflow_policy',
     'Read-only execution cannot publish a central workspace advance',
   );
-  return freeze({
+  return freezeData({
     readOnly: parsed.data.readOnly,
     ...(parsed.data.workspace === undefined ? {} : { workspace: parsed.data.workspace }),
     tools,
@@ -269,7 +210,7 @@ export function admitDispatch(
   const grant = execution.policy.tools.find((grant) => grant.name === tool);
   check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
   // A worker's tool input is bounded like anyone's request body, not like policy metadata.
-  const original = json(input, 'invalid_input', 400, 4_000_000);
+  const original = dispatchInput(input);
   check(
     original && typeof original === 'object' && !Array.isArray(original),
     'invalid_input',

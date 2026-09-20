@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "evidenceChecks": {
+    "expectedTask": true,
+    "structuredAssessmentPinned": true,
+    "structuredReviewPinned": true,
+    "independentReviewer": true,
+    "reviewerReadAllPinnedEvidence": true,
+    "observerReadRetainedDelivery": true
+  },
+  "assignmentChecks": {
+    "bothAgentsReadAssignments": true,
+    "bothAgentsRepeatedBegin": true,
+    "exactlyTwoStartEvents": true,
+    "startsSurvivedTwoRestarts": true,
+    "startAttributionMatchesActors": true
+  },
+  "userKeyChecks": {
+    "humanOwnerHttpIssuance": true,
+    "accountAndProjectGrants": true,
+    "explicitMcpProjectSelection": true,
+    "twoWorkerKeyRotations": true,
+    "oldBearersRefusedOverHttp": true,
+    "attributionGrantAndExpiryPreserved": true,
+    "rotatedReviewerAuthenticatedAfterRestart": true,
+    "currentAndFutureMembershipRoles": true,
+    "crossProjectArtifactRefused": true,
+    "ownerCanManageAfterLeavingIssuanceProject": true,
+    "accountRotationUsingAnotherMembership": true,
+    "ancestorRevocationKillsLaterSuccessor": true,
+    "independentKeyAndHumanLoginPreserved": true,
+    "domainWritesRetainKeyAndMembershipProvenance": true
+  }
+}

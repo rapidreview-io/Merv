@@ -51,7 +51,10 @@ async function setup(t: TestContext, storage?: State) {
 test('draft PR creation recovers a lost response and independent approval readies exactly that proposal', async (t) => {
   const f = await setup(t);
   f.control.loseCreateReply = true;
-  const draft = await f.sync();
+  const source = structuredClone(f.caller);
+  const syncing = f.publications.syncPublications(source);
+  source.actorId = 'missing';
+  const draft = (await syncing)[0];
   assert.equal(draft.lastError, null);
   assert.equal(draft.pull?.draft, true);
   assert.equal(f.pulls.length, 1);
@@ -76,15 +79,52 @@ test('draft PR creation recovers a lost response and independent approval readie
   assert.equal((await restarted.publications(f.caller))[0].review?.id, 'review_fixture');
   const detail = await restarted.publicationDetails(f.caller, f.proposal.id);
   assert.equal(detail.details?.pull.head.sha, headOid);
-  const merged = await restarted.mergePublication(f.caller, {
+  const mergingCaller = structuredClone(f.caller);
+  const merging = restarted.mergePublication(mergingCaller, {
     proposalId: f.proposal.id,
     expectedHead: headOid,
     expectedBase: baseOid,
     requestId: 'merge',
   });
+  mergingCaller.actorId = 'missing';
+  const merged = await merging;
   assert.equal(merged.pull?.merged, true);
   assert.equal(merged.merge?.commitSha, mergeOid);
   assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 1);
+});
+
+test('publication reads retain their original reader', async (t) => {
+  const f = await setup(t);
+  for (const method of ['publications', 'publicationDetails'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...structuredClone(f.caller), actorId: 'missing' };
+      const pending =
+        method === 'publications'
+          ? f.publications.publications(caller)
+          : f.publications.publicationDetails(caller, f.proposal.id);
+      Object.assign(caller, f.caller);
+      await assert.rejects(pending, { code: 'membership_required' });
+    });
+  }
+});
+
+test('a proposal edit cannot turn a pending self-review into an independent approval', async (t) => {
+  const f = await setup(t);
+  await assert.rejects(
+    f.state.transaction(async (tx) => {
+      const proposal = structuredClone(f.proposal);
+      const pending = f.publications.recordReview(f.caller, proposal, 'self', 'pass', tx);
+      proposal.producer.actorId = f.reviewer.actorId;
+      await pending;
+    }),
+    { code: 'self_review' },
+  );
+  assert.equal((await f.publications.publications(f.caller))[0].review, null);
+  await f.review();
+  assert.equal(
+    (await f.publications.publications(f.caller))[0].review?.actorId,
+    f.reviewer.actorId,
+  );
 });
 
 test('changed PR heads and non-passing checks prevent merge; a rejection closes only the matching PR', async (t) => {
@@ -177,19 +217,90 @@ test('publication intent and its review remain durable when GitHub automation is
   const proposal = { ...f.proposal, id: 'codeprop_offline' };
   const count = f.calls.length;
   await f.state.transaction(async (tx) => {
-    await f.publications.enqueue(f.caller, proposal, tx);
-    await f.publications.recordReview(f.reviewer, proposal, 'review_offline', 'pass', tx);
+    const source = structuredClone(f.caller),
+      supplied = structuredClone(proposal);
+    const enqueue = f.publications.enqueue(source, supplied, tx);
+    source.projectId = 'missing';
+    supplied.id = 'changed';
+    supplied.receipt.headOid = 'e'.repeat(40);
+    await enqueue;
+    const reviewer = structuredClone(f.reviewer);
+    const reviewing = f.publications.recordReview(reviewer, proposal, 'review_offline', 'pass', tx);
+    reviewer.actorId = f.caller.actorId;
+    await reviewing;
   });
   assert.equal(f.calls.length, count);
   const record = (await f.publications.publications(f.caller)).find(
     (p) => p.proposalId === proposal.id,
   )!;
   assert.equal(record.review?.verdict, 'pass');
+  assert.equal(record.headOid, headOid);
+  assert.equal(record.review?.actorId, f.reviewer.actorId);
   await f.sync();
   assert.equal(f.pulls.length, 0);
 });
 
-test('a superseded merge lock prevents GitHub writes and does not record an unowned intent', async (t) => {
+test('publication writes stop when automation is disabled or the lock expires or changes', async (t) => {
+  for (const action of ['create', 'ready', 'close'] as const) {
+    for (const failure of ['revoked', 'expired', 'replaced'] as const) {
+      await t.test(`${action}: ${failure}`, async (t) => {
+        const f = await setup(t);
+        if (action !== 'create') {
+          await f.sync();
+          await f.review(action === 'ready' ? 'pass' : 'needs_changes');
+        }
+        let successor: unknown;
+        const stored = () =>
+          f.state.read((sql) =>
+            sql.get('SELECT lock_id,lock_until,error,synced_at,pull_json FROM code_publications'),
+          );
+        f.control.before = async (path) => {
+          if (path.endsWith(action === 'create' ? '/pulls' : '/pulls/1')) {
+            f.control.before = undefined;
+            if (failure === 'revoked')
+              await f.github.configureAutomation(f.caller, {
+                expectedRevision: 3,
+                mode: 'off',
+                baseBranch: null,
+              });
+            else
+              await f.state.transaction((tx) =>
+                tx.run(
+                  failure === 'replaced'
+                    ? "UPDATE code_publications SET lock_id='new-owner',error='successor_error'"
+                    : "UPDATE code_publications SET lock_until='2000-01-01T00:00:00.000Z'",
+                ),
+              );
+            successor = await stored();
+          }
+        };
+        const before = f.calls.length;
+        const result = await f.sync();
+        assert.deepEqual(
+          f.calls
+            .slice(before)
+            .filter((call) => call.method !== 'GET')
+            .map((call) => call.path),
+          [],
+        );
+        if (failure === 'replaced') assert.deepEqual(await stored(), successor);
+        else
+          assert.equal(
+            result.lastError,
+            failure === 'revoked' ? 'github_automation_disabled' : 'publication_busy',
+          );
+        if (action === 'create') assert.equal(f.pulls.length, 0);
+        else {
+          assert.equal(f.pulls[0].draft, true);
+          assert.equal(f.pulls[0].state, 'open');
+        }
+        if (failure === 'expired') assert.equal((await f.sync()).lastError, null);
+      });
+    }
+  }
+});
+
+test('superseded and expired merge locks prevent GitHub writes and unowned intents', async (t) => {
   const f = await setup(t);
   await f.sync();
   await f.review();
@@ -205,6 +316,26 @@ test('a superseded merge lock prevents GitHub writes and does not record an unow
       expectedHead: headOid,
       expectedBase: baseOid,
       requestId: 'merge',
+    }),
+    { code: 'publication_busy' },
+  );
+  assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 0);
+  assert.equal((await f.publications.publications(f.caller))[0].merge, null);
+  await f.state.transaction((tx) =>
+    tx.run('UPDATE code_publications SET lock_id=NULL,lock_until=NULL'),
+  );
+  f.control.before = async (path) => {
+    if (path.endsWith('/status'))
+      await f.state.transaction((tx) =>
+        tx.run("UPDATE code_publications SET lock_until='2000-01-01T00:00:00.000Z'"),
+      );
+  };
+  await assert.rejects(
+    f.publications.mergePublication(f.caller, {
+      proposalId: f.proposal.id,
+      expectedHead: headOid,
+      expectedBase: baseOid,
+      requestId: 'expired-merge',
     }),
     { code: 'publication_busy' },
   );

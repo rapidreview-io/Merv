@@ -3,6 +3,7 @@ import {
   check,
   digest,
   now,
+  plain,
   type Migration,
   type Sql,
   type SqlValue,
@@ -25,7 +26,7 @@ interface Context {
   sql: Sql;
   transaction?: Transaction;
   eventWritten: boolean;
-  childTransaction?: boolean;
+  childTransaction?: Promise<unknown>;
   /** A read scope: nested "transactions" read on the same snapshot and refuse writes. */
   readOnly?: boolean;
 }
@@ -60,8 +61,10 @@ export abstract class StateStore implements State {
     return operation;
   }
 
-  private scope(connection: Connection): Context {
-    const scope = { connection, live: true, eventWritten: false } as Context;
+  private scope(connection: Connection, parent?: Context): Context {
+    const scope = (
+      parent ? Object.create(parent) : { connection, live: true, eventWritten: false }
+    ) as Context;
     const valid = () => {
       const current = this.context.getStore();
       check(
@@ -78,6 +81,7 @@ export abstract class StateStore implements State {
       dialect: this.dialect,
       run: async (sql, ...params) => {
         valid();
+        check(!scope.readOnly, 'read_only_scope', 'A read scope cannot write', 409);
         return connection.run(sql, params);
       },
       get: async <T>(sql: string, ...params: SqlValue[]) => {
@@ -96,7 +100,9 @@ export abstract class StateStore implements State {
     connection: Connection,
     fn: (tx: Transaction) => T | Promise<T>,
   ): Promise<T> {
-    const scope = this.scope(connection);
+    const scope = this.scope(connection, this.context.getStore());
+    // The parent read may retire while this admitted transaction drains.
+    scope.live = true;
     const tx: Transaction = { ...scope.sql, transactionId: Symbol('transaction') };
     scope.transaction = tx;
     try {
@@ -108,9 +114,12 @@ export abstract class StateStore implements State {
         this.context.exit(() =>
           queueMicrotask(() => {
             if (this.closed) return;
-            for (const listener of this.listeners) {
+            // Registrations created by a wakeup belong to the next commit. Still
+            // honor withdrawals before admitting a snapshotted listener.
+            for (const listener of [...this.listeners]) {
+              if (!this.listeners.has(listener)) continue;
               try {
-                listener();
+                void Promise.resolve(listener()).catch(() => {});
               } catch {
                 /* Wakeups cannot undo a committed transaction. */
               }
@@ -148,16 +157,14 @@ export abstract class StateStore implements State {
         'transaction_closed',
         'Database scope is no longer active',
       );
-      const tx: Transaction = {
-        ...current.sql,
-        run: async (sql: string) => {
-          check(false, 'read_only_scope', `A read scope cannot write: ${sql.slice(0, 60)}`, 409);
-          throw new Error('unreachable');
-        },
-        transactionId: Symbol('read'),
-      };
-      const own = Object.create(current, { transaction: { value: tx } }) as Context;
-      return await this.context.run(own, () => fn(tx));
+      const own = this.scope(current.connection, current);
+      const tx: Transaction = { ...own.sql, transactionId: Symbol('read') };
+      own.transaction = tx;
+      try {
+        return await this.context.run(own, () => fn(tx));
+      } finally {
+        own.live = false;
+      }
     }
     if (current) {
       check(
@@ -170,11 +177,12 @@ export abstract class StateStore implements State {
         'nested_transaction',
         'A transaction is already using this read scope',
       );
-      current.childTransaction = true;
+      const child = this.transact(current.connection, fn);
+      current.childTransaction = child;
       try {
-        return await this.transact(current.connection, fn);
+        return await child;
       } finally {
-        current.childTransaction = false;
+        current.childTransaction = undefined;
       }
     }
     return this.operation(() => this.connect((connection) => this.transact(connection, fn)));
@@ -197,6 +205,7 @@ export abstract class StateStore implements State {
           return await this.context.run(scope, () => fn(scope.sql));
         } finally {
           scope.live = false;
+          await scope.childTransaction?.catch(() => {});
         }
       }, 'read'),
     );
@@ -256,7 +265,9 @@ export abstract class StateStore implements State {
       'nested_transaction',
       'Migrations require their own database scope',
     );
-    const ordered = [...migrations].sort((a, b) => a.version - b.version);
+    const ordered = plain<Migration[]>(migrations, 'invalid_migration').sort(
+      (a, b) => a.version - b.version,
+    );
     const seen = new Set<number>();
     for (const migration of ordered) {
       check(
@@ -338,6 +349,9 @@ export abstract class StateStore implements State {
   ): Promise<StoredEvent> {
     this.assertTransaction(tx);
     check(!this.context.getStore()?.readOnly, 'read_only_scope', 'A read scope cannot write', 409);
+    // The returned receipt and stored row must describe one detached event, even
+    // when the caller edits its object while the insert is pending.
+    event = plain<typeof event>(event, 'invalid_event', { keys: 'any' });
     const createdAt = now();
     const row = await tx.get<{ id: number }>(
       'INSERT INTO events(project_id,actor_id,type,subject_id,data_json,created_at) VALUES(?,?,?,?,?,?) RETURNING id',
@@ -354,9 +368,11 @@ export abstract class StateStore implements State {
 
   onEventsCommitted(listener: () => void): () => void {
     check(!this.closed, 'state_closed', 'State is closed', 503);
-    this.listeners.add(listener);
+    // Ownership belongs to the subscription, even when callers share one callback.
+    const registered = () => listener();
+    this.listeners.add(registered);
     return () => {
-      this.listeners.delete(listener);
+      this.listeners.delete(registered);
     };
   }
 
@@ -417,11 +433,13 @@ export abstract class StateStore implements State {
   }
 
   async close(): Promise<void> {
-    check(
-      !this.context.getStore()?.live,
-      'transaction_active',
-      'Cannot close State inside an active database scope',
-    );
+    // A finished child can still belong to a live snapshot or read scope.
+    for (let scope = this.context.getStore(); scope; scope = Object.getPrototypeOf(scope))
+      check(
+        !scope.live,
+        'transaction_active',
+        'Cannot close State inside an active database scope',
+      );
     if (!this.closing)
       this.closing = (async () => {
         await Promise.allSettled([...this.operations]);

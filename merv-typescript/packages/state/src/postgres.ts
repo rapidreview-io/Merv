@@ -176,12 +176,11 @@ END $merv$;`);
     // Sibling reads of one snapshot arrive together; one connection runs them in turn.
     let tail: Promise<unknown> = Promise.resolve();
     const query = (sql: string, params: SqlValue[] = []): Promise<QueryResult> => {
+      const values = params.map((value) =>
+        value instanceof Uint8Array ? Buffer.from(value) : value,
+      );
       const next = tail.then(
-        async () =>
-          await client.query(
-            postgresParameters(sql, params.length),
-            params.map((value) => (value instanceof Uint8Array ? Buffer.from(value) : value)),
-          ),
+        async () => await client.query(postgresParameters(sql, values.length), values),
       );
       tail = next.catch(() => undefined);
       return next.catch((error) => {
@@ -220,6 +219,7 @@ END $merv$;`);
         },
       });
     } finally {
+      await tail;
       client.release(discard);
     }
   }

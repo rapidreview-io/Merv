@@ -62,6 +62,7 @@ const listBody = {
 };
 const recordBody = {
   id: 'sbx_one',
+  revision: 1,
   name: 'one',
   Secret: 'hidden',
   endpoint: { host: 'one.invalid', token: 'sbxt_leaked_record' },
@@ -283,6 +284,7 @@ test('reads proxy the collection and one record, namespace-scoped and free of se
   const record = (await ui.read(caller, 'sandboxes-sandboxes', { id: 'sbx_one' })) as Json;
   assert.deepEqual(record, {
     id: 'sbx_one',
+    revision: 1,
     name: 'one',
     endpoint: { host: 'one.invalid' },
     // The manifest's console link may be a path on the service; this says where it lives.
@@ -422,7 +424,12 @@ test('the two tools send the service exactly one change, under a write grant', a
   assert.deepEqual(demanded, ['write'], 'changing a machine is a write, like every other change');
   assert.equal((renewed as { lease_seconds: number }).lease_seconds, 3600);
   const released = await call('sandbox.release', caller, { id: 'sbx_one' });
-  assert.deepEqual(released, { id: 'sbx_one', name: 'one', endpoint: { host: 'one.invalid' } });
+  assert.deepEqual(released, {
+    id: 'sbx_one',
+    revision: 1,
+    name: 'one',
+    endpoint: { host: 'one.invalid' },
+  });
   // The browser's guard is the retention confirmation the legacy tool asked for in a second call.
   assert.deepEqual(
     service.seen.filter((entry) => entry.method !== 'GET'),
@@ -430,7 +437,7 @@ test('the two tools send the service exactly one change, under a write grant', a
       {
         path: '/v1/sandboxes/sbx_one/renew',
         method: 'POST',
-        sent: { lease_seconds: 3600 },
+        sent: { lease_seconds: 3600, expected_revision: 1 },
         ...proved,
       },
       {

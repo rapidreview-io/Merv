@@ -13,6 +13,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
+import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, Workflows } from '@merv/contracts';
 
 async function fixture() {
@@ -76,6 +77,7 @@ async function fixture() {
     artifacts,
     workflows,
     reviews,
+    builder,
     tasks,
     brief,
     create,
@@ -85,6 +87,57 @@ async function fixture() {
 }
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
+
+test('task reads, context and failure keep their original caller and inputs', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const task = await f.create();
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const foreign = { projectId: other.project.id, actorId: other.actor.id };
+  for (const method of ['get', 'record', 'records', 'list', 'process'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...(method === 'process' ? f.producer : foreign) };
+      const reading =
+        method === 'list' || method === 'records'
+          ? f.tasks[method](caller)
+          : f.tasks[method](caller, task.id);
+      Object.assign(caller, method === 'process' ? foreign : f.producer);
+      if (method === 'list' || method === 'records') assert.deepEqual(await reading, []);
+      else if (method === 'process') await reading;
+      else await assert.rejects(reading, code('not_found'));
+    });
+  }
+  await t.test('context', async () => {
+    const caller = { ...f.producer };
+    const input = {
+      taskId: task.id,
+      purpose: 'work' as const,
+      expectedRevision: 0,
+      requestId: 'context',
+    };
+    const original = { ...input };
+    const building = f.tasks.context(caller, input);
+    Object.assign(caller, f.reader);
+    input.requestId = 'replacement';
+    const context = await building;
+    assert.deepEqual(await f.tasks.context(f.producer, original), context);
+  });
+  await t.test('failure', async () => {
+    const caller = { ...f.producer };
+    const input = {
+      taskId: task.id,
+      expectedRevision: 0,
+      reason: 'Original reason',
+      requestId: 'failure',
+    };
+    const failing = f.tasks.markFailed(caller, input);
+    Object.assign(caller, f.operator);
+    input.reason = 'Replacement reason';
+    const failed = await failing;
+    assert.equal(failed.failure!.actorId, f.producer.actorId);
+    assert.equal(failed.failure!.reason, 'Original reason');
+  });
+});
 
 test('a task can be created inside a caller\u2019s transaction and rolls back with it', async () => {
   const f = await fixture();
@@ -154,7 +207,12 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
       expectedRevision: initial.workflow.revision,
       requestId: 'deliver',
     };
-    const pending = await f.tasks.submitDelivery(f.producer, confirmedDelivery(input, 2));
+    const caller = { ...f.producer },
+      deliveryInput = confirmedDelivery(structuredClone(input), 2);
+    const delivering = f.tasks.submitDelivery(caller, deliveryInput);
+    Object.assign(caller, f.operator);
+    deliveryInput.artifactIds.length = 0;
+    const pending = await delivering;
     assert.equal(pending.workflow.state, 'in_review');
     assert.deepEqual(
       await f.tasks.submitDelivery(f.producer, confirmedDelivery(input, 2)),
@@ -221,7 +279,12 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
       expectedRevision: pending.workflow.revision,
       requestId: 'revise',
     };
-    const revised = await f.tasks.submitReview(f.reviewer, revise);
+    const decision = structuredClone(revise);
+    Object.assign(caller, f.reviewer);
+    const revising = f.tasks.submitReview(caller, decision);
+    Object.assign(caller, f.reviewer2);
+    decision.notes = 'Replacement verdict notes';
+    const revised = await revising;
     assert.equal(revised.workflow.state, 'in_progress');
     assert.equal(revised.workflow.data.revisionContext, revise.notes);
     assert.deepEqual(await f.tasks.submitReview(f.reviewer, revise), revised);
@@ -846,7 +909,12 @@ test('review reissue recovers revoked claims, preserves evidence, fences old rev
       async () => await f.tasks.reissueReview(f.producer, { ...input, expectedRevision: 0 }),
       code('revision_conflict'),
     );
-    const reissued = await f.tasks.reissueReview(f.producer, input);
+    const caller = { ...f.producer },
+      request = { ...input };
+    const reissuing = f.tasks.reissueReview(caller, request);
+    Object.assign(caller, f.reader);
+    request.reason = 'Replacement reason';
+    const reissued = await reissuing;
     assert.equal(reissued.workflow.state, 'in_review');
     assert.equal(reissued.workflow.revision, pending.workflow.revision + 1);
     assert.notEqual(reissued.reviewId, original.id);
@@ -957,4 +1025,184 @@ test('review reissue rollback restores original claim and target revision', asyn
   } finally {
     await f.cleanup();
   }
+});
+
+test('task creation retains the validated input while its pinned brief is read', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const original = {
+    title: 'Original task',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.', 'Handles negative inputs.'],
+    briefId: f.brief.id,
+    requestId: 'input-snapshot',
+  };
+  const input = structuredClone(original);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = f.artifacts.read.bind(f.artifacts);
+  t.mock.method(f.artifacts, 'read', async (...args: Parameters<typeof read>) => {
+    const result = await read(...args);
+    enter();
+    await waiting;
+    return result;
+  });
+  const caller = { ...f.producer };
+  const pending = f.tasks.create(caller, input);
+  try {
+    await entered;
+    input.title = '';
+    input.checks.splice(0, 2, 'Adds');
+    input.requestId = 'mutated-request';
+    Object.assign(caller, f.operator);
+  } finally {
+    release();
+  }
+  const task = await pending;
+  assert.equal(task.producerId, f.producer.actorId);
+  assert.equal(task.title, original.title);
+  assert.deepEqual(task.checks, original.checks);
+  assert.deepEqual(await f.tasks.create(f.producer, original), task);
+  assert.equal((await f.tasks.list(f.producer)).length, 1);
+});
+
+test('task type registration snapshots the definition before Context Builder yields', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const definition = { ...structuredClone(TASK_TYPES[0]), name: 'task.snapshot' };
+  const original = structuredClone(definition);
+  const register = f.builder.register.bind(f.builder);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.mock.method(f.builder, 'register', async (...args: Parameters<typeof register>) => {
+    const handle = await register(...args);
+    enter();
+    await waiting;
+    return handle;
+  });
+  const pending = f.tasks.registerType(definition);
+  try {
+    await entered;
+    definition.name = 'task.changed';
+    definition.version = 999;
+    definition.recipe.sections.length = 0;
+  } finally {
+    release();
+  }
+  const dispose = await pending;
+  try {
+    const task = await f.tasks.create(f.producer, {
+      title: 'Original type',
+      goal: 'Build an adder.',
+      checks: ['Adds two numbers.'],
+      briefId: f.brief.id,
+      requestId: 'registered-type',
+      type: original.name,
+      typeVersion: original.version,
+    });
+    const context = await f.tasks.context(f.producer, {
+      taskId: task.id,
+      purpose: 'work',
+      requestId: 'registered-context',
+      expectedRevision: task.workflow.revision,
+    });
+    assert.equal(context.type, original.name);
+    assert.equal(context.typeVersion, original.version);
+  } finally {
+    dispose();
+  }
+});
+
+for (const pending of [false, true]) {
+  test(`task type registration ${pending ? 'pending during' : 'started after'} disposal cannot retain a context recipe`, async (t) => {
+    const f = await fixture();
+    t.after(f.cleanup);
+    const definition = { ...structuredClone(TASK_TYPES[0]), name: 'task.retired' };
+    const register = f.builder.register.bind(f.builder);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    if (pending)
+      t.mock.method(f.builder, 'register', async (...args: Parameters<typeof register>) => {
+        const handle = await register(...args);
+        enter();
+        await waiting;
+        return handle;
+      });
+    else f.tasks.dispose();
+    const registration = f.tasks.registerType(definition);
+    const rejected = assert.rejects(registration, { code: 'tasks_closed' });
+    try {
+      if (pending) {
+        await entered;
+        f.tasks.dispose();
+      }
+    } finally {
+      release();
+    }
+    await rejected;
+    const replacement = await register(definition);
+    replacement.dispose();
+  });
+}
+
+test('task checkpoints retain validated notes and artifact IDs during evidence lookup', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const task = await f.create(),
+    evidence = await f.delivery();
+  const original = {
+    taskId: task.id,
+    purpose: 'work' as const,
+    expectedRevision: task.workflow.revision,
+    requestId: 'stable-checkpoint',
+    notes: 'Verified the current result.',
+    artifactIds: [evidence.id],
+  };
+  const input = structuredClone(original);
+  const get = f.artifacts.get.bind(f.artifacts);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof get>) => {
+    const result = await get(...args);
+    if (args[1] === evidence.id) {
+      enter();
+      await waiting;
+    }
+    return result;
+  });
+  const caller = { ...f.producer };
+  const pending = f.tasks.checkpoint(caller, input);
+  try {
+    await entered;
+    input.notes = '';
+    input.artifactIds[0] = 'unchecked-artifact';
+    Object.assign(caller, f.operator);
+  } finally {
+    release();
+  }
+  const checkpoint = await pending;
+  assert.equal(checkpoint.actorId, f.producer.actorId);
+  assert.equal(checkpoint.notes, original.notes);
+  assert.deepEqual(checkpoint.artifactIds, original.artifactIds);
+  assert.deepEqual(await f.tasks.checkpoint(f.producer, original), checkpoint);
 });

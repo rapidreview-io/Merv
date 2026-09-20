@@ -74,7 +74,10 @@ test('transport fences source/launch, pins repository authority and verifies rem
     code: 'session_forbidden',
   });
   await assert.rejects(f.service.grant(f.reviewer, f.fetchInput), { code: 'session_forbidden' });
-  const grant = await f.service.grant(f.caller, f.fetchInput);
+  const caller = structuredClone(f.caller);
+  const granting = f.service.grant(caller, f.fetchInput);
+  caller.actorId = 'missing';
+  const grant = await granting;
   assert.equal(grant.repositoryId, 'github:101');
   assert.equal(grant.target, null);
   f.attach();
@@ -91,7 +94,10 @@ test('transport fences source/launch, pins repository authority and verifies rem
   f.branches.set(push.target!.branch, 'e'.repeat(40));
   await assert.rejects(f.service.verify(f.caller, f.pushInput), { code: 'github_push_mismatch' });
   f.branches.set(push.target!.branch, headOid);
-  assert.deepEqual(await f.service.verify(f.caller, f.pushInput), { verified: true });
+  const verifier = structuredClone(f.caller);
+  const verifying = f.service.verify(verifier, f.pushInput);
+  verifier.actorId = 'missing';
+  assert.deepEqual(await verifying, { verified: true });
   await f.state.transaction((tx) => f.service.requireCheckpoint(complete, tx));
   await assert.rejects(
     f.service.grant(f.caller, {

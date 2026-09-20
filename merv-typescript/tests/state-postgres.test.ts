@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
 import { Pool } from 'pg';
-import { PostgresState, statePlugin } from '@merv/state';
+import { PostgresState, SqliteState, statePlugin } from '@merv/state';
 import { postgresParameters } from '@merv/state/parameters';
 import type { Transaction } from '@merv/contracts';
 
@@ -54,7 +54,38 @@ test('PostgreSQL bind lexer preserves quoted SQL, nested comments and dollar bod
     sql.replace('SELECT ?,', 'SELECT $1,').replace('WHERE x=?', 'WHERE x=$2'),
   );
   assert.throws(() => postgresParameters('SELECT ?', 0), { code: 'invalid_sql_parameters' });
+  for (const [input, output] of [
+    ['SELECT ? AS first -- ?\r, ? AS second', 'SELECT $1 AS first -- ?\r, $2 AS second'],
+    ['SELECT ? AS a$tag$tail, ? AS second', 'SELECT $1 AS a$tag$tail, $2 AS second'],
+    [
+      'SELECT $é$?$é$ AS literal, ? AS first, ? AS second',
+      'SELECT $é$?$é$ AS literal, $1 AS first, $2 AS second',
+    ],
+  ])
+    assert.equal(postgresParameters(input!, 2), output);
 });
+
+test(
+  'PostgreSQL executes bound SQL with carriage-return comments, dollar identifiers and Unicode quote tags',
+  postgres,
+  async (t) => {
+    const { state } = await fixture(t);
+    for (const sql of [
+      'SELECT ? AS first -- ?\r, ? AS second',
+      'SELECT ? AS a$tag$tail, ? AS second',
+      'SELECT $é$?$é$ AS literal, ? AS first, ? AS second',
+    ]) {
+      const row = await state.read((tx) => tx.get(sql, 'one', 'two'));
+      assert.equal(row?.second, 'two');
+      assert.equal(row?.first ?? row?.a$tag$tail, 'one');
+      if (row?.literal !== undefined) assert.equal(row.literal, '?');
+    }
+    await state.transaction(async (tx) => {
+      await assert.rejects(tx.get('SELECT ?'), { code: 'invalid_sql_parameters' });
+      assert.deepEqual(await tx.get('SELECT ?::integer AS value', 7), { value: 7 });
+    });
+  },
+);
 
 test('State config retains local path and requires explicit verified TLS settings', () => {
   assert.deepEqual(statePlugin.Config.parse({ path: ':memory:' }), { path: ':memory:' });
@@ -69,6 +100,116 @@ test('State config retains local path and requires explicit verified TLS setting
     false,
   );
 });
+
+test(
+  'PostgreSQL retains binary parameters when a caller reuses buffers before execution',
+  postgres,
+  async (t) => {
+    const { state } = await fixture(t);
+    await state.transaction(async (tx) => {
+      await tx.run('CREATE TEMP TABLE binary_input (value BYTEA) ON COMMIT DROP');
+      for (const value of [new Uint8Array([1, 2]), Buffer.from([0, 1, 2, 3]).subarray(1, 3)]) {
+        const writing = tx.run('INSERT INTO binary_input VALUES(?)', value);
+        value.fill(9);
+        await writing;
+      }
+      assert.deepEqual(await tx.all('SELECT value FROM binary_input'), [
+        { value: Buffer.from([1, 2]) },
+        { value: Buffer.from([1, 2]) },
+      ]);
+      const value = new Uint8Array([3, 4]);
+      const reading = tx.get<{ value: Buffer }>('SELECT ?::bytea AS value', value);
+      value.fill(9);
+      assert.deepEqual((await reading)?.value, Buffer.from([3, 4]));
+    });
+  },
+);
+
+test(
+  'PostgreSQL drains sibling queries before releasing a failed read connection',
+  postgres,
+  async (t) => {
+    const { state } = await fixture(t);
+    let completed = 0;
+    await assert.rejects(
+      state.read((sql) =>
+        Promise.all([
+          sql.get('SELECT 1/0'),
+          sql.get('SELECT pg_sleep(0.02)').then(() => completed++),
+          sql.get('SELECT pg_sleep(0.02)').then(() => completed++),
+        ]),
+      ),
+      { code: 'state_unavailable' },
+    );
+    assert.equal(completed, 2, 'a rejected callback still owns its admitted queries');
+    assert.deepEqual(await state.read((sql) => sql.get('SELECT 1 AS value')), { value: 1 });
+  },
+);
+
+for (const backend of ['sqlite', 'postgres'] as const) {
+  test(
+    `${backend}: a failed read drains the transaction it started`,
+    { skip: backend === 'postgres' && !connectionString },
+    async (t) => {
+      const state = backend === 'sqlite' ? new SqliteState(':memory:') : (await fixture(t)).state;
+      if (backend === 'sqlite') t.after(() => state.close());
+      const entered = deferred(),
+        released = deferred(),
+        callbackEnded = deferred();
+      const failure = new Error('parallel read failed');
+      let child!: Promise<unknown>,
+        late!: Promise<void>,
+        finished = false;
+      const reading = state
+        .read(async (sql) => {
+          late = callbackEnded.promise.then(async () => {
+            await new Promise((resolve) => setImmediate(resolve));
+            await assert.rejects(sql.get('SELECT 1'), { code: 'transaction_closed' });
+            await assert.rejects(
+              state.transaction(() => undefined),
+              { code: 'transaction_closed' },
+            );
+          });
+          child = state.transaction(async (tx) => {
+            await state.appendEvent(tx, event);
+            entered.resolve();
+            await released.promise;
+            await state.appendEvent(tx, { ...event, subjectId: 'second' });
+          });
+          try {
+            await Promise.all([
+              child,
+              entered.promise.then(() => {
+                throw failure;
+              }),
+            ]);
+          } finally {
+            callbackEnded.resolve();
+          }
+        })
+        .catch((error) => {
+          finished = true;
+          return error;
+        });
+      try {
+        await callbackEnded.promise;
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(
+          finished,
+          false,
+          'the connection remains owned until its transaction finishes',
+        );
+        await late;
+        released.resolve();
+        assert.equal(await reading, failure);
+        assert.equal(await state.eventHead(), 2);
+      } finally {
+        released.resolve();
+        await Promise.allSettled([reading, child, late]);
+      }
+    },
+  );
+}
 
 test(
   'PostgreSQL boots in a pre-created owned schema without database CREATE privilege',
@@ -288,19 +429,42 @@ test(
     const { state } = await fixture(t, { maxConnections: 1 });
     const entered = deferred();
     const release = deferred();
+    const readEntered = deferred();
+    const releaseRead = deferred();
     const work = state.transaction(async (tx) => {
       entered.resolve();
       await release.promise;
       await state.appendEvent(tx, event);
     });
     await entered.promise;
-    const read = state.eventHead();
-    const closing = state.close();
-    await assert.rejects(state.eventHead(), { code: 'state_closed' });
-    release.resolve();
-    await work;
-    assert.ok((await read) > 0);
-    await closing;
+    // Readers have their own pool; a concurrent eventHead may correctly see the old
+    // committed head. Hold an admitted read explicitly instead of assuming it queues
+    // behind the writer, then query after the writer has committed.
+    const read = state.read(async () => {
+      readEntered.resolve();
+      await releaseRead.promise;
+      return state.eventHead();
+    });
+    let closed = false;
+    try {
+      await readEntered.promise;
+      const closing = state.close().then(() => {
+        closed = true;
+      });
+      await assert.rejects(state.eventHead(), { code: 'state_closed' });
+      assert.equal(closed, false);
+      release.resolve();
+      await work;
+      assert.equal(closed, false, 'the admitted read must also drain before closing');
+      releaseRead.resolve();
+      assert.ok((await read) > 0);
+      await closing;
+      assert.equal(closed, true);
+    } finally {
+      release.resolve();
+      releaseRead.resolve();
+      await Promise.allSettled([work, read]);
+    }
   },
 );
 
@@ -312,18 +476,73 @@ test(
     await state.transaction(async (tx) => await state.appendEvent(tx, event));
     // A page's parts are independent read-only tools sharing one snapshot: none of them may
     // see another's transaction as its own nesting, and each may assert its own handle.
+    const siblings: Transaction[] = [];
     const heads = await state.snapshot(async () =>
       Promise.all(
         Array.from({ length: 6 }, async () =>
           state.transaction(async (tx) => {
             state.assertTransaction(tx);
+            siblings.push(tx);
             await new Promise((resolve) => setTimeout(resolve, 5));
+            for (const sibling of siblings)
+              if (sibling !== tx)
+                await assert.rejects(sibling.get('SELECT 1'), { code: 'transaction_closed' });
             return (await state.events(event.projectId)).length;
           }),
         ),
       ),
     );
     assert.deepEqual(heads, [1, 1, 1, 1, 1, 1]);
+    await state.snapshot(async () => {
+      for (const fail of [false, true]) {
+        let captured!: Transaction;
+        const operation = state.transaction((tx) => {
+          captured = tx;
+          if (fail) throw new Error('Failed child read');
+        });
+        if (fail) await assert.rejects(operation, /Failed child read/);
+        else await operation;
+        for (const query of [
+          () => captured.get('SELECT 1'),
+          () => captured.all('SELECT 1'),
+          () => captured.run('SELECT 1'),
+        ])
+          await assert.rejects(query, { code: 'transaction_closed' });
+        assert.equal(await state.eventHead(), 1, 'The parent snapshot remains usable');
+      }
+    });
+    const resume = deferred();
+    let child!: Promise<void>;
+    await state.snapshot(() => {
+      child = state.transaction(async (tx) => {
+        await resume.promise;
+        await assert.rejects(tx.get('SELECT 1'), { code: 'transaction_closed' });
+      });
+    });
+    resume.resolve();
+    await child;
+    for (const enclosing of ['snapshot', 'read'] as const)
+      await state[enclosing](async () => {
+        const release = deferred();
+        let closing!: Promise<string | undefined>;
+        await state.transaction(() => {
+          closing = release.promise
+            .then(() => state.close())
+            .then(
+              () => 'closed',
+              (error: { code?: string }) => error.code,
+            );
+        });
+        release.resolve();
+        assert.equal(
+          await Promise.race([
+            closing,
+            new Promise((resolve) => setTimeout(() => resolve('stalled'), 100)),
+          ]),
+          'transaction_active',
+        );
+        assert.equal(await state.eventHead(), 1);
+      });
     await assert.rejects(
       state.snapshot(() =>
         state.transaction((tx) => state.transaction(async () => tx.transactionId)),
@@ -336,3 +555,64 @@ test(
     );
   },
 );
+
+test(
+  'PostgreSQL appendEvent receipt remains identical to its inserted event during caller edits',
+  postgres,
+  async (t) => {
+    const { state } = await fixture(t);
+    const input = structuredClone(event);
+    const receipt = await state.transaction(async (tx) => {
+      const pending = state.appendEvent(tx, input);
+      input.subjectId = 'changed-after-insert';
+      input.data.value = 99;
+      return await pending;
+    });
+    assert.equal(receipt.subjectId, event.subjectId);
+    assert.deepEqual(receipt.data, event.data);
+    assert.deepEqual((await state.events(event.projectId))[0], receipt);
+  },
+);
+
+test('PostgreSQL queued migrations retain their version and dialect SQL', postgres, async (t) => {
+  const { state } = await fixture(t);
+  const entered = deferred(),
+    release = deferred();
+  const writer = state.transaction(async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await entered.promise;
+  const original = [
+    { version: 1, sql: 'SELECT 1;', postgres: 'CREATE TABLE original_migration(value TEXT);' },
+  ];
+  const input = structuredClone(original);
+  const pending = state.migrate('snapshot', input);
+  try {
+    input[0].version = 99;
+    input[0].postgres = 'CREATE TABLE changed_migration(value TEXT);';
+  } finally {
+    release.resolve();
+  }
+  await Promise.all([writer, pending]);
+  assert.deepEqual(
+    (
+      await state.read((sql) =>
+        sql.all<{ table_name: string }>(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('original_migration','changed_migration') ORDER BY table_name",
+        ),
+      )
+    ).map((row) => row.table_name),
+    ['original_migration'],
+  );
+  await state.migrate('snapshot', original);
+  assert.equal(
+    (await state.read((sql) =>
+      sql.get<{ version: number }>(
+        'SELECT version FROM component_migrations WHERE component=?',
+        'snapshot',
+      ),
+    ))!.version,
+    1,
+  );
+});

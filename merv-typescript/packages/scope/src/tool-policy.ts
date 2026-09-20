@@ -25,10 +25,13 @@ export const grantsSchema = z.array(
 const key = (caller: Caller, mountId: string, toolName: string) =>
   JSON.stringify([caller.projectId, caller.actorId, mountId, toolName]);
 
+type SessionRegistration = { provider: SessionToolPolicy };
+
 /** In-memory exact grants; Scope remains authoritative for the actor's current project access. */
 export class ExactToolPolicy implements ToolPolicy {
   private granted = new Set<string>();
-  private sessions?: SessionToolPolicy;
+  private sessions?: SessionRegistration;
+  private readonly preparations = new WeakMap<SessionToolInvocation, SessionRegistration>();
 
   constructor(
     private readonly scope: Pick<Scope, 'require'> & Partial<Pick<Scope, 'authorityActor'>>,
@@ -74,20 +77,35 @@ export class ExactToolPolicy implements ToolPolicy {
 
   registerSessions(provider: SessionToolPolicy): () => void {
     check(!this.sessions, 'session_provider_conflict', 'Session policy is already registered', 409);
-    this.sessions = provider;
+    const registration = { provider };
+    this.sessions = registration;
     return () => {
-      if (this.sessions === provider) this.sessions = undefined;
+      if (this.sessions === registration) this.sessions = undefined;
     };
   }
 
-  private sessionPolicy(): SessionToolPolicy {
+  private sessionPolicy(): SessionRegistration {
     check(this.sessions, 'session_unavailable', 'Session policy is unavailable', 503);
     return this.sessions;
   }
 
+  private requireRegistration(registration: SessionRegistration): void {
+    check(
+      this.sessions === registration,
+      'session_unavailable',
+      'Session policy changed during authorization; retry with the current provider',
+      503,
+    );
+  }
+
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
+    const registration = caller.session ? this.sessionPolicy() : undefined;
     await this.scope.require(caller, 'read');
-    return !caller.session || (await this.sessionPolicy().allowsTool(caller, name, read));
+    if (!registration) return true;
+    this.requireRegistration(registration);
+    const allowed = await registration.provider.allowsTool(caller, name, read);
+    this.requireRegistration(registration);
+    return allowed;
   }
 
   async prepare(
@@ -96,29 +114,58 @@ export class ExactToolPolicy implements ToolPolicy {
     input: Data,
     read?: boolean,
   ): Promise<SessionToolInvocation> {
+    const registration = caller.session ? this.sessionPolicy() : undefined;
     await this.scope.require(caller, 'read');
-    return caller.session
-      ? await this.sessionPolicy().prepare(caller, name, input, read)
-      : { caller, tool: name, input };
+    if (!registration) return { caller, tool: name, input };
+    this.requireRegistration(registration);
+    const invocation = await registration.provider.prepare(caller, name, input, read);
+    try {
+      this.requireRegistration(registration);
+    } catch (error) {
+      // Preparation may allocate a reservation before yielding. Its original owner
+      // must release it even though this registration can no longer authorize work.
+      await registration.provider.cancel(invocation);
+      throw error;
+    }
+    this.preparations.set(invocation, registration);
+    return invocation;
   }
 
   async validate(caller: Caller, name: string, input: Data): Promise<void> {
+    const registration = caller.session ? this.sessionPolicy() : undefined;
     await this.scope.require(caller, 'read');
-    if (caller.session) await this.sessionPolicy().validate(caller, name, input);
+    if (registration) {
+      this.requireRegistration(registration);
+      await registration.provider.validate(caller, name, input);
+      this.requireRegistration(registration);
+    }
   }
 
   async cancel(invocation: SessionToolInvocation): Promise<void> {
-    if (invocation.caller.session) await this.sessions?.cancel(invocation);
+    const registration = this.preparations.get(invocation);
+    if (!registration) return;
+    this.preparations.delete(invocation);
+    await registration.provider.cancel(invocation);
   }
 
   async run<T>(
     invocation: SessionToolInvocation,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T> {
+    const registration = this.preparations.get(invocation);
+    if (invocation.caller.session) {
+      check(registration, 'session_invocation', 'Session invocation is unavailable', 403);
+      this.requireRegistration(registration);
+    }
     await this.scope.require(invocation.caller, 'read');
-    return invocation.caller.session
-      ? this.sessionPolicy().run(invocation, handler)
-      : handler(invocation.caller, invocation.input);
+    if (!registration) return handler(invocation.caller, invocation.input);
+    this.requireRegistration(registration);
+    return registration.provider.run(invocation, (caller, input) => {
+      // Provider admission may itself await storage. Check once more at dispatch,
+      // but do not turn an already committed mutation into an error afterward.
+      this.requireRegistration(registration);
+      return handler(caller, input);
+    });
   }
 
   replace(grants: ToolGrant[]): void {

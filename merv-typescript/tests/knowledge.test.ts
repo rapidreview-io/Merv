@@ -294,6 +294,64 @@ async function fixture(t: TestContext) {
   };
 }
 
+for (const name of ['knowledge', 'experiments'] as const) {
+  test(`${name} Code binding disposal cannot withdraw a replacement binding of the same provider`, async (t) => {
+    const f = await fixture(t);
+    const service = f[name];
+    const old = service.bindCode(f.code);
+    const current = service.bindCode(f.code);
+    const available = async () => {
+      if (name === 'knowledge') {
+        assert.equal(
+          (await f.knowledge.resolve(f.reader, ['code-proposal:missing']))[0].status,
+          'missing',
+        );
+      } else {
+        await f.experiments.create(f.producer, {
+          name: f.id(),
+          intent: 'Exercise the current Code binding.',
+          workspace: 'git',
+          requestId: f.id(),
+        });
+      }
+    };
+    const unavailable = async () => {
+      if (name === 'knowledge') {
+        assert.equal(
+          (await f.knowledge.resolve(f.reader, ['code-proposal:missing']))[0].status,
+          'unavailable',
+        );
+      } else {
+        await assert.rejects(
+          f.experiments.create(f.producer, {
+            name: f.id(),
+            intent: 'Code has been withdrawn.',
+            workspace: 'git',
+            requestId: f.id(),
+          }),
+          { code: 'code_unavailable' },
+        );
+      }
+    };
+    old();
+    await available();
+    current();
+    await unavailable();
+    const replacement = service.bindCode(f.code);
+    old();
+    current();
+    await available();
+    replacement();
+    await unavailable();
+  });
+
+  test(`${name} refuses new Code bindings after its own shutdown`, async (t) => {
+    const f = await fixture(t);
+    f[name].close();
+    assert.throws(() => f[name].bindCode(f.code), { code: `${name}_unavailable` });
+  });
+}
+
 test('Scoped references distinguish missing, unsupported and unpublished without guidance or bytes', async (t) => {
   const f = await fixture(t);
   const task = await f.completeTask(),
@@ -334,8 +392,15 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   t.mock.method(f.artifacts, 'read', () => assert.fail('Metadata resolver must not read bytes'));
   t.mock.method(f.workflows, 'evaluate', () => assert.fail('Resolver must not evaluate guidance'));
   const head = await f.state.eventHead();
+  const caller = { ...f.reader };
+  const lookup = f.claims.get.bind(f.claims);
+  t.mock.method(f.claims, 'get', async (...args: Parameters<typeof lookup>) => {
+    const result = await lookup(...args);
+    Object.assign(caller, otherCaller);
+    return result;
+  });
   const results = await f.state.transaction(
-    async (tx) => await f.knowledge.resolve(f.reader, refs, tx),
+    async (tx) => await f.knowledge.resolve(caller, refs, tx),
   );
   assert.deepEqual(
     results.map((item) => item.status),
@@ -371,6 +436,45 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   await assert.rejects(async () => await f.knowledge.resolve(f.reader, refs), {
     code: 'knowledge_unavailable',
   });
+});
+
+test('Knowledge keeps one caller throughout its inventory and evidence reads', async (t) => {
+  const f = await fixture(t);
+  await f.createTask();
+  const boot = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
+  const project = f.scope.project.bind(f.scope);
+  for (const method of ['records', 'researchReferences'] as const) {
+    const expected = await f.knowledge[method](f.reader);
+    await t.test(method, async () => {
+      const caller = { ...f.reader };
+      f.scope.project = async (...args) => {
+        const result = await project(...args);
+        Object.assign(caller, other);
+        return result;
+      };
+      try {
+        assert.deepEqual(await f.knowledge[method](caller), expected);
+      } finally {
+        f.scope.project = project;
+      }
+    });
+  }
+  const lookup = f.artifacts.get.bind(f.artifacts);
+  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof lookup>) => {
+    const result = await lookup(...args);
+    await args[2]!.run(
+      'UPDATE actor_credentials SET revoked_at=? WHERE id=?',
+      new Date().toISOString(),
+      f.reader.credentialId!,
+    );
+    return result;
+  });
+  await assert.rejects(f.knowledge.researchReferences(f.reader), { code: 'forbidden' });
 });
 
 test('Historical session capture reference resolves for current readers without reauthorizing the former source', async (t) => {

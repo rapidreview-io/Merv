@@ -5,6 +5,7 @@ import {
   type Server as HttpServer,
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { isUtf8 } from 'node:buffer';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
@@ -75,6 +76,9 @@ function json(res: ServerResponse, status: number, value: unknown): void {
 }
 
 function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
+  // Authentication may have yielded while the client disconnected. Its abort/end
+  // events will not fire again for listeners attached after the stream was destroyed.
+  if (req.destroyed) throw new ApiError('request_aborted', 'Request was aborted');
   const mediaType = req.headers['content-type']?.split(';')[0]?.trim();
   if (mediaType !== 'application/json') {
     req.resume();
@@ -101,7 +105,10 @@ function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
     req.once('end', () => {
       if (rejected) return;
       try {
-        resolve(plain(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+        const body = Buffer.concat(chunks);
+        if (!isUtf8(body))
+          throw new ApiError('invalid_json', 'Request body must contain valid UTF-8 JSON');
+        resolve(plain(JSON.parse(body.toString('utf8'))));
       } catch (error) {
         if (error instanceof MervError) reject(error);
         else reject(new ApiError('invalid_json', 'Request body must contain valid JSON'));
@@ -307,6 +314,8 @@ export class ApiServer {
   private sessions?: SessionApiProvider;
   private code?: CodeApiProvider;
   private stopping = false;
+  private starting?: Promise<string>;
+  private closing?: Promise<void>;
   private readonly requests = new Set<Promise<void>>();
   private readonly calls = new Set<Promise<unknown>>();
   private readonly mcpServers = new Set<McpServer>();
@@ -326,9 +335,20 @@ export class ApiServer {
       throw new ApiError('invalid_config', 'maxBodyBytes must be a positive integer');
   }
 
-  async start(): Promise<string> {
-    if (this.server) throw new ApiError('already_started', 'API server is already started', 409);
+  start(): Promise<string> {
+    if (this.server || this.starting || this.closing)
+      return Promise.reject(new ApiError('already_started', 'API server is already started', 409));
     this.stopping = false;
+    const starting = this.listen();
+    this.starting = starting;
+    const settled = () => {
+      this.starting = undefined;
+    };
+    void starting.then(settled, settled);
+    return starting;
+  }
+
+  private async listen(): Promise<string> {
     const server = createServer((req, res) => {
       const request = this.handle(req, res).catch((error: unknown) => {
         const body = errorBody(error);
@@ -370,9 +390,23 @@ export class ApiServer {
     return this.url;
   }
 
-  async stop(): Promise<void> {
-    if (!this.server) return;
+  stop(): Promise<void> {
+    if (this.closing) return this.closing;
     this.stopping = true;
+    const closing = this.shutdown(this.starting);
+    this.closing = closing;
+    const settled = () => {
+      this.closing = undefined;
+    };
+    void closing.then(settled, settled);
+    return closing;
+  }
+
+  private async shutdown(starting?: Promise<string>): Promise<void> {
+    // Closing a not-yet-listening Node server can prevent its listen callback from ever
+    // firing. Finish (or fail) startup before closing, while admission stays withdrawn.
+    if (starting) await starting.catch(() => undefined);
+    if (!this.server) return;
     const server = this.server;
     // Stop admission before waiting. Existing responses and handlers retain their providers.
     const closed = new Promise<void>((resolve, reject) =>
@@ -408,7 +442,10 @@ export class ApiServer {
     if (typeof handler !== 'function')
       throw new ApiError('invalid_mount', 'Mount handler is required');
     this.mounts.set(prefix, handler);
+    let active = true;
     return () => {
+      if (!active) return;
+      active = false;
       if (this.mounts.get(prefix) === handler) this.mounts.delete(prefix);
     };
   }
@@ -421,7 +458,10 @@ export class ApiServer {
         409,
       );
     this.sessions = provider;
+    let active = true;
     return () => {
+      if (!active) return;
+      active = false;
       if (this.sessions === provider) this.sessions = undefined;
     };
   }

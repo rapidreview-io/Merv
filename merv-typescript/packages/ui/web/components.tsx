@@ -3,15 +3,19 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FormHTMLAttributes,
+  type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
 } from 'react';
 import { Link } from 'react-router-dom';
 import { useTool, type ApiError } from './api';
+import { shortId } from './markdown';
 import { useCommand } from './mutations';
 import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
-import { ArtifactBody, bytes, type Artifact } from './views/artifacts';
+import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
+import { ArtifactBody, bytes, fileType, type Artifact } from './views/artifacts';
 
 export { term, words };
 
@@ -20,37 +24,40 @@ export const cx = (...names: (string | false | null | undefined)[]) =>
 
 /**
  * One colour and one name per record kind, keyed by the view kind a row
- * declares. Icons live only in the rail (icons.tsx); the kind label and every
- * uppercase kind label read from this table and nowhere else. Kinds that share
- * a subject share a colour; a kind this build does not know — a row a service
- * outside this process published — falls back to the slate the agents wear, and
- * is named by its own noun rather than by an entry of its own.
+ * declares. The kind label and every uppercase kind label read from this table
+ * and nowhere else; the glyph of the same name is in icons.tsx. A colour is a
+ * --kind-* token rather than a value, because each theme states its own: what is
+ * legible as an 11px label on the light ground is not on the dark one. Kinds
+ * that share a subject share a colour; a kind this build does not know — a row a
+ * service outside this process published — falls back to the slate the agents
+ * wear, and is named by its own noun rather than by an entry of its own.
  */
 export const KIND: Record<string, { color: string; label: string }> = {
-  research: { color: '#6d28d9', label: 'Research' },
-  claims: { color: '#6d28d9', label: 'Claim' },
-  paper: { color: '#2563eb', label: 'Paper' },
-  tasks: { color: '#0d9488', label: 'Task' },
-  experiments: { color: '#0d9488', label: 'Experiment' },
-  reviews: { color: '#dc2626', label: 'Review' },
-  reflections: { color: '#dc2626', label: 'Reflection' },
-  consolidation: { color: '#d97706', label: 'Consolidation' },
-  sessions: { color: '#475569', label: 'Agent' },
-  code: { color: '#475569', label: 'Code' },
-  connections: { color: '#475569', label: 'Connection' },
-  feed: { color: '#6b7280', label: 'Post' },
-  artifacts: { color: '#6b7280', label: 'File' },
-  settings: { color: '#6b7280', label: 'Settings' },
-  'legacy-history': { color: '#6b7280', label: 'Archive' },
+  research: { color: 'var(--kind-purple)', label: 'Research' },
+  claims: { color: 'var(--kind-purple)', label: 'Claim' },
+  paper: { color: 'var(--kind-blue)', label: 'Paper' },
+  tasks: { color: 'var(--kind-teal)', label: 'Task' },
+  experiments: { color: 'var(--kind-teal)', label: 'Experiment' },
+  work: { color: 'var(--kind-teal)', label: 'Work' },
+  reviews: { color: 'var(--kind-red)', label: 'Review' },
+  reflections: { color: 'var(--kind-red)', label: 'Reflection' },
+  consolidation: { color: 'var(--kind-amber)', label: 'Consolidation' },
+  sessions: { color: 'var(--kind-slate)', label: 'Agent' },
+  code: { color: 'var(--kind-slate)', label: 'Code' },
+  connections: { color: 'var(--kind-slate)', label: 'Connection' },
+  feed: { color: 'var(--kind-gray)', label: 'Post' },
+  artifacts: { color: 'var(--kind-gray)', label: 'File' },
+  settings: { color: 'var(--kind-gray)', label: 'Settings' },
+  'legacy-history': { color: 'var(--kind-gray)', label: 'Archive' },
 };
-const UNKNOWN = { color: '#475569', label: '' };
+const UNKNOWN = { color: 'var(--kind-slate)', label: '' };
 export const kindOf = (kind: string | undefined) =>
   (kind && KIND[kind]) || { ...UNKNOWN, label: words(kind ?? '') };
 /** The kind's colour reaches the CSS as --kind, so a card and its label agree. */
 export const kindStyle = (kind: string | undefined) =>
   ({ '--kind': kindOf(kind).color }) as CSSProperties;
 
-/** The card's first line: the kind's name in small caps; icons live only in the rail. */
+/** The card's first line: the kind's name in small caps, in the kind's colour. */
 export function KindLabel({ kind }: { kind: string | undefined }) {
   const { label } = kindOf(kind);
   if (!label) return null;
@@ -61,14 +68,29 @@ export function KindLabel({ kind }: { kind: string | undefined }) {
   );
 }
 
-/** The absolute time, where a record states one exactly. */
-export const stamp = (at: string) => new Date(at).toLocaleString();
+const STAMP = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+/**
+ * The absolute time in the reader's own locale, to the minute: `Sep 20, 2026,
+ * 10:38 AM`. Seconds are the machine's business and stay in the ISO string. What
+ * is not a time at all is returned as it was written.
+ */
+export const stamp = (at: string) => {
+  const on = new Date(at);
+  return Number.isNaN(on.getTime()) ? at : STAMP.format(on);
+};
 
-/** A relative time in a row, with the exact stamp kept in its title and nowhere else. */
+/** The same, as the element a time is: the ISO string is its value and its title. */
+export const Stamp = ({ at, className }: { at: string; className?: string }) => (
+  <time className={className} dateTime={at} title={at}>
+    {stamp(at)}
+  </time>
+);
+
+/** A relative time in a row, with the absolute one kept in its title and nowhere else. */
 export const Ago = ({ at, className }: { at: string; className?: string }) => (
-  <span className={className} title={at}>
+  <time className={className} dateTime={at} title={stamp(at)}>
     {relativeTime(at)}
-  </span>
+  </time>
 );
 
 export function relativeTime(iso: string): string {
@@ -85,24 +107,29 @@ export function relativeTime(iso: string): string {
 /**
  * Semantic tone for status text. Tones map to the status--ok/warn/bad/dim
  * classes in the stylesheet; any status this table does not know stays neutral.
+ * Every state a deployed program can stand in is here, a review gate included, so
+ * work that is with a reviewer never reads as the grey of work that has stopped.
  */
 type Tone = 'ok' | 'warn' | 'bad' | 'dim';
 const TONES: [Tone, string][] = [
   [
     'ok',
     'ready done complete completed approved passed pass success succeeded active live online ' +
-      'running healthy verified published accepted merged enabled connected open supported',
+      'running healthy verified published accepted merged enabled connected open supported ' +
+      'resolved',
   ],
   [
     'warn',
     'degraded pending waiting requested started in_progress in-progress review reviewing ' +
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
-      'attempting planning provisioning starting deleting cancelling',
+      'attempting planning provisioning starting deleting cancelling needs_reconnect refreshing ' +
+      'in_review design_review experiment_review consolidation_review planned defining ' +
+      'researching reflecting synthesizing consolidating weakened',
   ],
   [
     'bad',
     'unavailable unreachable failed failure fail error rejected blocked denied dead offline disconnected ' +
-      'timed_out timeout invalid broken abandoned refuted contradicted',
+      'timed_out timeout invalid broken abandoned refuted contradicted missing unsupported',
   ],
   [
     'dim',
@@ -164,7 +191,7 @@ export function useNow(every: number): number {
 export function Countdown({ to, now }: { to: string | null | undefined; now: Now }) {
   const { at, since, stale } = clockOf(now);
   const on = to ? Date.parse(to) : Number.NaN;
-  if (!Number.isFinite(on)) return <span className="faint">—</span>;
+  if (!Number.isFinite(on)) return <span className="ghost">—</span>;
   if (stale)
     return (
       <span className="countdown tabular">
@@ -243,24 +270,17 @@ export function ConfirmAction({
 }
 
 /**
- * Every waiting state names whose move it is. An empty row is not a statement,
- * so a side with nothing on it says so in words; the browser adds the two labels
- * and nothing else.
+ * The one line a fold shows while it is shut. Every disclosure on every page opens
+ * from the same mark — the thin caret of icons.tsx, which turns as it opens — and
+ * never from the browser's own triangle, which is a different weight in every
+ * browser and no part of the glyph set.
  */
-export function ActorSplit({ agent, you }: { agent?: ReactNode; you?: ReactNode }) {
-  return (
-    <div className="moves">
-      <div className="move">
-        <span className="label">Agent’s move</span>
-        {agent || <p className="muted">Nothing until an agent moves.</p>}
-      </div>
-      <div className="move">
-        <span className="label">Your move</span>
-        {you || <p className="muted">Nothing is waiting on you.</p>}
-      </div>
-    </div>
-  );
-}
+export const Summary = ({ children, ...rest }: HTMLAttributes<HTMLElement>) => (
+  <summary {...rest}>
+    <ChevronRightIcon size={12} className="caret" />
+    {children}
+  </summary>
+);
 
 export function PageHeader({
   eyebrow,
@@ -308,9 +328,10 @@ export const Part = ({ title, children }: { title: string; children: ReactNode }
 /**
  * One anatomy for every record, in one order: the way back and what this is, then
  * the gate it stands at with the one control that moves it — no heading over it,
- * because the ladder is its own sentence — then the kind's own content, how it got
- * here, what it relates to, and the details last. A slot this kind has nothing for
- * is dropped rather than drawn empty, and `title` is the kind's word for its content.
+ * because the ladder is its own sentence — then what the record says of itself where
+ * its author wrote more than a line, the kind's own content, how it got here, what
+ * it relates to, and the details last. A slot this kind has nothing for is dropped
+ * rather than drawn empty, and `title` is the kind's word for its content.
  */
 export function RecordPage({
   back,
@@ -328,8 +349,11 @@ export function RecordPage({
   standing?: ReactNode;
   state?: ReactNode;
   title?: string;
-} & Partial<Record<'act' | 'content' | 'history' | 'related' | 'details', ReactNode>>) {
+} & Partial<
+  Record<'act' | 'description' | 'content' | 'history' | 'related' | 'details', ReactNode>
+>) {
   const order: [string, ReactNode][] = [
+    ['Description', slots.description],
     [title, slots.content],
     ['History', slots.history],
     ['Related', slots.related],
@@ -351,6 +375,52 @@ export function RecordPage({
 }
 
 /**
+ * A place with nothing in it, said once and the same way everywhere: the glyph of
+ * the kind that would be here in that kind's colour, a few words, and — where
+ * the reader may make the first one — the control that does. It carries the
+ * create action itself, so nobody has to find a button at the far end of an empty
+ * page. A failed load wears the same shape in the refusal's colour.
+ */
+export function EmptyState({
+  kind,
+  icon = kind,
+  title,
+  hint,
+  action,
+  error,
+  page,
+}: {
+  /** The view kind: it names the glyph and supplies the colour. */
+  kind?: string;
+  /** A glyph other than the kind's own, by its name in icons.tsx. */
+  icon?: string;
+  title: ReactNode;
+  hint?: ReactNode;
+  action?: ReactNode;
+  error?: boolean;
+  /** True where the state is the whole page, so its words are the page's one h1. */
+  page?: boolean;
+}) {
+  const Title = page ? 'h1' : 'h2';
+  return (
+    <div
+      className={cx('empty-state', error && 'empty-state--error')}
+      role={error ? 'alert' : undefined}
+      style={kind ? kindStyle(kind) : undefined}
+    >
+      {icon && (
+        <span className="empty-icon">
+          <Icon name={icon} size={22} />
+        </span>
+      )}
+      <Title className="empty-title">{title}</Title>
+      {hint && <p>{hint}</p>}
+      {action && <div className="empty-action">{action}</div>}
+    </div>
+  );
+}
+
+/**
  * Loading, error, and empty states share one calm voice; errors name the code
  * the server sent. While the read is in flight the list keeps its own shape:
  * grey rows in the same grid, in as many columns as the list will have. A failed
@@ -366,6 +436,9 @@ export function LoadState({
   empty,
   emptyTitle = 'Nothing here yet',
   emptyHint,
+  emptyKind,
+  emptyIcon,
+  emptyAction,
   back,
   columns = 1,
 }: {
@@ -376,6 +449,10 @@ export function LoadState({
   empty?: boolean;
   emptyTitle?: string;
   emptyHint?: ReactNode;
+  /** What the empty state draws: see EmptyState's `kind`, `icon` and `action`. */
+  emptyKind?: string;
+  emptyIcon?: string;
+  emptyAction?: ReactNode;
   back?: { to: string; label: string };
   columns?: number;
 }) {
@@ -388,23 +465,29 @@ export function LoadState({
     );
   if (error)
     return (
-      <div className="empty-state empty-state--error" role="alert">
-        <h2>
-          {error.status === 403
+      <EmptyState
+        error
+        icon="alert"
+        title={
+          error.status === 403
             ? 'Not permitted'
             : error.status === 404
               ? 'Not found'
-              : 'Could not load'}
-        </h2>
-        <p>
-          {error.message} <span className="mono faint">({error.code})</span>
-        </p>
-        {back && (
-          <Link className="btn" to={back.to}>
-            ← {back.label}
-          </Link>
-        )}
-      </div>
+              : 'Could not load'
+        }
+        hint={
+          <>
+            {error.message} <span className="mono faint">({error.code})</span>
+          </>
+        }
+        action={
+          back && (
+            <Link className="btn" to={back.to}>
+              ← {back.label}
+            </Link>
+          )
+        }
+      />
     );
   if (loading)
     return (
@@ -420,28 +503,39 @@ export function LoadState({
     );
   if (empty)
     return (
-      <div className="empty-state">
-        <h2>{emptyTitle}</h2>
-        {emptyHint && <p>{emptyHint}</p>}
-      </div>
+      <EmptyState
+        kind={emptyKind}
+        icon={emptyIcon ?? emptyKind}
+        title={emptyTitle}
+        hint={emptyHint}
+        action={emptyAction}
+      />
     );
   return null;
 }
 
 /**
  * One labelled control, written the same way on every form: the label above it and
- * the limits the tool itself enforces passed straight through to the element.
+ * the limits the tool itself enforces passed straight through to the element. The
+ * element wears the field's own class whatever form it stands in, so its frame, its
+ * size under a finger and its 16px type on a phone never depend on the caller.
  */
 type Asked = { label: ReactNode; value: string; onChange(value: string): void };
 export const Field = ({
   label,
   value,
   onChange,
+  className,
   ...rest
 }: Asked & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (
   <label>
     {label}
-    <input {...rest} value={value} onChange={(event) => onChange(event.target.value)} />
+    <input
+      {...rest}
+      className={cx('input', className)}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   </label>
 );
 /** The same, where the answer runs longer than a line. */
@@ -449,18 +543,183 @@ export const Area = ({
   label,
   value,
   onChange,
+  className,
   ...rest
 }: Asked & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
   <label>
     {label}
-    <textarea {...rest} value={value} onChange={(event) => onChange(event.target.value)} />
+    <textarea
+      {...rest}
+      className={cx('textarea', className)}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   </label>
 );
 
-/** A refused command says so in one line, in the same place on every form. */
-export const Failure = ({ message }: { message?: string }) =>
+/**
+ * The search field of a list or a chooser: the glyph says what it is, so the
+ * placeholder is one word and the sentence about what it reads is its name for a
+ * screen reader instead.
+ */
+export const SearchField = ({
+  label,
+  value,
+  onChange,
+  placeholder = 'Search',
+  title,
+}: {
+  label: string;
+  value: string;
+  onChange(value: string): void;
+  placeholder?: string;
+  title?: string;
+}) => (
+  <span className="search" title={title}>
+    <Icon name="search" />
+    <input
+      className="input"
+      type="search"
+      aria-label={label}
+      placeholder={placeholder}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  </span>
+);
+
+/**
+ * What every opened form does, whoever draws it: the cursor goes to its first
+ * field as it opens, and Escape means what Cancel means wherever the focus
+ * happens to be — except while its request is in flight, when there is nothing
+ * left to cancel. The key is captured and marked as handled, so a pane that also
+ * listens for Escape leaves the page alone; a field with its own use for the key
+ * (the record picker's open list) takes it first, the same way.
+ */
+export function useOpenedForm(
+  box: { current: HTMLElement | null },
+  onClose: () => void,
+  locked = false,
+) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    box.current
+      ?.querySelector<HTMLElement>('input:not([type="hidden"]), textarea, select')
+      ?.focus();
+  }, [box]);
+  useEffect(() => {
+    if (locked) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      close.current();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [locked]);
+}
+
+/**
+ * A form that stands on its own rather than under a list's control row — an
+ * editor beside a heading, a panel's one form — held to the same width and given
+ * the same manners as the forms a list opens.
+ */
+export function OpenedForm({
+  onClose,
+  locked,
+  className,
+  children,
+  ...rest
+}: Omit<FormHTMLAttributes<HTMLFormElement>, 'onKeyDown'> & {
+  onClose(): void;
+  locked?: boolean;
+}) {
+  const form = useRef<HTMLFormElement>(null);
+  useOpenedForm(form, onClose, locked);
+  return (
+    <form {...rest} className={cx('creation', className)} ref={form}>
+      {children}
+    </form>
+  );
+}
+
+/**
+ * The one button a creation form submits with. The opener and the form's heading
+ * already say what is being made, so the button says only `Create`; it keeps the
+ * command's own words while the request is in flight or waiting to be retried.
+ */
+export const Submit = ({
+  label = 'Create',
+  busy,
+  retry,
+  disabled,
+  saving = 'Saving…',
+}: {
+  label?: string;
+  busy?: boolean;
+  retry?: boolean;
+  disabled?: boolean;
+  saving?: string;
+}) => (
+  <button type="submit" className="btn btn--primary" disabled={busy || disabled}>
+    {busy ? saving : retry ? 'Retry same request' : label}
+  </button>
+);
+
+/**
+ * Machine text is there to be copied, not read: one glyph takes all of it to the
+ * clipboard and turns to a check for a moment. The clipboard exists only on a
+ * secure origin; without it nothing is drawn, and the text is still there to
+ * select or to read from its hover title.
+ */
+export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+  if (!clipboard) return null;
+  return (
+    <button
+      type="button"
+      className="btn-icon btn-icon--inline"
+      aria-label={label}
+      title={copied ? 'Copied' : label}
+      onClick={() =>
+        void clipboard.writeText(text).then(
+          () => setCopied(true),
+          () => undefined,
+        )
+      }
+    >
+      {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+    </button>
+  );
+}
+
+/**
+ * A hash or a commit is for comparing, not reading: its head in the mono, all of it
+ * in the hover title and, where `copy` names the act, one click from the clipboard.
+ */
+export const Short = ({ value, copy }: { value: string; copy?: string }) => (
+  <>
+    <span className="mono faint" title={value}>
+      {value.slice(0, 12)}…
+    </span>
+    {copy && <CopyButton text={value} label={copy} />}
+  </>
+);
+
+/**
+ * A refused command says so in one line, in the same place on every form. Where the
+ * refusal is about one field, `id` lets that field name the line as its description.
+ */
+export const Failure = ({ message, id }: { message?: string; id?: string }) =>
   message ? (
-    <p className="error-message" role="alert">
+    <p className="error-message" role="alert" id={id}>
       {message}
     </p>
   ) : null;
@@ -526,6 +785,18 @@ export function KV({ rows }: { rows: KVRow[] }) {
   );
 }
 
+/**
+ * When a record was made and when it last changed, as the two rows every Details
+ * block ends with. A record nobody has touched since it was made says so by
+ * having one row: Updated is left out when it reads the same, to the minute, as
+ * Created. Spread it into a KV's rows.
+ */
+export const timeRows = (createdAt?: string | null, updatedAt?: string | null): KVRow[] => [
+  !!createdAt && ['Created', <Stamp at={createdAt} />],
+  !!updatedAt &&
+    (!createdAt || stamp(updatedAt) !== stamp(createdAt)) && ['Updated', <Stamp at={updatedAt} />],
+];
+
 /** One column declared once: its key, its heading, and what a row says in it. */
 export interface Column<T> {
   key: string;
@@ -579,6 +850,54 @@ export function Table<T>({
   );
 }
 
+/**
+ * Facts that are not records, ruled on one grid: the head and every row read the
+ * same template, so a fact keeps its x-position down the list. It is the lease
+ * list's anatomy, and it narrows the way that list does — each fact under the
+ * last, behind its column's name — where a table carries its last columns off the
+ * side of a phone without saying so.
+ */
+export function Ruled<T>({
+  label,
+  template,
+  columns,
+  rows,
+  keyOf,
+}: {
+  label: string;
+  template: string;
+  columns: Column<T>[];
+  rows: T[];
+  keyOf(row: T): string;
+}) {
+  return (
+    <div
+      className="ruled"
+      role="table"
+      aria-label={label}
+      style={{ '--cols': template } as CSSProperties}
+    >
+      <div className="ruled-head" role="row">
+        {columns.map((column) => (
+          <span className="label" role="columnheader" key={column.key}>
+            {column.label}
+          </span>
+        ))}
+      </div>
+      {rows.map((row) => (
+        <div className="ruled-row" role="row" key={keyOf(row)}>
+          {columns.map((column, at) => (
+            // The first fact is the row's own name; the rest say which fact they are.
+            <div role="cell" key={column.key} data-label={at ? column.label : undefined}>
+              {column.render(row)}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** One list serves every pinned title, so a record does not fetch each file to name it. */
 export const useArtifacts = () => {
   const list = useTool<Artifact[]>('artifact.list');
@@ -588,35 +907,54 @@ export const useArtifacts = () => {
 /**
  * A pinned file read where it is cited: the summary opens the body in place and
  * costs nothing until it is opened, and /artifacts/:id stays a destination —
- * reachable from the opened head — rather than the only way to read a file.
- * A file the one list did not name (it carries the newest thousand) is still shown and
- * still opens, named by the tail of its identifier rather than silently dropped.
+ * reachable from the opened head — rather than the only way to read a file. The
+ * summary has said the file's title, so the head under it does not say it again.
+ * A file the one list did not name (it carries the newest thousand) is still shown
+ * and still opens, under the short form every unnamed record takes until its own
+ * head can name it.
  */
 export function Evidence({
   artifactId,
   artifact,
   label,
   meta,
+  opened = false,
 }: {
   artifactId: string;
   artifact?: Artifact;
   label?: ReactNode;
   meta?: boolean;
+  /** Open on arrival, where the file is what the page is about until something else is. */
+  opened?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const naming = label ?? artifact?.title ?? `File …${artifactId.slice(-6)}`;
+  const [open, setOpen] = useState(opened);
   return (
-    <details className="crit-file" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>
-        {naming}
-        {meta && artifact && (
-          <span className="faint">
+    <details
+      className="crit-file"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <Summary>
+        {label ?? artifact?.title ?? <span className="mono">{shortId(artifactId)}</span>}
+        {/* Shut, the summary says what would open; open, the head beneath it does. What it
+            says is set a step apart and wraps as one piece, so a long title never leaves
+            a separator hanging at the end of its line. */}
+        {meta && artifact && !open && (
+          <>
             {' '}
-            · {artifact.mediaType} · {bytes(artifact.size)}
-          </span>
+            <span className="faint crit-file-meta">
+              {fileType(artifact).label} · {bytes(artifact.size)}
+            </span>
+          </>
         )}
-      </summary>
-      {open && <ArtifactBody artifactId={artifactId} metadata={artifact} />}
+      </Summary>
+      {open && (
+        <ArtifactBody
+          artifactId={artifactId}
+          metadata={artifact}
+          named={!label && artifact ? 'cited' : undefined}
+        />
+      )}
     </details>
   );
 }

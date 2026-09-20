@@ -12,9 +12,10 @@ import type { Session } from '@merv/sessions/types';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { createApp } from '../src/app.js';
+import { RunnerClient } from '../packages/runner/src/client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 
-async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy) {
+async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy, packetText?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-session-api-'));
   const app = await createApp({ directory, api: true, port: 0 });
   const boot = await app.ctx.scope.bootstrap({
@@ -64,7 +65,7 @@ async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy) {
           build: () => ({
             role: 'producer',
             label: 'Transport test',
-            brief: 'Verify the bounded transport.',
+            brief: packetText ?? 'Verify the bounded transport.',
             references: [],
             handoff: { instruction: 'Finish', tools: ['checked.echo'] },
             execution: { readOnly: false, tools: [] },
@@ -87,9 +88,10 @@ async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy) {
               },
             ],
           },
+          references: (): Record<string, string> => (packetText ? { evidence: packetText } : {}),
           lease: {
             role: () => 'producer',
-            acquire: () => ({}),
+            acquire: (): Data => (packetText ? { evidence: packetText } : {}),
             check: () => {},
             release: () => {},
           },
@@ -661,4 +663,27 @@ test('mounted tool errors and invalid output envelopes are recorded as failed ca
   assert.equal(result.toolCalls[0]!.outputTokens, null);
   assert.ok(result.toolCalls[1]!.outputTokens! > 0);
   assert.equal(JSON.stringify(result).includes('private upstream failure'), false);
+});
+
+test('the runner can read a server-admitted session whose combined frozen packets exceed one MiB', async (t) => {
+  const packetText = '研'.repeat(160_000);
+  const f = await fixture(t, undefined, packetText);
+  const { session, secret } = await f.offer();
+  for (const packet of [
+    session.assignment,
+    session.execution.policy,
+    session.execution.references,
+    session.lease.receipt,
+  ])
+    assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 524_288);
+  assert.ok(Buffer.byteLength(JSON.stringify({ session })) > 1024 * 1024);
+  const runner = new RunnerClient(f.app.ctx.api.url!, f.boot.project.id, f.boot.token);
+  const observed = await runner.get(session.id, 'runner');
+  assert.equal(observed.assignment.brief, packetText);
+  assert.equal(observed.execution.references.evidence, packetText);
+  assert.equal(observed.lease.receipt.evidence, packetText);
+  await f.app.ctx.sessions.authenticate(secret);
+  const renewed = await runner.heartbeat(session.id, 'runner');
+  assert.equal(renewed.status, 'active');
+  assert.equal(renewed.assignment.brief, packetText);
 });

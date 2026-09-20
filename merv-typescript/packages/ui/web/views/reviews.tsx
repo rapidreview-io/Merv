@@ -6,6 +6,7 @@ import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
   Ago,
+  Area,
   Evidence,
   LoadState,
   RecordPage,
@@ -14,6 +15,8 @@ import {
   useArtifacts,
   words,
 } from '../components';
+import { ArrowRightIcon } from '../icons';
+import { RecordLink, RecordText, useRecordNames } from '../markdown';
 import { useActorNames } from './people';
 import { WorkList } from './work';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
@@ -48,144 +51,208 @@ export interface Review {
   createdAt: string;
 }
 /** The producer's own confirmation of the acceptance check with the same number. */
-interface Confirmation {
+export interface Confirmation {
   checkNumber: number;
   status: 'met' | 'not_met';
   notes: string;
+  evidenceIds?: string[];
 }
-interface Draft {
-  status?: Finding;
+/** What a desk has said about one check so far: its word, the sentence, the files it cites. */
+export interface Draft {
+  status?: string;
   notes: string;
   evidenceIds: string[];
 }
-const BLANK: Draft = { notes: '', evidenceIds: [] };
+export const BLANK: Draft = { notes: '', evidenceIds: [] };
+/**
+ * Whether a desk holds anything it has not sent. A desk that does marks itself with
+ * `data-draft`, and the split pane's Escape then stays on the record: a verdict or a
+ * delivery half written lives only in this page's state, one keypress from the list.
+ */
+export const drafted = (values: Record<number, Draft>) =>
+  Object.values(values).some(
+    (draft) => !!draft.status || !!draft.notes.trim() || draft.evidenceIds.length > 0,
+  );
+/**
+ * A desk writing on the rows: the words it may choose between, the files it may
+ * cite, and what it has written. The reviewer's desk and the producer's are the
+ * same rows with different words.
+ */
+export interface Drafting {
+  words: readonly string[];
+  files: string[];
+  values: Record<number, Draft>;
+  set(number: number, value: Draft): void;
+  /** True while the desk's command is in flight or kept for a retry: what was sent stays what is shown. */
+  locked?: boolean;
+}
+
+/** A finding word as the pill every state on these pages is: a dot and the word, in its colour. */
+export const FindingPill = ({ value }: { value: string }) => (
+  <span className={cx('crit-word', 'crit-pill', `crit-word--${value}`)}>{words(value)}</span>
+);
 
 /**
- * A criterion reads as one sentence: the check, the producer's confirmation of the
- * same number, the reviewer's finding, and the evidence it cites, readable in place.
- * The same rows carry the reviewer's draft while a verdict is still being written.
- * In compact mode only the criteria that objected are drawn, so a record read
- * elsewhere shows the objections rather than the roll call.
+ * The review's one line on the record it judged: the word it came back with — or
+ * where it stands until it has one — its sentence, and the way to the verdict page.
  */
-export function CriterionRows({
+export function ReviewSummary({
   review,
-  confirmations,
-  head,
-  compact,
-  draft,
 }: {
-  review: Review;
-  confirmations?: Confirmation[];
-  head?: boolean;
-  compact?: boolean;
-  draft?: { values: Record<number, Draft>; set(number: number, value: Draft): void };
+  review: {
+    id: string;
+    status: string;
+    verdict: string | null;
+    synopsis: string | null;
+    notes?: string | null;
+  };
 }) {
-  const artifacts = useArtifacts();
+  const said = review.synopsis ?? review.notes;
   return (
     <div className="stack">
-      {head && (
-        <div className="cluster">
-          <StatusPill value={review.status} />
-          {review.verdict && <StatusPill value={review.verdict} />}
-          <Link to={`/reviews/${review.id}`}>Open the review</Link>
-        </div>
-      )}
-      {head && review.synopsis && <p className="verdict-said">{review.synopsis}</p>}
-      <ol className="crits">
-        {review.criteria.map((text, index) => {
-          const number = index + 1;
-          const finding = review.findings?.find((item) => item.criterionNumber === number);
-          const said = confirmations?.find((item) => item.checkNumber === number);
-          const value = draft?.values[number] ?? BLANK;
-          if (compact && finding?.status !== 'not_met' && finding?.status !== 'not_verified')
-            return null;
-          return (
-            // The desk's unmet rule navigates here, so every criterion is a
-            // destination that can hold focus.
-            <li className="crit" key={number} id={`crit-${number}`} tabIndex={-1}>
-              <span className="crit-n tabular">{number}</span>
-              <div className="stack">
-                <p className="crit-text">{text}</p>
-                {said && (
-                  <p className="crit-said">
-                    Producer: {said.status === 'met' ? '' : 'not met — '}
-                    {said.notes}
-                  </p>
-                )}
-                {finding && (
-                  <p className="crit-found">
-                    <span className={cx('crit-word', `crit-word--${finding.status}`)}>
-                      {words(finding.status)}
-                    </span>
-                    {finding.notes}
-                  </p>
-                )}
-                {finding?.evidenceIds.map((id) => (
-                  <Evidence key={id} artifactId={id} artifact={artifacts.get(id)} />
-                ))}
-                {draft && (
-                  <>
-                    <div className="cluster">
-                      {FINDINGS.map((status) => (
-                        <button
-                          key={status}
-                          type="button"
-                          aria-pressed={value.status === status}
-                          className={cx(
-                            'crit-word',
-                            'crit-pick',
-                            value.status === status && `crit-word--${status}`,
-                          )}
-                          onClick={() => draft.set(number, { ...value, status })}
-                        >
-                          {words(status)}
-                        </button>
-                      ))}
-                    </div>
-                    {/* The rest of the sentence opens once its finding word is chosen. */}
-                    {value.status && (
-                      <>
-                        <textarea
-                          className="textarea"
-                          rows={2}
-                          aria-label={`Notes on criterion ${number}`}
-                          placeholder="Notes"
-                          value={value.notes}
-                          onChange={(event) =>
-                            draft.set(number, { ...value, notes: event.target.value })
-                          }
-                        />
-                        <div className="crit-cites">
-                          {review.artifactIds.map((id) => (
-                            <label key={id} className="crit-cite">
-                              <input
-                                type="checkbox"
-                                checked={value.evidenceIds.includes(id)}
-                                onChange={(event) =>
-                                  draft.set(number, {
-                                    ...value,
-                                    evidenceIds: event.target.checked
-                                      ? [...value.evidenceIds, id]
-                                      : value.evidenceIds.filter((other) => other !== id),
-                                  })
-                                }
-                              />
-                              {/* The list is capped at the newest files; an older pinned one is
-                                  still citable, so name it the way Evidence does. */}
-                              {artifacts.get(id)?.title ?? `File …${id.slice(-6)}`}
-                            </label>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+      <div className="cluster">
+        <StatusPill value={review.verdict ?? review.status} />
+        <Link className="cluster hit" to={`/reviews/${review.id}`}>
+          Open the review <ArrowRightIcon size={14} />
+        </Link>
+      </div>
+      {said && <p className="verdict-said">{said}</p>}
     </div>
+  );
+}
+
+/**
+ * A criterion is one box, read down: the check, what the producer claimed for the
+ * check of the same number, what the reviewer found, and every file either of them
+ * cited, readable in place. A row holds only what has happened yet: before a
+ * delivery it is the check alone, after one the claim and its evidence fill in, and
+ * after the review the finding does. The same rows carry a desk's draft while a
+ * delivery or a verdict is still being written.
+ */
+export function CriterionRows({
+  criteria,
+  confirmations,
+  review,
+  draft,
+}: {
+  criteria: string[];
+  confirmations?: Confirmation[];
+  /** The review whose findings the rows state, once there is one. */
+  review?: Review;
+  draft?: Drafting;
+}) {
+  const artifacts = useArtifacts();
+  const findings = review?.findings ?? [];
+  // A note may point at a record; it says its name, and reads for names only if it does.
+  const names = useRecordNames(
+    [...(confirmations ?? []), ...findings].map((item) => item.notes).join('\n'),
+  );
+  return (
+    <ol className="crits">
+      {criteria.map((text, index) => {
+        const number = index + 1;
+        const finding = findings.find((item) => item.criterionNumber === number);
+        const said = confirmations?.find((item) => item.checkNumber === number);
+        const value = draft?.values[number] ?? BLANK;
+        const cited = [...new Set([...(said?.evidenceIds ?? []), ...(finding?.evidenceIds ?? [])])];
+        return (
+          // The desk's unmet rule navigates here, so every criterion is a
+          // destination that can hold focus.
+          <li className="crit" key={number} id={`crit-${number}`} tabIndex={-1}>
+            <span className="crit-n tabular">{number}</span>
+            <div className="stack">
+              <p className="crit-text">{text}</p>
+              {(said || finding) && (
+                <dl className="crit-says">
+                  {said && (
+                    <div>
+                      <dt>Producer</dt>
+                      <dd>
+                        <FindingPill value={said.status} />
+                        <span>
+                          <RecordText text={said.notes} names={names} />
+                        </span>
+                      </dd>
+                    </div>
+                  )}
+                  {finding && (
+                    <div>
+                      <dt>Reviewer</dt>
+                      <dd>
+                        <FindingPill value={finding.status} />
+                        <span>
+                          <RecordText text={finding.notes} names={names} />
+                        </span>
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              )}
+              {cited.map((id) => (
+                <Evidence key={id} artifactId={id} artifact={artifacts.get(id)} />
+              ))}
+              {draft && (
+                <fieldset className="stack crit-draft" disabled={draft.locked}>
+                  <div className="cluster">
+                    {draft.words.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        aria-pressed={value.status === status}
+                        className={cx(
+                          'crit-word',
+                          'crit-pick',
+                          value.status === status && `crit-word--${status}`,
+                        )}
+                        onClick={() => draft.set(number, { ...value, status })}
+                      >
+                        {words(status)}
+                      </button>
+                    ))}
+                  </div>
+                  {/* The rest of the sentence opens once its finding word is chosen. */}
+                  {value.status && (
+                    <>
+                      <textarea
+                        className="textarea"
+                        rows={2}
+                        aria-label={`Notes on check ${number}`}
+                        placeholder="Notes"
+                        value={value.notes}
+                        onChange={(event) =>
+                          draft.set(number, { ...value, notes: event.target.value })
+                        }
+                      />
+                      <div className="crit-cites">
+                        {draft.files.map((id) => (
+                          <label key={id} className="crit-cite">
+                            <input
+                              type="checkbox"
+                              checked={value.evidenceIds.includes(id)}
+                              onChange={(event) =>
+                                draft.set(number, {
+                                  ...value,
+                                  evidenceIds: event.target.checked
+                                    ? [...value.evidenceIds, id]
+                                    : value.evidenceIds.filter((other) => other !== id),
+                                })
+                              }
+                            />
+                            {/* The list is capped at the newest files; an older pinned one is
+                                still citable, by the short form every unnamed record takes. */}
+                            {artifacts.get(id)?.title ?? <RecordLink id={id} plain />}
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </fieldset>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -197,6 +264,7 @@ interface SubjectExperiment {
 interface SubjectTask {
   id: string;
   title: string;
+  reviewId: string | null;
   deliveryConfirmations: Confirmation[];
 }
 
@@ -212,7 +280,6 @@ function ReviewDetail() {
   const subjectId = review.data?.subjectId;
   const experiment = experiments.data?.find((item) => item.id === subjectId);
   const task = tasks.data?.find((item) => item.id === subjectId);
-  const confirmations = useTool<SubjectTask>(task ? 'task.get' : null, { taskId: subjectId ?? '' });
   const stages = useTool<{ submissions: { stage: string; reviewId: string | null }[] }>(
     experiment ? 'experiment.get_state' : null,
     { experimentId: subjectId ?? '' },
@@ -234,10 +301,16 @@ function ReviewDetail() {
   const stage =
     stages.data?.submissions.find((item) => item.reviewId === r.id)?.stage ??
     { design_review: 'design', experiment_review: 'results' }[experiment?.workflow.state ?? ''];
-  const kind =
-    stage === 'design' ? 'Design review' : stage === 'results' ? 'Results review' : 'Review';
+  // The kind label over the title already says Review; only the gate it reads adds to that.
+  const gate = stage === 'design' ? 'Design' : stage === 'results' ? 'Results' : undefined;
   const submit = guidance.data?.actions.find((action) => action.tool === 'review.submit');
-  const cited = new Set(r.findings?.flatMap((finding) => finding.evidenceIds) ?? []);
+  // A task carries the claims of its newest delivery only, so they stand beside the
+  // review of that delivery and beside no earlier one.
+  const claims = task?.reviewId === r.id ? task.deliveryConfirmations : undefined;
+  // A file a criterion already opens in place is not listed a second time under them.
+  const cited = new Set(
+    [...(r.findings ?? []), ...(claims ?? [])].flatMap((item) => item.evidenceIds ?? []),
+  );
   const rest = r.artifactIds.filter((artifactId) => !cited.has(artifactId));
   // The findings are the record's once a verdict exists, and this desk's draft
   // until then, so the exceptions are stated while their cost is being paid.
@@ -262,20 +335,29 @@ function ReviewDetail() {
       ))}
     </ul>
   );
+  const subject = experiment
+    ? { name: experiment.name, to: `/experiments/${experiment.id}` }
+    : task && { name: task.title, to: `/tasks/${task.id}` };
+  const reviewer = nameOf(r.reviewerId);
   return (
     <RecordPage
       back={<Link to={WORK.path}>← Work</Link>}
       kind="reviews"
-      name={[kind, experiment?.name ?? task?.title].filter(Boolean).join(' · ')}
-      state={<StatusPill value={r.status} />}
+      // A review is named by what it judged, and the name is the way back to it.
+      name={subject ? <Link to={subject.to}>{subject.name}</Link> : 'Review'}
+      // Once it is in, the verdict is how the review stands; until then its own state is.
+      state={<StatusPill value={r.status === 'submitted' && r.verdict ? r.verdict : r.status} />}
       standing={
         <>
+          {gate && `${gate} · `}
           Requested <Ago at={r.createdAt} /> ·{' '}
           {!r.reviewerId
             ? 'unclaimed'
-            : nameOf(r.reviewerId)
-              ? `claimed by ${nameOf(r.reviewerId)}`
-              : 'claimed'}
+            : reviewer
+              ? `${r.verdict ? 'reviewed' : 'claimed'} by ${reviewer}`
+              : r.verdict
+                ? 'reviewed'
+                : 'claimed'}
         </>
       }
       act={
@@ -286,15 +368,18 @@ function ReviewDetail() {
           </>
         )
       }
-      title="Criteria"
+      title="Checks"
       content={
-        <>
+        <div className="stack stack--lg">
           <CriterionRows
+            criteria={r.criteria}
             review={r}
-            confirmations={confirmations.data?.deliveryConfirmations}
+            confirmations={claims}
             draft={
               submit && submit.status !== 'blocked'
                 ? {
+                    words: FINDINGS,
+                    files: r.artifactIds,
                     values,
                     set: (number, value) => setValues((old) => ({ ...old, [number]: value })),
                   }
@@ -302,7 +387,7 @@ function ReviewDetail() {
             }
           />
           {rest.length > 0 && (
-            <>
+            <div className="stack">
               <h3 className="ev-role">Pinned evidence</h3>
               {rest.map((artifactId) => (
                 <Evidence
@@ -312,26 +397,18 @@ function ReviewDetail() {
                   meta
                 />
               ))}
-            </>
+            </div>
           )}
+          {/* The word and who gave it stand in the header; here is what they said. */}
           {r.verdict && (
-            <>
+            <div className="stack">
               <h3 className="ev-role">Verdict</h3>
               <p className="verdict-said">{r.synopsis ?? r.notes}</p>
-              <p className="muted">
-                {[
-                  r.returnTo
-                    ? `Returned to ${words(r.returnTo)}`
-                    : `Recorded as ${words(r.verdict)}`,
-                  nameOf(r.reviewerId) && `by ${nameOf(r.reviewerId)}`,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
+              {r.returnTo && <p className="muted">Returned to {words(r.returnTo)}</p>}
               {stated}
-            </>
+            </div>
           )}
-        </>
+        </div>
       }
     />
   );
@@ -358,16 +435,16 @@ function exceptionsOf({
       .filter((item) => item.status === status)
       .map((item) => item.number)
       .sort((left, right) => left - right);
-    if (at.length === 1) lines.push(`Criterion ${at[0]} was ${word}.`);
+    if (at.length === 1) lines.push(`Check ${at[0]} was ${word}.`);
     else if (at.length > 1)
-      lines.push(`Criteria ${at.slice(0, -1).join(', ')} and ${at.at(-1)} were ${word}.`);
+      lines.push(`Checks ${at.slice(0, -1).join(', ')} and ${at.at(-1)} were ${word}.`);
   }
   if (review.status === 'superseded') lines.push('This review was superseded.');
   return lines;
 }
 
 /** The one primary control, with its consequence, its blocker or its error beneath. */
-function Primary({
+export function Primary({
   label,
   help,
   error,
@@ -472,6 +549,9 @@ const ROUTES: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
+/** The longest synopsis review.submit takes. */
+const SYNOPSIS_MAX = 420;
+
 /** The verdict desk. Every rule below is review.submit's own, checked before it is sent. */
 function Desk({
   review,
@@ -509,16 +589,16 @@ function Desk({
   // control is the way there, so nobody counts list items to find number 3.
   const unmet: { text: string; at?: number } | undefined =
     bare >= 0
-      ? { text: `Criterion ${bare + 1} still needs a finding and notes.`, at: bare + 1 }
+      ? { text: `Check ${bare + 1} still needs a finding and notes.`, at: bare + 1 }
       : uncited >= 0
         ? {
-            text: `Criterion ${uncited + 1} is met, so it must cite at least one pinned file.`,
+            text: `Check ${uncited + 1} is met, so it must cite at least one pinned file.`,
             at: uncited + 1,
           }
         : said.length < 40
           ? { text: `The synopsis needs ${40 - said.length} more characters.` }
-          : said.length > 420
-            ? { text: `The synopsis is ${said.length - 420} characters too long.` }
+          : said.length > SYNOPSIS_MAX
+            ? { text: `The synopsis is ${said.length - SYNOPSIS_MAX} characters too long.` }
             : /[\r\n\u2028\u2029`]/u.test(synopsis) || said.startsWith('#')
               ? {
                   text: 'The synopsis is one plain paragraph: no line breaks, backticks or headings.',
@@ -531,23 +611,28 @@ function Desk({
                   ? { text: 'Choose a verdict.' }
                   : verdict === 'pass' && objection >= 0
                     ? {
-                        text: 'A passing verdict needs every criterion met or waived.',
+                        text: 'A passing verdict needs every check met or waived.',
                         at: objection + 1,
                       }
                     : verdict !== 'pass' && routes.length > 0 && !returnTo
                       ? { text: 'Choose where the work returns.' }
                       : undefined;
   return (
-    <div className="stack">
-      <textarea
-        className="textarea"
-        rows={3}
-        aria-label="Synopsis"
-        placeholder="Synopsis"
-        value={synopsis}
-        onChange={(event) => setSynopsis(event.target.value)}
-      />
-      <p className="verdict-count tabular">{said.length} characters · 40 to 420</p>
+    // One form's width and one field anatomy with the producer's desk, which stands in
+    // this same slot on the task's page: the field keeps its name once something is typed.
+    <div
+      className="stack creation claims-form"
+      data-draft={
+        !!synopsis.trim() || !!verdict || drafted(values) || command.locked ? '' : undefined
+      }
+    >
+      <Area label="Synopsis" rows={3} value={synopsis} onChange={setSynopsis} />
+      {/* A limit is said as it nears, not before: the rule under the control says the rest. */}
+      {said.length > SYNOPSIS_MAX - 60 && (
+        <p className="verdict-count tabular">
+          {said.length} / {SYNOPSIS_MAX}
+        </p>
+      )}
       <div className="cluster">
         {VERDICTS.map((value) => (
           <button
@@ -613,11 +698,11 @@ function Desk({
  * The blocker is the navigation: the sentence goes to the criterion it is about
  * and leaves the cursor there. Movement relocates focus and writes nothing.
  */
-function Unmet({ text, at }: { text: string; at?: number }) {
+export function Unmet({ text, at }: { text: string; at?: number }) {
   if (!at) return <>{text}</>;
   return (
     <a
-      className="verdict-jump"
+      className="verdict-jump hit"
       href={`#crit-${at}`}
       onClick={(event) => {
         event.preventDefault();

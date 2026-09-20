@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
-import { KV, LoadState, StatusPill, stamp, words } from '../components';
-import { ListPage, useListFilter } from '../list-filters';
+import { KV, LoadState, Stamp, StatusPill, Summary, words } from '../components';
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon } from '../icons';
+import { ListPage, Tabs, useListFilter } from '../list-filters';
+import { Markdown } from '../markdown';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
@@ -93,7 +95,12 @@ function ResearchContent({ value, depth = 0 }: { value: unknown; depth?: number 
         ))}
       </dl>
     );
-  return <p className="history-prose">{String(value)}</p>;
+  // What an agent wrote is read as the markdown it wrote; a number or a flag is only itself.
+  return typeof value === 'string' ? (
+    <Markdown source={value} />
+  ) : (
+    <p className="history-prose">{String(value)}</p>
+  );
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -171,8 +178,14 @@ function Detail({
               ? words(detail.data.type)
               : 'Loading research…'}
         </h2>
-        <button className="btn btn--sm" onClick={close}>
-          Close
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Close"
+          title="Close (Esc)"
+          onClick={close}
+        >
+          <CloseIcon />
         </button>
       </div>
       <LoadState {...detail} />
@@ -181,12 +194,8 @@ function Detail({
           <div className="cluster faint">
             <span>{words(detail.data.type)}</span>
             <StatusPill value={typeof record?.status === 'string' ? record.status : undefined} />
-            {typeof record?.created_at === 'string' && (
-              <time dateTime={record.created_at}>
-                {new Date(record.created_at).toLocaleDateString()}
-              </time>
-            )}
-            <span>Imported · read-only</span>
+            {typeof record?.created_at === 'string' && <Stamp at={record.created_at} />}
+            <span>Imported</span>
           </div>
           {(READING_FIELDS[detail.data.type] ?? ['summary', 'description', 'notes']).map(
             (field) => {
@@ -202,20 +211,18 @@ function Detail({
           )}
           {detail.data.fileRetention?.status === 'verified' && (
             <Link
-              className="btn btn--sm"
+              className="btn"
               to={`/artifacts/${encodeURIComponent(detail.data.fileRetention.artifactId)}`}
             >
               Open imported file
             </Link>
           )}
-          {detail.data.fileRetention?.status === 'metadata-only' && (
-            <p>Contents were not retained in Merv.</p>
+          {/* How the file itself stands is one state word, the same one its row carries. */}
+          {detail.data.type === 'artifacts' && detail.data.fileRetention?.status !== 'verified' && (
+            <div>
+              <StatusPill value={detail.data.fileRetention?.status ?? 'unverified'} />
+            </div>
           )}
-          {detail.data.type === 'artifacts' &&
-            detail.data.data.status === 'complete' &&
-            (!detail.data.fileRetention || detail.data.fileRetention.status === 'unverified') && (
-              <p className="faint">File availability has not been verified for this import.</p>
-            )}
           {!!detail.data.files?.length && (
             <div className="stack">
               <h3 className="section-title">Attached files</h3>
@@ -227,8 +234,8 @@ function Detail({
             </div>
           )}
           <details className="history-technical">
-            <summary>Original record and import details</summary>
-            <KV rows={[['Preservation hash', <span className="mono">{detail.data.hash}</span>]]} />
+            <Summary>Original record</Summary>
+            <KV rows={[['Hash', <span className="mono">{detail.data.hash}</span>]]} />
             <pre className="doc">{JSON.stringify(detail.data.data, null, 2)}</pre>
           </details>
         </>
@@ -283,51 +290,56 @@ function History({ row }: ViewProps) {
         error={summary.error?.code === 'legacy_history_not_found' ? undefined : summary.error}
         empty={summary.error?.code === 'legacy_history_not_found'}
         emptyTitle="No previous research in this project"
+        emptyKind="legacy-history"
       />
       {summary.data && !summary.error && (
         <>
-          <nav className="history-type-tabs" aria-label="Research categories">
-            {RESEARCH_TYPES.filter(([name]) => (summary.data?.counts[name] ?? 0) > 0).map(
-              ([name, label]) => (
-                <button
-                  className={`history-type-tab${type === name ? ' active' : ''}`}
-                  key={name}
-                  aria-pressed={type === name}
-                  onClick={() => update({ type: name, pages: [] })}
-                >
-                  {label}
-                  <span>{summary.data!.counts[name].toLocaleString()}</span>
-                </button>
-              ),
-            )}
+          {/* The categories a person reads are tabs; every other type is one fold away. */}
+          <nav className="history-tabs" aria-label="Research categories">
+            <Tabs
+              label="Research categories"
+              options={RESEARCH_TYPES.filter(([name]) => (counts[name] ?? 0) > 0).map(
+                ([name, label]) => ({
+                  value: name,
+                  label,
+                  count: counts[name]!.toLocaleString(),
+                }),
+              )}
+              value={type}
+              onChange={(name) => update({ type: name, pages: [] })}
+            />
           </nav>
           <details className="history-technical">
-            <summary>Browse all record types</summary>
-            <div className="cluster">
-              <label>
-                Record type{' '}
-                <select
-                  className="input"
-                  ref={typeChooser}
-                  value={type}
-                  onChange={(event) => update({ type: event.target.value, pages: [] })}
-                >
-                  {types.map(([name, count]) => (
-                    <option key={name} value={name}>
-                      {words(name)} ({count.toLocaleString()})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <span className="faint">Imported {stamp(summary.data.importedAt)}</span>
-            </div>
+            <Summary>Import details</Summary>
+            <KV
+              rows={[
+                [
+                  'Record type',
+                  <select
+                    className="input"
+                    aria-label="Record type"
+                    ref={typeChooser}
+                    value={type}
+                    onChange={(event) => update({ type: event.target.value, pages: [] })}
+                  >
+                    {types.map(([name, count]) => (
+                      <option key={name} value={name}>
+                        {words(name)} ({count.toLocaleString()})
+                      </option>
+                    ))}
+                  </select>,
+                ],
+                ['Imported', <Stamp at={summary.data.importedAt} />],
+                ['Fingerprint', <span className="mono">{summary.data.fingerprint}</span>],
+              ]}
+            />
           </details>
           <div className={`history-layout${selected ? ' history-layout--selected' : ''}`}>
             <section className="stack" aria-label="Historical records">
               <ListPage
                 load={records}
                 noun="records"
-                placeholder="Record"
+                kind="legacy-history"
                 filter={filter}
                 emptyTitle="No records of this type"
                 line={(item) => ({
@@ -345,40 +357,53 @@ function History({ row }: ViewProps) {
                   standing: (
                     <ThreeStates
                       execution={item.status ?? null}
-                      meta={[
-                        type === 'artifacts' &&
-                          (item.fileRetention?.status === 'verified'
-                            ? 'Available'
-                            : item.fileRetention?.status === 'metadata-only'
-                              ? 'Metadata only'
-                              : 'Not verified'),
-                        item.createdAt && new Date(item.createdAt).toLocaleDateString(),
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
+                      meta={
+                        (type === 'artifacts' || item.createdAt) && (
+                          <>
+                            {type === 'artifacts' &&
+                              (item.fileRetention?.status === 'verified'
+                                ? 'Available'
+                                : item.fileRetention?.status === 'metadata-only'
+                                  ? 'Metadata only'
+                                  : 'Not verified')}
+                            {type === 'artifacts' && item.createdAt && ' · '}
+                            {item.createdAt && <Stamp at={item.createdAt} />}
+                          </>
+                        )
+                      }
                     />
                   ),
                 })}
               />
-              <div className="cluster">
-                <button
-                  className="btn btn--sm"
-                  disabled={!pages.length || records.loading}
-                  onClick={() => update({ type, pages: pages.slice(0, -1) })}
-                >
-                  Previous
-                </button>
-                <span className="faint">Page {pages.length + 1}</span>
-                <button
-                  className="btn btn--sm"
-                  disabled={!records.data?.next || records.loading || !!records.error}
-                  onClick={() => {
-                    if (records.data?.next) update({ type, pages: [...pages, records.data.next] });
-                  }}
-                >
-                  Next
-                </button>
-              </div>
+              {/* One page of a short type needs no way to turn it. */}
+              {(pages.length > 0 || !!records.data?.next) && (
+                <div className="cluster">
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    aria-label="Previous page"
+                    title="Previous page"
+                    disabled={!pages.length || records.loading}
+                    onClick={() => update({ type, pages: pages.slice(0, -1) })}
+                  >
+                    <ChevronLeftIcon />
+                  </button>
+                  <span className="faint tabular">Page {pages.length + 1}</span>
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    aria-label="Next page"
+                    title="Next page"
+                    disabled={!records.data?.next || records.loading || !!records.error}
+                    onClick={() => {
+                      if (records.data?.next)
+                        update({ type, pages: [...pages, records.data.next] });
+                    }}
+                  >
+                    <ChevronRightIcon />
+                  </button>
+                </div>
+              )}
             </section>
             {selected && (
               <Detail
@@ -389,10 +414,6 @@ function History({ row }: ViewProps) {
               />
             )}
           </div>
-          <details className="faint">
-            <summary>Import provenance</summary>
-            <p className="history-hash mono">{summary.data.fingerprint}</p>
-          </details>
         </>
       )}
     </div>

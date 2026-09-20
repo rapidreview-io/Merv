@@ -1,4 +1,4 @@
-import type { Row } from './shell-types';
+import type { PluginState, Row } from './shell-types';
 
 /**
  * Sidebar navigation model. Sections express what a person is doing
@@ -99,4 +99,57 @@ export function buildNavigation(rows: Row[]): NavSection[] {
   );
   const unknown = [...sections.values()].filter((section) => !SECTION_ORDER.includes(section.id));
   return [...known, ...unknown];
+}
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * A heading names the places under it. Over one place that already says the same
+ * word — Feed over Feed — it names nothing, so the rail draws the row alone and
+ * keeps the gap a heading would have stood in.
+ */
+export const headed = (section: NavSection) =>
+  section.rows.length !== 1 || !same(section.rows[0]!.label, section.label);
+
+/**
+ * Who is signed in, as the lines the account row prints: the name, then the role
+ * only where it says something the name did not. `Operator` over `operator` is
+ * one line, and an account nobody named is known by its role alone. The role is
+ * an enum, so it is written here the way a person would write it.
+ */
+export function accountLines(name: string | undefined, role: string): string[] {
+  const held = role.replaceAll('_', ' ').replace(/^./, (first) => first.toUpperCase());
+  return !name ? [held] : same(name, held) ? [name] : [name, held];
+}
+
+/**
+ * What the browser's tab, its history and a screen reader's page announcement say:
+ * the page's own heading, then the project, then the app — each once, so Home, whose
+ * heading is the project's name, does not say it twice.
+ */
+export const documentTitle = (heading: string | undefined, project: string): string =>
+  [heading?.trim(), project.trim(), 'Merv']
+    .filter((part, at, all) => !!part && all.findIndex((other) => same(other ?? '', part)) === at)
+    .join(' · ');
+
+/**
+ * The plugin a missing page belonged to, where the shell can show it: the address
+ * opens with a view kind this build can draw, no registered row is of that kind,
+ * and the lifecycle table holds that kind's UI plugin in a state other than
+ * active. Any other missing address is a mistyped one, and says nothing of plugins.
+ */
+export function dormantOwner(
+  pathname: string,
+  kinds: readonly string[],
+  rows: Row[],
+  plugins: PluginState[],
+): PluginState | undefined {
+  const place = pathname.split('/')[1] ?? '';
+  if (!kinds.includes(place) || rows.some((row) => row.view.kind === place)) return undefined;
+  // An entry is named by whoever configured it; the module it loads is not.
+  return plugins.find(
+    (plugin) =>
+      plugin.state !== 'active' &&
+      (plugin.id === `${place}-ui` || plugin.name.endsWith(`/${place}/ui`)),
+  );
 }

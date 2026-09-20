@@ -106,6 +106,59 @@ async function fixture(t: TestContext) {
   };
   return { app, owner, actor, create, lenses, synthesize, verdict };
 }
+test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
+  const f = await fixture(t);
+  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const foreign = {
+    projectId: other.project.id,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
+  await t.test('open authorizes its caller', async () => {
+    await assert.rejects(
+      f.app.ctx.state.transaction((tx) =>
+        f.app.ctx.reflections.open({ ...foreign, projectId: f.owner.projectId }, tx),
+      ),
+      { code: 'forbidden' },
+    );
+  });
+  wave = await f.verdict(
+    await f.synthesize(await f.lenses(wave)),
+    await f.actor('Reviewer', 'reviewer'),
+    true,
+  );
+  for (const method of ['get', 'list', 'lens', 'approved'] as const) {
+    await t.test(method, async (t) => {
+      const caller = { ...foreign };
+      const authorize = f.app.ctx.scope.require.bind(f.app.ctx.scope);
+      t.mock.method(f.app.ctx.scope, 'require', async (...args: Parameters<typeof authorize>) => {
+        const result = await authorize(...args);
+        Object.assign(caller, f.owner);
+        return result;
+      });
+      if (method === 'list') assert.deepEqual(await f.app.ctx.reflections.list(caller), []);
+      else
+        await assert.rejects(
+          f.app.ctx.reflections[method](caller, method === 'lens' ? wave.lenses[0]!.id : wave.id),
+          { code: method === 'lens' ? 'reflection_lens_not_found' : 'reflection_not_found' },
+        );
+    });
+  }
+  await t.test('creation captures ownership and input', async () => {
+    const caller = { ...f.owner };
+    const input = { title: 'Original', requestId: 'original' };
+    const original = { ...input };
+    const creating = f.app.ctx.reflections.create(caller, input);
+    Object.assign(caller, foreign);
+    Object.assign(input, { title: 'Replacement', requestId: 'replacement' });
+    const created = await creating;
+    assert.equal(created.ownerId, f.owner.actorId);
+    assert.equal(created.title, original.title);
+    assert.deepEqual(await f.app.ctx.reflections.create(f.owner, original), created);
+  });
+});
+
 test('reflection uses live research, joins five independent ordinary workflows, reviews and retains exact approval', async (t) => {
   const f = await fixture(t);
   let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
@@ -182,12 +235,23 @@ test('reflection uses live research, joins five independent ordinary workflows, 
     );
   }
   const artifact = await f.create(lensWorker, 'First');
-  await f.app.ctx.reflections.submitLens(lensWorker, {
+  const replacementWorker = await f.actor('Replacement lens worker');
+  const replacement = await f.create(replacementWorker, 'Replacement');
+  const caller = { ...lensWorker };
+  const input = {
     lensId: wave.lenses[0]!.id,
     artifactId: artifact.id,
     expectedRevision: 0,
     requestId: 'first',
-  });
+  };
+  const original = { ...input };
+  const submitting = f.app.ctx.reflections.submitLens(caller, input);
+  Object.assign(caller, replacementWorker);
+  Object.assign(input, { artifactId: replacement.id, requestId: 'replacement' });
+  const submitted = await submitting;
+  assert.equal(submitted.producerId, lensWorker.actorId);
+  assert.equal(submitted.artifact!.id, artifact.id);
+  assert.deepEqual(await f.app.ctx.reflections.submitLens(lensWorker, original), submitted);
   await assert.rejects(
     async () =>
       await f.app.ctx.reflections.submitLens(lensWorker, {
@@ -635,8 +699,16 @@ test('reflection synthesis and its existing review own paper changes atomically'
     expectedRevision: wave.workflow.revision,
     requestId: 'paper-synthesis',
   };
-  wave = await f.app.ctx.reflections.submit(f.owner, input);
-  assert.deepEqual(await f.app.ctx.reflections.submit(f.owner, input), wave);
+  const replacement = await f.actor('Replacement synthesizer');
+  const caller = { ...f.owner };
+  const original = { ...input };
+  const submitting = f.app.ctx.reflections.submit(caller, input);
+  Object.assign(caller, replacement);
+  Object.assign(input, { reportArtifactId: changes.id, requestId: 'replacement' });
+  wave = await submitting;
+  assert.equal(wave.report!.id, original.reportArtifactId);
+  assert.equal(wave.review!.producerId, f.owner.actorId);
+  assert.deepEqual(await f.app.ctx.reflections.submit(f.owner, original), wave);
   assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 0);
   assert.ok(wave.review!.artifactIds.includes(changes.id));
   const reviewer = await f.actor('Scientific reviewer', 'reviewer');

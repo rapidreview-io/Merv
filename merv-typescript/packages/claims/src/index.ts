@@ -93,10 +93,10 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
   }
 
   async create(caller: Caller, value: ClaimCreate, transaction?: Transaction): Promise<Claim> {
-    this.ensureOpen();
+    caller = this.capture(caller);
+    const input = parseClaimInput(claimCreateSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const input = parseClaimInput(claimCreateSchema, value);
       return await this.command(caller, 'create', input, tx, async () => {
         const createdAt = now();
         const claim: Claim = {
@@ -133,10 +133,10 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
   }
 
   async update(caller: Caller, value: ClaimUpdate, transaction?: Transaction): Promise<Claim> {
-    this.ensureOpen();
+    caller = this.capture(caller);
+    const input = parseClaimInput(claimUpdateSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const input = parseClaimInput(claimUpdateSchema, value);
       return await this.command(caller, 'update', input, tx, async () => {
         const before = await this.get(caller, input.claimId, tx);
         check(
@@ -183,7 +183,7 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
   }
 
   async get(caller: Caller, claimId: string, transaction?: Transaction): Promise<Claim> {
-    this.ensureOpen();
+    caller = this.capture(caller);
     if (transaction) this.state.assertTransaction(transaction);
     await this.scope.require(caller, 'read', transaction);
     check(
@@ -204,7 +204,7 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
   }
 
   async list(caller: Caller, transaction?: Transaction): Promise<Claim[]> {
-    this.ensureOpen();
+    caller = this.capture(caller);
     if (transaction) this.state.assertTransaction(transaction);
     await this.scope.require(caller, 'read', transaction);
     const read = async (sql: Sql) =>
@@ -250,8 +250,9 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
   close(): void {
     this.closed = true;
   }
-  private ensureOpen(): void {
+  private capture(caller: Caller): Caller {
     check(!this.closed, 'claims_unavailable', 'Claims is unavailable', 503);
+    return structuredClone(caller);
   }
 }
 

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   createCipheriv,
   createDecipheriv,
@@ -97,6 +98,7 @@ export class GitHubClient {
   #key: Buffer;
   #appKey?: KeyObject;
   #stop = new AbortController();
+  #authorization = new AsyncLocalStorage<(() => Promise<void>) | undefined>();
   constructor(
     config: GitHubConfig,
     private fetcher: typeof fetch = fetch,
@@ -147,6 +149,9 @@ export class GitHubClient {
   }
   close() {
     this.#stop.abort();
+  }
+  authorized<T>(authorize: () => Promise<void>, operation: () => Promise<T>): Promise<T> {
+    return this.#authorization.run(authorize, operation);
   }
   get automationConfigured() {
     return !!this.#appKey;
@@ -212,7 +217,10 @@ export class GitHubClient {
     return { token: result.token, expiresAt: result.expires_at };
   }
   async revokeInstallationToken(token: string) {
-    await this.request('https://api.github.com/installation/token', token, undefined, 'DELETE');
+    // Revoking a token is cleanup and must still work after the grant loses authority.
+    await this.#authorization.run(undefined, () =>
+      this.request('https://api.github.com/installation/token', token, undefined, 'DELETE'),
+    );
   }
   async ensureBranch(token: string, repository: string, branch: string, sha: string) {
     githubResponse(githubOid, sha);
@@ -309,6 +317,8 @@ export class GitHubClient {
     method = body ? 'POST' : 'GET',
   ): Promise<unknown> {
     try {
+      await this.#authorization.getStore()?.();
+      this.#stop.signal.throwIfAborted();
       const response = await this.fetcher(url, {
         method,
         redirect: 'error',

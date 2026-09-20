@@ -87,6 +87,15 @@ async function fixture(t: TestContext) {
 test('lease offer reserves ownership and freezes context atomically; first activation is metadata only', async (t) => {
   const f = await fixture(t);
   const { artifacts, workflows, state } = f.app.ctx;
+  const offerLease = workflows.offerLease.bind(workflows);
+  t.mock.method(workflows, 'offerLease', async (...args: Parameters<typeof offerLease>) => {
+    const source = structuredClone(args[0]),
+      worker = structuredClone(args[1]);
+    const offering = offerLease(source, worker, args[2], args[3]);
+    source.actorId = 'replacement-source';
+    worker.actorId = 'replacement-worker';
+    return await offering;
+  });
   const before = await state.read(async (sql) => ({
     actors: await sql.all('SELECT id FROM actors'),
     events: await state.eventHead(),
@@ -123,6 +132,40 @@ test('lease offer reserves ownership and freezes context atomically; first activ
   assert.equal((await workflows.workStarts(f.source, f.task.id)).length, 1);
   artifacts.read = read;
   workflows.assignment = assignment;
+});
+
+test('lease authority retains its source and worker during pending checks', async (t) => {
+  const f = await fixture(t);
+  const { workflows, sessions } = f.app.ctx;
+  await t.test('role', async () => {
+    const caller = { ...f.source };
+    const resolving = workflows.leaseRole(caller, { instanceId: f.task.id, expectedRevision: 0 });
+    caller.actorId = 'replacement';
+    assert.equal(await resolving, 'producer');
+  });
+  const offered = await f.offer();
+  const worker = await sessions.authenticate(offered.secret);
+  for (const method of ['checkLease', 'activateLease', 'authorizeLeaseDispatch'] as const) {
+    await t.test(method, async () => {
+      const caller = structuredClone(worker);
+      const checking =
+        method === 'authorizeLeaseDispatch'
+          ? workflows.authorizeLeaseDispatch(
+              caller,
+              offered.session.lease,
+              offered.session.execution,
+              {
+                tool: 'workflow.status_and_next',
+                input: {},
+                read: true,
+              },
+            )
+          : workflows[method](caller, offered.session.lease);
+      caller.actorId = 'replacement';
+      caller.session!.id = 'replacement-lease';
+      await checking;
+    });
+  }
 });
 
 test('frozen checkpoint inputs remain readable; later source attachments cannot expand session context or reads', async (t) => {

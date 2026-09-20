@@ -26,6 +26,8 @@ Disposal withdraws the review owner before suspending Tasks and draining its dep
 
 Task types and context references are pinned at creation. Tasks registers its versioned recipes directly with Context Builder. `task.context` checks current ownership, revision and review claim before building an immutable package. `task.checkpoint` saves attributed, immutable progress for the current assignment. Both are replayable; stale or revoked claims are refused. Producer identity stays historical attribution. See [recipes, required inputs and recovery behavior](../../docs/RECOVERY_AND_CONTEXT.md).
 
+Creation and type registration copy their inputs before asynchronous work. A type registration cannot publish after Tasks is disposed; a recipe acquired during disposal is released so a replacement owner can register it.
+
 `task.mark_failed` gives the producer/operator an explicit terminal exit with a reason. It closes any unfinished review in the same transaction, preserves evidence and prior verdicts, and records `task.failed`. Guidance lists this action without recommending it as ordinary progress. Older tasks upgrade only when this command is used. See [task closure and version compatibility](../../docs/TASK_CLOSURE.md).
 
 ## Work prerequisites

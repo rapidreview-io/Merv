@@ -1,0 +1,27 @@
+{
+  "tests": 870,
+  "passed": 852,
+  "failed": 0,
+  "skipped": 18,
+  "durationMs": 35435.785542,
+  "skips": [
+    "ok 117 - PostgreSQL persists GitHub connections and fences refresh across separate connections # SKIP",
+    "ok 140 - PostgreSQL retains publication/review bindings and recovers an uncertain PR across service instances # SKIP",
+    "ok 288 - immutable research history preserves IDs, attempts, evidence and publication on PostgreSQL # SKIP",
+    "ok 296 - artifact retention is explicit, immutable and project-scoped on PostgreSQL # SKIP",
+    "ok 299 - legacy foundation imports the same project and shared account on PostgreSQL without credentials or fabricated history # SKIP",
+    "ok 355 - Nisa-owned MCP composes retrieval, durable Q&A, quota and independent mount removal # SKIP Set MERV_NISA_CHECKOUT to the prepared Nisa repository to run the cross-repository integration",
+    "ok 372 - assembled PostgreSQL + disk preserves artifact, review, event and replay atomicity across restarts # SKIP",
+    "ok 373 - assembled PostgreSQL + s3 preserves artifact, review, event and replay atomicity across restarts # SKIP",
+    "ok 577 - PostgreSQL full application retains task delivery, independent review and live reflection metadata # SKIP",
+    "ok 608 - PostgreSQL preserves continuing agent identity, lease fencing and tool observations # SKIP",
+    "ok 628 - all native domain migrations execute on PostgreSQL and retain provenance, ordering and atomicity # SKIP Set MERV_TEST_POSTGRES_DSN for a disposable PostgreSQL acceptance database",
+    "ok 635 - PostgreSQL boots in a pre-created owned schema without database CREATE privilege # SKIP",
+    "ok 636 - PostgreSQL uses native migrations and keeps records, events and checksum history atomic # SKIP",
+    "ok 637 - PostgreSQL serializes writers across app instances before allocating event IDs # SKIP",
+    "ok 638 - PostgreSQL lock timeout rolls back the checked-out connection for later requests # SKIP",
+    "ok 639 - PostgreSQL disposal drains admitted async work before closing its pool # SKIP",
+    "ok 837 - postgres: awaited transition checks share the writer and withdrawal rolls back the entire command # SKIP",
+    "ok 838 - postgres: awaited assignment and evidence providers cannot survive their own withdrawal # SKIP"
+  ]
+}

@@ -9,6 +9,7 @@ import { Worker } from 'node:worker_threads';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
+import { Memberships } from '@merv/scope/memberships';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
@@ -53,7 +54,10 @@ test('project keys reuse owner membership attribution, default to their fixed pr
   const reader = await f.login('reader');
   await f.scope.addMember(f.owner, f.project.id, { subject: 'reader', role: 'reader' });
   const beforeActors = await f.scope.actors(f.operator);
-  const issued = await f.scope.createKey(reader, { projectId: f.project.id, label: ' Laptop ' });
+  const input = { projectId: f.project.id, label: ' Laptop ' };
+  const creating = f.scope.createKey(reader, input);
+  input.label = ' ';
+  const issued = await creating;
   assert.match(issued.token, /^mk_[A-Za-z0-9_-]{43}$/);
   assert.equal(issued.key.label, 'Laptop');
   assert.equal(issued.key.grantScope, 'project');
@@ -323,7 +327,10 @@ test('key expiry and rotation preserve grants and support explicit human reautho
     expiresAt,
   });
   const caller = await f.scope.caller(await f.principal(issued.token));
-  const rotated = await f.scope.rotateKey(f.owner, { keyId: issued.key.id });
+  const rotation: { keyId: string; expiresAt?: string | null } = { keyId: issued.key.id };
+  const rotating = f.scope.rotateKey(f.owner, rotation);
+  rotation.expiresAt = null;
+  const rotated = await rotating;
   assert.equal(rotated.key.expiresAt, expiresAt);
   assert.equal(rotated.key.previousId, issued.key.id);
   assert.equal(rotated.key.projectId, issued.key.projectId);
@@ -379,6 +386,33 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   await f.scope.revokeKey(f.owner, issued.key.id);
   assert.equal(await f.state.eventHead(), head);
   assert.equal((await f.scope.require(f.operator, 'admin')).active, true);
+  const durable = await f.scope.createKey(f.owner, { projectId: f.project.id });
+  const keys = await f.scope.keys(f.owner);
+  const rotationHead = await f.state.eventHead();
+  const resolve = Memberships.prototype.resolve;
+  const delayed = t.mock.method(
+    Memberships.prototype,
+    'resolve',
+    async function (this: Memberships, ...args: Parameters<typeof resolve>) {
+      const caller = await resolve.apply(this, args);
+      f.advance(1000);
+      return caller;
+    },
+  );
+  try {
+    await assert.rejects(
+      f.scope.rotateKey(f.owner, {
+        keyId: durable.key.id,
+        expiresAt: new Date(initialTime + 2000).toISOString(),
+      }),
+      { code: 'invalid_expiry' },
+    );
+  } finally {
+    delayed.mock.restore();
+  }
+  assert.equal((await f.scope.authenticateKey(durable.token)).id, durable.key.id);
+  assert.deepEqual(await f.scope.keys(f.owner), keys);
+  assert.equal(await f.state.eventHead(), rotationHead);
 });
 
 test('account rotation survives losing its issuance project but requires another current membership', async (t) => {

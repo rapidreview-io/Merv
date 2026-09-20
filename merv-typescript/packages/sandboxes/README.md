@@ -39,8 +39,10 @@ Configuration names environment variables and never carries a secret:
 `urlEnv` holds the service origin and is the only origin this plugin ever calls; each connection
 holds one project's namespace and the name of the variable holding that project's `sbxt_` consumer
 grant. Unknown configuration keys are refused, so a literal token cannot be configured by mistake.
-Secrets are read from the environment on every request, never stored on the client, never logged,
-and never reported in status. The default composition does not install this optional plugin;
+Secrets are resolved for each operation and pinned through identity proof and dispatch. Only
+credential fingerprints are cached; secrets are never logged or reported in status. A credential
+change before dispatch refuses the operation so a retry can prove the replacement grant.
+The default composition does not install this optional plugin;
 `scripts/ui-demo.ts` composes it, its tools and its UI adapter for the demo project when
 `MERV_SANDBOXES_URL` and `MERV_SANDBOXES_TOKEN` are both set.
 
@@ -56,24 +58,31 @@ checksummed.
 `{ id, seconds }` adds `seconds` (60–86400, as the service bounds a lease) to what is left of one
 lease: a renewal is a total, not an increment — the service sets the lease to now +
 `lease_seconds` — so the record is read first and what remains is carried into
-`POST /v1/sandboxes/{id}/renew`. Extending a machine can therefore only lengthen its life. The
+`POST /v1/sandboxes/{id}/renew` together with `expected_revision` from that record. The service
+must atomically refuse a stale revision, so a concurrent extension cannot shorten another
+client's renewal. A conflict requires reading the record again; the plugin does not retry writes.
+Deploy the sandbox-service revision-check support before this client: an older service rejects
+the extra field, and a record without a revision is refused before any write. There is no unsafe
+fallback to an unconditional renewal. The
 service publishes no maximum lease anywhere a reader can see, so an over-long total is its
 refusal to give rather than a limit this build guesses at. `sandbox.release` `{ id }` sends
 `DELETE /v1/sandboxes/{id}` with
 `confirm_retained: true` — the browser's guard is the retention confirmation the legacy tool
 asked for in a second call — and answers the record as it then reads, so the caller sees the
 state deletion left behind. Both require the project's `write` permission, like every other tool
-that changes something, and both are idempotent per sandbox: a lease renewed twice ends where
-the last renewal put it, and a machine released twice is released once. Both answer the
+that changes something. Release is idempotent, while each separate extension adds the requested
+lifetime. Both answer the
 service's own record, stripped of anything named like a credential.
 
 `src/client.ts` is the whole transport, and it reads: origin validated as an HTTP(S) origin with no
-credentials, query, fragment or path; `GET /v1/auth/me` once per connection, requiring role
+credentials, query, fragment or path; `GET /v1/auth/me` for each new connection/credential identity, requiring role
 `consumer` and the configured namespace, so an administrator grant is refused before any resource
 is requested; `X-Sandbox-Namespace` and the bearer on every call; `{id}` substitution guarded to
 letters, digits, dashes and underscores; routes constrained to plain `/v1` paths, so a manifest
 cannot point a read at another host; redirects refused rather than followed; bounded timeouts; and
-JSON bodies only, within a size limit. Upstream failure bodies are never forwarded — only the
+JSON bodies only, limited during streaming to 4,000,000 decoded bytes (4,096 bytes for a write
+error). Rejected and oversized bodies are cancelled; the deadline also covers response-body
+reads. Upstream read failure bodies are never forwarded — only the
 shape of the failure, as `sandbox_forbidden`, `sandbox_not_found`, `sandbox_redirect_refused` or
 `sandbox_unavailable`. A write is the caller's own act on one sandbox it named, and why the
 service refused it is the answer, so a refused write reports the service's own error code and
@@ -106,7 +115,10 @@ The manifest is read at startup, every `refreshMs` (five minutes by default), an
 concurrent attempts share one read. Rows are re-registered only when the manifest actually changes.
 An unreachable service keeps the last manifest: the row stays where it is and reports `degraded`
 with a reason, instead of vanishing or showing an error page. Unloading the plugin withdraws every
-row.
+row, stops polling, and rejects new operations on captured service handles with `sandboxes_closed`.
+Shutdown waits for admitted operations to finish, including the follow-up read after a release.
+An active manifest refresh finishes its current connection without publishing or starting the
+next connection. Standalone service owners can await `close()` or the disposer from `start()`.
 
 Run `npm run test:sandboxes` for the fixture regressions: manifest validation and dropped controls,
 row identity and view, proxied reads with the namespace header and stripped secrets, the refused

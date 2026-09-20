@@ -82,11 +82,10 @@ test('one agent can produce successive tasks and review other work, but cannot r
   assert.equal(b.agentId, agent.id);
   // It reads the earlier proof like anything else in the project; it did not author it.
   assert.ok(await app.ctx.tools.call('artifact.read', callerB, { artifactId: proof.id }));
-  assert.deepEqual(
-    await app.ctx.artifacts.authored(callerB),
-    [],
-    'Previous execution output is not automatically authorized',
-  );
+  const changingCaller = structuredClone(callerB);
+  const outputs = app.ctx.artifacts.authored(changingCaller);
+  changingCaller.session!.id = callerA.session!.id;
+  assert.deepEqual(await outputs, [], 'Previous execution output is not automatically authorized');
   await app.ctx.sessions.releaseAgentAssignment(token, b.id);
   // Another producer submits separate work. The same agent may now become a reviewer.
   const independent = await createTask('independent');

@@ -95,7 +95,8 @@ test('paper keeps ordered section history, structured scope and scoped citation 
     (await f.paper.read(f.reader)).documents.problem.current.sections.map((s) => s.id),
     ['problem', 'scope', 'goals', 'constraints'],
   );
-  const problem = await f.paper.patch(f.producer, {
+  const mutable = { ...f.producer };
+  const patching = f.paper.patch(mutable, {
     kind: 'problem',
     expectedRevision: 0,
     requestId: f.request(),
@@ -104,6 +105,9 @@ test('paper keeps ordered section history, structured scope and scoped citation 
       { id: 'constraints', content: 'One fixed evaluation split.' },
     ],
   });
+  Object.assign(mutable, f.operator);
+  const problem = await patching;
+  assert.equal(problem.updatedBy, f.producer.actorId);
   assert.equal(problem.revision, 1);
   const input = {
     kind: 'literature' as const,
@@ -136,7 +140,8 @@ test('paper keeps ordered section history, structured scope and scoped citation 
     title: 'Evidence',
     content: 'Source evidence',
   });
-  const citation = await f.paper.cite(f.producer, {
+  Object.assign(mutable, f.producer);
+  const citing = f.paper.cite(mutable, {
     expectedRevision: 0,
     requestId: f.request(),
     identifier: 'ARXIV:1234.5678',
@@ -144,6 +149,9 @@ test('paper keeps ordered section history, structured scope and scoped citation 
     sectionIds: ['baselines'],
     refs: [`artifact:${claim.id}`],
   });
+  Object.assign(mutable, f.operator);
+  const citation = await citing;
+  assert.equal(citation.updatedBy, f.producer.actorId);
   assert.equal(citation.identifier, 'arxiv:1234.5678');
   assert.equal(citation.revision, 1);
   await assert.rejects(
@@ -198,6 +206,30 @@ test('paper keeps ordered section history, structured scope and scoped citation 
   await f.reload();
   assert.deepEqual((await f.paper.read(f.reader)).documents.literature.current, updated);
   assert.equal((await f.paper.read(f.reader)).citations[0].id, citation.id);
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const outsider = {
+    projectId: other.project.id,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  const caller = { ...outsider };
+  const authorize = f.scope.require.bind(f.scope);
+  f.scope.require = async (...args) => {
+    const actor = await authorize(...args);
+    Object.assign(caller, f.reader);
+    return actor;
+  };
+  try {
+    const workspace = await f.paper.read(caller);
+    Object.assign(caller, outsider);
+    const history = await f.paper.history(caller, 'literature');
+    assert.deepEqual(
+      [workspace.documents.literature.current.revision, workspace.citations, history],
+      [0, [], []],
+    );
+  } finally {
+    f.scope.require = authorize;
+  }
   await assert.rejects(
     async () =>
       await f.state.transaction(
@@ -265,8 +297,23 @@ test('paper retains proposals without assignments and applies exact reviewed edi
     /abort verdict/,
   );
   assert.equal((await f.paper.read(f.reader)).documents.methods.current.revision, 0);
+  const caller = { ...f.reviewer },
+    pendingInput = structuredClone(input);
+  const preflight = f.paper.checkAccept.bind(f.paper);
+  f.paper.checkAccept = async (...args) => {
+    const result = await preflight(...args);
+    Object.assign(caller, f.producer);
+    pendingInput.reviewId = 'replacement-review';
+    return result;
+  };
   const accepted = await f.state.transaction(
-    async (tx) => await f.paper.accept(f.reviewer, input, tx),
+    async (tx) => await f.paper.accept(caller, pendingInput, tx),
+  );
+  f.paper.checkAccept = preflight;
+  assert.equal(accepted[0].reviewId, input.reviewId);
+  assert.equal(
+    (await f.paper.read(f.reader)).proposals[0].acceptance?.reviewerId,
+    f.reviewer.actorId,
   );
   assert.deepEqual(
     await f.state.transaction(async (tx) => await f.paper.accept(f.reviewer, input, tx)),
@@ -302,32 +349,40 @@ test('paper prevents cross-project inputs, foreign authors, mismatched approval 
     p = await proposal(f);
   await assert.rejects(
     async () =>
-      await f.state.transaction(
-        async (tx) =>
-          await f.paper.accept(
-            f.operator,
-            { proposalId: p.id, source: { ...p.source, id: 'other' }, reviewId: 'review' },
-            tx,
-          ),
-      ),
+      await f.state.transaction(async (tx) => {
+        const input = {
+          proposalId: p.id,
+          source: { ...p.source, id: 'other' },
+          reviewId: 'review',
+        };
+        const checking = f.paper.checkAccept(f.operator, input, tx);
+        input.source.id = p.source.id;
+        return await checking;
+      }),
     hasCode('paper_source_mismatch'),
   );
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) =>
-          await f.paper.propose(
-            f.operator,
-            {
-              artifactId: p.artifact.id,
-              source: p.source,
-              evidenceIds: p.evidence.map((a) => a.id),
-            },
-            tx,
-          ),
-      ),
-    hasCode('invalid_evidence_author'),
-  );
+  for (const method of ['validate', 'propose'] as const)
+    await assert.rejects(
+      async () =>
+        await f.state.transaction(async (tx) => {
+          const caller = { ...f.operator };
+          const checking =
+            method === 'validate'
+              ? f.paper.validate(caller, p.artifact.id, tx)
+              : f.paper.propose(
+                  caller,
+                  {
+                    artifactId: p.artifact.id,
+                    source: p.source,
+                    evidenceIds: p.evidence.map((a) => a.id),
+                  },
+                  tx,
+                );
+          Object.assign(caller, f.producer);
+          return await checking;
+        }),
+      hasCode('invalid_evidence_author'),
+    );
   const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' }),
     caller = { projectId: other.project.id, actorId: other.actor.id };
   await assert.rejects(

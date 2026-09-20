@@ -1,0 +1,13 @@
+{
+  "capturedHead": "053808bc509509e0bd343441092b764e45e709f5",
+  "capturedTree": "d5d473e756dcd434370362ca1c5a84eb5576a4ce",
+  "sourceHead": "b1acccf1bfdfa9ca06877a35c54ac7c7479321dc",
+  "centralHead": "b1acccf1bfdfa9ca06877a35c54ac7c7479321dc",
+  "codeSha256": "d19d3c0cba7ce2926c3662e995f5033eaf8fa20077c5077175dec46326b4baf5",
+  "stdoutSha256": "eb6b054223c11bd3280761d00a43c68518a4b4a364a884758af6df38cf93d932",
+  "capturedCodeMatchesArtifact": true,
+  "capturedStdoutMatchesArtifact": true,
+  "sourceAndCentralUnchanged": true,
+  "reviewerCheckoutRemoved": true,
+  "allWorkersStopped": true
+}

@@ -146,13 +146,16 @@ export class RunnerClient {
       if (!response.body) throw new Error();
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
+      // Sessions admits four frozen packets of up to 512 KiB each. The complete
+      // reply also carries session metadata and workspace receipts.
+      const limit = response.ok ? 4 * 1024 * 1024 : 1024 * 1024;
       let size = 0;
       try {
         while (true) {
           const next = await reader.read();
           if (next.done) break;
           size += next.value.length;
-          if (size > 1024 * 1024) {
+          if (size > limit) {
             await reader.cancel();
             throw new Error();
           }

@@ -172,11 +172,15 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
     /contributor/,
   );
   await f.scope.revokeActor(f.operator, f.lensA.actorId);
-  const reissued = await f.reviews.reissue(f.producer, {
+  const reissueInput = {
     reviewId: review.id,
     subjectRevision: 5,
     requestId: 'reissue',
-  });
+  };
+  const reissuing = f.reviews.reissue(f.producer, reissueInput);
+  reissueInput.subjectRevision = 99;
+  const reissued = await reissuing;
+  assert.equal(reissued.subjectRevision, 5);
   assert.deepEqual(reissued.excludedActorIds, review.excludedActorIds);
   await assert.rejects(async () => await f.reviews.start(f.lensA, reissued.id), {
     code: 'forbidden',
@@ -299,4 +303,143 @@ test('additive migration preserves legacy snapshot hash, absent field and stored
   );
   const legacy = await f.reviews.request(f.producer, f.input());
   assert.equal((await f.reviews.start(f.lensA, legacy.id)).reviewerId, f.lensA.actorId);
+});
+
+test('review entrypoints retain their caller and preflight claim', async (t) => {
+  for (const method of [
+    'get',
+    'list',
+    'checkStart',
+    'start',
+    'checkSubmit',
+    'supersede',
+  ] as const) {
+    await t.test(method, async (t) => {
+      const f = await fixture(t);
+      const review = await f.reviews.request(f.producer, f.input());
+      const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+      const foreign = { projectId: other.project.id, actorId: other.actor.id };
+      const reading = method === 'get' || method === 'list';
+      const caller = { ...(reading ? foreign : f.reviewer) };
+      if (method === 'supersede')
+        caller.actorId = (
+          await f.scope.issueActor(f.operator, { name: 'Other producer', role: 'producer' })
+        ).actor.id;
+      const claim = method === 'checkSubmit' ? await f.reviews.start(f.reviewer, review.id) : null;
+      const input = {
+        claimId: 'wrong-claim',
+        reviewId: review.id,
+        verdict: 'pass' as const,
+        notes: 'Checked.',
+      };
+      const authorize = f.scope.require.bind(f.scope);
+      t.mock.method(f.scope, 'require', async (...args: Parameters<typeof authorize>) => {
+        const result = await authorize(...args);
+        if (method === 'checkSubmit') input.claimId = claim!.claimId!;
+        else Object.assign(caller, reading ? f.operator : f.producer);
+        return result;
+      });
+      if (method === 'get')
+        await assert.rejects(f.reviews.get(caller, review.id), { code: 'not_found' });
+      else if (method === 'list') assert.deepEqual(await f.reviews.list(caller), []);
+      else if (method === 'checkSubmit')
+        await assert.rejects(f.reviews.checkSubmit(caller, review.id, input), {
+          code: 'stale_claim',
+        });
+      else if (method === 'supersede')
+        await assert.rejects(f.reviews.supersede(caller, review.id), { code: 'forbidden' });
+      else {
+        const result = await f.reviews[method](caller, review.id);
+        assert.equal(result.status, method === 'start' ? 'started' : 'requested');
+        if (method === 'start') assert.equal(result.reviewerId, f.reviewer.actorId);
+      }
+    });
+  }
+});
+
+test('review requests retain the validated evidence list while artifact lookup yields', async (t) => {
+  const f = await fixture(t);
+  const input = f.input(),
+    original = structuredClone(input);
+  const get = f.artifacts.get.bind(f.artifacts);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let first = true;
+  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof get>) => {
+    const result = await get(...args);
+    if (first) {
+      first = false;
+      enter();
+      await waiting;
+    }
+    return result;
+  });
+  const caller = { ...f.producer };
+  const pending = f.reviews.request(caller, input);
+  try {
+    await entered;
+    input.artifactIds[0] = 'unchecked-artifact';
+    input.criteria[0] = '';
+    Object.assign(caller, f.lensA);
+  } finally {
+    release();
+  }
+  const review = await pending;
+  assert.equal((await f.state.events(f.operator.projectId)).at(-1)!.actorId, f.producer.actorId);
+  assert.deepEqual(review.artifactIds, original.artifactIds);
+  assert.deepEqual(review.criteria, original.criteria);
+  const row = await f.state.read((sql) =>
+    sql.get<{ manifest: string }>('SELECT manifest FROM reviews WHERE id=?', review.id),
+  );
+  assert.deepEqual(
+    review.artifactIds,
+    JSON.parse(row!.manifest).map((artifact: { id: string }) => artifact.id),
+  );
+  assert.deepEqual(await f.reviews.request(f.producer, original), review);
+});
+
+test('review submission retains the decision checked before a pending validation returns', async (t) => {
+  const f = await fixture(t);
+  const review = await f.reviews.request(f.producer, f.input());
+  const claim = await f.reviews.start(f.reviewer, review.id);
+  const original = {
+    reviewId: review.id,
+    claimId: claim.claimId!,
+    verdict: 'pass' as const,
+    notes: 'Checked all evidence.',
+    requestId: 'stable-decision',
+  };
+  const input = { ...original };
+  const checkSubmit = f.reviews.checkSubmit.bind(f.reviews);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  t.mock.method(f.reviews, 'checkSubmit', async (...args: Parameters<typeof checkSubmit>) => {
+    const result = await checkSubmit(...args);
+    enter();
+    await waiting;
+    return result;
+  });
+  const caller = { ...f.reviewer };
+  const pending = f.reviews.submit(caller, input);
+  try {
+    await entered;
+    input.notes = '';
+    Object.assign(caller, f.producer);
+  } finally {
+    release();
+  }
+  const result = await pending;
+  assert.equal(result.notes, original.notes);
+  assert.equal((await f.state.events(f.operator.projectId)).at(-1)!.actorId, f.reviewer.actorId);
+  assert.deepEqual(await f.reviews.submit(f.reviewer, original), result);
 });

@@ -29,12 +29,16 @@ const define = (key: string, value: unknown) => {
     /* a runtime that will not surrender the name keeps its own */
   }
 };
+/** What every width query answers — a wide window — until `resize` says otherwise. */
+const media = { wide: true, listeners: new Set<() => void>() };
 win.matchMedia = ((query: string) => ({
-  matches: true,
+  get matches() {
+    return media.wide;
+  },
   media: query,
   onchange: null,
-  addEventListener() {},
-  removeEventListener() {},
+  addEventListener: (_type: string, listener: () => void) => media.listeners.add(listener),
+  removeEventListener: (_type: string, listener: () => void) => media.listeners.delete(listener),
   addListener() {},
   removeListener() {},
   dispatchEvent: () => false,
@@ -85,18 +89,30 @@ define('Date', Shifted);
 
 /** What the fixture server answers: a response, or a connection that drops. */
 export type Reply = { status?: number; body?: unknown } | { network: true };
-const handlers = new Map<string, (call: number) => Reply>();
+/**
+ * One path's answer: fixed, or decided by how many times it has been asked and by
+ * what was sent — one tool answers more than one question of the same page.
+ */
+type Answer = (call: number, sent: Record<string, unknown>) => Reply;
+const handlers = new Map<string, Answer>();
 const counts = new Map<string, number>();
 /** Every request the views made, newest last, as `METHOD path`. */
 export const requests: string[] = [];
-export const serve = (path: string, reply: Reply | ((call: number) => Reply)) =>
+export const serve = (path: string, reply: Reply | Answer) =>
   handlers.set(path, typeof reply === 'function' ? reply : () => reply);
-define('fetch', async (input: unknown, init: { method?: string } = {}) => {
+const sentBy = (body: unknown): Record<string, unknown> => {
+  try {
+    return typeof body === 'string' ? JSON.parse(body) : {};
+  } catch {
+    return {};
+  }
+};
+define('fetch', async (input: unknown, init: { method?: string; body?: unknown } = {}) => {
   const path = String(input);
   requests.push(`${init.method ?? 'GET'} ${path}`);
   const call = (counts.get(path) ?? 0) + 1;
   counts.set(path, call);
-  const reply = handlers.get(path)?.(call) ?? {
+  const reply = handlers.get(path)?.(call, sentBy(init.body)) ?? {
     status: 404,
     body: { error: { code: 'no_fixture', message: `No fixture for ${path}` } },
   };
@@ -127,6 +143,13 @@ export const settle = async (ms = 0) => {
     await new Promise((resolve) => setTimeout(resolve, ms));
   });
 };
+/** Carry the window across every width breakpoint at once, and let the page follow. */
+export const resize = async (wide: boolean) => {
+  media.wide = wide;
+  await act(async () => {
+    for (const listener of media.listeners) listener();
+  });
+};
 /** Move the clock the views read, then let what that changed render. */
 export const jump = async (ms: number, thenWait = 1200) => {
   offset += ms;
@@ -150,6 +173,7 @@ export async function unmount(): Promise<void> {
   counts.clear();
   requests.length = 0;
   offset = 0;
+  media.wide = true;
 }
 /** What a person reads on the page, which is what every assertion here is about. */
 export const text = (): string => host?.textContent ?? '';

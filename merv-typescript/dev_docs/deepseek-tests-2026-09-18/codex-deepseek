@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+import os, sys
+binary = "/Users/guraltoo/.nvm/versions/node/v22.13.1/bin/codex"
+settings = [
+    "-m", "deepseek-flash",
+    "-c", 'model_provider="deepseek"',
+    "-c", 'model_reasoning_effort="high"',
+    "-c", 'web_search="disabled"',
+    "-c", 'model_providers.deepseek={name="DeepSeek V4.1 Flash",base_url="https://api.deepseek.com",wire_api="responses",supports_websockets=false,auth={command="/bin/cat",args=["/Users/guraltoo/.codex/credentials/deepseek-api-key"],refresh_interval_ms=0}}',
+]
+args = sys.argv[1:]
+position = args.index("exec") + 1 if "exec" in args else 0
+args[position:position] = settings
+os.execv(binary, [binary, *args])

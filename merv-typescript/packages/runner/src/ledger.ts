@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { plain } from '@merv/contracts';
 
 export type LaunchStatus =
   'reserved' | 'starting' | 'running' | 'stopping' | 'exited' | 'stopped' | 'uncertain';
@@ -93,42 +94,27 @@ export function launchRecord(row: Row): LaunchRecord {
     runDirectory: String(row.run_directory),
   };
 }
-function safeJson(value: unknown): string {
-  const walk = (item: unknown, depth: number): void => {
-    if (depth > 32) throw new Error('Runner metadata is too deeply nested');
-    if (typeof item === 'string') {
-      if (/m[sk]_[A-Za-z0-9_-]{32,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(item)) {
-        throw new Error('Credentials must not be persisted in runner metadata');
-      }
-    } else if (typeof item === 'number') {
-      if (!Number.isFinite(item)) throw new Error('Invalid runner metadata');
-    } else if (item !== null && typeof item !== 'boolean') {
-      if (!item || typeof item !== 'object') throw new Error('Invalid runner metadata');
-      if (Array.isArray(item)) {
-        for (const child of item) walk(child, depth + 1);
-      } else {
-        if (
-          Object.getPrototypeOf(item) !== Object.prototype &&
-          Object.getPrototypeOf(item) !== null
-        )
-          throw new Error('Invalid runner metadata');
-        for (const [key, child] of Object.entries(item)) {
-          if (
-            /^(token|secret|authorization|password|bearer|env|sourceToken|sessionToken|__proto__|constructor|prototype)$/i.test(
-              key,
-            )
-          ) {
-            throw new Error('Credentials must not be persisted in runner metadata');
-          }
-          if (child !== undefined) walk(child, depth + 1);
-        }
-      }
-    }
-  };
-  walk(value, 0);
-  const encoded = JSON.stringify(value);
+function safeData<T>(value: T): T {
+  const detached = plain<T>(value, 'invalid_runner_metadata', {
+    depth: 32,
+    nodes: 524288,
+    bytes: 524288,
+    keys: 'any',
+    strings: 'json',
+  });
+  const encoded = JSON.stringify(detached, (key, item: unknown) => {
+    if (
+      /^(token|secret|authorization|password|bearer|env|sourceToken|sessionToken|__proto__|constructor|prototype)$/i.test(
+        key,
+      ) ||
+      (typeof item === 'string' &&
+        /m[sk]_[A-Za-z0-9_-]{32,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(item))
+    )
+      throw new Error('Credentials must not be persisted in runner metadata');
+    return item;
+  });
   if (Buffer.byteLength(encoded) > 524288) throw new Error('Runner metadata is too large');
-  return encoded;
+  return detached;
 }
 export const terminalLaunch = (record: LaunchRecord): boolean =>
   record.status === 'exited' || record.status === 'stopped';
@@ -251,9 +237,10 @@ export class LocalLedger {
     platform: LaunchPlatform,
     input: { hardDeadlineSeconds?: number } = {},
   ): PendingLaunchRequest {
+    ({ platform, input } = safeData({ platform, input }));
     if (!platform.name || platform.name.length > 200 || !platform.harness)
       throw new Error('Invalid runner platform');
-    const encoded = safeJson({ platform, ...input });
+    const encoded = JSON.stringify({ platform, ...input });
     this.db
       .prepare('INSERT OR IGNORE INTO launch_requests VALUES(?,?,?)')
       .run(platform.name, randomUUID(), encoded);
@@ -311,8 +298,8 @@ export class LocalLedger {
       input.deadline <= Date.now()
     )
       throw new Error('Invalid launch reservation');
-    const metadata = input.metadata ?? {};
-    const encodedMetadata = safeJson(metadata);
+    const metadata = safeData(input.metadata ?? {});
+    const encodedMetadata = JSON.stringify(metadata);
     const canonical = JSON.stringify({
       id: input.id,
       sessionId: input.sessionId,
@@ -392,11 +379,12 @@ export class LocalLedger {
     );
   }
   updateMetadata(id: string, patch: LaunchMetadata): LaunchRecord {
+    patch = safeData(patch);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const record = this.get(id);
       if (!record) throw new Error('Unknown launch');
-      const encoded = safeJson({ ...record.metadata, ...patch });
+      const encoded = JSON.stringify(safeData({ ...record.metadata, ...patch }));
       this.db
         .prepare('UPDATE launches SET metadata_json=?,updated_at=? WHERE id=?')
         .run(encoded, Date.now(), id);

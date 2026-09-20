@@ -115,6 +115,15 @@ export function identityValid(identity: VerifiedIdentity, time: string): boolean
   );
 }
 
+function checkIdentity(identity: VerifiedIdentity, time: string): void {
+  check(
+    identityValid(identity, time),
+    'unauthorized',
+    'Verified identity is invalid or expired',
+    401,
+  );
+}
+
 /** Synchronous membership storage, owned by Scope. Identity verification stays outside this layer. */
 export class Memberships {
   constructor(
@@ -127,14 +136,8 @@ export class Memberships {
     ) => Promise<Actor>,
   ) {}
 
-  async acceptVerifiedIdentity(identity: VerifiedIdentity): Promise<HumanPrincipal> {
-    const time = this.time();
-    check(
-      identityValid(identity, time),
-      'unauthorized',
-      'Verified identity is invalid or expired',
-      401,
-    );
+  async acceptVerifiedIdentity({ ...identity }: VerifiedIdentity): Promise<HumanPrincipal> {
+    checkIdentity(identity, this.time());
     const existing = await this.state.read(
       async (sql) =>
         await sql.get<{ created_at: string }>(
@@ -143,6 +146,7 @@ export class Memberships {
           identity.subject,
         ),
     );
+    checkIdentity(identity, this.time());
     if (existing)
       return {
         kind: 'user',
@@ -155,21 +159,18 @@ export class Memberships {
       };
     return await this.state.transaction(async (tx) => {
       const insertedAt = this.time();
-      check(
-        identityValid(identity, insertedAt),
-        'unauthorized',
-        'Verified identity is invalid or expired',
-        401,
-      );
+      checkIdentity(identity, insertedAt);
       await tx.run(
         'INSERT INTO shared_users(issuer,subject,created_at) VALUES(?,?,?) ON CONFLICT DO NOTHING',
         identity.issuer,
         identity.subject,
         insertedAt,
       );
+      const user = await this.user(tx, identity.issuer, identity.subject);
+      checkIdentity(identity, this.time());
       return {
         kind: 'user',
-        user: await this.user(tx, identity.issuer, identity.subject),
+        user,
         expiresAt: identity.expiresAt,
       };
     });
@@ -192,17 +193,14 @@ export class Memberships {
       'This operation requires a verified human user',
       403,
     );
-    check(
-      principal.user &&
-        identityValid({ ...principal.user, expiresAt: principal.expiresAt }, this.time()),
-      'unauthorized',
-      'Verified identity is invalid or expired',
-      401,
-    );
+    const identity = { ...principal.user, expiresAt: principal.expiresAt };
+    checkIdentity(identity, this.time());
+    const user = await this.user(tx, identity.issuer, identity.subject);
+    checkIdentity(identity, this.time());
     return {
       kind: 'user',
-      user: await this.user(tx, principal.user.issuer, principal.user.subject),
-      expiresAt: principal.expiresAt,
+      user,
+      expiresAt: identity.expiresAt,
     };
   }
 
@@ -290,7 +288,7 @@ export class Memberships {
 
   async createProject(
     principal: Principal,
-    input: { name: string; requestId: string },
+    { ...input }: { name: string; requestId: string },
   ): Promise<Project> {
     check(
       typeof input.name === 'string' && visible(input.name) && input.name.length <= 200,
@@ -365,8 +363,7 @@ export class Memberships {
 
   async memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]> {
     return await this.state.transaction(async (tx) => {
-      await this.human(principal, tx);
-      await this.resolve(principal, projectId, tx);
+      await this.resolve(await this.human(principal, tx), projectId, tx);
       return (
         await tx.all<MembershipRow>(
           tx.dialect === 'postgres'
@@ -383,8 +380,7 @@ export class Memberships {
     projectId: string,
     tx: Transaction,
   ): Promise<Caller> {
-    await this.human(principal, tx);
-    const caller = await this.resolve(principal, projectId, tx);
+    const caller = await this.resolve(await this.human(principal, tx), projectId, tx);
     await this.require(caller, 'admin', tx);
     return caller;
   }
@@ -456,10 +452,10 @@ export class Memberships {
   async addMember(
     principal: Principal,
     projectId: string,
-    input: { subject: string; role: Role },
+    { subject, role }: { subject: string; role: Role },
   ): Promise<ProjectMembership> {
-    this.input(input.subject);
-    check(roles.includes(input.role), 'invalid_role', 'Unknown member role');
+    this.input(subject);
+    check(roles.includes(role), 'invalid_role', 'Unknown member role');
     return await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const issuer = caller.human!.issuer;
@@ -467,24 +463,24 @@ export class Memberships {
         'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
         projectId,
         issuer,
-        input.subject,
+        subject,
       );
       if (old) {
         check(
-          old.role === input.role,
+          old.role === role,
           'membership_exists',
           'Use changeMemberRole for an existing member',
           409,
         );
         return membership(old);
       }
-      const value = await this.activate(tx, projectId, issuer, input.subject, input.role);
+      const value = await this.activate(tx, projectId, issuer, subject, role);
       await this.state.appendEvent(tx, {
         projectId,
         actorId: caller.actorId,
         type: 'actor.membership_added',
         subjectId: value.actorId,
-        data: { membershipId: value.id, issuer, subject: input.subject, role: input.role },
+        data: { membershipId: value.id, issuer, subject, role },
       });
       return value;
     });
@@ -526,27 +522,21 @@ export class Memberships {
   async changeMemberRole(
     principal: Principal,
     projectId: string,
-    input: { subject: string; role: Role },
+    { subject, role }: { subject: string; role: Role },
   ): Promise<ProjectMembership> {
-    this.input(input.subject);
-    check(roles.includes(input.role), 'invalid_role', 'Unknown member role');
+    this.input(subject);
+    check(roles.includes(role), 'invalid_role', 'Unknown member role');
     return await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
-      const previous = await this.active(tx, projectId, caller.human!.issuer, input.subject);
-      if (previous.role === input.role) return membership(previous);
-      await this.keepOperator(tx, previous, input.role);
+      const previous = await this.active(tx, projectId, caller.human!.issuer, subject);
+      if (previous.role === role) return membership(previous);
+      await this.keepOperator(tx, previous, role);
       await tx.run(
         'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',
         this.time(),
         previous.id,
       );
-      const next = await this.activate(
-        tx,
-        projectId,
-        previous.issuer,
-        previous.subject,
-        input.role,
-      );
+      const next = await this.activate(tx, projectId, previous.issuer, previous.subject, role);
       await this.state.appendEvent(tx, {
         projectId,
         actorId: caller.actorId,
@@ -602,19 +592,17 @@ export class Memberships {
     projectId: string,
     options?: { repairReason: string },
   ): Promise<ProjectMembership> {
+    const reason = options?.repairReason;
     if (options !== undefined)
       check(
-        options &&
-          typeof options.repairReason === 'string' &&
-          visible(options.repairReason) &&
-          options.repairReason.length <= 2000,
+        typeof reason === 'string' && visible(reason) && reason.length <= 2000,
         'invalid_repair_reason',
         'Local ownership repair requires a reason of 1–2000 characters',
       );
     return await this.state.transaction(async (tx) => {
       const human = await this.human(principal, tx);
       await this.project(tx, projectId);
-      if (options !== undefined) {
+      if (reason !== undefined) {
         const previous = await tx.get<MembershipRow>(
           tx.dialect === 'postgres'
             ? 'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,_merv_rowid DESC LIMIT 1'
@@ -659,7 +647,7 @@ export class Memberships {
           type: 'membership.repaired',
           subjectId: value.actorId,
           data: {
-            reason: options.repairReason.trim(),
+            reason: reason.trim(),
             issuer: value.issuer,
             subject: value.subject,
             membershipId: value.id,

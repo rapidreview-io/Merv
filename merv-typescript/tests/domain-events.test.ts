@@ -405,6 +405,69 @@ async function emitProbe(state: SqliteState) {
   );
 }
 
+test('a failed delivery cannot put another worker’s successful delivery back into retry', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-stale-failure-'));
+  const state = new SqliteState(join(directory, 'state.db'));
+  const other = new SqliteState(join(directory, 'state.db'));
+  const events = await createService(new DurableEvents(state));
+  const successor = await createService(new DurableEvents(other));
+  const failed = signal(),
+    released = signal();
+  const failure = new Error('handler failed');
+  const transaction = state.transaction.bind(state);
+  state.transaction = async (fn) => {
+    try {
+      return await transaction(fn);
+    } catch (error) {
+      if (error === failure) {
+        failed.resolve();
+        await released.promise;
+      }
+      throw error;
+    }
+  };
+  try {
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle() {
+        throw failure;
+      },
+    });
+    const first = await emitProbe(state);
+    const draining = events.drain();
+    await failed.promise;
+    const handled: number[] = [];
+    await successor.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle(event) {
+        handled.push(event.id);
+      },
+    });
+    await successor.drain();
+    const successful = [
+      { id: 'worker', cursor: first.id, active: true, attempts: 0, error: null, retryAt: 0 },
+    ];
+    assert.deepEqual(await successor.status(), successful);
+    released.resolve();
+    await draining;
+    await events.close();
+    assert.deepEqual(await successor.status(), successful);
+    const second = await emitProbe(other);
+    await successor.drain();
+    assert.deepEqual(handled, [first.id, second.id]);
+  } finally {
+    released.resolve();
+    state.transaction = transaction;
+    await Promise.all([events.close(), successor.close()]);
+    await Promise.all([state.close(), other.close()]);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('drain joins async handlers and close waits for their atomic commit without admitting the next event', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-events-drain-'));
   const state = new SqliteState(join(directory, 'state.db'));
@@ -639,6 +702,190 @@ test('joining drain includes a commit made after an earlier consumer exhausted i
   } finally {
     released.resolve();
     state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});
+
+for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
+  test(`handler event edits cannot move the durable cursor to ${cursor}`, async () => {
+    const state = new SqliteState(':memory:');
+    const events = await createService(new DurableEvents(state));
+    try {
+      await state.migrate('cursor_probe', [
+        { version: 1, sql: 'CREATE TABLE cursor_probe(event INTEGER);' },
+      ]);
+      let changed = false;
+      await events.subscribe({
+        id: 'cursor-owner',
+        types: ['probe.created'],
+        from: 'beginning',
+        async handle(event, tx) {
+          await tx.run('INSERT INTO cursor_probe VALUES (?)', event.id);
+          if (!changed) {
+            changed = true;
+            event.id = cursor;
+          }
+        },
+      });
+      const first = await emitProbe(state),
+        second = await emitProbe(state);
+      await events.drain();
+      assert.deepEqual(
+        (
+          await state.read((sql) =>
+            sql.all<{ event: number }>('SELECT event FROM cursor_probe ORDER BY rowid'),
+          )
+        ).map((row) => row.event),
+        [first.id, second.id],
+      );
+      assert.equal((await events.status())[0].cursor, second.id);
+      const third = await emitProbe(state);
+      await events.drain();
+      assert.equal((await events.status())[0].cursor, third.id);
+    } finally {
+      await events.close();
+      await state.close();
+    }
+  });
+}
+
+for (const shape of ['getter', 'proxy', 'revoked proxy'] as const) {
+  test(`a handler's thrown ${shape} cannot prevent failure isolation`, async () => {
+    const state = new SqliteState(':memory:');
+    const events = await createService(new DurableEvents(state));
+    let effects = 0,
+      healthyCalls = 0;
+    const trap = () => {
+      effects++;
+      throw new Error('error inspection must not execute this');
+    };
+    let failure: unknown;
+    if (shape === 'getter') failure = Object.defineProperty({}, 'code', { get: trap });
+    else if (shape === 'proxy')
+      failure = new Proxy({}, { has: trap, get: trap, getOwnPropertyDescriptor: trap });
+    else {
+      const proxy = Proxy.revocable({}, {});
+      proxy.revoke();
+      failure = proxy.proxy;
+    }
+    try {
+      await events.subscribe({
+        id: 'failing',
+        types: ['probe.created'],
+        from: 'beginning',
+        handle() {
+          throw failure;
+        },
+      });
+      await events.subscribe({
+        id: 'healthy',
+        types: ['probe.created'],
+        from: 'beginning',
+        handle() {
+          healthyCalls++;
+        },
+      });
+      const event = await emitProbe(state);
+      await events.drain();
+      const status = await events.status();
+      assert.equal(effects, 0);
+      assert.equal(healthyCalls, 1);
+      assert.equal(status.find((consumer) => consumer.id === 'healthy')!.cursor, event.id);
+      const failed = status.find((consumer) => consumer.id === 'failing')!;
+      assert.equal(failed.cursor, 0);
+      assert.equal(failed.attempts, 1);
+      assert.equal(failed.error, 'handler_failed');
+      assert.ok(failed.retryAt > 0);
+    } finally {
+      await events.close();
+      await state.close();
+    }
+  });
+}
+
+for (const operation of ['drain', 'close'] as const) {
+  test(`a handler cannot ${operation} its own dispatcher and strand other consumers`, async () => {
+    const state = new SqliteState(':memory:');
+    const events = await createService(new DurableEvents(state));
+    let outcome: unknown;
+    let healthy = 0;
+    try {
+      await events.subscribe({
+        id: 'self',
+        types: ['probe.created'],
+        from: 'beginning',
+        async handle() {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            outcome = await Promise.race([
+              Promise.resolve()
+                .then(() => events[operation]())
+                .then(
+                  () => 'unexpected success',
+                  (error: unknown) => error,
+                ),
+              new Promise((resolve) => {
+                timer = setTimeout(() => resolve('self-wait deadlock'), 100);
+              }),
+            ]);
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+      });
+      await events.subscribe({
+        id: 'healthy',
+        types: ['probe.created'],
+        from: 'beginning',
+        handle() {
+          healthy++;
+        },
+      });
+      const first = await emitProbe(state);
+      await events.drain();
+      assert.equal((outcome as { code?: string })?.code, 'events_handler_active', String(outcome));
+      assert.equal(healthy, 1);
+      assert.ok(
+        (await events.status()).every(
+          (consumer) => consumer.cursor === first.id && consumer.active,
+        ),
+      );
+      await emitProbe(state);
+      await events.drain();
+      assert.equal(healthy, 2);
+    } finally {
+      await events.close();
+      await state.close();
+    }
+  });
+}
+
+test('a continuation inherited from a completed handler can close normally', async () => {
+  const state = new SqliteState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const released = signal();
+  let continuation: Promise<void> | undefined;
+  let calls = 0;
+  try {
+    await events.subscribe({
+      id: 'continuation',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle() {
+        calls++;
+        continuation ??= released.promise.then(() => events.close());
+      },
+    });
+    await emitProbe(state);
+    await events.drain();
+    released.resolve();
+    await continuation;
+    assert.equal(calls, 1);
+    assert.equal((await events.status())[0]!.active, false);
+  } finally {
+    released.resolve();
+    await continuation;
     await events.close();
     await state.close();
   }

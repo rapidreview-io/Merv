@@ -266,7 +266,11 @@ test('expiry is canonical, rejects invalid issuance atomically and fences previo
 test('credential identity cannot be paired with another actor/project and metadata visibility stays scoped', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const reader = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
+  const actorInput = { name: 'Reader', role: 'reader' as 'reader' | 'operator' };
+  const issuing = f.scope.issueActor(f.operator, actorInput);
+  actorInput.role = 'operator';
+  const reader = await issuing;
+  assert.equal(reader.actor.role, 'reader');
   const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
   const readerCaller = asCaller(reader);
   assert.deepEqual(await f.scope.actorCredentials(readerCaller), [reader.credential]);
@@ -289,17 +293,129 @@ test('credential identity cannot be paired with another actor/project and metada
     { ...f.operator, credentialId: 'missing' },
   ])
     await assert.rejects(async () => await f.scope.require(caller, 'read'), { code: 'forbidden' });
+  await f.state.transaction(async (tx) => {
+    const caller = { ...f.operator, credentialId: reader.credential.id };
+    const get = tx.get.bind(tx);
+    let substitutions = 0;
+    const intercept = t.mock.method(tx, 'get', async (...args: Parameters<typeof get>) => {
+      const row = await get(...args);
+      if (args[0].includes('LEFT JOIN member_actors')) {
+        caller.actorId = reader.actor.id;
+        substitutions++;
+      }
+      return row;
+    });
+    try {
+      await assert.rejects(() => f.scope.require(caller, 'admin', tx), { code: 'forbidden' });
+      assert.equal(substitutions, 1);
+    } finally {
+      intercept.mock.restore();
+    }
+  });
+  const pendingCaller = { ...f.operator };
+  const source = f.scope.delegationSource(pendingCaller);
+  Object.assign(pendingCaller, readerCaller);
+  const capturedSource = await source;
+  assert.equal(capturedSource.actorId, f.operator.actorId);
+  assert.ok(capturedSource.kind === 'actor');
+  const authorized = f.scope.requireDelegation(capturedSource, 'admin');
+  capturedSource.expiresAt = 'changed';
+  assert.equal((await authorized).id, f.operator.actorId);
   for (const action of [
     async () =>
       await f.scope.rotateCredential(readerCaller, { credentialId: reader.credential.id }),
     async () => await f.scope.revokeCredential(readerCaller, f.admin.credential.id),
   ])
     await assert.rejects(action, { code: 'forbidden' });
-  for (const action of [
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: other.credential.id }),
-    async () => await f.scope.revokeCredential(f.operator, other.credential.id),
-  ])
-    await assert.rejects(action, { code: 'not_found' });
+  const changingCaller = { ...f.operator };
+  const authorize = f.scope.require.bind(f.scope);
+  const intercepted = t.mock.method(
+    f.scope,
+    'require',
+    async (...args: Parameters<typeof authorize>) => {
+      const actor = await authorize(...args);
+      changingCaller.projectId = other.project.id;
+      return actor;
+    },
+  );
+  try {
+    for (const action of [
+      () => f.scope.issueActorCredential(changingCaller, { actorId: other.actor.id }),
+      () => f.scope.actorCredentials(changingCaller, other.actor.id),
+      () => f.scope.rotateCredential(changingCaller, { credentialId: other.credential.id }),
+      () => f.scope.revokeCredential(changingCaller, other.credential.id),
+      () => f.scope.revokeActor(changingCaller, other.actor.id),
+    ]) {
+      changingCaller.projectId = f.operator.projectId;
+      await assert.rejects(action, { code: 'not_found' });
+    }
+    changingCaller.projectId = f.operator.projectId;
+    assert.equal((await f.scope.project(changingCaller)).id, f.operator.projectId);
+    changingCaller.projectId = f.operator.projectId;
+    assert.ok(
+      (await f.scope.actors(changingCaller)).every(
+        (actor) => actor.projectId === f.operator.projectId,
+      ),
+    );
+  } finally {
+    intercepted.mock.restore();
+  }
+});
+
+test('session actor creation and role updates retain the authorized delegation and role', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const reader = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
+  const readerSource = await f.scope.delegationSource(asCaller(reader));
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  await assert.rejects(() => f.scope.requireDelegation(readerSource, 'write'), {
+    code: 'forbidden',
+  });
+  for (const change of ['role', 'project'])
+    await t.test(change, async () => {
+      const source = structuredClone(readerSource);
+      const input = {
+        sessionId: `session-${change}`,
+        name: 'Reader session',
+        role: 'reader' as 'reader' | 'producer',
+      };
+      const created = await f.state.transaction(async (tx) => {
+        const pending = f.scope.createSessionActor(source, input, tx);
+        if (change === 'role') input.role = 'producer';
+        else source.projectId = other.project.id;
+        return await pending;
+      });
+      assert.equal(created.role, 'reader');
+      assert.equal(created.projectId, f.operator.projectId);
+      const stored = await f.state.read((sql) =>
+        sql.get('SELECT role,project_id FROM actors WHERE id=?', created.id),
+      );
+      assert.equal(stored!.role, 'reader');
+      assert.equal(stored!.project_id, f.operator.projectId);
+    });
+  const otherSource = await f.scope.delegationSource(asCaller(other));
+  const foreign = await f.state.transaction((tx) =>
+    f.scope.createSessionActor(
+      otherSource,
+      {
+        sessionId: 'foreign-session',
+        agentId: 'foreign-agent',
+        name: 'Foreign reader',
+        role: 'reader',
+      },
+      tx,
+    ),
+  );
+  const source = await f.scope.delegationSource(f.operator);
+  await f.state.transaction(async (tx) => {
+    const pending = f.scope.setAgentRole(source, foreign.id, 'producer', tx);
+    source.projectId = other.project.id;
+    await assert.rejects(pending, { code: 'agent_unavailable' });
+  });
+  assert.equal(
+    (await f.state.read((sql) => sql.get('SELECT role FROM actors WHERE id=?', foreign.id)))!.role,
+    'reader',
+  );
 });
 
 test('rotation preserves identity and expiry, retains history and immediately fences old caller credentials', async (t) => {
@@ -582,10 +698,45 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
     expiresAt: deadline,
   });
   const caller = asCaller(limited);
-  const inherited = await f.scope.issueActorCredential(caller, { actorId: caller.actorId });
+  const issueInput = { actorId: caller.actorId };
+  const pendingIssue = f.scope.issueActorCredential(caller, issueInput);
+  issueInput.actorId = f.operator.actorId;
+  const inherited = await pendingIssue;
   assert.equal(inherited.credential.expiresAt, deadline);
   const before = await f.scope.actorCredentials(caller);
   const head = await f.state.eventHead();
+  for (const operation of ['issue', 'rotate']) {
+    const pendingCaller = { ...caller };
+    const authorize = f.scope.require.bind(f.scope);
+    const intercepted = t.mock.method(
+      f.scope,
+      'require',
+      async (...args: Parameters<typeof authorize>) => {
+        const actor = await authorize(...args);
+        pendingCaller.actorId = f.operator.actorId;
+        delete pendingCaller.credentialId;
+        return actor;
+      },
+    );
+    try {
+      await assert.rejects(
+        () =>
+          operation === 'issue'
+            ? f.scope.issueActorCredential(pendingCaller, {
+                actorId: caller.actorId,
+                expiresAt: null,
+              })
+            : f.scope.rotateCredential(pendingCaller, {
+                credentialId: inherited.credential.id,
+                expiresAt: null,
+              }),
+        { code: 'self_expiry_extension', status: 403 },
+      );
+    } finally {
+      intercepted.mock.restore();
+    }
+  }
+
   for (const expiresAt of [null, new Date(start + 2001).toISOString()])
     await assert.rejects(
       async () =>
@@ -605,7 +756,10 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
         await f.scope.rotateCredential(caller, { credentialId: short.credential.id, expiresAt }),
       { code: 'self_expiry_extension', status: 403 },
     );
-  const rotated = await f.scope.rotateCredential(caller, { credentialId: short.credential.id });
+  const rotationInput = { credentialId: short.credential.id };
+  const pendingRotation = f.scope.rotateCredential(caller, rotationInput);
+  rotationInput.credentialId = caller.credentialId!;
+  const rotated = await pendingRotation;
   assert.equal(rotated.credential.expiresAt, shortDeadline);
   // Nor can a short-lived caller rotate a longer credential of its own into a permanent one.
   const lasting = await f.scope.issueActorCredential(f.operator, {

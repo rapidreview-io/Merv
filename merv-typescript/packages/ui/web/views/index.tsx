@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import { Navigate } from 'react-router-dom';
 import type { Row, ShellData } from '../shell';
+import { EmptyState } from '../components';
 import { TasksView } from './tasks';
 import { ReviewsView } from './reviews';
 import { ArtifactsView } from './artifacts';
@@ -49,17 +50,18 @@ const views: Record<string, ComponentType<ViewProps>> = {
   record: RecordView,
 };
 
+/** Every view kind this build can draw: what an address may open with and still be ours. */
+export const VIEW_KINDS: readonly string[] = Object.keys(views);
+
 /** A row whose view kind this bundle does not know still gets a page; it says so instead of breaking. */
 function UnknownView({ row }: ViewProps) {
   return (
     <div className="page-stage">
-      <div className="empty-state">
-        <h2>{row.label}</h2>
-        <p>
-          This build of the UI cannot render view kind <span className="mono">{row.view.kind}</span>
-          .{row.readable ? ' The row exposes data through ui.read.' : ''}
-        </p>
-      </div>
+      <EmptyState
+        icon="alert"
+        title={row.label}
+        hint="This version of Merv cannot show this page"
+      />
     </div>
   );
 }

@@ -35,6 +35,8 @@ Configuration explicitly selects raw upstream tool names:
 
 The plugin configuration defaults to empty `mounts` and `bindings` arrays; the application default list does not install this optional plugin. Tool selection does not grant access: individual callers still need exact Scope tool grants and matching upstream credential bindings. Discovery can use the optional local identity; invocation resolves the actual caller's credentials. Credential bindings live in this same configuration; secret values remain in the server environment.
 
+Discovery, invocation, and notification requests refuse HTTP redirects. Configure the final MCP endpoint directly: a redirect does not authorize forwarding tool arguments, selector headers, or MCP session headers to another destination.
+
 The following helper modules now belong to this package:
 
 - `@merv/mounts/remote-catalog` exports `collectRemoteCatalog` and `RemoteCatalog`. Collection is bounded by page, tool, and time limits. Catalog replacement validates a complete generation before publication, and controller shutdown withdraws tools before waiting for admitted calls. The controller owns its client's `tools/list_changed` handler.
@@ -59,3 +61,5 @@ Remove the old `@merv/credentials` plugin entry and move its `config.bindings` i
 The internal resolver selects exact project/actor/mount bindings and checks current Scope authority. Agent sessions resolve against their authority actor. Secrets are read from `env:NAME` on every resolution; known local Merv credentials are rejected, including revoked or rotated credentials. Bindings accept only fixed nonsecret selector headers. Missing or invalid credentials produce sanitized errors.
 
 Secret snapshots hide headers from JSON and diagnostic inspection. Their opaque identity includes the binding and current secret, so rotation selects a different connection. The client rechecks authority and credential identity after connection setup, before dispatch. Upstream tokens never become agent-facing tool results. This move adds no OAuth flow or automatic token refresh.
+
+Resolution rejects bindings or secrets changed while local-token validation is pending. Environment-backed snapshots also supply a synchronous `assertCurrent()` fence, checked after the final policy await and at the HTTP transport boundary, including discovery. Custom mutable credential providers can supply the same optional fence. Equivalent binding replacements keep cached connections usable; requests already sent can drain with their original identity.

@@ -9,8 +9,8 @@ const id = z.string().min(1).max(128);
  * The two acts the manifest binds its Act controls to. The service decides everything else:
  * these carry one sandbox's id and, for a lease, the length the service is asked for, and
  * report the service's own answer. Both need the project's write permission, like every other
- * tool that changes something, and both are idempotent per sandbox: a lease renewed twice ends
- * where the last renewal put it, and a machine released twice is released once.
+ * tool that changes something. Release is idempotent; each separate extension adds lifetime
+ * and uses the revision read from the service to refuse concurrent changes.
  */
 export const sandboxesToolsPlugin = {
   name: 'merv-sandboxes-tools',

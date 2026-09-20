@@ -1,4 +1,4 @@
-import { visible, recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -80,6 +80,10 @@ export class FeedService implements Feed {
   }
 
   async post(caller: Caller, input: FeedInput, transaction?: Transaction): Promise<FeedPost> {
+    caller = structuredClone(caller);
+    // The validated attachments, persisted post and retry receipt must describe one input,
+    // even when a direct service caller reuses its object while asynchronous checks run.
+    input = plain<FeedInput>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       const actor = await this.scope.require(caller, 'read', tx);
       check(
@@ -175,6 +179,7 @@ export class FeedService implements Feed {
   }
 
   async get(caller: Caller, postId: string): Promise<FeedPost> {
+    caller = structuredClone(caller);
     await this.scope.require(caller, 'read');
     check(typeof postId === 'string' && visible(postId), 'invalid_post', 'A post ID is required');
     const row = await this.state.read(
@@ -190,14 +195,15 @@ export class FeedService implements Feed {
   }
 
   async list(caller: Caller, input: FeedListInput = {}): Promise<FeedPost[]> {
+    caller = structuredClone(caller);
+    input = structuredClone(input);
     await this.scope.require(caller, 'read');
     check(
       input && typeof input === 'object' && !Array.isArray(input),
       'invalid_input',
       'List input must be an object',
     );
-    const after = input.after === undefined ? 0 : input.after,
-      limit = input.limit === undefined ? 50 : input.limit;
+    const { after = 0, limit = 50 } = input;
     check(
       Number.isSafeInteger(after) && after >= 0,
       'invalid_cursor',
@@ -229,6 +235,7 @@ export class FeedService implements Feed {
   }
 
   async activity(caller: Caller, after?: number): Promise<StoredEvent[]> {
+    caller = structuredClone(caller);
     const actor = await this.scope.require(caller, 'read');
     check(
       after === undefined || (Number.isSafeInteger(after) && after >= 0),

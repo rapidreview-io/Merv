@@ -121,6 +121,71 @@ test('preview renders the exact future package without creating IDs, timestamps,
   );
 });
 
+test('context requests retain their caller and assignment across authorization', async (t) => {
+  const { state, scope, artifacts, builder, operator } = await setup(t);
+  const identity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = { actorId: identity.actor.id, projectId: identity.project.id };
+  const registration = await builder.register(definition);
+  const original = {
+    subject: { id: 'assignment', revision: 3 },
+    inputs: { evidence: { text: 'Original evidence' } },
+    requestId: 'original',
+  };
+  const built = await registration.build(operator, original);
+  const { id, createdAt, ...preview } = built;
+  const authorize = scope.require.bind(scope);
+  for (const method of ['preview', 'build', 'replay'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...operator };
+      const input = structuredClone(original);
+      scope.require = async (...args) => {
+        const actor = await authorize(...args);
+        Object.assign(caller, other);
+        input.subject.revision = 99;
+        input.inputs.evidence.text = 'Changed evidence';
+        input.requestId = 'changed';
+        return actor;
+      };
+      try {
+        if (method === 'preview') {
+          const { requestId, ...request } = input;
+          assert.deepEqual(await registration.preview(caller, request), preview);
+        } else if (method === 'build') {
+          assert.deepEqual(await registration.build(caller, input), built);
+        } else {
+          const { inputs, ...request } = input;
+          assert.deepEqual(await registration.replay(caller, request), built);
+        }
+      } finally {
+        scope.require = authorize;
+      }
+    });
+  }
+  const foreign = await registration.build(other, original);
+  const caller = { ...operator };
+  scope.require = async (...args) => {
+    const actor = await authorize(...args);
+    caller.projectId = other.projectId;
+    return actor;
+  };
+  await assert.rejects(builder.get(caller, foreign.id), { code: 'not_found' });
+  scope.require = authorize;
+  const small = await artifacts.create(operator, { title: 'Small', content: 'x' });
+  const large = await artifacts.create(operator, { title: 'Large', content: 'x'.repeat(100) });
+  const ids = [small.id, large.id];
+  const modeCaller = { ...operator };
+  const lookup = artifacts.get.bind(artifacts);
+  artifacts.get = async (...args) => {
+    const artifact = await lookup(...args);
+    ids.pop();
+    Object.assign(modeCaller, other);
+    return artifact;
+  };
+  await state.transaction(async (tx) => {
+    assert.equal(await builder.mode(modeCaller, ids, 50, tx), 'references');
+  });
+});
+
 test('preview shares text, auto and references rendering, deduplicated manifests and required/optional budgets', async (t) => {
   const { artifacts, builder, operator, changes } = await setup(t);
   const text = await artifacts.create(operator, { title: 'Text', content: 'A text result.' });

@@ -3,16 +3,10 @@ import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
-import {
-  Area,
-  Failure,
-  KindLabel,
-  LoadState,
-  StatusPill,
-  relativeTime,
-  words,
-} from '../components';
+import { Ago, Area, Failure, LoadState, StatusPill, Submit, Summary, words } from '../components';
+import { EditIcon } from '../icons';
 import { ListPage, useListFilter } from '../list-filters';
+import { RecordText, useRecordNames, type RecordNames } from '../markdown';
 import { useScopeKey, useSession } from '../session';
 import type { Row } from '../shell-types';
 import type { ViewProps } from './index';
@@ -31,9 +25,13 @@ interface Reference {
 /**
  * The one thing the retired Knowledge page did that nothing else does: read the
  * metadata behind references an agent quoted. It is a lookup, not a collection,
- * so it is a quiet control beside the claims rather than a place of its own.
+ * so it is a quiet control beside the claims rather than a place of its own. What
+ * it reads is what an agent wrote, pasted as it was written — nobody picks these by
+ * name, because whether the name exists is the question — so the field says that
+ * in the one place a field may: its own placeholder.
  */
 function ReferenceLookup() {
+  const heading = useId();
   const [text, setText] = useState('');
   const [refs, setRefs] = useState<string[] | null>(null);
   const [error, setError] = useState<string>();
@@ -42,7 +40,7 @@ function ReferenceLookup() {
     event.preventDefault();
     const next = text.split(/\s+/).filter(Boolean);
     if (!next.length || next.length > 200) {
-      setError('Enter between 1 and 200 references, separated by spaces or new lines.');
+      setError('Paste between 1 and 200 references.');
       return;
     }
     setError(undefined);
@@ -51,20 +49,21 @@ function ReferenceLookup() {
   };
   return (
     <section className="stack">
-      <form className="card stack claims-form" onSubmit={submit}>
+      <form className="card stack claims-form" aria-labelledby={heading} onSubmit={submit}>
+        <h2 id={heading}>Check references</h2>
         <Area
-          label="Record IDs or references"
-          className="textarea mono"
+          label="References"
+          className="mono"
           rows={3}
           maxLength={40200}
+          placeholder="Paste what an agent cited, one reference to a line"
           value={text}
           onChange={setText}
-          placeholder="claim:claim_… artifact:art_… task:task_…"
         />
         <Failure message={error} />
         <div>
           <button className="btn" disabled={lookup.loading || !text.trim()}>
-            Check references
+            Check
           </button>
         </div>
       </form>
@@ -74,7 +73,8 @@ function ReferenceLookup() {
           {lookup.data.map((item, index) => (
             <li className="row" key={`${index}:${item.ref}`}>
               <span className="row-name">
-                <strong>{item.label ?? item.ref}</strong>
+                {/* A reference nobody could name is shortened, never printed as its id. */}
+                <strong>{item.label ?? <RecordText text={item.ref} />}</strong>
                 <StatusPill value={item.status} />
               </span>
               <span className="states-detail">{item.state ? words(item.state) : ''}</span>
@@ -195,7 +195,6 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
       <fieldset disabled={mutation.locked}>
         <Area
           label="Statement"
-          className="textarea"
           required
           maxLength={16000}
           rows={3}
@@ -204,7 +203,6 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
         />
         <Area
           label="Scope (optional)"
-          className="textarea"
           maxLength={16000}
           rows={2}
           value={scope}
@@ -219,9 +217,7 @@ function CreateClaim({ onSaved }: { onSaved: () => void }) {
       </fieldset>
       <Failure message={mutation.error} />
       <div className="cluster">
-        <button className="btn btn--primary" disabled={mutation.busy || !statement.trim()}>
-          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'New claim'}
-        </button>
+        <Submit busy={mutation.busy} retry={mutation.retry} disabled={!statement.trim()} />
       </div>
     </form>
   );
@@ -269,9 +265,7 @@ function EditClaim({
       </fieldset>
       <Failure message={mutation.error} />
       <div className="cluster">
-        <button className="btn btn--primary" disabled={mutation.busy || !changed}>
-          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Edit standing'}
-        </button>
+        <Submit label="Save" busy={mutation.busy} retry={mutation.retry} disabled={!changed} />
         <button type="button" className="btn" disabled={mutation.locked} onClick={onCancel}>
           Cancel
         </button>
@@ -289,12 +283,15 @@ function ClaimEntry({
   claim,
   tests,
   changes,
+  names,
   writable,
   reload,
 }: {
   claim: Claim;
   tests: Testing[];
   changes: StandingChange[];
+  /** The records a statement or a scope may mention by id, named once for the book. */
+  names: RecordNames;
   writable: boolean;
   reload: () => void;
 }) {
@@ -305,29 +302,41 @@ function ClaimEntry({
   return (
     <article className="record claim" aria-labelledby={heading}>
       <details>
-        <summary className="claim-line">
-          <KindLabel kind="claims" />
+        {/* The book holds claims and nothing else, so no entry says again that it is one. */}
+        <Summary className="claim-line">
           <h2 className="claim-statement" id={heading}>
-            {claim.statement}
+            <RecordText text={claim.statement} names={names} />
           </h2>
+          {/* The standing closes the line, so the pills read down the book as one column. */}
+          {tests.length > 0 && (
+            <span className="faint claim-tests">
+              {tests.length} {tests.length === 1 ? 'experiment' : 'experiments'}
+            </span>
+          )}
           <StatusPill value={claim.status} />
-          {tests.length > 0 && <span className="faint">{tests.length} experiments</span>}
-        </summary>
+        </Summary>
         <p className="claim-standing">
           {claim.confidence} confidence
-          {claim.scope && ` · ${claim.scope}`}
+          {claim.scope && (
+            <>
+              {' · '}
+              <RecordText text={claim.scope} names={names} />
+            </>
+          )}
           {/* The one quiet action a card carries, at the end of its standing and nowhere else. */}
           {writable && !editing && (
             <button
               type="button"
-              className="btn-text claim-edit"
+              className="btn-icon btn-icon--inline claim-edit"
+              aria-label="Edit standing"
+              title="Edit standing"
               disabled={needsRefresh}
               onClick={() => {
                 setEditing(true);
                 setConflictRevision(undefined);
               }}
             >
-              Edit standing
+              <EditIcon />
             </button>
           )}
           {writable && needsRefresh && (
@@ -349,7 +358,7 @@ function ClaimEntry({
               change.data.status ?? claim.status,
               change.data.confidence ?? claim.confidence,
             )}{' '}
-            · <span title={change.createdAt}>{relativeTime(change.createdAt)}</span>
+            · <Ago at={change.createdAt} />
           </p>
         ))}
         {conflictRevision !== undefined && (
@@ -421,6 +430,10 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
         .sort((a, b) => Number(stopped.has(a.state)) - Number(stopped.has(b.state)))
     );
   };
+  // An id an author wrote into a statement reads as the record's name, as it does in a note.
+  const names = useRecordNames(
+    (claims.data ?? []).map((claim) => `${claim.statement}\n${claim.scope}`).join('\n'),
+  );
   const changesOf = (claimId: string) =>
     (activity.data ?? [])
       .filter(
@@ -432,6 +445,7 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
     <ListPage
       load={claims}
       noun="claims"
+      kind="claims"
       placeholder="Statement or scope"
       filter={filter}
       emptyTitle="No claims yet"
@@ -458,6 +472,7 @@ function ClaimsPage({ rows }: { rows: Row[] }) {
             claim={claim}
             tests={testsOf(claim.id)}
             changes={changesOf(claim.id)}
+            names={names}
             writable={writable}
             reload={() => {
               claims.reload();

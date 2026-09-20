@@ -214,10 +214,12 @@ export class MountRuntime {
     const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
       ...(credential ? { requestInit: { headers: { ...credential.headers() } } } : {}),
       fetch: async (address, init) => {
+        credential?.assertCurrent?.();
         const lifetime = [controller.signal, ...(init?.signal ? [init.signal] : [])];
         if (init?.method?.toUpperCase() !== 'GET')
           return fetch(address, {
             ...init,
+            redirect: 'error',
             signal: AbortSignal.any([...lifetime, AbortSignal.timeout(this.timeoutMs)]),
           });
         // Bound opening the notification stream, not its lifetime. Timing out an
@@ -227,6 +229,8 @@ export class MountRuntime {
         try {
           return await fetch(address, {
             ...init,
+            // Notification session headers must stay on the configured endpoint too.
+            redirect: 'error',
             signal: AbortSignal.any([...lifetime, opening.signal]),
           });
         } finally {

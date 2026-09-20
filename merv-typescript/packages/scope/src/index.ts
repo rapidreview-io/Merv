@@ -95,6 +95,7 @@ export class ProjectScope implements Scope {
   private members!: Memberships;
   private userKeys!: UserKeys;
   private sessionAuthority?: SessionAuthority;
+  private sessionAuthorityRegistration?: symbol;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -271,11 +272,24 @@ export class ProjectScope implements Scope {
       409,
     );
     this.sessionAuthority = authority;
+    const registration = Symbol('session-authority');
+    this.sessionAuthorityRegistration = registration;
     return () => {
-      if (this.sessionAuthority === authority) this.sessionAuthority = undefined;
+      if (this.sessionAuthorityRegistration !== registration) return;
+      this.sessionAuthorityRegistration = undefined;
+      this.sessionAuthority = undefined;
     };
   }
+  private requireAuthorityRegistration(registration: symbol | undefined): void {
+    check(
+      registration !== undefined && this.sessionAuthorityRegistration === registration,
+      'session_unavailable',
+      'Session authority changed during authorization; retry with the current provider',
+      503,
+    );
+  }
   async delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource> {
+    caller = structuredClone(caller);
     check(
       !caller.session,
       'nested_session',
@@ -318,6 +332,7 @@ export class ProjectScope implements Scope {
     permission: Permission,
     tx?: Transaction,
   ): Promise<Actor> {
+    source = structuredClone(source);
     check(
       source && typeof source.actorId === 'string' && typeof source.projectId === 'string',
       'invalid_delegation',
@@ -382,6 +397,8 @@ export class ProjectScope implements Scope {
     input: { sessionId: string; agentId?: string; role: Exclude<Role, 'operator'>; name: string },
     tx: Transaction,
   ): Promise<Actor> {
+    source = structuredClone(source);
+    input = structuredClone(input);
     this.state.assertTransaction(tx);
     check(
       ['producer', 'reviewer', 'reader'].includes(input.role) &&
@@ -424,6 +441,7 @@ export class ProjectScope implements Scope {
     role: Exclude<Role, 'operator'>,
     tx: Transaction,
   ): Promise<void> {
+    source = structuredClone(source);
     this.state.assertTransaction(tx);
     check(
       ['producer', 'reviewer', 'reader'].includes(role),
@@ -461,6 +479,8 @@ export class ProjectScope implements Scope {
     });
   }
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
+    caller = structuredClone(caller);
+    const registration = this.sessionAuthorityRegistration;
     const value = await this.require(caller, 'read', tx);
     if (!value.sessionId) return value;
     const lookup = async (sql: Sql): Promise<Actor> => {
@@ -476,7 +496,9 @@ export class ProjectScope implements Scope {
         sql as Transaction,
       );
     };
-    return tx ? await lookup(tx) : await this.state.read(lookup);
+    const result = tx ? await lookup(tx) : await this.state.read(lookup);
+    this.requireAuthorityRegistration(registration);
+    return result;
   }
   private time(): string {
     return new Date(this.clock()).toISOString();
@@ -646,6 +668,8 @@ export class ProjectScope implements Scope {
     );
   }
   async require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor> {
+    caller = structuredClone(caller);
+    const registration = this.sessionAuthorityRegistration;
     if (tx) this.state.assertTransaction(tx);
     const lookup = async (sql: Sql) => {
       const row = await sql.get<ActorRow>(
@@ -737,6 +761,9 @@ export class ProjectScope implements Scope {
       return actor(row);
     };
     const value = tx ? await lookup(tx) : await this.state.read(lookup);
+    // An in-flight decision cannot survive provider removal, even if the same object
+    // is installed again before it returns. The caller must make a fresh request.
+    if (value.sessionId) this.requireAuthorityRegistration(registration);
     const allowed = permits(value.role, permission);
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;
@@ -762,6 +789,7 @@ export class ProjectScope implements Scope {
     return !!row && permits(row.role, permission);
   }
   async project(caller: Caller, tx?: Transaction): Promise<Project> {
+    caller = structuredClone(caller);
     if (tx) this.state.assertTransaction(tx);
     await this.require(caller, 'read', tx);
     const read = async (sql: Sql) =>
@@ -773,6 +801,7 @@ export class ProjectScope implements Scope {
     raw: ProjectContextUpdate,
     transaction?: Transaction,
   ): Promise<Project> {
+    caller = structuredClone(caller);
     const input = parseProjectContextUpdate(raw);
     return await inTransaction(this.state, transaction, async (tx) => {
       const authorize = async () => {
@@ -864,6 +893,8 @@ export class ProjectScope implements Scope {
     });
   }
   async issueActor(caller: Caller, input: { name: string; role: Role; expiresAt?: string | null }) {
+    caller = structuredClone(caller);
+    input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
       await this.require(caller, 'admin', tx);
       this.legacyAdministration(caller);
@@ -885,6 +916,7 @@ export class ProjectScope implements Scope {
     });
   }
   async actorCredentials(caller: Caller, actorId = caller.actorId): Promise<ActorCredential[]> {
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.require(caller, actorId === caller.actorId ? 'read' : 'admin', tx);
       // A read of one's own metadata is not administration; a session or key holds none.
@@ -903,6 +935,8 @@ export class ProjectScope implements Scope {
     caller: Caller,
     input: { actorId: string; expiresAt?: string | null },
   ): Promise<IssuedActorCredential> {
+    caller = structuredClone(caller);
+    input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
       await this.require(caller, 'admin', tx);
       this.legacyAdministration(caller);
@@ -934,6 +968,8 @@ export class ProjectScope implements Scope {
     caller: Caller,
     input: { credentialId: string; expiresAt?: string | null },
   ): Promise<IssuedActorCredential> {
+    caller = structuredClone(caller);
+    input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
       await this.require(caller, 'admin', tx);
       this.legacyAdministration(caller);
@@ -986,6 +1022,7 @@ export class ProjectScope implements Scope {
     });
   }
   async revokeCredential(caller: Caller, credentialId: string): Promise<void> {
+    caller = structuredClone(caller);
     await this.state.transaction(async (tx) => {
       await this.require(caller, 'admin', tx);
       this.legacyAdministration(caller);
@@ -1063,6 +1100,7 @@ export class ProjectScope implements Scope {
     return row;
   }
   async actors(caller: Caller) {
+    caller = structuredClone(caller);
     await this.require(caller, 'admin');
     return await this.state.read(async (sql) =>
       (
@@ -1075,6 +1113,7 @@ export class ProjectScope implements Scope {
     );
   }
   async revokeActor(caller: Caller, actorId: string): Promise<void> {
+    caller = structuredClone(caller);
     await this.state.transaction(async (tx) => {
       await this.require(caller, 'admin', tx);
       this.legacyAdministration(caller);

@@ -80,6 +80,7 @@ const resultsCriteria = [
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService implements Experiments {
   private closed = false;
+  private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   private program!: ExperimentProgram;
   /** Complete storage migrations before publishing this service. */
@@ -136,8 +137,13 @@ export class ExperimentService implements Experiments {
   }
   /** The optional Cordis child owns this binding, not the experiment lifecycle. */
   bindCode(code: Pick<Code, 'capture'>): () => void {
+    this.open();
+    const binding = Symbol('code');
+    this.codeBinding = binding;
     this.code = code;
     return () => {
+      if (this.codeBinding !== binding) return;
+      this.codeBinding = undefined;
       this.code = undefined;
     };
   }
@@ -146,6 +152,7 @@ export class ExperimentService implements Experiments {
   }
   async process(caller: Caller, id: string): Promise<ProcessGraph> {
     this.open();
+    caller = structuredClone(caller);
     return await this.workflows.process(caller, id);
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
@@ -159,6 +166,7 @@ export class ExperimentService implements Experiments {
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Experiment> {
     this.open();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       parseExperimentInput(experimentGetSchema, { experimentId: id });
@@ -225,6 +233,7 @@ export class ExperimentService implements Experiments {
   }
   async list(caller: Caller, transaction?: Transaction): Promise<Experiment[]> {
     this.open();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
@@ -242,9 +251,10 @@ export class ExperimentService implements Experiments {
     transaction?: Transaction,
   ): Promise<Experiment> {
     this.open();
+    caller = structuredClone(caller);
+    const input = parseExperimentInput(experimentCreateSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const input = parseExperimentInput(experimentCreateSchema, value);
       return await this.command(caller, 'create', input, tx, async () => {
         check(
           !caller.session,
@@ -327,9 +337,10 @@ export class ExperimentService implements Experiments {
     transaction?: Transaction,
   ): Promise<ExperimentEvidence> {
     this.open();
+    caller = structuredClone(caller);
+    const input = parseExperimentInput(experimentAttachSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const input = parseExperimentInput(experimentAttachSchema, value);
       return await this.command(caller, 'attach', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
         this.revision(experiment, input.expectedRevision);
@@ -540,6 +551,7 @@ export class ExperimentService implements Experiments {
   }
   async exhibit(caller: Caller, id: string, transaction?: Transaction): Promise<ExperimentExhibit> {
     this.open();
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const experiment = await this.get(caller, id, tx);
@@ -558,9 +570,10 @@ export class ExperimentService implements Experiments {
     transaction?: Transaction,
   ): Promise<Experiment> {
     this.open();
+    caller = structuredClone(caller);
+    const input: ExperimentTransition = parseExperimentInput(experimentTransitionSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const input: ExperimentTransition = parseExperimentInput(experimentTransitionSchema, value);
       return await this.command(caller, 'transition', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
         this.revision(experiment, input.expectedRevision);
@@ -929,13 +942,14 @@ export class ExperimentService implements Experiments {
     transaction?: Transaction,
   ): Promise<Experiment> {
     this.open();
+    caller = structuredClone(caller);
+    const input = plain<ReviewApplication>(value, 'invalid_experiment_input', {
+      nodes: 8192,
+      depth: 20,
+      bytes: 262144,
+    });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
-      const input = plain<ReviewApplication>(value, 'invalid_experiment_input', {
-        nodes: 8192,
-        depth: 20,
-        bytes: 262144,
-      });
       check(
         input && typeof input === 'object' && !Array.isArray(input),
         'invalid_experiment_input',
@@ -1361,6 +1375,8 @@ export class ExperimentService implements Experiments {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.codeBinding = undefined;
+    this.code = undefined;
     this.withdrawReviewOwner();
     this.program.dispose();
   }

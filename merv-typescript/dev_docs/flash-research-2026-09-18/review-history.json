@@ -1,0 +1,636 @@
+[
+  {
+    "id": "review_2773ccf6af6d48cea7ac5a79df167e63",
+    "subject_id": "wf_c948778f526349d798d656d07b98ed33",
+    "subject_revision": 1,
+    "status": "submitted",
+    "verdict": "pass",
+    "return_to": null,
+    "producer_id": "actor_608eb8d5182b479dbb7da7ec18aed434",
+    "reviewer_id": "actor_450e0dbc949b42729302e3cee1d0c9bc",
+    "synopsis": "Re-verified from the retained bytes: all 39 artifacts hash-match their addresses, all 26 SHA256SUMS entries resolve to hash-correct blobs, 116/116 gold and OCR reproduce from the raw BIO tags, the documented split procedure reproduces the manifest IDs exactly, and the stdlib evaluator passes 9/9 hand-checked cases plus my own fixtures. All four criteria hold.",
+    "notes": "Independently verified against the pinned artifacts (no producer notes relied on). Method: read the Merv blob store directly; (1) recomputed sha256 of all 39 blobs - every one equals its content-addressed filename, and the 26 SHA256SUMS entries each map to a blob whose bytes hash to the listed value; (2) parsed the retained rows-API pages myself and re-implemented BIO span decoding from the info.json tag names, reproducing the OCR words, tag digits and all four gold strings of all 116 kit records (0 mismatches) plus the full 973-row source statistics; (3) re-implemented the documented group-shuffle-quota selection with seed 20260918 and got exactly the same demonstration/development/holdout receipt-id sets as splits_manifest.json; (4) recomputed the dataset canonical hash (804d5937...), the file plain sha256, all three per-split hashes and both freeze hashes - all match; (5) concatenated the delivered parquet chunks and confirmed both reassembled PAR1 files match the pinned parquet sha256 and the work tree; (6) ran the shipped evaluate.py and selftest_evaluator.py on the frozen data (9/9 fixtures, perfect demo 1.0000, perfect holdout 1.0000, corrupted demo overall 0.4792 / whole 0.4167 / invalid 0.5000 with the six cited reasons and 1 ignored unknown id) and additionally scored my own hand-computed fixtures for perfect/wrong/missing/malformed/non-object/non-string/extra/duplicate/unknown-id/unparseable input, whose hand-derived expectations (e.g. 7/16 fields, 0.25 whole) the evaluator reproduced exactly; (7) validated the exclusion ledger against the raw rows (15 duplicate rows with correct normalized-text sha256 pointing at a kept row with identical text, plus train row 104 X51005663280 genuinely lacking an ADDRESS span in the tags), confirmed 958 distinct normalized OCR texts and 372 company groups over all 973 rows, and confirmed the visibility rule (only demonstration_split.json / demonstration_receipts.txt are label-displayable; no dev/holdout id appears in the demo text). Non-blocking observations, none affecting the criteria: (a) observed_check_outputs.txt section G lists kit_manifests.tar.gz as 12701 bytes and kit_evidence.tar.gz as 25030 bytes, which are earlier within-session pack sizes - the delivered archives are 13055 and 25265 bytes (the log was written before the final repack, and it already defers hashes to SHA256SUMS); I re-verified that the delivered archive members are byte-identical to the checked working tree, so the recorded 27/27 and 9/9 results still describe the delivered bytes; (b) README says \"all 14 retained rows-API response bodies\" while the manifest lists 16 endpoints (11 rows pages + 5 metadata); (c) evaluate.py's docstring documents that a malformed prediction entry invalidates the whole predictions file, but the README invalid-output list does not mention that path. None of these is a false claim about the data, the splits, or the scoring.",
+    "artifactIds": [
+      "art_af5610a940914109b6a6c53b2b52f71d",
+      "art_381f40f2701842d9b5332377302c69a6",
+      "art_189cca15d2184d8bb929c6701caeedb1",
+      "art_f47ad0c71c6340a6a6a7a80ed45bc796",
+      "art_a1df7c94a71349939c00f76b2d59e044",
+      "art_18d00e73ea6149f782bbbd7c50162966",
+      "art_4b0bf7e886ec4c5990da8c114e0346cc",
+      "art_e70f750a8bc64b66804ebef8dbe78260",
+      "art_867e77acab2d4ecc807122174c24630c",
+      "art_e9e663da4b614886a0c00394d81c7cc0",
+      "art_012fe4e3451f4824bf7de23c2bbe55f0",
+      "art_8a3556be2d5c4e01bb2f00268fef9085",
+      "art_3c65617a55e14cfea6630f260ba9abd1",
+      "art_15efcc80243c4585aeed1cde566727d9",
+      "art_bbc802a5e1224dc193df5a24b1ba7908",
+      "art_a445f5adb3a54286b0be7fdef8df3ff4",
+      "art_377a58a76167455195ceda513d8dfc39",
+      "art_be4fcf761f7c4003b059c01aa19bf7e3",
+      "art_989b199b4a9b40e9b46e2ef988b1f9e4",
+      "art_7a9d3b4c12a648618143212f9c0eed9e",
+      "art_aa70536bc3bb4875af460c029bd4af5a",
+      "art_d0b3329c54804cee8c0eb98002ac41e3",
+      "art_a41feb71702c4c58b5bc3c40cb6e98d1",
+      "art_e76d096c03394fb1833440b81c48bdd2",
+      "art_6d976263e16b484fa4035e27c9092ad5",
+      "art_89c8ec71a2744538a612cc1e6d105bca",
+      "art_1a8510ca811e44b5a672dea78037312c",
+      "art_4506c9be7de64568aa6013f545c8862d",
+      "art_851e374a4c5d48a6bab29747b6aa8162"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": [
+          "art_f47ad0c71c6340a6a6a7a80ed45bc796",
+          "art_8a3556be2d5c4e01bb2f00268fef9085",
+          "art_3c65617a55e14cfea6630f260ba9abd1",
+          "art_15efcc80243c4585aeed1cde566727d9",
+          "art_bbc802a5e1224dc193df5a24b1ba7908",
+          "art_a445f5adb3a54286b0be7fdef8df3ff4",
+          "art_377a58a76167455195ceda513d8dfc39",
+          "art_be4fcf761f7c4003b059c01aa19bf7e3",
+          "art_989b199b4a9b40e9b46e2ef988b1f9e4",
+          "art_7a9d3b4c12a648618143212f9c0eed9e",
+          "art_aa70536bc3bb4875af460c029bd4af5a",
+          "art_d0b3329c54804cee8c0eb98002ac41e3",
+          "art_a41feb71702c4c58b5bc3c40cb6e98d1",
+          "art_e76d096c03394fb1833440b81c48bdd2",
+          "art_6d976263e16b484fa4035e27c9092ad5",
+          "art_89c8ec71a2744538a612cc1e6d105bca",
+          "art_1a8510ca811e44b5a672dea78037312c",
+          "art_381f40f2701842d9b5332377302c69a6"
+        ],
+        "notes": "Verified myself, not from the confirmation text. source_manifest.json names the public URL https://huggingface.co/datasets/darentang/sroie plus the datasets-server base, pins the repo revision 2f8c28dfc9b70648bd6c6b04362324d158ebc8e7 (X-Revision header, and 84e221c355... for the parquet branch), records fetch time 2026-09-18T02:18:49-53Z, and lists per-response sha256 for all 16 endpoints. I recomputed sha256 for all 17 retained payload files and every one matches the manifest (0 mismatches), so the hashes are real pins. Schema/tag mapping is read from the retained info.json, whose ClassLabel names are exactly [O, B-COMPANY, I-COMPANY, B-DATE, I-DATE, B-ADDRESS, I-ADDRESS, B-TOTAL, I-TOTAL] with tag_index_mapping 0..8; I read that file directly and confirm the mapping was inspected, not guessed. Available counts verified: 973 rows = train 626 + test 347 with max row_idx 625/346, 958 distinct normalized OCR texts and 372 distinct normalized company groups over all 973 rows - I recomputed both counts and got the same numbers. Licensing is handled as fact plus uncertainty: the mirror's info.json license is the empty string with no licence file in the repo (I confirmed license='' and repo files sroie.py/.gitattributes), ICDAR-2019 SROIE provenance and the MIT-licensed secondary key repo are recorded, and the manifest explicitly states the redistribution licence status is UNKNOWN. All 16 exclusions are enumerated with reasons and evidence. Retention is real: the 9 rows-API archives hold every response body plus fetch_manifest.json, and the two parquet files are retained as 6 raw chunks that I concatenated and confirmed hash to the pinned d8e3afe4.../07df54d3... PAR1 files."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_a1df7c94a71349939c00f76b2d59e044",
+          "art_e70f750a8bc64b66804ebef8dbe78260",
+          "art_18d00e73ea6149f782bbbd7c50162966",
+          "art_4b0bf7e886ec4c5990da8c114e0346cc",
+          "art_8a3556be2d5c4e01bb2f00268fef9085",
+          "art_3c65617a55e14cfea6630f260ba9abd1",
+          "art_15efcc80243c4585aeed1cde566727d9",
+          "art_bbc802a5e1224dc193df5a24b1ba7908",
+          "art_a445f5adb3a54286b0be7fdef8df3ff4",
+          "art_377a58a76167455195ceda513d8dfc39",
+          "art_be4fcf761f7c4003b059c01aa19bf7e3",
+          "art_989b199b4a9b40e9b46e2ef988b1f9e4",
+          "art_7a9d3b4c12a648618143212f9c0eed9e"
+        ],
+        "notes": "I re-derived the dataset from the retained source payloads with my own BIO decoder. For all 116 records the newline-encoded OCR words are verbatim from the raw pages, the tag digits match exactly, and all four reconstructed gold strings match exactly (116/116, zero mismatches) - gold is genuinely reconstructed from the documented tags and no row is synthesised. Stable ids follow sroie-hf-<source split>-<canonical filename stem> (regex confirmed on all 116) and each maps to a distinct (source_split, source_row_index). splits_manifest.json records seed 20260918, targets and exact counts 12/24/80, all split ids, the full selection procedure, the visibility rule and interpretation limits. Hashes verified: canonical record hash 804d59370b... equals the manifest, the file plain sha256 3abff953... matches, all three per-split hashes match, and holdout_freeze.json's dataset/development/holdout hashes all match my recomputation. Leakage checks pass on my own counts: 0 duplicate normalized OCR texts anywhere in the kit and 0 normalized-company overlap across splits (70 groups among the 116 selected records). Rerunnability is proven rather than asserted: I re-implemented the documented procedure from the manifest text (global OCR dedup keeping the first (split,row_idx) row, grouping by normalize_text(company), sorted keys shuffled with random.Random(20260918), greedy quota assignment with deterministic repair) and reproduced exactly the manifest's demonstration, development and holdout id sets, with remaining quotas closing at 0. The visibility rule also holds: demonstration_split.json is byte-identical to the demonstration subset of the dataset, demonstration_receipts.txt contains exactly the 12 demonstration ids, and no development/holdout id appears in it."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_012fe4e3451f4824bf7de23c2bbe55f0",
+          "art_e9e663da4b614886a0c00394d81c7cc0",
+          "art_867e77acab2d4ecc807122174c24630c",
+          "art_381f40f2701842d9b5332377302c69a6"
+        ],
+        "notes": "evaluate.py imports only argparse, json, os, re, sys and unicodedata - standard library only, confirmed from the shipped source, whose archive members I checked are byte-identical to the bytes I ran. Normalization is documented in both the script and the README as NFKC + casefold + whitespace-collapse + strip, with matching by exact equality and no punctuation/currency/numeric folding; I confirmed behaviorally that RM 9.00 != 9.00 and that case/NFKC/whitespace variants do match. Reported quantities are per-field accuracy for company/date/address/total, overall field accuracy (correct cells / 4N), whole-receipt exact accuracy and invalid-output rate; no F1 is reported. The shipped selftest passes 9/9, and I independently hand-checked those expectations (missing-field case 4/12 overall, 2/3 invalid, 1/3 per field; extra field 0.5; duplicate 0.5; currency case 0.75 overall / 0.0 whole). Beyond the shipped fixtures I scored my own cases and they matched my own hand-derived numbers: valid-but-wrong values are not invalid (0.4375 overall, 0.25 whole, 0.5 invalid for one wrong-field row plus one extra-field row and one absent row); malformed JSON, non-object JSON, non-string raw, non-string field value, missing prediction, duplicate entry, unknown receipt id, non-dict entry, list-valued payload and a None payload are each flagged with the correct reason; unknown ids are reported and ignored. Missing/extra/non-string are handled explicitly (exactly four required string keys, extras rejected)."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "met",
+        "evidenceIds": [
+          "art_381f40f2701842d9b5332377302c69a6",
+          "art_189cca15d2184d8bb929c6701caeedb1",
+          "art_e9e663da4b614886a0c00394d81c7cc0",
+          "art_867e77acab2d4ecc807122174c24630c",
+          "art_012fe4e3451f4824bf7de23c2bbe55f0",
+          "art_851e374a4c5d48a6bab29747b6aa8162"
+        ],
+        "notes": "The delivery links a complete immutable kit. Every one of the 26 SHA256SUMS entries resolves to a blob whose recomputed sha256 equals the listed value (26/26), and all 26 archive members of the four kit archives are byte-identical to the working tree the checks ran against. Commands are independently reproducible: fetch_source.py/fetch_key.py re-fetch from the pinned public URLs and revisions with stdlib urllib, build_kit.py regenerates the dataset deterministically (I reproduced its selection output independently), and the README gives exact extraction and shasum -c commands; the parquet chunks reassemble to the pinned hashes. Observed check outputs are recorded (verify_kit 27/27, selftest 9/9, perfect demonstration and holdout 1.0000, corrupted demonstration 0.4792/0.4167/0.5000). I could not execute verify_kit.py here because the filesystem is read-only and it rebuilds into a work directory, so I instead independently reproduced every one of its 27 assertions (payload hashes, 973 rows, counts 12/24/80, per-split hashes, unique and pattern-valid ids, distinct source rows, lossless newline encoding, digit-only tags, gold non-empty and recomputable, no duplicate text, no company overlap, exclusion ledger shape, duplicate pointers, source accounting, freeze contents and hashes, demo artifact identity, and verbatim coverage of every excluded row). Limitations are stated honestly: gold is reconstructed from BIO spans rather than canonical target JSON with measured agreement (date 610/626, total 562/626, company 492/626, address 356/626) that I recomputed exactly from the canonical-key payloads, address is called the weakest field, company grouping is explicitly a heuristic that does not guarantee corporate-family independence, the 116-receipt Malay/English benchmark is small with wide intervals, the mirror declares no licence, and the mirror builder's 455 MB original zip was not downloaded."
+      }
+    ]
+  },
+  {
+    "id": "review_c4b320f2cf584037ac1eef4cfd09a79f",
+    "subject_id": "wf_81745bc7a920474dab27a0423ecdd8b0",
+    "subject_revision": 1,
+    "status": "submitted",
+    "verdict": "pass",
+    "return_to": null,
+    "producer_id": "actor_f16113c471084ad5994e4a6c683b6531",
+    "reviewer_id": "actor_9a7c5c46011b47ce8eab4088c6481ba8",
+    "synopsis": "Reproduced the frozen prompts P0/P1/P2 byte-exactly from the delivered kit under the plan's own rules; confirmed 12/24/80 splits, 44 holdout company groups (largest 15), zero company overlap, demonstration-only candidate material. Controls, metric, cluster-aware uncertainty and pre-registered decision rules are defensible; power limits and the P2 confound are disclosed.",
+    "notes": "Reviewed only the pinned submission (plan.md, sha256 6885f227...). I recomputed rather than trusting prose, using the retained kit blobs and the frozen plan text. Pass on all three criteria. Verification performed: (1) frozen prompts reconstruct byte-for-byte under the plan's stated conventions - P0 = P0_TASK+\"\\n\\n\"+OUTPUT_FORMAT is 519 chars with sha256 3de152a6...; P1 is 1674 chars with 06ebd802...; P2 is 2602 chars with fc04c0cd... (P2 matches only when the three shortest demonstration receipts are enumerated in the plan's listed id order, which the plan does specify), so the hypothesis is stated against fixed, reconstructible strings; (2) kit facts the design depends on are true - 116 records in 12/24/80 splits, 116 distinct flat OCR texts, zero normalized-company overlap across all three split pairs, 80 holdout receipts in 44 company groups with a largest group of 15 (so the dominant-cluster sensitivity is meaningful); (3) leakage is structurally prevented - every distinctive P1 example (\"STAR GROCER SDN BHD\", \"PANA JAYA ENTERPRISE\", \"(1171881-W)\", \"25/03/18\", \"01-02-2018\", \"10-05-2017\", \"Rounded Total (RM)\", \"TAXABLE AMT\") occurs in demonstration receipts, no development/holdout company string appears in any prompt, and P2 contains only demonstration OCR text plus demonstration gold. Non-blocking observations, none affecting a criterion: (a) the plan's drafting check says no dev/holdout gold string appears in the prompts \"except 27/06/18\", but demonstration-derived numerals 5.90, 50.00 and 9.90 also coincide with development/holdout totals; they enter only from demonstration material by construction, so this is an inaccurate self-check sentence, not label leakage; (b) the FIELD_RULES trailing-newline convention is not stated explicitly and is pinned only by the hash assertion; (c) which receipts the <=6 smoke calls use is unspecified; (d) with 80 receipts and a gate requiring both receipt-level and cluster-level interval lows above zero, a true 3-point effect will often fall into the pre-registered \"directional only, not confirmed\" class - the design accepts this and still produces a bounded, honest answer.",
+    "artifactIds": [
+      "art_96374c8145464f25a11fb4e7760b8eaa"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": [
+          "art_96374c8145464f25a11fb4e7760b8eaa"
+        ],
+        "notes": "H1 is a specific, falsifiable claim (delta >= 0.03 on 80 frozen holdout receipts) with five pre-registered outcome classes applied once by code, so support, directional-only, sub-threshold and null results are distinguished from each other. Alternatives are addressed explicitly: error attribution (model_miss / unsupported_gold / format / near_miss) separates genuine model errors from BIO-reconstruction label artifacts (address canonical agreement ~57%), and the plan states that a P2 gain confounds content with prompt length and that one prompt instance per arm cannot support a procedure-general claim. I verified the hypothesis is stated against fixed strings: all three frozen prompts reproduce byte-exactly from the delivered kit under the plan's own assembly rules (P0 519 chars / 3de152a6..., P1 1674 / 06ebd802..., P2 2602 / fc04c0cd...)."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_96374c8145464f25a11fb4e7760b8eaa"
+        ],
+        "notes": "P0 is a matched control rather than a straw man: the shared output-format paragraph is byte-identical across arms and the user message is byte-identical per receipt, so the P1-vs-P0 contrast isolates extraction guidance from format compliance, and the holdout comparison is paired because both arms score the same 80 receipts. Data are the frozen kit, which I re-checked independently: counts 12/24/80, 116 distinct flat OCR texts, zero normalized-company overlap across every split pair, 44 holdout company groups with a largest group of 15. Candidate material is provably demonstration-only. The primary metric is the claim's own normalized-exact field accuracy, the analysis unit is the receipt rather than the field, and selection/tie, invalidation and decision rules are all fixed before any call with a pre-holdout checkpoint. A minor reporting inaccuracy noted in my top-level notes (the drafting check misses three demonstration-derived numeral collisions) does not reflect leakage or weaken the comparison."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_96374c8145464f25a11fb4e7760b8eaa"
+        ],
+        "notes": "Budget and mechanics match the stated broker constraints: 72 development + 160 holdout = 232 scored calls plus <=6 smoke calls, against a 400-attempt ceiling, <=4 concurrent, transient retries capped at two with backoff and every attempt logged. Failure handling is explicit and honest - a receipt with no successful call stays in the denominator and scores invalid, with a complete-pairs sensitivity alongside. Nine pre-registered invalidation conditions (dataset/evaluator drift, prompt drift, contamination, post-score prompt edits, settings drift, budget/concurrency breaches, >10% unscored holdout, >10-point invalid-rate gap, missing predictions or checkpoint) make non-confirmation auditable rather than negotiable. Limitations are openly stated: one sample per cell so sampling variance is unmeasured, a noisy 24-receipt selection stage, the P2 content/length confound, heuristic company clustering, and BIO-derived gold. The main residual risk is that the cluster-robust gate makes a true 3-point effect likely to land as directional-only, but the plan pre-registers that outcome and the task accepts an uncertainty-bounded pilot."
+      }
+    ]
+  },
+  {
+    "id": "review_7bd7b9552303402789145b90f6879f44",
+    "subject_id": "wf_81745bc7a920474dab27a0423ecdd8b0",
+    "subject_revision": 3,
+    "status": "submitted",
+    "verdict": "needs_changes",
+    "return_to": "running",
+    "producer_id": "actor_2798b3dc361e400b9ad772d8fa5b8e76",
+    "reviewer_id": "actor_7f0f9a8d9a844b07b9578a1aaa97dc44",
+    "synopsis": "All scored metrics, both bootstrap intervals, token means and the error audit reproduce exactly from the pinned evidence, and the not-confirmed verdict is honest and well supported. But the report cites superseded bundle and exhibit hashes, and the proposed paper text claims all 237 attempts are in the run logs while one smoke attempt is absent.",
+    "notes": "I independently reconstructed every pinned artifact in memory (revision C bundle = sha256 798c00e0..., 23 payload files verified against its internal SHA256SUMS; superseded revision B = 0864e1f6...), unpacked the inherited kit and the operator journal (237 exact requests, gzip sha256 72757dc6..., raw sha256 c1c09ecd...), and recomputed the science with the frozen kit evaluator (sha256 7980231e...) against the kit dataset (sha256 3abff953...). Every measurement reproduces: dev P0/P1/P2 0.7396/0.8333/0.8438; holdout P0 0.8250 (264/320), P2 0.8719 (279/320); delta +0.046875; receipt bootstrap [0.009375, 0.084375] and company-cluster bootstrap [-0.003425, 0.089744] both reproduce with random.Random(20260918); dominant-cluster sensitivity 0.034615; all 80 per-receipt cell counts match; error audit 39 model_miss/2 near_miss/0 unsupported_gold verified against gold-in-input. Timing, concurrency (max 4), 237 attempts, zero retries/failures, frozen prompts (P0 3de152a6..., P1 06ebd802..., P2 fc04c0cd...) and freeze-before-holdout ordering all check out, with candidate material drawn only from demonstration-split rows. The failures are reporting-fidelity, not scientific: the report describes a superseded evidence pack, and one retained paper sentence is not supported by the logs. Both are cheap to fix.",
+    "artifactIds": [
+      "art_96374c8145464f25a11fb4e7760b8eaa",
+      "art_c0487fb5d1944ed69564a66a89315a95",
+      "art_00dfad5ea74c44d59d50d56ecc7df4ec",
+      "art_7a3e316b670e44ad82e486350046d0fc",
+      "art_b7a060078d0c492cacbc56e23714c98c",
+      "art_0d78e149d33a48979585578ffa63b459",
+      "art_e8f7444fc16a407d802a85d07a0c8c4a",
+      "art_219376d25337478c842b674636d18d23",
+      "art_29a4403404b54fefa574685453e6e8d2",
+      "art_b927f35265f24583b93238e195a8a889",
+      "art_41e57b24933b4d66ae296a9d6ac264ed",
+      "art_70ce4b843884405f9c2e6e2cb11d7739",
+      "art_8f84e57c66914ebc92c88aeac7afbb97",
+      "art_2bfaa9d24bda4430ac24ce27f0cd893b",
+      "art_e6744177cc14449fa5f60c055850e4e0",
+      "art_e51cda8d03b043c4b13a633d66a1f417",
+      "art_f01356ede02f42818c1d8a270fd1b09d",
+      "art_5467a6ad85fb413da7edf7139ac70c96",
+      "art_9fabda1650734abc9432959352478ef2",
+      "art_f8be1570bc6d4573bb9d78f5307bc0e7",
+      "art_b8bdc008a90b4c80b2986cf750fc996f",
+      "art_cab87395a62142059d8284fb27220220",
+      "art_09aad815c8274f4a819c43273bcb3f1b",
+      "art_03b168e94194414a918415ae5c863d77"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": [
+          "art_96374c8145464f25a11fb4e7760b8eaa",
+          "art_c0487fb5d1944ed69564a66a89315a95",
+          "art_00dfad5ea74c44d59d50d56ecc7df4ec",
+          "art_2bfaa9d24bda4430ac24ce27f0cd893b"
+        ],
+        "notes": "Execution matches the approved plan. From the operator journal I measured exactly 237 attempts with max concurrent = 4, every status 200, attempt = 1, zero retries/failures, spanning 02:43:49.590Z-02:45:36.561Z. Prompts were frozen (submitted 02:43:45.914Z) before the first call (02:43:49.590Z); selection_checkpoint was submitted 02:44:50.729Z before the first holdout call 02:44:55.974Z. All 237 system messages hash to one of the three frozen prompts, every user message equals 'Receipt OCR text:\\n' + flat OCR from the kit, and the 5 smoke calls consumed only demonstration-split receipts. Disclosed deviations (two kit documentation files, prompt-assembly ambiguity resolved from the frozen hash, settings not echoed) are consistent with the evidence. Caveat recorded under criterion 4: one of the five smoke attempts is absent from the producer's run logs, though it is fully retained in the operator journal."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_7a3e316b670e44ad82e486350046d0fc",
+          "art_b7a060078d0c492cacbc56e23714c98c",
+          "art_0d78e149d33a48979585578ffa63b459",
+          "art_09aad815c8274f4a819c43273bcb3f1b",
+          "art_cab87395a62142059d8284fb27220220"
+        ],
+        "notes": "Submitted measurements agree with the retained results. Rerunning the kit evaluator on predictions+gold reproduces every number in analysis.json, and the per-receipt file matches cell-for-cell (0 mismatches over 80 rows). Both bootstrap intervals and the dominant-cluster sensitivity reproduce exactly under the pre-registered seed/procedure. Token means (dev 516.58/814.17/1374.75; holdout 486.16/1343.24) match the run logs. Known rework (superseded bundle revisions) is disclosed in the pinned manifest and PARTS_README. Non-blocking metadata error worth fixing: the report's evidence-layout paragraph cites bundle sha256 05461a27...22915b5 and 'all 24 payload files', but that revision is listed as superseded; the authoritative revision C reassembles to 798c00e0... with 23 payload files. The report also cites exhibit hash 1902b42f... rather than the pinned exhibit (598c078a...), and '165 responses' where 237 calls exist."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_cab87395a62142059d8284fb27220220",
+          "art_09aad815c8274f4a819c43273bcb3f1b",
+          "art_03b168e94194414a918415ae5c863d77"
+        ],
+        "notes": "Conclusions follow from the evidence. Point estimate +0.046875 clears the 3-point threshold with the receipt-level CI excluding zero, but the company-cluster CI [-0.003425, 0.089744] includes zero, which maps to the plan's rule 2 'supported on the paired estimate, not cluster-robust; not confirmed' - exactly the report's conclusion. Negative and limiting findings are present and verified: address 0.9500->0.9250 and total 0.8250->0.8125 regress, 10 receipts were broken against 19 fixed, tokens rise 486->1343 (2.76x), 44 highly unequal clusters, one model/temperature/sample, and no fine-tuning test."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "not_met",
+        "evidenceIds": [
+          "art_03b168e94194414a918415ae5c863d77",
+          "art_2bfaa9d24bda4430ac24ce27f0cd893b",
+          "art_f8be1570bc6d4573bb9d78f5307bc0e7",
+          "art_b8bdc008a90b4c80b2986cf750fc996f"
+        ],
+        "notes": "Numbers in the proposed paper edits verify (0.8250/0.8719, +0.0469, [0.0094,0.0844], [-0.0034,0.0897], 39 model_miss/2 near_miss/0 unsupported_gold, 486->1343 tokens, 2.76x), but one methods sentence is not supported by the retained evidence. It states 'every attempt, retry, HTTP status, UTC timestamp, broker receipt, token count, raw response and parse result is retained in the run logs'; the run logs contain only 236 of the 237 broker attempts. run_log_smoke.jsonl holds 4 rows (broker numbers 2-5), while the first smoke attempt (broker number 1, 02:43:49.590Z, P0 on sroie-hf-test-X51006008166) appears only in the operator journal (art_18d638429e994c29ae7542d31cdbbb63), not in any producer run log. Required correction: add that attempt's row to run_log_smoke.jsonl (or attach the journal row) and either keep the sentence with a one-line disclosure of the extra operator-retained smoke call, or narrow it to 'all scored attempts are logged'. While revising, also update the report's bundle hash to revision C (798c00e0...) / 23 payload files and its exhibit hash (598c078a...)."
+      }
+    ]
+  },
+  {
+    "id": "review_1652f29f6cd94557bab696223516f4a0",
+    "subject_id": "wf_81745bc7a920474dab27a0423ecdd8b0",
+    "subject_revision": 5,
+    "status": "submitted",
+    "verdict": "pass",
+    "return_to": null,
+    "producer_id": "actor_d004433d30cf46cb92fe35e0d72a5ecc",
+    "reviewer_id": "actor_7e7eafe80041411c91218421c0d3caa4",
+    "synopsis": "Every scored number, both bootstrap intervals, token means, the error audit and all 80 per-receipt cells reproduce exactly from the pinned revision-C evidence; execution, journal and freeze ordering check out and the not-confirmed verdict is honest. Three non-blocking prose/metadata residuals are recorded for a later tidy-up.",
+    "notes": "I worked only from Merv-pinned artifacts, reading blobs read-only and recomputing with stdlib Python. The six pinned revision-C parts reassemble to sha256 798c00e0...6ce05 (23 payload files, every one matching the bundle's internal SHA256SUMS), and the bundle copies of analysis.json/holdout_per_receipt.json/prompts_frozen.json/selection_checkpoint.json/human_summary.txt equal the sha256 values in the pinned metrics exhibit. The frozen kit (dataset 3abff953..., evaluator 7980231e...) recomputes every metric: dev 71/80/81 of 96 (0.7396/0.8333/0.8438), holdout P0 264/320 (0.8250) vs P2 279/320 (0.871875), delta +0.046875, receipt bootstrap [0.009375, 0.084375], company-cluster bootstrap [-0.0034247, 0.0897436] over 44 sorted groups, dominant-cluster removal +0.034615 (15-receipt group), delta counts and 19/10/51 whole-receipt outcomes, all 80 per-receipt rows, token sums, and the 41-cell error audit (39 model_miss by field 16/14/6/3, 2 near_miss, 0 unsupported_gold, 0 format). Predictions equal the run-log final raw outputs with 0 mismatches. The operator journal (gzip 72757dc6..., payload c1c09ecd..., 237 rows, all HTTP 200, constant settings, max concurrency 4) matches the producer run logs byte-for-byte on system/user hashes, response content and usage for 236/237 calls; the single unmatched row is broker attempt 1, retained verbatim in the smoke supplement. Prompts hash to the plan's three frozen sha256 values, user messages reproduce the frozen renderer, cross-arm input hashes are identical, and the freeze timestamps precede the first call and the first holdout call. The paper edits verify against the evidence, including the corrected failure-accounting sentence. Three non-blocking residuals are detailed in the findings: a stale exhibit pointer in the report (the exhibit is regenerated at submission), a contamination-check count the report states as two where a plain substring search finds four coincidental demonstration-OCR substrings, and four non-scored smoke rows mislabelled unparseable although their outputs are valid JSON. None of these changes any measurement, conclusion or paper sentence, so I pass rather than return for rework.",
+    "artifactIds": [
+      "art_96374c8145464f25a11fb4e7760b8eaa",
+      "art_c0487fb5d1944ed69564a66a89315a95",
+      "art_00dfad5ea74c44d59d50d56ecc7df4ec",
+      "art_7a3e316b670e44ad82e486350046d0fc",
+      "art_b7a060078d0c492cacbc56e23714c98c",
+      "art_0d78e149d33a48979585578ffa63b459",
+      "art_e8f7444fc16a407d802a85d07a0c8c4a",
+      "art_219376d25337478c842b674636d18d23",
+      "art_29a4403404b54fefa574685453e6e8d2",
+      "art_b927f35265f24583b93238e195a8a889",
+      "art_41e57b24933b4d66ae296a9d6ac264ed",
+      "art_70ce4b843884405f9c2e6e2cb11d7739",
+      "art_8f84e57c66914ebc92c88aeac7afbb97",
+      "art_2bfaa9d24bda4430ac24ce27f0cd893b",
+      "art_e6744177cc14449fa5f60c055850e4e0",
+      "art_e51cda8d03b043c4b13a633d66a1f417",
+      "art_f01356ede02f42818c1d8a270fd1b09d",
+      "art_5467a6ad85fb413da7edf7139ac70c96",
+      "art_9fabda1650734abc9432959352478ef2",
+      "art_f8be1570bc6d4573bb9d78f5307bc0e7",
+      "art_b8bdc008a90b4c80b2986cf750fc996f",
+      "art_a2326681879145e3b557e5115db477b1",
+      "art_ad7fc871cddd460e9f6695ddf5cb398e",
+      "art_dde790b4e06c45b48689b8dfefcfcd95",
+      "art_171188f3da2a4e5f8d04dd41742278e3",
+      "art_f1d4adec8ce64f04a1961f1d9dfb19af",
+      "art_4b20516e5abd44afb2fb09d25445f2d2"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": [
+          "art_96374c8145464f25a11fb4e7760b8eaa",
+          "art_c0487fb5d1944ed69564a66a89315a95",
+          "art_00dfad5ea74c44d59d50d56ecc7df4ec",
+          "art_f8be1570bc6d4573bb9d78f5307bc0e7",
+          "art_ad7fc871cddd460e9f6695ddf5cb398e"
+        ],
+        "notes": "Execution matches the approved plan. The operator journal (art_18d638429e994c29ae7542d31cdbbb63, gzip 72757dc6.../payload c1c09ecd..., 237 rows) shows one row per attempt, all HTTP 200 with deepseek-flash, temperature 0, max_tokens 768, thinking disabled and json_object, max concurrency 4, zero retries or failures; 236 of 237 match the producer run logs exactly on system and user message hashes, response content and usage, and the unmatched row is broker attempt 1, retained verbatim in the pinned smoke supplement (art_ad7fc871..., verified against journal row 1). Run logs hold 72 development / 160 holdout / 4 smoke rows, every system hash equals a frozen prompt, every user message equals 'Receipt OCR text:\\n' + flat kit OCR, and cross-arm input hashes agree. Freeze ordering holds: prompts_frozen submitted 02:43:45.914Z before the first call 02:43:49.590Z; selection_checkpoint 02:44:50.729Z before the first holdout call 02:44:55.974Z. Deviations are disclosed and real: the plan's literal worked-example assembly does not hash to its own declared fc04c0cd... (the producer's NL2 variant does), the operator-retained smoke call appears only in the journal, and the kit's own SHA256SUMS gives 37 OK / 2 doc-only FAIL (kit/README.md, kit/observed_check_outputs.txt) exactly as reported. Caveat: the 4 retained smoke rows carry parse_result 'unparseable_json:AttributeError' although their raw_content is valid four-key JSON and the pinned log code would record 'ok' - a non-scored demonstration-split labelling inconsistency worth correcting."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_7a3e316b670e44ad82e486350046d0fc",
+          "art_b7a060078d0c492cacbc56e23714c98c",
+          "art_0d78e149d33a48979585578ffa63b459",
+          "art_f1d4adec8ce64f04a1961f1d9dfb19af",
+          "art_171188f3da2a4e5f8d04dd41742278e3"
+        ],
+        "notes": "Submitted measurements agree with the retained results and the pinned exhibit. Rerunning the frozen evaluator reproduces every value in analysis.json (dev 71/80/81 cells; holdout 264 and 279 of 320; per-field values; 0 invalid outputs), the paired delta +0.046875, both bootstrap intervals under random.Random(20260918)/10,000 draws, the dominant-cluster sensitivity +0.034615, the per-receipt delta distribution, all 80 per-receipt rows, dev and holdout token sums and means (12398/19540/32994 and 38893/107459), and the 41-cell error audit matching error_audit.jsonl row-for-row. Predictions equal the run-log final raw outputs with 0 mismatches. Known rework is disclosed, not hidden: superseded bundle revisions and the stale ARTIFACT_MANIFEST report row (86b64db9.../13205) are called out, and the pinned exhibit does embed that stale row as stated. Non-blocking: the report's exhibit paragraph still cites art_09aad815.../598c078a... with 20 result files as 'the pinned metrics exhibit', whereas revision 5 pins art_f1d4adec.../b7d503c7... with 23 result files; the mismatch recurs because the exhibit is regenerated at submission, so the paragraph should name it generically or be marked provisional."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_171188f3da2a4e5f8d04dd41742278e3",
+          "art_f1d4adec8ce64f04a1961f1d9dfb19af",
+          "art_a2326681879145e3b557e5115db477b1",
+          "art_ad7fc871cddd460e9f6695ddf5cb398e"
+        ],
+        "notes": "Conclusions follow from the evidence. The point estimate +0.046875 clears the pre-registered 3-point threshold with the receipt interval excluding zero, but the company-cluster interval [-0.0034247, 0.0897436] spans zero, which is the plan's rule 2 'supported on the paired estimate, not cluster-robust; not confirmed' - exactly the report's verdict. Negative and limiting findings are present and verified: address 0.9500->0.9250 and total 0.8250->0.8125 regress, 10 receipts broken against 19 fixed, tokens 486->1343 (2.763x), 44 very unequal clusters, one model/temperature/sample/prompt instance, BIO-derived gold, and no fine-tuning test. Caveat: a plain normalized substring search finds four dev/holdout gold strings in the prompt text, not the two the report states - '5.90' (inside demonstration OCR '55.90') and '9.90' (inside '49.90') in addition to the disclosed '50.00' and '27/06/18'. All four are coincidental substrings of demonstration OCR numerals and none is a leaked holdout label, so the stated conclusion that this is not label leakage and that invalidation condition 3 is not triggered still stands; only the reported check count needs restating."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "met",
+        "evidenceIds": [
+          "art_dde790b4e06c45b48689b8dfefcfcd95",
+          "art_171188f3da2a4e5f8d04dd41742278e3",
+          "art_7a3e316b670e44ad82e486350046d0fc",
+          "art_ad7fc871cddd460e9f6695ddf5cb398e"
+        ],
+        "notes": "The proposed methods and results edits accurately describe this experiment. Design and Evaluation text matches the frozen plan and evidence (24-receipt exploratory selection of P2 at 0.8438 vs 0.8333 vs 0.7396 before any holdout call; byte-identical user messages and shared format paragraph; unmodified kit evaluator; receipt-level unit and company-group bootstrap; >=3-point decision rule). Results text matches my recomputation: 0.8250/0.8719, +0.0469, [0.0094,0.0844], [-0.0034,0.0897], +0.0346 sensitivity, whole-receipt 35/80 -> 44/80, invalid 0.0000 in both arms, the per-field values, 39 model_miss / 2 near_miss / 0 unsupported_gold / 0 format, 486 -> 1343 tokens (2.76x), and the reverse of the plan's address-dominance expectation. The corrected failure-accounting sentence is now supported: 232 scored plus 5 smoke calls, with 4 smoke rows in the run logs and the fifth in the operator journal, attached verbatim as smoke_attempt1_supplement.json (journal row 1 verified field-for-field)."
+      }
+    ]
+  },
+  {
+    "id": "review_d8a0b1347b984a8abeb4d7f4a9b45934",
+    "subject_id": "wf_8a158ccef3a64865af0da3d15643bc6c",
+    "subject_revision": 2,
+    "status": "submitted",
+    "verdict": "needs_changes",
+    "return_to": "synthesizing",
+    "producer_id": "actor_87e6af13edca4682ade5bd73d1e333ca",
+    "reviewer_id": "actor_bc2ce3735411416f9403d44458f6e8c2",
+    "synopsis": "Independently reassembled the frozen revision-C bundle (sha256 798c00e0…, 23/23 SHA256SUMS), re-scored and re-bootstrapped the holdout, and checked each proposed paper edit against its original text and evidence. Everything replicates except one proposed Results sentence: 13, not 15, wrong cells carry a printed RM gold. Criteria 1–4 hold; criterion 5 needs correction.",
+    "notes": "Verification was performed against pinned bytes, not prose. I reassembled the six revision-C base64 parts and obtained sha256 798c00e0e8e785b54018f43263459473a9bb6e3fafaaa3017233f23712d6ce05 with 23/23 payload files matching the internal SHA256SUMS; re-scored the 80-receipt holdout from holdout_per_receipt.json (P0 264/320=0.8250, P2 279/320=0.871875, delta +0.046875, whole-receipt 35/80→44/80); re-ran both bootstraps with random.Random(20260918), 10 000 draws (receipt [0.009375,0.084375]; company-cluster [-0.003425,0.089744]; 5th percentiles 0.015625 and 0.005747; P(delta<0.03)=0.1857 and 0.2392; dominant cluster removed +0.034615; 44 clusters with sizes 15,8,4,4,3,3,2×5,1×33; sum of squared weights 0.06125, 16.33 effective clusters); recomputed 16/5/23 cluster signs, 33 singletons, the 25-up/10-down sign test (p=0.01667), the whole-receipt delta +0.1125 with interval including zero, the six prompt lengths (519/1674/2602), the four P2 contamination strings, the four mislabelled smoke rows, the literal backslash-n template, the exhibit-pointer file counts (20 vs 23), and the stale manifest report row (86b64db9… vs e813ae25…). Project records were re-read: experiment complete/rev 6/pass, kit task done/pass, literature revision 0 with zero sections, publication none, claim unchanged at active/low. One defect found, which is why this returns for a synthesis-level correction rather than a fresh lens wave: the proposed Results/secondary replacement, mirrored in synthesis §6 item 2, states “15 are totals whose gold carries a printed RM token”, but error_audit.jsonl shows 15 wrong totals of which 13 carry RM gold (13 of the 15 agree modulo non-digits); the same paragraph’s third sentence implies 13, so the text is self-contradictory and would publish an overstated label-artifact count. A second, documentation-only inconsistency: the change spec’s M2 evidence note cites a cluster one-sided 5th percentile of 0.004098 while both its own proposed text and the synthesis report say +0.0057; my replication of the frozen procedure supports +0.0057, so the note is stale. All other proposed edits verify, including that the edit ‘before’ blocks equal paper methods/results revision 1 and use expectedRevision 1 with section ids preserved.",
+    "artifactIds": [
+      "art_6ae939b9d84d47449785882f0cf6df53",
+      "art_fb5a5ef5887142fb8ca8394f91322d63",
+      "art_282970780fd74965988ac1e5931bbe7f",
+      "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+      "art_516f6c725fbc4adc840c24c4be974b57",
+      "art_d2df6a897b5b42149c1de4f1fa456cc3",
+      "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+      "art_cff0bd942c9345acb20fad1aa1c35735"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": [
+          "art_6ae939b9d84d47449785882f0cf6df53",
+          "art_cff0bd942c9345acb20fad1aa1c35735",
+          "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25"
+        ],
+        "notes": "Section 3 correctly separates completed, independently reviewed work from the in-flight wave. Cross-checked against live records: task wf_c948778f526349d798d656d07b98ed33 is done/pass (review_2773ccf6af6d48cea7ac5a79df167e63), experiment wf_81745bc7a920474dab27a0423ecdd8b0 is complete at revision 6 with verdict pass (review_1652f29f6cd94557bab696223516f4a0), literature is revision 0 with zero sections, publication status is none, and no other project work is in flight. The wave's new quantities (P(delta<0.03), the RM asymmetry, the contamination count, gold-in-input) are labelled post-hoc or lens-reported and traced to pinned identifiers, and the rework history (superseded bundle, review_7bd7b9552303402789145b90f6879f44 needs_changes) is stated rather than hidden. Uncertainty is preserved (no >=3-point, procedure-level, or generalisation claim)."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+          "art_516f6c725fbc4adc840c24c4be974b57",
+          "art_d2df6a897b5b42149c1de4f1fa456cc3",
+          "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+          "art_cff0bd942c9345acb20fad1aa1c35735"
+        ],
+        "notes": "All five lens reports are separately authored by five distinct actors and each was read at its pinned hash. Spot-checked the reconciliation: D1 correctly identifies the methods lens's survives-list as the minority position and gives the substantive reason (gold always being verbatim-in-input is why the unsupported_gold class is vacuous); D3's estimator dependence reproduces (receipt sign test 25 up/10 down, p=0.01667, against a clustered interval spanning zero); D7's cluster sizes and 16.3 effective clusters reproduce exactly; D5's +0.0469/+0.0375 reproduce while the +0.0531 total-only variant is correctly labelled lens-reported. Negative results (address and total regress on holdout, P1 never run on holdout, the one-cell selection margin) and methodological limits (one model, one sample per cell, string- not family-disjoint holdout, BIO-reconstructed gold) are preserved rather than smoothed. The theory lens's 19-of-22 suffix claim versus the synthesis's strict 18-of-22 is disclosed as an operationalisation difference, which matches how both lenses describe their tests."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_6ae939b9d84d47449785882f0cf6df53",
+          "art_fb5a5ef5887142fb8ca8394f91322d63",
+          "art_282970780fd74965988ac1e5931bbe7f"
+        ],
+        "notes": "Report and change specification agree on every shared quantity I could recompute: +0.046875, [0.009375, 0.084375], [-0.003425, 0.089744], +0.034615, 35/80 -> 44/80, 486 -> 1343 tokens (2.76x), 519/1674/2602 characters, 0.0612 sum of squared weights and 16.3 effective clusters. The change specification's no-measurement-change claim holds: the machine-readable edits carry expectedRevision 1 for methods and results with section ids design/evaluation/failure-accounting and primary/secondary/interpretation preserved, and its edit 'before' blocks match paper revision 1 verbatim where it says it appends. Rework and dead ends are honestly recorded in the report (superseded exhibit, superseded evidence bundles, the P1 arm written but never run on holdout, the mis-specified worked-example assembly recovered by search, the mislabelled non-scored smoke rows). Proposals are separated from established results via explicit post-hoc labelling and the 'Changes explicitly NOT proposed' section."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "met",
+        "evidenceIds": [
+          "art_cff0bd942c9345acb20fad1aa1c35735",
+          "art_fb5a5ef5887142fb8ca8394f91322d63",
+          "art_6ae939b9d84d47449785882f0cf6df53"
+        ],
+        "notes": "The next_steps lens's proposals follow from the reproduced evidence and stay inside the project's prompting-only scope: run the already-frozen P1 field-rules arm on the frozen holdout to separate rules from examples, add a length-matched padding control for the 2.76x confound, re-key the split and add a per-company cap, and add receipts one per company (about 63) to reach roughly 80 percent power on the clustered criterion, with the 400-attempt ceiling flagged as the scope change that would require. Its inputs reproduce (44 clusters, dominant 15, +0.046875, ~16.3 effective clusters). The consolidation decisions in the change specification respect scope: no verdict, decision-rule or measurement change; no retroactive re-registration; no claim that the effect is absent; no edit to problem or literature, with the empty literature treated as a separate work item. One caveat recorded rather than blocking: the synthesis report itself does not restate the follow-up queue or a consolidated claim decision, so the follow-up content lives in the next_steps lens."
+      },
+      {
+        "criterionNumber": 5,
+        "status": "not_met",
+        "evidenceIds": [
+          "art_282970780fd74965988ac1e5931bbe7f",
+          "art_fb5a5ef5887142fb8ca8394f91322d63",
+          "art_6ae939b9d84d47449785882f0cf6df53"
+        ],
+        "notes": "I verified the exact proposed edits against the original paper text and the pinned evidence chain. Before-blocks equal paper methods/results revision 1 verbatim, expectedRevision 1 is correct, and section ids are preserved. Almost every number reproduces: 519/1674/2602 characters, 2083 extra characters, 2.76x tokens (486.16 -> 1343.24), 0.186/0.243 and +0.0156/+0.0057, +0.1125 with a whole-receipt interval including zero, 0.0612 and 16.3 effective clusters, four contamination strings in P2 only (5.90, 9.90, 50.00, 27/06/18), four smoke rows mislabelled unparseable_json:AttributeError with valid four-key JSON, the literal backslash-n user_message_template, the exhibit pointer (art_09aad815c8274f4a819c43273bcb3f1b at 20 files vs art_f1d4adec8ce64f04a1961f1d9dfb19af at 23), the stale manifest report row (86b64db9… vs the actual report e813ae25…), 39 model_miss + 2 near_miss + 0 format/unsupported_gold, and 18 of 39 model_miss cells with the output a normalized substring of a longer gold span. The defect: the proposed Results/secondary replacement, and its mirror in synthesis section 6 item 2, states '15 are totals whose gold carries a printed RM token'. From error_audit.jsonl, 15 wrong cells are totals but only 13 have gold containing RM, and 13 of the 15 agree modulo non-digits. The same paragraph's third sentence (15 RM receipts, P2 wrong 13, two un-prefixed) implies 13, so the proposed text contradicts itself and overstates the label-artifact count that the whole sentence exists to establish. Also the change specification's M2 evidence note gives the cluster one-sided 5th percentile as 0.004098 while its own proposed text and the report say +0.0057; replicating the frozen procedure (random.Random(20260918), 10 000 draws, sorted groups, index 500) yields 0.005747, so the paper text is the supported value and the evidence note should be corrected to match."
+      }
+    ]
+  },
+  {
+    "id": "review_95996dc9d5664ef0a08f1714e47222e0",
+    "subject_id": "wf_8a158ccef3a64865af0da3d15643bc6c",
+    "subject_revision": 4,
+    "status": "submitted",
+    "verdict": "needs_changes",
+    "return_to": "synthesizing",
+    "producer_id": "actor_71e284857cc54146910e0a0a534fd4cb",
+    "reviewer_id": "actor_afb63c82e6d146b4b435cc97c08d3c75",
+    "synopsis": "Reassembled revision-C and checked each proposed edit against paper revision 1 and pinned evidence. Measurements reproduce except: the edits state cluster P(delta<0.03)=0.243 while the cited evidence and my replication give 0.2392, and the retained design sentence no development or holdout gold reached a prompt conflicts with the wave four-string contamination finding. Criteria 2-4 hold; 1 and 5 need correction.",
+    "notes": "Verification was performed against pinned bytes, not prose. I reassembled the six revision-C base64 parts (art_2bfaa9d2, art_e6744177, art_e51cda8d, art_f01356ed, art_5467a6ad, art_9fabda16 in that order) plus tail art_9fabda16 and obtained sha256 798c00e0e8e785b54018f43263459473a9bb6e3fafaaa3017233f23712d6ce05 with 23/23 payload files matching the internal SHA256SUMS; I then re-scored and re-bootstrapped the holdout with my own scorer against the frozen kit (dataset_receipts.json 3abff953..., evaluator 7980231e...) and re-read the live records. Reproduced independently: development P0/P1/P2 71/80/81 of 96 (0.7396/0.8333/0.8438, P2 over P1 by one cell); holdout P0 264/320=0.8250, P2 279/320=0.871875, delta +0.046875; receipt CI [0.009375,0.084375]; company-cluster CI [-0.0034247,0.0897436]; 5th percentiles 0.015625 and 0.005747; P(delta<0.03) 0.1857 (receipt) and 0.2392 (cluster); dominant cluster gerbang alaf restaurants sdn bhd (15 receipts) removed +0.034615; cluster sizes 15,8,4,4,3,3,2x5,1x33, sum of squared weights 0.06125 (16.33 effective); 25 up/10 down; whole-receipt 35/80 to 44/80 (+0.1125); per-field 0.5625->0.7875, 0.9625, 0.95->0.925, 0.825->0.8125; prompt lengths 519/1674/2602 characters; holdout tokens 486.16->1343.24 (2.76x); error audit 41 wrong = 39 model_miss + 2 near_miss, 15 wrong totals of which 13 carry RM gold and 13 agree modulo non-digits; 18/39 model_miss outputs a normalized substring of longer gold; gold-in-input 464/464 kit and 320/320 holdout; convention sensitivities +0.0531 (total modulo non-digits) and +0.0375 (alphanumeric all fields); RM asymmetry P0 5 / P2 13 wrong on the 15 RM totals and P0 9 / P2 2 on the 65 un-prefixed; four dev/holdout gold strings verbatim in the P2 prompt (5.90, 9.90, 50.00, 27/06/18); MR D.I.Y. split recurrence; stale manifest row 86b64db9 vs report e813ae25; exhibit 23 files; literal backslash-n template; four smoke rows mislabelled with valid four-key JSON. Live state: experiment complete/rev 6/pass, kit task pass, literature rev 0 with zero sections, publication none, claim active/low/rev 0, only this reflection in flight, no new results during the wave. Proposed edits also verified: expectedRevision 1 and section ids preserved, and the methods/evaluation and results/primary replacements equal the paper revision-1 text plus an appended paragraph. Two defects force return rather than a pass. (1) Cluster P(delta<0.03) is stated as 0.243 in the change-spec M2/R1 proposed text, in the JSON edits for methods/evaluation and results/primary, and in report sections 1 and 6 item 3, but the cited evidence gives 0.239 (evidence lens) / 0.2392 (report section 3 and the M2 evidence note) and my replication of the frozen procedure gives 2392/10000=0.2392; no variant I tried (strict/lenient inequality, shared RNG, distinct-receipt denominator, unweighted cluster means) yields 0.243, and the value is carried from the superseded submission art_6ae939b9. (2) The proposed methods/design replacement retains 'no development or holdout gold reached a prompt', although the wave itself reports four dev/holdout gold strings in the P2 prompt and producer_verification.json lists two holdout receipts (X51006414519 total 50.00; X51008123450 date 27/06/18) as substring matches, so the change spec's claim that this residual lives only in producer artifacts and the report is not accurate for that section. The five lens reports themselves are sound and should be retained; return to synthesizing to correct the report, change specification and JSON edits.",
+    "artifactIds": [
+      "art_e4849c2cd5784eb382c4bf1f8d49e7d7",
+      "art_5fb6c8920f0e4d0f804cda58bfd2f94c",
+      "art_fae1dcec42b5443a9485ec1f9005b87f",
+      "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+      "art_516f6c725fbc4adc840c24c4be974b57",
+      "art_d2df6a897b5b42149c1de4f1fa456cc3",
+      "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+      "art_cff0bd942c9345acb20fad1aa1c35735"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "not_met",
+        "evidenceIds": [
+          "art_e4849c2cd5784eb382c4bf1f8d49e7d7",
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+          "art_cff0bd942c9345acb20fad1aa1c35735",
+          "art_fae1dcec42b5443a9485ec1f9005b87f"
+        ],
+        "notes": "Coverage of the wave is accurate and verifiable from live records: experiment wf_81745bc7a920474dab27a0423ecdd8b0 complete at revision 6 with verdict pass, kit task done/pass, literature revision 0 with zero sections, publication none, claim active/low/revision 0, only this reflection in flight, and no new results observed during the wave; unfinished and stopped work (never-run P1 arm, superseded bundles and reviews) is stated. Uncertainty is preserved. But two factual conclusions do not cite the exact evidence. (a) Sections 1 and 6 item 3 state cluster P(delta<0.03)=0.243, while the report's own section 3 verification note and the evidence lens say 0.239/0.2392; replicating the frozen procedure (random.Random(20260918), 10,000 draws, sorted groups, denominator 4 x drawn receipts) gives 2392/10000=0.2392 and reproduces the recorded 5th percentile 0.005747 and interval [-0.0034247,0.0897436] exactly (no alternative variant yields 0.243). (b) T6 asserts 'No holdout label entered a prompt', but the wave's own contamination finding is four dev/holdout gold strings in P2 text (5.90, 9.90, 50.00, 27/06/18) and producer_verification.json itself lists two holdout receipts (X51006414519 total 50.00, X51008123450 date 27/06/18) as substring matches."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+          "art_516f6c725fbc4adc840c24c4be974b57",
+          "art_d2df6a897b5b42149c1de4f1fa456cc3",
+          "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+          "art_cff0bd942c9345acb20fad1aa1c35735"
+        ],
+        "notes": "Each reconciliation row was checked against the lens bytes. T1 is faithful: the methods lens lists residual-error attribution under 'conclusions that survive' in the narrow 0-unsupported_gold form while conceding about 13 of 41 wrong cells are currency-format, and the evidence and synthesis lenses call the check vacuous/near-tautological. T2 verified: methods and theory both report [-0.003425, 0.089623], the superseded synthesis art_6ae939b9 reports [-0.003676, 0.090278], and my replication gives the retained [-0.003425, 0.089744]. T3 (next_steps cache-miss ratio about 1.18x), T4 (about 50 percent power), T5 (sign test 25 up/10 down p=0.0167; whole-receipt 19/10 p=0.136), T6 (four contamination strings), T7 and T8 all match the lens text, and negative results (date ceiling, address/total regressions, under-powered null) plus methodological limitations are recorded. Only the T6 gloss is overstated, reported under criteria 1 and 5."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_e4849c2cd5784eb382c4bf1f8d49e7d7",
+          "art_5fb6c8920f0e4d0f804cda58bfd2f94c",
+          "art_fae1dcec42b5443a9485ec1f9005b87f"
+        ],
+        "notes": "The synthesis report and change specification agree on every shared quantity I recomputed (+0.046875, [0.009375,0.084375], [-0.003425,0.089744], +0.034615, 35/80 to 44/80, 486.16 to 1343.24 tokens = 2.76x, 519/1674/2602 characters, 2083 extra characters, 0.06125 sumsq / 16.33 effective clusters, 39 model_miss + 2 near_miss). The JSON edits use expectedRevision 1 with section ids preserved, and the methods/evaluation and results/primary replacements keep the revision-1 text verbatim as a prefix before appending. Rework, stopped runs and dead ends are preserved (section 0, section 2, section 7: superseded bundle and report, review_7bd7b955 needs_changes, the never-run P1 arm, the mis-specified worked-example assembly), and proposals are explicitly separated from results (section 9 'proposals ... they are not findings'; 'Changes explicitly NOT proposed'). Caveat: the 0.243/0.2392 inconsistency is carried identically in both documents rather than reconciled; that is scored under criteria 1 and 5."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "met",
+        "evidenceIds": [
+          "art_cff0bd942c9345acb20fad1aa1c35735",
+          "art_5fb6c8920f0e4d0f804cda58bfd2f94c",
+          "art_e4849c2cd5784eb382c4bf1f8d49e7d7"
+        ],
+        "notes": "Section 9 restates the next_steps lens queue and I confirmed every item in the lens bytes: run P1 on the frozen holdout (80 calls), length-matched padding control, about 63 one-per-company receipts (about 126 calls, roughly 80 percent power), do not buy the interval with repeat receipts (about 60 percent power), field-targeted arm, and cost/power reporting. Its scope decisions also trace (400-attempt ceiling; about 448 to 528 calls; per-company cap; 841 unused eligible rows and 372 company groups; keep the claim with a pre-registered resolution path; fill the empty literature; metadata residuals). These respect the project's prompting-only scope: no fine-tuning claim, the claim is left unchanged at revision 0, and no verdict, decision rule or measurement is altered. Inputs I could reach reproduce (cluster sizes 15,8,4,4,3,3,2x5,1x33; 0.06125; 16.33 effective clusters; +0.046875)."
+      },
+      {
+        "criterionNumber": 5,
+        "status": "not_met",
+        "evidenceIds": [
+          "art_fae1dcec42b5443a9485ec1f9005b87f",
+          "art_5fb6c8920f0e4d0f804cda58bfd2f94c",
+          "art_e4849c2cd5784eb382c4bf1f8d49e7d7",
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4"
+        ],
+        "notes": "I verified each proposed edit against paper revision 1 and the pinned evidence rather than the prose. Before-blocks are verbatim (methods/evaluation and results/primary are the revision-1 text plus an appended paragraph), expectedRevision 1 and section ids are correct, and I independently reproduced the load-bearing numbers: dev 71/80/81 of 96; holdout 264/320 vs 279/320 (+0.046875); per-field 0.5625->0.7875, 0.9625, 0.95->0.925, 0.825->0.8125; whole-receipt 35/80->44/80 (+0.1125); both intervals and 5th percentiles (0.015625, 0.005747); P(delta<0.03) 0.1857; dominant cluster 15 with +0.034615; 39 model_miss + 2 near_miss; 15 wrong totals with 13 RM gold and 13 agreeing modulo non-digits; 18/39 substring; 464/464 and 320/320 gold-in-input; sensitivities +0.0531 and +0.0375; RM asymmetry 5 vs 13 on the 15 RM totals and 9 vs 2 on the 65 un-prefixed; tokens 486.16->1343.24; lengths 519/1674/2602; MR D.I.Y. across splits. Two defects. (a) The methods/evaluation and results/primary replacements state cluster P(delta<0.03)=0.243, but the cited evidence (change-spec M2 evidence note: 0.2392; evidence lens: 0.239) and my replication of the frozen procedure give 0.2392; the report's own section 3 also says 0.2392, and the value appears carried from the superseded submission art_6ae939b9. (b) The proposed methods/design replacement retains 'no development or holdout gold reached a prompt' although the wave's own contamination finding (four dev/holdout gold strings in P2 text; producer_verification.json lists two holdout receipts' gold as substring matches) shows that sentence is unsupported as written, while the change spec claims those residuals live only in producer artifacts and the report, not in this section. Correct by narrowing the P value to 0.239 (or documenting the procedure that yields 0.243) and by qualifying the contamination sentence; then the edit set can be re-verified."
+      }
+    ]
+  },
+  {
+    "id": "review_826b6307aa87413095ef904b04fbc48a",
+    "subject_id": "wf_8a158ccef3a64865af0da3d15643bc6c",
+    "subject_revision": 6,
+    "status": "submitted",
+    "verdict": "needs_changes",
+    "return_to": "synthesizing",
+    "producer_id": "actor_d627c65256bf409b9ccfc96970e5d368",
+    "reviewer_id": "actor_b3ef2c2bd9b84738a072561cf02635e3",
+    "synopsis": "Reassembled revision C (23/23 hashes), re-ran the frozen evaluator and bootstraps, and audited every proposed edit. All scored figures, audits, contamination and currency checks reproduce, and the paper edits are faithful. One defect: the report attributes 2386/10000 to the frozen procedure, but the literal comparison gives 2392 (0.2392).",
+    "notes": "Verification performed (not read from assertions): I reassembled the revision-C bundle from its six pinned parts in memory and confirmed sha256 798c00e0e8e785b54018f43263459473a9bb6e3fafaaa3017233f23712d6ce05 with 23/23 SHA256SUMS. I loaded the frozen kit dataset (3abff953...) and evaluator (7980231e...) from the kit bundles, applied my own implementation of casefold(NFKC) whitespace-collapse exact matching to the frozen predictions, and reproduced every scored quantity: dev P0/P1/P2 71/80/81 of 96, holdout P0 264/320 and P2 279/320, delta +0.046875, receipt bootstrap [0.009375, 0.084375] and cluster bootstrap [-0.003424657534246589, 0.08974358974358965] under random.Random(20260918), 5th percentiles 0.015625 and 0.005747126, dominant-cluster-removed +0.034615, 44 clusters with sum of squared weights 0.06125, per-receipt cells identical to holdout_per_receipt.json (0/80 mismatches). I re-derived independently: P(delta<0.03) 0.1857 (receipt) and 0.2392 (cluster); total sensitivity +0.053125; alphanumeric sensitivity +0.0375; whole-receipt 19 fixed/10 broken/51 tied, +0.1125 with CI [-0.0125, 0.2375]; 40 percent of the net gain (6/15 cells) from the 15-receipt cluster; wrong P2 total cells 15, 13 with RM gold, 13 agreeing modulo non-digits; RM-gold receipts 15 (P2 wrong 13, 12 with matching digits; P0 wrong 5) and 65 un-prefixed (P0 wrong 9, P2 wrong 2); 39 model_miss/2 near_miss, 18/39 substring-of-longer-gold; 464/464 and 320/320 verbatim-in-input; contamination exactly the four claimed strings in P2 only, each inside demonstration OCR or demonstration gold; prompt lengths 519/1674/2602; dev P1-P2 flips 7/24; holdout run logs P0/P2 only. The five lens reports support the reconciliation (T1-T9), including the methods lens' survives-narrowly dissent, the theory lens' sign test 25/10 p=0.0167 and CRSE, the synthesis lens' near-tautological criticism, and the next_steps power/cache items. Rework, stopped arms, superseded material and metadata residuals are recorded accurately. Defect requiring correction: the report (sections 0.1, 3, T9) and the change-spec M2 evidence assert that re-implementing the frozen code 'exactly as written' gives 2386/10000 = 0.2386 and that the prior review's 0.2392 is 'not reproducible at the last digit'. In my replication the literal frozen comparison (v < 0.03) over the frozen draws gives 2392/10000 = 0.2392, reproducing the recorded interval and 5th percentile exactly; 2386 requires excluding six resamples whose delta is the floating-point value 0.029999999999999916, i.e. mathematically exactly 3.0 points. Both counts are defensible but the report mislabels which one the literal code produces and wrongly says 0.2392 is irreproducible. Both round to 0.239, so no proposed paper text is wrong and criterion 5 is met; the fix is to state the float-boundary distinction explicitly (or report the 0.2386-0.2392 range) rather than denying the reviewer's value. Minor additional inconsistencies: the first-appearance variant gives 2432/10000, not the stated 2431, and the change-spec M2 evidence paragraph is duplicated verbatim.",
+    "artifactIds": [
+      "art_75eb7600f89248c19a18fddcfae73591",
+      "art_04e8505153a94f9c884f49a4ef4193d9",
+      "art_0dd1d8e797bf415dbd68003a9edab674",
+      "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+      "art_516f6c725fbc4adc840c24c4be974b57",
+      "art_d2df6a897b5b42149c1de4f1fa456cc3",
+      "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+      "art_cff0bd942c9345acb20fad1aa1c35735"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "not_met",
+        "evidenceIds": [
+          "art_75eb7600f89248c19a18fddcfae73591",
+          "art_04e8505153a94f9c884f49a4ef4193d9",
+          "art_0dd1d8e797bf415dbd68003a9edab674"
+        ],
+        "notes": "Coverage of completed, in-progress, reworked and stopped work is accurate, and every substantive factual conclusion and the proposed 0.239 paper value reproduce. The exact-evidence attribution for the cluster tail does not: the report and change specification state that re-implementing the frozen code exactly gives 2386/10000 = 0.2386 and that the prior review's 0.2392 is not reproducible. Reassembling revision C and running the frozen procedure (groups keyed by evaluator-normalized gold company, gkeys sorted, random.Random(20260918), 10,000 draws, index percentiles) reproduces the recorded cluster interval -0.003424657534246589 to 0.08974358974358965 and 5th percentile 0.005747126436781609, and the literal v < 0.03 tail count is 2392/10000 = 0.2392; 2386/10000 arises only if the six resamples whose delta is the float value 0.029999999999999916 (mathematically exactly 3.0 points) are excluded. The report should disclose this float-boundary basis instead of asserting the reviewer's value is irreproducible. This is a factual-evidence defect in the report even though the paper text (0.239) is correct under both conventions."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+          "art_516f6c725fbc4adc840c24c4be974b57",
+          "art_d2df6a897b5b42149c1de4f1fa456cc3",
+          "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+          "art_cff0bd942c9345acb20fad1aa1c35735"
+        ],
+        "notes": "All five independently authored lens reports were read and their load-bearing claims checked against the frozen bytes. The synthesis preserves the real disagreements rather than averaging them: the methods lens' narrow survives verdict for the residual-error sentence against the evidence/theory/synthesis-lens rejection; fourth-decimal cluster-interval differences; the next_steps cache-miss cost ratio that the synthesis explicitly excludes from paper text as unverified; the theory lens' receipt-level sign test (25 up/10 down, p = 0.0167) versus whole-receipt (19/10, p = 0.136) versus clustered interval; the four-versus-two contamination count; and the under-powered not-confirmed reading. Negative results (date ceiling, address/total regressions, non-confirmation), the stopped P1 arm and the empty literature document are carried forward, not hidden."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_75eb7600f89248c19a18fddcfae73591",
+          "art_04e8505153a94f9c884f49a4ef4193d9",
+          "art_0dd1d8e797bf415dbd68003a9edab674"
+        ],
+        "notes": "The report, change specification and machine-readable edits agree on the same five section replacements, and none changes a measurement, per-receipt cell, interval or the recorded supported_but_not_cluster_robust verdict. Rework is honestly preserved: both prior needs_changes returns, the superseded bundles and change specifications, the frozen-but-unrun P1 arm, the recovered worked-example assembly, and the open metadata residues (contamination count 2 versus 4, superseded exhibit pointer, stale manifest report row, literal backslash-n template, mislabelled smoke rows) are all recorded. Post-hoc quantities are labelled post-hoc, and section 9 follow-ups are explicitly separated from established results."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "met",
+        "evidenceIds": [
+          "art_cff0bd942c9345acb20fad1aa1c35735",
+          "art_75eb7600f89248c19a18fddcfae73591",
+          "art_04e8505153a94f9c884f49a4ef4193d9"
+        ],
+        "notes": "The follow-up queue follows from the evidence and respects scope: it leads with the highest-information missing contrast (P1 on the frozen holdout), a length-matched padding control, and a power-calibrated company-balanced confirmation holdout of about 63 receipts (~126 calls, ~80 percent power), while warning that repeat receipts inside existing clusters buy only ~60 percent power at temperature 0. The scope decisions (reframing the 400-attempt ceiling for the ~448-528-call cluster-robust test, a per-company cap on future splits, keeping the claim unchanged with a resolution path, filling literature separately) are labelled proposals and stay within the prompting-only, no-fine-tuning scope. The power and cache figures are correctly labelled lens-reported and excluded from the proposed paper text."
+      },
+      {
+        "criterionNumber": 5,
+        "status": "met",
+        "evidenceIds": [
+          "art_0dd1d8e797bf415dbd68003a9edab674",
+          "art_04e8505153a94f9c884f49a4ef4193d9",
+          "art_75eb7600f89248c19a18fddcfae73591"
+        ],
+        "notes": "Every numeric and textual claim in the proposed methods/results replacements was re-derived from the pinned bytes and reproduces: the 264/279 cells and +0.0469 delta, both intervals, 2.76x token cost, 519/1674/2602 prompt lengths, 71/80/81 development cells, the width confound and unrun P1 arm, the four contamination strings with their demonstration contexts, receipt/cluster tails 0.186/0.239 and one-sided bounds +0.0156/+0.0057, the ~0.50 power label, the withdrawn residual-error sentence with 15 totals/13 RM/13 modulo-non-digits, 18/39 substring cells, 464/464 and 320/320 verbatim-in-input, the RM-vs-un-prefixed arm table, the +0.0531 and +0.0375 sensitivities, the +0.1125 whole-receipt reading, and the 40 percent single-cluster share. The edits narrow interpretation, withdraw unsupported text, label post-hoc figures and preserve every limitation; they change no measurement. The 2386 attribution defect documented under criterion 1 lives in the report and change-spec commentary, not in the proposed paper text."
+      }
+    ]
+  },
+  {
+    "id": "review_f405ffcc87be473c98d0b7623be24ecf",
+    "subject_id": "wf_8a158ccef3a64865af0da3d15643bc6c",
+    "subject_revision": 8,
+    "status": "submitted",
+    "verdict": "pass",
+    "return_to": null,
+    "producer_id": "actor_3addab09198844348aa7fdbced7bdf0a",
+    "reviewer_id": "actor_6b36306b87dd4c9fb8afc5aa908ba511",
+    "synopsis": "Reassembled revision C from its six parts (798c00e0..., 23/23 SHA256SUMS), re-scored the frozen holdout with the shipped evaluator against the pinned dataset, and re-ran both bootstraps from the frozen code: every scored figure, the cluster tail-count convention (2386 exact, 2392 float, 13 boundary draws), the four-string contamination scan, the currency audit and every proposed paper edit reproduce.",
+    "notes": "Verified from the immutable bytes, not from assertions. Method: (1) reassembled the revision-C bundle from its six base64 parts in memory - concatenated-b64 sha256 55ca18bf..., tar.gz sha256 798c00e0e8e785b54018f43263459473a9bb6e3fafaaa3017233f23712d6ce05, 23/23 SHA256SUMS verified; (2) read the frozen code/evaluate.py (sha256 7980231e56758eaac3cbb1ef1df5ec3b38cc20bb4b5e24372aeec77264e10755) and the pinned kit dataset (sha256 3abff953f55889495cb541f4f4151c3b9f91afc4c4ceb6b839cd3406110eea15; 116 records = 12/24/80) and re-scored the retained holdout predictions with the shipped evaluator; (3) re-implemented the frozen analyze.py bootstraps (gkeys=sorted(groups) on the evaluator normalization, random.Random(20260918), 10,000 draws, index percentiles); (4) rescanned prompts_frozen.json, the run logs, error_audit.jsonl and selection_checkpoint.json; (5) compared every proposed edit with paper.read methods/results revision 1.\n\nReproduced exactly: holdout P0 264/320 = 0.8250, P2 279/320 = 0.871875, delta +0.046875; per-field company 0.5625 to 0.7875, date 0.9625 flat, address 0.95 to 0.925, total 0.825 to 0.8125; whole-receipt 35/80 to 44/80 (19 fixed / 10 broken / 51 tied, delta +0.1125, bootstrap [-0.0125, 0.2375] includes zero); receipt CI [0.009375, 0.084375] with 5th percentile 0.015625 and P(delta<0.03) = 1857/10000 in both float and exact rational; cluster CI [-0.003424657534246589, 0.08974358974358965] with 5th percentile 0.005747126..., 44 clusters sized 15,8,4,4,3,3,2x5,1x33, sum of squared weights 0.06125 (16.33 effective), dominant-cluster-removed +0.034615. The contested tail count reproduces exactly as the report now states: over the identical frozen draw sequence 2386 draws fall strictly below 3 points in exact rational arithmetic and 2392 by the literal float comparison; 13 draws are mathematically exactly 3.0 points, six evaluating to 0.029999999999999916 and seven to 0.030000000000000027; boundary-inclusive count 2399. The first-appearance enumeration variant gives 2432 (not 2431) with interval [-0.003676, 0.090278], confirming the withdrawal of 0.243. Development 71/80/81 of 96 (0.7396/0.8333/0.8438) and dev company 0.5417 to 0.7917 reproduce; P1 mean tokens 814.17 versus P2 1374.75 confirms the tie-break cascade would have preferred P1 on a one-cell swing.\n\nAlso reproduced: prompt lengths 519/1674/2602 with matching sha256 and byte-identical shared format paragraph; four dev/holdout gold strings (5.90, 9.90, 50.00, 27/06/18) inside P2 text only, each an incidental substring of demonstration OCR or gold (55.90, 49.90, 750.00; 27/06/18 is the gold date of demo X51007579725), with the producer self-check reporting two of the four. Error audit: 41 wrong cells = 39 model_miss (company 16, total 14, address 6, date 3) plus 2 near_miss, 0 format/unsupported_gold; 15 wrong totals, 13 carrying RM in gold and 13 agreeing modulo non-digits; 18 of 39 model_miss outputs are substrings of longer gold spans; on the 15 RM totals P2 is wrong 13 times (12 digits-correct) and P0 5 times, while on the 65 un-prefixed totals P0 is wrong 9 and P2 twice; all three exemplar gold totals (750.00, 58.70, 22.60) are un-prefixed. Sensitivities +0.046875 / +0.0531 / +0.0375 reproduce. Run logs: 236 retained rows (72 dev + 160 holdout + 4 smoke) plus the separately attached fifth smoke call = 237 attempts, 0 retries, 0 errors, all HTTP 200, one system_fingerprint, max concurrency 4; 0 of 80 and 0 of 24 receipts have cross-arm input-hash differences, and all 236 rows reproduce byte-for-byte as the fixed prefix plus the space-joined flat token order; mean holdout tokens 486.16/1343.24 (2.76x); the 1.18x cache-miss ratio is also reproducible from the logs (486.79 vs 411.79 prompt tokens), which the report conservatively labels lens-reported. Gold is verbatim-in-input for 464/464 kit cells and 320/320 holdout cells. Residuals verified: four smoke rows mislabelled unparseable_json:AttributeError with valid four-key JSON; literal backslash-n in user_message_template that does not byte-match the sent messages; stale manifest report.md row 86b64db9 against the pinned e813ae25; producer report describing a 20-file superseded exhibit snapshot where revision 5 pins the 23-file exhibit.\n\nLive state re-checked during the review: experiment complete revision 6 with verdict pass, paper methods and results revision 1, literature revision 0 with zero sections, claim_b5d14a2303a94336a86154cd5feccc4d active/low/revision 0, no other work in flight. All five lens reports were read and their attributed positions match the T1-T9 reconciliation and the change specification.\n\nTwo immaterial observations, neither affecting a criterion: (a) the section 2 metadata bullet attributes the superseded exhibit to art_09aad815/598c078a, a characterization inherited from the theory lens; the producer report itself cites hash 1902b42f and never names art_09aad815 - the substantive residual (report describes the pre-submission 20-file snapshot, revision 5 pins 23 files) is verified, and the bullet is expressly not a paper edit; (b) the section 1/T6 shorthand that no holdout label entered a prompt is loose, though section 2 item 2 and the proposed M1 text state it precisely. The report header snapshot of revision 7 while synthesizing reflects authoring time; the frozen subject is revision 8.",
+    "artifactIds": [
+      "art_065693d5266a43c38b271ed88b266032",
+      "art_00b36146b0ae401fb508642f93691738",
+      "art_15d707ce0bbf462e96478ad6ec36379c",
+      "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+      "art_516f6c725fbc4adc840c24c4be974b57",
+      "art_d2df6a897b5b42149c1de4f1fa456cc3",
+      "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+      "art_cff0bd942c9345acb20fad1aa1c35735"
+    ],
+    "findings": [
+      {
+        "criterionNumber": 1,
+        "status": "met",
+        "evidenceIds": [
+          "art_065693d5266a43c38b271ed88b266032",
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+          "art_cff0bd942c9345acb20fad1aa1c35735"
+        ],
+        "notes": "Coverage verified against live records at review time (experiment complete rev 6 verdict pass; paper methods/results rev 1; literature rev 0 with zero sections; claim active/low/rev 0; no other work in flight), matching section 2. Every load-bearing quantity was re-derived from the pinned bytes rather than read: holdout 264/320 and 279/320, delta +0.046875, both intervals, the 44-cluster geometry, the error-audit breakdown, the currency tables, the contamination scan and the run-log counts. Uncertainty is preserved: the cluster interval is reported as spanning zero with the tail count disclosed as a boundary convention (2386 exact, 2392 float, 13 threshold draws, 2399 inclusive), the power figure and cache breakdown are labelled lens-reported, and the convention sensitivities are labelled post-hoc."
+      },
+      {
+        "criterionNumber": 2,
+        "status": "met",
+        "evidenceIds": [
+          "art_065693d5266a43c38b271ed88b266032",
+          "art_8ea2c1f9e99d4f1c85e984d06e6613c4",
+          "art_516f6c725fbc4adc840c24c4be974b57",
+          "art_d2df6a897b5b42149c1de4f1fa456cc3",
+          "art_e6a6bdd48fb1403eb9cfd3ca1e3eaf25",
+          "art_cff0bd942c9345acb20fad1aa1c35735"
+        ],
+        "notes": "All five lens reports read in full. The T1-T9 attributions check out: evidence lens F1-F9 (0.239, 18.6 percent, 320/320 and 464/464, the arm-asymmetric RM tables, four contamination strings); the methods lens keeps the narrow residual-error reading while conceding about 13 of 41 currency-format cells, contradicting its own survives entry as the report says; theory lens independent CRSE [-0.002, 0.096], sign test 25/10 p=0.0167, whole-receipt 19/10 p=0.136, 33 of 44 singleton clusters and its own 0.089623-vs-0.089744 percentile-index note; the synthesis lens four-string scan and unsupported_gold objection; next_steps about 50 percent power, the 1.18x cache-miss ratio and the 448-528 call figure. Disagreements are recorded rather than averaged (T1, T2, T9 each preserve both positions), and negative results are kept: date at ceiling, address -2 and total -1 cells, whole-receipt and clustered readings not significant, P1 frozen but never run on the holdout."
+      },
+      {
+        "criterionNumber": 3,
+        "status": "met",
+        "evidenceIds": [
+          "art_065693d5266a43c38b271ed88b266032",
+          "art_00b36146b0ae401fb508642f93691738",
+          "art_15d707ce0bbf462e96478ad6ec36379c"
+        ],
+        "notes": "Every number shared between the synthesis report and the change specification agrees (0.186/0.0156, 0.2386/0.2392/0.239, 13 boundary draws, 0.0612 sum of squared weights, 16.3 effective clusters, +0.0346, 39/2 error classes, 464/464 and 320/320 gold-in-input, the RM counts, +0.0469/+0.0531/+0.0375, 486 to 1343). The machine-readable edits carry exactly two methods changes (design, evaluation) and three results changes (primary, secondary, interpretation) at expectedRevision 1 with section ids preserved, and each content block matches the specification quoted replacement. Rework is preserved honestly: three needs_changes returns of this reflection with the defective item named, the experiment attempt-1 return on reporting fidelity, the frozen-but-unrun P1 arm, the recovered worked-example assembly, and the metadata residuals. Proposals are segregated in section 9 and the section headed Changes explicitly NOT proposed, including the explicit refusal to touch the claim or the verdict."
+      },
+      {
+        "criterionNumber": 4,
+        "status": "met",
+        "evidenceIds": [
+          "art_065693d5266a43c38b271ed88b266032",
+          "art_cff0bd942c9345acb20fad1aa1c35735"
+        ],
+        "notes": "The follow-up queue follows from the verified inputs: the one-cell development margin and unrun P1 justify the P1-vs-P0 holdout run; the confounded exemplar/length design justifies the length-matched control; 44 clusters with 16.3 effective clusters and the 841 unused eligible rows / 372 source groups ground the balanced confirmation holdout and the per-company cap; next_steps lines 122-124 supply the 448-528 call requirement against the 400-attempt ceiling and 90-minute limit, and the report flags that this exceeds one cycle rather than quietly proposing it. Dropping the more-samples-per-receipt suggestion follows the temperature-0 near-duplicate argument. Scope is respected: prompting-only, the fine-tuning comparison explicitly left unsettled, the claim change routed to the claim workflow and excluded from the paper edits, and the empty literature document treated as a separate work item rather than a paper edit."
+      },
+      {
+        "criterionNumber": 5,
+        "status": "met",
+        "evidenceIds": [
+          "art_15d707ce0bbf462e96478ad6ec36379c",
+          "art_00b36146b0ae401fb508642f93691738",
+          "art_065693d5266a43c38b271ed88b266032"
+        ],
+        "notes": "Each quoted defect matches paper revision 1 verbatim: the design sentence ending in so the contrast isolates extraction guidance, the secondary sentence claiming every wrong gold string was recoverable verbatim from the input and that no residual error is attributable to BIO/OCR label artifacts, and the primary/interpretation framings. Every numeric string in the replacements was recomputed from the pinned bytes (accuracies, both intervals, the dominant-cluster value, the cluster geometry, the tail-count boundary, the currency and substring audit, the three sensitivity variants, the token means) except the items the specification itself marks as lens-reported (power, +0.0531) or lens-reported and unverified (cache breakdown). The edits narrow interpretation, add clearly labelled post-hoc quantities, and change no measurement, per-receipt cell, interval or the recorded supported_but_not_cluster_robust verdict; the containment of the contamination sentence in M1 is exact (four strings, all incidental substrings, none drawn from a development or holdout record)."
+      }
+    ]
+  }
+]

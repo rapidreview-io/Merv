@@ -8,6 +8,7 @@ import { WorkflowsService } from '@merv/workflows';
 
 async function fixture(t: TestContext) {
   const state = new SqliteState(':memory:');
+  const controls = { outputs: () => {} };
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   t.after(async () => {
@@ -88,8 +89,14 @@ async function fixture(t: TestContext) {
         lease: {
           role: async (): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => 'producer',
           acquire: async ({ leaseId }) => ({ leaseId }),
-          check: async () => {},
+          check: async (context, receipt) => {
+            assert.equal(receipt.leaseId, context.caller.session!.id);
+          },
           release: async () => {},
+          outputs: () => {
+            controls.outputs();
+            return {};
+          },
         },
       },
     ],
@@ -97,7 +104,10 @@ async function fixture(t: TestContext) {
   const handle = await workflows.register(definition, policy);
   const instance = await handle.start(caller, { workflow: definition.name, requestId: 'start' });
   const target = { instanceId: instance.id, expectedRevision: instance.revision };
-  const execution = await workflows.execution(caller, target);
+  const requestedTarget = { ...target };
+  const pendingExecution = workflows.execution(caller, requestedTarget);
+  requestedTarget.expectedRevision = 99;
+  const execution = await pendingExecution;
   const dispatch = async (tool: string, input: Data) =>
     await workflows.authorizeDispatch(caller, {
       ...target,
@@ -106,7 +116,18 @@ async function fixture(t: TestContext) {
       tool,
       input,
     });
-  return { state, scope, workflows, caller, handle, instance, target, execution, dispatch };
+  return {
+    state,
+    scope,
+    workflows,
+    caller,
+    handle,
+    instance,
+    target,
+    execution,
+    dispatch,
+    controls,
+  };
 }
 
 test('optional references supplement only otherwise-denied declared evidence reads', async (t) => {
@@ -121,6 +142,22 @@ test('optional references supplement only otherwise-denied declared evidence rea
       lookups.push(tool);
       return { artifacts: ['live-artifact'], reviews: ['live-review'] };
     },
+  });
+  const request = {
+    ...f.target,
+    registrationId: f.execution.registrationId,
+    policyHash: f.execution.policyHash,
+    tool: 'artifact.read',
+    input: { artifactId: 'own-artifact' },
+    read: false,
+  };
+  const dispatching = f.workflows.authorizeDispatch(f.caller, request);
+  request.tool = 'undeclared.write';
+  request.read = true;
+  request.input.artifactId = 'changed';
+  assert.deepEqual(await dispatching, {
+    tool: 'artifact.read',
+    input: { artifactId: 'own-artifact' },
   });
   const head = await f.state.eventHead();
   assert.equal(
@@ -243,7 +280,10 @@ test('unavailable research reads do not interrupt assignment or lease lifecycle'
   });
   assert.ok(await f.workflows.assignment(f.caller, f.instance.id));
   assert.equal((await f.workflows.dispatchCandidates(f.caller))[0]!.instanceId, f.instance.id);
-  assert.equal(await f.workflows.leaseRole(f.caller, f.target), 'producer');
+  const roleTarget = { ...f.target };
+  const selectingRole = f.workflows.leaseRole(f.caller, roleTarget);
+  roleTarget.expectedRevision = 99;
+  assert.equal(await selectingRole, 'producer');
   const source = await f.scope.delegationSource(f.caller);
   f.scope.registerSessionAuthority({ require: async () => source });
   const actor = await f.state.transaction(
@@ -263,12 +303,20 @@ test('unavailable research reads do not interrupt assignment or lease lifecycle'
     actorId: actor.id,
     session: { id: 'lease-test' },
   };
-  const offered = await f.workflows.offerLease(f.caller, worker, {
-    ...f.target,
-    leaseId: 'lease-test',
-  });
-  assert.ok(await f.workflows.checkLease(worker, offered.lease));
-  assert.ok(await f.workflows.activateLease(worker, offered.lease));
+  const offerTarget = { ...f.target, leaseId: 'lease-test' };
+  const offering = f.workflows.offerLease(f.caller, worker, offerTarget);
+  offerTarget.leaseId = 'changed';
+  offerTarget.instanceId = 'changed';
+  const offered = await offering;
+  const checkedLease = structuredClone(offered.lease);
+  const checking = f.workflows.checkLease(worker, checkedLease);
+  checkedLease.actorId = 'changed';
+  checkedLease.receipt.leaseId = 'changed';
+  assert.ok(await checking);
+  const activatedLease = structuredClone(offered.lease);
+  const activating = f.workflows.activateLease(worker, activatedLease);
+  activatedLease.instanceId = 'changed';
+  assert.ok(await activating);
   assert.equal(
     (
       await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
@@ -286,5 +334,20 @@ test('unavailable research reads do not interrupt assignment or lease lifecycle'
       }),
     /Research lookup unavailable/,
   );
-  await f.workflows.releaseLease(offered.lease, { reason: 'Completed' });
+  for (const change of ['policy', 'read classification']) {
+    const frozen = structuredClone(offered.execution);
+    const request = { tool: 'undeclared.write', input: {}, read: false };
+    f.controls.outputs = () => {
+      if (change === 'policy') frozen.policy.tools.push({ name: request.tool, alternatives: [{}] });
+      else request.read = true;
+    };
+    await assert.rejects(
+      () => f.workflows.authorizeLeaseDispatch(worker, offered.lease, frozen, request),
+      { code: 'execution_tool_forbidden' },
+    );
+  }
+  const release = { reason: 'Completed' };
+  const releasing = f.workflows.releaseLease(offered.lease, release);
+  release.reason = '';
+  await releasing;
 });

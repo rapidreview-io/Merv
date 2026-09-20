@@ -233,6 +233,7 @@ export class ReflectionService implements Reflections {
     };
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Reflection> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const row = await this.row(caller, id, tx);
       const submission = row.submission ? (JSON.parse(row.submission) as Submission) : null;
@@ -262,6 +263,7 @@ export class ReflectionService implements Reflections {
     });
   }
   async list(caller: Caller, transaction?: Transaction): Promise<Reflection[]> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.read(caller, tx);
       return await mapAsync(
@@ -276,6 +278,7 @@ export class ReflectionService implements Reflections {
     });
   }
   async lens(caller: Caller, id: string, transaction?: Transaction): Promise<ReflectionLens> {
+    caller = structuredClone(caller);
     return await inTransaction(
       this.state,
       transaction,
@@ -298,6 +301,7 @@ export class ReflectionService implements Reflections {
     input: ReflectionCreate,
     transaction?: Transaction,
   ): Promise<Reflection> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       check(!caller.session, 'forbidden', 'Create waves outside an assigned worker', 403);
@@ -976,6 +980,7 @@ export class ReflectionService implements Reflections {
     input: ReflectionLensSubmit,
     transaction?: Transaction,
   ): Promise<ReflectionLens> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'submit_lens', input, tx, async () => {
@@ -1043,6 +1048,7 @@ export class ReflectionService implements Reflections {
     input: ReflectionSubmit,
     transaction?: Transaction,
   ): Promise<Reflection> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'submit', input, tx, async () => {
@@ -1297,6 +1303,8 @@ export class ReflectionService implements Reflections {
     });
   }
   async open(caller: Caller, tx: Transaction): Promise<string | undefined> {
+    caller = structuredClone(caller);
+    await this.read(caller, tx);
     return (
       await tx.get<{ id: string }>(
         'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
@@ -1309,6 +1317,7 @@ export class ReflectionService implements Reflections {
     id: string,
     transaction?: Transaction,
   ): Promise<ApprovedReflection> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const wave = await this.row(caller, id, tx);
       check(

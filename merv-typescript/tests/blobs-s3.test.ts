@@ -398,3 +398,39 @@ test('retained zero-byte media verifies SHA256(empty), exact HEAD length and con
     code('blob_corrupt'),
   );
 });
+
+for (const closing of ['source', 'destination', 'both', 'same provider'] as const) {
+  test(`verified copy admits both providers before immediate ${closing} shutdown`, async (t) => {
+    const f = await copyFixture(t);
+    const destination = closing === 'same provider' ? f.source : f.blobs;
+    const pending = destination.copyVerifiedFrom(f.source, 'project_1', f.keyHash, f.bytes.length);
+    const shutdowns = [
+      ...(closing === 'source' || closing === 'both' || closing === 'same provider'
+        ? [f.source.close()]
+        : []),
+      ...(closing === 'destination' || closing === 'both' ? [f.blobs.close()] : []),
+    ];
+    // Attach both settlements before asserting so a failure cannot leave cleanup pending.
+    const [result, ...shutdownResults] = await Promise.allSettled([pending, ...shutdowns]);
+    assert.ok(shutdownResults.every((shutdown) => shutdown.status === 'fulfilled'));
+    assert.deepEqual(result, {
+      status: 'fulfilled',
+      value: { hash: f.keyHash, size: f.bytes.length },
+    });
+    assert.deepEqual(
+      f.server.objects.get(closing === 'same provider' ? f.sourceKey : f.destinationKey),
+      f.bytes,
+    );
+  });
+}
+
+test('verified copy refuses a closed source before dispatching to either provider', async (t) => {
+  const f = await copyFixture(t);
+  await f.source.close();
+  await assert.rejects(
+    f.blobs.copyVerifiedFrom(f.source, 'project_1', f.keyHash, f.bytes.length),
+    code('blobs_closed'),
+  );
+  assert.equal(f.server.requests.length, 0);
+  assert.deepEqual(await f.blobs.put('project_1', content), { hash, size: content.length });
+});

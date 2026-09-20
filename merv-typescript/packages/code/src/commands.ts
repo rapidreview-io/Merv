@@ -246,6 +246,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
   }
 
   async list(caller: Caller): Promise<CodeCommandRecord[]> {
+    caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const sessionId = await this.reader(caller, tx);
       return (
@@ -260,6 +261,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
     });
   }
   async operation(caller: Caller, commandId: string): Promise<CodeCommandRecord> {
+    caller = structuredClone(caller);
     const id = parse(identifier, commandId);
     return await this.transaction(async (tx) => {
       const sessionId = await this.reader(caller, tx);
@@ -274,6 +276,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
     });
   }
   async commit(caller: Caller, value: CodeCommitInput): Promise<CodeCommandRecord> {
+    caller = structuredClone(caller);
     const input = parse(codeCommitInputSchema, value);
     return await this.transaction(async (tx) => {
       check(caller.session, 'session_required', 'Only a worker session can request a commit', 403);
@@ -341,6 +344,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
     });
   }
   async nextCommand(caller: Caller, value: CodeCommandControl): Promise<CodeCommitCommand | null> {
+    caller = structuredClone(caller);
     const input = parse(codeCommandControlSchema, value);
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, input);
@@ -372,6 +376,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
     });
   }
   async completeCommand(caller: Caller, value: CodeCommandCompletion): Promise<CodeCommandRecord> {
+    caller = structuredClone(caller);
     const input = parse(codeCommandCompletionSchema, value);
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, input);

@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useState, type InputHTMLAttributes, type ReactNode } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type InputHTMLAttributes,
+  type ReactNode,
+} from 'react';
 import { Link, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import type {
   PaperCitation,
@@ -20,11 +27,17 @@ import {
   Field,
   KV,
   LoadState,
+  OpenedForm,
   RecordPage,
   StatusPill,
+  Submit,
+  Summary,
   cx,
   useArtifacts,
 } from '../components';
+import { EditIcon, PlusIcon } from '../icons';
+import { Markdown, RecordText } from '../markdown';
+import { RecordPicker, filePick } from '../record-picker';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
 import { useActorNames } from './people';
@@ -56,11 +69,13 @@ interface Graded {
   reviewerId: string | null;
 }
 
-/** The clauses of one line, in the app's one separator. */
-const dotted = (parts: ReactNode[]) =>
-  parts
-    .filter(Boolean)
-    .map((part, at) => <Fragment key={at}>{at ? <> · {part}</> : part}</Fragment>);
+/** The clauses of one line, in the app's one separator; a line with none is no line. */
+const dotted = (parts: ReactNode[]) => {
+  const said = parts.filter(Boolean);
+  return said.length
+    ? said.map((part, at) => <Fragment key={at}>{at ? <> · {part}</> : part}</Fragment>)
+    : null;
+};
 /** A fragment a person can read, from the section's own title. */
 const slug = (title: string) =>
   title
@@ -70,12 +85,8 @@ const slug = (title: string) =>
 /** Authors as a paper prints them: three, then the rest under et al. */
 const authors = (names: string[]) =>
   names.length > 3 ? `${names.slice(0, 3).join(', ')} et al.` : names.join(', ');
-/** A blank line is what separates one paragraph from the next. */
-const paragraphs = (content: string) =>
-  content
-    .split(/\n\s*\n/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+/** How paper.cite writes a retained file among a citation's references. */
+const FILE = 'artifact:';
 const files = (n: number) => (n ? `${n} retained file${n > 1 ? 's' : ''}` : 'No retained file');
 /** The first limit a form has broken, in the tool's own words; null while it holds. */
 const complaint = (tests: [boolean, string][]) => tests.find(([broken]) => broken)?.[1] ?? null;
@@ -270,11 +281,46 @@ function useReading(anchors: string[]): string | undefined {
 }
 
 /**
- * Both editors are one form: the opener, the heading and the button read the same
- * words, the fields sit between them, and a refusal is stated in the same place.
+ * A section's own control: one glyph beside its heading, named for a screen reader
+ * and on hover by the words the form it opens is headed with. `data-tool` is how
+ * the cursor finds its way back here when that form closes.
+ */
+function HeadTool({
+  label,
+  glyph,
+  tool,
+  onClick,
+}: {
+  label: string;
+  glyph: 'edit' | 'plus';
+  tool: string;
+  onClick: () => void;
+}) {
+  const Glyph = glyph === 'edit' ? EditIcon : PlusIcon;
+  return (
+    <button
+      type="button"
+      className="btn-icon head-tool"
+      data-tool={tool}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <Glyph />
+    </button>
+  );
+}
+
+/**
+ * Both editors are one form: the heading says what is being made or changed, the
+ * fields sit under it, the button says only Create or Save, and a refusal is
+ * stated in the same place. The cursor goes to the first field as it opens, and
+ * Escape means what Cancel means.
  */
 function Editor({
   label,
+  creates,
+  incomplete,
   validation,
   command,
   onSubmit,
@@ -282,6 +328,14 @@ function Editor({
   children,
 }: {
   label: string;
+  /** True where the form makes a record rather than changing one. */
+  creates: boolean;
+  /**
+   * True while a field the form cannot do without is still empty. That is not a
+   * mistake anyone has made yet, so it holds the button and says nothing; a limit
+   * that was overrun is a `validation`, and is said.
+   */
+  incomplete: boolean;
   validation: string | null;
   command: { busy: boolean; retry: boolean; error?: string; locked: boolean };
   onSubmit: () => void;
@@ -289,11 +343,14 @@ function Editor({
   children: ReactNode;
 }) {
   return (
-    <form
+    <OpenedForm
       className="card stack claims-form"
+      aria-label={label}
+      onClose={onDone}
+      locked={command.locked}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!validation || command.retry) onSubmit();
+        if ((!validation && !incomplete) || command.retry) onSubmit();
       }}
     >
       <h3>{label}</h3>
@@ -301,17 +358,17 @@ function Editor({
       {validation && <p className="faint">{validation}</p>}
       <Failure message={command.error} />
       <div className="cluster">
-        <button
-          className="btn btn--primary"
-          disabled={command.busy || (!!validation && !command.retry)}
-        >
-          {command.retry ? 'Retry same request' : label}
-        </button>
+        <Submit
+          label={creates ? 'Create' : 'Save'}
+          busy={command.busy}
+          retry={command.retry}
+          disabled={(!!validation || incomplete) && !command.retry}
+        />
         <button type="button" className="btn" disabled={command.locked} onClick={onDone}>
           Cancel
         </button>
       </div>
-    </form>
+    </OpenedForm>
   );
 }
 
@@ -349,6 +406,7 @@ function SectionEditor({
   return (
     <Editor
       label={section ? `Edit ${section.title}` : 'New section'}
+      creates={!section}
       command={command}
       onDone={onDone}
       onSubmit={() =>
@@ -358,8 +416,8 @@ function SectionEditor({
           changes: [{ id, title, content }],
         })
       }
+      incomplete={!title.trim()}
       validation={complaint([
-        [!title.trim(), 'Enter a section title.'],
         [totalChars > 160_000, 'This document would exceed 160,000 characters.'],
         [
           !section && original.sections.length >= 100,
@@ -368,14 +426,7 @@ function SectionEditor({
       ])}
     >
       <Field label="Section title" required maxLength={300} value={title} onChange={setTitle} />
-      <Area
-        label="Content"
-        className="textarea"
-        rows={8}
-        maxLength={100000}
-        value={content}
-        onChange={setContent}
-      />
+      <Area label="Content" rows={8} maxLength={100000} value={content} onChange={setContent} />
     </Editor>
   );
 }
@@ -420,7 +471,14 @@ function CitationEditor({
   });
   const [notes, setNotes] = useState(citation?.notes ?? '');
   const [sectionIds, setSectionIds] = useState(citation?.sectionIds ?? []);
-  const [references, setReferences] = useState(citation?.refs.join('\n') ?? '');
+  // The tool takes a retained file as `artifact:<id>`; nobody types one. A reference of
+  // any other shape that the entry already carries is kept exactly as it was written.
+  const artifacts = useArtifacts();
+  const [files, setFiles] = useState(() =>
+    (citation?.refs ?? [])
+      .filter((ref) => ref.startsWith(FILE))
+      .map((ref) => ref.slice(FILE.length)),
+  );
   const command = useCommand<PaperCitation>({
     tool: 'paper.cite',
     validate: (value) =>
@@ -438,13 +496,15 @@ function CitationEditor({
     .split(';')
     .map((name) => name.trim())
     .filter(Boolean);
-  const refs = references.split(/\s+/).filter(Boolean);
-  /** A reference the tool takes: an artifact id, or one this entry already carries. */
-  const known = (ref: string) =>
-    /^artifact:[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(ref) || !!citation?.refs.includes(ref);
+  const carried = citation?.refs ?? [];
+  const refs = [
+    ...carried.filter((ref) => !ref.startsWith(FILE) || files.includes(ref.slice(FILE.length))),
+    ...files.map((id) => `${FILE}${id}`).filter((ref) => !carried.includes(ref)),
+  ];
   return (
     <Editor
       label={original ? 'Edit citation' : 'New citation'}
+      creates={!original}
       command={command}
       onDone={onDone}
       onSubmit={() =>
@@ -460,16 +520,13 @@ function CitationEditor({
           refs,
         })
       }
+      incomplete={!told.identifier.trim() || !told.title.trim()}
       validation={complaint([
-        [!told.identifier.trim() || !told.title.trim(), 'Enter an identifier and title.'],
         [
           authorNames.length > 100 || authorNames.some((name) => name.length > 300),
           'Use up to 100 author names, each at most 300 characters.',
         ],
-        [
-          refs.length > 200 || refs.some((ref) => !known(ref) || ref.length > 200),
-          'Use up to 200 artifact: evidence references, each at most 200 characters.',
-        ],
+        [refs.length > 200, 'Use up to 200 retained files.'],
       ])}
     >
       {original && (
@@ -493,41 +550,34 @@ function CitationEditor({
           onChange={(value) => setTold((held) => ({ ...held, [key]: value }))}
         />
       ))}
-      <Area
-        label="Notes"
-        className="textarea"
-        rows={3}
-        maxLength={16000}
-        value={notes}
-        onChange={setNotes}
-      />
-      <div className="stack">
-        <span>Literature sections</span>
-        {sections.map((section) => (
-          <label className="cluster" style={{ display: 'flex' }} key={section.id}>
-            <input
-              type="checkbox"
-              checked={sectionIds.includes(section.id)}
-              onChange={(event) =>
-                setSectionIds((ids) =>
-                  event.target.checked
-                    ? [...ids, section.id]
-                    : ids.filter((id) => id !== section.id),
-                )
-              }
-            />
-            {section.title}
-          </label>
-        ))}
-      </div>
-      <Area
-        label="Evidence references, one per line"
-        className="textarea mono"
-        rows={3}
-        maxLength={40199}
-        value={references}
-        onChange={setReferences}
-        placeholder={'artifact:art_…'}
+      <Area label="Notes" rows={3} maxLength={16000} value={notes} onChange={setNotes} />
+      {/* A group of nothing has no name to stand over. */}
+      {sections.length > 0 && (
+        <fieldset className="stack">
+          <legend>Literature sections</legend>
+          {sections.map((section) => (
+            <label className="cluster" style={{ display: 'flex' }} key={section.id}>
+              <input
+                type="checkbox"
+                checked={sectionIds.includes(section.id)}
+                onChange={(event) =>
+                  setSectionIds((ids) =>
+                    event.target.checked
+                      ? [...ids, section.id]
+                      : ids.filter((id) => id !== section.id),
+                  )
+                }
+              />
+              {section.title}
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <RecordPicker
+        label="Retained files"
+        options={[...artifacts.values()].map(filePick)}
+        value={files}
+        onChange={setFiles}
       />
     </Editor>
   );
@@ -583,7 +633,7 @@ function Entry({
   return (
     <li className="row">
       <details className="crit-file" id={`ref-${item.id}`}>
-        <summary>
+        <Summary>
           <span className="ref-name">
             <span className="ref-n">[{at}]</span>
             {dotted([authors(item.authors), item.year, item.title])}
@@ -598,16 +648,22 @@ function Entry({
               </>,
             ])}
           </span>
-        </summary>
+        </Summary>
         <div className="ref-open">
-          {item.notes && <p>{item.notes}</p>}
-          <p className="mono">{item.identifier}</p>
-          {source && (
+          {item.notes && (
+            <p>
+              <RecordText text={item.notes} />
+            </p>
+          )}
+          {/* Where the work can be opened the address says which it is; otherwise its identifier does. */}
+          {source ? (
             <p>
               <a href={source} target="_blank" rel="noreferrer">
                 {source.replace(/^https?:\/\//, '')}
               </a>
             </p>
+          ) : (
+            <p className="mono">{item.identifier}</p>
           )}
           {item.refs.map((ref) => {
             const id = ref.replace(/^artifact:/, '');
@@ -622,8 +678,10 @@ function Entry({
 
 /**
  * One section of the paper: its derived number, where it came from or what is
- * waiting on it, and the text itself — carrying the marks of an open proposal
- * unless the reader asks for the version that passed review.
+ * waiting on it, and the text itself — read as the markdown it is written in, or
+ * carrying the marks of an open proposal unless the reader asks for the version
+ * that passed review. A section nobody has written yet says so in one quiet line
+ * and keeps its control in view, rather than standing as a bare heading.
  */
 function Block({
   row,
@@ -638,6 +696,7 @@ function Block({
 }) {
   const [plain, setPlain] = useState(false);
   const { section, change, before } = row;
+  const shown = (plain ? (before?.content ?? section.content) : section.content).trim();
   const runs =
     change && !plain
       ? change.remove
@@ -647,7 +706,7 @@ function Block({
           : wordDiff(before?.content ?? '', change.content)
       : null;
   return (
-    <div className="sec" id={row.anchor}>
+    <div className={cx('sec', !runs && !shown && 'sec--unwritten')} id={row.anchor}>
       <h4 className="sec-h">
         <span className="n">{row.n}</span>
         {section.title}
@@ -676,9 +735,9 @@ function Block({
           )}
         </p>
       ) : (
-        paragraphs(plain ? (before?.content ?? section.content) : section.content).map(
-          (text, at) => <p key={at}>{text}</p>,
-        )
+        // A section nobody has written is its heading and the pencil beside it, which
+        // is always drawn there: the way to begin says that nothing has begun.
+        shown && <Markdown source={shown} under={4} />
       )}
       {markers}
       {change && before && (
@@ -776,6 +835,16 @@ function PaperPage({ row, shell }: ViewProps) {
   };
   const [editing, setEditing] = useState<{ kind: PaperKind; section?: PaperSection } | null>(null);
   const [citing, setCiting] = useState<string | null>(null);
+  // A form that closes hands the cursor back to the glyph that opened it, which is
+  // drawn again only once the form is gone.
+  const frame = useRef<HTMLDivElement>(null);
+  const tool = editing ? (editing.section?.id ?? editing.kind) : citing === '' ? 'citation' : '';
+  const last = useRef(tool);
+  useEffect(() => {
+    if (!tool && last.current)
+      frame.current?.querySelector<HTMLElement>(`[data-tool="${last.current}"]`)?.focus();
+    last.current = tool;
+  }, [tool]);
   const docs = workspace.data ? compose(workspace.data) : [];
   const here = useReading(docs.flatMap((doc) => doc.rows.map((item) => item.anchor)));
   const ready = docs.length > 0;
@@ -884,17 +953,32 @@ function PaperPage({ row, shell }: ViewProps) {
         ? { kind: doc.kind, characters: size, sections: doc.current.sections.length }
         : most;
     },
-    { kind: '', characters: 0, sections: 0 },
+    { kind: '' as PaperKind | '', characters: 0, sections: 0 },
   );
+  // What proposed this paper is named by its source; one nobody can name is left out.
+  const proposed = proposals.some((proposal) => sourceOf(proposal.source));
   // Every revision each document retained, once, newest first when they are read.
   const revisions = new Map<string, { doc: DocView; revision: PaperRevision }>();
+  // The revision a document's own heading already states is not History's to say again.
+  const headed = (doc: DocView, revision: PaperRevision) =>
+    !doc.publication && revision.revision === doc.current.revision;
   for (const doc of docs)
     for (const revision of kept[doc.kind].data ??
       [doc.current, doc.publication?.document].filter((item) => !!item))
-      if (revision.revision > 0) {
+      if (revision.revision > 0 && !headed(doc, revision)) {
         const key = `${doc.kind}-${revision.revision}`;
         if (!revisions.has(key)) revisions.set(key, { doc, revision });
       }
+  const stands = dotted([
+    published.map((kind) => labels[kind]).join(', '),
+    changes ? `${changes} change${changes > 1 ? 's' : ''} waiting on review` : null,
+    moved ? (
+      <>
+        updated&nbsp;
+        <Ago at={moved} />
+      </>
+    ) : null,
+  ]);
   const index = pathname === row.path;
   return (
     <RecordPage
@@ -905,35 +989,31 @@ function PaperPage({ row, shell }: ViewProps) {
       standing={
         <ThreeStates
           execution={published.length ? 'published' : 'unpublished'}
-          meta={dotted([
-            published.map((kind) => labels[kind]).join(', '),
-            changes ? `${changes} change${changes > 1 ? 's' : ''} waiting on review` : null,
-            moved ? (
-              <>
-                updated&nbsp;
-                <Ago at={moved} />
-              </>
-            ) : null,
-          ])}
+          // A paper with nothing to add is its state word alone: no clause, no separator.
+          // What it does add is one run of text, so its words keep a word's spacing.
+          meta={stands && <span>{stands}</span>}
         />
       }
       content={
-        <div className="paper">
+        <div className="paper" ref={frame}>
           <Outline docs={docs} ledger={citations.length} here={here} />
           <article className="paper-body">
             {docs.map((doc) => (
-              <div className="paper-doc" id={doc.kind} key={doc.kind}>
+              <div
+                className={cx('paper-doc', !doc.rows.length && 'paper-doc--unwritten')}
+                id={doc.kind}
+                key={doc.kind}
+              >
                 <h3 className="doc-h">
                   <span className="dn">{doc.n}</span>
                   {labels[doc.kind]}
                   {extendable(doc.kind) && !editing && (
-                    <button
-                      type="button"
-                      className="btn-text"
+                    <HeadTool
+                      label="New section"
+                      glyph="plus"
+                      tool={doc.kind}
                       onClick={() => setEditing({ kind: doc.kind })}
-                    >
-                      New section
-                    </button>
+                    />
                   )}
                 </h3>
                 {doc.current.revision > 0 && !doc.publication && (
@@ -957,25 +1037,24 @@ function PaperPage({ row, shell }: ViewProps) {
                       edit={
                         editable(doc.kind) &&
                         !editing && (
-                          <button
-                            type="button"
-                            className="btn-text"
+                          <HeadTool
+                            label={`Edit ${item.section.title}`}
+                            glyph="edit"
+                            tool={item.section.id}
                             onClick={() => setEditing({ kind: doc.kind, section: item.section })}
-                          >
-                            Edit {item.section.title}
-                          </button>
+                          />
                         )
                       }
                     />
                   ),
                 )}
-                {editing?.kind === doc.kind && !editing.section && (
+                {editing?.kind === doc.kind && !editing.section ? (
                   <SectionEditor
                     revision={doc.current}
                     onDone={() => setEditing(null)}
                     onSaved={reload}
                   />
-                )}
+                ) : null}
                 {doc.figures.map((file) => (
                   <div className="fig" key={file.id}>
                     <Evidence artifactId={file.id} artifact={artifacts.get(file.id)} meta />
@@ -989,9 +1068,12 @@ function PaperPage({ row, shell }: ViewProps) {
                     <span className="label">
                       References
                       {writable && citing === null && (
-                        <button type="button" className="btn-text" onClick={() => setCiting('')}>
-                          New citation
-                        </button>
+                        <HeadTool
+                          label="New citation"
+                          glyph="plus"
+                          tool="citation"
+                          onClick={() => setCiting('')}
+                        />
                       )}
                     </span>
                     {citing !== null && (
@@ -1053,77 +1135,83 @@ function PaperPage({ row, shell }: ViewProps) {
         ) : undefined
       }
       related={
-        <>
-          {proposals.some((proposal) => sourceOf(proposal.source)) && (
-            <Group label="Proposed this paper">
-              {proposals.map((proposal) => {
-                const found = sourceOf(proposal.source);
-                return found ? (
-                  <Row
-                    key={proposal.id}
-                    name={
-                      <Link to={found.to}>
-                        <strong>{found.name}</strong>
-                      </Link>
-                    }
-                    stand={<StatusPill value={found.state} />}
-                  />
-                ) : null;
-              })}
-            </Group>
-          )}
-          {published.length > 0 && (
-            <Group label="Accepted it">
-              {/* One review publishes every document it accepted, so it is one row. */}
-              {[...new Set(published.map((kind) => accepted(kind).publication.reviewId))].map(
-                (reviewId) => {
-                  const took = published.filter(
-                    (kind) => accepted(kind).publication.reviewId === reviewId,
-                  );
-                  const publication = accepted(took[0]).publication;
-                  const review = reviews.data?.find((item) => item.id === reviewId);
-                  const subject = sourceOf(publication.source);
-                  return subject ? (
+        proposed || published.length > 0 || retained.length > 0 ? (
+          <>
+            {proposed && (
+              <Group label="Proposed this paper">
+                {proposals.map((proposal) => {
+                  const found = sourceOf(proposal.source);
+                  return found ? (
                     <Row
-                      key={reviewId}
+                      key={proposal.id}
                       name={
-                        <Link to={`/reviews/${reviewId}`}>
-                          <strong>{subject.name} review</strong>
+                        <Link to={found.to}>
+                          <strong>{found.name}</strong>
                         </Link>
                       }
-                      stand={dotted([
-                        <StatusPill value={review?.verdict ?? review?.status} />,
-                        nameOf(review?.reviewerId),
-                        `published ${took.map((kind) => labels[kind]).join(' and ')}`,
-                        <Ago at={publication.createdAt} />,
-                      ])}
+                      stand={<StatusPill value={found.state} />}
                     />
                   ) : null;
-                },
-              )}
-            </Group>
-          )}
-          {retained.length > 0 && (
-            <Group label="Evidence retained with it">
-              {retained.map((id) => (
-                <li className="row" key={id}>
-                  <Evidence artifactId={id} artifact={artifacts.get(id)} meta />
-                </li>
-              ))}
-            </Group>
-          )}
-        </>
+                })}
+              </Group>
+            )}
+            {published.length > 0 && (
+              <Group label="Accepted it">
+                {/* One review publishes every document it accepted, so it is one row. */}
+                {[...new Set(published.map((kind) => accepted(kind).publication.reviewId))].map(
+                  (reviewId) => {
+                    const took = published.filter(
+                      (kind) => accepted(kind).publication.reviewId === reviewId,
+                    );
+                    const publication = accepted(took[0]).publication;
+                    const review = reviews.data?.find((item) => item.id === reviewId);
+                    const subject = sourceOf(publication.source);
+                    return subject ? (
+                      <Row
+                        key={reviewId}
+                        name={
+                          <Link to={`/reviews/${reviewId}`}>
+                            <strong>{subject.name} review</strong>
+                          </Link>
+                        }
+                        stand={dotted([
+                          <StatusPill value={review?.verdict ?? review?.status} />,
+                          nameOf(review?.reviewerId),
+                          `published ${took.map((kind) => labels[kind]).join(' and ')}`,
+                          <Ago at={publication.createdAt} />,
+                        ])}
+                      />
+                    ) : null;
+                  },
+                )}
+              </Group>
+            )}
+            {retained.length > 0 && (
+              <Group label="Evidence retained with it">
+                {retained.map((id) => (
+                  <li className="row" key={id}>
+                    <Evidence artifactId={id} artifact={artifacts.get(id)} meta />
+                  </li>
+                ))}
+              </Group>
+            )}
+          </>
+        ) : undefined
       }
       details={
         <KV
           rows={[
             ['Sections', `${written.length}`],
             ['Citations', `${citations.length}`],
-            [
-              'Fullest document',
-              fullest.kind
-                ? `${fullest.kind}: ${fullest.characters.toLocaleString()} of 160,000 characters, ${fullest.sections} of 100 sections`
-                : '—',
+            // How near the paper is to the tool's own limits, said of the document
+            // nearest them; with nothing written there is nothing to say.
+            !!fullest.kind && [
+              'Longest document',
+              dotted([
+                labels[fullest.kind],
+                `${fullest.characters.toLocaleString()} of 160,000 characters`,
+                `${fullest.sections} of 100 sections`,
+              ]),
             ],
           ]}
         />

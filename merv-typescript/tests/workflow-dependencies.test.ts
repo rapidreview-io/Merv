@@ -266,10 +266,20 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
     b = await start(handle, caller, 'preparation', 'b'),
     c = await start(handle, caller, 'preparation', 'c');
   const command = { instanceId: a.id, dependsOn: [b.id], expectedRevision: 0, requestId: 'attach' };
-  const attached = await handle.addDependencies(caller, command);
+  const requested = structuredClone(command);
+  const replacement = (await scope.issueActor(caller, { name: 'Replacement', role: 'producer' }))
+    .actor;
+  const pendingCaller = { ...caller };
+  const pending = handle.addDependencies(pendingCaller, command);
+  pendingCaller.actorId = replacement.id;
+  Object.assign(command, { instanceId: c.id, requestId: 'changed', expectedRevision: 99 });
+  command.dependsOn[0] = a.id;
+  const attached = await pending;
+  Object.assign(command, requested);
   assert.equal(attached.revision, 1);
   assert.deepEqual(await handle.addDependencies(caller, command), attached);
   assert.equal(((await workflows.history(caller, a.id)).at(-1) as any).action, 'add_dependencies');
+  assert.equal((await workflows.history(caller, a.id)).at(-1)!.actorId, caller.actorId);
   const head = await state.eventHead();
   assert.deepEqual(
     await handle.addDependencies(caller, { ...command, requestId: 'noop', expectedRevision: 1 }),

@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentObservation as Observation, AgentSummary } from '@merv/contracts/types';
 import { accountRequest, scopeVersion } from '../api';
-import { Ago, KV, Live, StatusPill, relativeTime, stamp, useNow, words } from '../components';
+import {
+  Ago,
+  KV,
+  KindLabel,
+  Live,
+  LoadState,
+  Stamp,
+  StatusPill,
+  Summary,
+  useNow,
+  words,
+} from '../components';
+import { CloseIcon } from '../icons';
+import { Segments } from '../list-filters';
 import { clock, holding, leaseLiveness, type Clock } from '../liveness';
 
 /** The same lease, as the agent's own observation sends it. */
@@ -11,37 +24,63 @@ const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
+/**
+ * A lease is labelled for the agent that takes it up — `Work: …`, `Review: …`, or
+ * the recipe it runs — and the role beside it already says which. What is left is
+ * the record's own name, which is the only part a person reads it for.
+ */
+const PURPOSE = /^(?:Work|Review|experiment\.\w+):\s+/;
+/**
+ * A reflection's lens is named by the server as the wave and then the lens's own enum
+ * word — `After the first sweep: next_steps` — which the reflection page writes as
+ * words. Only that closing word is rewritten: an underscore inside a name is its author's.
+ */
+const LENS = /: ([a-z]+(?:_[a-z]+)+)$/;
+export const workName = (label: string) =>
+  label.replace(PURPOSE, '').replace(LENS, (_, lens: string) => `: ${lens.replaceAll('_', ' ')}`);
+/** The view kind a workflow's records are drawn as, where this build draws them. */
+const KIND_OF: Record<string, string> = {
+  task: 'tasks',
+  experiment: 'experiments',
+  research: 'research',
+  reflection: 'reflections',
+  consolidation: 'consolidation',
+};
 
 function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: Clock }) {
   return (
-    <div className="stack agent-assignment">
+    <div className="stack">
       <div className="cluster cluster--between">
-        <strong>{assignment.label}</strong>
+        <strong>{workName(assignment.label)}</strong>
         <Live of={leaseLiveness(assignment, now)} />
       </div>
-      <p className="muted agent-help">
-        {assignment.role} · {assignment.workflow.name} / {words(assignment.workflow.state)}
+      {/* The role it holds, then the record's kind and how it stands, as a row says them. */}
+      <p className="cluster agent-help">
+        <span className="muted">{words(assignment.role)}</span>
+        <KindLabel kind={KIND_OF[assignment.workflow.name]} />
+        <StatusPill value={assignment.workflow.state} />
       </p>
       <details>
-        <summary>Assignment details and permitted tools</summary>
+        <Summary>Details</Summary>
         <div className="stack">
           <KV
             rows={[
-              ['Revision', assignment.revision],
-              ['Joined assignment', stamp(assignment.createdAt)],
+              ['Joined', <Stamp at={assignment.createdAt} />],
               [
                 holding(assignment, now) ? 'Lease expires' : 'Lease ran to',
-                stamp(assignment.expiresAt),
+                <Stamp at={assignment.expiresAt} />,
               ],
-              !!assignment.closedAt && ['Closed', stamp(assignment.closedAt)],
+              !!assignment.closedAt && ['Closed', <Stamp at={assignment.closedAt} />],
               !!(assignment.outcome || assignment.closeReason) && [
                 'Outcome',
                 words(assignment.outcome ?? assignment.closeReason ?? ''),
               ],
             ]}
           />
-          <strong>Permitted tools · {assignment.tools.length}</strong>
-          {assignment.tools.length ? (
+          <span className="label">
+            Tools <span className="section-n">{assignment.tools.length}</span>
+          </span>
+          {assignment.tools.length > 0 && (
             <ul className="agent-tool-list">
               {assignment.tools.map((tool) => (
                 <li key={tool}>
@@ -49,8 +88,6 @@ function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: C
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="muted">No tools permitted.</p>
           )}
         </div>
       </details>
@@ -85,147 +122,130 @@ function AgentObservation({ observation, now }: { observation: Observation; now:
   const truncated = observation.toolCallTotal > observation.toolCalls.length;
   return (
     <>
-      <section className="stack">
-        <h3>Current assignment</h3>
-        {current ? (
+      {/* An agent on nothing has no assignment to show: the section is not drawn. */}
+      {current && (
+        <section className="stack">
+          <h3>Assignment</h3>
           <AssignmentDetails assignment={current} now={now} />
-        ) : (
-          <p className="muted">No live assignment.</p>
-        )}
-      </section>
+        </section>
+      )}
       <section className="stack">
-        <h3>Tool activity</h3>
-        <div className="cluster" role="group" aria-label="Tool activity scope">
-          <button
-            className={`btn btn--sm${callScope === 'current' ? ' btn--primary' : ''}`}
-            aria-pressed={callScope === 'current'}
-            disabled={!current}
-            onClick={() => setRequestedScope('current')}
-          >
-            Current assignment · {currentCalls.length} shown
-          </button>
-          <button
-            className={`btn btn--sm${callScope === 'all' ? ' btn--primary' : ''}`}
-            aria-pressed={callScope === 'all'}
-            onClick={() => setRequestedScope('all')}
-          >
-            All history · {count(observation.toolCallTotal)} total
-          </button>
-        </div>
+        <h3>
+          Tool activity {/* What this read returned, against everything the agent ever called. */}
+          <span className="section-n">
+            {truncated && callScope === 'all'
+              ? `${count(calls.length)} of ${count(observation.toolCallTotal)}`
+              : count(calls.length)}
+          </span>
+        </h3>
+        {/* With no live assignment there is one reading, and a switch of one says nothing. */}
+        {current && (
+          <div>
+            <Segments<'current' | 'all'>
+              label="Tool activity scope"
+              options={[
+                { value: 'current', label: 'This assignment', count: count(currentCalls.length) },
+                { value: 'all', label: 'All', count: count(observation.toolCallTotal) },
+              ]}
+              value={callScope}
+              onChange={setRequestedScope}
+            />
+          </div>
+        )}
         <div className="agent-token-stats">
           <div>
-            <strong>{count(calls.length)}</strong>
-            <span>Calls shown</span>
-          </div>
-          <div>
             <strong>≈ {count(displayed.input)}</strong>
-            <span>Input tokens shown</span>
+            <span>Input tokens</span>
           </div>
           <div>
             <strong>≈ {count(displayed.output)}</strong>
-            <span>Output tokens shown</span>
+            <span>Output tokens</span>
           </div>
         </div>
-        {truncated && (
-          <p className="muted agent-help">
-            {calls.length} of {count(observation.toolCallTotal)} calls
-          </p>
-        )}
-        {calls.length === 0 ? (
-          <p className="muted">
-            {callScope === 'current'
-              ? 'No calls for this assignment in the returned activity.'
-              : 'No tool calls recorded yet.'}
-          </p>
-        ) : (
+        {calls.length > 0 && (
           <ol
             className="agent-call-list"
             aria-label={
               callScope === 'current' ? 'Current assignment tool calls' : 'Tool-call history'
             }
           >
-            {calls.map((call) => (
-              <li key={call.id} className="agent-call stack">
-                <div className="cluster cluster--between">
-                  <code>{call.tool}</code>
-                  <StatusPill value={call.status} />
-                </div>
-                {callScope === 'all' && (
-                  <p className="muted agent-help">
-                    {assignments.get(call.executionId)?.label ??
-                      'Assignment outside the loaded history'}
-                  </p>
-                )}
-                <div className="cluster muted agent-help">
-                  <time dateTime={call.startedAt} title={call.startedAt}>
-                    {new Date(call.startedAt).toLocaleTimeString()} · {relativeTime(call.startedAt)}
-                  </time>
-                  <span>
-                    · {duration(call.durationMs)}
-                    {call.status === 'running' ? ' · in progress' : ''}
-                  </span>
-                </div>
-                <div className="cluster agent-help">
-                  <span>Input ≈ {count(call.inputTokens)}</span>
-                  <span>
-                    Output {call.outputTokens === null ? '—' : `≈ ${count(call.outputTokens)}`}
-                  </span>
-                </div>
-              </li>
-            ))}
+            {calls.map((call) => {
+              const under = callScope === 'all' && assignments.get(call.executionId)?.label;
+              return (
+                <li key={call.id} className="agent-call stack">
+                  <div className="cluster cluster--between">
+                    <code>{call.tool}</code>
+                    <StatusPill value={call.status} />
+                  </div>
+                  {under && <p className="muted agent-help">{workName(under)}</p>}
+                  <div className="cluster muted agent-help">
+                    <Ago at={call.startedAt} />
+                    <span>{duration(call.durationMs)}</span>
+                  </div>
+                  <div className="cluster agent-help">
+                    <span>Input ≈ {count(call.inputTokens)}</span>
+                    <span>
+                      Output {call.outputTokens === null ? '—' : `≈ ${count(call.outputTokens)}`}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         )}
         <details>
-          <summary>Lifetime totals · {count(stats.totalCalls)} calls</summary>
+          <Summary>Lifetime · {count(stats.totalCalls)} calls</Summary>
           <div className="stack">
             <KV
               rows={[
-                ['Lifetime calls', count(stats.totalCalls)],
-                ['Completed calls', count(stats.completedCalls)],
-                ['Lifetime input estimate', `≈ ${count(stats.inputTokens)} tokens`],
-                ['Lifetime output estimate', `≈ ${count(stats.outputTokens)} tokens`],
+                ['Calls', count(stats.totalCalls)],
+                ['Completed', count(stats.completedCalls)],
+                ['Input tokens', `≈ ${count(stats.inputTokens)}`],
+                ['Output tokens', `≈ ${count(stats.outputTokens)}`],
               ]}
             />
           </div>
         </details>
       </section>
-      <details>
-        <summary>Agent identity</summary>
+      <section className="stack">
+        <h3>
+          Past assignments <span className="section-n">{history.length}</span>
+        </h3>
+        {history.map((assignment) => (
+          <details className="agent-history" key={assignment.id}>
+            <Summary>
+              {workName(assignment.label)} · {words(assignment.status)}
+            </Summary>
+            <AssignmentDetails assignment={assignment} now={now} />
+          </details>
+        ))}
+      </section>
+      <section className="stack">
+        <h3>Details</h3>
         <KV
           rows={[
             ['Runner', observation.agent.runnerId],
-            ['Joined', stamp(observation.agent.createdAt)],
+            ['Joined', <Stamp at={observation.agent.createdAt} />],
             ['Context epoch', observation.agent.contextEpoch],
           ]}
         />
-      </details>
-      <section className="stack">
-        <h3>Past assignments · {history.length}</h3>
-        {history.length ? (
-          history.map((assignment) => (
-            <details className="agent-history" key={assignment.id}>
-              <summary>
-                {assignment.label} · {words(assignment.status)}
-              </summary>
-              <AssignmentDetails assignment={assignment} now={now} />
-            </details>
-          ))
-        ) : (
-          <p className="muted">No previous assignments.</p>
-        )}
       </section>
     </>
   );
 }
 
 /**
- * What one agent is doing, read beside the list that named it. The row that opened
- * it holds the way back: Escape and the close control both return the cursor there.
+ * What one agent is doing, read under the list that named it. The list may be most
+ * of a window tall, so choosing an agent brings the panel's head to the top of the
+ * view and puts the cursor on its name; nothing animates, so there is no motion to
+ * reduce. The row that opened it holds the way back: Escape and the close control
+ * both return the cursor there.
  */
 export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): void }) {
   const [observation, setObservation] = useState<Observation>();
   const [loadedAt, setLoadedAt] = useState<string>();
   const [error, setError] = useState<string>();
+  const panel = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const selected = agent.id;
   // The panel reads its own payload, so it keeps its own clock: durations are
@@ -235,7 +255,7 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
   useEffect(() => {
     setObservation(undefined);
     setError(undefined);
-    heading.current?.focus();
+    heading.current?.focus({ preventScroll: true });
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     let waiting = false;
@@ -278,9 +298,16 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
       document.removeEventListener('visibilitychange', resume);
     };
   }, [selected]);
+  // A page cannot scroll past its own foot, and until its read lands the panel is one
+  // line tall: its head is brought up as it opens, and again once it has its height.
+  const loaded = observation?.agent.id === selected;
+  useEffect(() => {
+    panel.current?.scrollIntoView?.({ block: 'start' });
+  }, [selected, loaded]);
   return (
     <section
       id="agent-detail"
+      ref={panel}
       className="stack stack--lg agent-detail"
       aria-labelledby="agent-detail-title"
       onKeyDown={(event) => {
@@ -290,18 +317,24 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
         }
       }}
     >
-      <div className="cluster cluster--between agent-detail-heading">
+      <div className="cluster cluster--between">
         <div>
-          <p className="label">Agent details</p>
+          <KindLabel kind="sessions" />
           <h2 id="agent-detail-title" ref={heading} tabIndex={-1}>
             {agent.name}
           </h2>
         </div>
-        <button className="btn btn--sm" aria-label="Close agent details" onClick={close}>
-          Close ×
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Close agent details"
+          title="Close"
+          onClick={close}
+        >
+          <CloseIcon />
         </button>
       </div>
-      {observation?.agent.id === selected ? (
+      {loaded && observation ? (
         <>
           {error && (
             <p className="muted agent-help" role="status" title={error}>
@@ -314,9 +347,7 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
       ) : error ? (
         <p role="alert">{error}</p>
       ) : (
-        <p role="status" className="muted">
-          Loading agent activity…
-        </p>
+        <LoadState loading />
       )}
     </section>
   );

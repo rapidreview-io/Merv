@@ -10,6 +10,7 @@ import {
   effectiveWorkspace,
   MervError,
   newId,
+  plain,
   sessionWorkspaceSchema,
   type Caller,
   type Data,
@@ -69,6 +70,13 @@ const ended = (session: Session): MervError =>
 const permission = (role: Session['role']): Permission =>
   role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+const snapshotInput = (input: Data): Data =>
+  plain(input, 'invalid_input', {
+    keys: 'any',
+    strings: 'json',
+    undefined: 'reject',
+    nullPrototype: false,
+  });
 const text = (value: unknown, max = 200) =>
   typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');
 const safeError = (error: unknown): MervError =>
@@ -578,6 +586,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     }
   }
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
+    ({ caller, input } = structuredClone({ caller, input }));
     check(
       input && text(input.requestId, 320),
       'invalid_request_id',
@@ -794,6 +803,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     return clone(session);
   }
   async registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent> {
+    ({ caller, input } = structuredClone({ caller, input }));
     await this.prepareControl(caller);
     return await this.transaction(async (tx) => {
       // An agent is a new actor of the project: registering one is a write.
@@ -824,17 +834,20 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     };
   }
   async agents(caller: Caller): Promise<AgentStatus[]> {
+    caller = structuredClone(caller);
     return await this.transaction(async (tx) =>
       mapAsync(await this.directory.list(caller, tx), (agent) => this.agentStatus(agent, tx)),
     );
   }
   async agent(caller: Caller, agentId: string): Promise<AgentStatus> {
+    caller = structuredClone(caller);
     return await this.transaction(
       async (tx) =>
         await this.agentStatus(await this.directory.controlled(caller, agentId, tx), tx),
     );
   }
   async retireAgent(caller: Caller, agentId: string): Promise<Agent> {
+    caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const agent = await this.directory.controlled(caller, agentId, tx);
       const current = await this.currentAgentExecution(agent, tx);
@@ -864,7 +877,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       return { ...(await this.agentStatus(agent, tx)), available };
     });
   }
-  async assignAgent(token: string, input: AgentAssignment): Promise<Session> {
+  async assignAgent(token: string, { ...input }: AgentAssignment): Promise<Session> {
     const agent = await this.reading(async (tx) => await this.directory.authenticate(token, tx));
     // The connection credential stays fixed. Each execution has a distinct, undisclosed credential.
     const secret = `ms_${createHash('sha256')
@@ -934,6 +947,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   /** The rail's number on its own: no runner scan, no candidate enumeration, no blobs. */
   async liveSessionCount(caller: Caller): Promise<number> {
+    caller = structuredClone(caller);
     this.ensureOpen();
     return await this.transaction(async (tx) => {
       check(!caller.session, 'forbidden', 'Leased workers cannot read project dispatch', 403);
@@ -988,6 +1002,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     sessionId: string,
     transaction?: Transaction,
   ): Promise<SessionWorkspaceObservation> {
+    caller = structuredClone(caller);
     this.ensureOpen();
     check(text(sessionId), 'invalid_session', 'A session identifier is required');
     if (transaction) this.state.assertTransaction(transaction);
@@ -1048,6 +1063,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     return transaction ? await read(transaction) : await this.transaction(read);
   }
   async list(caller: Caller): Promise<Session[]> {
+    caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const owner = await this.owner(caller, tx);
       return await mapAsync(
@@ -1062,6 +1078,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     });
   }
   async get(caller: Caller, sessionId: string): Promise<Session> {
+    caller = structuredClone(caller);
     const result = await this.transaction(async (tx) => {
       const session = await this.controlled(caller, sessionId, undefined, tx);
       const error = await this.reconcile(session, tx);
@@ -1073,8 +1090,9 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async attach(
     caller: Caller,
-    input: SessionControl & { hostRef: string; workspace?: SessionWorkspace },
+    { ...input }: SessionControl & { hostRef: string; workspace?: SessionWorkspace },
   ): Promise<Session> {
+    caller = structuredClone(caller);
     check(text(input.hostRef, 1024), 'invalid_host', 'A nonempty host reference is required');
     const workspace =
       input.workspace === undefined ? undefined : this.workspaceInput(input.workspace);
@@ -1158,8 +1176,9 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async workspaceResult(
     caller: Caller,
-    input: SessionControl & { hostRef: string; workspace: SessionWorkspace },
+    { ...input }: SessionControl & { hostRef: string; workspace: SessionWorkspace },
   ): Promise<Session> {
+    caller = structuredClone(caller);
     check(text(input.hostRef, 1024), 'invalid_host', 'A nonempty host reference is required');
     const workspace = this.workspaceInput(input.workspace);
     return await this.transaction(async (tx) => {
@@ -1240,7 +1259,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       return session;
     });
   }
-  async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
+  async heartbeat(caller: Caller, { ...input }: SessionControl): Promise<Session> {
+    caller = structuredClone(caller);
     return await this.controlMutation(caller, input, async (session, tx) => {
       check(
         session.status === 'active',
@@ -1271,11 +1291,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   async release(
     caller: Caller,
-    input: SessionControl & {
+    {
+      ...input
+    }: SessionControl & {
       reason?: string;
       outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
     },
   ): Promise<Session> {
+    caller = structuredClone(caller);
     check(
       input.outcome === undefined ||
         ['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'].includes(
@@ -1340,6 +1363,13 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           },
           () => this.workflows.activateLease(this.worker(session), session.lease, tx),
         );
+        this.ensureOpen();
+        check(
+          session.expiresAt > this.time() && session.hardDeadline > this.time(),
+          'session_expired',
+          'Session expired during activation',
+          401,
+        );
         session.status = 'active';
         session.activatedAt = this.time();
         session.expiresAt = new Date(
@@ -1364,6 +1394,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     return result.caller!;
   }
   async describe(caller: Caller): Promise<Session> {
+    caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       check(caller.session, 'session_required', 'Session authority is required', 401);
       await this.scope.require(caller, 'read', tx);
@@ -1374,6 +1405,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
    *  asks about every registered tool, which under load meant one locked transaction each. */
   private readonly toolNames = new Map<string, { names: Set<string>; at: number }>();
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
+    caller = structuredClone(caller);
     if (read) return true;
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
@@ -1425,8 +1457,10 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     input: Data,
     read?: boolean,
   ): Promise<SessionInvocation> {
+    caller = structuredClone(caller);
+    input = snapshotInput(input);
     const prepared = await this.reading(
-      async (tx) => await this.admit(caller, tool, clone(input), tx, undefined, read),
+      async (tx) => await this.admit(caller, tool, input, tx, undefined, read),
     );
     this.ensureOpen();
     const invocationId = newId('invocation');
@@ -1460,6 +1494,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     return invocation;
   }
   async validate(caller: Caller, tool: string, input: Data): Promise<void> {
+    caller = structuredClone(caller);
+    input = snapshotInput(input);
     await this.reading(async (tx) => {
       const state = caller.session?.invocationId
         ? this.invocationIds.get(caller.session.invocationId)

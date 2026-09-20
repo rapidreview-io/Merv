@@ -31,6 +31,8 @@ Trusted application code can call `scope.toolPolicy.replace(grants)`. Replacemen
 
 Sessions registers its tool policy through `scope.toolPolicy.registerSessions()`. Registration returns a disposer, permits one provider, and does not add a Scope-to-Sessions dependency. Session tool checks fail closed when the provider is absent. Sessions retains ownership of invocation reservations, validation, fencing and execution.
 
+Pending policy decisions and prepared invocations belong to the registration that admitted them. Withdrawing or replacing that registration prevents later dispatch, including when the same provider object is registered again. Cleanup still goes to the original provider. A handler already admitted may finish; withdrawal does not discard its committed mutation result.
+
 `ToolPolicy`, `ToolGrant`, `SessionToolPolicy` and `SessionToolInvocation` are public types in `@merv/contracts`. The implementation stays in `src/tool-policy.ts` alongside Scope's other internal modules.
 
 ## Migration from the Access plugin

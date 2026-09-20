@@ -131,10 +131,10 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     check(this.#client, 'github_unconfigured', 'GitHub is not configured on this server', 503);
     return this.#client;
   }
-  private run<T>(fn: () => Promise<T>): Promise<T> {
+  private run<Input, T>(input: Input, fn: (input: Input) => Promise<T>): Promise<T> {
     if (this.#closed)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
-    const pending = fn();
+    const pending = fn(structuredClone(input));
     this.#pending.add(pending);
     void pending.then(
       () => this.#pending.delete(pending),
@@ -219,7 +219,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     };
   }
   status(caller: Caller) {
-    return this.run(() =>
+    return this.run(caller, (caller) =>
       this.state.transaction(async (tx) => {
         const status = await this.describe(caller, tx);
         await tx.run('DELETE FROM code_github_flows WHERE expires_at<=?', timestamp());
@@ -228,7 +228,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     );
   }
   begin(caller: Caller, value: { expectedRevision: number }) {
-    return this.run(async () => {
+    return this.run(caller, async (caller) => {
       const input = parseCodeInput(githubRevisionSchema, value);
       const client = this.client(),
         id = randomSecret(),
@@ -280,7 +280,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     return flow;
   }
   callback(input: { state: string; code?: string; error?: string; cookie: string }) {
-    return this.run(async () => {
+    return this.run(input, async (input) => {
       const client = this.client();
       await this.state.transaction(async (tx) => {
         this.live();
@@ -309,7 +309,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     });
   }
   finish(caller: Caller, cookie: string) {
-    return this.run(async () => {
+    return this.run(caller, async (caller) => {
       const client = this.client();
       const flow = await this.state.transaction(async (tx) => {
         await this.authorize(caller, tx, true);
@@ -544,7 +544,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     );
   }
   repositories(caller: Caller) {
-    return this.run(() =>
+    return this.run(caller, (caller) =>
       this.withToken(caller, async (token, row) => {
         const repositories = await this.client().repositories(token);
         await this.state.transaction((tx) => this.unchanged(caller, tx, row));
@@ -562,6 +562,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     tx: Transaction,
     access: 'read' | 'write',
   ) {
+    ({ caller, binding } = structuredClone({ caller, binding }));
     const row = await this.connection(caller, tx, access);
     this.revision(row, binding.revision);
     check(
@@ -572,7 +573,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     );
   }
   configureAutomation(caller: Caller, value: GitHubAutomationInput) {
-    return this.run(async () => {
+    return this.run(caller, async (caller) => {
       const input = parseCodeInput(githubAutomationSchema, value);
       if (input.mode !== 'off') {
         check(
@@ -619,7 +620,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     caller: Caller,
     fn: (client: GitHubClient, token: string, repo: GitHubRepository) => Promise<T>,
   ) {
-    return this.run(() =>
+    return this.run(caller, (caller) =>
       this.withToken(caller, async (token, row) => {
         const result = await fn(this.client(), token, this.repository(row));
         await this.state.transaction((tx) => this.unchanged(caller, tx, row));
@@ -646,8 +647,10 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     access: 'read' | 'write',
     binding: GitHubBinding | undefined,
     fn: (client: GitHubClient, token: string, binding: GitHubBinding) => Promise<T>,
+    authorizeRequest?: (tx: Transaction) => Promise<unknown>,
   ) {
-    return this.run(() =>
+    if (binding) binding = structuredClone(binding);
+    return this.run(caller, (caller) =>
       this.withToken(
         caller,
         async (token, row) => {
@@ -665,18 +668,26 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
               'GitHub repository binding changed',
               409,
             );
-          await this.client().repositoryPermission(token, repository, access === 'write');
-          await this.state.transaction((tx) => this.unchanged(caller, tx, row, access));
-          const result = await fn(this.client(), token, current);
-          await this.state.transaction((tx) => this.unchanged(caller, tx, row, access));
-          return result;
+          const client = this.client();
+          const authorize = () =>
+            this.state.transaction(async (tx) => {
+              await this.unchanged(caller, tx, row, access);
+              await authorizeRequest?.(tx);
+            });
+          return client.authorized(authorize, async () => {
+            await client.repositoryPermission(token, repository, access === 'write');
+            await authorize();
+            const result = await fn(client, token, current);
+            await authorize();
+            return result;
+          });
         },
         access,
       ),
     );
   }
   link(caller: Caller, value: GitHubRepositoryInput) {
-    return this.run(async () => {
+    return this.run(caller, async (caller) => {
       const input = parseCodeInput(githubRepositoryInputSchema, value);
       let repository: GitHubRepository | null = null;
       let observed: Connection | undefined;
@@ -721,9 +732,9 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     });
   }
   disconnect(caller: Caller, value: { expectedRevision: number }) {
-    return this.run(() =>
-      this.state.transaction(async (tx) => {
-        const input = parseCodeInput(githubRevisionSchema, value);
+    return this.run(caller, (caller) => {
+      const input = parseCodeInput(githubRevisionSchema, value);
+      return this.state.transaction(async (tx) => {
         await this.authorize(caller, tx, true);
         await this.ensure(tx, caller.projectId);
         this.revision(await this.row(tx, caller.projectId), input.expectedRevision);
@@ -742,7 +753,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         await tx.run('DELETE FROM code_github_flows WHERE project_id=?', caller.projectId);
         await this.event(tx, caller, 'disconnected');
         return this.describe(caller, tx);
-      }),
-    );
+      });
+    });
   }
 }

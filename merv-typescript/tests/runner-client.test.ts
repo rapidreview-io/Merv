@@ -317,3 +317,25 @@ test('control transport keeps the source bearer in its authorization header and 
   });
   assert.equal(String(calls[0].init?.body).includes(bearer), false);
 });
+
+test('control replies exceeding four MiB are cancelled before unbounded buffering', async () => {
+  let cancelled = false;
+  const connection = new RunnerClient(
+    'https://merv.example',
+    'project_fixture',
+    bearer,
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(4 * 1024 * 1024 + 1));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      ),
+  );
+  await assert.rejects(connection.presence(heartbeat), invalid);
+  assert.equal(cancelled, true);
+});

@@ -341,3 +341,49 @@ test('unexpected Scope recognition failures are sanitized and do not admit crede
     },
   );
 });
+
+for (const change of ['remove', 'replace', 'rotate'] as const) {
+  test(`credential resolution rejects ${change} during local-token validation`, async (t) => {
+    const { scope, caller } = await fixture(t);
+    const env = environment(t, 'before-change');
+    const original = binding(caller, env.ref);
+    const provider = new EnvironmentCredentials(scope, [original]);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    t.after(() => release());
+    const recognizes = scope.recognizesCredential.bind(scope);
+    let held = false;
+    t.mock.method(scope, 'recognizesCredential', async (secret: string) => {
+      const result = await recognizes(secret);
+      if (!held) {
+        held = true;
+        enter();
+        await waiting;
+      }
+      return result;
+    });
+    const pending = provider.resolve(caller, 'sandboxes');
+    const rejected = assert.rejects(pending, { code: 'credential_changed' });
+    await entered;
+    if (change === 'remove') provider.replace([]);
+    else if (change === 'replace')
+      provider.replace([{ ...original, headers: { 'x-subject': 'new-subject' } }]);
+    else process.env[env.name] = 'after-change';
+    release();
+    await rejected;
+    if (change === 'remove') {
+      await assert.rejects(provider.resolve(caller, 'sandboxes'), { code: 'credential_forbidden' });
+    } else {
+      const fresh = await provider.resolve(caller, 'sandboxes');
+      assert.equal(
+        fresh.headers()[change === 'replace' ? 'x-subject' : 'authorization'],
+        change === 'replace' ? 'new-subject' : 'Bearer after-change',
+      );
+    }
+  });
+}

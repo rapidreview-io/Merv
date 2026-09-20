@@ -359,48 +359,46 @@ export class S3Blobs implements Blobs {
       'invalid_blob_config',
       'Migration timeout must be between 1 and 900000 milliseconds',
     );
-    return source.operations.run(() =>
-      this.operations.run(async () => {
-        const signal = AbortSignal.timeout(timeoutMs);
-        const original = await source.verifyRetained(namespace, hash, size, signal);
-        const verifiedSize = original.size;
-        check(original.etag, 'blob_copy_unsupported', 'Source object must expose a version ETag');
-        if (this.bucket === source.bucket && key === sourceKey) return { hash, size: verifiedSize };
-        const r2 =
-          options.destinationCondition === 'r2' ||
-          (options.destinationCondition === undefined &&
-            new URL(this.endpoint).hostname.endsWith('.r2.cloudflarestorage.com'));
-        const command = new CopyObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-          CopySource: `${source.bucket}/${sourceKey}`,
-          CopySourceIfMatch: original.etag,
-          IfNoneMatch: r2 ? undefined : '*',
-        });
-        if (r2)
-          command.middlewareStack.add(
-            (next) => async (args) => {
-              (args.request as { headers: Record<string, string> }).headers[
-                'cf-copy-destination-if-none-match'
-              ] = '*';
-              return next(args);
-            },
-            { step: 'build', name: 'r2ImmutableDestination' },
-          );
-        try {
-          await this.request(signal, () => this.client.send(command, { abortSignal: signal }));
-        } catch (error) {
-          if (
-            (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 412
-          )
-            throw new MervError('blob_unavailable', 'Verified blob copy failed', 503);
-          // Source races and existing destinations both produce 412. Only verified destination
-          // bytes prove the intended immutable object is present; an absent/corrupt one fails.
-        }
-        await this.verifyRetained(namespace, hash, verifiedSize, signal);
-        return { hash, size: verifiedSize };
-      }),
-    );
+    return this.operations.run(async () => {
+      const signal = AbortSignal.timeout(timeoutMs);
+      const original = await source.verifyRetained(namespace, hash, size, signal);
+      const verifiedSize = original.size;
+      check(original.etag, 'blob_copy_unsupported', 'Source object must expose a version ETag');
+      if (this.bucket === source.bucket && key === sourceKey) return { hash, size: verifiedSize };
+      const r2 =
+        options.destinationCondition === 'r2' ||
+        (options.destinationCondition === undefined &&
+          new URL(this.endpoint).hostname.endsWith('.r2.cloudflarestorage.com'));
+      const command = new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        CopySource: `${source.bucket}/${sourceKey}`,
+        CopySourceIfMatch: original.etag,
+        IfNoneMatch: r2 ? undefined : '*',
+      });
+      if (r2)
+        command.middlewareStack.add(
+          (next) => async (args) => {
+            (args.request as { headers: Record<string, string> }).headers[
+              'cf-copy-destination-if-none-match'
+            ] = '*';
+            return next(args);
+          },
+          { step: 'build', name: 'r2ImmutableDestination' },
+        );
+      try {
+        await this.request(signal, () => this.client.send(command, { abortSignal: signal }));
+      } catch (error) {
+        if (
+          (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 412
+        )
+          throw new MervError('blob_unavailable', 'Verified blob copy failed', 503);
+        // Source races and existing destinations both produce 412. Only verified destination
+        // bytes prove the intended immutable object is present; an absent/corrupt one fails.
+      }
+      await this.verifyRetained(namespace, hash, verifiedSize, signal);
+      return { hash, size: verifiedSize };
+    }, [source.operations]);
   }
 
   get(namespace: string, hash: string): Promise<Buffer> {

@@ -241,7 +241,11 @@ test('requests and dispatch are durable, detached, single outstanding and replay
   f.poison();
   const beforeBuilds = f.builds;
   const request = input();
-  const queued = await f.code.commit(worker.caller, request);
+  const caller = structuredClone(worker.caller);
+  const pending = f.code.commit(caller, request);
+  caller.actorId = 'missing';
+  caller.session!.id = 'missing';
+  const queued = await pending;
   assert.equal(queued.status, 'queued');
   assert.equal(queued.command.actorId, worker.caller.actorId);
   assert.equal(queued.command.sessionId, worker.session.id);
@@ -359,6 +363,30 @@ test('project readers can inspect while worker reads and runner control preserve
     projectId: f.source.projectId,
     credentialId: actor.credential.id,
   };
+  for (const method of ['list', 'operation', 'nextCommand', 'completeCommand'] as const) {
+    await t.test(method, async () => {
+      const reads = method === 'list' || method === 'operation';
+      const caller = structuredClone(reads ? otherWorker.caller : reader);
+      const pending =
+        method === 'list'
+          ? f.code.list(caller)
+          : method === 'operation'
+            ? f.code.operation(caller, queued.command.id)
+            : method === 'nextCommand'
+              ? f.code.nextCommand(caller, worker.control)
+              : f.code.completeCommand(caller, {
+                  ...worker.control,
+                  commandId: queued.command.id,
+                  error: 'git_failed',
+                });
+      Object.assign(caller, reads ? worker.caller : f.source);
+      if (method === 'list') assert.deepEqual(await pending, []);
+      else
+        await assert.rejects(pending, {
+          code: reads ? 'code_command_not_found' : 'session_forbidden',
+        });
+    });
+  }
   assert.equal((await f.code.operation(reader, queued.command.id)).status, 'queued');
   assert.equal((await f.code.list(reader)).length, 1);
   assert.equal((await f.code.list(otherWorker.caller)).length, 0);

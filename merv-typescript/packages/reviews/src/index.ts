@@ -1,5 +1,5 @@
 import { visible, recorded, mapAsync } from '@merv/contracts';
-import { createService } from '@merv/contracts';
+import { createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -23,7 +23,7 @@ import {
   type Transaction,
   type StoredEvent,
 } from '@merv/contracts';
-import { validateAssessment, validateEvidence } from './findings.js';
+import { validateAssessment, evidenceFrom } from './findings.js';
 
 export type {
   ReviewInput,
@@ -338,10 +338,13 @@ export class ReviewService implements Reviews {
     input: ReviewApplication,
     transaction?: Transaction,
   ): Promise<unknown> {
+    caller = structuredClone(caller);
+    // Preserve route-specific validation before detaching input from its caller.
+    validateReturnTo(input);
+    input = plain<ReviewApplication>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
       await this.scope.require(caller, 'review', tx);
-      validateReturnTo(input);
       const review = await freeze(await this.get(caller, input.reviewId, tx));
       const epoch = this.ownerEpoch;
       const matches: Readonly<ReviewSubmitOwner>[] = [];
@@ -456,9 +459,13 @@ export class ReviewService implements Reviews {
     input: ReviewInput,
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
+    // Check descriptor-sensitive exclusions before copying; later awaits must use
+    // the same evidence and ownership input that command hashing will retain.
+    contributorExclusions(input);
+    input = plain<ReviewInput>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      contributorExclusions(input);
       const authority = await this.scope.authorityActor(caller, tx);
       check(
         input.producerId === caller.actorId || authority.role === 'operator',
@@ -482,6 +489,7 @@ export class ReviewService implements Reviews {
     input: { reviewId: string; subjectRevision: number; requestId: string },
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
+    ({ caller, input } = structuredClone({ caller, input }));
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const row = await this.row(tx, caller, input.reviewId);
@@ -677,6 +685,7 @@ export class ReviewService implements Reviews {
   }
 
   async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
     await this.scope.require(caller, 'read', transaction);
     if (transaction) {
       this.state.assertTransaction(transaction);
@@ -686,17 +695,19 @@ export class ReviewService implements Reviews {
   }
 
   async list(caller: Caller): Promise<ReviewRequest[]> {
+    caller = structuredClone(caller);
     await this.scope.require(caller, 'read');
-    return await this.state.read(async (sql) =>
-      await this.claimableBy(
-        caller,
-        (
-          await sql.all<ReviewRow>(
-            'SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at, id',
-            caller.projectId,
-          )
-        ).map(hydrate),
-      ),
+    return await this.state.read(
+      async (sql) =>
+        await this.claimableBy(
+          caller,
+          (
+            await sql.all<ReviewRow>(
+              'SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at, id',
+              caller.projectId,
+            )
+          ).map(hydrate),
+        ),
     );
   }
 
@@ -705,6 +716,7 @@ export class ReviewService implements Reviews {
     reviewId: string,
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
       const row = await this.row(tx, caller, reviewId);
@@ -728,6 +740,7 @@ export class ReviewService implements Reviews {
   }
 
   async start(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const current = await this.checkStart(caller, reviewId, tx);
       if (current.status === 'started') return current;
@@ -758,6 +771,12 @@ export class ReviewService implements Reviews {
     input?: Omit<ReviewSubmit, 'requestId'>,
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
+    if (input) {
+      validateReturnTo(input);
+      evidenceFrom(input);
+      input = plain(input);
+    }
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
       const row = await this.row(tx, caller, reviewId);
@@ -777,7 +796,6 @@ export class ReviewService implements Reviews {
       );
       await this.requireLiveClaim(row, tx);
       if (input) {
-        validateReturnTo(input);
         check(
           typeof input.claimId === 'string' && input.claimId === row.claim_id,
           'stale_claim',
@@ -805,10 +823,12 @@ export class ReviewService implements Reviews {
     input: ReviewSubmit,
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
+    const returnTo = validateReturnTo(input);
+    evidenceFrom(input);
+    input = plain<ReviewSubmit>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
-      const returnTo = validateReturnTo(input);
-      validateEvidence(input.evidence);
       return await this.command(tx, caller, input.requestId, 'submit', input, async () => {
         const current = await this.checkSubmit(caller, input.reviewId, input, tx);
         const assessment = validateAssessment(current, input);
@@ -834,6 +854,7 @@ export class ReviewService implements Reviews {
   }
 
   async supersede(caller: Caller, reviewId: string, transaction?: Transaction): Promise<void> {
+    caller = structuredClone(caller);
     await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const row = await this.row(tx, caller, reviewId);

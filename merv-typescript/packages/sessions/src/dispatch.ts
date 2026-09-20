@@ -236,11 +236,13 @@ export class SessionDispatch {
     return { enabled, updatedAt: time, updatedBy: caller.actorId };
   }
   async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {
+    caller = structuredClone(caller);
     check(
       input && typeof input.enabled === 'boolean' && Object.keys(input).length === 1,
       'invalid_dispatch',
       'Dispatch accepts only enabled',
     );
+    input = { ...input };
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'admin', tx);
       return await this.set(caller, input.enabled, tx);
@@ -250,11 +252,13 @@ export class SessionDispatch {
     caller: Caller,
     input: { sessionId?: string; reason?: string } = {},
   ): Promise<{ halted: number }> {
+    caller = structuredClone(caller);
     const parsed = z
       .object({ sessionId: label.optional(), reason: label.optional() })
       .strict()
       .safeParse(input);
     check(parsed.success, 'invalid_halt', 'Halt accepts an optional session and bounded reason');
+    input = parsed.data;
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'admin', tx);
       if (!input.sessionId) await this.set(caller, false, tx);
@@ -320,6 +324,7 @@ export class SessionDispatch {
     );
   }
   async heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence> {
+    caller = structuredClone(caller);
     const parsed = heartbeatSchema.safeParse(input);
     check(
       parsed.success,
@@ -383,6 +388,7 @@ export class SessionDispatch {
     caller: Caller,
     input: { runnerId: string; settings: RunnerSettings },
   ): Promise<RunnerPresence> {
+    caller = structuredClone(caller);
     const parsed = z
       .object({ runnerId: label, settings: settingsSchema })
       .strict()
@@ -392,6 +398,7 @@ export class SessionDispatch {
       'invalid_runner_settings',
       'Runner settings accept only named platform tuning',
     );
+    input = parsed.data;
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'admin', tx);
       const row = await tx.get<RunnerRow>(
@@ -408,10 +415,10 @@ export class SessionDispatch {
         'unknown_platform',
         'Runner settings may tune only an advertised platform',
       );
-      if (canonical(JSON.parse(row.settings_json)) !== canonical(parsed.data.settings)) {
+      if (canonical(JSON.parse(row.settings_json)) !== canonical(input.settings)) {
         await tx.run(
           'UPDATE session_runners SET settings_json=?,desired_version=desired_version+1 WHERE id=?',
-          JSON.stringify(parsed.data.settings),
+          JSON.stringify(input.settings),
           row.id,
         );
         await recorded(this.state, tx, caller, 'session.runner_settings_changed', row.id, {
@@ -440,6 +447,7 @@ export class SessionDispatch {
     );
   }
   async projectStatus(caller: Caller): Promise<SessionsProjectStatus> {
+    caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       const actor = await this.ordinary(caller, 'read', tx);
       const runners = await mapAsync(
@@ -588,6 +596,7 @@ export class SessionDispatch {
     caller: Caller,
     input: AutomaticLease,
   ): Promise<{ session: Session | null; reason: string }> {
+    caller = structuredClone(caller);
     const parsed = leaseSchema.safeParse(input);
     check(
       parsed.success,

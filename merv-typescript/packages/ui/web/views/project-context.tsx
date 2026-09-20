@@ -1,8 +1,14 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useTool, type Project } from '../api';
-import { Area, Failure, LoadState } from '../components';
+import { Area, EmptyState, Failure, LoadState, OpenedForm, Submit, cx } from '../components';
+import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
+
+/** A project nobody has introduced yet, and — for whoever may write it — the way to begin. */
+const Unwritten = ({ action }: { action?: ReactNode }) => (
+  <EmptyState kind="settings" icon="file-text" title="No introduction yet" action={action} />
+);
 
 function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: () => void }) {
   const heading = useId();
@@ -25,30 +31,42 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
       onSaved();
     },
   });
-  if (!draft)
-    return (
-      <div>
-        <button
-          className="btn btn--sm"
-          onClick={() =>
-            setDraft({ summary: project.summary ?? '', expectedSummary: project.summary ?? '' })
-          }
-        >
-          Edit introduction
-        </button>
-      </div>
+  if (!draft) {
+    const opener = (
+      <button
+        type="button"
+        // Offered from the empty state it is the page's one control, and wears the accent.
+        className={cx('btn', !project.summary && 'btn--primary')}
+        onClick={() =>
+          setDraft({ summary: project.summary ?? '', expectedSummary: project.summary ?? '' })
+        }
+      >
+        Edit introduction
+      </button>
     );
+    // With nothing written the empty state offers the control; otherwise it follows the text.
+    return project.summary ? <div>{opener}</div> : <Unwritten action={opener} />;
+  }
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!conflict || mutation.retry) void mutation.submit(draft);
   };
+  const cancel = () => {
+    setDraft(null);
+    setConflict(false);
+  };
   return (
-    <form className="card stack claims-form" aria-labelledby={heading} onSubmit={submit}>
-      <h3 id={heading}>Edit introduction</h3>
+    <OpenedForm
+      className="card stack claims-form"
+      aria-labelledby={heading}
+      onSubmit={submit}
+      onClose={cancel}
+      locked={mutation.locked}
+    >
+      <h2 id={heading}>Edit introduction</h2>
       <fieldset disabled={mutation.locked}>
         <Area
-          label="Project intent"
-          className="textarea"
+          label="Introduction"
           rows={6}
           maxLength={16000}
           value={draft.summary}
@@ -60,38 +78,30 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
           <p>The introduction changed while you were editing. Your draft is preserved.</p>
           <button
             type="button"
-            className="btn btn--sm"
+            className="btn"
             disabled={mutation.locked || project.summary === draft.expectedSummary}
             onClick={() => {
               setDraft({ ...draft, expectedSummary: project.summary ?? '' });
               setConflict(false);
             }}
           >
-            Keep my draft and use the current introduction as its baseline
+            Keep my draft
           </button>
         </div>
       )}
       <Failure message={mutation.error} />
       <div className="cluster">
-        <button
-          className="btn btn--primary"
-          disabled={mutation.busy || (conflict && !mutation.retry)}
-        >
-          {mutation.busy ? 'Saving…' : mutation.retry ? 'Retry same request' : 'Edit introduction'}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={mutation.locked}
-          onClick={() => {
-            setDraft(null);
-            setConflict(false);
-          }}
-        >
+        <Submit
+          label="Save"
+          busy={mutation.busy}
+          retry={mutation.retry}
+          disabled={conflict && !mutation.retry}
+        />
+        <button type="button" className="btn" disabled={mutation.locked} onClick={cancel}>
           Cancel
         </button>
       </div>
-    </form>
+    </OpenedForm>
   );
 }
 
@@ -99,19 +109,19 @@ export function ProjectIntroduction() {
   const { actor } = useSession();
   const project = useTool<Project>('project.get', {}, { every: 8000 });
   return (
-    <section className="stack">
-      <h2 className="section-title">Project introduction</h2>
+    <section className="stack" aria-label="Project introduction">
       <LoadState {...project} />
       {project.data && (
         <>
-          <p className="prose">{project.data.summary || 'No introduction has been set.'}</p>
-          <p className="faint">Revision {project.data.contextRevision ?? 0}</p>
-          {(actor.role === 'operator' || actor.role === 'producer') && (
+          {project.data.summary && <Markdown source={project.data.summary} />}
+          {actor.role === 'operator' || actor.role === 'producer' ? (
             <IntroductionEditor
               key={project.data.id}
               project={project.data}
               onSaved={project.reload}
             />
+          ) : (
+            !project.data.summary && <Unwritten />
           )}
         </>
       )}

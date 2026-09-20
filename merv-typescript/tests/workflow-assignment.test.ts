@@ -133,6 +133,9 @@ async function setup(path = ':memory:') {
 test('assignment reads are pure; begin records first activation before rendering current guidance', async (t) => {
   const f = await setup();
   t.after(async () => await f.state.close());
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const foreign = { projectId: other.project.id, actorId: other.actor.id };
+  const caller = { ...f.caller };
   const head = await f.state.eventHead();
   const before = await f.workflows.get(f.caller, f.instance.id);
   const guidance = await f.workflows.evaluate(f.caller, f.instance.id);
@@ -149,16 +152,22 @@ test('assignment reads are pure; begin records first activation before rendering
   const completion = await f.workflows.evaluate(f.caller, f.instance.id, { action: 'finish' });
   assert.equal(completion.nextAction?.tool, 'test.finish');
   assert.equal(completion.nextAction?.status, 'needs_input');
-  const preview = await f.workflows.assignment(f.caller, f.instance.id);
+  const previewing = f.workflows.assignment(caller, f.instance.id);
+  Object.assign(caller, foreign);
+  const preview = await previewing;
+  assert.equal(preview.actorId, f.caller.actorId);
   assert.match(preview.context!.prompt, /workflow.begin/);
   assert.equal(preview.workStart, null);
   assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), []);
   assert.equal(await f.state.eventHead(), head);
   assert.deepEqual(await f.workflows.get(f.caller, f.instance.id), before);
-  const begun = await f.workflows.begin(f.caller, {
+  Object.assign(caller, f.caller);
+  const beginning = f.workflows.begin(caller, {
     instanceId: f.instance.id,
     expectedRevision: 0,
   });
+  Object.assign(caller, foreign);
+  const begun = await beginning;
   assert.equal(begun.workStart?.actorId, f.caller.actorId);
   assert.equal(begun.workStart?.revision, 0);
   assert.match(begun.context!.prompt, /test.finish/);
@@ -438,14 +447,27 @@ test('assignment declarations and output fail closed while installed policy stay
       await f.workflows.begin(f.caller, { instanceId: f.instance.id, expectedRevision: 0 }),
     { message: 'No unhandled rejection' },
   );
-  malformed = { role: 'worker' };
-  await assert.rejects(async () => await f.workflows.assignment(f.caller, f.instance.id), {
-    code: 'invalid_workflow_policy',
-  });
-  malformed = { value: Number.NaN };
-  await assert.rejects(async () => await f.workflows.assignment(f.caller, f.instance.id), {
-    code: 'invalid_workflow_policy',
-  });
+  let callbacks = 0;
+  const unexpected = () => {
+    callbacks++;
+    throw new Error('Assignment validation executed provider code');
+  };
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  for (malformed of [
+    { role: 'worker' },
+    { value: Number.NaN },
+    Object.defineProperty({}, 'role', { enumerable: true, get: unexpected }),
+    new Proxy({}, { ownKeys: unexpected }),
+    Object.setPrototypeOf([], { map: unexpected }),
+    { value: revoked.proxy },
+  ]) {
+    await assert.rejects(async () => await f.workflows.assignment(f.caller, f.instance.id), {
+      code: 'invalid_workflow_policy',
+      status: 500,
+    });
+    assert.equal(callbacks, 0);
+  }
   assert.equal(await f.state.eventHead(), head);
   owner.dispose();
   owner = await f.workflows.register(graph, {

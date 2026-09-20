@@ -43,6 +43,80 @@ async function fixture(t: TestContext) {
 const code = (expected: string) => (error: unknown) =>
   error instanceof MervError && error.code === expected;
 
+test('Feed persists the input it validated and hashed even if its caller edits the object while awaiting attachments', async (t) => {
+  const f = await fixture(t);
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Retained' });
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const get = f.artifacts.get.bind(f.artifacts);
+  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof get>) => {
+    const result = await get(...args);
+    enter();
+    await waiting;
+    return result;
+  });
+  const input = { body: 'Original post', artifactIds: [evidence.id], requestId: 'stable-request' };
+  const original = structuredClone(input);
+  const caller = structuredClone(f.producer);
+  const pending = f.feed.post(caller, input);
+  try {
+    await entered;
+    input.body = '';
+    input.artifactIds[0] = 'art_unchecked';
+    input.requestId = 'different-request';
+    caller.actorId = f.reader.actorId;
+  } finally {
+    release();
+  }
+  const post = await pending;
+  assert.equal(post.authorId, f.producer.actorId);
+  assert.equal(post.body, original.body);
+  assert.deepEqual(post.artifactIds, original.artifactIds);
+  assert.deepEqual(
+    await f.feed.post(f.producer, original),
+    post,
+    'the original request must replay its receipt',
+  );
+  assert.deepEqual(await f.feed.get(f.producer, post.id), post);
+  assert.equal((await f.feed.list(f.producer)).length, 1);
+});
+
+test('artifact metadata stays bound to the input validated before asynchronous blob storage', async (t) => {
+  const f = await fixture(t);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const put = f.blobs.put.bind(f.blobs);
+  t.mock.method(f.blobs, 'put', async (...args: Parameters<typeof put>) => {
+    const stored = await put(...args);
+    enter();
+    await waiting;
+    return stored;
+  });
+  const input = { title: 'Original title', content: 'Original bytes' };
+  const pending = f.artifacts.create(f.producer, input);
+  try {
+    await entered;
+    input.title = '   ';
+    input.content = 'Different bytes';
+  } finally {
+    release();
+  }
+  const artifact = await pending;
+  assert.equal(artifact.title, 'Original title');
+  assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, 'Original bytes');
+  assert.deepEqual(await f.artifacts.get(f.producer, artifact.id), artifact);
+});
+
 test('standalone Feed admits reviewers, scopes communication, and validates artifact attachments', async (t) => {
   const f = await fixture(t);
   const evidence = await f.artifacts.create(f.producer, {
@@ -323,7 +397,11 @@ test('Feed cursor pages and activity preserve project boundaries and survive reo
   const newest = await f.feed.list(f.reader);
   assert.equal(newest.length, 50);
   assert.deepEqual(newest, [...records.slice(6), final]);
-  const first = await f.feed.list(f.reader, { after: 0, limit: 50 });
+  const pagination = { after: 0, limit: 50 };
+  const paging = f.feed.list(f.reader, pagination);
+  pagination.after = final.sequence;
+  pagination.limit = 1;
+  const first = await paging;
   assert.deepEqual(first, records.slice(0, 50));
   const rest = await f.feed.list(f.reader, { after: first.at(-1)!.sequence, limit: 100 });
   assert.deepEqual(rest, [...records.slice(50), final]);
@@ -339,6 +417,26 @@ test('Feed cursor pages and activity preserve project boundaries and survive reo
     await f.feed.activity(f.reader, cursor),
     activity.filter((event) => event.id > cursor),
   );
+  const changing = structuredClone(f.operator);
+  const authorize = f.scope.require.bind(f.scope);
+  const swapped = t.mock.method(
+    f.scope,
+    'require',
+    async (...args: Parameters<typeof authorize>) => {
+      const actor = await authorize(...args);
+      changing.projectId = foreign.projectId;
+      return actor;
+    },
+  );
+  try {
+    await assert.rejects(f.feed.get(changing, foreignPost.id), code('not_found'));
+    changing.projectId = f.operator.projectId;
+    assert.deepEqual(await f.feed.list(changing), newest);
+    changing.projectId = f.operator.projectId;
+    assert.deepEqual(await f.feed.activity(changing), await f.state.events(f.operator.projectId));
+  } finally {
+    swapped.mock.restore();
+  }
   await f.state.close();
   const reopened = new SqliteState(join(f.directory, 'state.sqlite'));
   try {

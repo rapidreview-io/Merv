@@ -32,6 +32,7 @@ interface Connection {
   ready: Promise<void>;
   users: number;
   retired: boolean;
+  credentialFailure?: MervError;
   closing?: Promise<void>;
 }
 
@@ -59,6 +60,8 @@ function deadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
 }
 
 function transportError(error: unknown): MervError {
+  if (error instanceof MervError && error.code === 'credential_changed')
+    return new MervError('credential_changed', 'Upstream credential changed before dispatch', 409);
   if (
     (error instanceof MervError && error.code === 'remote_timeout') ||
     (error instanceof McpError && error.code === ErrorCode.RequestTimeout)
@@ -179,14 +182,30 @@ export class ScopedRemoteClients {
       try {
         const transport = new StreamableHTTPClientTransport(new URL(url), {
           requestInit: { headers: { ...credential.headers() } },
-          fetch: (address, init) =>
-            fetch(address, {
+          fetch: (address, init) => {
+            try {
+              credential.assertCurrent?.();
+            } catch {
+              // The SDK can wrap a failed initialized notification as a protocol
+              // error. Retain the local, sanitized cause through that boundary.
+              connection.credentialFailure = new MervError(
+                'credential_changed',
+                'Upstream credential changed before dispatch',
+                409,
+              );
+              throw connection.credentialFailure;
+            }
+            return fetch(address, {
               ...init,
+              // The binding authorizes this endpoint, not a redirect destination. Even
+              // when fetch strips Authorization, it forwards tool bodies and MCP headers.
+              redirect: 'error',
               signal: AbortSignal.any([
                 ...(init?.signal ? [init.signal] : []),
                 AbortSignal.timeout(this.timeoutMs),
               ]),
-            }),
+            });
+          },
         });
         await deadline(
           client.connect(transport, { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs }),
@@ -194,7 +213,7 @@ export class ScopedRemoteClients {
         );
       } catch (error) {
         this.retire(connection);
-        throw transportError(error);
+        throw connection.credentialFailure ?? transportError(error);
       }
     })();
     return connection;
@@ -224,6 +243,7 @@ export class ScopedRemoteClients {
       // Credential resolution can also yield after the connection is ready.
       await this.access.require(caller, mountId, name);
       if (caller.session) await this.access.validate(caller, `_${mountId}.${name}`, args as Data);
+      currentCredential.assertCurrent?.();
       return await deadline(
         connection.client.request(
           { method: 'tools/call', params: { name, arguments: args } },
@@ -234,7 +254,9 @@ export class ScopedRemoteClients {
       );
     } catch (error) {
       this.retire(connection);
-      throw error instanceof MervError ? error : transportError(error);
+      throw (
+        connection.credentialFailure ?? (error instanceof MervError ? error : transportError(error))
+      );
     } finally {
       connection.users--;
       // A failed shared connection is withdrawn immediately; other admitted calls retain it.

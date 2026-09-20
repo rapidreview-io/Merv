@@ -9,7 +9,8 @@ import { Worker } from 'node:worker_threads';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
-import type { Caller, HumanPrincipal, Principal } from '@merv/contracts';
+import { Memberships } from '@merv/scope/memberships';
+import type { Caller, HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { createApp } from '../src/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -41,7 +42,10 @@ test('verified identities onboard independently of projects; creation receipts r
   const alice = await f.login('alice');
   assert.deepEqual(await f.scope.projects(alice), []);
   await assert.rejects(async () => await f.scope.caller(alice), { code: 'project_required' });
-  const project = await f.scope.createProject(alice, { name: 'Research', requestId: 'create' });
+  const creation = { name: 'Research', requestId: 'create' };
+  const creating = f.scope.createProject(alice, creation);
+  creation.requestId = ' ';
+  const project = await creating;
   const caller = await f.scope.caller(alice, project.id);
   assert.equal((await f.scope.require(caller, 'admin')).role, 'operator');
   assert.deepEqual((await f.scope.require(caller, 'read')).user, { issuer, subject: 'alice' });
@@ -98,7 +102,10 @@ test('one human has independent project roles and attribution actors; issuer and
   const inA = await f.scope.caller(alice, a.id),
     inB = await f.scope.caller(alice, b.id);
   assert.notEqual(inA.actorId, inB.actorId);
-  assert.equal((await f.scope.require(inA, 'admin')).role, 'operator');
+  const pendingCaller = structuredClone(inA);
+  const authorized = f.scope.require(pendingCaller, 'admin');
+  pendingCaller.human!.subject = 'changed';
+  assert.equal((await authorized).role, 'operator');
   assert.equal((await f.scope.require(inB, 'read')).role, 'reader');
   await assert.rejects(async () => await f.scope.require(inB, 'write'), { code: 'forbidden' });
   assert.deepEqual(
@@ -133,6 +140,37 @@ test('one human has independent project roles and attribution actors; issuer and
     2,
     'Every human member may read membership history',
   );
+  const changing = structuredClone(alice);
+  const head = await f.state.eventHead();
+  let swapTo = 'bob';
+  const human = Memberships.prototype.human;
+  const swapped = t.mock.method(
+    Memberships.prototype,
+    'human',
+    async function (this: Memberships, ...args: Parameters<typeof human>) {
+      const checked = await human.apply(this, args);
+      changing.user.subject = swapTo;
+      return checked;
+    },
+  );
+  try {
+    for (const operation of [
+      () => f.scope.addMember(changing, b.id, { subject: 'mallory', role: 'operator' }),
+      () => f.scope.changeMemberRole(changing, b.id, { subject: 'alice', role: 'operator' }),
+      () => f.scope.removeMember(changing, b.id, 'alice'),
+    ]) {
+      changing.user.subject = 'alice';
+      await assert.rejects(operation, { code: 'forbidden' });
+    }
+    swapTo = 'alice';
+    changing.user.subject = 'bob';
+    await assert.rejects(() => f.scope.memberships(changing, a.id), {
+      code: 'membership_required',
+    });
+  } finally {
+    swapped.mock.restore();
+  }
+  assert.equal(await f.state.eventHead(), head);
 });
 
 test('invitations do not verify users, login preserves user identity, and expiration is rechecked inside transactions', async (t) => {
@@ -205,7 +243,17 @@ test('existing verified identities use a read path while first insertion recheck
     throw new Error('Unexpected identity write transaction');
   };
   assert.deepEqual(await f.login('alice'), initial);
+  const identity = { ...initial.user, expiresAt: initial.expiresAt };
+  const accepting = f.scope.acceptVerifiedIdentity(identity);
+  identity.subject = 'unverified';
+  identity.expiresAt = new Date(initialTime + 120_000).toISOString();
+  assert.deepEqual(await accepting, initial);
+  const expiring = f.scope.acceptVerifiedIdentity({
+    ...initial.user,
+    expiresAt: initial.expiresAt,
+  });
   f.advance(60_000);
+  await assert.rejects(expiring, { code: 'unauthorized' });
   await assert.rejects(
     async () =>
       await f.scope.acceptVerifiedIdentity({
@@ -242,18 +290,46 @@ test('existing verified identities use a read path while first insertion recheck
   );
 });
 
+test('human validation retains the original expiry and rejects expiry during the user lookup', async (t) => {
+  const f = await fixture();
+  t.after(async () => await f.state.close());
+  const principal = await f.login('alice');
+  const expiresAt = principal.expiresAt;
+  let time = initialTime;
+  const members = new Memberships(
+    f.state,
+    () => new Date(time).toISOString(),
+    f.scope.require.bind(f.scope),
+  );
+  await f.state.transaction(async (tx) => {
+    const pending = members.human(principal, tx);
+    principal.expiresAt = new Date(initialTime + 120_000).toISOString();
+    assert.equal((await pending).expiresAt, expiresAt);
+  });
+  await f.state.transaction(async (tx) => {
+    const pending = members.human({ ...principal, expiresAt }, tx);
+    time += 60_000;
+    await assert.rejects(pending, { code: 'unauthorized' });
+  });
+});
+
 test('role changes and remove/rejoin preserve actor attribution but fence every old membership epoch', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice'),
     bob = await f.login('bob');
   const project = await f.scope.createProject(alice, { name: 'Epochs', requestId: 'create' });
-  const initial = await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'reviewer' });
+  const invitation = { subject: 'bob', role: 'reviewer' as Role };
+  const inviting = f.scope.addMember(alice, project.id, invitation);
+  invitation.subject = 'mallory';
+  invitation.role = 'operator';
+  const initial = await inviting;
+  assert.deepEqual([initial.subject, initial.role], ['bob', 'reviewer']);
   const old = await f.scope.caller(bob, project.id);
-  const changed = await f.scope.changeMemberRole(alice, project.id, {
-    subject: 'bob',
-    role: 'reader',
-  });
+  const change = { subject: 'bob', role: 'reader' as Role };
+  const changing = f.scope.changeMemberRole(alice, project.id, change);
+  change.role = 'operator';
+  const changed = await changing;
   assert.equal(changed.actorId, initial.actorId);
   assert.notEqual(changed.id, initial.id);
   await assert.rejects(async () => await f.scope.require(old, 'read'), {
@@ -651,9 +727,12 @@ test('v2 migration preserves local projects and credentials; adoption is explici
         code: 'invalid_repair_reason',
       },
     );
-  const repaired = await scope.adoptProject(rescuer, legacy.project.id, {
+  const repair = {
     repairReason: 'The previous owner lost their identity-provider account.',
-  });
+  };
+  const repairing = scope.adoptProject(rescuer, legacy.project.id, repair);
+  repair.repairReason = ' ';
+  const repaired = await repairing;
   assert.equal(
     (await scope.require(await scope.caller(rescuer, legacy.project.id), 'admin')).id,
     repaired.actorId,

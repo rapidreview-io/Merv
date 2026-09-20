@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   accountRequest,
   keyClient,
@@ -8,7 +8,17 @@ import {
   type Project,
   type UserKey,
 } from '../api';
-import { Failure, PageHeader, stamp } from '../components';
+import { signedInEmail } from '../auth';
+import {
+  EmptyState,
+  Failure,
+  LoadState,
+  OpenedForm,
+  PageHeader,
+  Stamp,
+  Submit,
+  cx,
+} from '../components';
 import { ThreeStates } from '../states';
 
 const message = (error: unknown) =>
@@ -24,7 +34,10 @@ const expiration = (value: string): string | null => {
 /**
  * Keys are a setting, and open as one under Settings › Keys. The same panel still
  * stands alone for an account with no project selected — after membership loss,
- * or from the project chooser — which is when it carries a way back.
+ * or from the project chooser — which is when it carries its own title, whose
+ * account it is, and a way back. It reads as every list does: the rows, one
+ * control that opens the form for a new one, and that control in the empty state
+ * while there are none.
  */
 export function KeysPanel({
   account,
@@ -48,6 +61,8 @@ export function KeysPanel({
   const [rotationExpiry, setRotationExpiry] = useState('');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const heading = useId();
   const generation = useRef(0);
   const issuer = account.user.issuer;
   const subject = account.user.subject;
@@ -84,7 +99,10 @@ export function KeysPanel({
     };
   }, [issuer, subject]);
 
-  const mutate = async (run: () => Promise<IssuedUserKey | { revoked: true }>) => {
+  const mutate = async (
+    run: () => Promise<IssuedUserKey | { revoked: true }>,
+    done?: () => void,
+  ) => {
     if (busy) return;
     const currentGeneration = generation.current;
     const epoch = scopeVersion();
@@ -98,6 +116,7 @@ export function KeysPanel({
       if (!current()) return;
       if ('token' in result) setSecret(result);
       setRotating(undefined);
+      done?.();
       const fresh = await keyClient.list();
       if (current()) setKeys(fresh.keys);
     } catch (error) {
@@ -108,13 +127,19 @@ export function KeysPanel({
   };
   const create = (event: FormEvent) => {
     event.preventDefault();
-    void mutate(() =>
-      keyClient.create({
-        projectId,
-        grantScope,
-        ...(label.trim() ? { label: label.trim() } : {}),
-        expiresAt: expiration(expiresAt),
-      }),
+    void mutate(
+      () =>
+        keyClient.create({
+          projectId,
+          grantScope,
+          ...(label.trim() ? { label: label.trim() } : {}),
+          expiresAt: expiration(expiresAt),
+        }),
+      () => {
+        setCreating(false);
+        setLabel('');
+        setExpiresAt('');
+      },
     );
   };
   const rotate = (event: FormEvent, id: string) => {
@@ -140,12 +165,24 @@ export function KeysPanel({
     }
   };
 
+  // A key is issued in a project, so an account with none has no control to offer.
+  const opener = projects.length > 0 && (
+    <button
+      type="button"
+      className={cx('btn', !creating && 'btn--primary', 'action-end')}
+      aria-expanded={creating}
+      onClick={() => setCreating((open) => !open)}
+    >
+      {creating ? 'Cancel' : 'New key'}
+    </button>
+  );
   return (
     <section className="page-stage stack stack--lg">
-      <PageHeader
-        title="Machine keys"
-        actions={
-          onClose && (
+      {onClose && (
+        <PageHeader
+          title="Machine keys"
+          summary={signedInEmail()}
+          actions={
             <button
               className="btn"
               onClick={() => {
@@ -155,14 +192,11 @@ export function KeysPanel({
             >
               Close
             </button>
-          )
-        }
-      />
-      <p className="faint">
-        Account: <code>{subject}</code>
-      </p>
+          }
+        />
+      )}
       {secret && (
-        <section className="card stack" aria-label="New machine key">
+        <section className="card stack creation" aria-label="New machine key">
           <h2 className="section-title">Copy this key now</h2>
           <textarea
             className="textarea mono"
@@ -173,7 +207,7 @@ export function KeysPanel({
             autoComplete="off"
             spellCheck={false}
           />
-          <div className="signin-actions">
+          <div className="cluster">
             <button className="btn" onClick={() => void copySecret()}>
               {copied ? 'Copied' : 'Copy key'}
             </button>
@@ -184,165 +218,178 @@ export function KeysPanel({
         </section>
       )}
       <Failure message={error} />
-      <section className="card stack">
-        <h2 className="section-title">New key</h2>
-        {!keys ? (
-          <p>Loading your projects and keys…</p>
-        ) : projects.length === 0 ? (
-          <p>No project to issue a key in.</p>
-        ) : (
-          <form className="identity-form" onSubmit={create}>
-            <label>
-              Issuance project
-              <select
-                className="input"
-                required
-                disabled={busy}
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-              >
-                <option value="">Choose a project</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Access
-              <select
-                className="input"
-                disabled={busy}
-                value={grantScope}
-                onChange={(e) => setGrantScope(e.target.value as 'project' | 'account')}
-              >
-                <option value="project">Only this project</option>
-                <option value="account">All current and future project memberships</option>
-              </select>
-            </label>
-            <label>
-              Label (optional)
-              <input
-                className="input"
-                maxLength={120}
-                value={label}
-                disabled={busy}
-                onChange={(e) => setLabel(e.target.value)}
-              />
-            </label>
-            <label>
-              Expiration (optional, local time)
-              <input
-                className="input"
-                type="datetime-local"
-                value={expiresAt}
-                disabled={busy}
-                onChange={(e) => setExpiresAt(e.target.value)}
-              />
-            </label>
-            <button className="btn btn--primary" disabled={busy || !projectId}>
-              New key
-            </button>
-          </form>
-        )}
-      </section>
-      <section className="stack">
-        <h2 className="section-title">Your keys</h2>
-        {keys?.length === 0 && <p>No keys have been issued by this account.</p>}
-        {keys?.map((key) => {
-          const expired = !!key.expiresAt && Date.parse(key.expiresAt) <= Date.now();
-          const project = projects.find((project) => project.id === key.projectId);
-          const canRotate = key.grantScope === 'account' ? projects.length > 0 : !!project;
-          return (
-            <section className="stack" key={key.id}>
-              <span className="row-name">
-                <strong>{key.label || 'Unnamed key'}</strong>
-              </span>
-              <ThreeStates
-                execution={key.revokedAt ? 'revoked' : expired ? 'expired' : 'active'}
-                meta={[
-                  key.grantScope === 'account'
-                    ? 'All current and future memberships'
-                    : project?.name,
-                  `created ${stamp(key.createdAt)}`,
-                  key.expiresAt ? `expires ${stamp(key.expiresAt)}` : 'no expiration',
-                  key.previousId && 'replaces an earlier key',
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              />
-              <div className="signin-actions">
-                {!key.revokedAt && canRotate && (
-                  <button
-                    className="btn"
-                    disabled={busy}
-                    onClick={() => {
-                      forgetSecret();
-                      setRotating(key.id);
-                      setChangeExpiry(expired);
-                      setRotationExpiry('');
-                    }}
-                  >
-                    Replace key…
-                  </button>
-                )}
-                <button
-                  className="btn"
+      {!keys ? (
+        !error && <LoadState loading columns={2} />
+      ) : (
+        <div className="stack">
+          {(keys.length > 0 || creating) && <div className="action-row">{opener}</div>}
+          {creating && (
+            <OpenedForm
+              className="identity-form card"
+              aria-labelledby={heading}
+              onSubmit={create}
+              onClose={() => setCreating(false)}
+              locked={busy}
+            >
+              <h2 id={heading}>New key</h2>
+              <label>
+                Project
+                <select
+                  className="input"
+                  required
                   disabled={busy}
-                  onClick={() => void mutate(() => keyClient.revoke(key.id))}
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
                 >
-                  {key.revokedAt ? 'Revoke descendants' : 'Revoke key and descendants'}
-                </button>
+                  <option value="">Choose a project</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Access
+                <select
+                  className="input"
+                  disabled={busy}
+                  value={grantScope}
+                  onChange={(e) => setGrantScope(e.target.value as 'project' | 'account')}
+                >
+                  <option value="project">Only this project</option>
+                  <option value="account">All current and future project memberships</option>
+                </select>
+              </label>
+              <label>
+                Label (optional)
+                <input
+                  className="input"
+                  maxLength={120}
+                  value={label}
+                  disabled={busy}
+                  onChange={(e) => setLabel(e.target.value)}
+                />
+              </label>
+              <label>
+                Expires (optional)
+                <input
+                  className="input"
+                  type="datetime-local"
+                  value={expiresAt}
+                  disabled={busy}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                />
+              </label>
+              <div>
+                <Submit busy={busy} disabled={!projectId} />
               </div>
-              {rotating === key.id && (
-                <form className="identity-form" onSubmit={(event) => rotate(event, key.id)}>
-                  <label>
-                    <span>
-                      <input
-                        type="checkbox"
-                        style={{ width: 'auto' }}
-                        checked={changeExpiry}
+            </OpenedForm>
+          )}
+          {keys.length === 0 && !creating && (
+            <EmptyState kind="settings" icon="key" title="No keys yet" action={opener} />
+          )}
+          <ul className="rows">
+            {keys.map((key) => {
+              const expired = !!key.expiresAt && Date.parse(key.expiresAt) <= Date.now();
+              const project = projects.find((project) => project.id === key.projectId);
+              const canRotate = key.grantScope === 'account' ? projects.length > 0 : !!project;
+              return (
+                <li className="row" key={key.id}>
+                  <span className="row-name">
+                    <strong>{key.label || 'Unnamed key'}</strong>
+                  </span>
+                  <ThreeStates
+                    execution={key.revokedAt ? 'revoked' : expired ? 'expired' : 'active'}
+                    meta={
+                      <>
+                        {key.grantScope === 'account' ? 'Every membership' : project?.name}
+                        {' · '}created <Stamp at={key.createdAt} />
+                        {key.expiresAt && (
+                          <>
+                            {' · '}expires <Stamp at={key.expiresAt} />
+                          </>
+                        )}
+                        {key.previousId && ' · replaces an earlier key'}
+                      </>
+                    }
+                  />
+                  <div className="cluster key-tools">
+                    {!key.revokedAt && canRotate && (
+                      <button
+                        className="btn"
                         disabled={busy}
-                        onChange={(e) => setChangeExpiry(e.target.checked)}
-                      />{' '}
-                      Change expiration
-                    </span>
-                  </label>
-                  {changeExpiry ? (
-                    <label>
-                      New expiration (leave empty for no expiration)
-                      <input
-                        className="input"
-                        type="datetime-local"
-                        value={rotationExpiry}
-                        disabled={busy}
-                        onChange={(e) => setRotationExpiry(e.target.value)}
-                      />
-                    </label>
-                  ) : null}
-                  <div className="signin-actions">
+                        onClick={() => {
+                          forgetSecret();
+                          setRotating(key.id);
+                          setChangeExpiry(expired);
+                          setRotationExpiry('');
+                        }}
+                      >
+                        Replace key…
+                      </button>
+                    )}
                     <button
                       className="btn"
-                      type="button"
                       disabled={busy}
-                      onClick={() => setRotating(undefined)}
+                      onClick={() => void mutate(() => keyClient.revoke(key.id))}
                     >
-                      Cancel
-                    </button>
-                    <button
-                      className="btn btn--primary"
-                      disabled={busy || (expired && !changeExpiry)}
-                    >
-                      Replace and stop old key
+                      {key.revokedAt ? 'Revoke descendants' : 'Revoke key and descendants'}
                     </button>
                   </div>
-                </form>
-              )}
-            </section>
-          );
-        })}
-      </section>
+                  {rotating === key.id && (
+                    <form
+                      className="identity-form creation"
+                      onSubmit={(event) => rotate(event, key.id)}
+                    >
+                      <label>
+                        <span>
+                          <input
+                            type="checkbox"
+                            style={{ width: 'auto' }}
+                            checked={changeExpiry}
+                            disabled={busy}
+                            onChange={(e) => setChangeExpiry(e.target.checked)}
+                          />{' '}
+                          Change expiration
+                        </span>
+                      </label>
+                      {changeExpiry ? (
+                        <label>
+                          Expires (optional)
+                          <input
+                            className="input"
+                            type="datetime-local"
+                            value={rotationExpiry}
+                            disabled={busy}
+                            onChange={(e) => setRotationExpiry(e.target.value)}
+                          />
+                        </label>
+                      ) : null}
+                      <div className="cluster">
+                        <button
+                          className="btn btn--primary"
+                          disabled={busy || (expired && !changeExpiry)}
+                        >
+                          Replace and stop old key
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setRotating(undefined)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

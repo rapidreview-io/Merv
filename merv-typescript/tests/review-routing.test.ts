@@ -486,3 +486,40 @@ test('routing does not authorize fabricated task reviews, wrong projects, revoke
   await assert.rejects(async () => await f.app.ctx.reviews.apply(f.reviewer.caller, input));
   assert.deepEqual(await f.durable(), before);
 });
+
+test('review routing keeps the selected subject while owner lookup is pending', async (t) => {
+  const f = await fixture(t),
+    reviews = f.app.ctx.reviews;
+  const original = await f.request('original-subject'),
+    other = await f.request('different-subject');
+  const input = f.input(original);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  reviews.registerSubmitOwner({
+    id: 'original-owner',
+    owns: async (review) => {
+      enter();
+      await waiting;
+      return review.id === original.id;
+    },
+    submit: (caller, input, tx) => reviews.submit(caller, input, tx),
+  });
+  const caller = { ...f.reviewer.caller };
+  const pending = reviews.apply(caller, input);
+  try {
+    await entered;
+    input.reviewId = other.id;
+    input.claimId = other.claimId!;
+    Object.assign(caller, f.reader.caller);
+  } finally {
+    release();
+  }
+  await pending;
+  assert.equal((await reviews.get(f.reviewer.caller, original.id)).status, 'submitted');
+  assert.equal((await reviews.get(f.reviewer.caller, other.id)).status, 'started');
+});

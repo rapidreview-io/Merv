@@ -1,0 +1,85 @@
+{
+  "origin": "Independent operator audit; original API responses; no model reruns and no producer scoring code used.",
+  "dataset_sha256": "3abff953f55889495cb541f4f4151c3b9f91afc4c4ceb6b839cd3406110eea15",
+  "matched_scored_provider_receipts": 232,
+  "gateway_calls": 237,
+  "metrics": {
+    "development_P0": {
+      "receipts": 24,
+      "correct_cells": 71,
+      "whole_exact": 8,
+      "invalid": 0,
+      "tokens": 12398,
+      "per_field_correct": {
+        "company": 13,
+        "date": 23,
+        "address": 15,
+        "total": 20
+      }
+    },
+    "development_P1": {
+      "receipts": 24,
+      "correct_cells": 80,
+      "whole_exact": 14,
+      "invalid": 0,
+      "tokens": 19540,
+      "per_field_correct": {
+        "company": 19,
+        "date": 23,
+        "address": 19,
+        "total": 19
+      }
+    },
+    "development_P2": {
+      "receipts": 24,
+      "correct_cells": 81,
+      "whole_exact": 14,
+      "invalid": 0,
+      "tokens": 32994,
+      "per_field_correct": {
+        "company": 19,
+        "date": 23,
+        "address": 19,
+        "total": 20
+      }
+    },
+    "holdout_P0": {
+      "receipts": 80,
+      "correct_cells": 264,
+      "whole_exact": 35,
+      "invalid": 0,
+      "tokens": 38893,
+      "per_field_correct": {
+        "company": 45,
+        "date": 77,
+        "address": 76,
+        "total": 66
+      }
+    },
+    "holdout_P2": {
+      "receipts": 80,
+      "correct_cells": 279,
+      "whole_exact": 44,
+      "invalid": 0,
+      "tokens": 107459,
+      "per_field_correct": {
+        "company": 63,
+        "date": 77,
+        "address": 74,
+        "total": 65
+      }
+    }
+  },
+  "paired_delta": 0.046875,
+  "receipt_bootstrap_95": [
+    0.009375,
+    0.084375
+  ],
+  "company_bootstrap_95": [
+    -0.003424657534246575,
+    0.08974358974358974
+  ],
+  "company_groups": 44,
+  "company_disjoint_splits": true,
+  "interpretation_caution": "The model_miss category means a gold string was found in OCR. This does not establish that the BIO label identifies the correct semantic field. Label/OCR causes cannot be excluded without independent semantic adjudication. No fine-tuning comparison was run."
+}

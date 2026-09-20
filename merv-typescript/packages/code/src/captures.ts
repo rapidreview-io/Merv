@@ -26,6 +26,7 @@ export class CodeCaptureReader {
   ) {}
   async capture(caller: Caller, value: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture> {
     check(!this.closed, 'code_unavailable', 'Code capture reader is unavailable', 503);
+    caller = structuredClone(caller);
     const ref = parseCodeInput(codeCaptureRefSchema, value);
     if (tx) this.state.assertTransaction(tx);
     await this.scope.require(caller, 'read', tx);

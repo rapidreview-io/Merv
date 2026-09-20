@@ -120,38 +120,55 @@ export class RecipeContextBuilder implements ContextBuilder {
       'Context recipe is already active',
       409,
     );
-    await this.state.transaction(async (tx) => {
-      const old = await tx.get<{ hash: string }>(
-        'SELECT hash FROM context_recipes WHERE type=? AND version=?',
-        definition.name,
-        definition.version,
-      );
-      if (old)
-        check(
-          old.hash === hash,
-          'recipe_changed',
-          'Publish a new version to change a context recipe',
-          409,
-        );
-      else
-        await tx.run(
-          'INSERT INTO context_recipes VALUES(?,?,?,?)',
-          definition.name,
-          definition.version,
-          hash,
-          JSON.stringify(definition),
-        );
-    });
+    // Reserve ownership before storage yields; identical concurrent registrations still
+    // belong to different plugins and must never silently replace each other's handles.
     const registration = Symbol(key);
     this.registrations.set(key, registration);
+    try {
+      await this.state.transaction(async (tx) => {
+        const old = await tx.get<{ hash: string }>(
+          'SELECT hash FROM context_recipes WHERE type=? AND version=?',
+          definition.name,
+          definition.version,
+        );
+        if (old)
+          check(
+            old.hash === hash,
+            'recipe_changed',
+            'Publish a new version to change a context recipe',
+            409,
+          );
+        else
+          await tx.run(
+            'INSERT INTO context_recipes VALUES(?,?,?,?)',
+            definition.name,
+            definition.version,
+            hash,
+            JSON.stringify(definition),
+          );
+      });
+      check(
+        !this.closed && this.registrations.get(key) === registration,
+        'context_builder_closed',
+        'Context Builder closed during recipe registration',
+        503,
+      );
+    } catch (error) {
+      if (this.registrations.get(key) === registration) this.registrations.delete(key);
+      throw error;
+    }
+    const capture = <T>(caller: Caller, input: T) => {
+      check(
+        this.registrations.get(key) === registration,
+        'recipe_unavailable',
+        'Context recipe is not active',
+        503,
+      );
+      return structuredClone({ caller, input });
+    };
     return {
       preview: async (caller, input, transaction) => {
-        check(
-          this.registrations.get(key) === registration,
-          'recipe_unavailable',
-          'Context recipe is not active',
-          503,
-        );
+        ({ caller, input } = capture(caller, input));
         return await inTransaction(this.state, transaction, async (tx) => {
           await this.scope.require(caller, definition.kind === 'review' ? 'review' : 'write', tx);
           const parsed = previewSchema.safeParse(input);
@@ -164,21 +181,11 @@ export class RecipeContextBuilder implements ContextBuilder {
         });
       },
       build: async (caller, input, transaction) => {
-        check(
-          this.registrations.get(key) === registration,
-          'recipe_unavailable',
-          'Context recipe is not active',
-          503,
-        );
+        ({ caller, input } = capture(caller, input));
         return await this.build(definition, hash, caller, input, transaction);
       },
       replay: async (caller, input, transaction) => {
-        check(
-          this.registrations.get(key) === registration,
-          'recipe_unavailable',
-          'Context recipe is not active',
-          503,
-        );
+        ({ caller, input } = capture(caller, input));
         return await inTransaction(this.state, transaction, async (tx) => {
           await this.scope.require(caller, definition.kind === 'review' ? 'review' : 'write', tx);
           const parsed = buildSchema.omit({ inputs: true }).safeParse(input);
@@ -380,6 +387,8 @@ export class RecipeContextBuilder implements ContextBuilder {
     room: number,
     tx: Transaction,
   ): Promise<'auto' | 'references'> {
+    caller = structuredClone(caller);
+    ids = [...ids];
     const documents = await mapAsync(ids, async (id) => await this.artifacts.get(caller, id, tx));
     const inline = documents
       .filter((a) => a.mediaType.startsWith('text/') || a.mediaType === 'application/json')
@@ -387,6 +396,7 @@ export class RecipeContextBuilder implements ContextBuilder {
     return inline > room ? 'references' : 'auto';
   }
   async get(caller: Caller, id: string): Promise<ContextPackage> {
+    caller = structuredClone(caller);
     check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
     const actor = await this.scope.require(caller, 'read');
     return await this.state.read(async (sql) => {

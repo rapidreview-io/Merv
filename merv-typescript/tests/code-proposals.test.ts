@@ -421,7 +421,13 @@ test('requires current real invocation and exact matching domain admission even 
   const first = await f.sessions.run(
     valid,
     async (caller) =>
-      await f.state.transaction(async (tx) => await f.proposals.seal(caller, input, binding, tx)),
+      await f.state.transaction(async (tx) => {
+        const source = structuredClone(caller);
+        const pending = f.proposals.seal(source, input, binding, tx);
+        source.actorId = 'missing';
+        source.session!.invocationId = 'missing';
+        return await pending;
+      }),
   );
   await assert.rejects(
     async () =>
@@ -632,6 +638,18 @@ test('project reads remain scoped and metadata-only, support borrowed transactio
     code: 'code_proposal_not_found',
   });
   assert.deepEqual(await f.proposals.proposals(other), []);
+  for (const method of ['proposal', 'proposals'] as const) {
+    await t.test(method, async () => {
+      const caller = { ...other };
+      const pending =
+        method === 'proposal'
+          ? f.proposals.proposal(caller, first.id)
+          : f.proposals.proposals(caller);
+      Object.assign(caller, f.source);
+      if (method === 'proposal') await assert.rejects(pending, { code: 'code_proposal_not_found' });
+      else assert.equal(((await pending) as unknown[]).length, 0);
+    });
+  }
   f.sessions.describe = async () => {
     throw new Error('Metadata read must not recursively describe a session');
   };

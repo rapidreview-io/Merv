@@ -209,10 +209,13 @@ test('Git attachment and final capture are immutable, replayable and independent
     headOid: oid('b'),
     stats: { commitCount: 1, filesChanged: 2, insertions: 3, deletions: 4 },
   });
-  const closed = await f.app.ctx.sessions.workspaceResult(f.source, {
-    ...f.control,
-    workspace: result,
-  });
+  const caller = { ...f.source };
+  const capture = { ...f.control, workspace: structuredClone(result) };
+  const pendingCapture = f.app.ctx.sessions.workspaceResult(caller, capture);
+  caller.actorId = 'missing';
+  Object.assign(capture, { sessionId: 'missing', runnerId: 'other', hostRef: '' });
+  capture.workspace.headOid = oid('c');
+  const closed = await pendingCapture;
   assert.equal(closed.status, 'released');
   assert.equal(closed.activatedAt, null);
   assert.deepEqual(closed.workspace, { attachment: workspace(), result });

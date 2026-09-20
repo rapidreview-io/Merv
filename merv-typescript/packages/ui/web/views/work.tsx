@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
-import { useTool } from '../api';
+import { refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Ago, Area, Failure, Field, PageHeader, StatusPill, cx, words } from '../components';
-import { ListPage, useListFilter } from '../list-filters';
+import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
+import { Chips, ListPage, Tabs, useListFilter } from '../list-filters';
+import { RecordPicker, useWorkPicks } from '../record-picker';
 import { useSession } from '../session';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
 import { RowDiagram } from '../process';
-import { newest, type Flow } from './map-data';
+import { ArrowRightIcon } from '../icons';
+import { newest, useHome, type Flow } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
 import type { Review } from './reviews';
@@ -25,7 +27,8 @@ import type { Task } from './tasks';
  * cycle names the work it depends on and the rest is each record's own standing.
  */
 
-const ids = (value: string) => value.split(/\s+/).filter(Boolean);
+/** The tab that narrows nothing: every kind of work the wave holds. */
+const ALL = 'all';
 /** Open work, in the union of the two kinds' own words for having stopped. */
 const isOpen = (state: string) => !['done', 'failed', 'complete', 'abandoned'].includes(state);
 
@@ -53,17 +56,21 @@ export const currentCycle = (cycles: ResearchRecord[] | undefined) => {
 
 export function CreateResearch({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState('');
-  const [dependencies, setDependencies] = useState('');
-  const [consolidationDependencies, setConsolidationDependencies] = useState('');
+  const [dependencies, setDependencies] = useState<string[]>([]);
+  const [consolidationDependencies, setConsolidationDependencies] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState('none');
+  // What a cycle may wait on is the work this page lists, chosen by name.
+  const work = useWorkPicks();
   const command = useCommand<ResearchRecord>({
     tool: 'research.create',
     validate: (value) =>
       !!value && typeof value.id === 'string' && value.workflow?.workflow === 'research',
     onSuccess: () => {
       setName('');
-      setDependencies('');
-      setConsolidationDependencies('');
+      setDependencies([]);
+      setConsolidationDependencies([]);
+      // The new cycle's gate rides the shared home read, which its header's move reads.
+      refreshTools('ui.home');
       onSaved();
     },
   });
@@ -74,8 +81,8 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
         event.preventDefault();
         void command.submit({
           name,
-          dependsOn: ids(dependencies),
-          consolidationDependsOn: workspace === 'git' ? ids(consolidationDependencies) : [],
+          dependsOn: dependencies,
+          consolidationDependsOn: workspace === 'git' ? consolidationDependencies : [],
           consolidationWorkspace: workspace,
         });
       }}
@@ -83,13 +90,11 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
       <h2>New cycle</h2>
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
-        <Area
+        <RecordPicker
           label="Research prerequisites"
-          className="textarea mono"
-          rows={2}
+          {...work}
           value={dependencies}
           onChange={setDependencies}
-          placeholder="Workflow IDs, separated by spaces"
         />
         <label>
           Code changes
@@ -97,7 +102,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
             value={workspace}
             onChange={(event) => {
               setWorkspace(event.target.value);
-              if (event.target.value === 'none') setConsolidationDependencies('');
+              if (event.target.value === 'none') setConsolidationDependencies([]);
             }}
           >
             <option value="none">No code changes</option>
@@ -105,10 +110,9 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
           </select>
         </label>
         {workspace === 'git' && (
-          <Area
-            label="Additional consolidation prerequisites"
-            className="textarea mono"
-            rows={2}
+          <RecordPicker
+            label="Consolidation prerequisites"
+            {...work}
             value={consolidationDependencies}
             onChange={setConsolidationDependencies}
           />
@@ -116,9 +120,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
       </fieldset>
       <Failure message={command.error} />
       <div>
-        <button className="btn btn--primary" disabled={command.busy || !name.trim()}>
-          {command.retry ? 'Retry same request' : 'New cycle'}
-        </button>
+        <Submit busy={command.busy} retry={command.retry} disabled={!name.trim()} />
       </div>
     </form>
   );
@@ -132,7 +134,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
 export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string }) {
   const { actor } = useSession();
   const nameOf = useActorNames();
-  const [kind, setKind] = useState<string>('');
+  const [kind, setKind] = useState<string>(ALL);
   const rowOf = (view: string) => shell.rows.find((row) => row.view.kind === view);
   const tasksRow = rowOf('tasks');
   const experimentsRow = rowOf('experiments');
@@ -187,27 +189,28 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
     ],
     (item) => item.at,
   );
+  const under = (of: string) => (item: Item) =>
+    of === ALL || (of === 'cycle' ? item.named : item.kind === of);
   const filter = useListFilter(items, {
     stateOf: (item) => item.state,
     isOpen,
     mine: (item) => item.mine,
     labels: (item) => item.labels,
     ids: (item) => [item.id, item.owner],
+    also: under(kind),
   });
-  const counted = (of: string) =>
-    of === 'cycle'
-      ? items.filter((item) => item.named).length
-      : items.filter((item) => item.kind === of).length;
-  // The first narrowing: which kind of work, and the work this cycle itself names. A
-  // narrowing in force stays on screen even when it matches nothing, so it can be undone.
-  const narrowings = [
-    ['tasks', 'Tasks'],
-    ['experiments', 'Experiments'],
-    ...(counted('cycle') || kind === 'cycle' ? [['cycle', 'In this cycle']] : []),
-  ] as [string, string][];
-  const shown = filter.rows.filter(
-    (item) => !kind || (kind === 'cycle' ? item.named : item.kind === kind),
-  );
+  // The first narrowing: which kind of work, and the work this cycle itself names. A tab
+  // with nothing under it is not drawn, unless it is the one in force and so the way back;
+  // and where only one of them holds anything there is nothing to choose between. Which
+  // tabs there are is read from the whole wave, so they stand still; the number on each
+  // is what pressing it would show under the search, the scope and the state in force.
+  const narrowings = (
+    [
+      ['tasks', 'Tasks'],
+      ['experiments', 'Experiments'],
+      ['cycle', 'In this cycle'],
+    ] as const
+  ).filter(([value]) => items.some(under(value)) || kind === value);
   // Two reads make one list: it is still loading while neither has arrived, and a
   // failure that leaves rows on screen degrades to a line rather than blanking them.
   const load = {
@@ -220,31 +223,28 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
     <ListPage
       load={load}
       noun="work"
+      kind="work"
       placeholder="Name, question or person"
       filter={{
         ...filter,
-        filtering: filter.filtering || !!kind,
+        filtering: filter.filtering || kind !== ALL,
         clear() {
           filter.clear();
-          setKind('');
+          setKind(ALL);
         },
       }}
-      rows={shown}
       narrow={
-        items.length > 0 && (
-          <span className="state-line">
-            {narrowings.map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className="btn-text"
-                aria-pressed={kind === value}
-                onClick={() => setKind(kind === value ? '' : value)}
-              >
-                {label} <span className="state-n">{counted(value)}</span>
-              </button>
-            ))}
-          </span>
+        narrowings.length > 1 && (
+          <Tabs
+            label="Kind of work"
+            options={[[ALL, 'All'] as const, ...narrowings].map(([value, label]) => ({
+              value,
+              label,
+              count: filter.tabbed.filter(under(value)).length,
+            }))}
+            value={kind}
+            onChange={setKind}
+          />
         )
       }
       emptyTitle="No work yet"
@@ -302,6 +302,50 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
   );
 }
 
+/** The gate's own code for a cycle whose problem, scope, goals and constraints are unwritten. */
+const UNDEFINED = 'research_definition_required';
+/** Whether a gate refuses any of its moves for want of that definition. */
+export const needsDefinition = (
+  moves: { status: string | null; blockers: { code: string }[] }[] | undefined,
+) =>
+  !!moves?.some(
+    (move) => move.status === 'blocked' && move.blockers.some((item) => item.code === UNDEFINED),
+  );
+
+/**
+ * A cycle's one move, here and on its own page. A step the gate already refuses for
+ * want of the definition is not offered as a button that can only fail: the
+ * definition is written on the paper, so the move is the way there.
+ */
+export function CycleMove({
+  cycle,
+  shell,
+  undefinedYet,
+  onSaved,
+}: {
+  cycle: ResearchRecord;
+  shell: ShellData;
+  undefinedYet: boolean;
+  onSaved(): void;
+}) {
+  const paper = shell.rows.find((row) => row.view.kind === 'paper');
+  if (undefinedYet && paper)
+    return (
+      <Link className="btn" to={paper.path}>
+        Write the definition <ArrowRightIcon size={14} />
+      </Link>
+    );
+  return (
+    <ResearchCommand
+      disabled={cycle.workflow.state === 'complete'}
+      tool="research.advance"
+      input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision }}
+      label="Start next step"
+      onSaved={onSaved}
+    />
+  );
+}
+
 /** The cycle that frames the wave: what it is called, where it stands, its one move. */
 function CycleHead({
   shell,
@@ -319,10 +363,12 @@ function CycleHead({
     {},
     { every: 10000 },
   );
+  // The cycle's gate comes with the read the rail and Home already share.
+  const home = useHome();
   const all = newest(cycles.data ?? [], (cycle) => cycle.workflow.updatedAt);
   const cycle = all.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
-  if (!cycle || !cyclesRow)
-    return <PageHeader title="Work" summary={cyclesRow ? 'No research cycle yet' : undefined} />;
+  // With no cycle the page is its title: the absent switch already says there is none.
+  if (!cycle || !cyclesRow) return <PageHeader title="Work" />;
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && cycle.ownerId === actor.id);
   return (
@@ -332,11 +378,13 @@ function CycleHead({
         <div className="cluster">
           <StatusPill value={cycle.workflow.state} />
           {writable && (
-            <ResearchCommand
-              disabled={cycle.workflow.state === 'complete'}
-              tool="research.advance"
-              input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision }}
-              label="Start next step"
+            <CycleMove
+              cycle={cycle}
+              shell={shell}
+              undefinedYet={needsDefinition(
+                home.data?.workflows?.workflows.find((item) => item.instanceId === cycle.id)
+                  ?.actions,
+              )}
               onSaved={cycles.reload}
             />
           )}
@@ -344,19 +392,16 @@ function CycleHead({
       }
       summary={
         all.length > 1 && (
-          <span className="state-line">
-            {all.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="btn-text"
-                aria-pressed={item.id === cycle.id}
-                onClick={() => onChoose(item.id)}
-              >
-                {item.name} <span className="state-n">{words(item.workflow.state)}</span>
-              </button>
-            ))}
-          </span>
+          <Chips
+            label="Research cycle"
+            options={all.map((item) => ({
+              value: item.id,
+              label: item.name,
+              count: words(item.workflow.state),
+            }))}
+            value={cycle.id}
+            onChange={onChoose}
+          />
         )
       }
     />
