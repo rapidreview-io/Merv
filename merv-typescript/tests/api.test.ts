@@ -140,6 +140,19 @@ test('registry enforces unique registration, input validation, scope and awaited
   await assert.rejects(tools.call('echo', caller, { message: 'hi' }), /stopping/);
 });
 
+test('queued tool invocation keeps the original caller identity', async (t) => {
+  const { tools } = fixture();
+  t.after(() => tools.close());
+  const admitted = { ...caller };
+  const running = tools.call('echo', admitted, { message: 'original' });
+  admitted.projectId = bob.projectId;
+  assert.deepEqual(await running, { message: 'original', caller });
+  const denied = { ...caller, projectId: bob.projectId };
+  const refused = tools.invoke('echo', denied, { message: 'wrong project' });
+  denied.projectId = caller.projectId;
+  await assert.rejects(refused, { code: 'forbidden' });
+});
+
 test('native registration keeps validation paired with its description when the definition schema is replaced', async () => {
   const { tools } = fixture();
   const definition = (await tools.list())[0]! as ToolDefinition;
@@ -211,8 +224,16 @@ test('changing a native definition cannot turn a mutation into an unrestricted s
   };
   tools.register(definition);
   definition.readOnly = true;
-  assert.deepEqual(await tools.describe(sessionCaller), []);
-  await assert.rejects(tools.call(definition.name, sessionCaller, {}), { code: 'tool_forbidden' });
+  for (const method of ['describe', 'list'] as const) {
+    const source: Caller = structuredClone(sessionCaller);
+    const listing = tools[method](source);
+    delete source.session;
+    assert.deepEqual(await listing, []);
+  }
+  const source: Caller = structuredClone(sessionCaller);
+  const invoking = tools.call(definition.name, source, {});
+  delete source.session;
+  await assert.rejects(invoking, { code: 'tool_forbidden' });
   assert.equal(calls, 0);
 });
 

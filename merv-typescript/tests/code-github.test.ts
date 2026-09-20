@@ -652,3 +652,26 @@ test('GitHub client rejects malformed/oversized replies and does not reflect ups
     client.close();
   }
 });
+
+test('GitHub branch names retain valid Unicode and reject invalid UTF-8 bytes', async (t) => {
+  let name = Buffer.from('研究�');
+  const client = new GitHubClient(
+    config,
+    async () =>
+      new Response(
+        Buffer.concat([
+          Buffer.from('[{"name":"'),
+          name,
+          Buffer.from(`","commit":{"sha":"${'a'.repeat(40)}"},"protected":false}]`),
+        ]),
+      ),
+  );
+  t.after(() => client.close());
+  assert.equal((await client.branches('synthetic-token', 'fixture/private'))[0].name, '研究�');
+  for (const bytes of [[0x80], [0xc0, 0xaf], [0xed, 0xa0, 0x80], [0xe2, 0x82]]) {
+    name = Buffer.from(bytes);
+    await assert.rejects(client.branches('synthetic-token', 'fixture/private'), {
+      code: 'github_unavailable',
+    });
+  }
+});

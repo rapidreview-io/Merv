@@ -366,7 +366,9 @@ export class GitHubClient {
       } finally {
         await reader.cancel().catch(() => {});
       }
-      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      return JSON.parse(
+        new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)),
+      );
     } catch (error) {
       if (error instanceof MervError) throw error;
       throw new MervError(

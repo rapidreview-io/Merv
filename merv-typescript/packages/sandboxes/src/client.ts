@@ -30,7 +30,9 @@ async function boundedText(response: Response, limit: number): Promise<string> {
       check(size <= limit, 'sandbox_unavailable', 'The answer is too large', 502);
       chunks.push(part.value);
     }
-    return Buffer.concat(chunks, size).toString('utf8');
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      Buffer.concat(chunks, size),
+    );
   } finally {
     // The transport's finally cancels unfinished bodies after this lock is released.
     reader.releaseLock();
@@ -114,6 +116,7 @@ export class SandboxClient {
     body: Json,
   ): Promise<Json> {
     connection = { ...connection };
+    body = structuredClone(body);
     const secret = await this.#prove(connection);
     return await this.#send(connection, secret, method, path, body);
   }

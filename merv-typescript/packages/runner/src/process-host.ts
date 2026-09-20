@@ -26,6 +26,7 @@ export class ProcessHost {
   constructor(private readonly ledger: LocalLedger) {}
 
   async launch(input: ProcessLaunch): Promise<LaunchRecord> {
+    input = { ...input };
     const record = this.required(input.launchId);
     if (terminalLaunch(record)) return record;
     if (record.status === 'uncertain') throw new Error('An uncertain launch cannot be restarted');

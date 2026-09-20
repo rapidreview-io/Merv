@@ -146,7 +146,12 @@ test('code commit changes only the owned checkout, persists a replayable receipt
   writeFileSync(join(first.handle.path, 'seed.txt'), 'changed\n');
   writeFileSync(join(first.handle.path, 'new.txt'), 'evidence\n');
   const command = first.command();
-  const receipt = await f.manager.checkpointCommit(first.record, command);
+  const record = structuredClone(first.record),
+    input = structuredClone(command);
+  const committing = f.manager.checkpointCommit(record, input);
+  record.id = 'changed';
+  input.message = 'changed';
+  const receipt = await committing;
   assert.equal(receipt.parentOid, command.expectedHead);
   assert.notEqual(receipt.headOid, receipt.parentOid);
   assert.deepEqual(receipt.stats, { commitCount: 1, filesChanged: 2, insertions: 2, deletions: 1 });

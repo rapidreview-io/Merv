@@ -55,7 +55,10 @@ const client = (value: unknown) =>
 const invalid = { code: 'invalid_control_response', status: 0 };
 
 test('runner presence accepts only closed bounded tuning settings', async () => {
-  const result = await client(presence()).presence(heartbeat);
+  const input = structuredClone(heartbeat);
+  const pending = client(presence()).presence(input);
+  input.runnerId = 'changed_runner';
+  const result = await pending;
   assert.deepEqual(result.desiredSettings, { platforms: [desired] });
   assert.equal(result.desiredVersion, 1);
   assert.deepEqual((await client(presence([])).presence(heartbeat)).desiredSettings, {
@@ -93,10 +96,10 @@ test('runner presence accepts only closed bounded tuning settings', async () => 
 });
 
 test('lease replies bind the server-selected session to this project and runner, including replayed closed leases', async () => {
-  assert.equal(
-    (await client({ session: session(), reason: 'leased' }).lease(lease)).session?.id,
-    'session_fixture',
-  );
+  const input = structuredClone(lease);
+  const pending = client({ session: session(), reason: 'leased' }).lease(input);
+  input.runnerId = 'changed_runner';
+  assert.equal((await pending).session?.id, 'session_fixture');
   assert.deepEqual(await client({ session: null, reason: 'no_candidates' }).lease(lease), {
     session: null,
     reason: 'no_candidates',
@@ -128,6 +131,42 @@ test('lease replies bind the server-selected session to this project and runner,
     { session: null, reason: 'empty', unexpected: true },
   ])
     await assert.rejects(async () => client(body).lease(lease), invalid);
+});
+
+test('pending presence and lease replies cannot adopt a replacement runner identity', async () => {
+  const ping = { ...heartbeat, runnerId: 'other_runner' };
+  const pinging = client(presence()).presence(ping);
+  ping.runnerId = heartbeat.runnerId;
+  await assert.rejects(pinging, invalid);
+  const offer = { ...lease, runnerId: 'other_runner' };
+  const offering = client({ session: session(), reason: 'leased' }).lease(offer);
+  offer.runnerId = heartbeat.runnerId;
+  await assert.rejects(offering, invalid);
+});
+
+test('workspace acknowledgements compare against the attachment originally sent', async () => {
+  const workspace = {
+    repositoryId: 'repository_fixture',
+    workspaceId: 'workspace_fixture',
+    mode: 'persistent' as const,
+    branch: 'codex/work',
+    baseOid: '1'.repeat(40),
+    headOid: '1'.repeat(40),
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  };
+  for (const operation of ['attach', 'workspaceResult'] as const) {
+    for (const changedReply of [false, true]) {
+      const input = structuredClone(workspace),
+        reply = structuredClone(workspace);
+      if (changedReply) reply.stats.insertions = 1;
+      const pending = client({
+        session: session({ workspace: { attachment: reply, result: reply } }),
+      })[operation]('session_fixture', heartbeat.runnerId, 'launch_fixture', input);
+      input.stats.insertions = 1;
+      if (changedReply) await assert.rejects(pending, invalid);
+      else assert.deepEqual((await pending).workspace?.attachment, workspace);
+    }
+  }
 });
 
 test('get rejects a same-project response for any different session or runner', async () => {
@@ -338,4 +377,32 @@ test('control replies exceeding four MiB are cancelled before unbounded bufferin
   );
   await assert.rejects(connection.presence(heartbeat), invalid);
   assert.equal(cancelled, true);
+});
+
+test('runner replies reject invalid UTF-8 without changing valid Unicode', async () => {
+  let reason = Buffer.from('研究�');
+  const connection = new RunnerClient(
+    'https://merv.example',
+    'project_fixture',
+    bearer,
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            const body = Buffer.concat([
+              Buffer.from('{"session":null,"reason":"'),
+              reason,
+              Buffer.from('"}'),
+            ]);
+            for (const byte of body) controller.enqueue(Uint8Array.of(byte));
+            controller.close();
+          },
+        }),
+      ),
+  );
+  assert.equal((await connection.lease(lease)).reason, '研究�');
+  for (const bytes of [[0x80], [0xc0, 0xaf], [0xed, 0xa0, 0x80], [0xe2, 0x82]]) {
+    reason = Buffer.from(bytes);
+    await assert.rejects(connection.lease(lease), invalid);
+  }
 });

@@ -167,3 +167,39 @@ test('GitHub browsing cannot switch to another caller while pending', async (t) 
     });
   }
 });
+
+test('disconnect stops follow-up GitHub reads and automation setup', async (t) => {
+  for (const operation of ['repositories', 'pullDetails', 'configureAutomation'] as const) {
+    await t.test(operation, async (t) => {
+      const f = await githubFixture(t);
+      await f.enable();
+      const pull = await f.github.automation(f.reviewer, 'write', undefined, (client, token, b) =>
+        client.createPull(token, b.repository.fullName, {
+          title: 'fixture',
+          body: '',
+          head: 'main',
+          base: 'main',
+          draft: true,
+        }),
+      );
+      const revision = (await f.github.status(f.caller)).revision;
+      const before = f.calls.length;
+      f.control.before = async () => {
+        f.control.before = undefined;
+        await f.github.disconnect(f.caller, { expectedRevision: revision });
+      };
+      const pending =
+        operation === 'pullDetails'
+          ? f.github.pullDetails(f.caller, pull.number)
+          : operation === 'repositories'
+            ? f.github.repositories(f.caller)
+            : f.github.configureAutomation(f.caller, {
+                expectedRevision: revision,
+                mode: 'write',
+                baseBranch: 'main',
+              });
+      await assert.rejects(pending, { code: 'github_owner' });
+      assert.equal(f.calls.length - before, 1, 'no further request may use the disconnected token');
+    });
+  }
+});

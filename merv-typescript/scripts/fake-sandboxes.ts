@@ -15,6 +15,7 @@
  * and `endpoint.token` is bait: the plugin strips it.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 const port = Number(process.env.PORT ?? 3210);
 const namespace = process.env.FAKE_SANDBOXES_NAMESPACE ?? 'demo';
@@ -309,7 +310,7 @@ async function change(
   return send(response, 200, current(seed));
 }
 
-createServer((request, response) => {
+const server = createServer((request, response) => {
   const method = request.method ?? 'GET';
   const path = new URL(request.url ?? '/', `http://127.0.0.1:${port}`).pathname;
   if (!(request.headers.authorization ?? '').startsWith('Bearer sbxt_'))
@@ -329,5 +330,11 @@ createServer((request, response) => {
   }
   return missing(response, path);
 }).listen(port, '127.0.0.1', () =>
-  console.log(JSON.stringify({ status: 'ready', url: `http://127.0.0.1:${port}`, namespace })),
+  console.log(
+    JSON.stringify({
+      status: 'ready',
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      namespace,
+    }),
+  ),
 );

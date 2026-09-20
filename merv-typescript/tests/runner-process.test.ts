@@ -149,7 +149,12 @@ test('two guardian attempts execute an exact durable launch once and redact spli
       `const fs=require('fs'); fs.appendFileSync('count','once\\n'); const s=process.env.MERV_AGENT_SESSION_TOKEN; process.stdout.write(s.slice(0,20)); setTimeout(()=>{process.stdout.write(s.slice(20)+'\\n');process.stderr.write(s);},20);`,
     ),
   };
-  await Promise.all([await host.launch(input), await host.launch(input)]);
+  const pendingInput = { ...input };
+  const first = host.launch(pendingInput);
+  pendingInput.launchId = 'changed';
+  pendingInput.sessionToken = 'changed';
+  pendingInput.deadline = 0;
+  await Promise.all([first, host.launch(input)]);
   await until(() => terminalLaunch(ledger.get(record.id)!));
   assert.equal(ledger.get(record.id)?.status, 'exited');
   assert.equal(ledger.get(record.id)?.exitCode, 0);

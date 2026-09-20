@@ -317,6 +317,7 @@ export class ToolRegistry implements Tools {
   }
 
   private async visible(caller?: Caller): Promise<Entry[]> {
+    if (caller) caller = structuredClone(caller);
     if (caller) await this.scope.require(caller, 'read');
     const policy = caller?.session ? this.sessionAccess() : undefined;
     return await filterAsync(
@@ -348,6 +349,7 @@ export class ToolRegistry implements Tools {
 
   async invoke(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
     this.open();
+    caller = structuredClone(caller);
     const entry = this.entries.get(name);
     if (!entry) throw new ApiError('unknown_tool', `Unknown tool: ${name}`, 404);
     input = plain(input);
