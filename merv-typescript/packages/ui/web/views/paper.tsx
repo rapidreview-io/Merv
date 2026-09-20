@@ -701,9 +701,12 @@ function Block({
     change && !plain
       ? change.remove
         ? [{ text: section.content, mark: 'del' as const }]
-        : change.content === undefined
+        : // A section that is wholly new has nothing to be read against: every word would
+          // be an insertion, a page of underline. Its `Proposed` flag says it, and the
+          // text is read as the document it is.
+          change.content === undefined || !before
           ? null
-          : wordDiff(before?.content ?? '', change.content)
+          : wordDiff(before.content, change.content)
       : null;
   return (
     <div className={cx('sec', !runs && !shown && 'sec--unwritten')} id={row.anchor}>
