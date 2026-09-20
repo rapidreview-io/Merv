@@ -630,12 +630,14 @@ test('a real pre-v4 database gains format defaults without rewriting immutable s
           pinned_input_ids: inputs,
           return_to: returnTo,
           excluded_actor_ids: exclusions,
+          required_criteria: required,
           ...row
         }) => {
           assert.equal(administrator, null);
           assert.equal(inputs, '[]');
           assert.equal(returnTo, null);
           assert.equal(exclusions, null);
+          assert.equal(required, null);
           return row;
         },
       ),
@@ -779,6 +781,136 @@ test('review evidence keeps its exact encoded byte limit after safe copying', as
       (await f.reviews.submit(f.reviewer, { ...input, evidence })).evidence,
       evidence,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test('required criteria are immutable sorted provenance in the snapshot, returned on reads and carried across reissue', async () => {
+  const f = await fixture();
+  try {
+    const input = { ...f.input(), requiredCriteria: [2, 1] };
+    const review = await f.reviews.request(f.producer, input);
+    assert.deepEqual(review.requiredCriteria, [1, 2]);
+    assert.equal(
+      review.snapshotHash,
+      digest({
+        subjectId: input.subjectId,
+        subjectRevision: input.subjectRevision,
+        producerId: input.producerId,
+        criteria: input.criteria,
+        manifest: [f.proof],
+        formatVersion: 2,
+        requiredCriteria: [1, 2],
+      }),
+    );
+    assert.deepEqual(
+      await f.reviews.request(f.producer, { ...input, requiredCriteria: [1, 2] }),
+      review,
+      'Order does not change the pinned review or its replay',
+    );
+    const without = await f.reviews.request(f.producer, {
+      ...input,
+      requiredCriteria: undefined,
+      requestId: 'without-required',
+    });
+    assert.equal('requiredCriteria' in without, false);
+    assert.notEqual(without.snapshotHash, review.snapshotHash);
+    assert.deepEqual(await f.reviews.get(f.reader, review.id), review);
+    assert.deepEqual(
+      (await f.reviews.list(f.reader)).find((item) => item.id === review.id)?.requiredCriteria,
+      [1, 2],
+    );
+    await assert.rejects(
+      async () =>
+        await f.state.transaction(
+          async (tx) =>
+            await tx.run('UPDATE reviews SET required_criteria=? WHERE id=?', '[1]', review.id),
+        ),
+      /immutable/,
+    );
+    const reissued = await f.reviews.reissue(f.producer, {
+      reviewId: review.id,
+      subjectRevision: 3,
+      requestId: 'reissue-required',
+    });
+    assert.notEqual(reissued.id, review.id);
+    assert.deepEqual(reissued.requiredCriteria, [1, 2]);
+  } finally {
+    await f.close();
+  }
+});
+
+test('required criteria must be distinct numbers of a format 2 review, supplied as ordinary data', async () => {
+  const f = await fixture();
+  try {
+    const before = await f.durable();
+    const accessor = f.input();
+    Object.defineProperty(accessor, 'requiredCriteria', { enumerable: true, get: () => [1] });
+    for (const input of [
+      { ...f.input(), requiredCriteria: [] },
+      { ...f.input(), requiredCriteria: [1, 1] },
+      { ...f.input(), requiredCriteria: [3] },
+      { ...f.input(), requiredCriteria: [0] },
+      { ...f.input(), requiredCriteria: [1.5] },
+      { ...f.input(), requiredCriteria: ['1'] as unknown as number[] },
+      { ...f.input(), requiredCriteria: 1 as unknown as number[] },
+      { ...f.input(1), requiredCriteria: [1] },
+      accessor,
+    ])
+      await assert.rejects(f.reviews.request(f.producer, input), {
+        code: 'invalid_required_criteria',
+      });
+    assert.deepEqual(await f.durable(), before);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a pass can waive an ordinary criterion but never a required one, in preflight and in the commit', async () => {
+  const f = await fixture();
+  try {
+    const request = async () =>
+      await f.reviews.start(
+        f.reviewer,
+        (await f.reviews.request(f.producer, { ...f.input(), requiredCriteria: [2] })).id,
+      );
+    const finding = (input: ReviewSubmit, status: 'waived' | 'not_verified', number: number) => {
+      const item = input.findings!.find((entry) => entry.criterionNumber === number)!;
+      item.status = status;
+      item.evidenceIds = [];
+      item.notes = 'The reviewer did not establish this criterion.';
+      return input;
+    };
+
+    const claimed = await request();
+    const waived = finding(f.submit(claimed), 'waived', 2);
+    const before = await f.durable();
+    await assert.rejects(f.reviews.checkSubmit(f.reviewer, claimed.id, waived), {
+      code: 'criterion_not_waivable',
+      message: /Criterion 2 is required/,
+    });
+    await assert.rejects(f.reviews.submit(f.reviewer, waived), {
+      code: 'criterion_not_waivable',
+    });
+    assert.deepEqual(await f.durable(), before, 'A refused pass leaves no verdict behind');
+    await assert.rejects(
+      f.reviews.submit(f.reviewer, finding(f.submit(claimed), 'not_verified', 2)),
+      { code: 'invalid_findings' },
+    );
+    // The same review still passes when the waived criterion is the ordinary one.
+    const passed = await f.reviews.submit(f.reviewer, finding(f.submit(claimed), 'waived', 1));
+    assert.equal(passed.verdict, 'pass');
+    assert.equal(passed.findings[1].status, 'met');
+
+    const returned = await request();
+    const result = await f.reviews.submit(f.reviewer, {
+      ...finding(f.submit(returned), 'waived', 2),
+      verdict: 'needs_changes',
+      synopsis:
+        'The required negative case was not established, so the delivery returns for changes.',
+    });
+    assert.equal(result.verdict, 'needs_changes');
   } finally {
     await f.close();
   }

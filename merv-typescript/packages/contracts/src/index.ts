@@ -1134,6 +1134,8 @@ export interface ReviewRequest {
   pinnedInputIds?: string[];
   /** Immutable contributor exclusions in addition to the primary producer. Omitted for legacy reviews. */
   excludedActorIds?: string[];
+  /** Immutable numbers of the criteria a pass can never waive. Omitted for reviews requested without any. */
+  requiredCriteria?: number[];
   /** Whether the reader of this answer may claim it now. Present on reads, not on writes. */
   claimable?: boolean;
   criteria: string[];
@@ -1169,6 +1171,12 @@ export interface ReviewInput {
   /** Authors of pinned manifest evidence who must not claim or judge this review. */
   excludedActorIds?: string[];
   criteria: string[];
+  /**
+   * Numbers of the criteria a pass can never waive: each must be met with retained evidence.
+   * The requesting domain sets it, so a reviewer cannot wave through the check the domain
+   * depends on. Format 2 only, because a format 1 verdict may carry no findings at all.
+   */
+  requiredCriteria?: number[];
   /** The integrating program pins the verdict format when requesting review. */
   formatVersion?: 1 | 2;
   requestId: string;

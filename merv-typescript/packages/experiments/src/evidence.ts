@@ -87,6 +87,91 @@ export function parseResult(text: string, format: 'json' | 'qualitative'): Json 
   return format === 'json' ? parseJson(text) : null;
 }
 
+/**
+ * What a design requires against what exists, stated by its author before design review.
+ * The field failures this answers were arithmetic — a corpus smaller than every training arm —
+ * so the quantities are numbers the server can compare, and each names the basis it was
+ * measured from so an independent reviewer can recompute it.
+ */
+export interface FeasibilityStatement {
+  formatVersion: 1;
+  resources: {
+    kind: 'data' | 'compute' | 'time';
+    name: string;
+    unit: string;
+    required: number;
+    available: number;
+    basis: string;
+  }[];
+  dependencies: { name: string; present: boolean; basis: string }[];
+  blockers: string[];
+}
+const quantity = z.number().finite().nonnegative();
+const line = (max: number) => z.string().max(max).refine(visible);
+const feasibilitySchema = z
+  .object({
+    formatVersion: z.literal(1),
+    resources: z
+      .array(
+        z
+          .object({
+            kind: z.enum(['data', 'compute', 'time']),
+            name: line(200),
+            unit: line(64),
+            required: quantity,
+            available: quantity,
+            basis: line(2000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(50),
+    dependencies: z
+      .array(z.object({ name: line(200), present: z.boolean(), basis: line(2000) }).strict())
+      .max(50),
+    blockers: z.array(line(2000)).max(20),
+  })
+  .strict();
+
+/** Checks the shape of a feasibility statement only; whether it admits the design is a separate question. */
+export function parseFeasibility(text: string): FeasibilityStatement {
+  boundedText(text);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    error(false, 'A feasibility statement must be valid JSON');
+  }
+  const parsed = feasibilitySchema.safeParse(safeJson(value));
+  const issue = parsed.error?.issues[0];
+  error(
+    parsed.success,
+    `Feasibility statement is malformed at ${issue?.path.join('.') || 'the top level'}: ${issue?.message}`,
+  );
+  // The observed failure was a corpus too small for the design, so the data is never left unstated.
+  error(
+    parsed.data.resources.some((resource) => resource.kind === 'data'),
+    'A feasibility statement must state at least one data resource',
+  );
+  return parsed.data;
+}
+
+/** One line for each reason the statement's own figures do not admit the design. */
+export function feasibilityShortfalls(statement: FeasibilityStatement): string[] {
+  return [
+    ...statement.resources
+      .filter((resource) => resource.available < resource.required)
+      .map(
+        (resource) =>
+          `${resource.kind} ${resource.name}: ${resource.available} ${resource.unit} available, ${resource.required} required`,
+      ),
+    ...statement.dependencies
+      .filter((dependency) => !dependency.present)
+      .map((dependency) => `dependency ${dependency.name} is not present`),
+    ...statement.blockers.map((blocker) => `blocker: ${blocker}`),
+  ];
+}
+
 const section = (text: string, title: string) => markdownSection(boundedText(text), title);
 
 /** Only retained artifact images are supported; the caller verifies bytes, media type and scope. */

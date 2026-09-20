@@ -346,11 +346,19 @@ test('migration adds nullable route storage without rewriting old submitted rows
     const reviews = await createService(new ReviewService(f.state, f.scope, f.artifacts));
     const after = await f.durable();
     assert.deepEqual(
-      after.reviews.map(({ return_to: route, excluded_actor_ids: exclusions, ...row }) => {
-        assert.equal(route, null);
-        assert.equal(exclusions, null);
-        return row;
-      }),
+      after.reviews.map(
+        ({
+          return_to: route,
+          excluded_actor_ids: exclusions,
+          required_criteria: required,
+          ...row
+        }) => {
+          assert.equal(route, null);
+          assert.equal(exclusions, null);
+          assert.equal(required, null);
+          return row;
+        },
+      ),
       before.reviews.map((row) => ({ ...row })),
     );
     assert.deepEqual(after.commands, before.commands);

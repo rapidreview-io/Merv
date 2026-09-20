@@ -29,6 +29,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { Experiment, ExperimentAttach, ExperimentTransition } from '@merv/experiments/types';
+import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
@@ -137,7 +138,7 @@ async function fixture(t: TestContext) {
     const artifact = await artifacts.create(producer, {
       title: role,
       content,
-      mediaType: role === 'result' ? 'application/json' : 'text/markdown',
+      mediaType: role === 'plan' || role === 'report' ? 'text/markdown' : 'application/json',
     });
     return await experiments.attach(producer, {
       experimentId: e.id,
@@ -145,7 +146,7 @@ async function fixture(t: TestContext) {
       expectedRevision: e.workflow.revision,
       artifactId: artifact.id,
       role,
-      path: `${role}.${role === 'result' ? 'json' : 'md'}`,
+      path: `${role}.${role === 'plan' || role === 'report' ? 'md' : 'json'}`,
       requestId: id(),
     });
   };
@@ -178,7 +179,7 @@ async function fixture(t: TestContext) {
       findings: review.criteria.map((_, index) => ({
         criterionNumber: index + 1,
         status: verdict === 'pass' ? ('met' as const) : ('not_met' as const),
-        evidenceIds: [review.artifactIds[0]!],
+        evidenceIds: citedEvidence(e, review, index + 1),
         notes: `Criterion ${index + 1} was checked against the retained evidence.`,
       })),
       requestId: id(),
@@ -192,9 +193,11 @@ async function fixture(t: TestContext) {
   const completeExperiment = async () => {
     let e = await createExperiment();
     await attach(e, 'plan', plan);
+    await attach(e, 'feasibility', feasibilityStatement());
     e = await transition(e, 'submit_design');
     e = await verdict(e, 'needs_changes');
     await attach(e, 'plan', `${plan}\nThe missing control is now explicit.`);
+    await attach(e, 'feasibility', feasibilityStatement());
     e = await transition(e, 'submit_design');
     e = await verdict(e, 'pass');
     await workflows.begin(producer, { instanceId: e.id, expectedRevision: e.workflow.revision });

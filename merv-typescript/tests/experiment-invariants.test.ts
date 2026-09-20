@@ -17,8 +17,14 @@ import { ClaimService } from '@merv/claims';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
-import type { Caller, Data, ReviewApplication } from '@merv/contracts';
-import type { Experiment, ExperimentAttach, ExperimentTransition } from '@merv/experiments/types';
+import type { Artifact, Caller, Data, ReviewApplication } from '@merv/contracts';
+import type {
+  Experiment,
+  ExperimentAttach,
+  ExperimentEvidence,
+  ExperimentTransition,
+} from '@merv/experiments/types';
+import { feasibilityStatement } from './feasibility-fixture.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
@@ -78,11 +84,13 @@ async function fixture(t: TestContext) {
     role: ExperimentAttach['role'],
     content: string,
     caller = source,
-  ) => {
+  ): Promise<{ artifact: Artifact; evidence: ExperimentEvidence }> => {
+    // A design is a plan and a feasibility statement; these tests are about the plan.
+    if (role === 'plan') await attach(experiment, 'feasibility', feasibilityStatement(), caller);
     const artifact = await artifacts.create(caller, {
       title: role,
       content,
-      mediaType: role === 'result' ? 'application/json' : 'text/markdown',
+      mediaType: role === 'plan' || role === 'report' ? 'text/markdown' : 'application/json',
     });
     const evidence = await experiments.attach(caller, {
       experimentId: experiment.id,
@@ -90,7 +98,7 @@ async function fixture(t: TestContext) {
       attemptIndex: experiment.attempt.index,
       artifactId: artifact.id,
       role,
-      path: `${role}.${role === 'result' ? 'json' : 'md'}`,
+      path: `${role}.${role === 'plan' || role === 'report' ? 'md' : 'json'}`,
       requestId: request(),
     });
     return { artifact, evidence };

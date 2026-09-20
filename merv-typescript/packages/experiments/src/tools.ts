@@ -45,7 +45,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.attach',
         description:
-          'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan; during execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.',
+          'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.',
         inputSchema: experimentAttachSchema,
         handler: async (caller: Caller, input: ExperimentAttach) =>
           await experiments.attach(caller, input),

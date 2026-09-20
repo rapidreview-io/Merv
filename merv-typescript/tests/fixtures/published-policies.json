@@ -104,6 +104,18 @@
       "version": 4,
       "fingerprint": "7d20f91f0a6eca7f43c185384d5bd2215ed75b70088db17149ae9c51aef0bb05",
       "published": true
+    },
+    {
+      "name": "experiment",
+      "version": 5,
+      "fingerprint": "c6e5058e02489aa9d309e39198fbce6bbc1c58ce9935fcaa3e29b9562a0ec1e7",
+      "published": false
+    },
+    {
+      "name": "experiment",
+      "version": 6,
+      "fingerprint": "d8feae5424eb44f3a2c580f733bc539ba3f4f750537a4ec76d88924243604d6b",
+      "published": false
     }
   ],
   "policies": [
@@ -446,6 +458,62 @@
       "state": "researching",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
       "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 5,
+      "state": "design_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 5,
+      "state": "experiment_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 5,
+      "state": "planned",
+      "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 5,
+      "state": "running",
+      "fingerprint": "6d8e16fc603fc05c4a1a36a3c77e9c2a4c636973eeb4f209ce28376eaca5d30f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 6,
+      "state": "design_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 6,
+      "state": "experiment_review",
+      "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 6,
+      "state": "planned",
+      "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 6,
+      "state": "running",
+      "fingerprint": "6e698abc07bae5520280e25a3797f8bb1717f264e7222b42c1e50862c08d01d4",
+      "published": false
     }
   ],
   "recipes": [

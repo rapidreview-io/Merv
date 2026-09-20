@@ -40,13 +40,29 @@ const producing = (state: string) => state === 'planned' || state === 'running';
 /**
  * Registered program versions by workspace kind. A published execution policy is immutable, so
  * versions 1 and 2 are frozen history — their policies stay byte-identical, retired grants
- * included — and any policy change publishes a new version. New experiments start on 3 or 4.
+ * included — and any policy change publishes a new version. New experiments start on 5 or 6.
  */
-const workspaces: Record<number, 'none' | 'git'> = { 1: 'none', 2: 'git', 3: 'none', 4: 'git' };
+const workspaces: Record<number, 'none' | 'git'> = {
+  1: 'none',
+  2: 'git',
+  3: 'none',
+  4: 'git',
+  5: 'none',
+  6: 'git',
+};
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 const frozenHistory = (version: number) => version <= 2;
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-export const programVersion = (workspace?: string): number => (workspace === 'git' ? 4 : 3);
+export const programVersion = (workspace?: string): number => (workspace === 'git' ? 6 : 5);
+/**
+ * From version 5 a design is submitted with a feasibility statement and its review cannot waive
+ * the feasibility criterion. Versions 3 and 4 stay registered for the experiments already on
+ * them, which finish under the rules they started with.
+ */
+export const feasibilityGated = (version: number) => version >= 5;
+/** The evidence a design submission is made of, which is also what a successor planner inherits. */
+export const designRoles = (version: number) =>
+  feasibilityGated(version) ? ['plan', 'feasibility'] : ['plan'];
 
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
   name: 'experiment',
@@ -429,7 +445,13 @@ DROP TABLE experiment_leases_backup;`,
       'The approved design has no pinned plan',
       409,
     );
-    return [...new Set([...plans, ...submission.figureIds])];
+    // The admitted feasibility statement travels with the plan, so the running worker and the
+    // results reviewer see the budget the design was approved under. It is not required here:
+    // submission and the design review are the gates, and this runs only after both.
+    const feasibility = submission.evidence
+      .filter((evidence) => evidence.role === 'feasibility')
+      .map((evidence) => evidence.artifactId);
+    return [...new Set([...plans, ...feasibility, ...submission.figureIds])];
   }
 
   private async review(
@@ -533,7 +555,10 @@ DROP TABLE experiment_leases_backup;`,
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
-    const roles = experiment.workflow.state === 'planned' ? ['plan'] : ['result', 'report'];
+    const roles =
+      experiment.workflow.state === 'planned'
+        ? designRoles(experiment.workflow.version)
+        : ['result', 'report'];
     return experiment.evidence.filter(
       (evidence) =>
         evidence.current &&
@@ -807,7 +832,7 @@ DROP TABLE experiment_leases_backup;`,
     const frozen = frozenHistory(version);
     const roles =
       state === 'planned'
-        ? ['plan']
+        ? designRoles(version)
         : frozen
           ? ['result', 'report', 'graph']
           : ['result', 'report'];

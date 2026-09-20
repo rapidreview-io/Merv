@@ -120,4 +120,17 @@ $merv$;
 CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
 FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();
 `,
+  8: `
+ALTER TABLE reviews ADD COLUMN required_criteria TEXT CHECK(
+          required_criteria IS NULL OR ((required_criteria IS JSON) AND jsonb_typeof(required_criteria::jsonb)='array')
+        );
+        CREATE OR REPLACE FUNCTION reviews_required_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Required review criteria are immutable', ERRCODE = '23514';
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER reviews_required_immutable BEFORE UPDATE OF required_criteria ON reviews
+FOR EACH ROW EXECUTE FUNCTION reviews_required_immutable_guard();
+`,
 };

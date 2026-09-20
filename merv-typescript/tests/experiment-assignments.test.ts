@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
-import type { Caller, Data, ReviewApplication, WorkflowExecution } from '@merv/contracts';
+import type { Artifact, Caller, Data, ReviewApplication, WorkflowExecution } from '@merv/contracts';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
@@ -20,7 +20,13 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
 import { CodeService } from '@merv/code/service';
-import type { Experiment, ExperimentAttach, ExperimentTransition } from '@merv/experiments/types';
+import type {
+  Experiment,
+  ExperimentAttach,
+  ExperimentEvidence,
+  ExperimentTransition,
+} from '@merv/experiments/types';
+import { feasibilityStatement } from './feasibility-fixture.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
@@ -93,11 +99,14 @@ async function fixture(t: TestContext) {
     content: string,
     caller = source,
     path = `${role}.md`,
-  ) => {
+  ): Promise<{ artifact: Artifact; association: ExperimentEvidence }> => {
+    // A design is a plan and a feasibility statement; these tests are about the plan.
+    if (role === 'plan')
+      await attach(experiment, 'feasibility', feasibilityStatement(), caller, 'feasibility.json');
     const artifact = await artifacts.create(caller, {
       title: role,
       content,
-      mediaType: 'text/markdown',
+      mediaType: role === 'feasibility' ? 'application/json' : 'text/markdown',
     });
     const association = await experiments.attach(caller, {
       experimentId: experiment.id,
@@ -586,6 +595,18 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
   assert.deepEqual((await f.reviews.get(f.source, submitted.reviewId!)).excludedActorIds, [
     f.source.actorId,
   ]);
+  // The feasibility statement is design evidence like the plan: the successor was offered the
+  // predecessor's exact statement and submits it without having to measure everything again.
+  const statement = submitted.submissions[0].evidence.find(
+    (evidence) => evidence.role === 'feasibility',
+  )!;
+  assert.equal(statement.createdBy, f.source.actorId);
+  assert.ok(
+    (successor.session.execution.references.artifacts as string[]).includes(statement.artifactId),
+  );
+  assert.ok(
+    (await f.reviews.get(f.source, submitted.reviewId!)).artifactIds.includes(statement.artifactId),
+  );
 });
 
 test('review leases claim before freezing, recover exactly once, and preserve same-source independence', async (t) => {
@@ -893,11 +914,11 @@ test('Git Experiments keep the scratch program version and wait for their exact 
     instanceId: old.id,
     expectedRevision: 0,
   });
-  assert.equal(old.workflow.version, 3);
+  assert.equal(old.workflow.version, 5);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
   const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 4);
+  assert.equal(experiment.workflow.version, 6);
   assert.equal(experiment.workspace, 'git');
   const pendingDesign = (await f.design(experiment)).experiment;
   assert.deepEqual(

@@ -47,13 +47,21 @@ import {
   decodeEvidence,
   exhibitBytes,
   markdownImageTargets,
+  feasibilityShortfalls,
+  parseFeasibility,
   parseResult,
   shouldPinExhibit,
   reportConclusion,
   validatePlan,
   validateReport,
 } from './evidence.js';
-import { ExperimentProgram, programVersion, programWorkspace } from './program.js';
+import {
+  designRoles,
+  ExperimentProgram,
+  feasibilityGated,
+  programVersion,
+  programWorkspace,
+} from './program.js';
 import {
   attemptMetadata,
   migrateExperiments,
@@ -71,6 +79,17 @@ const designCriteria = [
   'Controls, baselines, data, metrics and decision criteria make the proposed comparison defensible.',
   'The proposed execution is feasible and its limitations and possible failure modes are addressed.',
 ];
+/**
+ * Design criteria from program version 5. Feasibility is its own criterion, the last, so the
+ * review can be asked never to waive it; the statement's arithmetic is its author's, which is why
+ * the reviewer is told to look for what it leaves out as well as for what it gets wrong.
+ */
+const gatedDesignCriteria = [
+  ...designCriteria.slice(0, 2),
+  'The limitations and possible failure modes of the proposed execution are addressed.',
+  'The feasibility statement is accurate and complete: each required and available quantity, the compute and time estimate, and the presence of every dependency were verified by the reviewer against retained records; no requirement, dependency or blocker the design implies is omitted; and no known blocker remains.',
+];
+const feasibilityCriterion = gatedDesignCriteria.length;
 const resultsCriteria = [
   'The retained execution and results follow the exact approved plan, with deviations and failures explained.',
   'The submitted measurements agree with the retained results and any metrics exhibit, and the report selects what mattered without hiding known rework.',
@@ -352,9 +371,10 @@ export class ExperimentService implements Experiments {
         );
         await this.program.assertProducer(caller, experiment, tx);
         check(
-          experiment.workflow.state === 'planned'
-            ? input.role === 'plan'
-            : ['result', 'report'].includes(input.role),
+          (experiment.workflow.state === 'planned'
+            ? designRoles(experiment.workflow.version)
+            : ['result', 'report']
+          ).includes(input.role),
           'invalid_experiment_role',
           'This evidence role is not writable in the current state',
           409,
@@ -379,6 +399,7 @@ export class ExperimentService implements Experiments {
         );
         const text = await this.text(caller, artifact.id, tx);
         if (input.role === 'result') parseResult(text, input.resultFormat ?? 'json');
+        if (input.role === 'feasibility') parseFeasibility(text);
         const figureIds = ['plan', 'report'].includes(input.role)
           ? await this.figures(caller, text, experiment, tx)
           : [];
@@ -657,7 +678,7 @@ export class ExperimentService implements Experiments {
     let evidence = await this.selected(
       caller,
       experiment,
-      stage === 'design' ? ['plan'] : ['result', 'report'],
+      stage === 'design' ? designRoles(experiment.workflow.version) : ['result', 'report'],
       tx,
     );
     let figureIds: string[] = [];
@@ -667,6 +688,19 @@ export class ExperimentService implements Experiments {
       const text = await this.text(caller, plan.artifactId, tx);
       figureIds = await this.figures(caller, text, experiment, tx);
       validatePlan(text, { figures: figureIds });
+      if (feasibilityGated(experiment.workflow.version)) {
+        const statement = parseFeasibility(
+          await this.text(caller, this.one(evidence, 'feasibility').artifactId, tx),
+        );
+        // The cheap check: a design whose own figures fall short never reaches a reviewer.
+        const shortfalls = feasibilityShortfalls(statement);
+        check(
+          shortfalls.length === 0,
+          'experiment_infeasible',
+          `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason`,
+          409,
+        );
+      }
     } else {
       const approved = this.approved(experiment);
       // Include the exact approved design, never a newer plan association.
@@ -835,13 +869,20 @@ export class ExperimentService implements Experiments {
         artifactIds,
         pinnedInputIds,
         criteria: [
-          ...(stage === 'design' ? designCriteria : resultsCriteria),
+          ...(stage !== 'design'
+            ? resultsCriteria
+            : feasibilityGated(experiment.workflow.version)
+              ? gatedDesignCriteria
+              : designCriteria),
           ...(paperProposal
             ? [
                 'The proposed paper edits accurately describe this experiment and are supported by its retained evidence.',
               ]
             : []),
         ],
+        ...(stage === 'design' && feasibilityGated(experiment.workflow.version)
+          ? { requiredCriteria: [feasibilityCriterion] }
+          : {}),
         formatVersion: 2,
         requestId: `experiment:submission:${caller.actorId}:${input.requestId}`,
       },
@@ -1123,6 +1164,17 @@ export class ExperimentService implements Experiments {
     await this.program.reviewCapture(caller, experiment, tx);
     this.route(submission.stage, input);
     await this.reviews.checkSubmit(caller, review.id, input, tx);
+    // Reviews holds the criterion to met with some pinned evidence; only Experiments knows
+    // which artifact is the statement, and a finding citing the plan alone has not read it.
+    const statement = submission.evidence.find((e) => e.role === 'feasibility');
+    if (input.verdict === 'pass' && submission.stage === 'design' && statement)
+      check(
+        input.findings
+          ?.find((finding) => finding.criterionNumber === feasibilityCriterion)
+          ?.evidenceIds.includes(statement.artifactId),
+        'feasibility_not_cited',
+        `A passing design review cites the feasibility statement ${statement.artifactId} in the finding for criterion ${feasibilityCriterion}`,
+      );
     // A pass applies the paper proposal; what that would hit is part of the verdict's check.
     if (input.verdict === 'pass' && submission.paperProposal)
       await this.paper.checkAccept(
@@ -1333,9 +1385,10 @@ export class ExperimentService implements Experiments {
       sequence,
       JSON.stringify(evidence),
     );
-    // A plan and a report are one document each: a newer one at another path replaces the
-    // earlier, so an attempt is never stuck with two current plans and no way to choose.
-    if (role === 'plan' || role === 'report')
+    // A plan, a feasibility statement and a report are one document each: a newer one at another
+    // path replaces the earlier, so an attempt is never stuck with two current plans and no way
+    // to choose.
+    if (role === 'plan' || role === 'feasibility' || role === 'report')
       await tx.run(
         'DELETE FROM experiment_slots WHERE experiment_id=? AND attempt_index=? AND role=? AND path<>?',
         experiment.id,

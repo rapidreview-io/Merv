@@ -17,7 +17,7 @@ const ids = z
   .array(experimentIdSchema)
   .max(100)
   .transform((value) => [...new Set(value)]);
-export const experimentRoleSchema = z.enum(['plan', 'result', 'report']);
+export const experimentRoleSchema = z.enum(['plan', 'result', 'report', 'feasibility']);
 export const resultFormatSchema = z.enum(['json', 'qualitative']);
 export const experimentPathSchema = z
   .string()

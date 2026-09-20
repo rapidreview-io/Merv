@@ -15,7 +15,13 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { ClaimService } from '@merv/claims';
 import { ExperimentService } from '@merv/experiments';
 import { check, type Caller, type ReviewApplication, type Transaction } from '@merv/contracts';
-import type { Experiment, ExperimentAttach, ExperimentTransition } from '@merv/experiments/types';
+import type {
+  Experiment,
+  ExperimentAttach,
+  ExperimentEvidence,
+  ExperimentTransition,
+} from '@merv/experiments/types';
+import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
 const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nThe change should improve validation accuracy.\n# Evaluation\nCompare two fixed seeds and matched controls.';
 const report =
@@ -69,22 +75,25 @@ async function fixture(t: TestContext) {
     role: ExperimentAttach['role'],
     content: string,
     extra: Partial<ExperimentAttach> = {},
-  ) => {
+  ): Promise<ExperimentEvidence> => {
     const artifact = await artifacts.create(producer, {
       title: role,
       content,
-      mediaType: role === 'result' ? 'application/json' : 'text/markdown',
+      mediaType: role === 'plan' || role === 'report' ? 'text/markdown' : 'application/json',
     });
-    return await experiments.attach(producer, {
+    const attached = await experiments.attach(producer, {
       experimentId: experiment.id,
       attemptIndex: experiment.attempt.index,
       expectedRevision: experiment.workflow.revision,
       artifactId: artifact.id,
       role,
-      path: `${role}.${role === 'result' ? 'json' : 'md'}`,
+      path: `${role}.${role === 'plan' || role === 'report' ? 'md' : 'json'}`,
       requestId: id(),
       ...extra,
     });
+    // A design is a plan and a feasibility statement; these tests are about the plan.
+    if (role === 'plan') await attach(experiment, 'feasibility', feasibilityStatement());
+    return attached;
   };
   const transition = async (
     experiment: Experiment,
@@ -114,7 +123,7 @@ async function fixture(t: TestContext) {
       findings: review.criteria.map((_, index) => ({
         criterionNumber: index + 1,
         status: verdict === 'pass' ? 'met' : 'not_met',
-        evidenceIds: [review.artifactIds[0]!],
+        evidenceIds: citedEvidence(experiment, review, index + 1),
         notes: 'I inspected the retained evidence for this criterion.',
       })),
       requestId: id(),
@@ -338,9 +347,10 @@ test('Immutable role/path versions, strict attempt/revision and actual submittin
   const second = await attaching;
   assert.equal(second.path, 'plan.md');
   const current = await f.experiments.get(f.producer, e.id);
-  assert.equal(current.evidence.length, 2);
-  assert.equal(current.evidence[0].current, false);
-  assert.equal(current.evidence[1].current, true);
+  const plans = current.evidence.filter((evidence) => evidence.role === 'plan');
+  assert.equal(plans.length, 2);
+  assert.equal(plans[0].current, false);
+  assert.equal(plans[1].current, true);
   await assert.rejects(
     async () =>
       await f.state.transaction(
@@ -513,7 +523,12 @@ test('Missing bytes and invalid scoped figure references cannot seal a review', 
   f.blobs.get = original;
   assert.equal((await f.state.events(f.operator.projectId)).length, events);
   assert.equal((await f.experiments.get(f.producer, e.id)).submissions.length, 0);
-  assert.equal((await f.experiments.get(f.producer, e.id)).evidence.at(-1)!.id, attached.id);
+  assert.equal(
+    (await f.experiments.get(f.producer, e.id)).evidence.findLast(
+      (evidence) => evidence.role === 'plan',
+    )!.id,
+    attached.id,
+  );
 });
 test('Source revocation is checked before replay and before a composed writer commits', async (t) => {
   const f = await fixture(t),

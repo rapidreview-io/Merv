@@ -125,6 +125,55 @@ function contributorExclusions(input: ReviewInput): string[] | undefined {
   return [...new Set(ids)].sort();
 }
 
+/**
+ * The criteria a pass can never waive, read without invoking accessors and sorted so that
+ * [4,2] and [2,4] pin the same review. Whether each number names one of this review's
+ * criteria is checked where the criteria themselves are.
+ */
+function requiredCriteria(input: ReviewInput): number[] | undefined {
+  const field = Object.getOwnPropertyDescriptor(input, 'requiredCriteria');
+  check(
+    !('requiredCriteria' in input) || (field && Object.hasOwn(field, 'value')),
+    'invalid_required_criteria',
+    'Required criteria must be an ordinary data field',
+  );
+  if (!field || field.value === undefined) return undefined;
+  const value: unknown = field.value;
+  check(
+    field.enumerable &&
+      Array.isArray(value) &&
+      !nodeTypes.isProxy(value) &&
+      Object.getPrototypeOf(value) === Array.prototype,
+    'invalid_required_criteria',
+    'Required criteria must be an ordinary array',
+  );
+  const length = Object.getOwnPropertyDescriptor(value, 'length')!.value as number;
+  check(
+    length >= 1 && length <= 200 && Reflect.ownKeys(value).length === length + 1,
+    'invalid_required_criteria',
+    'Required criteria must be a nonempty bounded dense array',
+  );
+  const numbers = Array.from({ length }, (_, index) => {
+    const item = Object.getOwnPropertyDescriptor(value, String(index));
+    check(
+      item &&
+        Object.hasOwn(item, 'value') &&
+        item.enumerable &&
+        Number.isSafeInteger(item.value) &&
+        item.value >= 1,
+      'invalid_required_criteria',
+      'Required criteria must be criterion numbers',
+    );
+    return item.value as number;
+  });
+  check(
+    new Set(numbers).size === length,
+    'invalid_required_criteria',
+    'Required criteria must be distinct',
+  );
+  return numbers.sort((a, b) => a - b);
+}
+
 interface ReviewRow {
   id: string;
   project_id: string;
@@ -134,6 +183,7 @@ interface ReviewRow {
   administrative_actor_id: string | null;
   pinned_input_ids: string;
   excluded_actor_ids: string | null;
+  required_criteria: string | null;
   artifact_ids: string;
   criteria: string;
   format_version: 1 | 2;
@@ -163,6 +213,7 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
   ...(row.excluded_actor_ids == null
     ? {}
     : { excludedActorIds: JSON.parse(row.excluded_actor_ids) }),
+  ...(row.required_criteria == null ? {} : { requiredCriteria: JSON.parse(row.required_criteria) }),
   artifactIds: JSON.parse(row.artifact_ids),
   criteria: JSON.parse(row.criteria),
   formatVersion: row.format_version,
@@ -284,6 +335,15 @@ export class ReviewService implements Reviews {
         CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
           WHEN NEW.reviewer_id IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(COALESCE(NEW.excluded_actor_ids,'[]')) WHERE value=NEW.reviewer_id)
           BEGIN SELECT RAISE(ABORT,'A contributor cannot review their submission'); END;`,
+        },
+        {
+          version: 8,
+          postgres: postgresMigrations[8],
+          sql: `ALTER TABLE reviews ADD COLUMN required_criteria TEXT CHECK(
+          required_criteria IS NULL OR (json_valid(required_criteria) AND json_type(required_criteria)='array')
+        );
+        CREATE TRIGGER reviews_required_immutable BEFORE UPDATE OF required_criteria ON reviews
+          BEGIN SELECT RAISE(ABORT,'Required review criteria are immutable'); END;`,
         },
       ]);
     };
@@ -463,6 +523,7 @@ export class ReviewService implements Reviews {
     // Check descriptor-sensitive exclusions before copying; later awaits must use
     // the same evidence and ownership input that command hashing will retain.
     contributorExclusions(input);
+    requiredCriteria(input);
     input = plain<ReviewInput>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -512,6 +573,9 @@ export class ReviewService implements Reviews {
           ...(row.excluded_actor_ids == null
             ? {}
             : { excludedActorIds: JSON.parse(row.excluded_actor_ids) }),
+          ...(row.required_criteria == null
+            ? {}
+            : { requiredCriteria: JSON.parse(row.required_criteria) }),
           criteria: JSON.parse(row.criteria),
           formatVersion: row.format_version,
           requestId: input.requestId,
@@ -544,6 +608,8 @@ export class ReviewService implements Reviews {
   ): Promise<ReviewRequest> {
     const excludedActorIds = contributorExclusions(input);
     if (excludedActorIds !== undefined) input = { ...input, excludedActorIds };
+    const required = requiredCriteria(input);
+    if (required !== undefined) input = { ...input, requiredCriteria: required };
     return await this.command(tx, caller, input.requestId, 'request', input, async () => {
       check(
         typeof input.subjectId === 'string' && visible(input.subjectId),
@@ -567,6 +633,14 @@ export class ReviewService implements Reviews {
           input.criteria.every((item) => typeof item === 'string' && visible(item)),
         'invalid_criteria',
         'At least one nonempty assessment criterion is required',
+      );
+      // A format 1 verdict may carry no findings, so it has nothing a required criterion
+      // could hold the reviewer to.
+      check(
+        !required ||
+          (formatVersion === 2 && required.every((number) => number <= input.criteria.length)),
+        'invalid_required_criteria',
+        "Required criteria must be numbers of this review's criteria, on a format 2 review",
       );
       check(
         Array.isArray(input.artifactIds) &&
@@ -630,10 +704,11 @@ export class ReviewService implements Reviews {
           : {}),
         ...(formatVersion === 2 ? { formatVersion } : {}),
         ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
+        ...(required === undefined ? {} : { requiredCriteria: required }),
       });
       await tx.run(
         `INSERT INTO reviews (id, project_id, subject_id, subject_revision, producer_id, artifact_ids,
-          criteria, manifest, snapshot_hash, status, created_at, format_version, administrative_actor_id, pinned_input_ids${excludedActorIds === undefined ? '' : ', excluded_actor_ids'}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?${excludedActorIds === undefined ? '' : ', ?'})`,
+          criteria, manifest, snapshot_hash, status, created_at, format_version, administrative_actor_id, pinned_input_ids${excludedActorIds === undefined ? '' : ', excluded_actor_ids'}${required === undefined ? '' : ', required_criteria'}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?${excludedActorIds === undefined ? '' : ', ?'}${required === undefined ? '' : ', ?'})`,
         id,
         caller.projectId,
         input.subjectId,
@@ -648,12 +723,14 @@ export class ReviewService implements Reviews {
         input.administrativeActorId ?? input.producerId,
         JSON.stringify(pinnedInputIds),
         ...(excludedActorIds === undefined ? [] : [JSON.stringify(excludedActorIds)]),
+        ...(required === undefined ? [] : [JSON.stringify(required)]),
       );
       await recorded(this.state, tx, caller, 'review.requested', id, {
         subjectId: input.subjectId,
         subjectRevision: input.subjectRevision,
         snapshotHash,
         ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
+        ...(required === undefined ? {} : { requiredCriteria: required }),
       });
       return hydrate(await this.row(tx, caller, id));
     });

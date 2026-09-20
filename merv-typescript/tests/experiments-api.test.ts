@@ -9,6 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import type { Caller } from '@merv/contracts';
+import { feasibilityStatement } from './feasibility-fixture.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiments-api-'));
@@ -234,6 +235,7 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
     return artifact;
   };
   const planArtifact = await attach('plan', 'plan.md', plan);
+  const statement = await attach('feasibility', 'feasibility.json', feasibilityStatement());
   e = await f.call(producer, 'experiment.transition', {
     experimentId: e.id,
     transition: 'submit_design',
@@ -293,6 +295,10 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
   assert.equal(
     approved.evidence.find((item: any) => item.role === 'plan').artifactId,
     planArtifact.id,
+  );
+  assert.equal(
+    approved.evidence.find((item: any) => item.role === 'feasibility').artifactId,
+    statement.id,
   );
   await f.call(producer, 'workflow.begin', {
     instanceId: e.id,

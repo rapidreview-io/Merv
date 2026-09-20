@@ -66,7 +66,7 @@ export function evidenceFrom(input: { evidence?: unknown }): Data {
 
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */
 export function validateAssessment(
-  review: Pick<ReviewRequest, 'formatVersion' | 'criteria' | 'artifactIds'>,
+  review: Pick<ReviewRequest, 'formatVersion' | 'criteria' | 'artifactIds' | 'requiredCriteria'>,
   input: Pick<ReviewSubmit, 'verdict' | 'synopsis' | 'findings' | 'evidence'>,
 ): { synopsis: string | null; findings: ReviewFinding[]; evidence: Data } {
   const evidence = evidenceFrom(input);
@@ -155,6 +155,16 @@ export function validateAssessment(
       value.every((item) => item.status === 'met' || item.status === 'waived'),
     'invalid_findings',
     'A passing verdict requires every criterion to be met or explicitly waived with a reason',
+  );
+  // The requesting domain depends on these criteria, so a reviewer's waiver cannot stand in
+  // for them; needs_changes is the way out when one cannot be met.
+  const unmet = (review.requiredCriteria ?? []).find(
+    (number) => value.find((item) => item.criterionNumber === number)?.status !== 'met',
+  );
+  check(
+    input.verdict !== 'pass' || unmet === undefined,
+    'criterion_not_waivable',
+    `Criterion ${unmet} is required: a passing verdict needs it met with retained evidence, and it cannot be waived. Return needs_changes if it is not met`,
   );
   return {
     synopsis,
