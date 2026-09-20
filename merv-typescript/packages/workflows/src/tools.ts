@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import type { Caller, Data, WorkflowBegin } from '@merv/contracts';
+import type { Caller, Data, WorkflowBegin, WorkflowExtendLimit } from '@merv/contracts';
 import { z } from 'zod';
 
 /** Generic node guidance and activation; domain tools own the work's handoff. */
@@ -13,7 +13,7 @@ export const workflowToolsPlugin = {
       ctx.tools.register({
         name: 'workflow.status_and_next',
         description:
-          'Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. Omit instanceId for a project overview of all workflow instances. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
+          'Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
         readOnly: true,
         inputSchema: z
           .object({
@@ -89,6 +89,25 @@ export const workflowToolsPlugin = {
           .strict(),
         handler: async (caller: Caller, input: WorkflowBegin) =>
           await workflows.begin(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'workflow.extend_limit',
+        description:
+          'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return buys one more automated review.',
+        readOnly: false,
+        inputSchema: z
+          .object({
+            instanceId: z.string().min(1),
+            limit: z.string().min(1),
+            additional: z.number().int().min(1).max(100),
+            reason: z.string().trim().min(1).max(500),
+            requestId: z.string().min(1).max(256),
+          })
+          .strict(),
+        handler: async (caller: Caller, input: WorkflowExtendLimit) =>
+          await workflows.extendLimit(caller, input),
       }),
     );
   },

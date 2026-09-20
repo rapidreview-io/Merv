@@ -2,6 +2,7 @@ import { visible, mapAsync, filterAsync } from '@merv/contracts';
 import { createService, plain, recorded, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import {
   check,
   digest,
@@ -53,7 +54,12 @@ import {
   validatePlan,
   validateReport,
 } from './evidence.js';
-import { ExperimentProgram, programVersion, programWorkspace } from './program.js';
+import {
+  EXPERIMENT_LIMITS,
+  ExperimentProgram,
+  programVersion,
+  programWorkspace,
+} from './program.js';
 import {
   attemptMetadata,
   migrateExperiments,
@@ -77,6 +83,20 @@ const resultsCriteria = [
   'The report’s conclusions follow from the evidence, including negative findings and limitations.',
 ];
 
+const rounds = (fallback: number) => z.number().int().min(1).max(1000).default(fallback);
+const configuration = z
+  .object({
+    limits: z
+      .object({
+        designRounds: rounds(EXPERIMENT_LIMITS.designRounds),
+        resultRounds: rounds(EXPERIMENT_LIMITS.resultRounds),
+      })
+      .strict()
+      .default({}),
+  })
+  .strict()
+  .default({});
+
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService implements Experiments {
   private closed = false;
@@ -95,12 +115,14 @@ export class ExperimentService implements Experiments {
     private readonly claims: Claims,
     private code: Pick<Code, 'capture'> | undefined,
     private readonly paper: Paper,
+    limits = EXPERIMENT_LIMITS,
   ) {
     this.initialize = async () => {
       await migrateExperiments(state);
       const service = this;
       this.program = await createService(
         new ExperimentProgram({
+          limits,
           state,
           scope,
           artifacts,
@@ -1393,7 +1415,8 @@ export const experimentsPlugin = {
     'claims',
     'paper',
   ],
-  async apply(ctx: Context) {
+  Config: configuration,
+  async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const experiments = await createService(
       new ExperimentService(
         ctx.state,
@@ -1405,6 +1428,7 @@ export const experimentsPlugin = {
         ctx.claims,
         undefined,
         ctx.paper,
+        config.limits,
       ),
     );
     ctx.inject(['code'], (ctx) => {

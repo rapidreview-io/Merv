@@ -7,6 +7,8 @@ import type {
   WorkflowDecision,
   WorkflowDefinition,
   WorkflowEvaluationInput,
+  WorkflowLimitStatus,
+  WorkflowLoopLimit,
   WorkflowPolicy,
   WorkflowAssignmentRule,
   WorkflowWorkStart,
@@ -14,6 +16,7 @@ import type {
 import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './dependencies.js';
 import { validateExecution } from './execution.js';
+import { limitMessage, validateLimits } from './limits.js';
 
 const descriptionSchema = z.object({
   label: z.string(),
@@ -215,9 +218,14 @@ export function validatePolicy(
     'invalid_workflow_policy',
     'Dependency failure action must name a registered action',
   );
+  const limits =
+    policy.limits === undefined ? undefined : validateLimits(definition, policy.limits);
   return Object.freeze({
     actions: Object.freeze(actions) as unknown as WorkflowActionRule[],
     describe: policy.describe,
+    ...(limits === undefined
+      ? {}
+      : { limits: Object.freeze(limits) as unknown as WorkflowLoopLimit[] }),
     ...(assignments === undefined
       ? {}
       : { assignments: Object.freeze(assignments) as unknown as WorkflowAssignmentRule[] }),
@@ -332,6 +340,7 @@ export async function decision(
   context: WorkflowCheckContext,
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null = null,
+  limits: WorkflowLimitStatus[] = [],
 ): Promise<WorkflowDecision> {
   const snapshot = context.snapshot;
   const terminal = definition.terminal.includes(snapshot.state);
@@ -351,6 +360,7 @@ export async function decision(
     blockers: [],
     references: [],
     dependencies: structuredClone(context.dependencies ?? []),
+    limits: [],
     workStart: workStart === null ? null : structuredClone(workStart),
   };
   let gate: string | undefined;
@@ -388,6 +398,19 @@ export async function decision(
     result.blockers = [{ code: 'workflow_unavailable', status: 503, message: result.instruction }];
     return result;
   }
+  result.limits = structuredClone(limits);
+  // Every return a limit allows has been used. The actions stay as they are, because a human
+  // may still accept or end the work; what changes is that the read says why nothing more
+  // will happen by itself. A failed prerequisite is the stronger reason and keeps its gate.
+  const exhausted = query.action ? undefined : limits.find((limit) => limit.exhausted);
+  const escalate = (): WorkflowDecision => {
+    if (!exhausted || result.currentGate === 'dependency_failed') return result;
+    const message = limitMessage(exhausted, snapshot.workflow);
+    result.currentGate = 'loop_limit_reached';
+    result.blockers = [{ code: 'loop_limit_reached', status: 409, message }, ...result.blockers];
+    result.instruction = `${message} ${result.instruction}`;
+    return result;
+  };
   const rules = policy.actions.filter((rule) => rule.states.includes(snapshot.state));
   const assignment = policy.assignments?.find((rule) => rule.state === snapshot.state);
   if (query.action)
@@ -435,7 +458,7 @@ export async function decision(
       result.nextAction = begin;
       result.currentGate = gate ?? snapshot.state;
       result.instruction = begin.instruction;
-      return result;
+      return escalate();
     }
   }
   result.nextAction = candidates.find((action) => action.status !== 'blocked') ?? null;
@@ -504,5 +527,5 @@ export async function decision(
         result.blockers.unshift(dependencyBlocker);
     }
   }
-  return result;
+  return escalate();
 }

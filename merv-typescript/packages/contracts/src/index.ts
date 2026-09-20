@@ -76,6 +76,7 @@ export type {
   WorkflowBlocker,
   WorkflowActionStatus,
   WorkflowDecision,
+  WorkflowLimitStatus,
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
@@ -88,6 +89,7 @@ export type {
 import type {
   WorkflowReference,
   WorkflowDecision,
+  WorkflowLimitStatus,
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
@@ -859,9 +861,32 @@ export interface WorkflowActionRule {
   check(context: WorkflowCheckContext): void | Promise<void>;
   arguments?(context: WorkflowCheckContext): Data | Promise<Data>;
 }
+/**
+ * A cap on how often one instance may take a returning edge. `max` is the sum of recorded
+ * traversals allowed across `actions`, every one of which leaves `from` for another state.
+ */
+export interface WorkflowLoopLimit {
+  name: string;
+  from: string;
+  actions: string[];
+  max: number;
+}
+/** An admin's append-only allowance of more traversals on one instance; it changes no revision. */
+export interface WorkflowExtendLimit {
+  instanceId: string;
+  limit: string;
+  additional: number;
+  reason: string;
+  requestId: string;
+}
 export interface WorkflowPolicy {
   actions: WorkflowActionRule[];
   assignments?: WorkflowAssignmentRule[];
+  /**
+   * Not fingerprinted with the graph: a cap is deployed policy, a number operators tune, and
+   * it governs every live instance of the version at once, counted from its whole history.
+   */
+  limits?: WorkflowLoopLimit[];
   /** Immutable per version; only these terminal states satisfy downstream work. */
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
@@ -1106,6 +1131,12 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<WorkflowDecision>;
   overview(caller: Caller): Promise<WorkflowOverview>;
+  /** Only a project admin who is not a leased worker may allow a capped loop more rounds. */
+  extendLimit(
+    caller: Caller,
+    input: WorkflowExtendLimit,
+    tx?: Transaction,
+  ): Promise<WorkflowLimitStatus>;
   dependencies(
     caller: Caller,
     instanceId: string,

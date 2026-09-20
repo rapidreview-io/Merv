@@ -42,6 +42,21 @@ export interface WorkflowWorkStart {
   startedAt: string;
   eventId: number;
 }
+/**
+ * One loop limit as it stands for one instance, counted from its recorded history.
+ * `max` is the deployed cap plus what an admin has granted this instance.
+ */
+export interface WorkflowLimitStatus {
+  name: string;
+  from: string;
+  actions: string[];
+  base: number;
+  granted: number;
+  max: number;
+  used: number;
+  remaining: number;
+  exhausted: boolean;
+}
 export interface WorkflowDecision {
   instanceId: string;
   workflow: string;
@@ -58,6 +73,8 @@ export interface WorkflowDecision {
   blockers: WorkflowBlocker[];
   references: WorkflowReference[];
   dependencies: WorkflowDependency[];
+  /** Loop limits leaving the current state; empty when it has none or the work has ended. */
+  limits: WorkflowLimitStatus[];
   /** First activation at this revision, if recorded. */
   workStart: WorkflowWorkStart | null;
 }
@@ -127,6 +144,13 @@ export interface WorkflowOverview {
    * them — they wait for their owner to end them, or for a cycle to replan around them.
    */
   stalled: string[];
+  /**
+   * Work that has used every return its loop limit allows and waits for a human. Nothing
+   * is dispatched for it: a reviewer leased now could only have a needs_changes verdict
+   * refused and rolled back, and the next poll would lease another. A human may still
+   * review it by hand or end it, and a project admin may allow more rounds.
+   */
+  escalated: string[];
   terminal: string[];
   unavailable: string[];
   workflows: WorkflowDecision[];

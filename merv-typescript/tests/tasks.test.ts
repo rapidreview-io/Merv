@@ -16,7 +16,7 @@ import { TaskService } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, Workflows } from '@merv/contracts';
 
-async function fixture() {
+async function fixture(limits?: { reviewRounds: number }) {
   const path = mkdtempSync(join(tmpdir(), 'merv-task-test-'));
   const state = new SqliteState(join(path, 'state.db')),
     scope = await createService(new ProjectScope(state));
@@ -39,7 +39,7 @@ async function fixture() {
     reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder),
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, limits),
   );
   const brief = await artifacts.create(producer, {
     title: 'Brief',
@@ -356,6 +356,103 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
   }
 });
 
+/** One delivery and the verdict input for its review, claimed by the fixture's reviewer. */
+async function round(f: Awaited<ReturnType<typeof fixture>>, taskId: string, label: string) {
+  const task = await f.tasks.get(f.producer, taskId);
+  const pending = await f.tasks.submitDelivery(
+    f.producer,
+    confirmedDelivery(
+      {
+        taskId,
+        artifactIds: [(await f.delivery(label)).id],
+        expectedRevision: task.workflow.revision,
+        requestId: `deliver-${label}`,
+      },
+      2,
+    ),
+  );
+  const review = await f.reviews.start(f.reviewer, pending.reviewId!);
+  return {
+    pending,
+    verdict: (verdict: 'pass' | 'needs_changes', requestId: string) => ({
+      ...reviewedFindings(review),
+      reviewId: review.id,
+      claimId: review.claimId!,
+      verdict,
+      notes: `Round ${label}.`,
+      ...(verdict === 'pass' ? { evidence: { outcome: 'Both checks ran.' } } : {}),
+      expectedRevision: pending.workflow.revision,
+      requestId,
+    }),
+  };
+}
+
+test('the fourth return of a task is refused whole, the task escalates, and a grant buys one more', async () => {
+  const f = await fixture();
+  try {
+    const task = await f.create();
+    for (const label of ['one', 'two', 'three']) {
+      const { verdict } = await round(f, task.id, label);
+      await f.tasks.submitReview(f.reviewer, verdict('needs_changes', `revise-${label}`));
+    }
+    const { pending, verdict } = await round(f, task.id, 'four');
+    const guidance = await f.workflows.evaluate(f.reviewer, task.id);
+    assert.equal(guidance.currentGate, 'loop_limit_reached');
+    assert.deepEqual(
+      guidance.limits.map((limit) => [limit.name, limit.actions, limit.used, limit.max]),
+      [['review_rounds', ['revise'], 3, 3]],
+    );
+    assert.deepEqual((await f.workflows.overview(f.operator)).escalated, [task.id]);
+
+    const events = (await f.state.events(f.operator.projectId)).length;
+    await assert.rejects(
+      async () => await f.tasks.submitReview(f.reviewer, verdict('needs_changes', 'revise-four')),
+      (error: unknown) =>
+        code('loop_limit_reached')(error) &&
+        /review_rounds is exhausted on this task \(3\/3\)/.test((error as Error).message),
+    );
+    assert.equal((await f.state.events(f.operator.projectId)).length, events);
+    assert.equal((await f.reviews.get(f.reviewer, pending.reviewId!)).verdict, null);
+    assert.deepEqual((await f.tasks.get(f.producer, task.id)).workflow, pending.workflow);
+
+    // A reviewer cannot allow itself another round; a project admin can.
+    const grant = {
+      instanceId: task.id,
+      limit: 'review_rounds',
+      additional: 1,
+      reason: 'The last finding is small and specific.',
+      requestId: 'one-more',
+    };
+    await assert.rejects(async () => await f.workflows.extendLimit(f.reviewer, grant));
+    await f.workflows.extendLimit(f.operator, grant);
+    assert.deepEqual((await f.tasks.get(f.producer, task.id)).workflow, pending.workflow);
+    assert.deepEqual((await f.workflows.overview(f.operator)).escalated, []);
+    const revised = await f.tasks.submitReview(
+      f.reviewer,
+      verdict('needs_changes', 'revise-four-allowed'),
+    );
+    assert.equal(revised.workflow.state, 'in_progress');
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('an escalated task can still be accepted by a human reviewer', async () => {
+  const f = await fixture({ reviewRounds: 1 });
+  try {
+    const task = await f.create();
+    const first = await round(f, task.id, 'one');
+    await f.tasks.submitReview(f.reviewer, first.verdict('needs_changes', 'revise-one'));
+    const { verdict } = await round(f, task.id, 'two');
+    assert.deepEqual((await f.workflows.overview(f.operator)).escalated, [task.id]);
+    const done = await f.tasks.submitReview(f.reviewer, verdict('pass', 'accept'));
+    assert.equal(done.workflow.state, 'done');
+    assert.deepEqual((await f.workflows.overview(f.operator)).escalated, []);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('failed workflow routing rolls back verdict, request record, and events atomically', async () => {
   const f = await fixture();
   let alternative: TaskService | undefined;
@@ -380,6 +477,7 @@ test('failed workflow routing rolls back verdict, request record, and events ato
     const wrapped: Workflows = {
       registerReadReferences: f.workflows.registerReadReferences.bind(f.workflows),
       dispatchCandidates: f.workflows.dispatchCandidates.bind(f.workflows),
+      extendLimit: f.workflows.extendLimit.bind(f.workflows),
       leaseRole: f.workflows.leaseRole.bind(f.workflows),
       offerLease: f.workflows.offerLease.bind(f.workflows),
       checkLease: f.workflows.checkLease.bind(f.workflows),

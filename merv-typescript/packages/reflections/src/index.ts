@@ -3,6 +3,7 @@ import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
 import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
+import { z } from 'zod';
 import {
   check,
   digest,
@@ -101,6 +102,24 @@ const grant = (name: string, ...alternatives: Record<string, WorkflowExecutionBi
   alternatives,
 });
 
+/**
+ * How often a review may send a reflection back, to its synthesis or to its lenses. Restarting
+ * the lenses opens five more sessions, so this is the cap on that fan-out. After the last
+ * return the next synthesis waits for a human, who reviews it by hand or allows another round.
+ */
+export const REFLECTION_LIMITS = { reviewReturns: 2 };
+const configuration = z
+  .object({
+    limits: z
+      .object({
+        reviewReturns: z.number().int().min(1).max(1000).default(REFLECTION_LIMITS.reviewReturns),
+      })
+      .strict()
+      .default({}),
+  })
+  .strict()
+  .default({});
+
 /** Domain composition only: every runnable stage is an ordinary registered workflow node. */
 export class ReflectionService implements Reflections {
   private parents = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -118,6 +137,7 @@ export class ReflectionService implements Reflections {
     private workflows: Workflows,
     private reviews: Reviews,
     contextBuilder: ContextBuilder,
+    private limits = REFLECTION_LIMITS,
   ) {
     this.initialize = async () => {
       await state.migrate('reflections', [
@@ -802,6 +822,19 @@ export class ReflectionService implements Reflections {
     }));
     return {
       successStates: [lens ? 'complete' : 'approved'],
+      // A lens has one way forward and nothing to return to; only the wave loops.
+      ...(lens
+        ? {}
+        : {
+            limits: [
+              {
+                name: 'review_returns',
+                from: 'in_review',
+                actions: ['revise_synthesis', 'restart_lenses'],
+                max: this.limits.reviewReturns,
+              },
+            ],
+          }),
       assignments,
       describe: async (context) => {
         const row = lens
@@ -1338,7 +1371,8 @@ export class ReflectionService implements Reflections {
 export const reflectionsPlugin = {
   name: 'merv-reflections',
   inject: ['state', 'scope', 'artifacts', 'paper', 'workflows', 'reviews', 'contextBuilder'],
-  async apply(ctx: Context) {
+  Config: configuration,
+  async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
       const service = await createService(
         new ReflectionService(
@@ -1349,6 +1383,7 @@ export const reflectionsPlugin = {
           ctx.workflows,
           ctx.reviews,
           ctx.contextBuilder,
+          config.limits,
         ),
       );
       yield () => service.close();

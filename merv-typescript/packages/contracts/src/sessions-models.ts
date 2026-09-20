@@ -80,6 +80,8 @@ export type DispatchDecision =
   | 'settings_pending'
   | 'capacity_full'
   | 'retry_backoff'
+  | 'budget_exceeded'
+  | 'retries_exhausted'
   | 'no_candidates';
 export interface RunnerPresence extends RunnerHeartbeat {
   id: string;
@@ -166,6 +168,63 @@ export interface AgentObservation {
     totalCalls: number;
   };
   tokenAccounting: { kind: 'estimate'; method: string };
+}
+/** What the machine that launched a process says it spent. Merv cannot verify any of it. */
+export interface SessionUsageReport {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+  model?: string;
+}
+export interface UsageTotals {
+  sessions: number;
+  /** How many of `sessions` carry a runner report; the token and cost sums cover only these. */
+  reportedSessions: number;
+  /** Lease wall-clock, activation to close. A close may lag the death of the process. */
+  wallMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  costMicros: number;
+  toolCalls: number;
+  toolPayloadTokensEstimate: number;
+}
+/**
+ * A budget only pauses automatic dispatch; nothing running is stopped. Wall-clock is the
+ * dimension Merv measures itself. Cost and tokens trust whatever wrote the runner's report.
+ */
+export interface BudgetStatus {
+  /** The project id for the project budget, otherwise a workflow instance id. */
+  scopeId: string;
+  kind: 'project' | 'instance';
+  maxWallMs: number | null;
+  maxCostMicros: number | null;
+  maxTokens: number | null;
+  used: { wallMs: number; costMicros: number; tokens: number };
+  exceeded: ('wall' | 'cost' | 'tokens')[];
+  updatedAt: string;
+  updatedBy: string;
+}
+export interface UsageRollup {
+  scope:
+    | { kind: 'project'; projectId: string }
+    | {
+        kind: 'instance';
+        instanceId: string;
+        includeDependencies: boolean;
+        instanceCount: number;
+      };
+  totals: UsageTotals;
+  byWorkflow: (UsageTotals & { workflow: string })[];
+  /** The fifty instances with the most wall-clock. */
+  byInstance: (UsageTotals & { instanceId: string; workflow: string | null })[];
+  liveSessions: number;
+  budgets: BudgetStatus[];
+  accounting: {
+    wallClock: 'measured';
+    tokens: 'runner_reported';
+    since: string | null;
+    method: string;
+  };
 }
 export interface SessionsProjectStatus {
   agents?: AgentSummary[];
