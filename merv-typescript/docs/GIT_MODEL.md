@@ -76,6 +76,18 @@ Not in S2: every merge (S3), consolidation and publication changes (S4), the che
 
 **Deploying S2.** Deploy the server before any machine built from this release: a runner that advertises capabilities is refused by an older server's closed heartbeat schema. Bind the project with `code.local.bind`, then import its history with `merv code-import` (repeat it until `code.status`'s `store.tips` covers what work needs, and name main again so `main.stored` is true). From then on new Git work without `baseTaskId` is created on `task@6`/`experiment@9` and only machines that carry the `code.v2` driver take it; work already under way finishes on the version and in the repository it began with, so drain in-flight `task@3/4/5` and `experiment@6/7/8` work on the machines that hold it. To publish to GitHub, link the repository and turn write automation on; without that the mirror is `off` and nothing else changes.
 
+**Stage S3 is partly implemented: the base records and the server-side merge.** The resolution task, its rounds, provenance-aware review, system prerequisites and session-less admission are not, so automatic merging ships switched off (`code.repositories.autoMerge`, default false) and nothing changes for a deployment that does not set it.
+
+What shipped:
+
+- **`code_bases`** on SQLite and Postgres: one record per distinct set of accepted commits in a project, keyed by the sha256 of the sorted full commit ids, with the member list stored and compared on lookup. The plan (its two inputs and the engine) is frozen by trigger, the result is written once, and no record is deleted.
+- **The planner** (`packages/code/src/base-plan.ts`) is a pure function: the largest record inside the set leads, then whichever adds the most of what is missing, ties to the lower key; every merge joins exactly two records and every union on the way is a record of its own. An unresolved record is built on, never planned round; a quarantined one never is.
+- **The merge** (`packages/code/src/base-merge.ts`) runs `git merge-tree --write-tree` and `commit-tree` inside Code's own repository with one fixed identity and moment, so a merge repeated after a crash is the same commit. It executes no repository code. A conflict is an answer with its paths and Git's words; one side that already holds the other is the base as it stands. The ref `refs/merv/bases/<key>` is created, create-only, before the record says there is a result.
+- **Derivation.** A unit whose checkouts Code's driver prepares and whose dependencies were accepted with several commits derives `merged` once the record is resolved. Until then it shows `code_base_wait`, `code_merge_conflict`, `code_base_blocked` or `code_quarantined` (all 409, all uncounted at the offer), and the first unit to wait writes the record from the reconcile path, never from a read. A unit a runner's own repository prepares keeps `code_merge_required`.
+- **Work** runs one merge at a time per project, is picked up again after a crash, retries an infrastructure failure five times with backoff and then waits as `blocked_infra`.
+
+Not yet, and therefore the reason the switch is off: a conflict has nobody to resolve it (the one task per key with rounds), base jobs are not admitted against dispatch or budgets, base refs are not mirrored, and there are no operator tools for a record (`retry`, `suspend`, `cancel`, `quarantine`).
+
 ## The owner's decisions
 
 1. One branch per unit of work. `main` is consolidated, reviewed research: it moves only at consolidation, and no

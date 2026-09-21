@@ -6,8 +6,9 @@ import {
   type WorkflowSnapshot,
 } from '@merv/contracts';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
@@ -20,6 +21,8 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code/service';
+import { CodeRepositories } from '@merv/code/store/repository';
+import { CodeBaseService } from '../packages/code/src/bases.js';
 
 const oid = (char: string) => char.repeat(40);
 const repository = 'runner-repository';
@@ -523,3 +526,145 @@ for (const backend of backends) {
     },
   );
 }
+
+for (const backend of backends)
+  test(
+    `[${backend}] units waiting on the same two accepted commits get one merged base, and a conflict holds them visibly`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      // A real repository beside the fixture: the commits the dependencies are accepted with
+      // have to exist for the server to merge them.
+      const root = mkdtempSync(join(tmpdir(), 'merv-auto-merge-'));
+      const repositories = new CodeRepositories({
+        root: join(root, 'code'),
+        quotaBytes: 1024 * 1024 * 1024,
+        reservedFreeBytes: 1,
+      });
+      await repositories.open();
+      await repositories.ensure(f.project.id, repository, 'sha1');
+      const bare = repositories.paths(f.project.id).repository;
+      const work = join(root, 'work');
+      const git = (...args: string[]) =>
+        execFileSync('git', args, {
+          cwd: work,
+          encoding: 'utf8',
+          env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+        }).trim();
+      execFileSync('git', ['init', '-q', '-b', 'main', work]);
+      git('config', 'user.email', 'test@localhost');
+      git('config', 'user.name', 'Test');
+      for (const name of ['f', 'g']) writeFileSync(join(work, `${name}.txt`), 'base\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'base');
+      const commit = (branch: string, file: string, text: string) => {
+        git('checkout', '-q', '-B', branch, 'main');
+        writeFileSync(join(work, file), text);
+        git('commit', '-q', '-am', branch);
+        git('push', '-q', bare, `${branch}:refs/heads/${branch}`);
+        return git('rev-parse', 'HEAD');
+      };
+      const [a, b, c] = [
+        commit('a', 'f.txt', 'base\nA\n'),
+        commit('b', 'g.txt', 'base\nB\n'),
+        commit('c', 'f.txt', 'base\nC\n'),
+      ];
+      // The composition hands the units their base records; here the test is the composition.
+      const units = (
+        f.code as unknown as {
+          unitStore: {
+            bases?: CodeBaseService;
+            imported(tx: unknown, projectId: string): Promise<void>;
+          };
+        }
+      ).unitStore;
+      const bases = new CodeBaseService(
+        f.state,
+        repositories,
+        { changed: async (tx, projectId) => await units.imported(tx, projectId) },
+        true,
+      );
+      await bases.initialize();
+      units.bases = bases;
+      t.after(async () => {
+        await bases.close();
+        await repositories.close(1000);
+        rmSync(root, { recursive: true, force: true });
+      });
+
+      await f.bind(oid('a'));
+      await f.state.transaction(async (tx) => {
+        await tx.run(
+          'UPDATE code_projects SET store_json=? WHERE project_id=?',
+          JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: a }),
+          f.project.id,
+        );
+        for (const [index, head] of [a, b, c].entries())
+          await tx.run(
+            "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES (?,?,'actor:fixture',?,'import','hash','{}','completed',?,'now','now','refs_applied')",
+            `cop_import_${index}`,
+            f.project.id,
+            `import-${index}`,
+            JSON.stringify({ head }),
+          );
+      });
+      const [left, right, other] = [
+        await f.succeeded(a),
+        await f.succeeded(b),
+        await f.succeeded(c),
+      ];
+
+      // Three units on the same two dependencies: one record, one merge, one base for all.
+      const waiters = [];
+      for (let index = 0; index < 3; index++)
+        waiters.push(await f.declare([left.work, right.work], 'kept'));
+      for (const waiter of waiters)
+        assert.deepEqual(await f.published(waiter), [['code', 'code_base_wait', 'merge']]);
+      await assert.rejects(f.pin(waiters[0]!), { code: 'code_base_wait', status: 409 });
+      await bases.work(f.project.id);
+      const pins = [];
+      for (const waiter of waiters) {
+        assert.deepEqual(await f.published(waiter), [], 'the wait is lifted for every waiter');
+        pins.push(await f.pin(waiter));
+      }
+      assert.deepEqual(new Set(pins.map((pin) => pin.kind)), new Set(['merged']));
+      assert.equal(new Set(pins.map((pin) => pin.reference)).size, 1, 'the identical commit');
+      assert.deepEqual(
+        pins[0]!.sources.map((source) => source.unitId).sort(),
+        [left.work.id, right.work.id].sort(),
+      );
+      const parents = execFileSync(
+        'git',
+        ['--git-dir', bare, 'rev-list', '--parents', '-n', '1', pins[0]!.reference],
+        { encoding: 'utf8' },
+      )
+        .trim()
+        .split(' ')
+        .slice(1);
+      assert.deepEqual(parents.sort(), [a, b].sort());
+      const rows = await f.state.read(
+        async (sql) =>
+          await sql.all<{ attempts: number | string }>(
+            'SELECT attempts FROM code_bases WHERE project_id=?',
+            f.project.id,
+          ),
+      );
+      assert.deepEqual(
+        rows.map((row) => Number(row.attempts)),
+        [1],
+      );
+
+      // Two commits that change the same lines: the unit is held, and says why.
+      const clash = await f.declare([left.work, other.work], 'kept');
+      await bases.work(f.project.id);
+      assert.deepEqual(await f.published(clash), [['code', 'code_merge_conflict', 'merge']]);
+      const [blocker] = await f.workflows.blockers(f.admin, clash.id);
+      assert.match(blocker!.message, /f\.txt/);
+      await assert.rejects(f.pin(clash), { code: 'code_merge_conflict', status: 409 });
+
+      // A unit that names no Code driver is prepared by a runner's own repository, where
+      // the server merges nothing: it keeps the older answer.
+      const legacy = await f.declare([left.work, right.work]);
+      assert.deepEqual(await f.published(legacy), [['code', 'code_merge_required', 'merge']]);
+    },
+  );
