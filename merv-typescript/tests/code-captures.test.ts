@@ -382,13 +382,20 @@ test('Capture reads compose with an existing transaction and retain legacy final
     'A commit tree must not be guessed onto a legacy final report',
   );
   assert.equal(Object.hasOwn(result, 'parentOid'), false);
+  assert.equal(result.attachedBaseOid, attachment.baseOid);
 });
 
 test('A final capture of a session halted before any host attached is failed, not pending forever', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer(false);
   const ref = { kind: 'session-final' as const, sessionId: session.id };
-  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
+  const unattached = await f.app.ctx.code.capture(f.reader, ref);
+  assert.equal(unattached.status, 'pending');
+  assert.equal(
+    Object.hasOwn(unattached, 'attachedBaseOid'),
+    false,
+    'A session no runner attached worked from no commit',
+  );
   await f.app.ctx.sessions.halt(f.source, { sessionId: session.id });
   assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'failed');
 });

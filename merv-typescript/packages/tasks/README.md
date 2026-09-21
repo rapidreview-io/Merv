@@ -43,8 +43,9 @@ See [dependency behavior and parity](../../docs/WORK_ITEM_DEPENDENCIES.md).
 
 `task.create` with `workspace: "git"` gives the producer a private Git checkout
 and lets it deliver a commit in place of, or beside, files; the reviewer's leased
-read-only checkout is pinned to that commit, and only that leased review can pass
-the task. `baseTaskId` bases the checkout on another Git task's accepted commit.
+read-only checkout is pinned to that commit, and only that leased review, once its
+runner has attached at that commit, can pass the task. An interactive claim of such
+a review can never pass it and shuts review workers out until `task.reissue_review`. `baseTaskId` bases the checkout on another Git task's accepted commit.
 Code is bound optionally: only Git tasks ask for it. See
 [delivering a commit](../../docs/STRUCTURED_TASK_EVIDENCE.md#delivering-a-commit).
 

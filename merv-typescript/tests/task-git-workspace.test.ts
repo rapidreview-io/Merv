@@ -596,8 +596,20 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
   assert.equal(reissued.workflow.revision, delivered.workflow.revision + 1);
   assert.deepEqual(reissued.deliveryCode, delivered.deliveryCode);
 
-  // An interactive reviewer has no checkout: it may return the task but never pass it.
+  // Reviews admits an interactive claim without asking Tasks, so the guidance warns beforehand.
+  const guidance = await f.workflows.evaluate(f.reviewer, task.id);
+  assert.match(
+    guidance.actions.find((action) => action.action === 'start_review')!.instruction,
+    /only a leased review worker.*task\.reissue_review/,
+  );
+  assert.match(
+    (await f.workflows.assignment(f.reviewer, task.id)).brief,
+    /only a leased review worker.*task\.reissue_review/,
+  );
+  // An interactive reviewer has no checkout: it may return the task but never pass it, and its
+  // claim shuts every leased reviewer out.
   const claimed = await f.reviews.start(f.reviewer, reissued.reviewId!);
+  await assert.rejects(async () => await f.leaseReview(reissued), { code: 'review_unavailable' });
   assert.ok(claimed.artifactIds.includes(delivered.deliveryCodeArtifactId!));
   await assert.rejects(async () => await f.verdict(f.reviewer, reissued, 'pass'), {
     code: 'task_commit_unfetched',
@@ -643,6 +655,11 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
       }),
     { code: 'workspace_base_conflict' },
   );
+  // Holding the lease is not enough: until its runner attaches the checkout at the delivered
+  // commit, nothing shows this reviewer could have fetched what it would accept.
+  await assert.rejects(async () => await f.verdict(review.worker, again, 'pass'), {
+    code: 'task_commit_unfetched',
+  });
   await f.sessions.attach(f.reviewer, { ...review.control, workspace: review.checkout(oid('d')) });
 
   // Without Code the stored record still reads, but no verdict and no assignment is admitted.

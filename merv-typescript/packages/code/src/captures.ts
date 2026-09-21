@@ -45,6 +45,9 @@ export class CodeCaptureReader {
               : 'failed',
         provenance: observation.provenance,
         workspace: observation.workspace?.result ?? null,
+        ...(observation.workspace
+          ? { attachedBaseOid: observation.workspace.attachment.baseOid }
+          : {}),
         observedAt: observation.observedAt,
         eventId: observation.eventId,
       };

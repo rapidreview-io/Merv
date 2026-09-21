@@ -179,6 +179,12 @@ const GIT_DELIVERY =
   'This is a Git task: work in the private Git checkout prepared for this assignment. Record the work with code.commit (expectedHead is the HEAD of your local checkout), wait until code.operation reports it succeeded, then pass that operation’s commandId to task.submit_delivery. The commit must be your own, made in this assignment: if an earlier worker committed but did not deliver, commit again, which succeeds even when nothing changed. artifactIds may be empty, and a met confirmation that cites no evidenceIds is backed by the delivered commit.';
 const GIT_REVIEW =
   'This is a Git task: the read-only checkout prepared for this assignment is pinned to the exact delivered commit named by the ‘Delivered commit’ record in your evidence; do not substitute another branch or a newer head. Cite that record’s artifact id in the findings the commit supports. Only this leased review, working in that checkout, can pass the task.';
+/**
+ * Reviews admits an interactive claim without asking Tasks, and a claimed review can no longer be
+ * leased. The reviewer is told before claiming, because afterwards only a reissue frees the task.
+ */
+const GIT_CLAIM =
+  'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it. Claim it only as that worker. A claim made without a lease can return or fail the task but never pass it, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
 const normalized = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
@@ -738,7 +744,8 @@ DROP TABLE task_leases_backup;`,
           states: ['in_review'],
           tool: 'review.start',
           instruction:
-            'Claim this independent review, then refresh its guidance and read the context for your new assignment.',
+            'Claim this independent review, then refresh its guidance and read the context for your new assignment.' +
+            (taskWorkspace(version) === 'none' ? '' : ` ${GIT_CLAIM}`),
           arguments: async (context) => ({ reviewId: (await this.currentReview(context)).id }),
           check: async (context) => {
             const review = await this.currentReview(context);
@@ -825,8 +832,8 @@ DROP TABLE task_leases_backup;`,
     // Only a proposed verdict asks Code: the committing transition always carries its input, so
     // this is re-checked there, while guidance read with Code unloaded still answers.
     if (context.input && taskWorkspace(context.snapshot.version) !== 'none') {
-      await this.reviewCommit(context.caller, context.snapshot, review, context.tx);
-      if (context.input.verdict === 'pass') await this.checkoutReviewer(context, review);
+      const headOid = await this.reviewCommit(context.caller, context.snapshot, review, context.tx);
+      if (context.input.verdict === 'pass') await this.checkoutReviewer(context, review, headOid);
     }
     if (context.input && context.transition) {
       const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
@@ -884,19 +891,21 @@ DROP TABLE task_leases_backup;`,
   }
 
   /**
-   * A Git task passes only from the leased reviewer of this review. Its runner prepared the
-   * read-only checkout at the frozen delivered commit and refuses to launch without the objects,
-   * so an actor with no checkout at all — an interactive reviewer — may return or fail the task
-   * but cannot accept a commit it could not have fetched.
+   * A Git task passes only from the leased reviewer of this review, and only once its runner has
+   * attached the read-only checkout at the delivered commit. Sessions fixes that attachment and
+   * refuses any other base, and a runner without the objects never attaches, so the attachment is
+   * the server-side fact that the reviewer could fetch what it accepts. An actor with no checkout
+   * at all — an interactive reviewer — may return or fail the task but cannot pass it.
    */
   private async checkoutReviewer(
     { caller, snapshot, tx }: WorkflowCheckContext,
     review: ReviewRequest,
+    headOid: string,
   ): Promise<void> {
     check(
       caller.session,
       'task_commit_unfetched',
-      'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task',
+      'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Return or fail it, or have the review replaced with task.reissue_review so a leased worker can claim it',
       409,
     );
     const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
@@ -904,6 +913,17 @@ DROP TABLE task_leases_backup;`,
       lease.purpose === 'review' && lease.review_id === review.id,
       'stale_lease',
       'This worker does not hold the lease of the current review',
+      409,
+    );
+    const own = await this.requireCode().capture(
+      caller,
+      { kind: 'session-final', sessionId: caller.session.id },
+      tx,
+    );
+    check(
+      own.attachedBaseOid === headOid,
+      'task_commit_unfetched',
+      'This review’s runner has not attached a checkout of the delivered commit',
       409,
     );
   }
@@ -1498,15 +1518,15 @@ DROP TABLE task_leases_backup;`,
     const needsClaim = purpose === 'review' && review?.status === 'requested';
     const assisting =
       purpose === 'work' && !(await this.isProducer(caller, row, task.workflow, tx));
+    const git = taskWorkspace(task.workflow.version) !== 'none';
     const instruction = assisting
       ? 'Support the assigned producer using this task context and save useful checkpoints. Only the assigned producer may submit the delivery; return your evidence to that producer.'
       : needsClaim
-        ? 'Claim the review with review.start, then refresh workflow.assignment for your current claim before assessing or submitting. Reading or beginning this assignment does not claim the review.'
+        ? 'Claim the review with review.start, then refresh workflow.assignment for your current claim before assessing or submitting. Reading or beginning this assignment does not claim the review.' +
+          (git ? ` ${GIT_CLAIM}` : '')
         : type.definition.recipe.outputInstructions +
           // A brief the caller supplied never carries these words, so the assignment always does.
-          (taskWorkspace(task.workflow.version) === 'none'
-            ? ''
-            : ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}`);
+          (git ? ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` : '');
     return {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,

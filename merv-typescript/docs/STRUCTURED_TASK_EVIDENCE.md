@@ -102,12 +102,23 @@ building later work on the delivered commit.
   re-reads the receipt from Code and requires it to match the sealed delivery and the
   review to pin the rendered record. The comparison uses the stored producing
   revision, so `task.reissue_review` does not strand the task.
-- **Only that leased review can pass a Git task.** Its runner refuses to launch
-  without the commit's objects, so a verdict of `pass` from an actor with no checkout
-  — an interactive reviewer — is refused with `task_commit_unfetched`. Such a reviewer
-  may still return or fail the task. Merv does not itself fetch Git objects: this
-  rests on the runner's launch check, and the review must run on the machine that
-  holds the objects.
+- **Only that leased review, attached at the delivered commit, can pass a Git task.**
+  A verdict of `pass` must come from the session holding the current review lease, and
+  Sessions must already hold that session's workspace attachment with a base equal to
+  `deliveryCode.headOid`. Sessions refuses any other base, and a runner without the
+  commit's objects fails at launch and never attaches, so the attachment is the
+  server-side record that the reviewer's runner held the commit. Anything else —
+  an interactive reviewer, or a leased one whose runner has not attached — is refused
+  with `task_commit_unfetched`. Merv does not itself fetch or verify Git objects: the
+  attachment is a source-authenticated runner report, and the review must run on the
+  machine that holds the objects.
+- **Do not claim a Git task's review interactively.** Reviews admits `review.start`
+  from any eligible reviewer without asking Tasks. Such a reviewer may still return
+  or fail the task, but can never pass it, and once the review is claimed no review
+  worker can lease it (`review_unavailable`). The `start_review` guidance and the
+  reviewer assignment say so before the claim. If it has happened, the producer or
+  an admin replaces the review with `task.reissue_review`; the fresh review is
+  unclaimed, pins the same delivered commit, and can be leased.
 
 | Code                     | Meaning                                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------------------ |
@@ -118,7 +129,7 @@ building later work on the delivered commit.
 | `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.         |
 | `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |
 | `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery. |
-| `task_commit_unfetched`  | A `pass` that does not come from the leased review pinned to the delivered commit.         |
+| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; reissue if claimed.  |
 | `task_base_unavailable`  | A based task's prerequisite has not been accepted with a delivered commit.                 |
 
 With Code unloaded, Git task records stay readable (`deliveryCode` is stored data)
