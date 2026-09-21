@@ -430,11 +430,16 @@ for (const backend of backends)
         f.state.transaction(
           async (tx) => await tx.run('UPDATE wf_limit_grants SET additional=additional+100'),
         ),
-        /Workflow limit grants are immutable/,
+        // PostgreSQL's trigger refuses it too, but State never forwards a server's own words.
+        backend === 'postgres'
+          ? { code: 'state_constraint' }
+          : /Workflow limit grants are immutable/,
       );
       await assert.rejects(
         f.state.transaction(async (tx) => await tx.run('DELETE FROM wf_limit_grants')),
-        /Workflow limit grants are retained/,
+        backend === 'postgres'
+          ? { code: 'state_constraint' }
+          : /Workflow limit grants are retained/,
       );
 
       await f.move(instance.id, 'approve');
