@@ -76,6 +76,18 @@
       "published": true
     },
     {
+      "name": "task",
+      "version": 3,
+      "fingerprint": "60efdec2a9c36741059b4745b172b9259f04e1ce9bdf815e27576a91c3ee3f11",
+      "published": false
+    },
+    {
+      "name": "task",
+      "version": 4,
+      "fingerprint": "5019e16922a875da264d8138383c2a9928daf9592cc0ade70ec7540592da7444",
+      "published": false
+    },
+    {
       "name": "experiment",
       "version": 3,
       "fingerprint": "785e5dd01afc81371c6ac71d34dfbdffc1add648d3f29d09ad0269bdf9689dc8",
@@ -346,6 +358,34 @@
       "state": "in_review",
       "fingerprint": "aa05a6e3d358fb2db8c5aa613c0c3ca47083421f28c20c9623e6f0c0f73e60a8",
       "published": true
+    },
+    {
+      "workflow": "task",
+      "version": 3,
+      "state": "in_progress",
+      "fingerprint": "7e456899b88024c866aa14585ac532aa2c8a0b70bf6ba9f7bc78c9d77b5691b3",
+      "published": false
+    },
+    {
+      "workflow": "task",
+      "version": 3,
+      "state": "in_review",
+      "fingerprint": "4941934dd76ac21323999df84e90e7ac4bfa9b6f42589d20ec51b02225800f63",
+      "published": false
+    },
+    {
+      "workflow": "task",
+      "version": 4,
+      "state": "in_progress",
+      "fingerprint": "ffba0d266dcc81508c7e9af90196952c947227a12f377321a53ba8b38d797107",
+      "published": false
+    },
+    {
+      "workflow": "task",
+      "version": 4,
+      "state": "in_review",
+      "fingerprint": "4941934dd76ac21323999df84e90e7ac4bfa9b6f42589d20ec51b02225800f63",
+      "published": false
     },
     {
       "workflow": "experiment",

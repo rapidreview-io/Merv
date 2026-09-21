@@ -8,8 +8,20 @@ const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => (
 const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
 const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 
-/** Fixed work protocols. Completion readiness and context rendering never mint grants. */
-export function taskExecutionPolicy(purpose: 'work' | 'review'): WorkflowExecutionPolicy {
+/** Where a task version's private Git checkout starts, or 'none' for the original scratch task. */
+export type TaskWorkspace = 'none' | 'central' | 'reference';
+
+/**
+ * Fixed work protocols. Completion readiness and context rendering never mint grants.
+ *
+ * A published execution policy is immutable, so the workspace belongs to the task's workflow
+ * version: a scratch version declares nothing and stays byte-identical, and a Git version adds
+ * the checkout and, for the producer alone, the commit tools a workspace never grants by itself.
+ */
+export function taskExecutionPolicy(
+  purpose: 'work' | 'review',
+  workspace: TaskWorkspace = 'none',
+): WorkflowExecutionPolicy {
   const instance = { instanceId: target('instanceId') };
   const task = { taskId: target('instanceId') };
   const revision = { expectedRevision: target('revision') };
@@ -21,6 +33,28 @@ export function taskExecutionPolicy(purpose: 'work' | 'review'): WorkflowExecuti
   };
   return {
     readOnly: purpose === 'review',
+    ...(workspace === 'none'
+      ? {}
+      : {
+          workspace:
+            purpose === 'work'
+              ? {
+                  mode: 'persistent' as const,
+                  namespace: 'tasks',
+                  base:
+                    workspace === 'central' ? ('central' as const) : ('reference:base' as const),
+                  perBase: false,
+                  retain: true,
+                  advancesCentral: false,
+                }
+              : {
+                  // The reviewer inspects exactly the delivered commit and keeps nothing.
+                  mode: 'ephemeral' as const,
+                  namespace: 'task-reviews',
+                  base: 'reference:code' as const,
+                  retain: false,
+                },
+        }),
     tools: [
       grant('workflow.status_and_next', instance, {
         instanceId: { kind: 'oneOf', name: 'dependencies' },
@@ -40,6 +74,9 @@ export function taskExecutionPolicy(purpose: 'work' | 'review'): WorkflowExecuti
             grant('artifact.create', {}),
             grant('task.submit_delivery', { taskId: reference('producerTaskId'), ...revision }),
             grant('task.mark_failed', { ...task, ...revision }),
+            ...(workspace === 'none'
+              ? []
+              : [grant('code.commit', {}), grant('code.operation', {})]),
           ]
         : [
             grant('review.start', { reviewId: reference('reviewId') }),

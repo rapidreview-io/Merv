@@ -1,9 +1,14 @@
 import { visible, check, type TaskConfirmation } from '@merv/contracts';
+import type { CodeCapture } from '@merv/code/types';
 
 export const acceptanceChecks = (checks: string[]) =>
   checks.map((text, index) => ({ number: index + 1, text }));
 
-export function renderBrief(input: { title: string; goal: string; checks: string[] }): string {
+/** `git` adds the one sentence a Git task's producer needs; every other brief stays byte-identical. */
+export function renderBrief(
+  input: { title: string; goal: string; checks: string[] },
+  git = false,
+): string {
   return [
     `# ${input.title}`,
     '',
@@ -20,7 +25,10 @@ export function renderBrief(input: { title: string; goal: string; checks: string
     'Retain evidence as artifacts. In task.submit_delivery, supply one confirmation per numbered check. ' +
       'Each confirmation records checkNumber, status (met or not_met), evidenceIds and notes explaining what you checked and found. ' +
       'A met claim requires evidence from the submitted artifactIds. Report unmet checks honestly. ' +
-      'The server validates coverage and evidence references; an independent reviewer determines whether the goal was achieved.',
+      'The server validates coverage and evidence references; an independent reviewer determines whether the goal was achieved.' +
+      (git
+        ? ' This is a Git task: work in the private Git checkout provided, record the work with code.commit, and deliver that operation’s commandId in task.submit_delivery; artifactIds may then be empty, and a met claim that cites no evidenceIds is backed by the delivered commit.'
+        : ''),
     '',
   ].join('\n');
 }
@@ -30,6 +38,8 @@ export function validateConfirmations(
   value: unknown,
   checks: string[],
   artifactIds: string[],
+  /** A Git task always delivers a commit, which backs a met claim that cites no file. */
+  commit = false,
 ): TaskConfirmation[] {
   check(
     Array.isArray(value),
@@ -75,7 +85,7 @@ export function validateConfirmations(
       `Check ${item.checkNumber} must refer only to distinct submitted artifact IDs`,
     );
     check(
-      item.status !== 'met' || item.evidenceIds.length > 0,
+      item.status !== 'met' || commit || item.evidenceIds.length > 0,
       'invalid_confirmations',
       `Check ${item.checkNumber} claims met and requires retained evidence`,
     );
@@ -89,6 +99,36 @@ export function validateConfirmations(
       .join(', ')}`,
   );
   return structuredClone(value as TaskConfirmation[]).sort((a, b) => a.checkNumber - b.checkNumber);
+}
+
+/**
+ * The record of a delivered commit that the review pins. It is deterministic, and it prints the
+ * receipt in full because the task record keeps only the identifiers a later check compares.
+ */
+export function renderDeliveredCommit(
+  title: string,
+  capture: Pick<CodeCapture, 'ref' | 'provenance' | 'parentOid'> & {
+    workspace: NonNullable<CodeCapture['workspace']>;
+  },
+): string {
+  const { workspace, provenance } = capture;
+  return [
+    `# Delivered commit: ${title}`,
+    '',
+    `- Commit: ${workspace.headOid}`,
+    `- Tree: ${workspace.treeOid ?? 'not recorded'}`,
+    `- Parent: ${capture.parentOid ?? 'not recorded'}`,
+    `- Base: ${workspace.baseOid}`,
+    `- Repository: ${workspace.repositoryId}`,
+    `- Workspace: ${workspace.workspaceId}`,
+    `- Branch: ${workspace.branch ?? 'detached'}`,
+    `- Code operation: ${capture.ref.kind === 'code-commit' ? capture.ref.commandId : 'none'}`,
+    `- Producing session: ${provenance.sessionId}`,
+    `- Changes: ${JSON.stringify(workspace.stats)}`,
+    '',
+    'The reviewer’s read-only checkout is pinned to exactly this commit. It exists only on a machine whose runner repository holds these objects.',
+    '',
+  ].join('\n');
 }
 
 export function renderAssessment(checks: string[], confirmations: TaskConfirmation[]): string {
