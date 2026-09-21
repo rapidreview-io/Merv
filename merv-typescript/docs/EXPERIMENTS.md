@@ -10,8 +10,11 @@ Completion does not automatically change a claim's status or confidence.
 
 The provider injects **State, Scope, Artifacts, Workflows, Reviews, Context Builder,
 Claims, Code and Paper**. It owns experiment/attempt/evidence/submission records, the
-managed `experiment@1` scratch and explicit `experiment@2` Git programs, four
-context recipes and its Reviews submission route.
+managed `experiment` programs, four context recipes and its Reviews submission
+route. New experiments start on version 5 (scratch) or 6 (explicit Git), the
+versions whose design carries a feasibility statement. Versions 1-4 stay
+registered, unchanged, for the experiments already on them, which finish under
+the rules they started with.
 Workflows continues to own transitions, guidance and execution authority;
 Reviews owns independent claims and verdicts; Artifacts owns immutable file
 metadata and bytes. Claims supplies the referenced research statements.
@@ -81,13 +84,18 @@ Owner tools expose `submit_design`, `submit_results`, `retry_running`, `abandon`
 and `mark_failed`. Review transitions are applied only through `review.submit`
 with the exact review, active claim and expected workflow revision.
 
-| Review outcome                    | Required return input            | Result                                                                      |
-| --------------------------------- | -------------------------------- | --------------------------------------------------------------------------- |
-| Design `pass`                     | Omit `returnTo`                  | Enter running; pin that exact design submission and review                  |
-| Design `needs_changes` or `fail`  | Omit `returnTo` or use `planned` | New planning attempt; old attempt and assessment remain retained            |
-| Attempt `pass`                    | Omit `returnTo`                  | Complete the experiment                                                     |
-| Attempt `needs_changes` or `fail` | Explicit `returnTo: "running"`   | Repair execution/reporting in the same attempt under the same approved plan |
-| Attempt `needs_changes` or `fail` | Explicit `returnTo: "planned"`   | New attempt requiring a new design and approval                             |
+| Review outcome                    | Required return input            | Result                                                                                      |
+| --------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| Design `pass`                     | Omit `returnTo`                  | Enter running; pin that exact design submission (plan and feasibility statement) and review |
+| Design `needs_changes` or `fail`  | Omit `returnTo` or use `planned` | New planning attempt; old attempt and assessment remain retained                            |
+| Attempt `pass`                    | Omit `returnTo`                  | Complete the experiment                                                                     |
+| Attempt `needs_changes` or `fail` | Explicit `returnTo: "running"`   | Repair execution/reporting in the same attempt under the same approved plan                 |
+| Attempt `needs_changes` or `fail` | Explicit `returnTo: "planned"`   | New attempt requiring a new design and approval                                             |
+
+A design review on version 5 or 6 has four criteria, and criterion 4, the
+accuracy of the feasibility statement, is required: a `pass` needs it `met` with
+the statement artifact among its cited evidence, never `waived`. Versions 1-4
+keep three criteria and the ordinary pass rule.
 
 A negative review never implicitly terminally fails the experiment.
 `abandon` and `mark_failed` are separate owner/operator actions from any
@@ -113,18 +121,67 @@ start times remain attributed to their original attempts.
 
 Create retained artifacts first, then attach their IDs. The role rules are:
 
-| Role      | Writable stage | Submission requirement                                                                                 |
-| --------- | -------------- | ------------------------------------------------------------------------------------------------------ |
-| `plan`    | planned        | Exactly one selected plan, with nonempty Summary, Objective & hypothesis, Evaluation sections          |
-| `result`  | running        | At least one selected result; declared finite JSON or explicitly qualitative text                      |
-| `report`  | running        | Exactly one selected report, with nonempty Summary, Results, Deviations from plan, Conclusion sections |
-| `exhibit` | System only    | Generated and pinned when a submitted result declares JSON                                             |
+| Role          | Writable stage               | Submission requirement                                                                                 |
+| ------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `plan`        | planned                      | Exactly one selected plan, with nonempty Summary, Objective & hypothesis, Evaluation sections          |
+| `feasibility` | planned, version 5 and later | Exactly one selected JSON statement whose own figures show no shortfall, absent dependency or blocker  |
+| `result`      | running                      | At least one selected result; declared finite JSON or explicitly qualitative text                      |
+| `report`      | running                      | Exactly one selected report, with nonempty Summary, Results, Deviations from plan, Conclusion sections |
+| `exhibit`     | System only                  | Generated and pinned when a submitted result declares JSON                                             |
 
 Each input role accepts nonempty valid UTF-8 at most **16,000 bytes**. Logical
 paths are bounded relative labels: no absolute paths, traversal, empty segments,
 backslashes or URL syntax. They do not direct filesystem writes. Role and path
 form the replaceable slot within an attempt. Public attachment is refused during
 review and after termination.
+
+### Feasibility statement
+
+A design that cannot be run should be stopped before it is reviewed for
+anything else. In scenario run 01 the design review returned a plan four times
+on feasibility alone, starting from "the entire 973-receipt corpus is smaller
+than every required training arm" (`dev_docs/scenario-runs/01/report.md:163`);
+the facts that would have settled it were cheap to state while planning. From
+program version 5 the planner therefore attaches one JSON artifact as role
+`feasibility` beside the plan:
+
+```json
+{
+  "formatVersion": 1,
+  "resources": [
+    {
+      "kind": "data",
+      "name": "receipt corpus",
+      "unit": "receipts",
+      "required": 900,
+      "available": 973,
+      "basis": "Row count of the retained corpus inventory art_…"
+    }
+  ],
+  "dependencies": [
+    { "name": "base checkpoint", "present": true, "basis": "Model inventory art_…" }
+  ],
+  "blockers": []
+}
+```
+
+`kind` is `data`, `compute` or `time`; at least one `data` resource is stated;
+quantities are finite and non-negative; unknown keys are refused. The shape is
+checked at attachment (`invalid_experiment_evidence`) and again at submission.
+`submit_design` then applies the statement's own arithmetic: any resource with
+`available` below `required`, any dependency with `present: false` and any
+listed blocker refuses the submission with `experiment_infeasible` (409) and
+names each shortfall; `workflow.status_and_next` shows the same blocker. The way
+forward is a smaller design or ending the experiment with the reason.
+
+The server does not measure anything, so an overstated figure or an omitted
+requirement passes this check. That is what the required review criterion is
+for: the statement is pinned into the design review, the reviewer recomputes it
+from the records each `basis` names and looks for what it leaves out, and a
+passing criterion 4 finding must cite the statement (`feasibility_not_cited`
+otherwise). A successor planner inherits the statement with the plan, and the
+approved statement travels with the approved plan into execution and the
+results review.
 
 Draft plan/report sections may be unfinished at attachment. Declared JSON
 results are parsed immediately, and any plan/report images must already
@@ -183,7 +240,7 @@ metadata-only; building a context packet reads its pinned inputs deliberately.
 The program owns four recipes: `experiment.design`,
 `experiment.design_review`, `experiment.execute`, and
 `experiment.attempt_review`. These are independent of Tasks' existing
-`experiment.plan@1` recipe. Packets include experiment metadata, linked claims,
+`experiment.plan@2` recipe. Packets include experiment metadata, linked claims,
 the exact approved plan where applicable, numbered review criteria, selected
 evidence, interruption feedback and retained rejected assessments.
 
@@ -246,10 +303,10 @@ claims.
 
 ## Explicit Git execution
 
-Omitting `workspace`, or selecting `"none"`, retains `experiment@1` and its
-original scratch policy. Omitted input stays absent in legacy command hashes;
+Omitting `workspace`, or selecting `"none"`, selects the scratch program
+(version 5; versions 1 and 3 are its earlier registrations). Omitted input stays absent in legacy command hashes;
 existing records, submissions and frozen contexts are not rewritten. Creating
-with `workspace: "git"` selects version 2. Planning/design review remain scratch;
+with `workspace: "git"` selects the Git program (version 6; earlier 2 and 4). Planning/design review remain scratch;
 running uses a retained private persistent checkout, and attempt review uses an
 ephemeral read-only checkout based on an exact captured commit.
 

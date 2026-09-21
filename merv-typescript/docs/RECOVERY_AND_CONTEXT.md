@@ -21,16 +21,18 @@ Recovery changes the review from `started` to `requested`, clears its current re
 
 ## Context formulas belong to task types
 
-| Type                   | Required context                                              | Output                                       |
-| ---------------------- | ------------------------------------------------------------- | -------------------------------------------- |
-| `task.work@1`          | Authoritative task and pinned brief                           | Evidence-backed task delivery                |
-| `experiment.plan@1`    | Task, brief, `research`, `constraints`                        | Experiment plan submitted for review         |
-| `project.reflection@1` | Task, brief, `experiments`, `projectKnowledge`                | Reflection on the explicitly selected corpus |
-| `task.review@1`        | Task, claimed assessment, pinned evidence and task background | Independent verdict                          |
+| Type                   | Required context                                              | Output                                                             |
+| ---------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `task.work@1`          | Authoritative task and pinned brief                           | Evidence-backed task delivery                                      |
+| `experiment.plan@2`    | Task, brief, `research`, `constraints`                        | Experiment plan, with its feasibility stated, submitted for review |
+| `project.reflection@1` | Task, brief, `experiments`, `projectKnowledge`                | Reflection on the explicitly selected corpus                       |
+| `task.review@1`        | Task, claimed assessment, pinned evidence and task background | Independent verdict                                                |
 
 `previousReflection` is optional for reflection. Relevant revision feedback, saved checkpoints and checkpoint evidence are optional background where included by the recipe. Review recovery cause is also retained in its required assessment record. Context Builder never guesses which experiments or papers to select.
 
 Create planning/reflection work through `task.create`, supplying `type`, optional `typeVersion` (default 1), and `contextInputs`, a mapping from the named recipe sections to immutable artifact IDs. Plain tasks default to `task.work@1`. Review context is selected by the existing task's review assignment; it is not a second manually created task.
+
+New `experiment.plan` tasks start on version 2. Merv appends one feasibility check to their checks and rendered brief — what the plan requires against what exists, every dependency and no known blocker — and names it in the delivery review's `requiredCriteria`, so that review cannot waive it. A caller's own `briefId` must contain the check. `experiment.plan@1` stays registered for the tasks already on it, and a new task asking for it is refused with `task_type_unavailable`. The experiment program's own recipes (`experiment.design`, `experiment.design_review`, `experiment.execute`, `experiment.attempt_review`) are at version 7, which says when a feasibility statement and its required criterion apply.
 
 ```json
 {

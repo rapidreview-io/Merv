@@ -50,7 +50,7 @@ import {
 } from '@merv/contracts';
 
 import { taskExecutionPolicy } from './execution-policy.js';
-import { TASK_TYPES, RESERVED_CONTEXT_INPUTS } from './definitions.js';
+import { TASK_TYPES, TYPE_REQUIRED_CHECKS, RESERVED_CONTEXT_INPUTS } from './definitions.js';
 import {
   acceptanceChecks,
   renderBrief,
@@ -620,7 +620,7 @@ DROP TABLE task_leases_backup;`,
           transitions: ['accept', 'revise', 'fail_review'],
           tool: 'review.submit',
           instruction:
-            'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. For formatVersion 2, include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
+            'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. For formatVersion 2, include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
           requiredInput: async (context) =>
             (await this.currentReview(context)).formatVersion === 2
               ? ['verdict', 'notes', 'synopsis', 'findings']
@@ -870,6 +870,15 @@ DROP TABLE task_leases_backup;`,
           'An active work task type/version is required',
           409,
         );
+        // An older version stays registered so its tasks still build context, but a new task
+        // may not choose it to escape the check its type has since made required.
+        const required = TYPE_REQUIRED_CHECKS[typeName];
+        check(
+          !required || typeVersion >= required.since,
+          'task_type_unavailable',
+          `New ${typeName} tasks start on version ${required?.since} or later`,
+          409,
+        );
         const contextInputs = input.contextInputs ?? {};
         check(
           contextInputs && typeof contextInputs === 'object' && !Array.isArray(contextInputs),
@@ -916,13 +925,21 @@ DROP TABLE task_leases_backup;`,
           'invalid_checks',
           'Done-when checks must be distinct',
         );
+        // The type's required checks are the server's, so a caller cannot leave them out; one the
+        // caller already wrote is kept where they put it.
+        const checks = [
+          ...input.checks,
+          ...(required?.checks ?? []).filter(
+            (item) => !input.checks.some((own) => normalized(own) === normalized(item)),
+          ),
+        ];
         const brief =
           input.briefId === undefined
             ? await this.artifacts.create(
                 caller,
                 {
                   title: clip(`Task brief: ${input.title}`, 300),
-                  content: renderBrief(input),
+                  content: renderBrief({ ...input, checks }),
                 },
                 tx,
               )
@@ -953,7 +970,7 @@ DROP TABLE task_leases_backup;`,
         const text = normalized(document.content);
         check(
           text.includes(normalized(input.goal)) &&
-            input.checks.every((item) => text.includes(normalized(item))),
+            checks.every((item) => text.includes(normalized(item))),
           'invalid_brief',
           'The pinned brief must contain the task goal and every Done-when check',
         );
@@ -969,7 +986,7 @@ DROP TABLE task_leases_backup;`,
             data: {
               title: input.title,
               goal: input.goal,
-              checks: input.checks,
+              checks,
               producerId: caller.actorId,
               briefId: brief.id,
               evidenceVersion: 2,
@@ -983,7 +1000,7 @@ DROP TABLE task_leases_backup;`,
           caller.projectId,
           input.title,
           input.goal,
-          JSON.stringify(input.checks),
+          JSON.stringify(checks),
           caller.actorId,
           brief.id,
           now(),
@@ -1765,6 +1782,15 @@ DROP TABLE task_leases_backup;`,
           },
           tx,
         );
+        // The checks a task type requires are the ones its review may not waive. They are found
+        // by their text, because the caller may have written one of them anywhere in the list.
+        const required = TYPE_REQUIRED_CHECKS[row.type_name];
+        const requiredCriteria =
+          required && row.type_version >= required.since && row.evidence_version === 2
+            ? required.checks
+                .map((item) => checks.findIndex((own) => normalized(own) === normalized(item)) + 1)
+                .filter((number) => number > 0)
+            : [];
         const review = await this.reviews.request(
           caller,
           {
@@ -1784,6 +1810,7 @@ DROP TABLE task_leases_backup;`,
             artifactIds: [row.brief_id, ...deliveryIds],
             criteria: checks,
             ...(row.evidence_version === 2 ? { formatVersion: 2 as const } : {}),
+            ...(requiredCriteria.length ? { requiredCriteria } : {}),
             requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
           },
           tx,

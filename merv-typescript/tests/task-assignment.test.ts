@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import type { Caller, TaskCreate } from '@merv/contracts';
 import { createApp } from '../src/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-assignment-'));
@@ -343,6 +344,95 @@ test('unavailable task recipes block begin while task reads and explicit closure
     await f.app.ctx.tasks.registerType(type);
     const restored = await f.begin(f.producer.caller, task.id);
     assert.equal(restored.context!.type, type.name);
+  } finally {
+    await f.close();
+  }
+});
+
+test('an experiment plan task carries a feasibility check its delivery review cannot waive', async () => {
+  const f = await fixture();
+  try {
+    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']!.checks[0]!;
+    const source = async (title: string) =>
+      (await f.app.ctx.artifacts.create(f.producer.caller, { title, content: `${title}.` })).id;
+    const contextInputs = {
+      research: [await source('Prior work')],
+      constraints: [await source('Constraints')],
+    };
+    const task = await f.create({ type: 'experiment.plan', contextInputs });
+    assert.equal(task.typeVersion, 2);
+    assert.deepEqual(task.checks, ['Two plus three equals five.', feasible]);
+    const brief = await f.app.ctx.artifacts.read(f.producer.caller, task.briefId);
+    assert.ok(brief.content.includes(feasible), 'The rendered brief states the appended check');
+    // A caller who already wrote the check keeps it where they put it, once.
+    const supplied = await f.create({
+      type: 'experiment.plan',
+      contextInputs,
+      checks: [feasible.toUpperCase(), 'Two plus three equals five.'],
+    });
+    assert.deepEqual(supplied.checks, [feasible.toUpperCase(), 'Two plus three equals five.']);
+    // The older version stays registered for its own tasks but is no way around the check.
+    await assert.rejects(
+      async () => await f.create({ type: 'experiment.plan', typeVersion: 1, contextInputs }),
+      { code: 'task_type_unavailable' },
+    );
+
+    const deliver = async (taskId: string, checkCount: number) => {
+      const plan = await f.app.ctx.artifacts.create(f.producer.caller, {
+        title: 'Plan',
+        content: 'The plan and what it needs against what exists.',
+      });
+      const delivered = await f.app.ctx.tasks.submitDelivery(
+        f.producer.caller,
+        confirmedDelivery(
+          { taskId, expectedRevision: 0, artifactIds: [plan.id], requestId: `deliver-${taskId}` },
+          checkCount,
+        ),
+      );
+      return await f.app.ctx.reviews.start(f.reviewer.caller, delivered.reviewId!);
+    };
+    const first = await deliver(task.id, 2);
+    assert.deepEqual(first.requiredCriteria, [2]);
+    assert.deepEqual((await deliver(supplied.id, 2)).requiredCriteria, [1]);
+    assert.equal('requiredCriteria' in (await deliver((await f.create()).id, 1)), false);
+
+    const verdict = (findings: unknown) => ({
+      ...reviewedFindings(first),
+      ...(findings ? { findings } : {}),
+      reviewId: first.id,
+      claimId: first.claimId!,
+      expectedRevision: 1,
+      verdict: 'pass' as const,
+      notes: 'Read the plan against the project records.',
+    });
+    const met = reviewedFindings(first).findings as { criterionNumber: number }[];
+    const waived = met.map((finding) =>
+      finding.criterionNumber === 2
+        ? {
+            criterionNumber: 2,
+            status: 'waived',
+            evidenceIds: [],
+            notes: 'Feasibility is taken on trust.',
+          }
+        : finding,
+    );
+    await assert.rejects(
+      async () =>
+        await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
+          ...verdict(waived),
+          requestId: 'waived',
+        } as never),
+      { code: 'criterion_not_waivable' },
+    );
+    assert.equal(
+      (await f.app.ctx.tasks.get(f.producer.caller, task.id)).workflow.state,
+      'in_review',
+    );
+    const done = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
+      ...verdict(null),
+      requestId: 'met',
+    } as never);
+    assert.equal(done.workflow.state, 'done');
   } finally {
     await f.close();
   }

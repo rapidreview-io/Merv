@@ -276,12 +276,21 @@ test('a design review cannot waive feasibility, and its finding cites the statem
     intent: 'Compare two methods.',
     requestId: f.id(),
   });
+  // The planner is told of the statement where it is told of the plan, and shown its shape.
+  const planning = await f.app.ctx.workflows.assignment(f.owner, e.id);
+  assert.match(planning.brief, /Attach it as role feasibility/);
+  assert.match(planning.handoff.instruction, /Attach it as role feasibility/);
+  assert.equal(planning.context!.typeVersion, 7);
+  assert.match(planning.context!.prompt, /"feasibilityFormat":\{"formatVersion":1/);
   await f.attach(e, 'plan', plan);
   const marked = statement();
   marked.resources[0].basis = 'Row count of inventory FEASIBILITY_BASIS_7731.';
   const attached = await f.attach(e, 'feasibility', feasibilityStatement(marked));
   const pending = await f.submit(e);
   const review = await f.app.ctx.reviews.start(f.reviewer, pending.reviewId!);
+  const reviewing = await f.app.ctx.workflows.assignment(f.reviewer, e.id);
+  assert.match(reviewing.brief, /Criterion 4 is required/);
+  assert.match(reviewing.context!.prompt, /"requiredCriteria":\[4\]/);
   const plans = [review.artifactIds[0]!];
   assert.notEqual(plans[0], attached.artifactId);
 
@@ -331,6 +340,9 @@ test('an experiment already on version 3 finishes its design under the rules it 
   });
   program.handleFor = handleFor;
   assert.equal(e.workflow.version, 3);
+  const planning = await f.app.ctx.workflows.assignment(f.owner, e.id);
+  assert.doesNotMatch(planning.brief, /role feasibility/);
+  assert.doesNotMatch(planning.context!.prompt, /"feasibilityFormat":/);
   await assert.rejects(
     f.attach(e, 'feasibility', feasibilityStatement()),
     code('invalid_experiment_role'),
@@ -340,6 +352,10 @@ test('an experiment already on version 3 finishes its design under the rules it 
   const review = await f.app.ctx.reviews.start(f.reviewer, pending.reviewId!);
   assert.equal(review.criteria.length, 3);
   assert.equal('requiredCriteria' in review, false);
+  assert.doesNotMatch(
+    (await f.app.ctx.workflows.assignment(f.reviewer, e.id)).brief,
+    /Criterion 4 is required/,
+  );
   const input = f.verdict(pending, review, { status: 'met', evidenceIds: [] });
   input.findings![2] = { ...input.findings![2], status: 'waived', evidenceIds: [] };
   assert.equal((await experiments.submitReview(f.reviewer, input)).workflow.state, 'running');

@@ -59,6 +59,20 @@ the reviewer's responsibility to judge the overall goal. A `needs_changes` or
 or goal problem in the synopsis and notes. Structural validation does not prove
 that the reviewer performed the checks or that its judgment is true.
 
+Some criteria are too important to the requesting domain to be waived. The
+domain service that requests the review may name them in `requiredCriteria`, a
+sorted list of criterion numbers on a format 2 review. A `pass` then needs each
+of them `met`, which already needs retained evidence; `waived` is refused with
+`criterion_not_waivable`, and the way out is `needs_changes`. Other criteria on
+the same review stay waivable, and `needs_changes` and `fail` are unaffected.
+The field is set only at request (`review.request` is not a tool), is immutable,
+is part of the snapshot hash when supplied, is carried onto a reissued review
+and is returned by `review.get`, so the reviewer sees it beside the numbered
+criteria. Reviews does not know what a required criterion means: Experiments
+requires the feasibility criterion of a design review, and Tasks the
+feasibility check of an `experiment.plan` task. The rule runs where a verdict is
+submitted, inside the committing transaction, not in verdict-free guidance.
+
 Evidence IDs must be distinct within each finding and belong to the immutable
 review snapshot. Unsubmitted same-project files and foreign artifacts are not
 accepted as finding references. To replace the actual submission, the producer
@@ -136,8 +150,9 @@ research increment is the production Experiment lifecycle.
 Fable reviewed a standalone generic protocol question, with no source files sent.
 Its concerns were checked locally: claim fencing and hash-bound evidence are
 already enforced; explicit reviewer waivers preserve Python's delegated authority.
-The UI surfaces waiver counts beside verdicts. Reviewer-owned artifact attachments,
-protected-criterion policies and execution lineage remain future work; structured
+The UI surfaces waiver counts beside verdicts. Criteria a pass cannot waive are
+the `requiredCriteria` above. Reviewer-owned artifact attachments and execution
+lineage remain future work; structured
 observations are already retained. See [the consultation and dispositions](reviews/review-assessments-fable-design.md).
 The earlier full source packet remains pending specific approval.
 

@@ -11,6 +11,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { createApp } from '../src/app.js';
+import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 import type { TaskTypeDefinition } from '@merv/contracts';
 
 const definition: TaskTypeDefinition = {
@@ -148,7 +149,9 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       replacement = await actor('reviewer');
     const doc = async (title: string, content: string) =>
       await app.ctx.artifacts.create(producer, { title, content });
-    const brief = await doc('Brief', 'Design a test. Define the controls.'),
+    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']!.checks[0]!;
+    const bare = await doc('Bare brief', 'Design a test. Define the controls.'),
+      brief = await doc('Brief', `Design a test. Define the controls. ${feasible}`),
       research = await doc('Research', 'Prior controlled comparisons.'),
       constraints = await doc('Constraints', 'Use the approved small dataset.');
     const create = {
@@ -163,10 +166,16 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       async () => await app.ctx.tasks.create(producer, create),
       /Missing required context: research/,
     );
-    const task = await app.ctx.tasks.create(producer, {
-      ...create,
-      contextInputs: { research: [research.id], constraints: [constraints.id] },
-    });
+    const contextInputs = { research: [research.id], constraints: [constraints.id] };
+    // The server's own feasibility check is part of the task, so the caller's brief must carry it.
+    await assert.rejects(
+      async () =>
+        await app.ctx.tasks.create(producer, { ...create, briefId: bare.id, contextInputs }),
+      { code: 'invalid_brief' },
+    );
+    const task = await app.ctx.tasks.create(producer, { ...create, contextInputs });
+    assert.equal(task.typeVersion, 2);
+    assert.deepEqual(task.checks, ['Define the controls.', feasible]);
     const checkpoint = await app.ctx.tasks.checkpoint(producer, {
       taskId: task.id,
       purpose: 'work',
@@ -191,12 +200,15 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
     );
     const submitted = await app.ctx.tasks.submitDelivery(
       producer,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [delivery.id],
-        expectedRevision: 0,
-        requestId: 'submit',
-      }),
+      confirmedDelivery(
+        {
+          taskId: task.id,
+          artifactIds: [delivery.id],
+          expectedRevision: 0,
+          requestId: 'submit',
+        },
+        2,
+      ),
     );
     const old = await app.ctx.reviews.start(reviewer, submitted.reviewId!);
     await app.ctx.tasks.checkpoint(reviewer, {

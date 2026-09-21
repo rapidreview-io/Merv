@@ -10,4 +10,4 @@ A successful build persists an immutable context package, its rendered prompt, a
 
 Tasks validates current assignment ownership, workflow revision and reviewer claim inside the same transaction before invoking the builder. It exposes `task.context` over HTTP/MCP. Other domain plugins can register recipes through the same service; the builder contains no task-, review- or experiment-specific selection rules.
 
-Current recipes are `task.work@1`, `experiment.plan@1`, `project.reflection@1`, and `task.review@1`. Planning and reflection are typed task assignments using explicitly supplied artifact inputs and the existing delivery/review workflow. They do not implement experiment execution, automatic corpus search, a multi-agent reflection workflow or a Runner.
+Current recipes are `task.work@1`, `experiment.plan@2`, `project.reflection@1`, and `task.review@1`. Planning and reflection are typed task assignments using explicitly supplied artifact inputs and the existing delivery/review workflow. They do not implement experiment execution, automatic corpus search, a multi-agent reflection workflow or a Runner.

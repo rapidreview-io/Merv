@@ -31,6 +31,7 @@ import type { Paper, PaperRevision, PaperWorkspace } from '@merv/paper/types';
 import type { Claims } from '@merv/claims/types';
 import type { Code, CodeCapture } from '@merv/code/types';
 import type { Experiment, ExperimentEvidence } from './types.js';
+import type { FeasibilityStatement } from './evidence.js';
 
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
 type ActiveState = (typeof activeStates)[number];
@@ -113,6 +114,39 @@ const handoffs: Record<ActiveState, string> = {
   experiment_review:
     'Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
 };
+/**
+ * What a feasibility-gated design adds to the planner's and the design reviewer's handoff. The
+ * published handoffs above still serve versions 1-4, so the gate's text is added beside them
+ * rather than written into them.
+ */
+const gatedHandoffs: Partial<Record<ActiveState, string>> = {
+  planned:
+    'Before submitting, also retain a feasibility statement as a JSON artifact in the shape of feasibilityFormat: what the design requires against what exists — data, compute and time, each with the basis you measured it from — the dependencies it needs and whether each is present, and any known blocker. Measure, do not assume; name the record or artifact each number came from. Attach it as role feasibility. A statement showing a shortfall, an absent dependency or a blocker cannot be submitted: shrink the design to what is available, or end the experiment with the reason.',
+  design_review:
+    'Criterion 4 is required: a pass cannot waive it or leave it not_verified, and its finding must cite the feasibility statement artifact. Open the records the statement names and recompute its numbers, and look for requirements, dependencies and blockers the statement leaves out. If it does not hold, the verdict is needs_changes.',
+};
+const handoff = (state: ActiveState, version: number) =>
+  feasibilityGated(version) && gatedHandoffs[state]
+    ? `${handoffs[state]} ${gatedHandoffs[state]}`
+    : handoffs[state];
+/** The shape a planner fills in, shown beside the design it is asked for. */
+const feasibilityFormat: FeasibilityStatement = {
+  formatVersion: 1,
+  resources: [
+    {
+      kind: 'data',
+      name: 'What is needed, such as labelled training examples',
+      unit: 'examples',
+      required: 0,
+      available: 0,
+      basis: 'The record or artifact the available figure was measured from',
+    },
+  ],
+  dependencies: [
+    { name: 'A model, dataset, service or tool', present: true, basis: 'How it was verified' },
+  ],
+  blockers: [],
+};
 
 /**
  * The paper as a worker needs it in its frozen context: every document's revision and
@@ -158,11 +192,16 @@ const verifying =
 
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 6,
+  version: 7,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
     instructions: instructions[state] + reading + (reviewing(state) ? verifying : ''),
-    outputInstructions: handoffs[state],
+    // One recipe serves every program version, so it says when the feasibility text applies.
+    outputInstructions:
+      handoffs[state] +
+      (gatedHandoffs[state]
+        ? ` When ${state === 'planned' ? 'the experiment below carries feasibilityFormat' : 'the pinned review names requiredCriteria'}: ${gatedHandoffs[state]}`
+        : ''),
     maxChars: 160_000,
     sections: [
       { key: 'experiment', title: 'Experiment and exact assignment', required: true },
@@ -641,6 +680,9 @@ DROP TABLE experiment_leases_backup;`,
             },
           ],
         },
+        ...(state === 'planned' && feasibilityGated(experiment.workflow.version)
+          ? { feasibilityFormat }
+          : {}),
         attempt: experiment.attempt,
         workflow: experiment.workflow,
         selectedEvidence: experiment.evidence.filter((evidence) =>
@@ -782,7 +824,7 @@ DROP TABLE experiment_leases_backup;`,
     const needsClaim = review?.status === 'requested';
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-      : handoffs[state];
+      : handoff(state, experiment.workflow.version);
     const preview = await recipe.preview(
       context.caller,
       {
@@ -1082,7 +1124,7 @@ DROP TABLE experiment_leases_backup;`,
                   ? 'review_required'
                   : 'independent_review',
           waiting: producing(context.snapshot.state)
-            ? handoffs[context.snapshot.state as ActiveState]
+            ? handoff(context.snapshot.state as ActiveState, version)
             : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
           references: [
             ...(context.dependencies ?? []).map((dependency) => ({
@@ -1112,7 +1154,7 @@ DROP TABLE experiment_leases_backup;`,
         };
       },
       actions: [
-        action('submit_design', ['planned'], handoffs.planned, true),
+        action('submit_design', ['planned'], handoff('planned', version), true),
         action('submit_results', ['running'], handoffs.running, true),
         action(
           'retry_running',
@@ -1137,7 +1179,7 @@ DROP TABLE experiment_leases_backup;`,
               ? ['approve_design', 'revise_design']
               : ['accept_results', 'revise_plan', 'revise_execution'],
           tool: 'review.submit',
-          instruction: handoffs[state],
+          instruction: handoff(state, version),
           requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
           arguments: async (context: WorkflowCheckContext): Promise<Data> => {
             const review = await this.review(context.caller, await this.facts(context), context.tx);

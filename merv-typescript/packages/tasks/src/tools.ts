@@ -56,7 +56,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.create',
         description:
-          'Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs; project.reflection requires experiments and projectKnowledge.',
+          'Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge.',
         inputSchema: z
           .object({
             title: z
@@ -99,7 +99,8 @@ export const taskToolsPlugin = {
       },
       {
         name: 'task.list',
-        description: 'List the tasks in the current project as records; task.get adds your guidance.',
+        description:
+          'List the tasks in the current project as records; task.get adds your guidance.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller: Caller) => await ctx.tasks.list(caller),
