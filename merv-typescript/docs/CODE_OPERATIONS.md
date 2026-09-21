@@ -6,11 +6,12 @@ Live checkpoints are the first slice of Code. The service also supports [immutab
 
 ## Plugin boundaries
 
-Code/Git is optional for the research stack. Experiments, Consolidation and Knowledge
-bind it through Cordis child injections; unloading Code preserves those services,
-their workflow registrations and non-Git assignments. Git experiment creation and
-assignment, capture validation, and Git consolidation require the service and
-report `code_unavailable` when it is absent. Retained records remain readable.
+Code/Git is optional for the research stack. Experiments, Tasks, Consolidation and
+Knowledge bind it through Cordis child injections; unloading Code preserves those
+services, their workflow registrations and non-Git assignments. Git experiment and
+Git task creation and assignment, capture validation, Git task delivery and review,
+and Git consolidation require the service and report `code_unavailable` when it is
+absent. Retained records remain readable, and artifact-only tasks never ask for Code.
 Knowledge reports unavailable Code references as `unavailable`, distinct from
 `missing`, and resolves them normally once Code returns.
 

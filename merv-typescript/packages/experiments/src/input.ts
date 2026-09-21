@@ -43,6 +43,7 @@ export const experimentCreateSchema = z
     details: prose().default(''),
     dependsOn: ids.default([]),
     workspace: z.enum(['none', 'git']).optional(),
+    baseTaskId: experimentIdSchema.optional(),
     requestId,
   })
   .strict();

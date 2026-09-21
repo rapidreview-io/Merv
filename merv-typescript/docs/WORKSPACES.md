@@ -58,6 +58,26 @@ There are two base forms:
 - `central` resolves the **machine's private** `refs/merv/central`, initialized once from the configured `baseRef`. It is not a server-authoritative project head and does not follow subsequent source-branch changes.
 - `reference:name` requires a frozen scalar reference containing a full lowercase 40- or 64-character Git commit OID already available in the private repository. Missing, list-valued, abbreviated or unavailable references fail. There is no implicit fallback to `central`.
 
+### Which workflows declare a Git workspace
+
+A workspace belongs to a workflow **version**, because a published execution policy is immutable. The choice is made once, at creation, and nothing is ever upgraded into Git.
+
+| Work                                  | Writable checkout                                                 | Reviewer checkout                                                 |
+| ------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Git experiment (`experiment@2/4/6`)   | `running`: persistent shared `experiments`, base `central`        | `experiment_review`: ephemeral read-only, `reference:code`        |
+| Based Git experiment (`experiment@7`) | `running`: persistent shared `experiments`, base `reference:base` | as above                                                          |
+| Git task (`task@3`)                   | `in_progress`: persistent shared `tasks`, base `central`          | `in_review`: ephemeral read-only `task-reviews`, `reference:code` |
+| Based Git task (`task@4`)             | `in_progress`: persistent shared `tasks`, base `reference:base`   | as above                                                          |
+| Consolidation                         | its own persistent checkout (see `docs/CODE_OPERATIONS.md`)       | —                                                                 |
+
+`task.create` and `experiment.create` take `workspace: "git"`; omitted means scratch, and every earlier task and experiment is unchanged. A Git task's producer is granted `code.commit` and `code.operation` explicitly and delivers that operation's `commandId` (see `docs/STRUCTURED_TASK_EVIDENCE.md`). After a returned review the successor lease re-enters the same `tasks` checkout at the previous head. The reviewer's `reference:code` is the delivered commit's head, never the branch tip: a close-time WIP capture added above the delivered commit is not under review.
+
+### Building on a delivered commit
+
+A Git task or Git experiment created with `baseTaskId` runs on `reference:base`, frozen to the head that task delivered. The base must be a Git task and must also be one of the new work's `dependsOn` prerequisites, so it has been accepted (`done`, which is terminal) before any checkout is prepared; the OID a shared persistent slot fixes at its first launch therefore never moves. Only an accepted Git task's delivered commit can be a base: an experiment capture, a consolidation or an arbitrary OID cannot. There is no fallback to `central`; an unresolvable base answers `task_base_unavailable` or `experiment_base_unavailable`.
+
+The delivered objects exist only in the private repository of the runner machine that produced them, rooted under `refs/merv/commands/`. The review of a Git task, and any work based on its commit, must therefore run on that machine; elsewhere the runner refuses the launch with `workspace_base_missing`. This is the same limit Git experiments have: there is no cross-machine object transport.
+
 `advancesCentral` is retained in the versioned declaration but causes no publication in this implementation. Even `true` supplies no central-update authority or receipt. Programs must not treat captured code as published code.
 
 The source is cloned once into a private bare repository without local hardlinks, alternates, or a retained source remote. The original repository is not changed. No fetch or network clone runs. The configured local source must remain available for current manager validation; importing newer source commits and transferring objects between machines remain open work.
@@ -145,7 +165,7 @@ These are **source-authenticated Runner observations**. The server validates aut
 
 Native support consists of sandboxed file editing/read-only inspection, policy-granted commit requests through Code, and host-side Runner WIP capture. The worker is not granted arbitrary private Git metadata writes, merge commands or ref updates. The `command` profile is a trusted executable without an equivalent verified sandbox and refuses read-only leases. Private files and process groups do not isolate hostile programs sharing one OS user.
 
-There is no `code.propose`, central publication, reviewed-proposal binding, compare-and-swap advance receipt, general merge/ancestry verification, remote Git push/fetch, cross-machine object transport, automatic retention pruning, or general repair of uncertain workspaces. Ordinary task workflows still need explicit Git policies, tool grants and domain-owned code-reference production. Python's full consolidation/publication flow remains a separate integration step.
+There is no `code.propose`, central publication, reviewed-proposal binding, compare-and-swap advance receipt, general merge/ancestry verification, remote Git push/fetch, cross-machine object transport, automatic retention pruning, or general repair of uncertain workspaces. Tasks declare Git policies, tool grants and a delivered-commit reference from `task@3`; none of it publishes to a central head. Python's full consolidation/publication flow remains a separate integration step.
 
 The historical workspace-capture checkpoint passed all **490 repository tests**, including 12 focused local Git workspace tests and synthetic HTTP/MCP workspace integration. Backend and UI typechecks/builds passed. This count predates Code operations; later integrated checks are recorded separately.
 

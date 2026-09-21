@@ -83,6 +83,12 @@ export interface CodeCapture {
   workspace: SessionWorkspace | null;
   /** Present only for an exact interactive commit receipt. */
   parentOid?: string;
+  /**
+   * Present only for a final capture whose runner attached a checkout: the commit that checkout
+   * was prepared from. Sessions fixed it at attach, so it proves where the session worked even
+   * before — or without — a final result.
+   */
+  attachedBaseOid?: string;
   observedAt: string | null;
   eventId: number | null;
   error?: string;

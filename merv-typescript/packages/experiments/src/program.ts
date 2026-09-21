@@ -41,7 +41,9 @@ const producing = (state: string) => state === 'planned' || state === 'running';
 /**
  * Registered program versions by workspace kind. A published execution policy is immutable, so
  * versions 1 and 2 are frozen history — their policies stay byte-identical, retired grants
- * included — and any policy change publishes a new version. New experiments start on 5 or 6.
+ * included — and any policy change publishes a new version. New experiments start on 5 or 6, or
+ * on 7 when the Git checkout starts from the commit an accepted task delivered: the base of a
+ * workspace is part of the policy too.
  */
 const workspaces: Record<number, 'none' | 'git'> = {
   1: 'none',
@@ -50,11 +52,14 @@ const workspaces: Record<number, 'none' | 'git'> = {
   4: 'git',
   5: 'none',
   6: 'git',
+  7: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 const frozenHistory = (version: number) => version <= 2;
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-export const programVersion = (workspace?: string): number => (workspace === 'git' ? 6 : 5);
+const referencedBase = (version: number) => version === 7;
+export const programVersion = (workspace?: string, baseTaskId?: string): number =>
+  workspace !== 'git' ? 5 : baseTaskId === undefined ? 6 : 7;
 /**
  * From version 5 a design is submitted with a feasibility statement and its review cannot waive
  * the feasibility criterion. Versions 3 and 4 stay registered for the experiments already on
@@ -770,12 +775,39 @@ DROP TABLE experiment_leases_backup;`,
     return [...new Set([...inputs.approvedArtifacts, ...inputs.evidenceArtifacts])].sort();
   }
 
+  /**
+   * Experiments does not inject Tasks: the commit is read from the task's own workflow data,
+   * which only Tasks' transitions write. Done is terminal, so the OID a persistent checkout fixes
+   * at its first launch cannot move; Sessions checks its shape again at attachment.
+   */
+  private async baseCommit({ caller, snapshot, tx }: WorkflowCheckContext): Promise<string> {
+    const baseTaskId = snapshot.data.baseTaskId;
+    const base =
+      typeof baseTaskId === 'string'
+        ? await this.host.workflows.get(caller, baseTaskId, tx)
+        : undefined;
+    const headOid = (base?.data.deliveryCode as { headOid?: unknown } | undefined)?.headOid;
+    check(
+      base?.workflow === 'task' &&
+        base.state === 'done' &&
+        typeof headOid === 'string' &&
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(headOid),
+      'experiment_base_unavailable',
+      'The base task has not been accepted with a delivered commit',
+      409,
+    );
+    return headOid;
+  }
+
   private async references(context: WorkflowCheckContext): Promise<WorkflowExecutionReferences> {
     const experiment = await this.admit(context);
     const review = experiment.reviewId
       ? await this.host.reviews.get(context.caller, experiment.reviewId, context.tx)
       : null;
     return {
+      ...(referencedBase(context.snapshot.version) && context.snapshot.state === 'running'
+        ? { base: await this.baseCommit(context) }
+        : {}),
       ...(experiment.workspace === 'git' && context.snapshot.state === 'experiment_review'
         ? {
             code: (await this.reviewCapture(context.caller, experiment, context.tx))!.workspace!
@@ -923,7 +955,7 @@ DROP TABLE experiment_leases_backup;`,
           ? {
               mode: 'persistent',
               namespace: 'experiments',
-              base: 'central',
+              base: referencedBase(version) ? 'reference:base' : 'central',
               perBase: false,
               retain: true,
               advancesCentral: false,

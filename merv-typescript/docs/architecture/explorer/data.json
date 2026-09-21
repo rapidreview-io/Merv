@@ -595,7 +595,7 @@
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout; with it, optional baseTaskId names a Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of that checkout in place of the central head. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -645,7 +645,7 @@
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout; with it, optional baseTaskId names a Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of that checkout in place of the central head. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -1826,7 +1826,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. With workspace \"git\", optional baseTaskId names another Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of this task’s checkout. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -1851,7 +1851,7 @@
         },
         {
           "name": "task.submit_delivery",
-          "description": "Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. expectedRevision is the task workflow revision.",
+          "description": "Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. A Git task (workspace \"git\") also requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. Every other task requires at least one artifact and takes no commandId. expectedRevision is the task workflow revision.",
           "readOnly": false
         }
       ]
@@ -1889,7 +1889,9 @@
         "reviews",
         "contextBuilder"
       ],
-      "optional": [],
+      "optional": [
+        "code"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -1911,7 +1913,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. With workspace \"git\", optional baseTaskId names another Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of this task’s checkout. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -1936,7 +1938,7 @@
         },
         {
           "name": "task.submit_delivery",
-          "description": "Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. expectedRevision is the task workflow revision.",
+          "description": "Submit immutable delivery artifacts and enter independent review atomically. At evidenceVersion 2, supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Legacy evidenceVersion 1 tasks require a text delivery addressing every check verbatim. A Git task (workspace \"git\") also requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. Every other task requires at least one artifact and takes no commandId. expectedRevision is the task workflow revision.",
           "readOnly": false
         }
       ]
@@ -2838,6 +2840,11 @@
       "optional": false
     },
     {
+      "from": "tasks",
+      "to": "code",
+      "optional": true
+    },
+    {
       "from": "tools",
       "to": "scope",
       "optional": false
@@ -2877,7 +2884,7 @@
     "plugins": 60,
     "providers": 26,
     "adapters": 34,
-    "dependencies": 154
+    "dependencies": 155
   },
   "network": [
     {

@@ -338,6 +338,16 @@ context. Later captures cannot substitute, and a missing reference or local Git
 object has no central fallback. New observations include a real tree OID;
 legacy reports can remain without one.
 
+With `workspace: "git"`, optional `baseTaskId` names a Git task that is also among
+`dependsOn`; the experiment then starts on version 7, whose `running` checkout is
+based on `reference:base`, frozen to the commit that task delivered once it is
+accepted. Without `workspace: "git"` it is refused (`invalid_workspace`); a base that
+is not a Git task among the prerequisites is `invalid_workspace_base`; a base without
+an accepted delivered commit is `experiment_base_unavailable`. Experiments on
+versions 5 and 6 finish under their own versions. The objects exist only in the
+producing runner's repository, so the experiment must run there
+([workspaces](WORKSPACES.md)).
+
 This integrates captured code as reviewed experiment evidence. It supplies no
 remote compute, sandbox provisioning, object transport, code consolidation or
 central publication. Sessions/Runner still owns process and checkout lifecycle.

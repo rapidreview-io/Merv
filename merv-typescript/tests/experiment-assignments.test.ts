@@ -12,6 +12,8 @@ import type {
   Data,
   ReviewApplication,
   ReviewHistory,
+  TaskDelivery,
+  TaskReview,
   WorkflowExecution,
 } from '@merv/contracts';
 import { SqliteState } from '@merv/state';
@@ -1346,4 +1348,165 @@ test('assigned plan and results reviewers update the paper through their scoped 
       assert.equal(document.current.sections[0].content, edit.documents[0].changes[0].content);
       await f.release(offered.session.id);
     });
+
+test('A Git experiment may start from the commit an accepted Git task delivered', async (t) => {
+  const f = await fixture(t);
+  t.after(f.tasks.bindCode(f.code));
+  const head = 'b'.repeat(40);
+  const task = await f.tasks.create(f.source, {
+    title: 'Evaluation harness',
+    goal: 'Build the harness as a repository.',
+    checks: ['The harness runs end to end'],
+    workspace: 'git',
+    requestId: f.request(),
+  });
+  const scratch = await f.tasks.create(f.source, {
+    title: 'Notes',
+    goal: 'Write the notes.',
+    checks: ['The notes exist'],
+    requestId: f.request(),
+  });
+  const input = {
+    name: 'based-on-harness',
+    intent: 'Run the harness against the matched evidence.',
+    workspace: 'git' as const,
+    requestId: f.request(),
+  };
+  await assert.rejects(
+    async () =>
+      await f.experiments.create(f.source, {
+        ...input,
+        workspace: 'none',
+        baseTaskId: task.id,
+        dependsOn: [task.id],
+      }),
+    { code: 'invalid_workspace' },
+  );
+  await assert.rejects(
+    async () => await f.experiments.create(f.source, { ...input, baseTaskId: task.id }),
+    { code: 'invalid_workspace_base' },
+  );
+  await assert.rejects(
+    async () =>
+      await f.experiments.create(f.source, {
+        ...input,
+        baseTaskId: scratch.id,
+        dependsOn: [scratch.id],
+      }),
+    { code: 'invalid_workspace_base' },
+  );
+  const based = { ...input, baseTaskId: task.id, dependsOn: [task.id] };
+  const experiment = await f.experiments.create(f.source, based);
+  assert.equal(experiment.workflow.version, 7);
+  assert.equal(experiment.baseTaskId, task.id);
+  assert.deepEqual(await f.experiments.create(f.source, based), experiment);
+
+  // The task's worker commits and delivers; its leased reviewer accepts the pinned commit.
+  const control = (sessionId: string, hostRef: string) => ({
+    sessionId,
+    runnerId: 'assignment-test',
+    hostRef,
+  });
+  const checkout = (mode: 'persistent' | 'ephemeral', baseOid: string) => ({
+    repositoryId: 'runner-private-repository',
+    workspaceId: `${mode}-${baseOid.slice(0, 4)}`,
+    mode,
+    branch: mode === 'persistent' ? 'merv/task' : null,
+    baseOid,
+    headOid: baseOid,
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  });
+  const work = await f.offer(task as unknown as Experiment);
+  const producing = control(work.session.id, 'task-launch');
+  await f.sessions.attach(f.source, {
+    ...producing,
+    workspace: checkout('persistent', 'a'.repeat(40)),
+  });
+  const worker = await f.sessions.authenticate(work.secret);
+  const { command } = await f.run(
+    worker,
+    'code.commit',
+    { expectedHead: 'a'.repeat(40), message: 'Record the harness', requestId: f.request() },
+    async (caller, bound) =>
+      await f.code.commit(
+        caller,
+        bound as unknown as { expectedHead: string; message: string; requestId: string },
+      ),
+  );
+  await f.code.nextCommand(f.source, producing);
+  await f.code.completeCommand(f.source, {
+    ...producing,
+    commandId: command.id,
+    receipt: {
+      commandId: command.id,
+      repositoryId: 'runner-private-repository',
+      workspaceId: 'persistent-aaaa',
+      baseOid: 'a'.repeat(40),
+      parentOid: 'a'.repeat(40),
+      headOid: head,
+      treeOid: 'c'.repeat(40),
+      stats: { commitCount: 1, filesChanged: 3, insertions: 40, deletions: 0 },
+    },
+  });
+  const delivered = await f.run(
+    worker,
+    'task.submit_delivery',
+    {
+      artifactIds: [],
+      commandId: command.id,
+      confirmations: [
+        { checkNumber: 1, status: 'met', evidenceIds: [], notes: 'Ran it on the fixture.' },
+      ],
+      requestId: f.request(),
+    },
+    async (caller, bound) => await f.tasks.submitDelivery(caller, bound as unknown as TaskDelivery),
+  );
+  await f.release(work.session.id);
+
+  // The base is a prerequisite, so nothing is planned or run on it before it is accepted.
+  await assert.rejects(async () => await f.offer(experiment), { code: 'dependencies_pending' });
+
+  const reviewing = await f.offer(delivered as unknown as Experiment, f.reviewer);
+  await f.sessions.attach(f.reviewer, {
+    ...control(reviewing.session.id, 'task-review-launch'),
+    workspace: checkout('ephemeral', head),
+  });
+  const taskReviewer = await f.sessions.authenticate(reviewing.secret);
+  const accepted = await f.run(
+    taskReviewer,
+    'review.submit',
+    {
+      ...reviewedFindings(await f.reviews.get(taskReviewer, delivered.reviewId!)),
+      verdict: 'pass',
+      notes: 'Checked out the delivered commit and ran the harness.',
+      requestId: f.request(),
+    } as Data,
+    async (caller, bound) => await f.tasks.submitReview(caller, bound as unknown as TaskReview),
+  );
+  assert.equal(accepted.workflow.state, 'done');
+  await f.release(reviewing.session.id, f.reviewer);
+
+  const running = await f.verdict((await f.design(experiment)).experiment, 'pass');
+  const offered = await f.offer(running);
+  assert.equal(offered.session.execution.references.base, head);
+  assert.deepEqual(offered.session.execution.policy.workspace, {
+    mode: 'persistent',
+    namespace: 'experiments',
+    base: 'reference:base',
+    perBase: false,
+    retain: true,
+    advancesCentral: false,
+  });
+  await assert.rejects(
+    async () =>
+      await f.sessions.attach(f.source, {
+        ...control(offered.session.id, 'experiment-launch'),
+        workspace: checkout('persistent', 'a'.repeat(40)),
+      }),
+    { code: 'workspace_base_conflict' },
+  );
+  await f.sessions.attach(f.source, {
+    ...control(offered.session.id, 'experiment-launch'),
+    workspace: checkout('persistent', head),
+  });
 });

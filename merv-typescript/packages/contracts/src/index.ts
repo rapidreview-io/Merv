@@ -1310,6 +1310,25 @@ export interface Task {
   type: string;
   typeVersion: number;
   contextInputs: Record<string, string[]>;
+  /** Present only on a Git task, so every earlier record reads back unchanged. */
+  workspace?: 'git';
+  /** The accepted Git task whose delivered commit is the base of this task's checkout. */
+  baseTaskId?: string;
+  /** The commit the current delivery names; the review pins its rendered record. */
+  deliveryCode?: TaskDeliveryCode;
+  deliveryCodeArtifactId?: string;
+}
+/**
+ * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
+ * keeps only what a later check compares: who produced it, at which revision, and what it is.
+ */
+export interface TaskDeliveryCode {
+  ref: { kind: 'code-commit'; commandId: string };
+  sessionId: string;
+  /** The task revision the commit was produced at; later revisions never move it. */
+  revision: number;
+  headOid: string;
+  treeOid: string | null;
 }
 export interface TaskFailure {
   reason: string;
@@ -1418,10 +1437,17 @@ export interface TaskCreate {
   typeVersion?: number;
   contextInputs?: Record<string, string[]>;
   dependsOn?: string[] | string | null;
+  /** Omission preserves the original scratch task and its command hash. */
+  workspace?: 'none' | 'git';
+  /** A Git task only: an accepted Git task, also a prerequisite, whose delivered commit is the base. */
+  baseTaskId?: string;
 }
 export interface TaskDelivery {
   taskId: string;
+  /** May be empty for a Git task, which delivers its commit. */
   artifactIds: string[];
+  /** A Git task only: this worker's own succeeded code.commit operation. */
+  commandId?: string;
   /** Required for tasks created with evidenceVersion 2. These are producer claims. */
   confirmations?: TaskConfirmation[];
   expectedRevision: number;

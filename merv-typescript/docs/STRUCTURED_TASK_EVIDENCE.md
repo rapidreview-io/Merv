@@ -60,6 +60,81 @@ replay receipt commit together. Failed commands leave no committed partial state
 Content-addressed blob bytes written before a later SQL failure can remain
 unreferenced, as with existing artifact writes; they are not accessible as artifacts.
 
+## Delivering a commit
+
+A task whose product is a code repository should not be cut into 2 MB artifacts.
+`task.create` with `workspace: "git"` (default none; requires Code) gives the
+producing worker a runner-prepared private Git checkout and the `code.commit` and
+`code.operation` tools. The choice is carried by the task's workflow version
+(`task@3`, or `task@4` with `baseTaskId`), so it is fixed at creation; tasks created
+without it are unchanged. See [workspaces](WORKSPACES.md) for the checkouts and for
+building later work on the delivered commit.
+
+```json
+{
+  "taskId": "…",
+  "artifactIds": [],
+  "commandId": "the worker's own succeeded code.commit operation",
+  "confirmations": [{ "checkNumber": 1, "status": "met", "evidenceIds": [], "notes": "…" }],
+  "expectedRevision": 0,
+  "requestId": "…"
+}
+```
+
+- A Git task always delivers a commit; files are optional alongside it, so
+  `artifactIds` may be empty. Every other task still requires at least one artifact
+  and takes no `commandId`.
+- The commit must be the leased worker's own, made in this assignment at this task
+  revision, and already receipted by the runner. A successor never delivers its
+  predecessor's commit: it commits again, which succeeds on an unchanged tree. An
+  interactive producer holds no checkout and cannot deliver a Git task.
+- `evidenceIds` remain artifact IDs only; a `commandId` is never an evidence ID. A
+  `met` confirmation that cites nothing is recorded against the commit record below.
+- Merv renders an immutable **Delivered commit** artifact (commit, tree, parent and
+  base OIDs, repository, workspace, operation, session and statistics).
+  `deliveryIds` holds the submitted files, then that record, then the assessment, so
+  the review snapshot pins the commit like any other evidence and findings cite the
+  record's ID. `deliveryCode` (`ref`, `sessionId`, `revision`, `headOid`, `treeOid`)
+  and `deliveryCodeArtifactId` are exposed on the task. Neither rendered record may
+  be resubmitted as evidence in a later round.
+- A leased reviewer's read-only checkout is frozen to `deliveryCode.headOid`
+  (`references.code`). On every reviewer assignment and every proposed verdict, Tasks
+  re-reads the receipt from Code and requires it to match the sealed delivery and the
+  review to pin the rendered record. The comparison uses the stored producing
+  revision, so `task.reissue_review` does not strand the task.
+- **Only that leased review, attached at the delivered commit, can pass a Git task.**
+  A verdict of `pass` must come from the session holding the current review lease, and
+  Sessions must already hold that session's workspace attachment with a base equal to
+  `deliveryCode.headOid`. Sessions refuses any other base, and a runner without the
+  commit's objects fails at launch and never attaches, so the attachment is the
+  server-side record that the reviewer's runner held the commit. Anything else —
+  an interactive reviewer, or a leased one whose runner has not attached — is refused
+  with `task_commit_unfetched`. Merv does not itself fetch or verify Git objects: the
+  attachment is a source-authenticated runner report, and the review must run on the
+  machine that holds the objects.
+- **Do not claim a Git task's review interactively.** Reviews admits `review.start`
+  from any eligible reviewer without asking Tasks. Such a reviewer may still return
+  or fail the task, but can never pass it, and once the review is claimed no review
+  worker can lease it (`review_unavailable`). The `start_review` guidance and the
+  reviewer assignment say so before the claim. If it has happened, the producer or
+  an admin replaces the review with `task.reissue_review`; the fresh review is
+  unclaimed, pins the same delivered commit, and can be leased.
+
+| Code                     | Meaning                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `invalid_workspace`      | Unknown workspace, or `baseTaskId` without `workspace: "git"`.                             |
+| `invalid_workspace_base` | The base is not a non-failed Git task of this project, or is not among `dependsOn`.        |
+| `code_unavailable` (503) | Code is unloaded: a Git task cannot be created, assigned, delivered or reviewed.           |
+| `task_commit_required`   | A Git delivery without its worker's `commandId`, or a `commandId` on a scratch task.       |
+| `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.         |
+| `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |
+| `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery. |
+| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; reissue if claimed.  |
+| `task_base_unavailable`  | A based task's prerequisite has not been accepted with a delivered commit.                 |
+
+With Code unloaded, Git task records stay readable (`deliveryCode` is stored data)
+and artifact-only tasks are unaffected.
+
 ## Guidance, context and UI
 
 `workflow.status_and_next` requests both `artifactIds` and `confirmations` for a

@@ -115,6 +115,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'artifacts',
   ],
   knowledge: ['code'],
+  tasks: ['code'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
