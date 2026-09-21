@@ -43,6 +43,8 @@ import type {
   WorkflowExecutionReferences,
   WorkflowCheckContext,
   WorkflowHistoryEntry,
+  WorkflowExtendLimit,
+  WorkflowLimitStatus,
   ProcessGraph,
 } from '@merv/contracts';
 import { processGraph } from './process.js';
@@ -56,6 +58,7 @@ import {
   validatePolicy,
 } from './evaluation.js';
 import { buildAssignment, readWorkStarts } from './assignments.js';
+import { limitFor, limitMessage, limitStatus, limitStatuses } from './limits.js';
 import {
   admitDispatch,
   dispatchInput,
@@ -158,7 +161,28 @@ const migrations = [
     BEGIN SELECT RAISE(ABORT,'Workflow execution declarations are retained'); END;
 `,
   },
+  {
+    version: 5,
+    postgres: postgresMigrations[5],
+    sql: `
+  CREATE TABLE wf_limit_grants (
+    project_id TEXT NOT NULL, request_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL REFERENCES wf_instances(id), limit_name TEXT NOT NULL,
+    additional INTEGER NOT NULL CHECK (additional > 0), reason TEXT NOT NULL,
+    actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, request_id)
+  );
+  CREATE INDEX wf_limit_grants_instance ON wf_limit_grants(instance_id, limit_name);
+  CREATE TRIGGER wf_limit_grants_no_update BEFORE UPDATE ON wf_limit_grants
+    BEGIN SELECT RAISE(ABORT,'Workflow limit grants are immutable'); END;
+  CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
+    BEGIN SELECT RAISE(ABORT,'Workflow limit grants are retained'); END;
+`,
+  },
 ];
+
+/** The most instances one dependency closure is walked over. */
+const closureLimit = 5000;
 
 interface InstanceRow {
   id: string;
@@ -483,6 +507,7 @@ export class WorkflowsService implements Workflows {
         }),
         { ...query, input },
         (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
+        await limitStatuses(tx, installed?.policy, snapshot),
       );
       if (installed) {
         await this.checkContext(
@@ -541,6 +566,11 @@ export class WorkflowsService implements Workflows {
           (rule) => rule.state === snapshot.state,
         );
         if (!registration || !rule?.lease || !rule.execution) continue;
+        // A reviewer leased at an exhausted limit could only have a needs_changes verdict
+        // refused and rolled back, and the next poll would lease another. The work waits for
+        // a human instead, who may still begin it by hand.
+        if ((await limitStatuses(tx, registration.policy, snapshot)).some((item) => item.exhausted))
+          continue;
         try {
           const role = await this.leaseRole(
             source,
@@ -587,6 +617,7 @@ export class WorkflowsService implements Workflows {
             policyHash: executionFingerprint(rule.execution),
             registrationId: registration.registrationId,
             workspace: effectiveWorkspace(rule.execution),
+            updatedAt: snapshot.updatedAt,
           });
         } catch (error) {
           // Domain admission refusals make a node ineligible. Malformed programs fail visibly.
@@ -1217,24 +1248,135 @@ export class WorkflowsService implements Workflows {
           )
           .map((item) => item.instanceId),
       );
+      // Work at an exhausted loop limit still names an action, since a human may accept or
+      // end it, but nothing will be dispatched for it and it is not ready for a worker.
+      const escalated = new Set(
+        workflows
+          .filter(
+            (item) => item.available && !item.terminal && item.currentGate === 'loop_limit_reached',
+          )
+          .map((item) => item.instanceId),
+      );
+      const waiting = (id: string) => stalled.has(id) || escalated.has(id);
       return {
         projectId: caller.projectId,
         workflows,
         ready: workflows
-          .filter((item) => item.nextAction && !stalled.has(item.instanceId))
+          .filter((item) => item.nextAction && !waiting(item.instanceId))
           .map((item) => item.instanceId),
         blocked: workflows
           .filter(
             (item) =>
-              item.available && !item.terminal && !item.nextAction && !stalled.has(item.instanceId),
+              item.available && !item.terminal && !item.nextAction && !waiting(item.instanceId),
           )
           .map((item) => item.instanceId),
         stalled: [...stalled],
+        escalated: [...escalated],
         terminal: workflows.filter((item) => item.terminal).map((item) => item.instanceId),
         unavailable: workflows
           .filter((item) => !item.available && !item.terminal)
           .map((item) => item.instanceId),
       };
+    });
+  }
+
+  /**
+   * An engine command rather than a program's, so it reaches managed workflows too. It writes
+   * a grant and nothing else: the instance keeps its revision, so a review pinned to it and a
+   * dispatch expecting it both stay valid. A grant only ever raises a cap, which is why one
+   * landing beside a transition needs no ordering between them.
+   */
+  async extendLimit(
+    caller: Caller,
+    { ...input }: WorkflowExtendLimit,
+    transaction?: Transaction,
+  ): Promise<WorkflowLimitStatus> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    this.requestId(input.requestId);
+    check(
+      typeof input.instanceId === 'string' && input.instanceId.length > 0,
+      'invalid_instance',
+      'Workflow instance id is required',
+    );
+    check(
+      typeof input.limit === 'string' && input.limit.length > 0,
+      'invalid_input',
+      'A limit name is required',
+    );
+    check(
+      Number.isSafeInteger(input.additional) && input.additional >= 1 && input.additional <= 100,
+      'invalid_input',
+      'additional must be an integer between 1 and 100',
+    );
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+    check(
+      reason.length > 0 && reason.length <= 500,
+      'invalid_input',
+      'A reason of 1–500 characters is required',
+    );
+    const hash = fingerprint({
+      operation: 'extend_limit',
+      actorId: caller.actorId,
+      instanceId: input.instanceId,
+      limit: input.limit,
+      additional: input.additional,
+      reason,
+    });
+    return await inTransaction(this.state, transaction, async (tx) => {
+      check(!caller.session, 'forbidden', 'A leased worker cannot raise its own limit', 403);
+      await this.scope.require(caller, 'admin', tx);
+      const snapshot = await this.readSnapshot(tx, caller.projectId, input.instanceId);
+      const registered = this.definition(snapshot.workflow, snapshot.version);
+      const limit = registered.policy?.limits?.find((item) => item.name === input.limit);
+      check(
+        limit,
+        'unknown_limit',
+        `This ${snapshot.workflow} declares no limit ${input.limit}`,
+        404,
+      );
+      if (await this.replay(tx, caller.projectId, input.requestId, hash)) {
+        this.requireActive(registered);
+        return await limitStatus(tx, limit, snapshot.id);
+      }
+      check(
+        !registered.definition.terminal.includes(snapshot.state),
+        'invalid_transition',
+        'Terminal workflow instances cannot be allowed more rounds',
+        409,
+      );
+      // History is transitions and this is not one, so the request is kept without a history
+      // row or a transition event; the grant table is the record.
+      await tx.run(
+        'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
+        caller.projectId,
+        input.requestId,
+        hash,
+        canonical(snapshot),
+      );
+      await tx.run(
+        'INSERT INTO wf_limit_grants (project_id,request_id,instance_id,limit_name,additional,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
+        caller.projectId,
+        input.requestId,
+        snapshot.id,
+        limit.name,
+        input.additional,
+        reason,
+        caller.actorId,
+        now(),
+      );
+      const status = await limitStatus(tx, limit, snapshot.id);
+      await recorded(this.state, tx, caller, 'workflow.limit_extended', snapshot.id, {
+        workflow: snapshot.workflow,
+        version: snapshot.version,
+        limit: limit.name,
+        additional: input.additional,
+        max: status.max,
+        used: status.used,
+        reason,
+      });
+      this.requireActive(registered);
+      return status;
     });
   }
 
@@ -1254,6 +1396,51 @@ export class WorkflowsService implements Workflows {
 
   async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
     requireDependencies((await this.dependencies(caller, instanceId, tx)).dependencies);
+  }
+
+  /**
+   * A walk rather than a recursive query, like the cycle check beside the dependency insert:
+   * it reads the same on both backends, and it can ask each loaded policy for the children
+   * that no dependency edge names. The bound keeps a pathological graph from holding a
+   * read open; the caller reports how many instances it was given.
+   */
+  async dependencyClosure(
+    caller: Caller,
+    instanceId: string,
+    transaction?: Transaction,
+  ): Promise<string[]> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      await this.readSnapshot(tx, caller.projectId, instanceId);
+      const frontier = [instanceId],
+        seen = new Set<string>();
+      while (frontier.length && seen.size < closureLimit) {
+        const current = frontier.pop()!;
+        if (seen.has(current)) continue;
+        const row = await tx.get<{ workflow: string; version: number }>(
+          'SELECT workflow,version FROM wf_instances WHERE id=? AND project_id=?',
+          current,
+          caller.projectId,
+        );
+        if (!row) continue;
+        seen.add(current);
+        frontier.push(
+          ...(
+            await tx.all<{ target_id: string }>(
+              'SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=?',
+              caller.projectId,
+              current,
+            )
+          ).map((item) => item.target_id),
+          ...((await this.registrations
+            .get(`${row.workflow}@${row.version}`)
+            ?.policy?.children?.({ caller, instanceId: current, tx })) ?? []),
+        );
+      }
+      return [...seen];
+    });
   }
 
   async start(caller: Caller, input: WorkflowStart, tx?: Transaction): Promise<WorkflowSnapshot> {
@@ -1493,6 +1680,14 @@ export class WorkflowsService implements Workflows {
         `Action ${input.action} is unavailable from ${before.state}`,
         409,
       );
+      // Checked before the owning rule so the caller learns the limit, not whichever domain
+      // refusal would also apply, and inside this transaction so the refusal rolls back the
+      // whole command that asked for the return.
+      const limit = limitFor(registered.policy, before.state, edge.action);
+      if (limit) {
+        const status = await limitStatus(transaction, limit, before.id);
+        check(!status.exhausted, 'loop_limit_reached', limitMessage(status, before.workflow), 409);
+      }
       if (registered.policy) {
         const rule = registered.policy.actions.find(
           (rule) => rule.states.includes(before.state) && rule.transitions?.includes(edge.action),
@@ -1548,6 +1743,20 @@ export class WorkflowsService implements Workflows {
         before.state,
         data,
       );
+      // Recorded on arrival, never from a read. A step that stays in the capped state (a
+      // reissued review) is not a new arrival and says nothing new.
+      if (after.state !== before.state)
+        for (const arrived of await limitStatuses(transaction, registered.policy, after))
+          if (arrived.exhausted)
+            await recorded(this.state, transaction, caller, 'workflow.escalated', after.id, {
+              workflow: after.workflow,
+              version: after.version,
+              revision: after.revision,
+              state: after.state,
+              limit: arrived.name,
+              used: arrived.used,
+              max: arrived.max,
+            });
       this.requireActive(registered);
       return after;
     });

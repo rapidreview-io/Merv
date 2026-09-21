@@ -62,6 +62,9 @@ writeFileSync(
   }),
   { mode: 0o600 },
 );
+// A wrapper would write what the harness spent; this child stands in for one.
+const usage = process.argv.find((argument) => argument.startsWith('--usage='));
+if (usage) writeFileSync(process.env.MERV_USAGE_FILE, usage.slice('--usage='.length));
 renameSync('worker-result.json.tmp', 'worker-result.json');
 
 if (process.argv.includes('--hold')) {

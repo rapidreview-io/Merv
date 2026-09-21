@@ -11,6 +11,7 @@ import {
   MervError,
   newId,
   plain,
+  sessionUsageReportSchema,
   sessionWorkspaceSchema,
   type Caller,
   type Data,
@@ -23,9 +24,10 @@ import {
   type WorkflowExecution,
   type Workflows,
 } from '@merv/contracts';
-import { SessionDispatch } from './dispatch.js';
+import { SessionDispatch, failureReasons } from './dispatch.js';
 import { AgentDirectory, sourceCaller } from './agents.js';
-import { AgentObservations, summarizeAgent } from './observations.js';
+import { AgentObservations, lastActivity, summarizeAgent } from './observations.js';
+import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
   Session,
@@ -35,18 +37,40 @@ import type {
   Sessions,
   SessionsConfig,
   AutomaticLease,
+  DispatchHold,
   DispatchState,
   RunnerHeartbeat,
   RunnerPresence,
   RunnerSettings,
   SessionsProjectStatus,
+  StuckReport,
   SessionOutcome,
   SessionWorkspace,
   SessionWorkspaceObservation,
+  SessionBudgetInput,
+  SessionUsageReport,
+  BudgetStatus,
+  UsageQuery,
+  UsageRollup,
 } from './types.js';
 export type * from './types.js';
 
 const tokenPattern = /^ms_[A-Za-z0-9_-]{43}$/;
+/**
+ * Closing for idleness is off unless a deployment asks for it: a tool call is the only
+ * progress the server sees, and honest work can be hours of local computing with none.
+ */
+const secondsDefaults = {
+  idleStalledSeconds: 1800,
+  idleCloseSeconds: 0,
+  quietReadySeconds: 21_600,
+  refusalSeconds: 300,
+};
+const configKeys = new Set([
+  'sweepIntervalMs',
+  'maxLaunchFailures',
+  ...Object.keys(secondsDefaults),
+]);
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 /**
@@ -141,6 +165,38 @@ export class LeasedSessions implements Sessions {
         'invalid_sessions_config',
         'Session sweep interval must be 100–60000 milliseconds',
       );
+      const maxLaunchFailures = options.maxLaunchFailures ?? 5;
+      check(
+        Number.isInteger(maxLaunchFailures) && maxLaunchFailures >= 1 && maxLaunchFailures <= 100,
+        'invalid_sessions_config',
+        'Session maxLaunchFailures must be 1–100',
+      );
+      const seconds = (key: keyof typeof secondsDefaults, least: number, most: number) => {
+        const value = options[key] ?? secondsDefaults[key];
+        check(
+          Number.isInteger(value) && value >= least && value <= most,
+          'invalid_sessions_config',
+          `Session ${key} must be ${least}–${most} seconds`,
+        );
+        return value;
+      };
+      const idleStalledSeconds = seconds('idleStalledSeconds', 60, 604_800);
+      const idleCloseSeconds = options.idleCloseSeconds ?? secondsDefaults.idleCloseSeconds;
+      check(
+        idleCloseSeconds === 0 ||
+          (Number.isInteger(idleCloseSeconds) &&
+            idleCloseSeconds >= idleStalledSeconds &&
+            idleCloseSeconds <= 604_800),
+        'invalid_sessions_config',
+        'Session idleCloseSeconds must be 0, or from idleStalledSeconds to 604800 seconds',
+      );
+      this.thresholds = {
+        idleStalledSeconds,
+        idleCloseSeconds,
+        maxLaunchFailures,
+        quietReadySeconds: seconds('quietReadySeconds', 60, 2_592_000),
+        refusalSeconds: seconds('refusalSeconds', 30, 86_400),
+      };
       await state.migrate('sessions', [
         {
           version: 1,
@@ -236,6 +292,34 @@ json_extract(NEW.session_json,'$.agentSessionId') IS NOT json_extract(OLD.sessio
 json_extract(NEW.session_json,'$.contextEpoch') IS NOT json_extract(OLD.session_json,'$.contextEpoch')
 BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         },
+        {
+          // A new table, because a closed session row refuses every update: what a session
+          // cost is known only at and after its close.
+          version: 4,
+          postgres: postgresMigrations[4],
+          sql: `
+      CREATE TABLE session_usage (
+        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id), project_id TEXT NOT NULL,
+        instance_id TEXT NOT NULL, revision INTEGER NOT NULL, workflow TEXT NOT NULL, state TEXT NOT NULL,
+        role TEXT NOT NULL, outcome TEXT NOT NULL, started_at TEXT, closed_at TEXT NOT NULL,
+        wall_ms INTEGER NOT NULL CHECK(wall_ms >= 0), harness TEXT, model TEXT,
+        input_tokens INTEGER CHECK(input_tokens IS NULL OR input_tokens >= 0),
+        output_tokens INTEGER CHECK(output_tokens IS NULL OR output_tokens >= 0),
+        cost_micros INTEGER CHECK(cost_micros IS NULL OR cost_micros >= 0),
+        reported_model TEXT, reported_at TEXT
+      );
+      CREATE INDEX session_usage_project ON session_usage(project_id, instance_id, revision);
+      CREATE TRIGGER session_usage_no_delete BEFORE DELETE ON session_usage
+        BEGIN SELECT RAISE(ABORT,'Session usage is retained'); END;
+      CREATE TRIGGER session_usage_write_once BEFORE UPDATE ON session_usage
+        WHEN OLD.reported_at IS NOT NULL OR NEW.session_id IS NOT OLD.session_id OR NEW.project_id IS NOT OLD.project_id OR
+          NEW.instance_id IS NOT OLD.instance_id OR NEW.revision IS NOT OLD.revision OR NEW.workflow IS NOT OLD.workflow OR
+          NEW.state IS NOT OLD.state OR NEW.role IS NOT OLD.role OR NEW.outcome IS NOT OLD.outcome OR
+          NEW.started_at IS NOT OLD.started_at OR NEW.closed_at IS NOT OLD.closed_at OR NEW.wall_ms IS NOT OLD.wall_ms OR
+          NEW.harness IS NOT OLD.harness OR NEW.model IS NOT OLD.model
+        BEGIN SELECT RAISE(ABORT,'Session usage is recorded once'); END;
+    `,
+        },
       ]);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
@@ -255,8 +339,10 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
               return true;
             },
             agents: async (caller, tx) => await this.agentSummaries(caller, tx),
+            activity: async (projectId, tx) => await this.observations.activity(tx, projectId),
           },
           this.clock,
+          this.thresholds,
         ),
       );
       try {
@@ -308,6 +394,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     };
   }
   private clock!: () => number;
+  private thresholds!: StuckReport['thresholds'];
+  private idleCheckedAt = Number.NEGATIVE_INFINITY;
   private time(): string {
     return new Date(this.clock()).toISOString();
   }
@@ -509,6 +597,15 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     session.closeReason = reason;
     session.outcome = outcome ?? (status === 'expired' ? 'expired' : 'released');
     await this.save(tx, session);
+    await recordUsage(tx, session);
+    // An offer that lapsed before any process activated it is a launch that was lost, and
+    // would otherwise be re-offered every five minutes for ever with nothing counting it.
+    const failure = failureReasons.has(session.outcome)
+      ? session.outcome
+      : reason === 'session_expired' && session.activatedAt === null
+        ? 'offer_expired'
+        : undefined;
+    if (failure) await this.dispatcher.failed(session, failure, tx);
     if (session.agentId) {
       const agent = await this.directory.get(session.agentId, tx);
       if (!agent.persistent) await this.directory.retire(agent, reason, tx);
@@ -971,6 +1068,74 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);
   }
+  async stuck(caller: Caller): Promise<StuckReport> {
+    this.ensureOpen();
+    return await this.dispatcher.stuck(caller);
+  }
+  async releaseHold(
+    caller: Caller,
+    input: Parameters<Sessions['releaseHold']>[1],
+  ): Promise<DispatchHold> {
+    this.ensureOpen();
+    return await this.dispatcher.releaseHold(caller, input);
+  }
+  async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
+    this.ensureOpen();
+    return await this.dispatcher.setBudget(caller, input);
+  }
+  /**
+   * Unlike the dispatch reads this admits a leased worker: it discloses totals, never a
+   * credential or another worker's input, and a reflection lens needs it to say what a
+   * cycle cost. The scope check still bounds it to the caller's project.
+   */
+  async usage(caller: Caller, input: UsageQuery = {}): Promise<UsageRollup> {
+    caller = structuredClone(caller);
+    this.ensureOpen();
+    check(
+      input &&
+        typeof input === 'object' &&
+        Object.keys(input).every((key) => key === 'instanceId' || key === 'includeDependencies') &&
+        (input.instanceId === undefined || text(input.instanceId)) &&
+        (input.includeDependencies === undefined ||
+          (typeof input.includeDependencies === 'boolean' && input.instanceId !== undefined)),
+      'invalid_usage_query',
+      'Usage accepts an optional instanceId and, with it, includeDependencies',
+    );
+    const { instanceId, includeDependencies = true } = input;
+    return await this.reading(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const instanceIds =
+        instanceId === undefined
+          ? null
+          : includeDependencies
+            ? await this.workflows.dependencyClosure(caller, instanceId, tx)
+            : [(await this.workflows.get(caller, instanceId, tx)).id];
+      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds);
+      return {
+        scope:
+          instanceId === undefined || instanceIds === null
+            ? { kind: 'project', projectId: caller.projectId }
+            : {
+                kind: 'instance',
+                instanceId,
+                includeDependencies,
+                instanceCount: instanceIds.length,
+              },
+        ...totals,
+        liveSessions: (await tx.get<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
+          caller.projectId,
+        ))!.n,
+        budgets: await this.dispatcher.budgetsFor(caller, tx, instanceId),
+        accounting: {
+          wallClock: 'measured',
+          tokens: 'runner_reported',
+          since,
+          method: accountingMethod,
+        },
+      };
+    });
+  }
   async halt(
     caller: Caller,
     input: { sessionId?: string; reason?: string } = {},
@@ -1296,9 +1461,16 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     }: SessionControl & {
       reason?: string;
       outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      usage?: SessionUsageReport;
     },
   ): Promise<Session> {
     caller = structuredClone(caller);
+    const usage = sessionUsageReportSchema.optional().safeParse(input.usage);
+    check(
+      usage.success,
+      'invalid_usage',
+      'Usage reports non-negative token counts and an optional cost and model',
+    );
     check(
       input.outcome === undefined ||
         ['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'].includes(
@@ -1314,22 +1486,59 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     );
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      // A session whose handoff already landed is recorded as that, whoever releases it; a
-      // completed outcome is what the handoff proves, never what a release claims.
-      if (live(session) && (await this.handedOff(session, tx)))
-        return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
-      check(
-        input.outcome !== 'completed',
-        'invalid_outcome',
-        'A completed outcome is recorded by the worker’s own handoff, not by a release',
-      );
-      return await this.closeSession(
-        session,
-        input.reason ?? 'released',
-        tx,
-        'released',
-        input.outcome,
-      );
+      const released = await this.closeReleased(session, input, tx);
+      if (usage.data) await this.reportUsage(released, usage.data, tx);
+      return released;
+    });
+  }
+  private async closeReleased(
+    session: Session,
+    input: { reason?: string; outcome?: SessionOutcome },
+    tx: Transaction,
+  ): Promise<Session> {
+    // A session whose handoff already landed is recorded as that, whoever releases it; a
+    // completed outcome is what the handoff proves, never what a release claims.
+    if (live(session) && (await this.handedOff(session, tx)))
+      return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+    check(
+      input.outcome !== 'completed',
+      'invalid_outcome',
+      'A completed outcome is recorded by the worker’s own handoff, not by a release',
+    );
+    return await this.closeSession(
+      session,
+      input.reason ?? 'released',
+      tx,
+      'released',
+      input.outcome,
+    );
+  }
+  /**
+   * Most real usage arrives here for a session its own handoff already closed, which is why
+   * the report rides on release rather than on a live-session call. It is the launching
+   * machine's word, stored as that and attributed to the system, never to a reviewer of it.
+   */
+  private async reportUsage(
+    session: Session,
+    usage: SessionUsageReport,
+    tx: Transaction,
+  ): Promise<void> {
+    const stored = await reportUsage(tx, session.id, usage, this.time());
+    if (!stored) return;
+    await this.state.appendEvent(tx, {
+      projectId: session.projectId,
+      actorId: 'system:sessions',
+      type: 'session.usage_reported',
+      subjectId: session.id,
+      data: {
+        sessionId: session.id,
+        instanceId: session.instanceId,
+        revision: session.expectedRevision,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        costMicros: stored.costMicros,
+        model: usage.model ?? null,
+      },
     });
   }
   async authenticate(token: string): Promise<Caller> {
@@ -1597,13 +1806,79 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     if (running && !this.closed)
       await this.observations.finish(invocation.caller.session!.invocationId!, 'failed');
   }
+  /**
+   * Alive is not progressing: a runner renews a lease for as long as its process lives, so a
+   * lease alone never says the work moves. The mark, its clearing and the close live only
+   * here, on the session the writing sweep just decoded. A poll may run on a read snapshot,
+   * where reconcile already has to swallow read_only_scope to report a closure it cannot
+   * record; an idle mark has no such need, so no read path computes one.
+   */
+  private async progress(
+    session: Session,
+    lastCallAt: string | undefined,
+    tx: Transaction,
+  ): Promise<void> {
+    const lastActivityAt = lastActivity(session, lastCallAt)!;
+    const idleSeconds = Math.floor((this.clock() - Date.parse(lastActivityAt)) / 1000);
+    const { idleStalledSeconds, idleCloseSeconds } = this.thresholds;
+    if (idleCloseSeconds > 0 && idleSeconds >= idleCloseSeconds) {
+      await this.closeSession(session, 'idle_timeout', tx, 'expired', 'stalled');
+      return;
+    }
+    if (idleSeconds < idleStalledSeconds) {
+      if (!session.stalledAt) return;
+      session.stalledAt = null;
+      await this.save(tx, session);
+      return;
+    }
+    // Once per episode: the mark is what keeps a later sweep from saying it again.
+    if (session.stalledAt) return;
+    session.stalledAt = this.time();
+    await this.save(tx, session);
+    await this.state.appendEvent(tx, {
+      projectId: session.projectId,
+      actorId: 'system:sessions',
+      type: 'session.stalled',
+      subjectId: session.id,
+      data: {
+        sessionId: session.id,
+        instanceId: session.instanceId,
+        revision: session.expectedRevision,
+        lastActivityAt,
+        idleSeconds,
+      },
+    });
+  }
+  /**
+   * Idleness moves on a scale of minutes, so the sweep looks at it at most once a minute of
+   * clock time, only at sessions active long enough to be idle, and reads every session's
+   * latest call in one statement the first time one of them needs it.
+   */
+  private idlePass(tx: Transaction) {
+    const now = this.clock();
+    const due = now - this.idleCheckedAt >= 60_000;
+    if (due) this.idleCheckedAt = now;
+    let calls: Promise<Map<string, string>> | undefined;
+    return {
+      due: (session: Session) =>
+        due &&
+        session.status === 'active' &&
+        session.activatedAt !== null &&
+        Date.parse(session.activatedAt) + this.thresholds.idleStalledSeconds * 1000 <= now,
+      activity: () => (calls ??= this.observations.activity(tx)),
+    };
+  }
   private async sweepTransaction(tx: Transaction): Promise<void> {
+    const idle = this.idlePass(tx);
     for (const row of await tx.all<Row>(
       tx.dialect === 'postgres'
         ? "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid"
         : "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY rowid",
-    ))
-      await this.reconcile(await this.decode(row, tx), tx);
+    )) {
+      const session = await this.decode(row, tx);
+      if (!(await this.reconcile(session, tx)) && idle.due(session))
+        await this.progress(session, (await idle.activity()).get(session.id), tx);
+    }
     for (const row of await tx.all<{ id: string }>("SELECT id FROM agents WHERE status='active'")) {
       const agent = await this.directory.get(row.id, tx);
       try {
@@ -1655,9 +1930,9 @@ export const sessionsPlugin = {
     check(
       config &&
         typeof config === 'object' &&
-        Object.keys(config).every((key) => key === 'sweepIntervalMs'),
+        Object.keys(config).every((key) => configKeys.has(key)),
       'invalid_sessions_config',
-      'Sessions only supports sweepIntervalMs configuration',
+      `Sessions only supports ${[...configKeys].join(', ')} configuration`,
     );
     await ctx.effect(async function* () {
       const sessions = await createService(

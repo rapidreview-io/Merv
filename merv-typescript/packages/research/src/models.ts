@@ -104,6 +104,13 @@ export interface ResearchDigest {
     approvedAt: string;
     report: ResearchArtifactRef;
     changeSpec: ResearchArtifactRef;
+    /** What a structured change specification decided comes next; null for a text one. */
+    next: {
+      decision: 'continue' | 'stop';
+      /** The stop reason; null when the plan continues. */
+      reason: string | null;
+      rationale: string;
+    } | null;
   } | null;
   consolidation: { id: string; reviewId: string; report: ResearchArtifactRef } | null;
   experiments: {
@@ -133,6 +140,8 @@ export interface ResearchDigest {
   carriedOver: string[];
   /** Tested claims still draft or active: derived, not authored. */
   openQuestions: { claimId: string; statement: string }[];
+  /** Alternatives the approved structured plan weighed and turned down, so they are not proposed again unknowingly. */
+  rejected: { title: string; reason: string }[];
   /** Entries left out to keep the digest within its bound. */
   omitted: number;
 }

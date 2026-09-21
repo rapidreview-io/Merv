@@ -31,6 +31,7 @@ function fixture() {
     createdAt: 'now',
     guidance: {
       dependencies: [],
+      limits: [],
       workStart: null,
       instanceId: 'task',
       workflow: 'task',

@@ -13,7 +13,13 @@ four generic tools remain unexposed.
 `await register(definition, policy)` registers awaited domain checks, action/tool
 descriptions and optional argument/reference builders. `evaluate` returns the
 current decision and supports read-only action preflight; `overview` evaluates all
-instances in the caller's project. A supplied policy must guard every graph edge.
+instances in the caller's project and sorts them into `ready`, `blocked`, `stalled`,
+`escalated`, `terminal` and `unavailable`. A supplied policy must guard every graph edge.
+A policy may also declare `limits` on its loop edges: they are deployed policy rather than
+fingerprinted graph, are counted from history, refuse the capped edge at commit with
+`loop_limit_reached`, and are raised for one instance by `extendLimit`
+([loop limits](../../docs/BUDGETS_AND_LIMITS.md)). Its optional `children` callback names
+instances it fans out to without a dependency edge, which `dependencyClosure` unions in.
 The same checks run before a transition commits. See [the complete contract,
 task integration and lifecycle behavior](../../docs/WORKFLOW_GUIDANCE.md).
 

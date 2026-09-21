@@ -28,7 +28,9 @@ export type SessionOutcome =
   | 'host_failed'
   | 'launch_failed'
   | 'workspace_failed'
-  | 'crash_loop';
+  | 'crash_loop'
+  /** Alive but not progressing: closed by the idle policy, never by the worker. */
+  | 'stalled';
 
 export interface DispatchState {
   enabled: boolean;
@@ -80,6 +82,8 @@ export type DispatchDecision =
   | 'settings_pending'
   | 'capacity_full'
   | 'retry_backoff'
+  | 'budget_exceeded'
+  | 'retries_exhausted'
   | 'no_candidates';
 export interface RunnerPresence extends RunnerHeartbeat {
   id: string;
@@ -90,6 +94,64 @@ export interface RunnerPresence extends RunnerHeartbeat {
   /** What the runner's last lease request decided; one row per runner, never a log. */
   lastDecision: DispatchDecision | null;
   lastDecisionAt: string | null;
+  /** When the current run of the same decision began, so a refusal says how long it has held. */
+  decisionSince: string | null;
+}
+/**
+ * Why automatic dispatch is spacing out or withholding one instance revision: one counter
+ * per target, never a log. `lastSessionId` is null when the offer itself could not be built.
+ */
+export interface DispatchHold {
+  instanceId: string;
+  revision: number;
+  attempts: number;
+  lastCode: string;
+  lastMessage: string;
+  lastSessionId: string | null;
+  firstAt: string;
+  lastAt: string;
+  /** Set once the attempts reach the cap; only a human's go-ahead clears it. */
+  heldAt: string | null;
+}
+export type StuckKind =
+  | 'session_idle'
+  | 'dispatch_held'
+  | 'dispatch_failing'
+  | 'ready_quiet'
+  | 'dispatch_disabled'
+  | 'no_live_runner'
+  | 'runner_refusing';
+/** One thing that stopped moving. `why` and `next` are advice; every guard is a transaction's. */
+export interface StuckItem {
+  kind: StuckKind;
+  instanceId?: string;
+  expectedRevision?: number;
+  sessionId?: string;
+  runnerRef?: string;
+  label?: string;
+  since: string;
+  forSeconds: number;
+  code: string;
+  attempts?: number;
+  why: string;
+  next: string;
+}
+export interface StuckReport {
+  observedAt: string;
+  thresholds: {
+    idleStalledSeconds: number;
+    idleCloseSeconds: number;
+    maxLaunchFailures: number;
+    quietReadySeconds: number;
+    refusalSeconds: number;
+  };
+  /** What needs someone: every item except `dispatch_failing`, which is still being retried. */
+  total: number;
+  /** Every item by kind, before the 200 cap. */
+  counts: Record<StuckKind, number>;
+  /** At most 200, in StuckKind order, then by `since` and instance. */
+  items: StuckItem[];
+  truncated: boolean;
 }
 export interface SessionSummary {
   agentId?: string;
@@ -110,6 +172,10 @@ export interface SessionSummary {
   closedAt: string | null;
   closeReason: string | null;
   outcome?: SessionOutcome | null;
+  /** An active session's activation or latest tool call, whichever is later; null otherwise. */
+  lastActivityAt: string | null;
+  /** When the sweep found the session alive without progressing; null while it moves. */
+  stalledAt: string | null;
   /** Frozen execution intent remains known before preparation or after a preparation failure. */
   workspaceMode: 'none' | 'ephemeral' | 'persistent';
   workspace?: SessionWorkspaceRecord;
@@ -167,6 +233,63 @@ export interface AgentObservation {
   };
   tokenAccounting: { kind: 'estimate'; method: string };
 }
+/** What the machine that launched a process says it spent. Merv cannot verify any of it. */
+export interface SessionUsageReport {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+  model?: string;
+}
+export interface UsageTotals {
+  sessions: number;
+  /** How many of `sessions` carry a runner report; the token and cost sums cover only these. */
+  reportedSessions: number;
+  /** Lease wall-clock, activation to close. A close may lag the death of the process. */
+  wallMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  costMicros: number;
+  toolCalls: number;
+  toolPayloadTokensEstimate: number;
+}
+/**
+ * A budget only pauses automatic dispatch; nothing running is stopped. Wall-clock is the
+ * dimension Merv measures itself. Cost and tokens trust whatever wrote the runner's report.
+ */
+export interface BudgetStatus {
+  /** The project id for the project budget, otherwise a workflow instance id. */
+  scopeId: string;
+  kind: 'project' | 'instance';
+  maxWallMs: number | null;
+  maxCostMicros: number | null;
+  maxTokens: number | null;
+  used: { wallMs: number; costMicros: number; tokens: number };
+  exceeded: ('wall' | 'cost' | 'tokens')[];
+  updatedAt: string;
+  updatedBy: string;
+}
+export interface UsageRollup {
+  scope:
+    | { kind: 'project'; projectId: string }
+    | {
+        kind: 'instance';
+        instanceId: string;
+        includeDependencies: boolean;
+        instanceCount: number;
+      };
+  totals: UsageTotals;
+  byWorkflow: (UsageTotals & { workflow: string })[];
+  /** The fifty instances with the most wall-clock. */
+  byInstance: (UsageTotals & { instanceId: string; workflow: string })[];
+  liveSessions: number;
+  budgets: BudgetStatus[];
+  accounting: {
+    wallClock: 'measured';
+    tokens: 'runner_reported';
+    since: string | null;
+    method: string;
+  };
+}
 export interface SessionsProjectStatus {
   agents?: AgentSummary[];
   /** The server's own clock when this payload was measured; every duration anchors here. */
@@ -182,4 +305,10 @@ export interface SessionsProjectStatus {
   /** Candidates currently admissible for the authenticated caller. */
   queue: WorkflowDispatchCandidate[];
   queueTotal: number;
+  /** Every budget of the project, measured at `observedAt`. */
+  budgets: BudgetStatus[];
+  /** Queued work withheld from automatic dispatch because its launches kept failing. */
+  retriesExhausted: number;
+  /** What `session.stuck` lists, as counts; a target still being retried is not in `total`. */
+  stuck: Pick<StuckReport, 'total' | 'counts'>;
 }

@@ -223,7 +223,16 @@ export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state)
   },
 }));
 
+/**
+ * How often a design review, and a results review, may return an experiment. A design return
+ * or a return to planning opens a new attempt, so together they bound an experiment's
+ * attempts. After the last return the next submission waits for a human, who reviews it by
+ * hand or allows another round. Deployed policy, so every live program version is covered.
+ */
+export const EXPERIMENT_LIMITS = { designRounds: 4, resultRounds: 3 };
+
 export interface ExperimentProgramHost {
+  limits: typeof EXPERIMENT_LIMITS;
   state: State;
   scope: Scope;
   claims: Claims;
@@ -1132,6 +1141,20 @@ DROP TABLE experiment_leases_backup;`,
     return {
       successStates: ['complete'],
       dependencyFailureAction: 'mark_failed',
+      limits: [
+        {
+          name: 'design_rounds',
+          from: 'design_review',
+          actions: ['revise_design'],
+          max: this.host.limits.designRounds,
+        },
+        {
+          name: 'result_rounds',
+          from: 'experiment_review',
+          actions: ['revise_plan', 'revise_execution'],
+          max: this.host.limits.resultRounds,
+        },
+      ],
       assignments: activeStates.map((state) => ({
         state,
         // A plan is written against its inputs, so planning waits for the tasks the

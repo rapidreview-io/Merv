@@ -1450,6 +1450,14 @@ test('a stop plan and a text change specification complete as before and ignore 
   assert.equal(done.workflow.state, 'complete');
   assert.equal(done.successorId, null);
   assert.deepEqual(await counts(f), before);
+  // The digest carries the decision and what the plan turned down, not the plan itself.
+  const decided = (await digestOf(f, done)).digest;
+  assert.deepEqual(decided.reflection!.next, {
+    decision: 'stop',
+    reason: 'goal_met',
+    rationale: 'The question is answered.',
+  });
+  assert.deepEqual(decided.rejected, stop.rejected);
 
   // Nothing to create: the choice is accepted and creates nothing.
   let text = await f.advance(await f.advance(await f.create()));
@@ -1463,6 +1471,8 @@ test('a stop plan and a text change specification complete as before and ignore 
   assert.equal(text.workflow.state, 'complete');
   assert.equal(text.successorId, null);
   assert.deepEqual(await counts(f), { ...before, cycles: before.cycles + 1 });
+  const prose = (await digestOf(f, text)).digest;
+  assert.deepEqual([prose.reflection!.next, prose.rejected], [null, []]);
 });
 
 test('a consolidated cycle creates the plan when consolidation completes, not at the handoff', async (t) => {

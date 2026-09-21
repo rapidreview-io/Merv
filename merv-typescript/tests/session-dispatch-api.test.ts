@@ -396,6 +396,22 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
     ).status,
     400,
   );
+  for (const usage of [
+    { inputTokens: 1, outputTokens: 1, reasoningTokens: 1 },
+    { inputTokens: -1, outputTokens: 1 },
+  ])
+    assert.equal(
+      (
+        await f.http(
+          `/sessions/${live.body.session.id}/release`,
+          f.key.token,
+          { runnerId: 'manual', usage },
+          f.project.id,
+        )
+      ).status,
+      400,
+      'A usage report is a closed shape of non-negative counts',
+    );
   const released = await f.http(
     `/sessions/${live.body.session.id}/release`,
     f.key.token,
@@ -404,6 +420,14 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
   );
   assert.equal(released.status, 200, JSON.stringify(released));
   assert.equal(released.body.session.outcome, 'launch_failed');
+  const reported = await f.http(
+    `/sessions/${live.body.session.id}/release`,
+    f.key.token,
+    { runnerId: 'manual', usage: { inputTokens: 5, outputTokens: 7, costUsd: 0.01 } },
+    f.project.id,
+  );
+  assert.equal(reported.status, 200, 'A closed session still accepts its runner’s report');
+  assert.equal(reported.body.session.outcome, 'launch_failed');
   const summarized = await f.http('/sessions/status', f.operator, undefined, f.project.id);
   assert.equal(
     summarized.body.sessions.find((item: { id: string }) => item.id === live.body.session.id)
@@ -503,6 +527,11 @@ test('a runner reports the answer its last lease request received', async (t) =>
   assert.equal(pending.body.reason, 'settings_pending');
   runner = await runnerRow();
   assert.equal(runner.lastDecision, 'settings_pending');
+  // Asked again, the refusal keeps the moment it began: that is how long it has held.
+  await f.http('/sessions/lease', f.key.token, f.leaseInput(), f.project.id);
+  const repeated = await runnerRow();
+  assert.equal(repeated.decisionSince, runner.decisionSince);
+  assert.ok(repeated.decisionSince <= repeated.lastDecisionAt);
   assert.equal(runner.desiredVersion > (runner.appliedVersion ?? 0), true);
 
   // Acknowledged, with the one seat this runner has already taken: capacity.

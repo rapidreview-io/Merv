@@ -91,4 +91,30 @@ $merv$;
 CREATE TRIGGER wf_execution_policies_no_delete BEFORE DELETE ON wf_execution_policies
 FOR EACH ROW EXECUTE FUNCTION wf_execution_policies_no_delete_guard();
 `,
+  5: `
+CREATE TABLE wf_limit_grants (
+    project_id TEXT NOT NULL, request_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL REFERENCES wf_instances(id), limit_name TEXT NOT NULL,
+    additional BIGINT NOT NULL CHECK (additional > 0), reason TEXT NOT NULL,
+    actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, request_id)
+  );
+  CREATE INDEX wf_limit_grants_instance ON wf_limit_grants(instance_id, limit_name);
+  CREATE OR REPLACE FUNCTION wf_limit_grants_no_update_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Workflow limit grants are immutable', ERRCODE = '23514';
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER wf_limit_grants_no_update BEFORE UPDATE ON wf_limit_grants
+FOR EACH ROW EXECUTE FUNCTION wf_limit_grants_no_update_guard();
+  CREATE OR REPLACE FUNCTION wf_limit_grants_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Workflow limit grants are retained', ERRCODE = '23514';
+  RETURN OLD;
+END;
+$merv$;
+CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
+FOR EACH ROW EXECUTE FUNCTION wf_limit_grants_no_delete_guard();
+`,
 };

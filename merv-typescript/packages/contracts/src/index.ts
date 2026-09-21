@@ -17,6 +17,7 @@ export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
 export { sessionWorkspaceSchema } from './workspace.js';
+export { sessionUsageReportSchema } from './usage-report.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
   CodePublication,
@@ -81,6 +82,7 @@ export type {
   WorkflowBlocker,
   WorkflowActionStatus,
   WorkflowDecision,
+  WorkflowLimitStatus,
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
@@ -93,6 +95,7 @@ export type {
 import type {
   WorkflowReference,
   WorkflowDecision,
+  WorkflowLimitStatus,
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
@@ -854,13 +857,46 @@ export interface WorkflowActionRule {
   check(context: WorkflowCheckContext): void | Promise<void>;
   arguments?(context: WorkflowCheckContext): Data | Promise<Data>;
 }
+/**
+ * A cap on how often one instance may take a returning edge. `max` is the sum of recorded
+ * traversals allowed across `actions`, every one of which leaves `from` for another state.
+ */
+export interface WorkflowLoopLimit {
+  name: string;
+  from: string;
+  actions: string[];
+  max: number;
+}
+/** An admin's append-only allowance of more traversals on one instance; it changes no revision. */
+export interface WorkflowExtendLimit {
+  instanceId: string;
+  limit: string;
+  additional: number;
+  reason: string;
+  requestId: string;
+}
 export interface WorkflowPolicy {
   actions: WorkflowActionRule[];
   assignments?: WorkflowAssignmentRule[];
+  /**
+   * Not fingerprinted with the graph: a cap is deployed policy, a number operators tune, and
+   * it governs every live instance of the version at once, counted from its whole history.
+   */
+  limits?: WorkflowLoopLimit[];
   /** Immutable per version; only these terminal states satisfy downstream work. */
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;
+  /**
+   * Instances this one fans work out to without a dependency edge, such as a reflection's
+   * lenses. A usage rollup over a dependency closure unions them in, so the sessions they
+   * cost are not lost from the figure of the cycle that caused them. It only reads.
+   */
+  children?(context: {
+    caller: Caller;
+    instanceId: string;
+    tx: Transaction;
+  }): string[] | Promise<string[]>;
   describe?(context: WorkflowCheckContext):
     | {
         label: string;
@@ -1101,6 +1137,12 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<WorkflowDecision>;
   overview(caller: Caller): Promise<WorkflowOverview>;
+  /** Only a project admin who is not a leased worker may allow a capped loop more rounds. */
+  extendLimit(
+    caller: Caller,
+    input: WorkflowExtendLimit,
+    tx?: Transaction,
+  ): Promise<WorkflowLimitStatus>;
   dependencies(
     caller: Caller,
     instanceId: string,
@@ -1110,6 +1152,11 @@ export interface Workflows {
     dependents: WorkflowDependency[];
   }>;
   checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void>;
+  /**
+   * The instance, everything it transitively depends on, and the children their policies
+   * declare: the grouping a research cycle's usage and budget are read over.
+   */
+  dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
 }
 export type Verdict = 'pass' | 'needs_changes' | 'fail';
 export type ReviewFinding = {

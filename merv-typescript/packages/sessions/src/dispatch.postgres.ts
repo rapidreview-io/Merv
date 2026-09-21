@@ -49,4 +49,30 @@ FOR EACH ROW EXECUTE FUNCTION session_runners_identity_guard();
 ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
       ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
 `,
+  3: `
+CREATE TABLE session_budgets (
+        project_id TEXT NOT NULL REFERENCES projects(id), scope_id TEXT NOT NULL,
+        max_wall_ms BIGINT CHECK(max_wall_ms IS NULL OR max_wall_ms > 0),
+        max_cost_micros BIGINT CHECK(max_cost_micros IS NULL OR max_cost_micros > 0),
+        max_tokens BIGINT CHECK(max_tokens IS NULL OR max_tokens > 0),
+        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        PRIMARY KEY(project_id, scope_id)
+      );
+`,
+  4: `
+ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
+      CREATE TABLE session_dispatch_holds (
+        project_id TEXT NOT NULL REFERENCES projects(id), instance_id TEXT NOT NULL, revision BIGINT NOT NULL,
+        attempts BIGINT NOT NULL CHECK(attempts>=0), last_code TEXT NOT NULL, last_message TEXT NOT NULL,
+        last_session_id TEXT REFERENCES worker_sessions(id), first_at TEXT NOT NULL, last_at TEXT NOT NULL,
+        held_at TEXT,
+        PRIMARY KEY(project_id,instance_id,revision)
+      );
+      CREATE INDEX session_dispatch_holds_held ON session_dispatch_holds(project_id) WHERE held_at IS NOT NULL;
+      CREATE TABLE session_hold_requests (
+        project_id TEXT NOT NULL, actor_id TEXT NOT NULL, request_id TEXT NOT NULL,
+        input_hash TEXT NOT NULL, result TEXT NOT NULL,
+        PRIMARY KEY(project_id,actor_id,request_id)
+      );
+`,
 };

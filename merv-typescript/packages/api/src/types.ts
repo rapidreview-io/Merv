@@ -5,6 +5,7 @@ import type {
   CodeCommandControl,
   CodeCommandRecord,
   CodeCommitCommand,
+  SessionUsageReport,
   SessionWorkspace,
 } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -138,6 +139,7 @@ export interface SessionApiProvider {
       runnerId: string;
       reason?: string;
       outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      usage?: SessionUsageReport;
     },
   ): Promise<unknown>;
 }

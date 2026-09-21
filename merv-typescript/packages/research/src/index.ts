@@ -981,6 +981,10 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       openQuestions: claims
         .filter(({ claim }) => claim.status === 'draft' || claim.status === 'active')
         .map(({ claim }) => ({ claimId: claim.id, statement: text(claim.statement) })),
+      rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
+        title: text(entry.title),
+        reason: text(entry.reason),
+      })),
     };
     const composedAt = now();
     let omitted = 0;
@@ -1004,6 +1008,15 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
         approvedAt: reflection.approvedAt,
         report: ref(reflection.report),
         changeSpec: ref(reflection.changeSpec),
+        // The decision is the one line of the plan every later wave needs; the items that
+        // became work are records, which the successor's origin names.
+        next: reflection.plan
+          ? {
+              decision: reflection.plan.next.decision,
+              reason: reflection.plan.next.decision === 'stop' ? reflection.plan.next.reason : null,
+              rationale: text(reflection.plan.next.rationale),
+            }
+          : null,
       },
       consolidation:
         consolidation && approvedSubmission

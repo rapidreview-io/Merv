@@ -3,6 +3,7 @@ import { clip, createService, plain, reviewHistory } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
+import { z } from 'zod';
 import {
   check,
   digest,
@@ -155,6 +156,22 @@ interface TaskLeaseRow {
 const normalized = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
+/**
+ * How often a review may return a task for changes. After that many returns the next delivery
+ * waits for a human, who reviews it by hand or allows another round. It is deployed policy
+ * and not part of the published graph, so it covers every live task of every version.
+ */
+export const TASK_LIMITS = { reviewRounds: 3 };
+const configuration = z
+  .object({
+    limits: z
+      .object({ reviewRounds: z.number().int().min(1).max(1000).default(TASK_LIMITS.reviewRounds) })
+      .strict()
+      .default({}),
+  })
+  .strict()
+  .default({});
+
 export class TaskService implements Tasks {
   private closed = false;
   private releaseReviewOwner?: () => void;
@@ -172,6 +189,7 @@ export class TaskService implements Tasks {
     private workflows: Workflows,
     private reviews: Reviews,
     private contextBuilder: ContextBuilder,
+    private limits = TASK_LIMITS,
   ) {
     this.initialize = async () => {
       await state.migrate('tasks', [
@@ -536,6 +554,14 @@ DROP TABLE task_leases_backup;`,
     return {
       successStates: ['done'],
       dependencyFailureAction: 'mark_failed',
+      limits: [
+        {
+          name: 'review_rounds',
+          from: 'in_review',
+          actions: ['revise'],
+          max: this.limits.reviewRounds,
+        },
+      ],
       assignments: [
         {
           state: 'in_progress',
@@ -2024,7 +2050,8 @@ DROP TABLE task_leases_backup;`,
 export const tasksPlugin = {
   name: 'merv-tasks',
   inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder'],
-  async apply(ctx: Context) {
+  Config: configuration,
+  async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const tasks = await createService(
       new TaskService(
         ctx.state,
@@ -2033,6 +2060,7 @@ export const tasksPlugin = {
         ctx.workflows,
         ctx.reviews,
         ctx.contextBuilder,
+        config.limits,
       ),
     );
     // Keep the graph registration until every consumer of Tasks has been disposed.

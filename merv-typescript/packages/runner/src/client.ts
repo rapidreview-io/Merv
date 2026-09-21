@@ -16,6 +16,7 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   Session,
+  SessionUsageReport,
   SessionWorkspace,
 } from '@merv/sessions/types';
 
@@ -345,6 +346,7 @@ export class RunnerClient {
     runnerId: string,
     outcome: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop',
     reason: string,
+    usage?: SessionUsageReport,
   ): Promise<Session> {
     return this.session(
       (
@@ -352,8 +354,21 @@ export class RunnerClient {
           runnerId,
           outcome,
           reason,
+          ...(usage ? { usage } : {}),
         })
       )?.session,
+      { id, runnerId, statuses: ['released', 'expired'] },
+    );
+  }
+  /**
+   * A session its own handoff closed has nothing left to release, yet that is the session
+   * with usage worth reporting. The release route accepts the report alone and changes
+   * nothing else about a session that has already ended.
+   */
+  async reportUsage(id: string, runnerId: string, usage: SessionUsageReport): Promise<Session> {
+    return this.session(
+      (await this.request(`/sessions/${encodeURIComponent(id)}/release`, { runnerId, usage }))
+        ?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }

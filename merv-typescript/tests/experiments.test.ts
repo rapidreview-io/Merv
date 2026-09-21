@@ -28,7 +28,7 @@ const report =
   '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the retained observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
     state = new SqliteState(join(dir, 'state.sqlite'));
   const scope = await createService(new ProjectScope(state)),
@@ -59,6 +59,7 @@ async function fixture(t: TestContext) {
         claims,
         undefined,
         await createService(new PaperService(state, scope, artifacts)),
+        limits,
       ),
     ),
     sequence = 0;
@@ -323,6 +324,53 @@ test('Design rejection starts a new attempt; invalid routes and self review cann
   assert.equal(e.attempt.index, 2);
   assert.equal(e.workflow.state, 'planned');
 });
+test('A design returned as often as its limit allows waits for a human; the refused verdict leaves no trace', async (t) => {
+  const f = await fixture(t, { designRounds: 1, resultRounds: 3 });
+  let e = await f.create();
+  await f.attach(e, 'plan', plan);
+  e = await f.submitReview(await f.transition(e, 'submit_design'), 'needs_changes');
+  assert.equal(e.attempt.index, 2);
+  await f.attach(e, 'plan', plan);
+  e = await f.transition(e, 'submit_design');
+  const guidance = await f.workflows.evaluate(f.producer, e.id);
+  assert.equal(guidance.currentGate, 'loop_limit_reached');
+  assert.deepEqual(
+    guidance.limits.map((limit) => [limit.name, limit.used, limit.max]),
+    [['design_rounds', 1, 1]],
+  );
+  assert.deepEqual((await f.workflows.overview(f.operator)).escalated, [e.id]);
+  const verdict = await f.reviewInput(e, 'needs_changes');
+  const events = (await f.state.events(f.operator.projectId)).length;
+  await assert.rejects(
+    async () => await f.reviews.apply(f.reviewer, verdict),
+    code('loop_limit_reached'),
+  );
+  // The review, the attempt and the record are as they were: nothing of the verdict was kept.
+  assert.equal((await f.state.events(f.operator.projectId)).length, events);
+  assert.equal((await f.reviews.get(f.reviewer, e.reviewId!)).verdict, null);
+  assert.deepEqual(await f.experiments.get(f.producer, e.id), e);
+  // The work is not failed, and its owner may still end it.
+  e = await f.transition(e, 'abandon', { evidence: { reason: 'The design will not converge.' } });
+  assert.equal(e.workflow.state, 'abandoned');
+});
+
+test('The experiment limits default to four design rounds and three result rounds', async (t) => {
+  const f = await fixture(t);
+  let e = await f.create();
+  await f.attach(e, 'plan', plan);
+  e = await f.transition(e, 'submit_design');
+  assert.deepEqual(
+    (await f.workflows.evaluate(f.producer, e.id)).limits.map((limit) => [limit.name, limit.max]),
+    [['design_rounds', 4]],
+  );
+  e = await f.results(await f.submitReview(e));
+  const [results] = (await f.workflows.evaluate(f.producer, e.id)).limits;
+  assert.deepEqual(
+    [results.name, results.actions, results.max],
+    ['result_rounds', ['revise_plan', 'revise_execution'], 3],
+  );
+});
+
 test('Immutable role/path versions, strict attempt/revision and actual submitting author are enforced', async (t) => {
   const f = await fixture(t);
   const e = await f.create();

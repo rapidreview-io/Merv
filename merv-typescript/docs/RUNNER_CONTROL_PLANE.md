@@ -41,6 +41,58 @@ automatic lease requires a fresh source-bound runner registration. An explicit
 manual offer retains its existing semantics and does not require automatic
 dispatch to be enabled.
 
+## Stuck work and dispatch holds
+
+Every failed attempt on one instance revision is counted in one `session_dispatch_holds`
+row, across runners and platforms: a session closed as `host_failed`, `crash_loop`,
+`workspace_failed`, `launch_failed` or `stalled`, an offer that lapsed before any process
+activated it (`offer_expired`), and an offer that could not be built, which leaves no
+session and is recorded after its lease transaction rolled back. Authority refusals,
+lost races and refusals of the lease request itself (a session secret that was already
+used) are not counted: they say nothing about the target. At Sessions config `maxLaunchFailures` (default 5) the row is
+**held**: the target is filtered out inside the committing lease transaction, a runner whose
+only remaining work is held is answered `retries_exhausted`, and one
+`session.dispatch_held` event is recorded. The thirty-second backoff between attempts is
+unchanged. See [the launch retry cap](BUDGETS_AND_LIMITS.md).
+
+A hold gates **automatic dispatch only**. An explicit `POST /sessions/offer` is a deliberate
+act by a write-permission source and still leases a held target; if that session fails, the
+failure counts like any other. A hold names one revision, so ending or revising the record
+is the decision not to run the work. The decision to run it again is
+`session.release_hold {instanceId, expectedRevision, reason, requestId}`: a project admin
+who is not a leased worker, checked in the transaction, idempotent by `requestId` (the same
+id with different input is `request_conflict`), refused with `hold_not_found` (404) when
+nothing is counted against the target and `hold_not_held` (409) while it is still being
+retried. It zeroes the count, clears the hold and records `session.hold_released`.
+Switching dispatch off and on does the same for every target of the project.
+
+A runner's presence carries `decisionSince` beside `lastDecision` and `lastDecisionAt`: the
+moment the current run of the same answer began. It is per runner, so a runner that
+alternates platforms with different answers restarts it.
+
+`session.stuck` is one read tool, for anyone who may read the project and never for a
+leased worker. It derives, in one transaction and without writing, everything that stopped
+moving. Each item carries `since`, `forSeconds`, `code`, `why` and `next`; the words are
+advice, and every guard is the transaction's that leases, closes or releases. Items come in
+the order below, then by `since` and instance, capped at 200 with `truncated`; `counts`
+covers all of them, and `total` leaves out `dispatch_failing`, which needs nobody yet.
+`GET /sessions/status` and the `ui.home` sessions row carry the same `stuck: {total, counts}`.
+
+| Kind                | Reported when                                                                                                                                                          | `since`                            | `next` says                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `session_idle`      | An active session has made no tool call for `idleStalledSeconds` ([alive is not progressing](SESSION_LEASES.md#alive-is-not-progressing)).                             | Its last activity                  | Leave it, or halt it with `POST /sessions/halt`; when it closes by itself, or that it never does. |
+| `dispatch_held`     | A held target is still waiting with no live session. `code` is the last failure, `why` its message, `attempts` the count.                                              | `heldAt`                           | Fix the cause and call `session.release_hold`, or end or revise the record.                       |
+| `dispatch_failing`  | A waiting target has failed attempts below the cap.                                                                                                                    | Its first failure                  | Nothing yet: it is retried after the backoff.                                                     |
+| `ready_quiet`       | A dispatchable step, an operator's included, has had no session for `quietReadySeconds` (default 21600). `code` is `queued`, `budget_exceeded` or `awaiting_operator`. | The record's last revision change  | Read the other items, the budget, or `workflow.status_and_next` for an operator's step.           |
+| `dispatch_disabled` | Work is queued and automatic dispatch is off.                                                                                                                          | When dispatch was last switched    | An admin enables dispatch.                                                                        |
+| `no_live_runner`    | Dispatch is on, work is queued and no authorized runner was seen in 45 seconds.                                                                                        | The newest runner's last heartbeat | Start a runner.                                                                                   |
+| `runner_refusing`   | A live runner has answered `settings_pending` or `platform_disabled` for `refusalSeconds` (default 300) while work is queued.                                          | `decisionSince`                    | Restart the runner or publish its settings with `PUT /sessions/runners/:id/settings`.             |
+
+`ready_quiet` measures from the record's last revision change, so a step released after a
+long session is quiet at once. A target that already has a `dispatch_held` or
+`dispatch_failing` item is not also reported as quiet, and while dispatch is off the one
+`dispatch_disabled` item stands for every queued step that a runner would take.
+
 ## Pause and halt
 
 Automatic dispatch starts **off** for every project. Enabling it allows a

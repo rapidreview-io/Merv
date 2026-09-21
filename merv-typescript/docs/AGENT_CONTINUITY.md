@@ -78,4 +78,6 @@ The inspector returns up to 100 calls, prioritizing in-flight calls and then new
 
 **Token figures are payload-size estimates**, computed as UTF-8 serialized JSON bytes divided by four, rounded up separately for input and output. They are not tokenizer counts, model input/output usage, reasoning usage, or billing. Tool calls outside Merv are not observed. Missing output is shown as unknown, not zero; aggregate output sums recorded results only. Exact model usage per tool would require a separate usage signal from the calling agent/provider.
 
+Per session, that signal now exists in a weaker form. [`usage.read`](BUDGETS_AND_LIMITS.md) keeps three kinds of figure apart: lease wall-clock, which Merv **measures**; tokens, cost and model, which the launching machine **reports** and nobody verifies; and these payload sizes, which are **estimates**. Model context, reasoning usage, provider billing and anything done outside a Merv-launched process remain unknown.
+
 No new Cordis plugin or dependency was added. Sessions owns the observations; its existing API/UI adapters expose them. ToolRegistry validates remote responses inside the existing session invocation so invalid response envelopes are observed as failures.

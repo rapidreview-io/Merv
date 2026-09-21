@@ -19,6 +19,7 @@ import {
   codeCommandCompletionSchema,
   codeCommandControlSchema,
   codeTransportInputSchema,
+  sessionUsageReportSchema,
   sessionWorkspaceSchema,
   plain,
   type Caller,
@@ -185,6 +186,7 @@ const sessionReleaseInput = z
     outcome: z
       .enum(['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'])
       .optional(),
+    usage: sessionUsageReportSchema.optional(),
   })
   .strict();
 const runnerText = z
