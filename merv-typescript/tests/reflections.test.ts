@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createApp } from '../src/app.js';
 import type { Artifact, Caller, ReviewApplication } from '@merv/contracts';
-import type { Reflection } from '../packages/reflections/src/types.js';
+import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
+import { CHANGE_SPEC_CRITERION } from '../packages/reflections/src/definitions.js';
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-reflection-'));
@@ -292,6 +293,10 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   await assert.rejects(async () => await f.synthesize(wave), { code: 'reflection_complete' });
   const approved = await f.app.ctx.reflections.approved(f.owner, wave.id);
   assert.equal(approved.report.id, wave.report!.id);
+  // A text change specification is never parsed: no plan, and no criterion to judge one.
+  assert.equal(wave.plan, null);
+  assert.equal(approved.plan, undefined);
+  assert.equal(wave.review!.criteria.length, 4);
   assert.equal(approved.reviewerId, reviewer.actorId);
   assert.equal(approved.corpus, null);
   assert.equal(approved.paper, null);
@@ -314,6 +319,112 @@ test('reflection uses live research, joins five independent ordinary workflows, 
     /immutable/,
   );
   assert.ok((await f.app.ctx.research.startReflection(f.owner, { requestId: 'next-wave' })).id);
+});
+
+test('a JSON change specification is parsed, reviewed as a plan and retained with the approval', async (t) => {
+  const f = await fixture(t);
+  const carried = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Unfinished measurement',
+    goal: 'Started before the wave',
+    checks: ['Recorded'],
+    requestId: 'carried',
+  });
+  let wave = await f.lenses(await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' }));
+  const plan: ChangeSpec = {
+    version: 1,
+    changes: 'Narrow the scope to the controlled setting.',
+    next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
+    items: [
+      {
+        key: 'measure',
+        kind: 'task',
+        title: 'Build the measurement',
+        goal: 'Establish the measurement the experiment needs.',
+        checks: ['The measurement is recorded'],
+        dependsOn: [],
+        rationale: 'The methods lens found it missing.',
+      },
+      {
+        key: 'control',
+        kind: 'experiment',
+        name: 'controlled-rerun',
+        question: 'Does the effect survive the control?',
+        details: '',
+        testedClaimIds: [],
+        dependsOn: ['measure'],
+        rationale: 'The evidence lens found the control missing.',
+      },
+    ],
+    carriedOver: [{ workflowId: carried.id, reason: 'Still needed by the next cycle.' }],
+    rejected: [{ title: 'Scale up first', reason: 'No evidence yet that the effect is real.' }],
+  };
+  const report = await f.create(f.owner, 'Synthesis');
+  const submit = async (spec: Artifact, requestId: string) =>
+    await f.app.ctx.reflections.submit(f.owner, {
+      reflectionId: wave.id,
+      reportArtifactId: report.id,
+      changeSpecArtifactId: spec.id,
+      expectedRevision: wave.workflow.revision,
+      requestId,
+    });
+  const json = async (value: unknown) =>
+    await f.app.ctx.artifacts.create(f.owner, {
+      title: 'Changes',
+      mediaType: 'application/json',
+      content: typeof value === 'string' ? value : JSON.stringify(value),
+    });
+  for (const [label, value] of [
+    ['malformed', '{not json'],
+    ['unknown field', { ...plan, budget: 3 }],
+    ['wrong version', { ...plan, version: 2 }],
+    ['cycle', { ...plan, items: [{ ...plan.items[0]!, dependsOn: ['measure'] }] }],
+    ['missing carried work', { ...plan, carriedOver: [{ workflowId: 'task_none', reason: 'x' }] }],
+    [
+      'carried work of another kind',
+      { ...plan, carriedOver: [{ workflowId: wave.id, reason: 'x' }] },
+    ],
+  ] as const) {
+    await assert.rejects(
+      async () => await submit(await json(value), `refused-${label}`),
+      { code: 'invalid_change_spec' },
+      label,
+    );
+    const after = await f.app.ctx.reflections.get(f.owner, wave.id);
+    assert.equal(after.workflow.state, 'synthesizing');
+    assert.equal(after.workflow.revision, wave.workflow.revision);
+    assert.equal(after.plan, null);
+  }
+  wave = await submit(await json(plan), 'structured');
+  assert.deepEqual(wave.plan, plan);
+  assert.equal(wave.review!.criteria.length, 5);
+  assert.equal(wave.review!.criteria[4], CHANGE_SPEC_CRITERION);
+  // A repair that falls back to prose drops the plan and the criterion that judged it.
+  wave = await f.verdict(wave, await f.actor('First reviewer', 'reviewer'), false, 'synthesizing');
+  assert.equal(wave.workflow.state, 'synthesizing');
+  const structuredReviewId = wave.review!.id;
+  wave = await submit(await f.create(f.owner, 'Changes as prose'), 'prose');
+  assert.equal(wave.plan, null);
+  assert.notEqual(wave.review!.id, structuredReviewId);
+  assert.equal(wave.review!.criteria.length, 4);
+  assert.ok(!wave.review!.criteria.includes(CHANGE_SPEC_CRITERION));
+  wave = await f.verdict(wave, await f.actor('Second reviewer', 'reviewer'), false, 'synthesizing');
+  wave = await submit(await json(plan), 'structured-again');
+  wave = await f.verdict(wave, await f.actor('Third reviewer', 'reviewer'), true);
+  assert.equal(wave.workflow.state, 'approved');
+  assert.deepEqual(wave.plan, plan);
+  assert.deepEqual((await f.app.ctx.reflections.approved(f.owner, wave.id)).plan, plan);
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.state.transaction(
+        async (tx) =>
+          await tx.run(
+            'UPDATE reflections SET approved=? WHERE id=?',
+            JSON.stringify({ plan: { ...plan, items: [] } }),
+            wave.id,
+          ),
+      ),
+    /immutable/,
+  );
 });
 
 test('review return preserves lenses for synthesis repair and creates fresh versioned children for lens repair', async (t) => {
@@ -480,6 +591,26 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
     requestId: 'synthesis-work',
   });
   const caller = await f.app.ctx.sessions.authenticate(synthesisToken);
+  // Writing the next wave's plan grants no power to create it.
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.tools.call('task.create', caller, {
+        title: 'Planned by synthesis',
+        goal: 'Work the plan proposes',
+        checks: ['Recorded'],
+        requestId: 'synthesis-task',
+      }),
+    { code: 'execution_tool_forbidden' },
+  );
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.tools.call('experiment.create', caller, {
+        name: 'planned-by-synthesis',
+        intent: 'Work the plan proposes',
+        requestId: 'synthesis-experiment',
+      }),
+    { code: 'execution_tool_forbidden' },
+  );
   const outputs: Artifact[] = [];
   for (const title of ['Report', 'Change specification'])
     outputs.push(

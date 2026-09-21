@@ -19,6 +19,45 @@ export interface HistoricalReflectionCorpus {
     experiments: { id: string }[];
   };
 }
+export interface ChangeSpecTask {
+  key: string;
+  kind: 'task';
+  title: string;
+  goal: string;
+  checks: string[];
+  /** Keys of other items in the same plan. */
+  dependsOn: string[];
+  rationale: string;
+}
+export interface ChangeSpecExperiment {
+  key: string;
+  kind: 'experiment';
+  name: string;
+  question: string;
+  details: string;
+  testedClaimIds: string[];
+  /** Keys of task items in the same plan: an experiment waits only on tasks. */
+  dependsOn: string[];
+  rationale: string;
+}
+export type WorkItem = ChangeSpecTask | ChangeSpecExperiment;
+/** A change specification submitted as application/json: the next wave's work, stated as records. */
+export interface ChangeSpec {
+  version: 1;
+  /** What a text change specification says: scope, claim and consolidation changes, as prose. */
+  changes: string;
+  next:
+    | { decision: 'continue'; name: string; rationale: string }
+    | {
+        decision: 'stop';
+        reason: 'goal_met' | 'no_worthwhile_next_step' | 'needs_owner';
+        rationale: string;
+      };
+  items: WorkItem[];
+  /** Existing tasks and experiments the next research cycle still waits on. */
+  carriedOver: { workflowId: string; reason: string }[];
+  rejected: { title: string; reason: string }[];
+}
 export interface ReflectionLens {
   id: string;
   reflectionId: string;
@@ -45,6 +84,8 @@ export interface Reflection {
   review: ReviewRequest | null;
   report: Artifact | null;
   changeSpec: Artifact | null;
+  /** The parsed plan of an application/json change specification; null for a text one. */
+  plan: ChangeSpec | null;
 }
 /** Exact reviewed bytes and provenance; terminally immutable and safe for downstream programs. */
 export interface ApprovedReflection {
@@ -59,6 +100,11 @@ export interface ApprovedReflection {
   /** Legacy only: waves approved before the 2026-09-16 ruling pinned an authored project graph. Never written going forward. */
   graph?: Artifact;
   changeSpec: Artifact;
+  /**
+   * Present only when the change specification was submitted as application/json. A text
+   * change specification is never parsed into authority.
+   */
+  plan?: ChangeSpec;
   lenses: { id: string; perspective: string; artifact: Artifact; producerId: string }[];
   producerId: string;
   reviewId: string;

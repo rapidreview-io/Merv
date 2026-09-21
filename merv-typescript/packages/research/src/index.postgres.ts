@@ -31,4 +31,10 @@ CREATE TRIGGER research_retained BEFORE DELETE ON research_cycles
 FOR EACH ROW EXECUTE FUNCTION research_retained_guard();
 CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,request_id TEXT NOT NULL,input_hash TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(project_id,actor_id,request_id));
 `,
+  2: `
+ALTER TABLE research_cycles ADD COLUMN predecessor_id TEXT;
+CREATE UNIQUE INDEX research_successor ON research_cycles(predecessor_id) WHERE predecessor_id IS NOT NULL;
+CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_cycles
+FOR EACH ROW EXECUTE FUNCTION research_identity_guard();
+`,
 };

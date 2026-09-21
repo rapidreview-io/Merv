@@ -119,7 +119,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 51);
+  assert.equal(all.length, 52);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(
@@ -251,6 +251,23 @@ test(
         .count,
       '0',
     );
+    // One successor per research cycle is a storage fact on both backends; the failures differ
+    // by dialect, so the refusal itself is what is asserted.
+    const cycle =
+      "INSERT INTO research_cycles(id,project_id,record,predecessor_id) VALUES($1,'project','{}',$2)";
+    await client.query(cycle, ['cycle', null]);
+    await client.query(cycle, ['unrelated', null]);
+    await client.query(cycle, ['follower', 'cycle']);
+    await assert.rejects(client.query(cycle, ['rival', 'cycle']), { code: '23505' });
+    await assert.rejects(
+      client.query("UPDATE research_cycles SET predecessor_id='unrelated' WHERE id='follower'"),
+      { code: '23514' },
+    );
+    await assert.rejects(
+      client.query("UPDATE research_cycles SET predecessor_id='cycle' WHERE id='unrelated'"),
+      { code: '23514' },
+    );
+
     await client.query(
       "INSERT INTO event_consumers(id,definition_hash,cursor,retry_at) VALUES('consumer','hash',1,1800000000000)",
     );

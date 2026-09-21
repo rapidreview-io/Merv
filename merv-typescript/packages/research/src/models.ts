@@ -24,6 +24,17 @@ export interface ResearchEnd extends ResearchAdvance {
 export interface ResearchReplan extends ResearchAdvance {
   dependsOn: string[];
 }
+/** Where a cycle opened from an approved reflection plan came from, pinned when it was created. */
+export interface ResearchOrigin {
+  /** The cycle whose completion created this one. */
+  researchId: string;
+  reflectionId: string;
+  reviewId: string;
+  changeSpec: { id: string; hash: string };
+  /** The plan's items as the records they became. */
+  items: { key: string; kind: 'task' | 'experiment'; id: string }[];
+  carriedOver: string[];
+}
 export interface ResearchRecord {
   id: string;
   projectId: string;
@@ -38,4 +49,8 @@ export interface ResearchRecord {
   problem: PaperRevision | null;
   reflectionId: string | null;
   consolidationId: string | null;
+  /** Null for a cycle somebody created by hand. */
+  origin: ResearchOrigin | null;
+  /** The cycle this one's approved plan opened, if it did. */
+  successorId: string | null;
 }

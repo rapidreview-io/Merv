@@ -7,6 +7,7 @@ import {
   check,
   digest,
   inTransaction,
+  MervError,
   now,
   type Artifact,
   type Artifacts,
@@ -27,7 +28,9 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Paper, PaperProposal } from '@merv/paper/types';
+import { parseChangeSpec } from './change-spec.js';
 import {
+  CHANGE_SPEC_CRITERION,
   LENSES,
   LENS_WORKFLOW,
   RECIPES,
@@ -36,6 +39,7 @@ import {
 } from './definitions.js';
 import type {
   ApprovedReflection,
+  ChangeSpec,
   Reflection,
   ReflectionCreate,
   ReflectionLens,
@@ -74,6 +78,8 @@ interface Submission {
   experimentIds?: string[];
   report: Artifact;
   changeSpec: Artifact;
+  /** Set only for an application/json change specification; approval copies it unchanged. */
+  plan?: ChangeSpec;
   producerId: string;
 }
 interface LeaseRow {
@@ -258,6 +264,7 @@ export class ReflectionService implements Reflections {
         review: row.review_id ? await this.reviews.get(caller, row.review_id, tx) : null,
         report: submission?.report ?? null,
         changeSpec: submission?.changeSpec ?? null,
+        plan: submission?.plan ?? null,
         paperProposal: submission?.paperProposal ?? null,
       };
     });
@@ -894,7 +901,8 @@ export class ReflectionService implements Reflections {
                 states: ['synthesizing'],
                 transitions: ['submit'],
                 tool: 'reflection.submit',
-                instruction: 'Submit your report and change specification for independent review.',
+                instruction:
+                  'Submit your report and change specification for independent review. An application/json change specification is validated as a structured plan and reviewed item by item; a text one is accepted but creates no work.',
                 requiredInput: ['reportArtifactId', 'changeSpecArtifactId'],
                 arguments: ({ snapshot }: WorkflowCheckContext) => ({
                   reflectionId: snapshot.id,
@@ -974,6 +982,31 @@ export class ReflectionService implements Reflections {
       'Reflection evidence must be nonempty UTF-8 text',
     );
     return artifact;
+  }
+  /**
+   * The plan a JSON change specification states. The media type is the author's declaration:
+   * text is never parsed, so prose can never become work by resembling a plan.
+   */
+  private async plan(
+    caller: Caller,
+    changeSpec: Artifact,
+    tx: Transaction,
+  ): Promise<ChangeSpec | undefined> {
+    if (changeSpec.mediaType !== 'application/json') return undefined;
+    const plan = parseChangeSpec((await this.artifacts.read(caller, changeSpec.id)).content);
+    // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
+    for (const { workflowId } of plan.carriedOver) {
+      const carried = await this.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
+        if (error instanceof MervError && error.code === 'not_found') return undefined;
+        throw error;
+      });
+      check(
+        carried && ['task', 'experiment'].includes(carried.workflow),
+        'invalid_change_spec',
+        `carriedOver ${workflowId} is not a task or experiment in this project`,
+      );
+    }
+    return plan;
   }
   async submitLens(
     caller: Caller,
@@ -1078,6 +1111,8 @@ export class ReflectionService implements Reflections {
           changeSpec: await this.author(caller, input.changeSpecArtifactId, tx),
           producerId: caller.actorId,
         };
+        const plan = await this.plan(caller, submission.changeSpec, tx);
+        if (plan) submission.plan = plan;
         const lenses = await this.lensRows(wave, tx);
         check(
           lenses.length === 5 && lenses.every((lens) => lens.artifact),
@@ -1148,6 +1183,7 @@ export class ReflectionService implements Reflections {
             ],
             criteria: [
               ...REFLECTION_CRITERIA,
+              ...(submission.plan ? [CHANGE_SPEC_CRITERION] : []),
               ...(submission.paperProposal
                 ? [
                     'The proposed paper edits faithfully synthesize the cited research evidence and preserve its limitations.',

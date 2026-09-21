@@ -26,6 +26,7 @@ import type {
   ResearchAdvance,
   ResearchCreate,
   ResearchEnd,
+  ResearchOrigin,
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
@@ -86,7 +87,20 @@ interface Row {
   consolidation_id: string | null;
   methods_update_id: string | null;
   results_update_id: string | null;
+  predecessor_id: string | null;
 }
+/** The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. */
+type StoredRecord = Pick<
+  ResearchRecord,
+  | 'id'
+  | 'projectId'
+  | 'ownerId'
+  | 'name'
+  | 'createdAt'
+  | 'researchDependencies'
+  | 'consolidationWorkspace'
+  | 'consolidationDependencies'
+> & { origin?: Omit<ResearchOrigin, 'researchId'> };
 
 /** A small coordinator over existing workflows; child programs own their actual assignments. */
 export class ResearchService implements Research {
@@ -116,6 +130,17 @@ CREATE TRIGGER research_identity BEFORE UPDATE OF id,project_id,record ON resear
 CREATE TRIGGER research_children BEFORE UPDATE ON research_cycles WHEN (OLD.problem IS NOT NULL AND NEW.problem IS NOT OLD.problem) OR (OLD.reflection_id IS NOT NULL AND NEW.reflection_id IS NOT OLD.reflection_id) OR (OLD.consolidation_id IS NOT NULL AND NEW.consolidation_id IS NOT OLD.consolidation_id) OR (OLD.methods_update_id IS NOT NULL AND NEW.methods_update_id IS NOT OLD.methods_update_id) OR (OLD.results_update_id IS NOT NULL AND NEW.results_update_id IS NOT OLD.results_update_id) BEGIN SELECT RAISE(ABORT,'Research children and accepted definition are immutable'); END;
 CREATE TRIGGER research_retained BEFORE DELETE ON research_cycles BEGIN SELECT RAISE(ABORT,'Research history is retained'); END;
 CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,request_id TEXT NOT NULL,input_hash TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(project_id,actor_id,request_id));
+`,
+        },
+        {
+          // A cycle opened from an approved plan names the cycle it follows. The index makes
+          // "one successor per cycle" a fact of storage rather than of a lookup before insert.
+          version: 2,
+          postgres: postgresMigrations[2],
+          sql: `
+ALTER TABLE research_cycles ADD COLUMN predecessor_id TEXT;
+CREATE UNIQUE INDEX research_successor ON research_cycles(predecessor_id) WHERE predecessor_id IS NOT NULL;
+CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_cycles BEGIN SELECT RAISE(ABORT,'Research inputs are immutable'); END;
 `,
         },
       ]);
@@ -259,8 +284,17 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
       check(row, 'research_not_found', 'Research cycle was not found in this project', 404);
       // The selection is what the cycle waits on now, not what it was created with.
       const children = [row.reflection_id, row.consolidation_id];
+      const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
+      const successor = await tx.get<{ id: string }>(
+        'SELECT id FROM research_cycles WHERE predecessor_id=? AND project_id=?',
+        id,
+        caller.projectId,
+      );
       return {
-        ...JSON.parse(row.record),
+        ...record,
+        // The column is the one statement of which cycle this follows; the record pins the rest.
+        origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
+        successorId: successor?.id ?? null,
         researchDependencies: (await this.workflows.dependencies(caller, id, tx)).dependencies
           .map((item) => item.id)
           .filter((item) => !children.includes(item)),
@@ -297,58 +331,80 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     const input = parse(createSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      check(
-        !caller.session,
-        'forbidden',
-        'Assigned workers cannot create an outer research cycle',
-        403,
+      return await this.command(
+        caller,
+        'create',
+        input,
+        tx,
+        async () => await this.begin(caller, input, 'create', null, tx),
       );
-      return await this.command(caller, 'create', input, tx, async () => {
-        check(
-          input.consolidationWorkspace === 'git' || !input.consolidationDependsOn.length,
-          'invalid_research_input',
-          'Consolidation prerequisites require Git consolidation',
-        );
-        // Validate every prerequisite in this project even if consolidation starts much later.
-        for (const id of [...input.dependsOn, ...input.consolidationDependsOn])
-          await this.workflows.get(caller, id, tx);
-        const workflow = await this.handles.get(4)!.start(
-          caller,
-          {
-            workflow: 'research',
-            version: 4,
-            requestId: this.request(caller, input.requestId, 'create'),
-            dependsOn: input.dependsOn,
-            data: { name: input.name },
-          },
-          tx,
-        );
-        const record = {
-          id: workflow.id,
-          projectId: caller.projectId,
-          ownerId: caller.actorId,
-          name: input.name,
-          createdAt: now(),
-          researchDependencies: [...new Set(input.dependsOn)],
-          consolidationWorkspace: input.consolidationWorkspace,
-          consolidationDependencies: [...new Set(input.consolidationDependsOn)],
-        };
-        await tx.run(
-          'INSERT INTO research_cycles(id,project_id,record) VALUES(?,?,?)',
-          workflow.id,
-          caller.projectId,
-          JSON.stringify(record),
-        );
-        await this.event(
-          caller,
-          'created',
-          workflow.id,
-          { dependsOn: record.researchDependencies },
-          tx,
-        );
-        return await this.get(caller, workflow.id, tx);
-      });
     });
+  }
+  /**
+   * Opens a cycle inside a command its caller already recorded. research_commands has one row
+   * per request, so the cycle an advance opens must not record a second one under the same ID.
+   */
+  private async begin(
+    caller: Caller,
+    input: ReturnType<typeof parse<typeof createSchema>>,
+    step: 'create' | 'successor',
+    origin: ResearchOrigin | null,
+    tx: Transaction,
+  ): Promise<ResearchRecord> {
+    check(
+      !caller.session,
+      'forbidden',
+      'Assigned workers cannot create an outer research cycle',
+      403,
+    );
+    check(
+      input.consolidationWorkspace === 'git' || !input.consolidationDependsOn.length,
+      'invalid_research_input',
+      'Consolidation prerequisites require Git consolidation',
+    );
+    // Validate every prerequisite in this project even if consolidation starts much later.
+    for (const id of [...input.dependsOn, ...input.consolidationDependsOn])
+      await this.workflows.get(caller, id, tx);
+    const workflow = await this.handles.get(4)!.start(
+      caller,
+      {
+        workflow: 'research',
+        version: 4,
+        requestId: this.request(caller, input.requestId, step),
+        dependsOn: input.dependsOn,
+        data: { name: input.name },
+      },
+      tx,
+    );
+    let predecessorId: string | null = null;
+    let pinned: StoredRecord['origin'];
+    if (origin) ({ researchId: predecessorId, ...pinned } = origin);
+    const record: StoredRecord = {
+      id: workflow.id,
+      projectId: caller.projectId,
+      ownerId: caller.actorId,
+      name: input.name,
+      createdAt: now(),
+      researchDependencies: [...new Set(input.dependsOn)],
+      consolidationWorkspace: input.consolidationWorkspace,
+      consolidationDependencies: [...new Set(input.consolidationDependsOn)],
+      ...(pinned ? { origin: pinned } : {}),
+    };
+    await tx.run(
+      'INSERT INTO research_cycles(id,project_id,record,predecessor_id) VALUES(?,?,?,?)',
+      workflow.id,
+      caller.projectId,
+      JSON.stringify(record),
+      predecessorId,
+    );
+    await this.event(
+      caller,
+      'created',
+      workflow.id,
+      { dependsOn: record.researchDependencies },
+      tx,
+    );
+    return await this.get(caller, workflow.id, tx);
   }
   private async authorize(caller: Caller, record: ResearchRecord, tx: Transaction) {
     await this.scope.require(caller, 'write', tx);

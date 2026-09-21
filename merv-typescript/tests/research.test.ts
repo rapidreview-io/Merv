@@ -358,6 +358,38 @@ test('new no-code research completes after approved reflection without consolida
   assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 0);
   await assert.rejects(async () => await f.advance(record), { code: 'research_complete' });
   assert.equal((await f.app.ctx.paper.read(f.owner)).proposals.length, 0);
+  // A text change specification opens nothing: the cycle neither follows nor leads another.
+  assert.equal(record.origin, null);
+  assert.equal(record.successorId, null);
+});
+
+test('a cycle follows at most one other, and which one never changes', async (t) => {
+  const f = await fixture(t);
+  const first = await f.create();
+  const follow = async (id: string, predecessorId: string) =>
+    await f.app.ctx.state.transaction(
+      async (tx) =>
+        await tx.run(
+          'INSERT INTO research_cycles(id,project_id,record,predecessor_id) VALUES(?,?,?,?)',
+          id,
+          f.owner.projectId,
+          '{}',
+          predecessorId,
+        ),
+    );
+  await follow('research_follower', first.id);
+  assert.equal((await f.research.get(f.owner, first.id)).successorId, 'research_follower');
+  await assert.rejects(async () => await follow('research_rival', first.id));
+  // Hand-made cycles follow nothing, and any number of them may.
+  assert.equal((await f.create()).origin, null);
+  for (const id of [first.id, 'research_follower'])
+    await assert.rejects(
+      async () =>
+        await f.app.ctx.state.transaction(
+          async (tx) =>
+            await tx.run('UPDATE research_cycles SET predecessor_id=? WHERE id=?', 'other', id),
+        ),
+    );
 });
 
 test('research owner authorization, project scoping, selected prerequisite success and request replay survive restart', async (t) => {
