@@ -1252,7 +1252,14 @@ test('a plan at its size limits is created whole, and a taken experiment name re
   plan.items = plan.items.map((item) => ({
     ...item,
     rationale: fill(1000),
-    ...(item.kind === 'task' ? { goal: fill(4000) } : { details: fill(4000) }),
+    ...(item.kind === 'task'
+      ? {
+          title: fill(200),
+          goal: fill(4000),
+          // Checks that differ only where Tasks still tells them apart.
+          checks: Array.from({ length: 12 }, (_, i) => `${i} `.padEnd(500, 'c')),
+        }
+      : { details: fill(4000) }),
   }));
   const { record, command } = await reflected(f, plan);
   const taken = await f.app.ctx.experiments.create(f.owner, {

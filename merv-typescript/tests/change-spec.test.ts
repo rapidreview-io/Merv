@@ -117,6 +117,11 @@ test('the item graph must be local, acyclic and feasible-first', () => {
     /at most 7 experiments/,
   );
   refused(plan({ items: [{ ...task('a'), checks: ['Same', 'Same'] }] }), /repeats a check/);
+  // Tasks folds case and runs of whitespace when it compares checks, so the plan must too.
+  refused(
+    plan({ items: [{ ...task('a'), checks: ['Tests pass', 'tests \t pass'] }] }),
+    /repeats a check/,
+  );
 });
 
 test('the decision agrees with the work it carries', () => {

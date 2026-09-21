@@ -81,6 +81,11 @@ export const changeSpecSchema = z
   })
   .strict();
 
+// Reflections cannot import Tasks, so its sense of two checks being the same one is repeated
+// here. A pair Tasks would refuse is refused while the author can still reword it, not after
+// the plan is approved and can only be skipped.
+const folded = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+
 const refuse: (condition: unknown, message: string) => asserts condition = (condition, message) =>
   check(condition, 'invalid_change_spec', message);
 
@@ -112,7 +117,10 @@ export function parseChangeSpec(content: string): ChangeSpec {
       refuse(!names.has(name), `Experiment name ${item.name} occurs more than once`);
       names.add(name);
     } else
-      refuse(new Set(item.checks).size === item.checks.length, `Item ${item.key} repeats a check`);
+      refuse(
+        new Set(item.checks.map(folded)).size === item.checks.length,
+        `Item ${item.key} repeats a check`,
+      );
     refuse(
       new Set(item.dependsOn).size === item.dependsOn.length,
       `Item ${item.key} repeats a dependency`,
