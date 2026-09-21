@@ -701,13 +701,20 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
     });
   };
   await key('ArrowDown');
-  // Work that ended without succeeding could never be satisfied, so it is not offered.
+  // Failed and abandoned work belongs in reflection too.
   assert.deepEqual(
     all('[role="option"]').map((node) => node.textContent),
-    ['Sweep weight decayin progress'],
+    [
+      'TaskSweep weight decayin progress',
+      'TaskA task that failedfailed',
+      'ExperimentAn abandoned experimentabandoned',
+    ],
   );
   await key('Enter');
   await key('Escape');
+  await act(async () => {
+    document.querySelector<HTMLInputElement>('input[type=checkbox]')!.click();
+  });
   await act(async () => {
     document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
   });
@@ -715,6 +722,8 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
   assert.deepEqual(sent?.dependsOn, ['wf_sweep']);
   assert.deepEqual(sent?.consolidationDependsOn, []);
   assert.equal(sent?.name, 'Wave one');
+  assert.equal(sent?.automatic, true);
+  assert.equal(sent?.maxCycles, 10);
   assert.equal(saved, 1);
 });
 

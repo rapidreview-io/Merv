@@ -121,6 +121,8 @@ export interface ReflectionCreate {
    * of their choosing as decisions already made.
    */
   previousCycleDigestId?: string;
+  /** Automatic Research needs an explicit reviewed continue/stop decision. */
+  requirePlan?: boolean;
 }
 export interface ReflectionLensSubmit {
   lensId: string;

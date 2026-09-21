@@ -133,7 +133,7 @@ export function chained<T extends { id: string; at: string }>(
 /** The cycle the project is on: the newest one still running, else the newest. */
 export const currentCycle = (cycles: ResearchRecord[] | undefined) => {
   const all = newest(cycles ?? [], (cycle) => cycle.workflow.updatedAt);
-  return all.find((cycle) => cycle.workflow.state !== 'complete') ?? all[0];
+  return all.find((cycle) => isOpen(cycle.workflow.state)) ?? all[0];
 };
 
 export function CreateResearch({ onSaved }: { onSaved: () => void }) {
@@ -141,8 +141,10 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [consolidationDependencies, setConsolidationDependencies] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState('none');
+  const [automatic, setAutomatic] = useState(false);
+  const [maxCycles, setMaxCycles] = useState('10');
   // What a cycle may wait on is the work this page lists, chosen by name.
-  const work = useWorkPicks();
+  const work = useWorkPicks({ includeFailed: true });
   const command = useCommand<ResearchRecord>({
     tool: 'research.create',
     validate: (value) =>
@@ -166,6 +168,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
           dependsOn: dependencies,
           consolidationDependsOn: workspace === 'git' ? consolidationDependencies : [],
           consolidationWorkspace: workspace,
+          ...(automatic ? { automatic: true, maxCycles: Number(maxCycles) } : {}),
         });
       }}
     >
@@ -173,11 +176,32 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
         <RecordPicker
-          label="Research prerequisites"
+          label="Work in this wave"
           {...work}
           value={dependencies}
           onChange={setDependencies}
         />
+        <label>
+          <input
+            type="checkbox"
+            checked={automatic}
+            onChange={(event) => setAutomatic(event.target.checked)}
+          />
+          Continue automatically through reviewed research waves
+        </label>
+        {automatic && (
+          <label>
+            Maximum cycles
+            <input
+              type="number"
+              min="1"
+              max="100"
+              required
+              value={maxCycles}
+              onChange={(event) => setMaxCycles(event.target.value)}
+            />
+          </label>
+        )}
         <label>
           Code changes
           <select
@@ -195,6 +219,9 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
           <RecordPicker
             label="Consolidation prerequisites"
             {...work}
+            options={work.options.filter(
+              (item) => !['failed', 'abandoned'].includes(item.state ?? ''),
+            )}
             value={consolidationDependencies}
             onChange={setConsolidationDependencies}
           />
@@ -445,9 +472,37 @@ export function CycleMove({
         Write the definition <ArrowRightIcon size={14} />
       </Link>
     );
+  if (cycle.automation && isOpen(cycle.workflow.state))
+    return (
+      <div className="stack">
+        <span>
+          Automatic · cycle {cycle.automation.cycle} of {cycle.automation.maxCycles}
+        </span>
+        {cycle.automation.blocker && <span>{cycle.automation.blocker.message}</span>}
+        {cycle.automation.blocker?.code === 'research_definition_changed' && (
+          <ResearchCommand
+            tool="research.advance"
+            input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision }}
+            label="Accept changed definition"
+            onSaved={onSaved}
+          />
+        )}
+        <ResearchCommand
+          tool="research.end"
+          input={{
+            researchId: cycle.id,
+            expectedRevision: cycle.workflow.revision,
+            outcome: 'abandoned',
+            reason: 'The owner stopped automatic research from the Work page.',
+          }}
+          label="Stop automatic research"
+          onSaved={onSaved}
+        />
+      </div>
+    );
   return (
     <ResearchCommand
-      disabled={cycle.workflow.state === 'complete'}
+      disabled={!isOpen(cycle.workflow.state)}
       tool="research.advance"
       input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision }}
       label="Start next step"
