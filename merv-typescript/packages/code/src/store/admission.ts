@@ -40,6 +40,8 @@ export interface AdmissionInput {
   expectedHead: string | null;
   /** The only prerequisites the bundle may name, or `admitted` for any commit already kept. */
   prerequisites: string[] | 'admitted';
+  /** Frozen merge inputs authorise their already-retained ancestors as bundle boundaries. */
+  prerequisiteAncestors?: boolean;
   limits: AdmissionLimits;
   /** Called after the pack is indexed, for tests that end the process there. */
   indexed?: () => void;
@@ -142,7 +144,7 @@ export function symlinkEscapes(path: string, target: string): boolean {
 }
 
 /** Read a bundle's header without Git. A filtered bundle, or one with two refs, is not a transfer. */
-export async function bundleHeader(file: string): Promise<BundleHeader> {
+export async function bundleHeader(file: string, multiple = false): Promise<BundleHeader> {
   const rejected = (message: string) => new AdmissionRejected('code_bundle_header', message);
   const handle = await open(file, 'r');
   let text: string;
@@ -178,11 +180,12 @@ export async function bundleHeader(file: string): Promise<BundleHeader> {
     if (!/^[0-9a-f]+$/.test(value) || value.length !== length || (rest && !rest.startsWith(' ')))
       throw rejected('The bundle header is malformed');
     if (prerequisite) prerequisites.push(value);
-    else if (heads.length || prerequisites.length > 256 || !rest)
+    else if ((!multiple && heads.length) || prerequisites.length > 256 || !rest)
       throw rejected('A transfer delivers exactly one commit');
     else heads.push(value);
   }
-  if (heads.length !== 1) throw rejected('A transfer delivers exactly one commit');
+  if ((!multiple && heads.length !== 1) || heads.length === 0)
+    throw rejected('A transfer delivers exactly one commit');
   if (prerequisites.length > 256) throw rejected('The bundle names too many prerequisites');
   return { objectFormat, prerequisites, head: heads[0], packOffset: end + 2 };
 }
@@ -249,11 +252,23 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
       : [];
 
   const authorised = input.prerequisites === 'admitted' ? null : new Set(input.prerequisites);
-  if (authorised && header.prerequisites.some((value) => !authorised.has(value)))
-    throw new AdmissionRejected(
-      'code_bundle_prerequisite',
-      'The bundle builds on a commit this operation was not told to build on',
-    );
+  if (authorised) {
+    const unauthorised = header.prerequisites.filter((value) => !authorised.has(value));
+    if (unauthorised.length) {
+      const reachable =
+        input.prerequisiteAncestors && authorised.size
+          ? await git.run(['rev-list', '--max-count=1', ...unauthorised, '--not', ...authorised], {
+              env: kept,
+              timeoutMs: WALK_TIMEOUT_MS,
+            })
+          : null;
+      if (!reachable || reachable.code !== 0 || reachable.stdout.toString('utf8').trim())
+        throw new AdmissionRejected(
+          'code_bundle_prerequisite',
+          'The bundle builds on a commit this operation was not told to build on',
+        );
+    }
+  }
   for (const [value, type] of await describe(
     kept,
     header.prerequisites.map((value) => `${value}^{commit}`),

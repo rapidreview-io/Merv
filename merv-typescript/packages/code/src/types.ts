@@ -26,6 +26,10 @@ import type {} from 'cordis';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 
 export interface CodeCommands {
+  merge(
+    caller: Caller,
+    input: import('@merv/contracts').CodeMergeInput,
+  ): Promise<CodeCommandRecord>;
   list(caller: Caller): Promise<CodeCommandRecord[]>;
   commit(caller: Caller, input: CodeCommitInput): Promise<CodeCommandRecord>;
   operation(caller: Caller, commandId: string): Promise<CodeCommandRecord>;

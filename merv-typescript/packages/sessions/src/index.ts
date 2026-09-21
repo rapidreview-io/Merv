@@ -832,6 +832,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           tx,
         ),
     );
+    const workspace = effectiveWorkspace(frozen.execution.policy);
+    if (workspace.mode !== 'none' && workspace.driver !== undefined)
+      check(
+        await this.dispatcher.capable(caller, input.runnerId, workspace.driver, tx),
+        'runner_incompatible',
+        'This runner does not advertise the workspace driver the assignment needs',
+        409,
+      );
     for (const packet of [
       frozen.assignment,
       frozen.execution.policy,

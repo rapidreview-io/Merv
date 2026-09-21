@@ -21,7 +21,7 @@ import type { Backend } from './code-store.js';
 export async function resolutionFixture(
   t: TestContext,
   backend: Backend,
-  versions: { workflows?: number; scope?: number } = {},
+  versions: { workflows?: number; scope?: number; human?: boolean } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-resolution-'));
   const schema = `resolution_${randomUUID().replaceAll('-', '')}`;
@@ -31,7 +31,12 @@ export async function resolutionFixture(
       : await PostgresState.open({ connectionString: process.env.MERV_TEST_POSTGRES_URL!, schema });
   const migrate = state.migrate.bind(state);
   state.migrate = async (component, migrations) => {
-    const version = versions[component as keyof typeof versions];
+    const version =
+      component === 'scope'
+        ? versions.scope
+        : component === 'workflows'
+          ? versions.workflows
+          : undefined;
     return migrate(
       component,
       version === undefined ? migrations : migrations.filter((item) => item.version <= version),
@@ -70,8 +75,22 @@ export async function resolutionFixture(
       }
     }
   });
-  const boot = await scope.bootstrap({ projectName: 'Resolution', actorName: 'Owner' });
-  const admin = { projectId: boot.project.id, actorId: boot.actor.id };
+  const admin = await (async () => {
+    if (versions.human) {
+      const principal = await scope.acceptVerifiedIdentity({
+        issuer: 'https://identity.example/auth/v1',
+        subject: 'owner',
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      const project = await scope.createProject(principal, {
+        name: 'Resolution',
+        requestId: 'project',
+      });
+      return await scope.caller(principal, project.id);
+    }
+    const boot = await scope.bootstrap({ projectName: 'Resolution', actorName: 'Owner' });
+    return { projectId: boot.project.id, actorId: boot.actor.id };
+  })();
   return {
     directory,
     state,

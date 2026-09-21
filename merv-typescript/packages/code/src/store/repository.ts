@@ -405,9 +405,10 @@ export class CodeRepositories {
         await rm(path, { force: true });
         const exportId = name.replace(/\.bundle$/, '');
         if (/^[A-Za-z0-9_]+$/.test(exportId))
-          await this.git.run(['update-ref', '-d', `refs/merv/exports/${exportId}`], {
-            env: { GIT_DIR: repository },
-          });
+          for (const suffix of ['', '-second'])
+            await this.git.run(['update-ref', '-d', `refs/merv/exports/${exportId}${suffix}`], {
+              env: { GIT_DIR: repository },
+            });
       }
       const packs = join(repository, 'objects', 'pack');
       for (const name of await readdir(packs).catch(() => []))

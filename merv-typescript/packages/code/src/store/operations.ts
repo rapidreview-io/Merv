@@ -27,11 +27,12 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { chmod, link, lstat, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pendingMerge, verifyResolution } from '../pending-merge.js';
 import { parseCodeInput } from '../input.js';
 import type { WriterFence } from '../writers.js';
 import { admit, AdmissionRejected, bundleHeader, defaultLimits } from './admission.js';
 import { enqueueMirror } from './mirror.js';
-import { acceptedRef, workRef } from './refs.js';
+import { workRef } from './refs.js';
 import {
   CodeRepositories,
   diskBytes,
@@ -191,6 +192,7 @@ const fenceRefusals = ['code_generation_stale', 'code_writer_closed', 'code_head
 const kinds = ['import', 'upload', 'accept-ref'];
 interface Progress {
   received: number;
+  merge?: { plan: string; left: string; right: string; firstMerge: string | null };
   /** Fixed before any ref moves; recovery applies exactly this and never another target. */
   expectedOld?: string | null;
   target?: string;
@@ -503,6 +505,7 @@ export class CodeStore {
             receiptRef: null,
             objects: 0,
             bytes: 0,
+            ...(await this.mergeReceipt(tx, caller.projectId, input.unitId)),
           }),
         );
         await this.admitted(tx, id, caller.projectId, payload);
@@ -522,7 +525,7 @@ export class CodeStore {
    */
   async export(
     caller: Caller,
-    input: { sessionId: string; head: string; haves: string[] },
+    input: { sessionId: string; head: string; haves: string[]; secondParent?: string },
   ): Promise<CodeExport> {
     this.assertOpen();
     const projectId = caller.projectId;
@@ -538,9 +541,10 @@ export class CodeStore {
       .map((line) => /^([0-9a-f]+) commit /.exec(line)?.[1])
       .filter((oid): oid is string => !!oid)
       .sort();
-    if (haves.includes(input.head)) return { upToDate: true, head: input.head };
+    if (haves.includes(input.head) && (!input.secondParent || haves.includes(input.secondParent)))
+      return { upToDate: true, head: input.head };
     const exportId = `exp${createHash('sha256').update(`${projectId}\0${input.sessionId}`).digest('hex').slice(0, 32)}`;
-    const key = digest({ head: input.head, haves });
+    const key = digest({ head: input.head, haves, secondParent: input.secondParent ?? null });
     const paths = this.repositories.paths(projectId);
     const file = join(paths.exports, `${exportId}.bundle`);
     const known = this.exports.get(exportId);
@@ -558,6 +562,7 @@ export class CodeStore {
       this.exports.delete(exportId);
       await rm(file, { force: true });
       await git.run(['update-ref', '-d', ref], { env });
+      await git.run(['update-ref', '-d', `${ref}-second`], { env });
       // The bundle is written under the project's directory and counts against its quota, so
       // what it will take is weighed before a byte of it is written, as a transfer's bytes are.
       // Without that, a first download of a large history fills the quota and every upload of
@@ -568,6 +573,7 @@ export class CodeStore {
           '--disk-usage',
           '--objects',
           input.head,
+          ...(input.secondParent ? [input.secondParent] : []),
           ...(haves.length ? ['--not', ...haves] : []),
         ],
         { env, timeoutMs: FETCH_TIMEOUT_MS },
@@ -576,14 +582,24 @@ export class CodeStore {
       check(Number.isFinite(estimate), 'code_git_failed', 'Git could not weigh the download', 500);
       await this.repositories.assertRoom(projectId, estimate);
       await git.ok(['update-ref', ref, input.head], { env });
+      const secondRef = `${ref}-second`;
+      if (input.secondParent) await git.ok(['update-ref', secondRef, input.secondParent], { env });
       const made = await git.run(
-        ['bundle', 'create', file, ref, ...(haves.length ? ['--not', ...haves] : [])],
+        [
+          'bundle',
+          'create',
+          file,
+          ref,
+          ...(input.secondParent ? [secondRef] : []),
+          ...(haves.length ? ['--not', ...haves] : []),
+        ],
         { env, timeoutMs: FETCH_TIMEOUT_MS },
       );
       if (made.code !== 0) {
         // Git refuses an empty bundle: everything the head reaches is beneath a have.
         await rm(file, { force: true });
         await git.run(['update-ref', '-d', ref], { env });
+        await git.run(['update-ref', '-d', `${ref}-second`], { env });
         this.exports.delete(exportId);
         return { upToDate: true as const, head: input.head };
       }
@@ -595,7 +611,7 @@ export class CodeStore {
         sha256: hash.digest('hex'),
         bytes: (await stat(file)).size,
         head: input.head,
-        prerequisites: (await bundleHeader(file)).prerequisites,
+        prerequisites: (await bundleHeader(file, true)).prerequisites,
         partBytes: this.config.partBytes,
         expiresAt: new Date(Date.now() + EXPORT_TTL_MS).toISOString(),
       };
@@ -1127,7 +1143,10 @@ export class CodeStore {
       try {
         const header = await bundleHeader(join(directory, 'bundle'));
         await this.repository(row!, project, header.objectFormat);
-        return await this.repositories.transfer(
+        const pending = upload
+          ? await this.state.read((sql) => pendingMerge(sql, row!.project_id, upload.unitId))
+          : null;
+        const admission = await this.repositories.transfer(
           async () =>
             await admit({
               git: this.repositories.git,
@@ -1136,11 +1155,39 @@ export class CodeStore {
               bundle: join(directory, 'bundle'),
               head: target,
               expectedHead: upload?.expectedHead ?? null,
-              prerequisites: upload ? [upload.expectedHead] : 'admitted',
+              prerequisites: upload
+                ? [
+                    upload.expectedHead,
+                    ...(pending ? [pending.firstParent, pending.secondParent] : []),
+                  ]
+                : 'admitted',
+              prerequisiteAncestors: !!pending,
               limits: { ...this.config.limits, ...this.limits(project) },
               indexed: () => this.fault('after_index'),
             }),
         );
+        if (!pending) return { ...admission, merge: undefined };
+        const verified = await verifyResolution(
+          this.repositories.git,
+          {
+            ...env,
+            GIT_OBJECT_DIRECTORY: join(directory, 'objects'),
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: join(paths.repository, 'objects'),
+          },
+          pending.firstParent,
+          pending.secondParent,
+          target,
+        );
+        if (verified.error) throw new AdmissionRejected('code_resolution_parents', verified.error);
+        return {
+          ...admission,
+          merge: {
+            plan: pending.plan,
+            left: pending.firstParent,
+            right: pending.secondParent,
+            firstMerge: verified.firstMerge,
+          },
+        };
       } catch (error) {
         if (
           error instanceof AdmissionRejected ||
@@ -1173,12 +1220,20 @@ export class CodeStore {
         target: target.oid,
         receiptRef: upload ? `refs/merv/receipts/${row.id}` : `refs/merv/imports/${row.id}`,
         tree: admission.tree,
+        ...(admission.merge ? { merge: admission.merge } : {}),
         objects: admission.objects,
         bytes: admission.bytes,
         objectFormat: admission.objectFormat,
         ...(target.github ? { github: target.github } : {}),
         waiting: null,
       };
+      const branch = upload
+        ? await this.repositories.git.run(
+            ['rev-parse', '--verify', '--quiet', workRef(upload.unitId)],
+            { env },
+          )
+        : null;
+      const branchHead = branch?.code === 0 ? branch.stdout.toString('utf8').trim() : null;
       try {
         progress = await this.state.transaction(async (tx) => {
           const current = await this.row(tx, id);
@@ -1193,8 +1248,17 @@ export class CodeStore {
           if (upload) {
             const unit = (await this.hooks.fenced(tx, fenceOf(current, upload), upload.kind)) as {
               head_oid: string | null;
+              base_json: string;
             };
-            admitted.expectedOld = unit.head_oid;
+            // A no-op initial checkpoint records a head without creating a branch ref.
+            const base = (JSON.parse(unit.base_json) as { reference: string }).reference;
+            check(
+              branchHead === unit.head_oid || (branchHead === null && unit.head_oid === base),
+              'code_head_conflict',
+              'The work ref differs from its recorded head',
+              409,
+            );
+            admitted.expectedOld = branchHead;
           }
           await tx.run("UPDATE code_operations SET phase='admitting' WHERE id=?", id);
           return await this.progress(tx, current, admitted);
@@ -1277,6 +1341,7 @@ export class CodeStore {
                   receiptRef: progress.receiptRef,
                   objects: progress.objects,
                   bytes: progress.bytes,
+                  ...(progress.merge ? { merge: progress.merge } : {}),
                 },
           ),
           at,
@@ -1294,7 +1359,7 @@ export class CodeStore {
           );
           return;
         }
-        if (upload) return await this.admitted(tx, id, row!.project_id, upload);
+        if (upload) return await this.admitted(tx, id, row!.project_id, upload, progress.merge);
         await tx.run(
           'UPDATE code_projects SET store_json=?,updated_at=? WHERE project_id=? AND store_json IS NULL',
           canonical({
@@ -1332,13 +1397,58 @@ export class CodeStore {
     }
   }
 
+  private async mergeReceipt(
+    tx: Transaction,
+    projectId: string,
+    unitId: string,
+  ): Promise<{ merge?: Progress['merge'] }> {
+    const pending = await pendingMerge(tx, projectId, unitId);
+    return pending
+      ? {
+          merge: {
+            plan: pending.plan,
+            left: pending.firstParent,
+            right: pending.secondParent,
+            firstMerge: pending.firstMerge,
+          },
+        }
+      : {};
+  }
+
   /** What the database learns when an upload is durable: the branch moved, and who moved it. */
   private async admitted(
     tx: Transaction,
     id: string,
     projectId: string,
     payload: UploadPayload,
+    merge?: Progress['merge'],
   ): Promise<void> {
+    const pending = await pendingMerge(tx, projectId, payload.unitId);
+    if (pending) {
+      check(
+        !payload.bundle ||
+          (merge?.plan === pending.plan &&
+            merge.left === pending.firstParent &&
+            merge.right === pending.secondParent),
+        'code_resolution_unverified',
+        'The upload must verify the frozen merge plan',
+        409,
+      );
+      const advanced = await tx.run(
+        'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE project_id=? AND unit_id=? AND head_oid=?',
+        payload.tip,
+        merge?.firstMerge ?? pending.firstMerge,
+        projectId,
+        payload.unitId,
+        payload.expectedHead,
+      );
+      check(
+        advanced.changes === 1,
+        'code_resolution_checkpoint_changed',
+        'The pending merge no longer names the expected checkpoint',
+        409,
+      );
+    }
     const final = payload.kind === 'final';
     await this.hooks.advanced(tx, fenceOf({ project_id: projectId }, payload), {
       head: payload.tip,

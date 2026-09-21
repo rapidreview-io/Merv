@@ -29,6 +29,7 @@ import {
   type WorkflowProviderRelations,
   type Workflows,
 } from '@merv/contracts';
+import { migratePendingMerges, pinMerge, pendingMerge } from './pending-merge.js';
 import { postgresMigrations } from './units.postgres.js';
 import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
@@ -269,6 +270,7 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
         postgres: postgresMigrations[3],
       },
     ]);
+    await migratePendingMerges(this.state);
   }
 
   async declareUnit(
@@ -475,6 +477,27 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
         receipt,
         'code_acceptance_unverifiable',
         'Code never admitted the commit that was reviewed',
+        409,
+      );
+    }
+    const pending = await pendingMerge(tx, caller.projectId, input.unitId);
+    if (pending) {
+      const proof = receipt
+        ? await tx.get<{ result_json: string }>(
+            "SELECT result_json FROM code_operations WHERE id=? AND status='completed'",
+            receipt,
+          )
+        : null;
+      const verified = proof ? JSON.parse(proof.result_json).merge : null;
+      check(
+        code &&
+          verified?.firstMerge &&
+          verified.firstMerge === pending.firstMerge &&
+          verified.plan === pending.plan &&
+          verified.left === pending.firstParent &&
+          verified.right === pending.secondParent,
+        'code_resolution_merge_required',
+        'Resolution acceptance requires the admitted two-parent merge of the frozen inputs and its corrective first-parent lineage.',
         409,
       );
     }
@@ -826,7 +849,7 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
         ],
       };
     // A unit whose checkouts Code's driver prepares can only start from what Code holds.
-    const kept = relations.instance.workspaceDrivers.includes(CODE_DRIVER);
+    const kept = relations.instance.workspaceDrivers.some((driver) => driver === CODE_DRIVER);
     if (kept && bound.store_json === null)
       return {
         status: 'blocked',
@@ -974,7 +997,10 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
           code: 'code_merge_conflict',
           status: 409,
           message: `Base resolution task “${task?.instance.name ?? record.resolutionTaskId}” (${record.resolutionTaskId}) is ${task?.instance.state ?? 'missing'}. ${record.resolutionError ?? `Conflicting paths: ${(record.conflict?.paths ?? []).join(', ')}`}`,
-          next: 'Complete the existing resolution task and its independent review; this unit continues from the accepted result.',
+          next:
+            task?.instance.state === 'suspended'
+              ? 'A signed-in human operator must extend review_rounds with workflow.extend_limit to resume this same task, or cancel/replan the waiting work. Keep this waiter pending.'
+              : 'Complete the existing resolution task and its independent review; this unit continues from the accepted result.',
           related: [
             {
               kind: 'task',
@@ -1149,7 +1175,7 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
             ...brief,
             baseReference: left,
             checks: [
-              `Deliver one commit with exactly two parents: the task branch descending from ${left}, and the frozen right input ${right}, in that order.`,
+              `The first completed merge on the task branch must have exactly two parents: the current checkpoint descending from ${left}, and frozen right input ${right}, in that order. Later rounds add ordinary corrective commits.`,
               'Resolve every conflicting path and leave no conflict markers.',
               'Run the project build and tests as far as this workspace permits; retain commands, results, and any checks that could not run as review evidence.',
             ],
@@ -1157,6 +1183,7 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
           tx,
         );
         await this.bases.linkTask(tx, projectId, base.key, task.id);
+        await pinMerge(tx, projectId, task.id, base.key, left, right);
         base.resolutionTaskId = task.id;
       }
       if (base.resolutionTaskId) {
@@ -1213,7 +1240,7 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     };
     return {
       title: `Merge ${titleSide(base.left)} with ${titleSide(base.right)}`,
-      goal: `Resolve the frozen base ${base.key}.\n\nLeft input ${left} (the workspace starts here):\n${bounded(side(base.left), 8000)}\n\nRight input ${right} (frozen):\n${bounded(side(base.right), 8000)}\n\nConflicting paths:\n${bounded((base.conflict?.paths ?? []).join('\n'), 4000)}\n\nGit messages:\n${bounded(base.conflict?.messages ?? '', 4000)}`,
+      goal: `Resolve conflicts between ${titleSide(base.left)} and ${titleSide(base.right)}.\n\nLeft input ${left} (the workspace starts here):\n${bounded(side(base.left), 8000)}\n\nRight input ${right} (frozen):\n${bounded(side(base.right), 8000)}\n\nConflicting paths:\n${bounded((base.conflict?.paths ?? []).join('\n'), 4000)}\n\nUse code.merge operation start on the clean initial checkout; wait for code.operation. The right input is frozen and never follows a branch. Resolve the files, retain conflict decisions and test evidence, then use code.merge operation complete. code.commit and final captures save single-parent WIP before completion. After interruption on any machine, continue from the downloaded checkpoint and its pendingMerge metadata; do not restart over saved WIP. After the first completed merge, later rounds use code.commit for corrections on this same branch. Retain the operation receipt, parent evidence, and commands and results for independent review.\n\nGit messages:\n${bounded(base.conflict?.messages ?? '', 4000)}`,
     };
   }
 

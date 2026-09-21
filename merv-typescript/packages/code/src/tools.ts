@@ -4,6 +4,8 @@ import type {} from './types.js';
 import { z } from 'zod';
 import {
   codeCommitInputSchema,
+  codeMergeInputSchema,
+  type CodeMergeInput,
   codeLocalBindInputSchema,
   codeRepositoryConfigureInputSchema,
   codeMirrorRetryInputSchema,
@@ -30,6 +32,16 @@ export const codeToolsPlugin = {
         inputSchema: codeCommitInputSchema,
         handler: async (caller: Caller, input: CodeCommitInput) =>
           await ctx.code.commit(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.merge',
+        description:
+          'Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.',
+        inputSchema: codeMergeInputSchema,
+        handler: async (caller: Caller, input: CodeMergeInput) =>
+          await ctx.code.merge(caller, input),
       }),
     );
     ctx.effect(() =>

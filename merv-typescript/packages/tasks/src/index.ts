@@ -148,7 +148,7 @@ const workspaces: Record<number, TaskWorkspace> = {
   4: 'reference',
   5: 'reference',
   6: 'code',
-  7: 'code',
+  7: 'resolution',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (
@@ -166,7 +166,19 @@ export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
 export const TASK_WORKFLOW_GIT_DERIVED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 5 };
 export const TASK_WORKFLOW_GIT_HOSTED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 6 };
-export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = { ...TASK_WORKFLOW, version: 7 };
+export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = {
+  ...TASK_WORKFLOW,
+  version: 7,
+  states: ['in_progress', 'in_review', 'suspended', 'done'],
+  terminal: ['done'],
+  edges: [
+    ...TASK_WORKFLOW.edges.map((edge) =>
+      edge.to === 'failed' ? { ...edge, to: 'suspended' } : edge,
+    ),
+    { from: 'in_review', action: 'revise_suspended', to: 'suspended' },
+    { from: 'suspended', action: 'resume', to: 'in_progress' },
+  ],
+};
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
@@ -510,7 +522,7 @@ DROP TABLE task_leases_backup;`,
     const base = await this.requireCode().baseStatus(caller, snapshot.id, tx);
     if (base.status === 'blocked')
       throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
-    if (taskWorkspace(snapshot.version) !== 'code') return;
+    if (!['code', 'resolution'].includes(taskWorkspace(snapshot.version))) return;
     // The last writer's machine still owes its final capture, or an operator must fence it.
     const writer = await this.requireCode().writerStatus(caller, snapshot.id, tx);
     if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
@@ -553,7 +565,7 @@ DROP TABLE task_leases_backup;`,
     // this hook in the same transaction, and a refused offer takes the pin back with it.
     if (purpose === 'work' && derivedBase(snapshot.version)) {
       await this.requireCode().pinBase(source, { unitId: snapshot.id, leaseId }, tx);
-      if (taskWorkspace(snapshot.version) === 'code')
+      if (['code', 'resolution'].includes(taskWorkspace(snapshot.version)))
         await this.requireCode().reserveWriter(source, { unitId: snapshot.id, leaseId }, tx);
     }
     const review =
@@ -693,11 +705,29 @@ DROP TABLE task_leases_backup;`,
       limits: [
         {
           name: 'review_rounds',
-          from: 'in_review',
-          actions: ['revise'],
+          from: serviceOwned(version) ? 'in_progress' : 'in_review',
+          actions: serviceOwned(version) ? ['submit_delivery', 'mark_failed'] : ['revise'],
           max: this.limits.reviewRounds,
         },
       ],
+      ...(serviceOwned(version)
+        ? {
+            limitExtended: async (context: WorkflowCheckContext) => {
+              if (context.snapshot.state !== 'suspended') return;
+              await this.registration(version).transition(
+                context.caller,
+                {
+                  instanceId: context.snapshot.id,
+                  expectedRevision: context.snapshot.revision,
+                  action: 'resume',
+                  requestId: `task:resume:${context.input!.requestId}`,
+                  input: context.input,
+                },
+                context.tx,
+              );
+            },
+          }
+        : {}),
       assignments: [
         {
           state: 'in_progress',
@@ -733,21 +763,25 @@ DROP TABLE task_leases_backup;`,
         return {
           label: row.title,
           gate:
-            snapshot.state === 'in_progress'
-              ? 'delivery_required'
-              : recovering
-                ? 'review_recovery_pending'
-                : review?.status === 'requested'
-                  ? 'review_required'
-                  : 'independent_review',
+            snapshot.state === 'suspended'
+              ? 'suspended'
+              : snapshot.state === 'in_progress'
+                ? 'delivery_required'
+                : recovering
+                  ? 'review_recovery_pending'
+                  : review?.status === 'requested'
+                    ? 'review_required'
+                    : 'independent_review',
           waiting:
-            snapshot.state === 'in_progress'
-              ? 'The task producer must complete and submit the delivery.'
-              : recovering
-                ? 'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.'
-                : review?.status === 'requested'
-                  ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
-                  : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
+            snapshot.state === 'suspended'
+              ? 'This service task is suspended. A signed-in human operator can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.'
+              : snapshot.state === 'in_progress'
+                ? 'The task producer must complete and submit the delivery.'
+                : recovering
+                  ? 'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.'
+                  : review?.status === 'requested'
+                    ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
+                    : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
           references: [
             ...(dependencies ?? []).map((dependency) => ({
               kind: 'workflow',
@@ -770,6 +804,40 @@ DROP TABLE task_leases_backup;`,
         };
       },
       actions: [
+        ...(serviceOwned(version)
+          ? [
+              {
+                name: 'resume',
+                states: ['suspended'],
+                transitions: ['resume'],
+                tool: 'workflow.extend_limit',
+                suggested: false,
+                instruction:
+                  'A signed-in human operator extends review_rounds to resume this same task.',
+                check: async ({ caller, tx, snapshot }: WorkflowCheckContext) => {
+                  check(
+                    caller.human && !caller.session && !caller.key,
+                    'forbidden',
+                    'Only a signed-in human operator resumes service work',
+                    403,
+                  );
+                  await this.scope.require(caller, 'admin', tx);
+                  const limit = await this.workflows.limitStatus(
+                    caller,
+                    snapshot.id,
+                    'review_rounds',
+                    tx,
+                  );
+                  check(
+                    !limit.exhausted,
+                    'workflow_limit_exhausted',
+                    'Extend review_rounds before resuming',
+                    409,
+                  );
+                },
+              },
+            ]
+          : []),
         {
           name: 'submit_delivery',
           states: ['in_progress'],
@@ -794,7 +862,12 @@ DROP TABLE task_leases_backup;`,
         {
           name: 'submit_review',
           states: ['in_review'],
-          transitions: ['accept', 'revise', 'fail_review'],
+          transitions: [
+            'accept',
+            'revise',
+            'fail_review',
+            ...(serviceOwned(version) ? ['revise_suspended'] : []),
+          ],
           tool: 'review.submit',
           instruction:
             'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. For formatVersion 2, include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
@@ -859,14 +932,31 @@ DROP TABLE task_leases_backup;`,
           suggested: false,
           requiredInput: ['reason'],
           arguments: taskArguments,
-          instruction:
-            'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
+          instruction: serviceOwned(version)
+            ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a human operator can extend review_rounds to resume the same task.'
+            : 'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
           check: async (context) => {
             await this.checkFailure(context);
           },
         },
       ],
     };
+  }
+
+  private async reviewAction(
+    context: WorkflowCheckContext,
+    verdict: 'pass' | 'needs_changes' | 'fail',
+  ): Promise<string> {
+    if (verdict === 'needs_changes' && serviceOwned(context.snapshot.version)) {
+      const limit = await this.workflows.limitStatus(
+        context.caller,
+        context.snapshot.id,
+        'review_rounds',
+        context.tx,
+      );
+      if (limit.exhausted) return 'revise_suspended';
+    }
+    return { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[verdict];
   }
 
   private async currentReview({
@@ -911,9 +1001,10 @@ DROP TABLE task_leases_backup;`,
       if (context.input.verdict === 'pass') await this.checkoutReviewer(context, review, headOid);
     }
     if (context.input && context.transition) {
-      const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
-        context.input.verdict as 'pass' | 'needs_changes' | 'fail'
-      ];
+      const action = await this.reviewAction(
+        context,
+        context.input.verdict as 'pass' | 'needs_changes' | 'fail',
+      );
       check(
         context.transition === action,
         'invalid_verdict',
@@ -1536,7 +1627,10 @@ DROP TABLE task_leases_backup;`,
               ? (task.workflow.data.rejectedReviewIds as string[])
               : []
             ).filter((id) => id !== task.reviewId),
-            async (id) => ({ review: await this.reviews.get(caller, id, tx) }),
+            async (id) => {
+              const review = await this.reviews.get(caller, id, tx);
+              return { review, label: `Submitted evidence: ${review.artifactIds.join(', ')}` };
+            },
           ),
           REVIEW_HISTORY_CHARS,
         );
@@ -1544,11 +1638,17 @@ DROP TABLE task_leases_backup;`,
           text:
             task.workflow.data.revisionContext +
             (previous?.status === 'submitted' &&
-            (previous.synopsis || previous.findings.length || Object.keys(previous.evidence).length)
+            (previous.notes ||
+              previous.synopsis ||
+              previous.findings.length ||
+              Object.keys(previous.evidence).length)
               ? '\n\nPinned review assessment (verify cited evidence before revising):\n' +
                 JSON.stringify({
                   reviewId: previous.id,
                   snapshotHash: previous.snapshotHash,
+                  artifactIds: previous.artifactIds,
+                  verdict: previous.verdict,
+                  notes: previous.notes,
                   criteria: previous.criteria,
                   synopsis: previous.synopsis,
                   findings: previous.findings,
@@ -1559,6 +1659,10 @@ DROP TABLE task_leases_backup;`,
               ? '\n\nEarlier review rounds, oldest first (each was answered by a later delivery; do not reintroduce what they rejected):\n' +
                 JSON.stringify(earlier)
               : ''),
+          omitted: Array.from(
+            { length: earlier.omittedRounds },
+            (_, index) => `feedback:round:${index + 1}`,
+          ),
         };
       }
     }
@@ -2245,12 +2349,23 @@ DROP TABLE task_leases_backup;`,
             action: 'mark_failed',
             input: { ...input, expectedRevision: current.revision },
             requestId: `${caller.actorId}:task:failure:${input.requestId}`,
-            data: { outcome: input.reason, failure: { ...failure } },
+            data: {
+              outcome: input.reason,
+              failure: { ...failure },
+              ...(serviceOwned(current.version) ? { revisionContext: input.reason } : {}),
+            },
           },
           tx,
         );
         if (reviewId) await this.reviews.supersede(caller, reviewId, tx);
-        await recorded(this.state, tx, caller, 'task.failed', row.id, { ...failure });
+        await recorded(
+          this.state,
+          tx,
+          caller,
+          serviceOwned(current.version) ? 'task.suspended' : 'task.failed',
+          row.id,
+          { ...failure },
+        );
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
     });
@@ -2493,9 +2608,7 @@ DROP TABLE task_leases_backup;`,
           409,
         );
         await this.reviews.checkSubmit(caller, input.reviewId, input, tx);
-        const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
-          input.verdict
-        ];
+        const action = await this.reviewAction({ caller, snapshot: current, tx }, input.verdict);
         const moved = await (
           await this.registration(current.version)
         ).transition(

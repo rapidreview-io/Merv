@@ -498,7 +498,7 @@ test('what publishes a project’s work is the owner’s link and the write auto
   );
 });
 
-test('the credential of a push exists only in the environment of that one Git child', async (t) => {
+test('the credential of a push exists only in the environment of that one Git child', async () => {
   const seen: { args: string[]; env: Record<string, string> }[] = [];
   const fake = {
     run: async (args: string[], options: { env?: Record<string, string> }) => {

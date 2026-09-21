@@ -60,7 +60,7 @@ const buildSchema = z
       .strict(),
     inputs: z.record(
       z.union([
-        z.object({ text: z.string() }).strict(),
+        z.object({ text: z.string(), omitted: z.array(z.string()).optional() }).strict(),
         z
           .object({
             artifactIds: z.array(z.string().min(1)),
@@ -307,8 +307,10 @@ export class RecipeContextBuilder implements ContextBuilder {
       }
       let content: string,
         documents: Artifact[] = [];
-      if ('text' in value) content = value.text;
-      else {
+      if ('text' in value) {
+        content = value.text;
+        omitted.push(...(value.omitted ?? []));
+      } else {
         check(
           new Set(value.artifactIds).size === value.artifactIds.length,
           'invalid_context',

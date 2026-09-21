@@ -1,4 +1,5 @@
 import { MervError } from '@merv/contracts';
+import { MERGE_SETTINGS } from './merge-settings.js';
 import type { ServerGit } from './git.js';
 
 /**
@@ -19,17 +20,6 @@ const IDENTITY = {
   LC_ALL: 'C',
   GIT_NO_REPLACE_OBJECTS: '1',
 };
-/** Rename and whitespace handling are stated, so an upgrade of Git changes nothing silently. */
-const SETTINGS = [
-  '-c',
-  'merge.renormalize=false',
-  '-c',
-  'merge.renames=true',
-  '-c',
-  'merge.directoryRenames=false',
-  '-c',
-  'diff.renameLimit=1000',
-];
 export const MERGE_ENGINE = 'merge-tree@1';
 const DEADLINE_MS = 120_000;
 
@@ -58,12 +48,12 @@ export async function mergeBases(
   if (left === right || (await holds(right, left))) return { outcome: 'contained', commit: left };
   if (await holds(left, right)) return { outcome: 'contained', commit: right };
   const merged = await git.run(
-    [...SETTINGS, 'merge-tree', '--write-tree', '--name-only', '--no-messages', left, right],
+    [...MERGE_SETTINGS, 'merge-tree', '--write-tree', '--name-only', '--no-messages', left, right],
     run,
   );
   const [tree = '', ...paths] = merged.stdout.toString('utf8').split('\n').filter(Boolean);
   if (merged.code === 1) {
-    const said = await git.run([...SETTINGS, 'merge-tree', '--write-tree', left, right], run);
+    const said = await git.run([...MERGE_SETTINGS, 'merge-tree', '--write-tree', left, right], run);
     return {
       outcome: 'conflict',
       paths: [...new Set(paths)].sort(),

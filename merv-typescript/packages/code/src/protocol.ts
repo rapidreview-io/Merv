@@ -12,6 +12,7 @@ import {
   type State,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
+import { pendingMerge } from './pending-merge.js';
 import { parseCodeInput } from './input.js';
 import type { CodeStore } from './store/operations.js';
 import { workBranch } from './store/refs.js';
@@ -85,6 +86,7 @@ export class CodeWorkspaceProtocol {
           sessionId: input.sessionId,
           head: manifest.head,
           haves: input.haves,
+          ...(manifest.pendingMerge ? { secondParent: manifest.pendingMerge.secondParent } : {}),
         }),
       };
     }
@@ -209,10 +211,14 @@ export class CodeWorkspaceProtocol {
         409,
       );
       const base = this.writers.base(unit);
+      const pending = await this.state.read((sql) =>
+        pendingMerge(sql, caller.projectId, session.instanceId),
+      );
       manifest = {
         ...shared,
         generation: Number(unit.generation),
         mode: 'write',
+        ...(pending ? { pendingMerge: pending } : {}),
         head: unit.head_oid ?? base,
         base,
         branch: workBranch(session.instanceId),

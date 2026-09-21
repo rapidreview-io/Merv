@@ -20,7 +20,11 @@ export { clip, visible } from './text.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
-export { sessionWorkspaceSchema } from './workspace.js';
+export {
+  sessionWorkspaceSchema,
+  codePendingMergeSchema,
+  type CodePendingMerge,
+} from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
@@ -92,6 +96,7 @@ export type {
 } from './workspace-driver.js';
 export {
   codeCommitInputSchema,
+  codeMergeInputSchema,
   codeCommandControlSchema,
   codeCommitCommandSchema,
   codeCommitReceiptSchema,
@@ -114,6 +119,7 @@ export type {
   CodeProjectBinding,
   CodeProjectStatus,
   CodeCommitInput,
+  CodeMergeInput,
   CodeCommitCommand,
   CodeCommitReceipt,
   CodeCommandRecord,
@@ -940,7 +946,7 @@ export interface WorkflowLoopLimit {
   actions: string[];
   max: number;
 }
-/** An admin's append-only allowance of more traversals on one instance; it changes no revision. */
+/** An admin's append-only allowance; an owner's resume hook may also advance suspended work. */
 export interface WorkflowExtendLimit {
   instanceId: string;
   limit: string;
@@ -956,6 +962,8 @@ export interface WorkflowPolicy {
    * it governs every live instance of the version at once, counted from its whole history.
    */
   limits?: WorkflowLoopLimit[];
+  /** The owner may resume suspended work in the same transaction as a human's allowance. */
+  limitExtended?(context: WorkflowCheckContext, status: WorkflowLimitStatus): Promise<void>;
   /** Immutable per version; only these terminal states satisfy downstream work. */
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
@@ -1216,6 +1224,12 @@ export interface Workflows {
     input: WorkflowExtendLimit,
     tx?: Transaction,
   ): Promise<WorkflowLimitStatus>;
+  limitStatus(
+    caller: Caller,
+    instanceId: string,
+    name: string,
+    tx: Transaction,
+  ): Promise<WorkflowLimitStatus>;
   dependencies(
     caller: Caller,
     instanceId: string,
@@ -1456,7 +1470,7 @@ export interface TaskTypeDefinition {
   recipe: ContextRecipe;
 }
 export type ContextInput =
-  | { text: string }
+  | { text: string; omitted?: string[] }
   | {
       artifactIds: string[];
       /** Text is strict UTF-8; auto retains binary references; references never embeds bytes. */

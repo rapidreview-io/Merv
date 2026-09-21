@@ -1330,9 +1330,9 @@ export class WorkflowsService implements Workflows {
 
   /**
    * An engine command rather than a program's, so it reaches managed workflows too. It writes
-   * a grant and nothing else: the instance keeps its revision, so a review pinned to it and a
-   * dispatch expecting it both stay valid. A grant only ever raises a cap, which is why one
-   * landing beside a transition needs no ordering between them.
+   * a grant without changing an active assignment's revision, so a pinned review stays valid.
+   * An owner may resume suspended work through its hook in this same transaction; if the
+   * owner refuses, the allowance and the resume both roll back.
    */
   async extendLimit(
     caller: Caller,
@@ -1393,8 +1393,8 @@ export class WorkflowsService implements Workflows {
         'Terminal workflow instances cannot be allowed more rounds',
         409,
       );
-      // History is transitions and this is not one, so the request is kept without a history
-      // row or a transition event; the grant table is the record.
+      // The grant has its own record. An owner's optional resume writes its own transition
+      // receipt, so retrying this request cannot advance suspended work twice.
       await tx.run(
         'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
         caller.projectId,
@@ -1414,6 +1414,10 @@ export class WorkflowsService implements Workflows {
         now(),
       );
       const status = await limitStatus(tx, limit, snapshot.id);
+      await registered.policy?.limitExtended?.(
+        { caller, snapshot, tx, input: { reason, requestId: input.requestId } },
+        status,
+      );
       await recorded(this.state, tx, caller, 'workflow.limit_extended', snapshot.id, {
         workflow: snapshot.workflow,
         version: snapshot.version,
@@ -1426,6 +1430,21 @@ export class WorkflowsService implements Workflows {
       this.requireActive(registered);
       return status;
     });
+  }
+
+  async limitStatus(
+    caller: Caller,
+    instanceId: string,
+    name: string,
+    tx: Transaction,
+  ): Promise<WorkflowLimitStatus> {
+    await this.scope.require(caller, 'read', tx);
+    const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
+    const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
+      (item) => item.name === name,
+    );
+    check(limit, 'unknown_limit', 'This workflow has no such limit', 404);
+    return await limitStatus(tx, limit, instanceId);
   }
 
   async dependencies(

@@ -513,6 +513,7 @@ export function buildLaunch(
     'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
     'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
     'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
+    'Continue the same assigned work after an interruption or a returned review. Read all earlier submissions, verdicts, unmet criteria and reviewer notes in its context; inspect any omitted feedback through the referenced records. Retain verification commands, results and unresolved questions as evidence. A suspended assignment waits for a human operator; do not replace it or fail work that waits on it.',
     // Workers read the assignment's tool list as the boundary of what they may look at and
     // then invent what the project already holds. The list binds writes; reads are open.
     'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it — the project summary and records, the other tasks and their deliveries, the experiments and their plans and results, the reviews, the feed and the living paper.',

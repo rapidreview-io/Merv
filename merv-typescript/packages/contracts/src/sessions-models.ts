@@ -1,6 +1,15 @@
 /** Portable session, runner and agent read models, shared by the server and the browser. */
 import type { WorkflowDispatchCandidate } from './workflow-models.js';
 
+/** Frozen plan and checkpoint metadata, carried only by a merge-capable workspace driver. */
+export type CodePendingMerge = {
+  plan: string;
+  firstParent: string;
+  secondParent: string;
+  checkpoint: string;
+  firstMerge: string | null;
+};
+
 /** Source-authenticated runner observations; the server does not verify Git objects. */
 export interface SessionWorkspace {
   repositoryId: string;
@@ -11,6 +20,7 @@ export interface SessionWorkspace {
   headOid: string;
   /** Observed Git tree; absent on older reports, never inferred by the server. */
   treeOid?: string;
+  pendingMerge?: CodePendingMerge;
   stats: { commitCount: number; filesChanged: number; insertions: number; deletions: number };
 }
 export interface SessionWorkspaceRecord {

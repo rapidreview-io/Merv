@@ -1,5 +1,6 @@
 import { MervError } from '@merv/contracts';
 import type { State, Sql, Transaction } from '@merv/contracts';
+import { verifyResolution } from './pending-merge.js';
 import { baseKey, members, planBase, type PlannedBase } from './base-plan.js';
 import { MERGE_ENGINE, mergeBases } from './base-merge.js';
 import type { CodeRepositories } from './store/repository.js';
@@ -308,21 +309,15 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
   private async acceptTask(projectId: string, base: CodeBaseRecord, commit: string): Promise<void> {
     const inputs = await this.state.read((sql) => this.inputs(sql, projectId, base));
     const env = this.repositories.environment(projectId);
-    const missing: string[] = [];
-    for (const input of inputs) {
-      if (!input) {
-        missing.push('unresolved planned input');
-        continue;
-      }
-      const ancestry = await this.repositories.git.run(
-        ['merge-base', '--is-ancestor', input, commit],
-        { env },
-      );
-      if (ancestry.code !== 0) missing.push(input);
-    }
-    const error = missing.length
-      ? `Accepted resolution commit ${commit} does not contain both planned inputs as ancestors; missing or unverifiable: ${missing.join(', ')}`
-      : null;
+    const verified =
+      inputs[0] && inputs[1]
+        ? await verifyResolution(this.repositories.git, env, inputs[0], inputs[1], commit)
+        : { firstMerge: null, error: 'The resolution has an unresolved planned input.' };
+    const error =
+      verified.error ??
+      (!verified.firstMerge
+        ? 'The resolution has no two-parent merge on the planned first-parent lineage.'
+        : null);
     let result: CodeBaseRecord['result'] = null;
     if (!error) {
       const ref = `refs/merv/bases/${base.key}`;

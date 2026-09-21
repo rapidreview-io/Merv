@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { codePendingMergeSchema } from './workspace.js';
 
 /**
  * The second workspace protocol: Code keeps one repository per project and machines move Git
@@ -168,6 +169,7 @@ export const codeWorkspaceManifestSchema = z
     base: oid,
     branch: z.string().min(1).max(512).nullable(),
     prerequisites: z.array(oid).max(256),
+    pendingMerge: codePendingMergeSchema.optional(),
   })
   .strict();
 export type CodeWorkspaceManifest = z.infer<typeof codeWorkspaceManifestSchema>;

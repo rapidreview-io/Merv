@@ -162,7 +162,7 @@
     {
       "name": "task",
       "version": 7,
-      "fingerprint": "bf70c97ce3c6dae3859840a3e852505b3203f38948e1df68097d7becdf8128b4",
+      "fingerprint": "4598e515ade021a30dcb1700020e55255d6b4f27b3430d8bf31a848821d1e32e",
       "published": false
     }
   ],
@@ -707,7 +707,7 @@
       "workflow": "task",
       "version": 7,
       "state": "in_progress",
-      "fingerprint": "54988e217898af66654a91286b135739864ce4ed39b4c7d459c873ae70cb7080",
+      "fingerprint": "83ac6ef778e3f079b8308c19e850f4dd8c4cf87fad211c6926faf3d437202cf1",
       "published": false
     },
     {
@@ -715,6 +715,13 @@
       "version": 7,
       "state": "in_review",
       "fingerprint": "2ac88b616bd85eead8754472eabf39614a1c0ed82dd973e3e9fa5d317f5736b4",
+      "published": false
+    },
+    {
+      "workflow": "task",
+      "version": 7,
+      "state": "suspended",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
       "published": false
     }
   ],

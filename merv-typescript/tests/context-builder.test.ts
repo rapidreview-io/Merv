@@ -58,6 +58,25 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
     assert.equal(context.sources[0].hash, artifact.hash);
     assert.ok(context.prompt.length <= 1200);
     assert.deepEqual(await registration.build(caller, input), context);
+    const carried = await registration.build(caller, {
+      ...input,
+      requestId: 'carried-omissions',
+      inputs: {
+        ...input.inputs,
+        background: { text: 'Latest review feedback.', omitted: ['background:round:1'] },
+      },
+    });
+    assert.deepEqual(carried.omitted, ['background:round:1']);
+    const overflow = await registration.build(caller, {
+      ...input,
+      requestId: 'carried-overflow',
+      inputs: {
+        ...input.inputs,
+        background: { text: 'x'.repeat(1100), omitted: ['background:round:1'] },
+      },
+    });
+    assert.deepEqual(overflow.omitted, ['background:round:1', 'background']);
+
     await assert.rejects(
       async () =>
         await registration.build(caller, { ...input, subject: { id: 'task-a', revision: 3 } }),
@@ -125,7 +144,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
         async (sql) =>
           (await sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM context_packages'))!.n,
       ),
-      2,
+      4,
     );
   } finally {
     builder.close();

@@ -2,23 +2,44 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { MervError } from '@merv/contracts';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 import { CodeWriterService } from '@merv/code/writers';
-import {
-  backends,
-  codeStoreFixture,
-  faultAt,
-  git,
-  gitSource,
-  optional,
-  type Backend,
-  type Bundle,
-} from './fixtures/code-store.js';
+import { backends, faultAt, git, optional } from './fixtures/code-store.js';
 
 const fixture = writerFixture;
 
 for (const backend of backends) {
+  test(
+    `${backend}: an ordinary unit accepts a real checkpoint after its first checkpoint was a no-op`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.lease('ses_1');
+      await f.event('session.workspace_attached', 'ses_1');
+      const empty = await f.begin('checkpoint', 'ses_1', 1, f.root, null);
+      assert.equal(empty.status, 'completed');
+      assert.equal((await f.unit()).canonicalHead, f.root);
+      assert.ok(!f.refs().some((ref) => ref.startsWith(`refs/merv/work/${f.unitId} `)));
+      const head = f.source.commit({ 'ordinary.txt': 'first actual change\n' });
+      const uploaded = await f.upload(
+        'checkpoint',
+        'ses_1',
+        1,
+        f.root,
+        f.source.bundle(head, [f.root]),
+      );
+      assert.equal(uploaded.status, 'completed');
+      assert.equal((await f.unit()).canonicalHead, head);
+      assert.ok(f.refs().includes(`refs/merv/work/${f.unitId} ${head}`));
+      assert.equal(
+        await f.state.read((sql) =>
+          sql.get('SELECT unit_id FROM code_pending_merges WHERE unit_id=?', f.unitId),
+        ),
+        undefined,
+      );
+    },
+  );
+
   for (const point of [
     'after_part',
     'after_index',

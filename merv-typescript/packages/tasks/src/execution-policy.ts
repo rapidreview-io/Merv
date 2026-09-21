@@ -9,7 +9,7 @@ const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'referenc
 const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 
 /** Where a task version's private Git checkout starts, or 'none' for the original scratch task. */
-export type TaskWorkspace = 'none' | 'central' | 'reference' | 'code';
+export type TaskWorkspace = 'none' | 'central' | 'reference' | 'code' | 'resolution';
 /** The workspace driver that prepares checkouts from Code's own repository; opaque to Tasks. */
 const CODE_DRIVER = 'code.v2';
 
@@ -26,7 +26,7 @@ export function taskExecutionPolicy(
   purpose: 'work' | 'review',
   workspace: TaskWorkspace = 'none',
 ): WorkflowExecutionPolicy {
-  const driver = workspace === 'code' ? { driver: CODE_DRIVER } : {};
+  const driver = ['code', 'resolution'].includes(workspace) ? { driver: CODE_DRIVER } : {};
   const instance = { instanceId: target('instanceId') };
   const task = { taskId: target('instanceId') };
   const revision = { expectedRevision: target('revision') };
@@ -83,7 +83,11 @@ export function taskExecutionPolicy(
             grant('task.mark_failed', { ...task, ...revision }),
             ...(workspace === 'none'
               ? []
-              : [grant('code.commit', {}), grant('code.operation', {})]),
+              : [
+                  grant('code.commit', {}),
+                  grant('code.operation', {}),
+                  ...(workspace === 'resolution' ? [grant('code.merge', {})] : []),
+                ]),
           ]
         : [
             grant('review.start', { reviewId: reference('reviewId') }),

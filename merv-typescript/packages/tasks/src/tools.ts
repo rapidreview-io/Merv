@@ -140,7 +140,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.mark_failed',
         description:
-          'Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.',
+          'Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.',
         inputSchema: z
           .object({
             taskId: id,

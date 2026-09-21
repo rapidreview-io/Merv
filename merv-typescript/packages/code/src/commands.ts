@@ -1,4 +1,3 @@
-import { postgresMigrations } from './commands.postgres.js';
 import { types } from 'node:util';
 import { z } from 'zod';
 import {
@@ -7,6 +6,8 @@ import {
   codeCommandCompletionSchema,
   codeCommandControlSchema,
   codeCommitInputSchema,
+  codeMergeInputSchema,
+  type CodeMergeInput,
   digest,
   newId,
   now,
@@ -23,6 +24,8 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
+import { pendingMerge } from './pending-merge.js';
+import { postgresMigrations } from './commands.postgres.js';
 import type { CodeCommands } from './types.js';
 
 type Row = {
@@ -202,13 +205,17 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
       403,
     );
   }
-  private async authorizeCommit(caller: Caller, input: CodeCommitInput): Promise<void> {
+  private async authorizeCommit(
+    caller: Caller,
+    input: CodeCommitInput | CodeMergeInput,
+    tool = 'code.commit',
+  ): Promise<void> {
     const data: Data = { ...input };
-    if (caller.session?.invocationId) await this.sessions.validate(caller, 'code.commit', data);
+    if (caller.session?.invocationId) await this.sessions.validate(caller, tool, data);
     else {
-      const invocation = await this.sessions.prepare(caller, 'code.commit', data);
+      const invocation = await this.sessions.prepare(caller, tool, data);
       try {
-        await this.sessions.validate(invocation.caller, 'code.commit', data);
+        await this.sessions.validate(invocation.caller, tool, data);
       } finally {
         await this.sessions.cancel(invocation);
       }
@@ -276,14 +283,33 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
     });
   }
   async commit(caller: Caller, value: CodeCommitInput): Promise<CodeCommandRecord> {
+    return await this.enqueue(caller, parse(codeCommitInputSchema, value));
+  }
+  async merge(caller: Caller, value: CodeMergeInput): Promise<CodeCommandRecord> {
+    return await this.enqueue(caller, parse(codeMergeInputSchema, value));
+  }
+  private async enqueue(
+    caller: Caller,
+    input: CodeCommitInput | CodeMergeInput,
+  ): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);
-    const input = parse(codeCommitInputSchema, value);
+    const merge = 'operation' in input ? input.operation : undefined;
     return await this.transaction(async (tx) => {
       check(caller.session, 'session_required', 'Only a worker session can request a commit', 403);
       await this.scope.require(caller, 'write', tx);
       const session = await this.sessions.describe(caller);
       this.writable(session);
-      await this.authorizeCommit(caller, input);
+      await this.authorizeCommit(caller, input, merge ? 'code.merge' : 'code.commit');
+      const pending = merge ? await pendingMerge(tx, caller.projectId, session.instanceId) : null;
+      if (merge)
+        check(
+          pending &&
+            session.execution.policy.tools.some((tool) => tool.name === 'code.merge') &&
+            session.workspace?.attachment.pendingMerge?.plan === pending.plan,
+          'code_merge_forbidden',
+          'Only a merge-capable service assignment may operate its frozen merge',
+          403,
+        );
       const hash = digest(input);
       const prior = await tx.get<Row>(
         'SELECT * FROM code_commands WHERE session_id=? AND request_id=?',
@@ -299,6 +325,13 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
         );
         return this.decode(prior);
       }
+      if (merge)
+        check(
+          !pending!.firstMerge,
+          'code_merge_completed',
+          'The planned merge is already complete; later rounds use code.commit',
+          409,
+        );
       check(
         !(await tx.get(
           "SELECT id FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
@@ -323,6 +356,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
         runnerId: session.runnerId,
         hostRef: session.hostRef!,
         workspace: session.workspace!.attachment,
+        ...(merge ? { merge } : {}),
         expectedHead: input.expectedHead,
         message: input.message,
         createdAt: now(),

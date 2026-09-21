@@ -1,3 +1,4 @@
+import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { mkdirSync } from 'node:fs';
@@ -20,8 +21,8 @@ import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { boundProject } from './fixtures/code-binding.js';
 
-async function fixture(t: TestContext, backend: Backend) {
-  const f = await resolutionFixture(t, backend);
+async function fixture(t: TestContext, backend: Backend, human = false) {
+  const f = await resolutionFixture(t, backend, { human });
   const code = await createService(
     new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
   );
@@ -121,6 +122,47 @@ async function fixture(t: TestContext, backend: Backend) {
       return capture;
     },
   );
+  const admission = async (taskId: string, commit: string, id: string) => {
+    const pending = await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, taskId));
+    assert.ok(pending);
+    const proof = await verifyResolution(
+      repositories.git,
+      repositories.environment(f.admin.projectId),
+      pending.firstParent,
+      pending.secondParent,
+      commit,
+    );
+    assert.equal(proof.error, null);
+    const merge = {
+      plan: pending.plan,
+      left: pending.firstParent,
+      right: pending.secondParent,
+      firstMerge: proof.firstMerge,
+    };
+    await f.state.transaction(async (tx) => {
+      await tx.run(
+        "UPDATE code_units SET generation=CASE WHEN generation=0 THEN 1 ELSE generation END,writer_state=CASE WHEN generation=0 THEN 'closed' ELSE writer_state END,head_oid=? WHERE project_id=? AND unit_id=?",
+        commit,
+        f.admin.projectId,
+        taskId,
+      );
+      await tx.run(
+        'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE project_id=? AND unit_id=?',
+        commit,
+        proof.firstMerge,
+        f.admin.projectId,
+        taskId,
+      );
+      await tx.run(
+        "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES (?,?,'fixture',?,'upload','hash','{}','completed',?,'now','now',?)",
+        id,
+        f.admin.projectId,
+        id,
+        JSON.stringify({ head: commit, merge }),
+        taskId,
+      );
+    });
+  };
   const accept = async (work: WorkflowSnapshot, commit: string) => {
     const commandId = `accepted-${work.id}`;
     captures.set(commandId, {
@@ -223,6 +265,7 @@ async function fixture(t: TestContext, backend: Backend) {
         .run("UPDATE wf_instances SET state='done',revision=revision+1 WHERE id=?", taskId)
         .then(() => undefined),
     );
+    await admission(taskId, commit, `admitted-${taskId}`);
     await accept(await f.workflows.get(f.admin, taskId), commit);
     await code.reconcileAll();
     await bases.work(f.admin.projectId);
@@ -249,6 +292,7 @@ async function fixture(t: TestContext, backend: Backend) {
     record,
     resolveCommit,
     acceptResolution,
+    admission,
     repositories,
     captures,
     handle,
@@ -632,14 +676,19 @@ for (const backend of backends) {
       const f = await fixture(t, backend);
       const waiter = await f.waiter();
       await f.bases.work(f.admin.projectId);
-      const taskId = (await f.record())!.resolutionTaskId;
-      await f.acceptResolution(f.a);
+      const baseRecord = (await f.record())!;
+      const taskId = baseRecord.resolutionTaskId;
+      // An old acceptance may predate admission proofs; the base worker must still reject it.
+      await f.state.transaction((tx) =>
+        f.bases.recordAcceptance(tx, f.admin.projectId, baseRecord!, f.a),
+      );
+      await f.bases.work(f.admin.projectId);
       for (let i = 0; i < 2; i++) await f.bases.work(f.admin.projectId);
       const base = (await f.record())!;
       assert.equal(base.state, 'awaiting_resolution');
       assert.equal(base.result, null);
       assert.equal(base.resolutionTaskId, taskId);
-      assert.match(base.resolutionError!, /does not contain both planned inputs/);
+      assert.match(base.resolutionError!, /no two-parent merge/);
       assert.deepEqual(await f.bases.due(), []);
       const rejectedAt = base.updatedAt;
       await f.code.reconcileAll();
@@ -649,7 +698,7 @@ for (const backend of backends) {
       assert.ok(
         blockers.some(
           (blocker) =>
-            /does not contain both/.test(blocker.message) && /done/.test(blocker.message),
+            /no two-parent merge/.test(blocker.message) && /in_progress/.test(blocker.message),
         ),
       );
       await assert.rejects(
@@ -661,12 +710,315 @@ for (const backend of backends) {
     },
   );
 
-  for (const verdict of ['pass', 'needs_changes'] as const)
+  test(
+    `${backend}: three resolution rounds retain one task, carry all feedback and suspend until a human extends the limit`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend, true);
+      const waiter = await f.waiter();
+      await f.bases.work(f.admin.projectId);
+      const taskId = (await f.record())!.resolutionTaskId!;
+      const commit = await f.resolveCommit();
+      const identity = await f.scope.issueActor(f.admin, {
+        name: 'Resolution worker machine',
+        role: 'producer',
+      });
+      const runner = {
+        projectId: f.admin.projectId,
+        actorId: identity.actor.id,
+        credentialId: identity.credential.id,
+      };
+      await f.sessions.heartbeatRunner(runner, {
+        runnerId: 'round-runner',
+        machine: { hostname: 'rounds', system: 'test', architecture: 'test' },
+        platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+        capacity: 1,
+        capabilities: ['code.v2'],
+      });
+      const ids: string[] = [];
+      const submissions: string[] = [];
+      for (let round = 1; round <= 3; round++) {
+        const task = await f.tasks.get(f.admin, taskId);
+        assert.equal(
+          (task.workflow.data.rejectedReviewIds as string[] | undefined)?.length ?? 0,
+          round - 1,
+        );
+        const context = await f.tasks.context(f.admin, {
+          taskId,
+          expectedRevision: task.workflow.revision,
+          purpose: 'work',
+          requestId: `context-${round}`,
+        });
+        for (let prior = 1; prior < round; prior++) {
+          assert.ok(context.prompt.includes(`Correction ${prior}`));
+          assert.ok(context.prompt.includes(ids[prior - 1]));
+          assert.ok(context.prompt.includes(submissions[prior - 1]));
+        }
+        const secret = `ms_${randomBytes(32).toString('base64url')}`;
+        const session = await f.sessions.offer(runner, {
+          instanceId: taskId,
+          expectedRevision: task.workflow.revision,
+          runnerId: 'round-runner',
+          requestId: `round-${round}`,
+          secret,
+        });
+        const base = (await f.state.transaction((tx) => f.code.basePin(f.admin, taskId, tx)))!
+          .reference;
+        const workspace = {
+          repositoryId: 'repository',
+          workspaceId: taskId,
+          mode: 'persistent' as const,
+          branch: 'merv/resolution',
+          baseOid: base,
+          headOid: commit,
+          stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 1 },
+        };
+        await f.sessions.attach(runner, {
+          sessionId: session.id,
+          runnerId: 'round-runner',
+          hostRef: `round-${round}`,
+          workspace,
+        });
+        const worker = await f.sessions.authenticate(secret);
+        const commandId = `round-commit-${round}`;
+        f.captures.set(commandId, {
+          ref: { kind: 'code-commit', commandId },
+          status: 'ready',
+          provenance: {
+            projectId: f.admin.projectId,
+            instanceId: taskId,
+            sessionId: session.id,
+            actorId: worker.actorId,
+            revision: task.workflow.revision,
+            workflow: { name: 'task', version: 7, state: 'in_progress' },
+            readOnly: false,
+          } as CodeCapture['provenance'],
+          workspace,
+          observedAt: 'now',
+          eventId: null,
+        });
+        await f.admission(taskId, commit, `round-upload-${round}`);
+        const delivery = confirmedDelivery(
+          {
+            taskId,
+            expectedRevision: task.workflow.revision,
+            requestId: `delivery-${round}`,
+            commandId,
+            artifactIds: [],
+          },
+          task.checks.length,
+        );
+        const submitted = await f.sessions.run(
+          await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
+          (caller) => f.tasks.submitDelivery(caller, delivery),
+        );
+        submissions.push(submitted.deliveryCodeArtifactId!);
+        const review = await f.reviews.start(f.admin, submitted.reviewId!);
+        ids.push(review.id);
+        const assessment = {
+          ...reviewedFindings(review),
+          reviewId: review.id,
+          claimId: review.claimId!,
+          expectedRevision: submitted.workflow.revision,
+          verdict: 'needs_changes' as const,
+          notes: `Correction ${round}`,
+          synopsis: `Correction ${round} is required because the independent checks found an unmet criterion.`,
+          findings: review.criteria.map((_, index) => ({
+            criterionNumber: index + 1,
+            status: index === 0 ? ('not_met' as const) : ('met' as const),
+            evidenceIds: [submitted.deliveryCodeArtifactId!],
+            notes: index === 0 ? `Unmet criterion ${round}` : 'Independently verified.',
+          })),
+          requestId: `verdict-${round}`,
+        };
+        const returned = await f.tasks.submitReview(f.admin, assessment);
+        assert.equal(returned.workflow.state, round === 3 ? 'suspended' : 'in_progress');
+        await f.sessions.release(runner, { sessionId: session.id, runnerId: 'round-runner' });
+        await f.events.drain();
+        // The fixture plays the final handoff; real final capture is exercised by the driver tests.
+        await f.state.transaction((tx) =>
+          tx.run("UPDATE code_units SET writer_state='closed' WHERE unit_id=?", taskId),
+        );
+      }
+      await f.code.reconcileAll();
+      const wait = await f.tasks.get(f.admin, waiter.id);
+      assert.notEqual(wait.guidance.nextAction?.action, 'mark_failed');
+      assert.ok(
+        wait.guidance.dependencies.some(
+          (edge) => edge.id === taskId && edge.state === 'suspended' && !edge.failed,
+        ),
+      );
+      const blockers = await f.workflows.blockers(f.admin, waiter.id);
+      assert.ok(
+        blockers.some(
+          (blocker) =>
+            blocker.message.includes('suspended') && blocker.next.includes('workflow.extend_limit'),
+        ),
+      );
+      assert.ok(
+        (await f.sessions.stuck(f.admin)).items.some(
+          (item) => item.instanceId === waiter.id && item.why.includes('suspended'),
+        ),
+      );
+      const grant = {
+        instanceId: taskId,
+        limit: 'review_rounds',
+        additional: 1,
+        reason: 'One more correction',
+        requestId: 'extend',
+      };
+      await assert.rejects(f.workflows.extendLimit(runner, grant), { code: 'forbidden' });
+      const machineAdmin = await f.scope.issueActor(f.admin, {
+        name: 'Operator machine',
+        role: 'operator',
+      });
+      await assert.rejects(
+        f.workflows.extendLimit(
+          {
+            projectId: f.admin.projectId,
+            actorId: machineAdmin.actor.id,
+            credentialId: machineAdmin.credential.id,
+          },
+          grant,
+        ),
+        { code: 'forbidden' },
+      );
+
+      await f.workflows.extendLimit(f.admin, grant);
+      const resumed = await f.tasks.get(f.admin, taskId);
+      assert.equal(resumed.workflow.state, 'in_progress');
+      assert.deepEqual(resumed.workflow.data.rejectedReviewIds, ids);
+      await f.workflows.extendLimit(f.admin, grant);
+      assert.equal(
+        (await f.tasks.get(f.admin, taskId)).workflow.revision,
+        resumed.workflow.revision,
+      );
+      const context = await f.tasks.context(f.admin, {
+        taskId,
+        expectedRevision: resumed.workflow.revision,
+        purpose: 'work',
+        requestId: 'resumed-context',
+      });
+      for (let prior = 1; prior <= 3; prior++) {
+        assert.ok(context.prompt.includes(`Correction ${prior}`));
+        assert.ok(context.prompt.includes(`Unmet criterion ${prior}`));
+        assert.ok(context.prompt.includes(ids[prior - 1]));
+        assert.ok(context.prompt.includes(submissions[prior - 1]));
+      }
+      assert.equal(
+        (await f.tasks.list(f.admin)).filter((task) => task.workflow.version === 7).length,
+        1,
+      );
+      const stopped = await f.tasks.markFailed(f.admin, {
+        taskId,
+        expectedRevision: resumed.workflow.revision,
+        requestId: 'suspend-again',
+        reason: 'The next round was abandoned before submission.',
+      });
+      assert.equal(stopped.workflow.state, 'suspended');
+      await f.workflows.extendLimit(f.admin, { ...grant, requestId: 'resume-again' });
+      const continued = await f.tasks.get(f.admin, taskId);
+      assert.equal(continued.workflow.state, 'in_progress');
+      assert.deepEqual(continued.workflow.data.rejectedReviewIds, ids);
+      const feedback = await f.tasks.context(f.admin, {
+        taskId,
+        expectedRevision: continued.workflow.revision,
+        purpose: 'work',
+        requestId: 'after-abandonment',
+      });
+      assert.match(feedback.prompt, /abandoned before submission/);
+      for (let prior = 1; prior <= 3; prior++) {
+        assert.ok(feedback.prompt.includes(`Correction ${prior}`));
+        assert.ok(feedback.prompt.includes(submissions[prior - 1]));
+      }
+      assert.equal((await f.record())!.resolutionTaskId, taskId);
+      assert.deepEqual(await f.bases.due(), []);
+    },
+  );
+
+  for (const shape of ['single parent', 'different second parent'] as const)
+    test(
+      `${backend}: ${shape} cannot seal a resolution and the refusal remains visible`,
+      optional(backend),
+      async (t) => {
+        const f = await fixture(t, backend);
+        const waiter = await f.waiter();
+        await f.bases.work(f.admin.projectId);
+        const base = (await f.record())!;
+        const [left, right] = await f.state.read((sql) =>
+          f.bases.inputs(sql, f.admin.projectId, base),
+        );
+        const tree = f.source.git('rev-parse', `${left}^{tree}`);
+        const ancestor = f.source.git('rev-parse', `${left}^`);
+        const wrong =
+          shape === 'single parent'
+            ? f.source.git(
+                'commit-tree',
+                tree,
+                '-p',
+                left!,
+                '-m',
+                'A single parent is not a resolution',
+              )
+            : f.source.git(
+                'commit-tree',
+                tree,
+                '-p',
+                left!,
+                '-p',
+                ancestor,
+                '-m',
+                'Wrong second parent',
+              );
+        // Both inputs eventually appear, but a later merge cannot repair the first merge's parents.
+        const head =
+          shape === 'single parent'
+            ? wrong
+            : f.source.git(
+                'commit-tree',
+                tree,
+                '-p',
+                wrong,
+                '-p',
+                right!,
+                '-m',
+                'Contains both inputs too late',
+              );
+        f.source.git(
+          'push',
+          f.repositories.paths(f.admin.projectId).repository,
+          `${head}:refs/heads/invalid-resolution`,
+        );
+        await f.state.transaction((tx) =>
+          f.bases.recordAcceptance(tx, f.admin.projectId, base, head),
+        );
+        await f.bases.work(f.admin.projectId);
+        const rejected = (await f.record())!;
+        assert.equal(rejected.result, null);
+        assert.equal(rejected.resolutionTaskId, base.resolutionTaskId);
+        assert.match(
+          rejected.resolutionError!,
+          shape === 'single parent' ? /no two-parent merge/ : /exactly.*two ordered parents/,
+        );
+        assert.ok(
+          (await f.workflows.blockers(f.admin, waiter.id)).some((blocker) =>
+            blocker.message.includes(rejected.resolutionError!),
+          ),
+        );
+        assert.deepEqual(await f.bases.due(), []);
+        if (shape === 'single parent')
+          await assert.rejects(f.acceptResolution(head), {
+            code: 'code_resolution_merge_required',
+          });
+      },
+    );
+
+  for (const verdict of ['pass', 'needs_changes', 'fail'] as const)
     test(
       `${backend}: service resolution uses the existing independent review path (${verdict})`,
       optional(backend),
       async (t) => {
-        const f = await fixture(t, backend);
+        const f = await fixture(t, backend, true);
         await f.waiter();
         await f.bases.work(f.admin.projectId);
         const id = (await f.record())!.resolutionTaskId!;
@@ -730,17 +1082,7 @@ for (const backend of backends) {
           observedAt: 'now',
           eventId: null,
         });
-        // Upload admission is outside this suite; its receipt is the boundary acceptUnit verifies.
-        await f.state.transaction((tx) =>
-          tx
-            .run(
-              "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES ('upload',?,'fixture','upload','upload','hash','{}','completed',?,'now','now',?)",
-              f.admin.projectId,
-              JSON.stringify({ head: commit }),
-              id,
-            )
-            .then(() => undefined),
-        );
+        await f.admission(id, commit, 'upload');
         const delivery = confirmedDelivery(
           {
             taskId: id,
@@ -811,7 +1153,10 @@ for (const backend of backends) {
           await f.sessions.prepare(reviewWorker, 'review.submit', assessment),
           (caller) => f.tasks.submitReview(caller, assessment),
         );
-        assert.equal(result.workflow.state, verdict === 'pass' ? 'done' : 'in_progress');
+        assert.equal(
+          result.workflow.state,
+          verdict === 'pass' ? 'done' : verdict === 'fail' ? 'suspended' : 'in_progress',
+        );
         await f.events.drain();
         if (verdict === 'needs_changes') {
           const [future] = await Promise.all([
@@ -832,6 +1177,27 @@ for (const backend of backends) {
         assert.equal(resolved.resolutionTaskId, id);
         assert.equal(resolved.state, verdict === 'pass' ? 'resolved' : 'awaiting_resolution');
         if (verdict === 'pass') assert.equal(resolved.result?.commit, commit);
+        if (verdict === 'fail') {
+          await f.workflows.extendLimit(f.admin, {
+            instanceId: id,
+            limit: 'review_rounds',
+            additional: 1,
+            reason: 'Allow another attempt after the failed review.',
+            requestId: 'resume-failed',
+          });
+          const resumed = await f.tasks.get(f.admin, id);
+          assert.equal(resumed.workflow.state, 'in_progress');
+          assert.deepEqual(resumed.workflow.data.rejectedReviewIds, [review.id]);
+          const context = await f.tasks.context(f.admin, {
+            taskId: id,
+            expectedRevision: resumed.workflow.revision,
+            purpose: 'work',
+            requestId: 'failed-feedback',
+          });
+          assert.ok(context.prompt.includes(review.id));
+          assert.ok(context.prompt.includes(assessment.notes));
+          assert.ok(context.prompt.includes('"verdict":"fail"'));
+        }
         assert.equal(
           (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 7).length,
           1,
@@ -840,7 +1206,7 @@ for (const backend of backends) {
     );
 
   test(
-    `${backend}: project writers lease a service task as producers and failure remains a non-failing prerequisite`,
+    `${backend}: project writers lease a service task as producers and mark_failed suspends a non-failing prerequisite`,
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
@@ -916,7 +1282,7 @@ for (const backend of backends) {
       assert.notEqual(read.guidance.currentGate, 'dependency_failed');
       assert.ok(
         read.guidance.dependencies.some(
-          (edge) => edge.kind === 'system' && edge.state === 'failed' && !edge.failed,
+          (edge) => edge.kind === 'system' && edge.state === 'suspended' && !edge.failed,
         ),
       );
       await f.code.reconcileAll();

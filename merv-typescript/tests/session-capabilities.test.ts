@@ -160,7 +160,7 @@ test('work that names a workspace driver is offered only to a runner that advert
   assert.equal(offered.session?.execution.policy.workspace?.mode, 'persistent');
 });
 
-test('a hand offer to a runner without the driver is refused when it attaches', async (t) => {
+test('a hand offer requires the driver before leasing and attachment rechecks the capability', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.source, presence('legacy'));
   await f.sessions.heartbeatRunner(f.source, presence('modern', ['code.v2']));
@@ -179,24 +179,35 @@ test('a hand offer to a runner without the driver is refused when it attaches', 
     ['modern', null],
   ] as const) {
     const instance = await f.hosted.start(f.source, { workflow: 'hosted', requestId: request() });
-    const session = await f.sessions.offer(f.source, {
+    const offered = f.sessions.offer(f.source, {
       instanceId: instance.id,
       expectedRevision: 0,
       runnerId,
       requestId: request(),
       secret: secret(),
     });
+    if (code) {
+      await assert.rejects(offered, { code });
+      continue;
+    }
+    const session = await offered;
+    await f.sessions.heartbeatRunner(f.source, presence(runnerId));
+    await assert.rejects(
+      f.sessions.attach(f.source, {
+        sessionId: session.id,
+        runnerId,
+        hostRef: 'launch',
+        workspace,
+      }),
+      { code: 'runner_incompatible' },
+    );
+    await f.sessions.heartbeatRunner(f.source, presence(runnerId, ['code.v2']));
     const attach = f.sessions.attach(f.source, {
       sessionId: session.id,
       runnerId,
       hostRef: 'launch',
       workspace,
     });
-    if (code)
-      await assert.rejects(
-        attach,
-        (error: unknown) => error instanceof MervError && error.code === code,
-      );
-    else assert.equal((await attach).hostRef, 'launch');
+    assert.equal((await attach).hostRef, 'launch');
   }
 });

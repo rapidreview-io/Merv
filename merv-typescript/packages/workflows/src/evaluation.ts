@@ -235,6 +235,7 @@ export function validatePolicy(
     ...(policy.successStates === undefined
       ? {}
       : { successStates: Object.freeze([...policy.successStates].sort()) as unknown as string[] }),
+    ...(policy.limitExtended ? { limitExtended: policy.limitExtended } : {}),
     ...(policy.dependencyFailureAction === undefined
       ? {}
       : { dependencyFailureAction: policy.dependencyFailureAction }),

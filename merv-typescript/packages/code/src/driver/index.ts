@@ -35,6 +35,7 @@ import {
   type WorkspaceSession,
   type WorkspaceTransport,
 } from '@merv/contracts';
+import { MERGE_SETTINGS } from '../merge-settings.js';
 import { DriverGit, WorkspaceError } from './git.js';
 
 export { WorkspaceError } from './git.js';
@@ -65,6 +66,7 @@ interface WorkspaceRow {
   attachment_json: string | null;
   result_json: string | null;
   canceled: number;
+  pending_merge: string | null;
 }
 interface TransferRow {
   request_id: string;
@@ -73,6 +75,7 @@ interface TransferRow {
   command_json: string | null;
   expected_head: string;
   tree_oid: string | null;
+  merge_tree: string | null;
   target_oid: string | null;
   index_path: string | null;
   bundle_path: string | null;
@@ -171,7 +174,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         policy_json TEXT NOT NULL, read_only INTEGER NOT NULL, base_oid TEXT NOT NULL,
         head_oid TEXT NOT NULL, branch TEXT, repository_id TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('preparing','ready','capturing','captured','closing','closed')),
-        attachment_json TEXT, result_json TEXT, canceled INTEGER NOT NULL DEFAULT 0
+        attachment_json TEXT, result_json TEXT, canceled INTEGER NOT NULL DEFAULT 0, pending_merge TEXT
       ) STRICT;
       CREATE TRIGGER IF NOT EXISTS code_v2_workspaces_identity BEFORE UPDATE ON code_v2_workspaces
         WHEN NEW.launch_id IS NOT OLD.launch_id OR NEW.session_id IS NOT OLD.session_id OR NEW.project_ref IS NOT OLD.project_ref OR NEW.unit_id IS NOT OLD.unit_id OR NEW.generation IS NOT OLD.generation OR NEW.path IS NOT OLD.path OR NEW.policy_json IS NOT OLD.policy_json OR NEW.read_only IS NOT OLD.read_only OR NEW.base_oid IS NOT OLD.base_oid OR NEW.branch IS NOT OLD.branch
@@ -184,12 +187,13 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         BEGIN SELECT RAISE(ABORT,'immutable workspace result'); END;
       CREATE TABLE IF NOT EXISTS code_v2_transfers (
         request_id TEXT PRIMARY KEY, launch_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('checkpoint','final')),
-        command_json TEXT, expected_head TEXT NOT NULL, tree_oid TEXT, target_oid TEXT, index_path TEXT,
+        command_json TEXT, expected_head TEXT NOT NULL, tree_oid TEXT, merge_tree TEXT, target_oid TEXT, index_path TEXT,
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
       ) STRICT;
       CREATE TRIGGER IF NOT EXISTS code_v2_transfers_identity BEFORE UPDATE ON code_v2_transfers
         WHEN NEW.request_id IS NOT OLD.request_id OR NEW.launch_id IS NOT OLD.launch_id OR NEW.kind IS NOT OLD.kind OR NEW.command_json IS NOT OLD.command_json OR NEW.expected_head IS NOT OLD.expected_head
+          OR (OLD.merge_tree IS NOT NULL AND NEW.merge_tree IS NOT OLD.merge_tree)
           OR (OLD.tree_oid IS NOT NULL AND NEW.tree_oid IS NOT OLD.tree_oid)
           OR (OLD.target_oid IS NOT NULL AND NEW.target_oid IS NOT OLD.target_oid)
           OR (OLD.bundle_hash IS NOT NULL AND NEW.bundle_hash IS NOT OLD.bundle_hash)
@@ -260,7 +264,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         if (owner) throw new WorkspaceError('workspace_owned_by_another_launch');
         this.db
           .prepare(
-            "INSERT INTO code_v2_workspaces (launch_id,session_id,runner_id,project_ref,unit_id,generation,path,policy_json,read_only,base_oid,head_oid,branch,repository_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'preparing')",
+            "INSERT INTO code_v2_workspaces (launch_id,session_id,runner_id,project_ref,unit_id,generation,path,policy_json,read_only,base_oid,head_oid,branch,repository_id,pending_merge,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'preparing')",
           )
           .run(
             launch.id,
@@ -276,6 +280,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
             manifest.head,
             manifest.branch,
             manifest.repositoryId,
+            manifest.pendingMerge ? JSON.stringify(manifest.pendingMerge) : null,
           );
       }
       const row = this.row(launch.id)!;
@@ -546,7 +551,10 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     manifest: CodeWorkspaceManifest,
     control: { sessionId: string; runnerId: string; hostRef: string },
   ): Promise<void> {
-    if (await this.has(cache, manifest.head)) return;
+    const present = async () =>
+      (await this.has(cache, manifest.head)) &&
+      (!manifest.pendingMerge || (await this.has(cache, manifest.pendingMerge.secondParent)));
+    if (await present()) return;
     const haves = (
       await this.git.ok([
         '--git-dir',
@@ -595,11 +603,11 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       const imported =
         intact && (await this.git.run(['--git-dir', cache, 'bundle', 'unbundle', file])).code === 0;
       rmSync(file, { force: true });
-      if (imported && (await this.has(cache, manifest.head))) break;
+      if (imported && (await present())) break;
     }
-    if (!(await this.has(cache, manifest.head)))
-      throw new WorkspaceError('workspace_download_failed');
+    if (!(await present())) throw new WorkspaceError('workspace_download_failed');
     await this.know(cache, manifest.head);
+    if (manifest.pendingMerge) await this.know(cache, manifest.pendingMerge.secondParent);
   }
 
   /** Remember a commit Code holds, so the next download can build on it. */
@@ -659,6 +667,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       insertions += match[1] === '-' ? 0 : Number(match[1]);
       deletions += match[2] === '-' ? 0 : Number(match[2]);
     }
+    const pending = this.mergeMetadata(row);
     return {
       repositoryId: row.repository_id,
       workspaceId: `workspace_${hash(`${CODE_DRIVER}:${row.project_ref}:${row.unit_id}:${row.read_only ? row.launch_id : 'work'}`)}`,
@@ -667,6 +676,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       baseOid: row.base_oid,
       headOid: head,
       treeOid: oid(await git(['rev-parse', '--verify', `${head}^{tree}`])),
+      ...(pending ? { pendingMerge: { ...pending, checkpoint: head } } : {}),
       stats: {
         commitCount: Number(
           (await git(['rev-list', '--count', `${row.base_oid}..${head}`])).trim(),
@@ -676,6 +686,77 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         deletions,
       },
     };
+  }
+
+  private mergeMetadata(row: WorkspaceRow): SessionWorkspace['pendingMerge'] {
+    return row.pending_merge ? JSON.parse(row.pending_merge) : undefined;
+  }
+
+  /** Journal the merge tree before materialising it, so an interrupted start repeats exactly. */
+  private async startMerge(
+    row: WorkspaceRow,
+    command: CodeCommitCommand,
+    journal: TransferRow,
+  ): Promise<CodeCommitReceipt> {
+    const pending = command.workspace.pendingMerge;
+    if (!pending || pending.firstMerge || command.expectedHead !== pending.firstParent)
+      throw new WorkspaceError('workspace_merge_already_started');
+    let mergeTree = journal.merge_tree;
+    if (!mergeTree) {
+      if (
+        (
+          await this.git.ok(['status', '--porcelain', '--untracked-files=all'], { cwd: row.path })
+        ).trim()
+      )
+        throw new WorkspaceError('workspace_merge_dirty');
+      const merged = await this.git.run(
+        [
+          ...MERGE_SETTINGS,
+          'merge-tree',
+          '--write-tree',
+          pending.firstParent,
+          pending.secondParent,
+        ],
+        { cwd: row.path },
+      );
+      if (merged.code !== 0 && merged.code !== 1)
+        throw new WorkspaceError('workspace_merge_failed');
+      const tree = oid(merged.stdout.split('\n')[0]);
+      this.db
+        .prepare('UPDATE code_v2_transfers SET merge_tree=? WHERE request_id=?')
+        .run(tree, command.id);
+      mergeTree = tree;
+    }
+    await this.git.ok(['read-tree', '--reset', '-u', mergeTree], { cwd: row.path });
+    const tree = oid(
+      await this.git.ok(['rev-parse', `${command.expectedHead}^{tree}`], { cwd: row.path }),
+    );
+    if (!journal.target_oid)
+      this.db
+        .prepare('UPDATE code_v2_transfers SET tree_oid=?,target_oid=? WHERE request_id=?')
+        .run(tree, command.expectedHead, command.id);
+    journal = this.transfer(command.id)!;
+    const operation = await this.upload(row, journal, {
+      kind: 'checkpoint',
+      commandId: command.id,
+      requestId: command.id,
+    });
+    if (operation.status !== 'completed')
+      throw new UploadRefused(operation.error ?? 'code_upload_failed');
+    const receipt: CodeCommitReceipt = {
+      commandId: command.id,
+      repositoryId: row.repository_id,
+      workspaceId: command.workspace.workspaceId,
+      baseOid: row.base_oid,
+      parentOid: command.expectedHead,
+      headOid: command.expectedHead,
+      treeOid: tree,
+      stats: (await this.snapshot(row, command.expectedHead)).stats,
+    };
+    this.db
+      .prepare('UPDATE code_v2_transfers SET receipt_json=? WHERE request_id=?')
+      .run(JSON.stringify(receipt), command.id);
+    return receipt;
   }
 
   private pendingRef(requestId: string): string {
@@ -730,6 +811,13 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       if (row.status !== 'ready') throw new WorkspaceError('workspace_commit_fenced');
       if (head !== command.expectedHead) throw new WorkspaceError('workspace_head_conflict');
     }
+    if (command.merge === 'start') return await this.startMerge(row, command, journal);
+    const pending = command.workspace.pendingMerge;
+    if (
+      command.merge === 'complete' &&
+      (!pending || pending.firstMerge || this.mergeMetadata(row)?.plan !== pending.plan)
+    )
+      throw new WorkspaceError('workspace_merge_closed');
     if (!journal.tree_oid) {
       // Each attempt owns a fresh index, so a crashed Git child never touches the checkout's.
       const directory = privateDirectory(
@@ -759,14 +847,23 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       );
       const timestamp = `${Math.floor(Date.parse(command.createdAt) / 1000)} +0000`;
       const target =
-        parentTree === journal.tree_oid
+        parentTree === journal.tree_oid && command.merge !== 'complete'
           ? command.expectedHead
           : oid(
-              await this.git.ok(['commit-tree', journal.tree_oid!, '-p', command.expectedHead], {
-                cwd: row.path,
-                env: { ...identity, GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_DATE: timestamp },
-                stdin: command.message.endsWith('\n') ? command.message : `${command.message}\n`,
-              }),
+              await this.git.ok(
+                [
+                  'commit-tree',
+                  journal.tree_oid!,
+                  '-p',
+                  command.expectedHead,
+                  ...(command.merge === 'complete' ? ['-p', pending!.secondParent] : []),
+                ],
+                {
+                  cwd: row.path,
+                  env: { ...identity, GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_DATE: timestamp },
+                  stdin: command.message.endsWith('\n') ? command.message : `${command.message}\n`,
+                },
+              ),
             );
       await this.git.ok(['--git-dir', cache, 'update-ref', this.pendingRef(command.id), target]);
       this.db
@@ -841,6 +938,18 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       this.pendingRef(journal.request_id),
     ]);
     await this.know(cache, target);
+    const command = journal.command_json
+      ? (JSON.parse(journal.command_json) as CodeCommitCommand)
+      : null;
+    if (command?.merge === 'complete')
+      this.db.prepare('UPDATE code_v2_workspaces SET pending_merge=? WHERE launch_id=?').run(
+        JSON.stringify({
+          ...command.workspace.pendingMerge,
+          firstMerge: target,
+          checkpoint: target,
+        }),
+        row.launch_id,
+      );
     this.db
       .prepare('UPDATE code_v2_workspaces SET head_oid=? WHERE launch_id=?')
       .run(target, row.launch_id);

@@ -29,6 +29,7 @@ export interface CodeCommitCommand {
   expectedHead: string;
   message: string;
   createdAt: string;
+  merge?: 'start' | 'complete';
 }
 /** An immutable, authenticated runner observation of this exact commit operation. */
 export interface CodeCommitReceipt {
@@ -67,6 +68,10 @@ const message = z
 export const codeCommitInputSchema = z
   .object({ expectedHead: oid, message, requestId: id })
   .strict();
+export const codeMergeInputSchema = codeCommitInputSchema
+  .extend({ operation: z.enum(['start', 'complete']) })
+  .strict();
+export type CodeMergeInput = z.infer<typeof codeMergeInputSchema>;
 export const codeCommandControlSchema = z
   .object({ sessionId: id, runnerId: id, hostRef: id })
   .strict();
@@ -84,6 +89,7 @@ export const codeCommitCommandSchema = z
     expectedHead: oid,
     message,
     createdAt: z.string().datetime(),
+    merge: z.enum(['start', 'complete']).optional(),
   })
   .strict()
   .refine((value) => value.expectedHead.length === value.workspace.baseOid.length);
