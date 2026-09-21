@@ -245,7 +245,7 @@ test('server boots without Code and completes no-code research after reflection 
   await f.app.ctx.domainEvents.drain();
   assert.equal((await f.reflect(record)).workflow.state, 'approved');
   record = await f.advance(record);
-  assert.equal(record.workflow.version, 4);
+  assert.equal(record.workflow.version, 5);
   assert.equal(record.workflow.state, 'complete');
   assert.equal(record.consolidationId, null);
   assert.equal(

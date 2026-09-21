@@ -16,6 +16,17 @@ export const createSchema = z
       .describe(
         "A complete, abandoned or failed cycle this one follows; its digest is carried into this cycle's reflection",
       ),
+    automatic: z
+      .boolean()
+      .optional()
+      .describe('Automatically advance this cycle and its approved next waves'),
+    maxCycles: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Automatic run limit, including this cycle; default 10'),
     requestId: id,
   })
   .strict();

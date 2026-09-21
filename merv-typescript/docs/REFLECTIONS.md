@@ -44,7 +44,7 @@ any open wave does. Lens sessions are counted in the wave's and the cycle's usag
 
 ## Structured change specification
 
-The change specification has two formats, told apart by the artifact's media type alone. Any media type other than `application/json` is the text format: it is reviewed as prose, never parsed, and creates no work. An `application/json` change specification is parsed at `reflection.submit` against a strict schema; a refusal is `invalid_change_spec` (400) naming the field or item, and leaves the wave in `synthesizing` at the same revision.
+The change specification has two formats, told apart by the artifact's media type alone. Waves created by automatic Research require the JSON format and an explicit continue/stop decision; this requirement is frozen in the assignment and enforced at submission. Other waves retain both formats. Any media type other than `application/json` is the text format: it is reviewed as prose, never parsed, and creates no work. An `application/json` change specification is parsed at `reflection.submit` against a strict schema; a refusal is `invalid_change_spec` (400) naming the field or item, and leaves the wave in `synthesizing` at the same revision.
 
 ```ts
 {

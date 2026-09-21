@@ -123,7 +123,7 @@ test('Research boots with only State, Scope and Workflows and reports the missin
   const record = await f.create();
   assert.equal(f.app.status().find(({ id }) => id === 'research')!.state, 'active');
   assert.deepEqual(await f.research.list(f.owner), [record]);
-  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 4);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 5);
   assert.match(
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
     /paper_unavailable/,
@@ -389,24 +389,24 @@ test('replacement between stage checks and provider use never invokes a second p
   const record = await f.advance(await f.advance(await f.create('git')));
   await f.approve(record);
   const input = f.command(record);
-  const workflows = f.app.ctx.workflows;
-  const original = workflows.checkDependencies.bind(workflows);
+  const reflections = f.app.ctx.reflections;
+  const original = reflections.approved.bind(reflections);
   const entered = pending(),
     release = pending();
   const waiting = t.mock.method(
-    workflows,
-    'checkDependencies',
+    reflections,
+    'approved',
     async (...args: Parameters<typeof original>) => {
-      await original(...args);
+      const result = await original(...args);
       entered.resolve();
       await release.promise;
+      return result;
     },
   );
   const operation = f.research.advance(f.owner, input);
   const rejected = assert.rejects(operation, { code: 'reflections_unavailable' });
   await entered.promise;
   let calls = 0;
-  const reflections = f.app.ctx.reflections;
   f.research.bindReflections({
     ...reflections,
     approved: async (...args) => {
