@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { CodeWorkspaceManifest } from '@merv/contracts';
 import type { CodeExport } from '@merv/code/store/operations';
+import { diskBytes } from '@merv/code/store/repository';
 import { git } from './fixtures/code-store.js';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 
@@ -173,4 +174,21 @@ test('a quarantined capture is never part of what a successor is given, and an e
     f.code.v2!.readPart!(f.admin, found.exportId, { ...control('ses_2'), offset: 0, length: 10 }),
     refused('code_export_not_found'),
   );
+});
+
+test('a download is weighed against the project quota before it takes a byte of the disk', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  // The bundle is written under the project's directory and counts against its quota, so with
+  // only room for what is already kept the download is refused outright, rather than written
+  // and leaving every upload of the project refused until the sweep takes the export away.
+  await f.open({ config: { quotaBytes: await diskBytes(f.paths.directory) } });
+  await assert.rejects(download(f, 'ses_1', []), refused('code_store_full'));
+  assert.deepEqual(existsSync(f.paths.exports) ? readdirSync(f.paths.exports) : [], []);
+  assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/exports/')));
+
+  await f.open({ config: { quotaBytes: 1e9 } });
+  const found = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in found));
+  assert.ok(f.refs().some((ref) => ref.startsWith(`refs/merv/exports/${found.exportId} `)));
 });

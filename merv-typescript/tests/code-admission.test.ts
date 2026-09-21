@@ -372,6 +372,42 @@ test('sizes, counts, modes, paths, links and deny globs are findings that name a
     ].sort(),
     JSON.stringify(denied.findings),
   );
+
+  // What a path decides is judged where a new commit puts a kept directory, not only where it
+  // was kept: moved under a denied path it is denied, and moved further down it is too deep.
+  f.source.git('reset', '--quiet', '--hard', kept);
+  const holding = f.source.commit({ 'lib/inner/data.txt': 'x\n' });
+  f.keep(holding);
+  const renamed = f.crafted(
+    [['40000', 'tree', f.source.git('rev-parse', `${holding}:lib/inner`), 'secrets']],
+    holding,
+  );
+  assert.deepEqual((await f.judge(f.source.bundle(renamed, [holding]))).findings, []);
+  assert.deepEqual(
+    (await f.judge(f.source.bundle(renamed, [holding]), { limits: { denyGlobs: ['secrets/**'] } }))
+      .findings,
+    [
+      {
+        rule: 'deny_glob',
+        path: 'secrets/data.txt',
+        oid: f.source.git('rev-parse', `${holding}:lib/inner/data.txt`),
+      },
+    ],
+  );
+
+  f.source.git('reset', '--quiet', '--hard', kept);
+  const tall = f.source.commit({
+    [`${Array.from({ length: 63 }, (_, index) => `e${index}`).join('/')}/leaf.txt`]: 'deep\n',
+  });
+  assert.deepEqual((await f.judge(f.source.bundle(tall, [kept]))).findings, []);
+  f.keep(tall);
+  const lowered = f.crafted(
+    [['40000', 'tree', f.source.git('rev-parse', `${tall}^{tree}`), 'under']],
+    tall,
+  );
+  assert.deepEqual(rules((await f.judge(f.source.bundle(lowered, [tall]))).findings), [
+    'path_depth',
+  ]);
 });
 
 test('the deny-glob matcher knows literals, ?, * within a segment and ** across segments', () => {

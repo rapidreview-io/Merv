@@ -491,9 +491,11 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     }
   }
 
-  // A kept tree was examined where it then stood. Put higher up, a link inside it that climbed
-  // to just below the root now climbs out, so what each borrowed tree needs above it is read.
-  const keptTrees = new Map<string, { trees: string[]; links: string[] }>();
+  // A kept tree was examined where it then stood, and a path decides three of these rules. Put
+  // higher up, a link inside it that climbed to just below the root now climbs out; put further
+  // down, what was shallow enough is too deep; put under a denied directory, what is inside it
+  // is denied. So every borrowed tree is read, and what a path decides is judged again.
+  const keptTrees = new Map<string, { trees: string[]; links: string[]; inside: TreeEntry[] }>();
   for (let level = [...new Set(borrowed.map((item) => item.oid))]; level.length;) {
     if (keptTrees.size + level.length > MAX_TREE_VISITS) {
       found('history_size', null, null);
@@ -505,11 +507,41 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
       const node = {
         trees: entries.filter((entry) => entry.mode === '40000').map((entry) => entry.oid),
         links: entries.filter((entry) => entry.mode === '120000').map((entry) => entry.oid),
+        // Only the deny globs need the names, and a whole repository of them is not small.
+        inside: deny.length
+          ? entries.map((entry) => ({ ...entry, name: Buffer.from(entry.name) }))
+          : [],
       };
       keptTrees.set(oid, node);
       for (const tree of node.trees) below.add(tree);
     });
     level = [...below].filter((oid) => !keptTrees.has(oid));
+  }
+
+  // A rename is not a way past a deny glob: what is inside a kept directory is matched at the
+  // path it now has. The names above it were judged when the tree that holds them was admitted.
+  if (deny.length) {
+    const seen = new Set<string>();
+    const stack = borrowed.map((item) => ({
+      oid: item.oid,
+      prefix: item.path === null ? '' : `${item.path}/`,
+      depth: item.depth + 1,
+    }));
+    for (let node = stack.pop(); node; node = stack.pop()) {
+      const key = `${node.oid}:${node.prefix}`;
+      if (seen.has(key)) continue;
+      if (seen.size >= MAX_TREE_VISITS) {
+        found('history_size', null, null);
+        break;
+      }
+      seen.add(key);
+      for (const entry of keptTrees.get(node.oid)?.inside ?? []) {
+        const path = node.prefix + entry.name.toString('utf8');
+        if (deny.some((pattern) => pattern.test(path))) found('deny_glob', path, entry.oid);
+        if (entry.mode === '40000' && node.depth <= MAX_DEPTH)
+          stack.push({ oid: entry.oid, prefix: `${path}/`, depth: node.depth + 1 });
+      }
+    }
   }
 
   // A link's target is judged where the link stands, so a kept blob is read again for a new path.
@@ -548,8 +580,20 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     climbs.set(oid, most);
     return most;
   };
-  for (const item of borrowed)
+  /** How many directories a kept tree holds below itself, so that where it stands decides depth. */
+  const depths = new Map<string, number>();
+  const deepest = (oid: string): number => {
+    const known = depths.get(oid);
+    if (known !== undefined) return known;
+    let most = 0;
+    for (const tree of keptTrees.get(oid)?.trees ?? []) most = Math.max(most, deepest(tree) + 1);
+    depths.set(oid, most);
+    return most;
+  };
+  for (const item of borrowed) {
     if (climb(item.oid) > item.depth) found('symlink_escape', item.path, item.oid);
+    if (item.depth + 1 + deepest(item.oid) > MAX_DEPTH) found('path_depth', item.path, item.oid);
+  }
 
   const blobs = fresh.filter(
     ([oid, object]) => object.type === 'blob' && blobPaths.get(oid) !== null,

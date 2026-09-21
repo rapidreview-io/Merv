@@ -551,10 +551,30 @@ export class CodeStore {
     )
       return known.view;
     return await this.repositories.transfer(async () => {
-      await this.repositories.assertRoom(projectId, 0);
       await mkdir(paths.exports, { recursive: true, mode: 0o700 });
-      await rm(file, { force: true });
       const ref = `refs/merv/exports/${exportId}`;
+      // Whatever this session held is given back before the next is measured: one download at
+      // a time is all a session ever costs, whether or not this Code is the one that wrote it.
+      this.exports.delete(exportId);
+      await rm(file, { force: true });
+      await git.run(['update-ref', '-d', ref], { env });
+      // The bundle is written under the project's directory and counts against its quota, so
+      // what it will take is weighed before a byte of it is written, as a transfer's bytes are.
+      // Without that, a first download of a large history fills the quota and every upload of
+      // the project is refused until the export is old enough for the sweep to take it away.
+      const measured = await git.ok(
+        [
+          'rev-list',
+          '--disk-usage',
+          '--objects',
+          input.head,
+          ...(haves.length ? ['--not', ...haves] : []),
+        ],
+        { env, timeoutMs: FETCH_TIMEOUT_MS },
+      );
+      const estimate = Number(measured.toString('utf8').trim());
+      check(Number.isFinite(estimate), 'code_git_failed', 'Git could not weigh the download', 500);
+      await this.repositories.assertRoom(projectId, estimate);
       await git.ok(['update-ref', ref, input.head], { env });
       const made = await git.run(
         ['bundle', 'create', file, ref, ...(haves.length ? ['--not', ...haves] : [])],
