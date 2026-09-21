@@ -33,6 +33,7 @@ import { postgresMigrations } from './units.postgres.js';
 import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 import type { CodeWriterService } from './writers.js';
+import type { CodeBaseService } from './bases.js';
 import { acceptedRef } from './store/refs.js';
 
 interface ProjectRow {
@@ -91,7 +92,8 @@ interface BaseBody {
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
 type Derived =
   | { status: 'waiting' }
-  | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[] }
+  /** `merge` names the accepted commits a base has still to be made from. */
+  | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[]; merge?: string[] }
   | { status: 'ready'; body: BaseBody };
 const PROVIDER = 'code';
 const EXPLICIT_BASE =
@@ -110,6 +112,8 @@ const IMPORT = 'An administrator imports it with `merv code-import`';
  */
 export class CodeUnitService implements CodeUnits {
   private closed = false;
+  /** Set once the project repositories exist; without it several commits are never merged. */
+  bases?: CodeBaseService;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -862,6 +866,62 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
       (item, index) => blockers.findIndex((other) => other.key === item.key) === index,
     );
     if (blocked.length) return { status: 'blocked', blockers: blocked };
+    const related = [...commits.values()]
+      .flatMap((entry) => entry.units)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((item) => ({ kind: 'workflow', id: item.id, label: item.name }));
+    // Several accepted commits are one base, made once for everyone who waits on that set.
+    if (commits.size > 1 && kept && this.bases?.enabled) {
+      const base = await this.bases.find(tx, projectId, commits.keys());
+      if (base?.state === 'resolved' && base.result && !base.quarantined)
+        return {
+          status: 'ready',
+          body: {
+            formatVersion: 1,
+            kind: 'merged',
+            reference: base.result.commit,
+            repositoryId: bound.repository_id,
+            dependencies: relations.dependencies.map((item) => item.id).sort(),
+            sources: [...commits.values()]
+              .flatMap((entry) => entry.sources)
+              .sort((left, right) => left.unitId.localeCompare(right.unitId)),
+            main: null,
+          },
+        };
+      const waiting =
+        !base || ['waiting_inputs', 'queued', 'running', 'retry_wait'].includes(base.state);
+      const conflicted = base?.state === 'awaiting_resolution';
+      return {
+        status: 'blocked',
+        merge: [...commits.keys()],
+        blockers: [
+          {
+            key: 'merge',
+            code: base?.quarantined
+              ? 'code_quarantined'
+              : waiting
+                ? 'code_base_wait'
+                : conflicted
+                  ? 'code_merge_conflict'
+                  : 'code_base_blocked',
+            message: base?.quarantined
+              ? 'The base made from this unit’s dependencies is quarantined'
+              : waiting
+                ? `The ${commits.size} commits this unit’s dependencies were accepted with are being merged into one base`
+                : conflicted
+                  ? `The commits this unit’s dependencies were accepted with do not merge cleanly: ${(base?.conflict?.paths ?? []).slice(0, 5).join(', ')}`
+                  : `The base of this unit could not be made (${base?.state})`,
+            status: 409,
+            next: waiting
+              ? 'Nothing: the merge runs on the server, and this unit is offered when it is done.'
+              : conflicted
+                ? 'The conflict is resolved by one reviewed task; this unit continues from its accepted commit.'
+                : 'An operator looks at the base with code.status.',
+            related,
+          },
+        ],
+      };
+    }
     if (commits.size > 1)
       return {
         status: 'blocked',
@@ -872,10 +932,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
             message: `The dependencies of this unit were accepted with ${commits.size} different commits, and they are not merged automatically yet`,
             status: 409,
             next: `${EXPLICIT_BASE}, or make one dependency carry the combined code.`,
-            related: [...commits.values()]
-              .flatMap((entry) => entry.units)
-              .sort((left, right) => left.id.localeCompare(right.id))
-              .map((item) => ({ kind: 'workflow', id: item.id, label: item.name })),
+            related,
           },
         ],
       };
@@ -933,7 +990,14 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     if (!row || row.base_json !== null || row.acceptance_json !== null) return;
     const relations = await this.workflows.dependencyRelations(projectId, unitId, tx);
     if (!relations || relations.instance.terminal) return;
-    const derived = await this.derive(tx, projectId, relations);
+    let derived = await this.derive(tx, projectId, relations);
+    // The first unit to wait on a set writes its record and plan; this is a writing path,
+    // which a derivation itself never is.
+    if (derived.status === 'blocked' && derived.merge && this.bases) {
+      await this.bases.ensure(tx, projectId, derived.merge);
+      derived = await this.derive(tx, projectId, relations);
+      this.bases.soon(projectId);
+    }
     await this.workflows.replaceBlockers(
       {
         projectId,

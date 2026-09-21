@@ -168,6 +168,12 @@ const uncountedOfferCodes = new Set([
   // published as blocked by whoever derives bases, and nothing about the target is broken.
   'code_base_pending',
   'code_merge_required',
+  // A base made from several accepted commits that is still being merged, waits for the one
+  // task that resolves its conflict, or needs an operator: a wait, never the target's fault.
+  'code_base_wait',
+  'code_merge_conflict',
+  'code_base_blocked',
+  'code_quarantined',
   'code_dependencies_changed',
   // The unit's last writer ended between candidacy and the offer and its machine has not
   // handed over what it left, or that handover needs an operator. Both are published where

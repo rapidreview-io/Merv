@@ -10,6 +10,7 @@ import type { GitHubConfig } from './github-client.js';
 import { CodeTransportService } from './transport.js';
 import { CodePublicationService } from './publications.js';
 import { CodeUnitService } from './units.js';
+import { CodeBaseService } from './bases.js';
 import { CodeWriterService } from './writers.js';
 import { CodeWorkspaceProtocol } from './protocol.js';
 import {
@@ -43,6 +44,8 @@ export interface CodeStoreOptions {
   /** Replaces the linked GitHub repository as the place work is published to. */
   mirror?: MirrorTransport;
   mirrorConfig?: Partial<CodeMirrorConfig>;
+  /** Merge several accepted commits into one base on the server. Off unless set. */
+  autoMerge?: boolean;
 }
 
 /** One Code capability; immutable proposals and machine commands retain separate records. */
@@ -53,6 +56,7 @@ export class CodeService extends CodeCommandService implements Code {
   private writerStore!: CodeWriterService;
   private store?: CodeStore;
   private mirrorStore?: CodeMirrorService;
+  private baseStore?: CodeBaseService;
   private protocol?: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
   readonly transport: CodeTransportService;
@@ -131,6 +135,18 @@ export class CodeService extends CodeCommandService implements Code {
             repositories.mirrorConfig,
           );
           this.mirrorStore = mirror;
+          // Several accepted commits are merged here, once per set; it stays off until a
+          // deployment turns it on, because a conflict needs its resolution task to exist.
+          const bases = new CodeBaseService(
+            state,
+            store.repositories,
+            { changed: (tx, projectId) => this.unitStore.imported(tx, projectId) },
+            repositories.autoMerge === true,
+          );
+          await bases.initialize();
+          this.unitStore.bases = bases;
+          this.baseStore = bases;
+          bases.start();
         }
         await this.github.initialize();
         // The mirror reads the project's GitHub link, so it only starts looking for refs to
@@ -365,6 +381,9 @@ export class CodeService extends CodeCommandService implements Code {
     // Publication stops before the repositories drain: it is the one thing here nothing waits
     // for, and a push that was interrupted is simply queued again by the next start.
     this.mirrorStore?.close();
+    // No new merge starts from here; one that is running is waited for below, because every
+    // read must be refused before this method first yields.
+    const merging = this.baseStore?.close();
     this.captureReader?.close();
     this.proposalStore?.close();
     this.unitStore?.close();
@@ -372,6 +391,7 @@ export class CodeService extends CodeCommandService implements Code {
     super.close();
     // Every read is refused from here on. Running admissions still reach the database, which
     // outlives Code, and are waited for before the writer lock is given up.
+    await merging;
     await this.store?.close();
     await this.github.close();
     await Promise.allSettled([...this.networkOperations]);

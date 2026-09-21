@@ -19,6 +19,8 @@ const configuration = z
         drainSeconds: z.number().int().min(1).max(3600).optional(),
         /** How long a closed session's machine has to hand over its final capture. */
         finalizeGraceSeconds: z.number().int().min(1).max(86_400).optional(),
+        /** Merge several accepted commits into one base on the server; off unless set. */
+        autoMerge: z.boolean().optional(),
         /** How often the server looks for refs to publish; zero publishes only when asked. */
         mirrorSeconds: z.number().int().min(0).max(86_400).optional(),
       })
@@ -44,9 +46,10 @@ export const codePlugin = {
           githubConfig(),
           undefined,
           config.repositories &&
-            (({ finalizeGraceSeconds, mirrorSeconds, ...store }) => ({
+            (({ finalizeGraceSeconds, mirrorSeconds, autoMerge, ...store }) => ({
               config: store,
               finalizeGraceSeconds,
+              autoMerge,
               ...(mirrorSeconds === undefined ? {} : { mirrorConfig: { mirrorSeconds } }),
             }))(config.repositories),
         ),

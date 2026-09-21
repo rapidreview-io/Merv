@@ -52,7 +52,8 @@ export interface CodeWriterStatus {
 }
 export interface CodeBasePin {
   unitId: string;
-  kind: 'main' | 'accepted';
+  /** `merged` is a base Code made from several accepted commits; it is never itself accepted. */
+  kind: 'main' | 'accepted' | 'merged';
   reference: string;
   /** Every acceptance that contributed, including those whose code was the same. */
   sources: { unitId: string; acceptanceHash: string }[];
