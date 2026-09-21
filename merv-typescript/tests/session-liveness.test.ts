@@ -617,7 +617,7 @@ const minute = 60_000;
 
 for (const backend of backends)
   test(
-    `a session that lives without a tool call is marked stalled once by the sweep, and a call clears the mark (${backend.name})`,
+    `a session that lives without a tool call is reported quiet once by the sweep, and a call clears the mark (${backend.name})`,
     { skip: backend.skip },
     async (t) => {
       const f = await fixture(t, { postgres: backend.postgres });
@@ -629,21 +629,21 @@ for (const backend of backends)
 
       f.advance(29 * minute);
       await f.sessions.sweep();
-      assert.equal((await f.stored(id)).stalledAt ?? null, null, 'not yet idle');
+      assert.equal((await f.stored(id)).quietSince ?? null, null, 'not yet idle');
 
       // The runner renews the lease for as long as its process lives; that is not progress.
       await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
       f.advance(minute);
       await f.sessions.sweep();
-      const stalledAt = f.time();
-      assert.equal((await f.stored(id)).stalledAt, stalledAt);
+      const quietSince = f.time();
+      assert.equal((await f.stored(id)).quietSince, quietSince);
       f.advance(5 * minute);
       await f.sessions.sweep();
-      assert.equal((await f.stored(id)).stalledAt, stalledAt, 'one mark for one episode');
-      const stalled = await f.events('session.stalled');
-      assert.equal(stalled.length, 1);
-      assert.equal(stalled[0].actorId, 'system:sessions');
-      assert.deepEqual(stalled[0].data, {
+      assert.equal((await f.stored(id)).quietSince, quietSince, 'one mark for one episode');
+      const quiet = await f.events('session.quiet');
+      assert.equal(quiet.length, 1);
+      assert.equal(quiet[0].actorId, 'system:sessions');
+      assert.deepEqual(quiet[0].data, {
         sessionId: id,
         instanceId: (await f.stored(id)).instanceId,
         revision: 0,
@@ -651,15 +651,15 @@ for (const backend of backends)
         idleSeconds: 1800,
       });
       let [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
-      assert.deepEqual([summary.lastActivityAt, summary.stalledAt], [activatedAt, stalledAt]);
+      assert.deepEqual([summary.lastActivityAt, summary.quietSince], [activatedAt, quietSince]);
 
       await f.call(worker);
       const calledAt = f.time();
       f.advance(minute);
       await f.sessions.sweep();
-      assert.equal((await f.stored(id)).stalledAt, null, 'a tool call is progress');
+      assert.equal((await f.stored(id)).quietSince, null, 'a tool call is progress');
       [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
-      assert.deepEqual([summary.lastActivityAt, summary.stalledAt], [calledAt, null]);
+      assert.deepEqual([summary.lastActivityAt, summary.quietSince], [calledAt, null]);
 
       // Mark only by default: hours of quiet local work are never closed for idleness.
       for (let hour = 0; hour < 5; hour++) {
@@ -668,11 +668,11 @@ for (const backend of backends)
         await f.sessions.sweep();
       }
       assert.equal((await f.stored(id)).status, 'active');
-      assert.equal((await f.events('session.stalled')).length, 2, 'a second episode says so again');
+      assert.equal((await f.events('session.quiet')).length, 2, 'a second episode says so again');
     },
   );
 
-test('a tool call that hangs counts from its start, so it does not hide a stall', async (t) => {
+test('a tool call that hangs counts from its start, so it does not hide the silence', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.source, presence());
   await f.sessions.setDispatch(f.owner, { enabled: true });
@@ -684,55 +684,43 @@ test('a tool call that hangs counts from its start, so it does not hide a stall'
 
   f.advance(10 * minute);
   await f.sessions.sweep();
-  assert.equal((await f.stored(id)).stalledAt ?? null, null, 'a call that began recently');
+  assert.equal((await f.stored(id)).quietSince ?? null, null, 'a call that began recently');
   f.advance(20 * minute);
   await f.sessions.sweep();
-  assert.equal((await f.stored(id)).stalledAt, f.time());
+  assert.equal((await f.stored(id)).quietSince, f.time());
   finish();
   await hung;
 });
 
 for (const backend of backends)
   test(
-    `a deployment that opts in closes an idle session as stalled, which frees and counts its target (${backend.name})`,
+    `hours without a Merv call never close a session or count against its target (${backend.name})`,
     { skip: backend.skip },
     async (t) => {
       const f = await fixture(t, {
         postgres: backend.postgres,
-        config: { idleStalledSeconds: 600, idleCloseSeconds: 3600 },
+        config: { idleNoticeSeconds: 600 },
       });
       await f.sessions.heartbeatRunner(f.source, presence());
       await f.sessions.setDispatch(f.owner, { enabled: true });
-      const target = await f.instance();
+      await f.instance();
       const { id } = await f.active();
-      for (let step = 0; step < 6; step++) {
+      // A long local job: the runner keeps the lease, the worker says nothing for six hours.
+      for (let step = 0; step < 36; step++) {
         f.advance(10 * minute);
         await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
         await f.sessions.sweep();
       }
-      const closed = await f.stored(id);
-      assert.deepEqual(
-        [closed.status, closed.outcome, closed.closeReason, closed.closedAt],
-        ['expired', 'stalled', 'idle_timeout', f.time()],
-      );
-      assert.equal((await f.events('session.stalled')).length, 1);
-      assert.deepEqual(
-        (await f.holds()).map((row) => [row.attempts, row.last_code, row.last_session_id]),
-        [[1, 'stalled', id]],
-      );
-      const status = await f.sessions.projectStatus(f.owner);
-      assert.deepEqual(
-        status.queue.map((item) => [item.instanceId, item.expectedRevision]),
-        [[target.id, 0]],
-        'the same revision is dispatchable again',
-      );
-      await f.pastBackoff();
-      assert.equal((await f.sessions.lease(f.source, auto())).session?.instanceId, target.id);
+      const kept = await f.stored(id);
+      assert.deepEqual([kept.status, kept.outcome ?? null], ['active', null]);
+      assert.ok(kept.quietSince, 'the silence is observed');
+      assert.equal((await f.events('session.quiet')).length, 1, 'and said once');
+      assert.deepEqual(await f.holds(), [], 'silence is not a failed attempt');
     },
   );
 
 test('no read marks or closes an idle session, yet the stuck report already names it', async (t) => {
-  const f = await fixture(t, { config: { idleStalledSeconds: 600, idleCloseSeconds: 1200 } });
+  const f = await fixture(t, { config: { idleNoticeSeconds: 600 } });
   await f.sessions.heartbeatRunner(f.source, presence());
   await f.sessions.setDispatch(f.owner, { enabled: true });
   await f.instance();
@@ -744,12 +732,13 @@ test('no read marks or closes an idle session, yet the stuck report already name
   await f.sessions.projectStatus(f.owner);
   const report = await f.sessions.stuck(f.owner);
   const stored = await f.stored(id);
-  assert.deepEqual([stored.status, stored.stalledAt ?? null], ['active', null]);
-  assert.equal((await f.events('session.stalled')).length, 0);
+  assert.deepEqual([stored.status, stored.quietSince ?? null], ['active', null]);
+  assert.equal((await f.events('session.quiet')).length, 0);
   assert.deepEqual(
     report.items.map((item) => [item.kind, item.sessionId, item.since, item.forSeconds, item.code]),
     [['session_idle', id, activatedAt, 1800, 'idle']],
   );
+  assert.match(report.items[0].why, /not evidence the work is stuck/);
   assert.match(report.items[0].next, /POST \/sessions\/halt/);
   await assert.rejects(async () => await f.sessions.stuck(worker), {
     code: 'forbidden',
@@ -757,11 +746,9 @@ test('no read marks or closes an idle session, yet the stuck report already name
   });
 });
 
-test('idle thresholds are bounded, and closing is never sooner than the mark', async (t) => {
+test('the idle, quiet-ready and refusal thresholds are bounded', async (t) => {
   for (const config of [
-    { idleStalledSeconds: 59 },
-    { idleStalledSeconds: 600, idleCloseSeconds: 599 },
-    { idleCloseSeconds: -1 },
+    { idleNoticeSeconds: 59 },
     { quietReadySeconds: 59 },
     { refusalSeconds: 29 },
     { refusalSeconds: 1.5 },
@@ -784,8 +771,7 @@ test('the stuck report names a switched-off dispatch, a missing runner and a run
     [['dispatch_disabled', 'dispatch_disabled', switchedOff.observedAt]],
   );
   assert.deepEqual(switchedOff.thresholds, {
-    idleStalledSeconds: 1800,
-    idleCloseSeconds: 0,
+    idleNoticeSeconds: 1800,
     maxLaunchFailures: 5,
     quietReadySeconds: 21_600,
     refusalSeconds: 300,

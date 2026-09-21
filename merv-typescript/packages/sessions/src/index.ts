@@ -61,8 +61,7 @@ const tokenPattern = /^ms_[A-Za-z0-9_-]{43}$/;
  * progress the server sees, and honest work can be hours of local computing with none.
  */
 const secondsDefaults = {
-  idleStalledSeconds: 1800,
-  idleCloseSeconds: 0,
+  idleNoticeSeconds: 1800,
   quietReadySeconds: 21_600,
   refusalSeconds: 300,
 };
@@ -180,19 +179,9 @@ export class LeasedSessions implements Sessions {
         );
         return value;
       };
-      const idleStalledSeconds = seconds('idleStalledSeconds', 60, 604_800);
-      const idleCloseSeconds = options.idleCloseSeconds ?? secondsDefaults.idleCloseSeconds;
-      check(
-        idleCloseSeconds === 0 ||
-          (Number.isInteger(idleCloseSeconds) &&
-            idleCloseSeconds >= idleStalledSeconds &&
-            idleCloseSeconds <= 604_800),
-        'invalid_sessions_config',
-        'Session idleCloseSeconds must be 0, or from idleStalledSeconds to 604800 seconds',
-      );
+      const idleNoticeSeconds = seconds('idleNoticeSeconds', 60, 604_800);
       this.thresholds = {
-        idleStalledSeconds,
-        idleCloseSeconds,
+        idleNoticeSeconds,
         maxLaunchFailures,
         quietReadySeconds: seconds('quietReadySeconds', 60, 2_592_000),
         refusalSeconds: seconds('refusalSeconds', 30, 86_400),
@@ -1807,9 +1796,12 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       await this.observations.finish(invocation.caller.session!.invocationId!, 'failed');
   }
   /**
-   * Alive is not progressing: a runner renews a lease for as long as its process lives, so a
-   * lease alone never says the work moves. The mark, its clearing and the close live only
-   * here, on the session the writing sweep just decoded. A poll may run on a read snapshot,
+   * A runner renews a lease for as long as its process lives, so a lease alone never says
+   * the work moves — and neither does silence: a worker with no Merv call may be training
+   * locally, waiting on a sandbox job or using another service, which the server cannot
+   * tell from one that is stuck. So quiet is only observed and said, never acted on; ending
+   * a session stays an explicit halt or the lease's hard deadline. The mark and its clearing
+   * live only here, on the session the writing sweep just decoded. A poll may run on a read snapshot,
    * where reconcile already has to swallow read_only_scope to report a closure it cannot
    * record; an idle mark has no such need, so no read path computes one.
    */
@@ -1820,25 +1812,21 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   ): Promise<void> {
     const lastActivityAt = lastActivity(session, lastCallAt)!;
     const idleSeconds = Math.floor((this.clock() - Date.parse(lastActivityAt)) / 1000);
-    const { idleStalledSeconds, idleCloseSeconds } = this.thresholds;
-    if (idleCloseSeconds > 0 && idleSeconds >= idleCloseSeconds) {
-      await this.closeSession(session, 'idle_timeout', tx, 'expired', 'stalled');
-      return;
-    }
-    if (idleSeconds < idleStalledSeconds) {
-      if (!session.stalledAt) return;
-      session.stalledAt = null;
+    const { idleNoticeSeconds } = this.thresholds;
+    if (idleSeconds < idleNoticeSeconds) {
+      if (!session.quietSince) return;
+      session.quietSince = null;
       await this.save(tx, session);
       return;
     }
     // Once per episode: the mark is what keeps a later sweep from saying it again.
-    if (session.stalledAt) return;
-    session.stalledAt = this.time();
+    if (session.quietSince) return;
+    session.quietSince = this.time();
     await this.save(tx, session);
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
-      type: 'session.stalled',
+      type: 'session.quiet',
       subjectId: session.id,
       data: {
         sessionId: session.id,
@@ -1864,7 +1852,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         due &&
         session.status === 'active' &&
         session.activatedAt !== null &&
-        Date.parse(session.activatedAt) + this.thresholds.idleStalledSeconds * 1000 <= now,
+        Date.parse(session.activatedAt) + this.thresholds.idleNoticeSeconds * 1000 <= now,
       activity: () => (calls ??= this.observations.activity(tx)),
     };
   }

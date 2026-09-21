@@ -146,6 +146,20 @@ shortened or halted, a person can still begin work by hand, and explicit offers 
 unchanged. Budgets count closed sessions, so the overshoot is bounded by the sessions live
 when the bound was crossed.
 
+**A cost or token bound is enforced only on complete accounting.** Those figures exist
+only where a runner reported them, so a bound on them is judged while every closed session
+in its scope has reported. One that closed without a report leaves the sum a floor, not a
+total: the bound then withholds new automatic offers with `usage_unavailable` instead of
+`budget_exceeded`, and the budget's status names it under `unavailable` with
+`unreportedSessions`. It lifts when the report arrives (a release may carry it after the
+close) or when an admin clears that bound with `usage.set_budget`. A wall-clock bound never
+waits on a report. Where no session in scope has reported at all, `used.costMicros` and
+`used.tokens` read `null`: unknown is never shown as zero.
+
+A budget covers **worker sessions Merv launched**, and nothing else: what a remote job
+costs — a sandbox's compute, a provider's bill for a service the worker called — is not in
+it, and a runner's token figures do not measure it.
+
 Trust boundary: **wall-clock is the dimension Merv measures itself.** Cost and tokens are
 whatever wrote the usage file, which may be the agent process; they can be wrong in either
 direction, so a forged report can pause dispatch early or never trip a cost budget. The
@@ -157,8 +171,8 @@ Failed launches on one instance revision used to be retried for ever, thirty sec
 apart. Sessions config `maxLaunchFailures` (1 to 100, default 5) ends that. Each failed
 attempt bumps one counter row per instance and revision in `session_dispatch_holds`
 (session_dispatch 4), across every runner and platform of the project. An attempt is a
-session that closed as `host_failed`, `crash_loop`, `workspace_failed`, `launch_failed` or
-`stalled`; an offer that lapsed before any process activated it (`offer_expired`); or an
+session that closed as `host_failed`, `crash_loop`, `workspace_failed` or `launch_failed`;
+an offer that lapsed before any process activated it (`offer_expired`); or an
 offer that could not be built at all, which leaves no session and is counted in its own
 transaction after the lease rolled back. An expiry after activation does not count,
 because that is also how long honest work ends, and neither does a refusal of who asked

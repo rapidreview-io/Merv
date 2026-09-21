@@ -120,13 +120,18 @@ const scaled = (value: number | null, unit: number): number | null =>
   value === null ? null : Math.max(1, Math.round(value * unit));
 const freshForMs = 45_000;
 const backoffMs = 30_000;
-/** The closes that count against a target: the process failed, or lived without progressing. */
+/**
+ * A budget stops new automatic offers when a bound is reached, and also when a cost or token
+ * bound cannot be judged: spending nobody reported must not pass as spending that stayed low.
+ */
+const withholds = (budget: { exceeded: unknown[]; unavailable: unknown[] }) =>
+  budget.exceeded.length > 0 || budget.unavailable.length > 0;
+/** The closes that count against a target: its process failed to launch or to stay up. */
 export const failureReasons = new Set([
   'host_failed',
   'crash_loop',
   'workspace_failed',
   'launch_failed',
-  'stalled',
 ]);
 /**
  * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
@@ -862,7 +867,13 @@ export class SessionDispatch {
     );
     const budgets = await this.budgets(caller, tx);
     const spent = new Set(
-      budgets.flatMap((budget) => (budget.exceeded.length ? (budget.instanceIds ?? []) : [])),
+      budgets.flatMap((budget) => (withholds(budget) ? (budget.instanceIds ?? []) : [])),
+    );
+    // Work withheld only because usage went unreported says so, not that it spent too much.
+    const unaccounted = new Set(
+      budgets.flatMap((budget) =>
+        !budget.exceeded.length && budget.unavailable.length ? (budget.instanceIds ?? []) : [],
+      ),
     );
     const retry = queue.filter((item) => exhausted.has(targetKey(item)));
     const overBudget = queue.filter(
@@ -873,10 +884,14 @@ export class SessionDispatch {
       backoff,
       retriesExhausted: retry.length,
       overBudget: overBudget.length,
+      // Whether every withheld item waits on unreported usage rather than on a reached bound.
+      unaccountedOnly:
+        overBudget.length > 0 && overBudget.every((item) => unaccounted.has(item.instanceId)),
       budgets,
       all,
       live,
       spent,
+      unaccounted,
     };
   }
   /** The most recently seen runners, which is where every live one is. */
@@ -909,7 +924,7 @@ export class SessionDispatch {
       observedAt = this.time(),
       limits = this.thresholds;
     const { runners, dispatch, activity } = facts;
-    const { all, live, spent, queue } = facts.admissible;
+    const { all, live, spent, unaccounted, queue } = facts.admissible;
     const older = (since: string, seconds: number) => Date.parse(since) + seconds * 1000 <= now;
     const items: StuckItem[] = [];
     const add = (item: Omit<StuckItem, 'forSeconds'>) =>
@@ -923,7 +938,7 @@ export class SessionDispatch {
     )) {
       const session: Session = JSON.parse(row.session_json);
       const since = lastActivity(session, activity.get(session.id));
-      if (since === null || !older(since, limits.idleStalledSeconds)) continue;
+      if (since === null || !older(since, limits.idleNoticeSeconds)) continue;
       add({
         kind: 'session_idle',
         instanceId: session.instanceId,
@@ -932,12 +947,8 @@ export class SessionDispatch {
         label: session.assignment.label,
         since,
         code: 'idle',
-        why: 'The session is alive but has made no Merv tool call since then. Its runner renews the lease for as long as the process lives, so the lease says nothing about progress.',
-        next: `Leave it if it is computing locally; otherwise an admin frees the work with POST /sessions/halt {"sessionId":"${session.id}"}. ${
-          limits.idleCloseSeconds > 0
-            ? `It is closed as stalled at ${new Date(Date.parse(since) + limits.idleCloseSeconds * 1000).toISOString()} unless it calls a tool first.`
-            : 'It is never closed for idleness, because idleCloseSeconds is 0.'
-        }`,
+        why: 'No recent Merv activity: the session is alive and has made no Merv tool call since then. That is not evidence the work is stuck — it may be computing locally, waiting on a remote job or using another service, none of which the server sees.',
+        next: `Check the worker before acting. Nothing closes a session for silence; it ends at its lease deadline, or when an admin halts it with POST /sessions/halt {"sessionId":"${session.id}"}. Halting the worker does not stop a remote job it started, and the retry may start that job again.`,
       });
     }
     // A target with a live session is being tried right now, so it is not waiting on anyone.
@@ -985,15 +996,19 @@ export class SessionDispatch {
         since: item.updatedAt,
         code: operator
           ? 'awaiting_operator'
-          : spent.has(item.instanceId)
-            ? 'budget_exceeded'
-            : 'queued',
+          : unaccounted.has(item.instanceId)
+            ? 'usage_unavailable'
+            : spent.has(item.instanceId)
+              ? 'budget_exceeded'
+              : 'queued',
         why: 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
         next: operator
           ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
-          : spent.has(item.instanceId)
-            ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
-            : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
+          : unaccounted.has(item.instanceId)
+            ? 'A cost or token budget covers it, and a closed session in its scope reported no usage, so the bound cannot be judged. usage.read names the budget and the count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
+            : spent.has(item.instanceId)
+              ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
+              : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
       });
     }
     if (queue.length && !dispatch.enabled)
@@ -1117,7 +1132,7 @@ export class SessionDispatch {
           outcome: session.outcome ?? null,
           lastActivityAt:
             session.status === 'active' ? lastActivity(session, activity.get(session.id)) : null,
-          stalledAt: session.stalledAt ?? null,
+          quietSince: session.quietSince ?? null,
           workspaceMode: effectiveWorkspace(session.execution.policy).mode,
           ...(row.attachment_json === null
             ? {}
@@ -1336,10 +1351,14 @@ export class SessionDispatch {
       const admissible = await this.candidates(caller, tx);
       // A budget only stops new automatic offers. What is running keeps running, and a human
       // may still begin work by hand; raising or clearing the budget resumes this on the next poll.
-      if (
-        admissible.budgets.some((budget) => budget.kind === 'project' && budget.exceeded.length > 0)
-      )
-        return { session: null, reason: await decided('budget_exceeded') };
+      const project = admissible.budgets.find(
+        (budget) => budget.kind === 'project' && withholds(budget),
+      );
+      if (project)
+        return {
+          session: null,
+          reason: await decided(project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable'),
+        };
       const candidates = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
       const candidate = candidates.find(
         (item) =>
@@ -1362,7 +1381,9 @@ export class SessionDispatch {
             candidates.length
               ? 'retry_backoff'
               : admissible.overBudget
-                ? 'budget_exceeded'
+                ? admissible.unaccountedOnly
+                  ? 'usage_unavailable'
+                  : 'budget_exceeded'
                 : admissible.retriesExhausted
                   ? 'retries_exhausted'
                   : 'no_candidates',

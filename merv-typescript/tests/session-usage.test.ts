@@ -426,6 +426,57 @@ for (const backend of backends)
     },
   );
 
+for (const backend of backends)
+  test(
+    `[${backend.name}] a token budget is judged only on complete accounting: an unreported session withholds offers until its usage arrives`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, backend.postgres);
+      await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      await f.sessions.setBudget(f.owner, { maxTokens: 1000 });
+      await f.instance();
+      // A session closes and its runner says nothing of what it used.
+      const silent = await f.spend((await f.instance()).id, 1000);
+
+      assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
+      const paused = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+      assert.deepEqual(
+        [paused.exceeded, paused.unavailable, paused.unreportedSessions, paused.used.tokens],
+        [[], ['tokens'], 1, null],
+        'what nobody reported is unknown, never zero, and never under the bound',
+      );
+      assert.equal(paused.used.wallMs, 1000, 'wall-clock is Merv’s own measure');
+
+      // The report may land after the close; with it the bound can be judged again.
+      await f.sessions.release(f.source, {
+        sessionId: silent.id,
+        runnerId: 'machine',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      });
+      const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+      assert.deepEqual(
+        [judged.exceeded, judged.unavailable, judged.unreportedSessions, judged.used.tokens],
+        [[], [], 0, 15],
+      );
+      assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+    },
+  );
+
+test('a wall-clock budget never waits on a report, and clearing a token bound lifts its wait', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.setBudget(f.owner, { maxWallMinutes: 60, maxTokens: 1000 });
+  await f.instance();
+  await f.spend((await f.instance()).id, 1000);
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
+  await f.sessions.setBudget(f.owner, { maxTokens: null });
+  const status = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  assert.deepEqual([status.exceeded, status.unavailable], [[], []]);
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+});
+
 test('an instance budget withholds only the work inside its closure', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });

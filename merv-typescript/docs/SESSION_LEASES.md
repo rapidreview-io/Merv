@@ -76,37 +76,37 @@ the exact ownership handle. Cleanup can wait while that plugin is unavailable.
 A successor execution receives a new ownership handle; an explicitly continuing agent retains its worker identity, while logical task ownership,
 evidence, verdicts, checkpoints and start history remain available.
 
-## Alive is not progressing
+## Alive, quiet, and what silence does not prove
 
 A runner heartbeats a session for as long as its child process lives, whatever the process
 does, so a renewed lease proves a process and nothing more. Progress is read from what the
 server already records: every leased tool call leaves a row in `session_tool_calls`. An
 active session's **idle clock** starts at the later of its activation and its latest tool
-call. A call that is still running counts from its start, so one that hangs does not hide a
-stall. Heartbeat is unchanged: it renews `expiresAt` and says nothing about progress.
+call. A call that is still running counts from its start, so one that hangs does not hide the
+silence. Heartbeat is unchanged: it renews `expiresAt` and says nothing about progress.
 
-| Sessions config      | Default | Bounds                               | Meaning                                                                   |
-| -------------------- | ------- | ------------------------------------ | ------------------------------------------------------------------------- |
-| `idleStalledSeconds` | 1800    | 60 to 604800                         | Idle time after which the sweep marks the session stalled.                |
-| `idleCloseSeconds`   | 0       | 0, or `idleStalledSeconds` to 604800 | Idle time after which the sweep closes it. 0 only marks and never closes. |
+| Sessions config     | Default | Bounds       | Meaning                                                                  |
+| ------------------- | ------- | ------------ | ------------------------------------------------------------------------ |
+| `idleNoticeSeconds` | 1800    | 60 to 604800 | Time without a Merv tool call after which the session is reported quiet. |
 
-Only the writing sweep marks, clears or closes, at most once a minute of clock time and
-only for sessions active longer than `idleStalledSeconds`. A poll can run on a read
-snapshot, so no read path computes a mark. The mark is `stalledAt` on the session, set once
-per episode with one `session.stalled` event (`lastActivityAt`, `idleSeconds`); the next
-tool call clears it on the following pass without an event. `GET /sessions/status` carries
-`lastActivityAt` and `stalledAt` on every session, and `session.stuck` reports an idle
-session from the same clock at the moment of the read, whether or not the sweep has run.
+Only the writing sweep marks or clears, at most once a minute of clock time and only for
+sessions active longer than `idleNoticeSeconds`. A poll can run on a read snapshot, so no
+read path computes a mark. The mark is `quietSince` on the session, set once per episode
+with one `session.quiet` event (`lastActivityAt`, `idleSeconds`); the next tool call clears
+it on the following pass without an event. `GET /sessions/status` carries `lastActivityAt`
+and `quietSince` on every session, and `session.stuck` reports a quiet session from the same
+clock at the moment of the read, whether or not the sweep has run.
 
-Closing is opt-in because a tool call is the only progress the server can see, and honest
-work can be hours of local computing with none. A deployment that sets `idleCloseSeconds`
-closes the session with status `expired`, outcome `stalled` and close reason
-`idle_timeout`. The ownership handle is released as for any close, the target is
-dispatchable again at the same revision, the close counts as one failed attempt towards the
-[launch retry cap](BUDGETS_AND_LIMITS.md), and the runner stops the child on its next poll
-as it does for any remotely closed session. Under such a deployment a worker doing long
-quiet local work must make any Merv tool call, for example `workflow.status_and_next`,
-within `idleCloseSeconds`.
+**Nothing is closed for silence.** A tool call is the only activity the server can see, and
+a worker with none may be training locally for hours, waiting on a sandbox job or using
+another service; the server cannot tell that from a worker that is stuck. So "no recent Merv
+activity" is an observation for a person to look into, never a verdict. A session ends by
+its worker's own handoff or release, by an explicit halt, or at the lease's hard deadline.
+Quiet never counts towards the [launch retry cap](BUDGETS_AND_LIMITS.md). Two things an
+operator should know before halting a quiet worker: halting it does not stop a remote job it
+started, and the retry that follows may start that job again. Where a worker launched a job
+through a service that reports job status, that status is evidence to read beside the quiet
+mark; Merv asks no worker to register jobs or to send keepalives.
 
 ## Enforced execution
 
@@ -146,10 +146,12 @@ Release can carry a bounded process outcome (`completed`, `host_failed`, `launch
 Release may also carry `usage`, the launching machine's unverified self-report of tokens,
 cost and model. Every close writes a `session_usage` row with the lease wall-clock; the
 first report for a session is stored beside it and later ones are dropped without an
-error, including for a session its own handoff already closed. Two more lease decisions
-exist: `budget_exceeded`, when a project or instance budget is reached, and
-`retries_exhausted`, when the only queued work left has failed to launch
-`maxLaunchFailures` times on its current revision. Both only pause automatic offers.
+error, including for a session its own handoff already closed. Three more lease decisions
+exist: `budget_exceeded`, when a project or instance budget is reached;
+`usage_unavailable`, when a cost or token bound cannot be judged because a closed session
+in its scope reported no usage; and `retries_exhausted`, when the only queued work left has
+failed to launch `maxLaunchFailures` times on its current revision. All three only pause
+automatic offers.
 `GET /sessions/status` adds `budgets`, `retriesExhausted` and `stuck`, the counts of what
 `session.stuck` lists. See [loop limits, usage and budgets](BUDGETS_AND_LIMITS.md) and the
 [runner control plane](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
@@ -186,8 +188,7 @@ assignment, policy and reference packet is bounded at 64 KiB. This is an admissi
 limit, not a transport upload limit.
 
 Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000),
-`maxLaunchFailures` (1–100; default 5), the idle thresholds `idleStalledSeconds` and
-`idleCloseSeconds` described under [alive is not progressing](#alive-is-not-progressing),
+`maxLaunchFailures` (1–100; default 5), the idle thresholds `idleNoticeSeconds` described under [alive is not progressing](#alive-quiet-and-what-silence-does-not-prove),
 and the two report thresholds of `session.stuck`, `quietReadySeconds` (60–2592000; default 21600) and `refusalSeconds` (30–86400; default 300). Any other key is refused at startup.
 Offer commits expired-predecessor closure and drains durable cleanup before
 starting a fresh acquisition transaction. A failing cleanup handler cannot roll

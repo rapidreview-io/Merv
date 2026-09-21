@@ -110,7 +110,7 @@ export interface Session {
   closeReason: string | null;
   outcome?: SessionOutcome | null;
   /** Set by the sweep while the session is alive without progressing; cleared when it moves. */
-  stalledAt?: string | null;
+  quietSince?: string | null;
   assignment: WorkflowAssignment;
   execution: WorkflowExecution;
   lease: WorkflowLease;
@@ -263,10 +263,8 @@ export interface SessionsConfig {
   sweepIntervalMs?: number;
   /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
   maxLaunchFailures?: number;
-  /** Seconds without a tool call before an active session is marked stalled. */
-  idleStalledSeconds?: number;
-  /** Seconds without a tool call before an active session is closed as stalled; 0, the default, only marks. */
-  idleCloseSeconds?: number;
+  /** Seconds without a tool call before an active session is reported as quiet; nothing is closed for it. */
+  idleNoticeSeconds?: number;
   /** Seconds a dispatchable target may wait on one revision before it is reported as quiet. */
   quietReadySeconds?: number;
   /** Seconds a live runner may repeat one refusal before it is reported as refusing. */

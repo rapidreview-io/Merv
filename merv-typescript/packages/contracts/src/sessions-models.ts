@@ -28,9 +28,7 @@ export type SessionOutcome =
   | 'host_failed'
   | 'launch_failed'
   | 'workspace_failed'
-  | 'crash_loop'
-  /** Alive but not progressing: closed by the idle policy, never by the worker. */
-  | 'stalled';
+  | 'crash_loop';
 
 export interface DispatchState {
   enabled: boolean;
@@ -83,6 +81,7 @@ export type DispatchDecision =
   | 'capacity_full'
   | 'retry_backoff'
   | 'budget_exceeded'
+  | 'usage_unavailable'
   | 'retries_exhausted'
   | 'no_candidates';
 export interface RunnerPresence extends RunnerHeartbeat {
@@ -139,8 +138,7 @@ export interface StuckItem {
 export interface StuckReport {
   observedAt: string;
   thresholds: {
-    idleStalledSeconds: number;
-    idleCloseSeconds: number;
+    idleNoticeSeconds: number;
     maxLaunchFailures: number;
     quietReadySeconds: number;
     refusalSeconds: number;
@@ -175,7 +173,7 @@ export interface SessionSummary {
   /** An active session's activation or latest tool call, whichever is later; null otherwise. */
   lastActivityAt: string | null;
   /** When the sweep found the session alive without progressing; null while it moves. */
-  stalledAt: string | null;
+  quietSince: string | null;
   /** Frozen execution intent remains known before preparation or after a preparation failure. */
   workspaceMode: 'none' | 'ephemeral' | 'persistent';
   workspace?: SessionWorkspaceRecord;
@@ -263,8 +261,21 @@ export interface BudgetStatus {
   maxWallMs: number | null;
   maxCostMicros: number | null;
   maxTokens: number | null;
-  used: { wallMs: number; costMicros: number; tokens: number };
+  /**
+   * Wall-clock is measured by Merv. Cost and tokens are only what runners reported: null
+   * while no closed session in scope has reported, never a zero that was not measured.
+   * They cover worker sessions alone; a remote job's own charges are not in them.
+   */
+  used: { wallMs: number; costMicros: number | null; tokens: number | null };
   exceeded: ('wall' | 'cost' | 'tokens')[];
+  /** Closed sessions in scope whose runner reported no usage. */
+  unreportedSessions: number;
+  /**
+   * Bounds that cannot be judged because of them: a cost or token bound is enforced only
+   * on complete accounting, so it withholds new automatic offers until the usage arrives
+   * or the bound is cleared, rather than letting unreported spending pass as none.
+   */
+  unavailable: ('cost' | 'tokens')[];
   updatedAt: string;
   updatedBy: string;
 }

@@ -216,16 +216,30 @@ export async function budgetStatuses(
   for (const row of rows) {
     const instanceIds = row.scope_id === projectId ? null : await closure(row.scope_id);
     const { totals } = await usageTotals(tx, projectId, instanceIds);
+    const unreportedSessions = totals.sessions - totals.reportedSessions;
+    // What nobody reported is unknown, not nothing.
+    const known = totals.sessions === 0 || totals.reportedSessions > 0;
     const used = {
       wallMs: totals.wallMs,
-      costMicros: totals.costMicros,
-      tokens: totals.inputTokens + totals.outputTokens,
+      costMicros: known ? totals.costMicros : null,
+      tokens: known ? totals.inputTokens + totals.outputTokens : null,
     };
     const exceeded: BudgetStatus['exceeded'] = [];
     if (row.max_wall_ms !== null && used.wallMs >= Number(row.max_wall_ms)) exceeded.push('wall');
-    if (row.max_cost_micros !== null && used.costMicros >= Number(row.max_cost_micros))
+    if (row.max_cost_micros !== null && totals.costMicros >= Number(row.max_cost_micros))
       exceeded.push('cost');
-    if (row.max_tokens !== null && used.tokens >= Number(row.max_tokens)) exceeded.push('tokens');
+    if (
+      row.max_tokens !== null &&
+      totals.inputTokens + totals.outputTokens >= Number(row.max_tokens)
+    )
+      exceeded.push('tokens');
+    // A bound on reported figures holds only while every closed session reported. One that
+    // did not leaves the sum a floor, so the bound withholds rather than pass as unreached.
+    const unavailable: BudgetStatus['unavailable'] = [];
+    if (unreportedSessions > 0) {
+      if (row.max_cost_micros !== null && !exceeded.includes('cost')) unavailable.push('cost');
+      if (row.max_tokens !== null && !exceeded.includes('tokens')) unavailable.push('tokens');
+    }
     result.push({
       scopeId: row.scope_id,
       kind: instanceIds === null ? 'project' : 'instance',
@@ -234,6 +248,8 @@ export async function budgetStatuses(
       maxTokens: row.max_tokens === null ? null : Number(row.max_tokens),
       used,
       exceeded,
+      unreportedSessions,
+      unavailable,
       updatedAt: row.updated_at,
       updatedBy: row.updated_by,
       instanceIds,
