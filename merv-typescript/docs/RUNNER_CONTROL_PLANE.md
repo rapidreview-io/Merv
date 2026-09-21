@@ -47,8 +47,9 @@ Every failed attempt on one instance revision is counted in one `session_dispatc
 row, across runners and platforms: a session closed as `host_failed`, `crash_loop`,
 `workspace_failed`, `launch_failed` or `stalled`, an offer that lapsed before any process
 activated it (`offer_expired`), and an offer that could not be built, which leaves no
-session and is recorded after its lease transaction rolled back. Authority refusals and
-lost races are not counted. At Sessions config `maxLaunchFailures` (default 5) the row is
+session and is recorded after its lease transaction rolled back. Authority refusals,
+lost races and refusals of the lease request itself (a session secret that was already
+used) are not counted: they say nothing about the target. At Sessions config `maxLaunchFailures` (default 5) the row is
 **held**: the target is filtered out inside the committing lease transaction, a runner whose
 only remaining work is held is answered `retries_exhausted`, and one
 `session.dispatch_held` event is recorded. The thirty-second backoff between attempts is

@@ -129,15 +129,21 @@ export const failureReasons = new Set([
   'stalled',
 ]);
 /**
- * Refusals that say who asked or what raced, never that the offer cannot be built. Counting
- * them would let a revoked key or a lost race hold a healthy target until an admin came.
+ * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
+ * built. Counting them would let a revoked key, a replayed secret or a lost race hold every
+ * healthy target in the queue until an admin came.
  */
-const transientOfferCodes = new Set([
+const uncountedOfferCodes = new Set([
   'dispatch_disabled',
   'runner_control_changed',
   'request_conflict',
   'revision_conflict',
   'session_conflict',
+  'session_secret_used',
+  'invalid_session_offer',
+  'invalid_deadline',
+  'nested_session_offer',
+  'agent_busy',
 ]);
 const releaseHoldSchema = z
   .object({
@@ -534,7 +540,9 @@ export class SessionDispatch {
   /**
    * The answer this runner's last lease request received, kept where the runner is. A
    * repeated answer keeps the moment it was first given, so a refusal says how long it has
-   * held. One statement: every right-hand side reads the row as it was.
+   * held. A runner that was already repeating its answer before the moment was kept starts
+   * counting now, or its refusal would stay silent. One statement: every right-hand side
+   * reads the row as it was.
    */
   private async decided(
     ownerHash: string,
@@ -544,8 +552,9 @@ export class SessionDispatch {
   ): Promise<void> {
     const time = this.time();
     await tx.run(
-      'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN decision_since ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
+      'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN COALESCE(decision_since,?) ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
       decision,
+      time,
       time,
       decision,
       time,
@@ -632,7 +641,7 @@ export class SessionDispatch {
       cause instanceof MervError
         ? { code: cause.code, message: cause.message }
         : { code: 'offer_failed', message: cause instanceof Error ? cause.message : String(cause) };
-    if (status === 401 || status === 403 || transientOfferCodes.has(failure.code)) return;
+    if (status === 401 || status === 403 || uncountedOfferCodes.has(failure.code)) return;
     try {
       await this.state.transaction(async (tx) => {
         const owner = await this.owner(caller, tx);

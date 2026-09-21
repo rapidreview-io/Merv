@@ -224,7 +224,11 @@ async function fixture(
       const input = auto(runnerId);
       const leased = await sessions.lease(source, input);
       assert.ok(leased.session, leased.reason);
-      return { id: leased.session.id, worker: await sessions.authenticate(input.secret) };
+      return {
+        id: leased.session.id,
+        secret: input.secret,
+        worker: await sessions.authenticate(input.secret),
+      };
     },
     /** One recorded tool call that leaves the record where it is. */
     async call(worker: Caller, handler: () => void | Promise<void> = () => {}) {
@@ -570,12 +574,43 @@ test('a hold names one revision: the record that moves is offered again', async 
 test('the hold tables arrive on a database whose runners already decided, and leave their rows alone', async (t) => {
   const f = await fixture(t, { dispatchSchema: 3 });
   await f.sessions.heartbeatRunner(f.source, presence());
+  // The answer this runner was already repeating when the upgrade came.
+  const before = f.time();
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE session_runners SET last_decision='dispatch_disabled',last_decision_at=?",
+      before,
+    );
+  });
   await f.upgrade();
   const runner = await f.runner();
-  assert.deepEqual([runner.lastDecision, runner.decisionSince], [null, null]);
+  assert.deepEqual([runner.lastDecision, runner.decisionSince], ['dispatch_disabled', null]);
   assert.deepEqual(await f.holds(), []);
+  f.advance(1_000);
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'dispatch_disabled');
+  const since = f.time();
+  assert.equal((await f.runner()).decisionSince, since, 'the same answer starts counting');
+  f.advance(1_000);
+  await f.sessions.heartbeatRunner(f.source, presence());
   await f.sessions.lease(f.source, auto());
-  assert.equal((await f.runner()).decisionSince, f.time());
+  assert.equal((await f.runner()).decisionSince, since, 'and then keeps its first moment');
+});
+
+test('a refusal of what the runner sent is not counted against any target', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 1 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  await f.instance();
+  await f.instance();
+  const used = (await f.active()).secret;
+  await f.sessions.heartbeatRunner(f.source, presence('other'));
+  await assert.rejects(
+    async () => await f.sessions.lease(f.source, { ...auto('other'), secret: used }),
+    { code: 'session_secret_used' },
+  );
+  assert.deepEqual(await f.holds(), []);
+  assert.deepEqual(await f.events('session.dispatch_held'), []);
 });
 
 const minute = 60_000;
