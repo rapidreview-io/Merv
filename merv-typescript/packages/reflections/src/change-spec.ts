@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, parsed, visible } from '@merv/contracts';
+import { check, ordered, parsed, visible } from '@merv/contracts';
 import type { ChangeSpec } from './types.js';
 
 /**
@@ -83,26 +83,6 @@ export const changeSpecSchema = z
 
 const refuse: (condition: unknown, message: string) => asserts condition = (condition, message) =>
   check(condition, 'invalid_change_spec', message);
-
-/**
- * The work items in an order that creates every prerequisite first, stable by listed position.
- * Undefined when the dependencies form a cycle.
- */
-export function ordered<T extends { key: string; dependsOn: string[] }>(
-  items: T[],
-): T[] | undefined {
-  const done = new Set<string>();
-  const result: T[] = [];
-  while (result.length < items.length) {
-    const next = items.find(
-      (item) => !done.has(item.key) && item.dependsOn.every((dependency) => done.has(dependency)),
-    );
-    if (!next) return undefined;
-    done.add(next.key);
-    result.push(next);
-  }
-  return result;
-}
 
 /**
  * A JSON change specification as the plan it states. Only what the document alone can show is

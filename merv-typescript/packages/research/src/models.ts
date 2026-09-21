@@ -10,18 +10,27 @@ export interface ResearchCreate {
   consolidationDependsOn?: string[];
   requestId: string;
 }
-export interface ResearchAdvance {
+/** What every command on an existing cycle names: the cycle, the revision it read, the request. */
+export interface ResearchCommandBase {
   researchId: string;
   expectedRevision: number;
   requestId: string;
 }
-/** The cycle's selected work, reselected whole: what is missing is added, what is left out is dropped. */
+export interface ResearchAdvance extends ResearchCommandBase {
+  /**
+   * The owner's answer to an approved plan that continues, on the advance that completes the
+   * cycle: create its work and the next cycle, or complete without them. Required then, so
+   * no caller creates agent-planned work without saying so; ignored everywhere else.
+   */
+  nextWave?: 'create' | 'skip';
+}
 /** Ending a cycle that cannot reach an answer. Terminal; the reason is recorded. */
-export interface ResearchEnd extends ResearchAdvance {
+export interface ResearchEnd extends ResearchCommandBase {
   outcome: 'abandoned' | 'failed';
   reason: string;
 }
-export interface ResearchReplan extends ResearchAdvance {
+/** The cycle's selected work, reselected whole: what is missing is added, what is left out is dropped. */
+export interface ResearchReplan extends ResearchCommandBase {
   dependsOn: string[];
 }
 /** Where a cycle opened from an approved reflection plan came from, pinned when it was created. */

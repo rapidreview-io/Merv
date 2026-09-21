@@ -75,7 +75,7 @@ export const researchToolsPlugin = {
       {
         name: 'research.advance',
         description:
-          'Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. Never launches agents or publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.',
+          'Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.',
         inputSchema: advanceSchema,
         handler: async (caller: Caller, input: ResearchAdvance) =>
           await research.advance(caller, input),

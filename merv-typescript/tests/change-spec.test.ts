@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MervError } from '@merv/contracts';
-import { ordered, parseChangeSpec } from '../packages/reflections/src/change-spec.js';
+import { ordered } from '@merv/contracts';
+import { parseChangeSpec } from '../packages/reflections/src/change-spec.js';
 import type {
   ChangeSpec,
   ChangeSpecExperiment,

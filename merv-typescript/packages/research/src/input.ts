@@ -13,15 +13,25 @@ export const createSchema = z
     requestId: id,
   })
   .strict();
-export const advanceSchema = z
-  .object({
-    researchId: id,
-    expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-    requestId: id,
-  })
-  .strict();
-export const replanSchema = advanceSchema.extend({ dependsOn: z.array(id).max(100) }).strict();
-export const endSchema = advanceSchema
+const commandSchema = z.object({
+  researchId: id,
+  expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  requestId: id,
+});
+const nextWave = z
+  .enum(['create', 'skip'])
+  .describe(
+    'Required when the approved reflection carries a plan that continues: create opens its tasks, experiments and the next cycle; skip completes this cycle without them',
+  );
+// Optional with no default, so the stored input of a request made before it existed still replays.
+export const advanceSchema = commandSchema.extend({ nextWave: nextWave.optional() }).strict();
+/**
+ * The owner's choice as a guard reads it. Not strict, for the reason endChoiceSchema is not:
+ * a preflight carries the bound fields alongside it.
+ */
+export const nextWaveChoiceSchema = z.object({ nextWave: nextWave.optional() });
+export const replanSchema = commandSchema.extend({ dependsOn: z.array(id).max(100) }).strict();
+export const endSchema = commandSchema
   .extend({
     outcome: z.enum(['abandoned', 'failed']),
     reason: z.string().trim().min(1).max(16000).refine(visible),

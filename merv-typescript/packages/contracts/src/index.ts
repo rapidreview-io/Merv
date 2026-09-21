@@ -13,6 +13,7 @@ import { FiberState } from 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
+export { ordered } from './order.js';
 export { sessionWorkspaceSchema } from './workspace.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {

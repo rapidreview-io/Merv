@@ -1,5 +1,5 @@
 import { mapAsync } from '@merv/contracts';
-import { clip, createService, recorded, replayed, visible } from '@merv/contracts';
+import { clip, createService, ordered, recorded, replayed, visible } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -11,6 +11,7 @@ import {
   type Data,
   type Scope,
   type State,
+  type Tasks,
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDefinition,
@@ -19,7 +20,13 @@ import {
 } from '@merv/contracts';
 import type { Paper, PaperRevision } from '@merv/paper/types';
 import type { Knowledge } from '@merv/knowledge/types';
-import type { ReflectionCreate, Reflections } from '@merv/reflections/types';
+import type { Experiments } from '@merv/experiments/types';
+import type {
+  ApprovedReflection,
+  ChangeSpec,
+  ReflectionCreate,
+  Reflections,
+} from '@merv/reflections/types';
 import type { Consolidation } from '@merv/consolidation/types';
 import type {
   Research,
@@ -36,6 +43,7 @@ import {
   endChoiceSchema,
   endSchema,
   getSchema,
+  nextWaveChoiceSchema,
   parse,
   replanSchema,
 } from './input.js';
@@ -47,7 +55,13 @@ interface Capabilities {
   reflections: Reflections;
   consolidation: Consolidation;
   knowledge: Knowledge;
+  tasks: Tasks;
+  experiments: Experiments;
 }
+/** An approved reflection whose plan says the project continues. */
+type Continuing = ApprovedReflection & {
+  plan: ChangeSpec & { next: { decision: 'continue' } };
+};
 type Binding<T> = { value: T };
 type BindingChecks = (() => void)[];
 const unavailable = {
@@ -55,18 +69,24 @@ const unavailable = {
   reflections: 'This stage needs Reflections; enable it to continue',
   consolidation: 'This cycle requires Consolidation and Code; enable them to continue',
   knowledge: 'This handoff needs live research evidence from Knowledge; enable it to continue',
+  tasks:
+    'Creating the approved plan\'s work needs Tasks; enable it, or complete this cycle with nextWave: "skip"',
+  experiments:
+    'Creating the approved plan\'s experiments needs Experiments; enable it, or complete this cycle with nextWave: "skip"',
 };
+const nextWaveGuidance =
+  'When the approved reflection carries a structured plan that continues, completing the cycle requires nextWave: "create" opens the plan\'s tasks, experiments and the next research cycle in the same transaction, and "skip" completes without them. A text change specification creates nothing; follow-on work is then the owner\'s to create.';
+/** Experiments counts these states as no longer active; the plan's experiments are sized against the rest. */
+const finishedExperiment = new Set(['complete', 'abandoned', 'failed']);
 const instructions: Record<Stage, string> = {
   defining:
     'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
   researching:
     'Finish the selected research workflows successfully, then advance to open a reflection wave over live research.',
-  reflecting:
-    'Complete all reflection lenses and independent synthesis review, then finish the cycle or start the selected Git consolidation.',
-  consolidating:
-    'Finish consolidation and its independent review, then complete the research cycle. Paper changes are reviewed within the experiment and reflection workflows.',
+  reflecting: `Complete all reflection lenses and independent synthesis review, then finish the cycle or start the selected Git consolidation. ${nextWaveGuidance}`,
+  consolidating: `Finish consolidation and its independent review, then complete the research cycle. Paper changes are reviewed within the experiment and reflection workflows. ${nextWaveGuidance}`,
   complete:
-    'The selected research, reflection and any required consolidation are complete. Paper changes were handled by their scientific reviews. Central Git publication is separate.',
+    'The selected research, reflection and any required consolidation are complete. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here. Central Git publication is separate.',
 };
 const definition: WorkflowDefinition = {
   name: 'research',
@@ -118,6 +138,8 @@ export class ResearchService implements Research {
     reflections?: Reflections,
     consolidation?: Consolidation,
     knowledge?: Knowledge,
+    tasks?: Tasks,
+    experiments?: Experiments,
   ) {
     this.initialize = async () => {
       await state.migrate('research', [
@@ -182,6 +204,8 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
         if (reflections) this.bindReflections(reflections);
         if (consolidation) this.bindConsolidation(consolidation);
         if (knowledge) this.bindKnowledge(knowledge);
+        if (tasks) this.bindTasks(tasks);
+        if (experiments) this.bindExperiments(experiments);
       } catch (error) {
         for (const handle of this.handles.values()) handle.dispose();
         throw error;
@@ -198,11 +222,16 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
           label: record.name,
           gate: context.snapshot.state,
           waiting: instructions[context.snapshot.state as Stage],
-          references: this.children(record).map((id) => ({
-            kind: 'workflow',
-            id,
-            label: 'Child workflow',
-          })),
+          references: [
+            ...this.children(record).map((id) => ({
+              kind: 'workflow',
+              id,
+              label: 'Child workflow',
+            })),
+            ...(record.successorId
+              ? [{ kind: 'workflow', id: record.successorId, label: 'Next research cycle' }]
+              : []),
+          ],
         };
       },
       // A cycle whose selected work cannot succeed is ended, not advanced.
@@ -248,8 +277,28 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
           check: async (context: WorkflowCheckContext) => {
             const record = await this.get(context.caller, context.snapshot.id, context.tx);
             await this.authorize(context.caller, record, context.tx);
-            await this.ready(context.caller, record, context.tx);
+            await this.ready(
+              context.caller,
+              record,
+              context.tx,
+              [],
+              parse(nextWaveChoiceSchema, context.input ?? {}).nextWave,
+            );
           },
+          // Creating a plan's work is never implied by an advance: a caller that does not know
+          // about the plan is asked, rather than launching work an agent wrote.
+          ...(stage === 'reflecting' || stage === 'consolidating'
+            ? {
+                requiredInput: async (context: WorkflowCheckContext) => {
+                  // A choice already made was judged by the check; a skip must not need Reflections.
+                  if (parse(nextWaveChoiceSchema, context.input ?? {}).nextWave) return [];
+                  const record = await this.get(context.caller, context.snapshot.id, context.tx);
+                  return (await this.continuing(context.caller, record, context.tx, []))
+                    ? ['nextWave']
+                    : [];
+                },
+              }
+            : {}),
         })),
       ],
     };
@@ -479,6 +528,7 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
     record: ResearchRecord,
     tx: Transaction,
     checks: BindingChecks = [],
+    nextWave?: ResearchAdvance['nextWave'],
   ): Promise<void> {
     const stage = record.workflow.state as Stage;
     check(stage !== 'complete', 'research_complete', 'This research cycle is complete', 409);
@@ -538,7 +588,168 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
         service.approved(caller, record.consolidationId!, tx),
       );
     }
+    // A skip reads no plan, so it completes a cycle whose plan can no longer be created, or
+    // whose Reflections is gone. Anything else must know whether a plan waits for an answer.
+    if (nextWave !== 'skip') {
+      const approved = await this.continuing(caller, record, tx, checks);
+      if (approved && nextWave === 'create')
+        await this.creatable(caller, approved.plan, tx, checks);
+    }
     checks.forEach((check) => check());
+  }
+
+  /** The approved reflection, when this advance completes the cycle and its plan continues. */
+  private async continuing(
+    caller: Caller,
+    record: ResearchRecord,
+    tx: Transaction,
+    checks: BindingChecks,
+  ): Promise<Continuing | undefined> {
+    const stage = record.workflow.state;
+    const completing =
+      stage === 'consolidating' || (stage === 'reflecting' && !this.needsConsolidation(record));
+    if (!completing || !record.reflectionId) return undefined;
+    const approved = await this.use('reflections', checks, (service) =>
+      service.approved(caller, record.reflectionId!, tx),
+    );
+    return approved.plan?.next.decision === 'continue' ? (approved as Continuing) : undefined;
+  }
+
+  /**
+   * Everything about the project that can refuse the plan, judged before the cycle moves. A
+   * plan reported ready and refused on every attempt would leave skipping as the only way on,
+   * and skipping discards the reviewed plan. Only whether a tested claim exists is left to
+   * creation: Research holds no Claims.
+   */
+  private async creatable(
+    caller: Caller,
+    plan: ChangeSpec,
+    tx: Transaction,
+    checks: BindingChecks,
+  ): Promise<void> {
+    this.requireCapability('tasks', checks);
+    const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
+    if (planned.length) {
+      const existing = await this.use('experiments', checks, (service) => service.list(caller, tx));
+      const taken = new Set(existing.map((experiment) => experiment.name.toLowerCase()));
+      for (const name of planned)
+        check(
+          !taken.has(name.toLowerCase()),
+          'experiment_name_conflict',
+          `An experiment already uses the planned name ${name}. Complete this cycle with nextWave: "skip" and create the work under another name`,
+          409,
+        );
+      const active = existing.filter(
+        (experiment) => !finishedExperiment.has(experiment.workflow.state),
+      ).length;
+      check(
+        active + planned.length <= 7,
+        'experiment_limit',
+        `The plan adds ${planned.length} experiments to ${active} active ones, and at most seven may be active in this project. Finish or end active experiments first, or complete this cycle with nextWave: "skip"`,
+        409,
+      );
+    }
+    // The engine refuses the starts anyway; said here, the owner reads it before trying.
+    check(
+      !(await this.use('reflections', checks, (service) => service.open(caller, tx))),
+      'reflection_open',
+      'Another reflection wave pauses task and experiment creation; finish it, or complete this cycle with nextWave: "skip"',
+      409,
+    );
+    for (const { workflowId } of plan.carriedOver) {
+      const carried = await this.workflows.get(caller, workflowId, tx);
+      check(
+        ['task', 'experiment'].includes(carried.workflow),
+        'next_wave_inapplicable',
+        `Carried-over work ${workflowId} is neither a task nor an experiment; complete this cycle with nextWave: "skip"`,
+        409,
+      );
+      // The next cycle ends when work it waits on has died, so it would be opened already dead.
+      check(
+        !['failed', 'abandoned'].includes(carried.state),
+        'next_wave_inapplicable',
+        `Carried-over work ${workflowId} has ${carried.state} and cannot be waited on; complete this cycle with nextWave: "skip"`,
+        409,
+      );
+    }
+  }
+
+  /**
+   * Creates the approved plan's work under the advancing owner and opens the cycle that waits
+   * on it. Runs inside the advance's transaction, so a refusal anywhere leaves nothing behind.
+   * Every request ID derives from the advance's, so a retry names the same records.
+   */
+  private async materialise(
+    caller: Caller,
+    record: ResearchRecord,
+    approved: Continuing,
+    requestId: string,
+    tx: Transaction,
+    checks: BindingChecks,
+  ): Promise<ResearchRecord> {
+    const { plan } = approved;
+    const created = new Map<string, string>();
+    for (const item of ordered(plan.items)!) {
+      // The text was written by a leased agent and is filed under the owner who accepted it;
+      // this line is what lets a reader of the record trace it back to the reviewed plan.
+      const provenance = `\n\nWhy: ${item.rationale}\n\nOrigin: reflection ${approved.id}, change specification ${approved.changeSpec.id} (${approved.changeSpec.hash}), item ${item.key}.`;
+      const dependsOn = item.dependsOn.map((key) => created.get(key)!);
+      const itemRequestId = this.request(caller, requestId, `item:${item.key}`);
+      const work =
+        item.kind === 'task'
+          ? await this.use('tasks', checks, (service) =>
+              service.create(
+                caller,
+                {
+                  title: item.title,
+                  goal: `${item.goal}${provenance}`,
+                  checks: item.checks,
+                  dependsOn,
+                  requestId: itemRequestId,
+                },
+                tx,
+              ),
+            )
+          : await this.use('experiments', checks, (service) =>
+              service.create(
+                caller,
+                {
+                  name: item.name,
+                  intent: item.question,
+                  details: `${item.details}${provenance}`.trimStart(),
+                  testedClaimIds: item.testedClaimIds,
+                  dependsOn,
+                  requestId: itemRequestId,
+                },
+                tx,
+              ),
+            );
+      created.set(item.key, work.id);
+    }
+    const carriedOver = plan.carriedOver.map((entry) => entry.workflowId);
+    return await this.begin(
+      caller,
+      parse(createSchema, {
+        name: plan.next.name,
+        dependsOn: [...created.values(), ...carriedOver],
+        consolidationWorkspace: record.consolidationWorkspace,
+        requestId,
+      }),
+      'successor',
+      {
+        researchId: record.id,
+        reflectionId: approved.id,
+        reviewId: approved.reviewId,
+        changeSpec: { id: approved.changeSpec.id, hash: approved.changeSpec.hash },
+        items: plan.items.map((item) => ({
+          key: item.key,
+          kind: item.kind,
+          id: created.get(item.key)!,
+        })),
+        carriedOver,
+      },
+      tx,
+    );
   }
 
   /**
@@ -653,7 +864,15 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
           'This historical research version cannot be advanced',
           409,
         );
-        await this.ready(caller, record, tx, checks);
+        await this.ready(caller, record, tx, checks, input.nextWave);
+        const continuing =
+          input.nextWave === 'skip' ? undefined : await this.continuing(caller, record, tx, checks);
+        check(
+          !continuing || input.nextWave,
+          'next_wave_choice_required',
+          'The approved reflection carries a plan that continues. Call research.advance with nextWave: "create" to open its tasks, experiments and the next research cycle, or nextWave: "skip" to complete this cycle without them',
+          400,
+        );
         const childIds: string[] = [];
         switch (record.workflow.state as Stage) {
           case 'defining':
@@ -725,10 +944,17 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
               record.workflow.state === 'reflecting' && !this.needsConsolidation(record)
                 ? 'complete'
                 : 'advance',
+            // The guard inside the transition judges the same choice the preflight did.
+            ...(input.nextWave ? { input: { nextWave: input.nextWave } } : {}),
             requestId: this.request(caller, input.requestId, 'advance'),
           },
           tx,
         );
+        // After the move, so every guard judged the project as it was before the plan's work
+        // existed: seven planned experiments would otherwise refuse themselves.
+        const successor = continuing
+          ? await this.materialise(caller, record, continuing, input.requestId, tx, checks)
+          : undefined;
         if (childIds.length)
           await handle.addDependencies(
             caller,
@@ -744,7 +970,15 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
           caller,
           'advanced',
           record.id,
-          { from: record.workflow.state, to: moved.state, children: childIds },
+          {
+            from: record.workflow.state,
+            to: moved.state,
+            children: childIds,
+            ...(successor ? { successorId: successor.id } : {}),
+            ...(moved.state === 'complete' && input.nextWave === 'skip'
+              ? { nextWave: 'skipped' }
+              : {}),
+          },
           tx,
         );
         return await this.get(caller, record.id, tx);
@@ -769,6 +1003,12 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
   }
   bindConsolidation(consolidation: Consolidation): () => void {
     return this.bind('consolidation', consolidation);
+  }
+  bindTasks(tasks: Tasks): () => void {
+    return this.bind('tasks', tasks);
+  }
+  bindExperiments(experiments: Experiments): () => void {
+    return this.bind('experiments', experiments);
   }
   bindKnowledge(knowledge: Knowledge): () => void {
     this.open();
@@ -876,6 +1116,12 @@ export const researchPlugin = {
       });
       ctx.inject(['consolidation'], (ctx) => {
         ctx.effect(() => service.bindConsolidation(ctx.consolidation));
+      });
+      ctx.inject(['tasks'], (ctx) => {
+        ctx.effect(() => service.bindTasks(ctx.tasks));
+      });
+      ctx.inject(['experiments'], (ctx) => {
+        ctx.effect(() => service.bindExperiments(ctx.experiments));
       });
       yield ctx.provide('research', service);
     });

@@ -9,7 +9,7 @@ import { createApp } from '../src/app.js';
 import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchRecord } from '../packages/research/src/types.js';
 import type { Caller, ReviewApplication, WorkflowDefinition } from '@merv/contracts';
-import type { Reflection } from '@merv/reflections/types';
+import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import {
   CONSOLIDATION_LIMITS,
   createSchema as consolidationCreateSchema,
@@ -37,6 +37,8 @@ async function fixture(t: TestContext) {
         app.ctx.reflections,
         app.ctx.consolidation,
         app.ctx.knowledge,
+        app.ctx.tasks,
+        app.ctx.experiments,
       ),
     );
   let research = await service(),
@@ -158,7 +160,7 @@ async function fixture(t: TestContext) {
     };
     return await app.ctx.reviews.apply(reviewer, input);
   };
-  const reflect = async (record: ResearchRecord) => {
+  const reflect = async (record: ResearchRecord, plan?: ChangeSpec) => {
     let wave = await app.ctx.reflections.get(owner, record.reflectionId!);
     for (const lens of wave.lenses) {
       const worker = await issue('producer');
@@ -173,7 +175,15 @@ async function fixture(t: TestContext) {
     wave = await app.ctx.reflections.submit(owner, {
       reflectionId: wave.id,
       reportArtifactId: (await artifact(owner, 'Report')).id,
-      changeSpecArtifactId: (await artifact(owner, 'Change specification')).id,
+      changeSpecArtifactId: plan
+        ? (
+            await app.ctx.artifacts.create(owner, {
+              title: 'Change specification',
+              content: JSON.stringify(plan),
+              mediaType: 'application/json',
+            })
+          ).id
+        : (await artifact(owner, 'Change specification')).id,
       expectedRevision: wave.workflow.revision,
       requestId: id(),
     });
@@ -739,6 +749,18 @@ test('consolidation continues from retained artifacts after Reflections and Know
   const completed = await f.consolidate(record);
   assert.equal((completed as { workflow: { state: string } }).workflow.state, 'complete');
   assert.equal((await f.app.ctx.paper.read(f.owner)).documents.problem.current.revision, 1);
+  // Whether an approved plan waits for an answer is Reflections' to say. Without it the cycle
+  // does not guess: the owner either restores it or says outright that nothing is to be created.
+  f.research.bindReflections(f.app.ctx.reflections)();
+  record = await f.research.get(f.owner, record.id);
+  await assert.rejects(f.advance(record), { code: 'reflections_unavailable' });
+  record = await f.research.advance(f.owner, {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    requestId: f.id(),
+    nextWave: 'skip',
+  });
+  assert.equal(record.workflow.state, 'complete');
 });
 
 test('Research selects live research evidence and completed experiments when advancing to consolidation', async (t) => {
@@ -826,4 +848,459 @@ test('v2 and v3 metadata and committed receipts survive all optional capabilitie
   assert.deepEqual(await f.research.create(f.owner, create), current);
   assert.ok(legacy.reflectionId);
   assert.ok(legacy.consolidationId);
+});
+
+const planned = (overrides: Partial<ChangeSpec> = {}): ChangeSpec => ({
+  version: 1,
+  changes: 'Narrow the comparison to the retained corpus and test the ordering effect directly.',
+  next: {
+    decision: 'continue',
+    name: 'Ordering effect',
+    rationale: 'The lenses agree it is open.',
+  },
+  items: [
+    {
+      key: 'corpus',
+      kind: 'task',
+      title: 'Freeze the comparison corpus',
+      goal: 'Select and freeze the documents the ordering experiment will read.',
+      checks: ['The corpus manifest is retained as an artifact'],
+      dependsOn: [],
+      rationale: 'The evidence lens found the corpus drifting between runs.',
+    },
+    {
+      key: 'harness',
+      kind: 'task',
+      title: 'Show the harness runs on one document',
+      goal: 'Run the harness end to end on a single document.',
+      checks: ['One complete run is retained'],
+      dependsOn: [],
+      rationale: 'Cheap feasibility before the experiment spends compute.',
+    },
+    {
+      key: 'ordering',
+      kind: 'experiment',
+      name: 'ordering-effect',
+      question: 'Does input ordering change the ranking?',
+      details: '',
+      testedClaimIds: [],
+      dependsOn: ['corpus', 'harness'],
+      rationale: 'The method lens named ordering as the untested confound.',
+    },
+    {
+      key: 'writeup',
+      kind: 'task',
+      title: 'Write up the ordering result',
+      goal: 'Summarise what the ordering experiment showed.',
+      checks: ['The summary cites the experiment'],
+      dependsOn: ['ordering'],
+      rationale: 'The result must reach the paper.',
+    },
+  ],
+  carriedOver: [],
+  rejected: [{ title: 'A larger corpus', reason: 'Nothing suggests size is the limit.' }],
+  ...overrides,
+});
+/** A no-consolidation cycle whose approved reflection carries the plan, ready to complete. */
+async function reflected(f: Awaited<ReturnType<typeof fixture>>, plan: ChangeSpec, git = false) {
+  await f.definition();
+  let record = await f.advance(await f.advance(await f.create(git ? 'git' : 'none')));
+  await f.reflect(record, plan);
+  record = await f.research.get(f.owner, record.id);
+  const command = (nextWave?: 'create' | 'skip') => ({
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    requestId: f.id(),
+    ...(nextWave ? { nextWave } : {}),
+  });
+  return { record, command };
+}
+const counts = async (f: Awaited<ReturnType<typeof fixture>>) => ({
+  tasks: (await f.app.ctx.tasks.list(f.owner)).length,
+  experiments: (await f.app.ctx.experiments.list(f.owner)).length,
+  cycles: (await f.research.list(f.owner)).length,
+});
+const advanced = async (f: Awaited<ReturnType<typeof fixture>>, id: string) =>
+  (
+    await f.app.ctx.state.read(
+      async (sql) =>
+        await sql.all<{ data_json: string }>(
+          "SELECT data_json FROM events WHERE type='research.advanced' AND subject_id=? ORDER BY id",
+          id,
+        ),
+    )
+  ).map((row) => JSON.parse(row.data_json));
+
+test('completing a cycle with nextWave create opens the approved plan as work and the next cycle', async (t) => {
+  const f = await fixture(t);
+  const carried = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Work already under way',
+    goal: 'Finish what the last wave started.',
+    checks: ['It is finished'],
+    requestId: f.id(),
+  });
+  const plan = planned({ carriedOver: [{ workflowId: carried.id, reason: 'Still needed.' }] });
+  const { record, command } = await reflected(f, plan);
+  const before = await counts(f);
+
+  // An advance that does not answer the plan creates nothing, whoever sends it.
+  const guidance = await f.app.ctx.workflows.evaluate(f.owner, record.id);
+  assert.equal(guidance.nextAction?.status, 'needs_input');
+  assert.deepEqual(guidance.nextAction?.requiredInput, ['nextWave']);
+  await assert.rejects(f.research.advance(f.owner, command()), {
+    code: 'next_wave_choice_required',
+  });
+  assert.deepEqual(await counts(f), before);
+  assert.equal(
+    (
+      await f.app.ctx.workflows.evaluate(f.owner, record.id, {
+        action: 'advance_reflecting',
+        input: { ...command('create') },
+      })
+    ).nextAction?.status,
+    'ready',
+  );
+
+  // A leased worker never reaches the plan.
+  await assert.rejects(
+    f.research.advance({ ...f.owner, session: { id: 'session_leased' } }, command('create')),
+    { code: 'forbidden' },
+  );
+  assert.deepEqual(await counts(f), before);
+
+  const input = command('create');
+  const done = await f.research.advance(f.owner, input);
+  assert.equal(done.workflow.state, 'complete');
+  assert.ok(done.successorId);
+  const successor = await f.research.get(f.owner, done.successorId);
+  assert.equal(successor.workflow.state, 'defining');
+  assert.equal(successor.name, 'Ordering effect');
+  const origin = successor.origin!;
+  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  assert.deepEqual(
+    { ...origin, items: origin.items.map((item) => [item.key, item.kind]) },
+    {
+      researchId: record.id,
+      reflectionId: approved.id,
+      reviewId: approved.reviewId,
+      changeSpec: { id: approved.changeSpec.id, hash: approved.changeSpec.hash },
+      items: [
+        ['corpus', 'task'],
+        ['harness', 'task'],
+        ['ordering', 'experiment'],
+        ['writeup', 'task'],
+      ],
+      carriedOver: [carried.id],
+    },
+  );
+  const ids = Object.fromEntries(origin.items.map((item) => [item.key, item.id]));
+  assert.deepEqual(
+    [...successor.researchDependencies].sort(),
+    [...Object.values(ids), carried.id].sort(),
+  );
+  const depends = async (id: string) =>
+    (await f.app.ctx.workflows.dependencies(f.owner, id)).dependencies.map((entry) => entry.id);
+  assert.deepEqual((await depends(ids.ordering)).sort(), [ids.corpus, ids.harness].sort());
+  assert.deepEqual(await depends(ids.writeup), [ids.ordering]);
+  const writeup = await f.app.ctx.tasks.get(f.owner, ids.writeup);
+  assert.ok(
+    writeup.goal.endsWith(
+      `Origin: reflection ${approved.id}, change specification ${approved.changeSpec.id} (${approved.changeSpec.hash}), item writeup.`,
+    ),
+  );
+  assert.match(writeup.goal, /\n\nWhy: The result must reach the paper\.\n\n/);
+  const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
+  assert.equal(experiment.intent, 'Does input ordering change the ranking?');
+  assert.match(experiment.details, /^Why: .*item ordering\.$/s);
+  assert.deepEqual((await advanced(f, record.id)).at(-1), {
+    from: 'reflecting',
+    to: 'complete',
+    children: [],
+    successorId: successor.id,
+  });
+  assert.ok(
+    (await f.app.ctx.workflows.evaluate(f.owner, record.id)).references.some(
+      (reference) => reference.id === successor.id && reference.label === 'Next research cycle',
+    ),
+  );
+
+  // The same request is the same records, across a restart; another request finds it complete.
+  const after = await counts(f);
+  assert.deepEqual(after, {
+    tasks: before.tasks + 3,
+    experiments: before.experiments + 1,
+    cycles: before.cycles + 1,
+  });
+  assert.deepEqual(await f.research.advance(f.owner, input), done);
+  await f.restart();
+  assert.deepEqual(await f.research.advance(f.owner, input), done);
+  assert.deepEqual(await counts(f), after);
+  await assert.rejects(
+    f.research.advance(f.owner, {
+      researchId: done.id,
+      expectedRevision: done.workflow.revision,
+      requestId: f.id(),
+      nextWave: 'create',
+    }),
+    { code: 'research_complete' },
+  );
+  assert.deepEqual(await counts(f), after);
+});
+
+test('a plan that cannot be created rolls the whole advance back, and skip completes the cycle', async (t) => {
+  const f = await fixture(t);
+  const plan = planned();
+  plan.items[2] = {
+    ...plan.items[2],
+    kind: 'experiment',
+    testedClaimIds: ['claim_missing'],
+  } as never;
+  const { record, command } = await reflected(f, plan);
+  const before = await counts(f);
+  await assert.rejects(
+    f.research.advance(f.owner, command('create')),
+    (error: { status: number }) => {
+      assert.equal(error.status, 404);
+      return true;
+    },
+  );
+  assert.deepEqual(await counts(f), before);
+  const kept = await f.research.get(f.owner, record.id);
+  assert.equal(kept.workflow.state, 'reflecting');
+  assert.equal(kept.workflow.revision, record.workflow.revision);
+
+  const skipped = await f.research.advance(f.owner, command('skip'));
+  assert.equal(skipped.workflow.state, 'complete');
+  assert.equal(skipped.successorId, null);
+  assert.deepEqual(await counts(f), before);
+  assert.deepEqual((await advanced(f, record.id)).at(-1), {
+    from: 'reflecting',
+    to: 'complete',
+    children: [],
+    nextWave: 'skipped',
+  });
+});
+
+test('materialised work rolls back with the caller transaction', async (t) => {
+  const f = await fixture(t);
+  const { record, command } = await reflected(f, planned());
+  const before = await counts(f);
+  const input = command('create');
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.state.transaction(async (tx) => {
+        await f.research.advance(f.owner, input, tx);
+        throw new Error('caller rollback');
+      }),
+    /caller rollback/,
+  );
+  assert.deepEqual(await counts(f), before);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+  assert.ok((await f.research.advance(f.owner, input)).successorId);
+});
+
+test('a stop plan and a text change specification complete as before and ignore nextWave', async (t) => {
+  const f = await fixture(t);
+  const stop = planned({
+    next: { decision: 'stop', reason: 'goal_met', rationale: 'The question is answered.' },
+    items: [],
+  });
+  const { record, command } = await reflected(f, stop);
+  const before = await counts(f);
+  assert.equal(
+    (await f.app.ctx.workflows.evaluate(f.owner, record.id)).nextAction?.status,
+    'ready',
+  );
+  const done = await f.research.advance(f.owner, command());
+  assert.equal(done.workflow.state, 'complete');
+  assert.equal(done.successorId, null);
+  assert.deepEqual(await counts(f), before);
+
+  // Nothing to create: the choice is accepted and creates nothing.
+  let text = await f.advance(await f.advance(await f.create()));
+  await f.reflect(text);
+  text = await f.research.advance(f.owner, {
+    researchId: text.id,
+    expectedRevision: text.workflow.revision,
+    requestId: f.id(),
+    nextWave: 'create',
+  });
+  assert.equal(text.workflow.state, 'complete');
+  assert.equal(text.successorId, null);
+  assert.deepEqual(await counts(f), { ...before, cycles: before.cycles + 1 });
+});
+
+test('a consolidated cycle creates the plan when consolidation completes, not at the handoff', async (t) => {
+  const f = await fixture(t);
+  await f.definition();
+  // Before version 3 every cycle consolidates, so this is where a retained v2 cycle continues.
+  let record = await f.advance(await f.advance(await f.legacy()));
+  assert.equal(record.workflow.version, 2);
+  await f.reflect(record, planned());
+  const before = await counts(f);
+  // The handoff to consolidation is not a completion: it asks nothing and creates nothing.
+  record = await f.advance(record);
+  assert.equal(record.workflow.state, 'consolidating');
+  assert.deepEqual(await counts(f), before);
+  await f.consolidate(record);
+  await assert.rejects(f.advance(record), { code: 'next_wave_choice_required' });
+  record = await f.research.advance(f.owner, {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    requestId: f.id(),
+    nextWave: 'create',
+  });
+  assert.equal(record.workflow.state, 'complete');
+  const successor = await f.research.get(f.owner, record.successorId!);
+  assert.equal(successor.origin?.items.length, 4);
+  // What follows a retained cycle is a cycle of today.
+  assert.equal(successor.workflow.version, 4);
+
+  let git = await f.advance(await f.advance(await f.create('git')));
+  await f.reflect(git, planned({ items: planned().items.slice(0, 1) }));
+  const waiting = await counts(f);
+  git = await f.advance(git);
+  assert.equal(git.workflow.state, 'consolidating');
+  assert.deepEqual(await counts(f), waiting);
+});
+
+test('what would refuse the plan is reported before the advance, and skip is always a way on', async (t) => {
+  const f = await fixture(t);
+  const carried = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Work already under way',
+    goal: 'Finish what the last wave started.',
+    checks: ['It is finished'],
+    requestId: f.id(),
+  });
+  const { record, command } = await reflected(
+    f,
+    planned({ carriedOver: [{ workflowId: carried.id, reason: 'Still needed.' }] }),
+  );
+  const before = await counts(f);
+  const refused = async (code: string) => {
+    const preflight = await f.app.ctx.workflows.evaluate(f.owner, record.id, {
+      action: 'advance_reflecting',
+      input: command('create'),
+    });
+    assert.equal(preflight.nextAction, null);
+    assert.equal(preflight.blockers[0].code, code);
+    await assert.rejects(f.research.advance(f.owner, command('create')), { code });
+    assert.deepEqual(await counts(f), before);
+  };
+
+  f.research.bindTasks(f.app.ctx.tasks)();
+  await refused('tasks_unavailable');
+  f.research.bindTasks(f.app.ctx.tasks);
+  f.research.bindExperiments(f.app.ctx.experiments)();
+  await refused('experiments_unavailable');
+  f.research.bindExperiments(f.app.ctx.experiments);
+
+  // Another wave pauses the very starts the plan needs.
+  await f.research.startReflection(f.owner, { requestId: f.id() });
+  await refused('reflection_open');
+  f.research.bindTasks(f.app.ctx.tasks)();
+  const skipped = await f.research.advance(f.owner, command('skip'));
+  assert.equal(skipped.workflow.state, 'complete');
+  assert.equal(skipped.successorId, null);
+  assert.deepEqual(await counts(f), before);
+});
+
+test('carried-over work that died and a project full of experiments each refuse the plan', async (t) => {
+  const f = await fixture(t);
+  const dead = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Work that will die',
+    goal: 'Be carried over and then fail.',
+    checks: ['It is finished'],
+    requestId: f.id(),
+  });
+  const { record, command } = await reflected(
+    f,
+    planned({ carriedOver: [{ workflowId: dead.id, reason: 'Still needed.' }] }),
+  );
+  const code = async () =>
+    (
+      await f.app.ctx.workflows.evaluate(f.owner, record.id, {
+        action: 'advance_reflecting',
+        input: command('create'),
+      })
+    ).blockers[0]?.code;
+  assert.equal(await code(), undefined);
+  // The next cycle would wait on it and be ended by it the moment it opened.
+  await f.app.ctx.tasks.markFailed(f.owner, {
+    taskId: dead.id,
+    expectedRevision: (await f.app.ctx.tasks.get(f.owner, dead.id)).workflow.revision,
+    reason: 'The approach it depended on was withdrawn.',
+    requestId: f.id(),
+  });
+  assert.equal(await code(), 'next_wave_inapplicable');
+  for (let index = 0; index < 7; index++)
+    await f.app.ctx.experiments.create(f.owner, {
+      name: `filler-${index}`,
+      intent: 'Occupies an active slot.',
+      requestId: f.id(),
+    });
+  assert.equal(await code(), 'experiment_limit');
+  await assert.rejects(f.research.advance(f.owner, command('create')), {
+    code: 'experiment_limit',
+  });
+});
+
+test('a plan at its size limits is created whole, and a taken experiment name refuses it first', async (t) => {
+  const f = await fixture(t);
+  const fill = (length: number) => 'x'.repeat(length);
+  const plan = planned();
+  plan.items = plan.items.map((item) => ({
+    ...item,
+    rationale: fill(1000),
+    ...(item.kind === 'task' ? { goal: fill(4000) } : { details: fill(4000) }),
+  }));
+  const { record, command } = await reflected(f, plan);
+  const taken = await f.app.ctx.experiments.create(f.owner, {
+    name: 'Ordering-Effect',
+    intent: 'Holds the planned name in another case.',
+    requestId: f.id(),
+  });
+  await assert.rejects(f.research.advance(f.owner, command('create')), {
+    code: 'experiment_name_conflict',
+  });
+  assert.equal((await f.research.get(f.owner, record.id)).successorId, null);
+  assert.ok(taken.id);
+
+  const other = await fixture(t);
+  const second = await reflected(other, plan);
+  const done = await other.research.advance(other.owner, second.command('create'));
+  const origin = (await other.research.get(other.owner, done.successorId!)).origin!;
+  // The Origin line is what ties an agent's text to the reviewed plan; no cap may clip it.
+  for (const item of origin.items) {
+    const text =
+      item.kind === 'task'
+        ? (await other.app.ctx.tasks.get(other.owner, item.id)).goal
+        : (await other.app.ctx.experiments.get(other.owner, item.id)).details;
+    assert.ok(text.endsWith(`item ${item.key}.`));
+    assert.ok(text.length > 5000 && text.length < 16000);
+  }
+});
+
+test('a capability replaced while the plan is being created invalidates the whole advance', async (t) => {
+  const f = await fixture(t);
+  const { record, command } = await reflected(f, planned());
+  const before = await counts(f);
+  const input = command('create');
+  const tasks = f.app.ctx.tasks;
+  let entered = false;
+  f.research.bindTasks({
+    ...tasks,
+    create: async (...args) => {
+      const task = await tasks.create(...args);
+      // Reflections was read earlier in this advance; what it said may no longer hold.
+      if (!entered) f.research.bindReflections(f.app.ctx.reflections);
+      entered = true;
+      return task;
+    },
+  });
+  await assert.rejects(f.research.advance(f.owner, input), { code: 'reflections_unavailable' });
+  assert.deepEqual(await counts(f), before);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+  const done = await f.research.advance(f.owner, input);
+  assert.ok(done.successorId);
 });
