@@ -14,6 +14,7 @@ import { FiberState } from 'cordis';
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
 export { sessionWorkspaceSchema } from './workspace.js';
+export { sessionUsageReportSchema } from './usage-report.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
   CodePublication,
@@ -891,6 +892,16 @@ export interface WorkflowPolicy {
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;
+  /**
+   * Instances this one fans work out to without a dependency edge, such as a reflection's
+   * lenses. A usage rollup over a dependency closure unions them in, so the sessions they
+   * cost are not lost from the figure of the cycle that caused them. It only reads.
+   */
+  children?(context: {
+    caller: Caller;
+    instanceId: string;
+    tx: Transaction;
+  }): string[] | Promise<string[]>;
   describe?(context: WorkflowCheckContext):
     | {
         label: string;
@@ -1146,6 +1157,11 @@ export interface Workflows {
     dependents: WorkflowDependency[];
   }>;
   checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void>;
+  /**
+   * The instance, everything it transitively depends on, and the children their policies
+   * declare: the grouping a research cycle's usage and budget are read over.
+   */
+  dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
 }
 export type Verdict = 'pass' | 'needs_changes' | 'fail';
 export type ReviewFinding = {

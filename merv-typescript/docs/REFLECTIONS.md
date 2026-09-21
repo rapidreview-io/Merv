@@ -28,6 +28,14 @@ Approval retains the exact submitted outputs, contributors and review. When Rese
 
 Synthesis can propose Methods/Results changes using `paperChangesArtifactId`; agents obtain current paper revisions through `paper.read`, and reviewers inspect the exact proposal and original text through `reflection.get`. Accepted edits apply atomically with reflection approval. Rejection leaves them unapplied. See [Living paper](LIVING_PAPER.md).
 
+A review may send a reflection back, to its synthesis or to its lenses, at most
+`limits.reviewReturns` times in total (Reflections config, default 2): the
+`review_returns` [loop limit](BUDGETS_AND_LIMITS.md) on the parent workflow. Restarting
+the lenses opens five more sessions, so this caps that fan-out. An escalated reflection
+has no abandon edge: its only exits are a human approval or an admin's
+`workflow.extend_limit`, and while it waits it still pauses new tasks and experiments, as
+any open wave does. Lens sessions are counted in the wave's and the cycle's usage.
+
 ## Existing tools
 
 - `reflection.create`: start a live wave and pause new tasks/experiments; registered by Research's existing tool adapter.

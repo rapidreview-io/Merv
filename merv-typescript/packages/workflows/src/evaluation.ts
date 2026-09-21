@@ -141,6 +141,7 @@ export function validatePolicy(
     'A registered policy must guard every graph transition',
   );
   if (policy.describe) callback(policy.describe);
+  if (policy.children) callback(policy.children);
   check(
     policy.assignments === undefined || Array.isArray(policy.assignments),
     'invalid_workflow_policy',
@@ -223,6 +224,7 @@ export function validatePolicy(
   return Object.freeze({
     actions: Object.freeze(actions) as unknown as WorkflowActionRule[],
     describe: policy.describe,
+    ...(policy.children === undefined ? {} : { children: policy.children }),
     ...(limits === undefined
       ? {}
       : { limits: Object.freeze(limits) as unknown as WorkflowLoopLimit[] }),

@@ -98,6 +98,18 @@ outcome; short exits use `crash_loop` so server backoff prevents tight retries.
 Successful handoffs are established by durable workflow transitions. Release
 reporting is retryable and happens only after local termination is confirmed.
 
+The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.json` in
+that launch's private run directory, cleared before the process starts. A profile's
+wrapper, or the process itself, may write one JSON object there:
+`{"inputTokens": 0, "outputTokens": 0, "costUsd": 0.0, "model": "name"}`, the last two
+optional and nothing else allowed. Merv parses no harness output, so a profile that writes
+nothing reports nothing. When the launch is over the runner sends a regular file of at
+most 4 KB in that shape: with its release when the process ended first, and on its own
+when the server had already closed the session, which is how a landed handoff ends. The
+ledger remembers that the report was answered, so it is retried across restarts and sent
+once. The figures are a self-report from whatever could write the file; see
+[usage and budgets](BUDGETS_AND_LIMITS.md).
+
 Sessions' source-owned `get` now reconciles current expiry and workflow admission
 without activating work or rebuilding context. That lets the runner discover
 closed or invalid assignments even when the child makes no further MCP calls.

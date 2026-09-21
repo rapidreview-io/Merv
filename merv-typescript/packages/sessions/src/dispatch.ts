@@ -27,8 +27,11 @@ import type {
   Session,
   SessionOffer,
   SessionSummary,
+  SessionBudgetInput,
   SessionsProjectStatus,
+  BudgetStatus,
 } from './types.js';
+import { budgetStatuses, publicBudget } from './usage.js';
 
 const label = z
   .string()
@@ -90,6 +93,23 @@ const leaseSchema = z
     hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
   })
   .strict();
+const budgetSchema = z
+  .object({
+    instanceId: z.string().min(1).max(200).optional(),
+    maxWallMinutes: z.number().int().min(1).max(5_256_000).nullable().optional(),
+    maxCostUsd: z.number().positive().max(1e6).nullable().optional(),
+    maxTokens: z.number().int().min(1).max(1e13).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (input) =>
+      input.maxWallMinutes !== undefined ||
+      input.maxCostUsd !== undefined ||
+      input.maxTokens !== undefined,
+  );
+/** A bound is stored in the unit usage is summed in; a fraction of it still rounds to a positive bound. */
+const scaled = (value: number | null, unit: number): number | null =>
+  value === null ? null : Math.max(1, Math.round(value * unit));
 const freshForMs = 45_000;
 const backoffMs = 30_000;
 const failureReasons = new Set(['host_failed', 'crash_loop', 'workspace_failed', 'launch_failed']);
@@ -149,6 +169,7 @@ export class SessionDispatch {
     private workflows: Workflows,
     private hooks: Hooks,
     private clock: () => number,
+    private maxLaunchFailures: number,
   ) {
     this.initialize = async () => {
       await state.migrate('session_dispatch', [
@@ -189,6 +210,23 @@ export class SessionDispatch {
           sql: `
       ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
       ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
+    `,
+        },
+        {
+          // Configuration an admin changes, like the dispatch switch, so nothing guards it;
+          // its history is the session.budget_changed events. The project's own id as the
+          // scope is the project budget; any other scope is a workflow instance.
+          version: 3,
+          postgres: postgresMigrations[3],
+          sql: `
+      CREATE TABLE session_budgets (
+        project_id TEXT NOT NULL REFERENCES projects(id), scope_id TEXT NOT NULL,
+        max_wall_ms INTEGER CHECK(max_wall_ms IS NULL OR max_wall_ms > 0),
+        max_cost_micros INTEGER CHECK(max_cost_micros IS NULL OR max_cost_micros > 0),
+        max_tokens INTEGER CHECK(max_tokens IS NULL OR max_tokens > 0),
+        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        PRIMARY KEY(project_id, scope_id)
+      );
     `,
         },
       ]);
@@ -247,6 +285,85 @@ export class SessionDispatch {
       await this.ordinary(caller, 'admin', tx);
       return await this.set(caller, input.enabled, tx);
     });
+  }
+  private async budgets(caller: Caller, tx: Transaction, only?: string[]) {
+    return await budgetStatuses(
+      tx,
+      caller.projectId,
+      async (instanceId) => await this.workflows.dependencyClosure(caller, instanceId, tx),
+      only,
+    );
+  }
+  /**
+   * A state-set command like the dispatch switch: it is idempotent by value, not by a
+   * request id, so setting what is already set records nothing and answers the same.
+   */
+  async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
+    caller = structuredClone(caller);
+    const parsed = budgetSchema.safeParse(input);
+    check(
+      parsed.success,
+      'invalid_budget',
+      'A budget names at least one of maxWallMinutes, maxCostUsd and maxTokens, each a positive bound or null',
+    );
+    const { instanceId, maxWallMinutes, maxCostUsd, maxTokens } = parsed.data;
+    return await this.state.transaction(async (tx) => {
+      await this.ordinary(caller, 'admin', tx);
+      if (instanceId !== undefined) await this.workflows.get(caller, instanceId, tx);
+      const scopeId = instanceId ?? caller.projectId;
+      const old = await tx.get<{
+        max_wall_ms: number | null;
+        max_cost_micros: number | null;
+        max_tokens: number | null;
+      }>(
+        'SELECT max_wall_ms,max_cost_micros,max_tokens FROM session_budgets WHERE project_id=? AND scope_id=?',
+        caller.projectId,
+        scopeId,
+      );
+      const next = {
+        maxWallMs:
+          maxWallMinutes === undefined
+            ? (old?.max_wall_ms ?? null)
+            : scaled(maxWallMinutes, 60_000),
+        maxCostMicros:
+          maxCostUsd === undefined ? (old?.max_cost_micros ?? null) : scaled(maxCostUsd, 1e6),
+        maxTokens: maxTokens === undefined ? (old?.max_tokens ?? null) : maxTokens,
+      };
+      check(
+        old || Object.values(next).some((value) => value !== null),
+        'budget_not_found',
+        'There is no budget here to clear',
+        404,
+      );
+      if (
+        !old ||
+        Number(old.max_wall_ms ?? -1) !== (next.maxWallMs ?? -1) ||
+        Number(old.max_cost_micros ?? -1) !== (next.maxCostMicros ?? -1) ||
+        Number(old.max_tokens ?? -1) !== (next.maxTokens ?? -1)
+      ) {
+        await tx.run(
+          'INSERT INTO session_budgets(project_id,scope_id,max_wall_ms,max_cost_micros,max_tokens,updated_at,updated_by) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,scope_id) DO UPDATE SET max_wall_ms=excluded.max_wall_ms,max_cost_micros=excluded.max_cost_micros,max_tokens=excluded.max_tokens,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
+          caller.projectId,
+          scopeId,
+          next.maxWallMs,
+          next.maxCostMicros,
+          next.maxTokens,
+          this.time(),
+          caller.actorId,
+        );
+        await recorded(this.state, tx, caller, 'session.budget_changed', scopeId, {
+          scopeId,
+          ...next,
+        });
+      }
+      return publicBudget((await this.budgets(caller, tx, [scopeId]))[0]!);
+    });
+  }
+  /** Budgets a usage read shows: the project's, and the one on the instance it asked about. */
+  async budgetsFor(caller: Caller, tx: Transaction, instanceId?: string): Promise<BudgetStatus[]> {
+    return (
+      await this.budgets(caller, tx, [caller.projectId, ...(instanceId ? [instanceId] : [])])
+    ).map(publicBudget);
   }
   async halt(
     caller: Caller,
@@ -441,10 +558,41 @@ export class SessionDispatch {
         )
       ).map((row) => `${row.instance_id}:${row.revision}`),
     );
-    return (await this.workflows.dispatchCandidates(caller, tx)).filter(
+    const queue = (await this.workflows.dispatchCandidates(caller, tx)).filter(
       (item) =>
         item.role !== 'operator' && !live.has(`${item.instanceId}:${item.expectedRevision}`),
     );
+    // A launch that keeps failing on one revision is not retried for ever: the backoff only
+    // spaces the attempts, so this is what ends them. Only launch failures count, because an
+    // expiry is also how long honest work ends. Switching dispatch off and on is the human
+    // go-ahead that starts every count in the project afresh, and so is a new revision.
+    const exhausted = new Set(
+      (
+        await tx.all<{ instance_id: string; revision: number }>(
+          `SELECT instance_id,revision FROM session_usage WHERE project_id=? AND outcome IN (${[...failureReasons].map(() => '?').join(',')}) AND closed_at>? GROUP BY instance_id,revision HAVING COUNT(*)>=?`,
+          caller.projectId,
+          ...failureReasons,
+          (await this.dispatch(caller.projectId, tx)).updatedAt ?? '',
+          this.maxLaunchFailures,
+        )
+      ).map((row) => `${row.instance_id}:${row.revision}`),
+    );
+    const budgets = await this.budgets(caller, tx);
+    const spent = new Set(
+      budgets.flatMap((budget) => (budget.exceeded.length ? (budget.instanceIds ?? []) : [])),
+    );
+    const key = (item: { instanceId: string; expectedRevision: number }) =>
+      `${item.instanceId}:${item.expectedRevision}`;
+    const retry = queue.filter((item) => exhausted.has(key(item)));
+    const overBudget = queue.filter(
+      (item) => !exhausted.has(key(item)) && spent.has(item.instanceId),
+    );
+    return {
+      queue: queue.filter((item) => !exhausted.has(key(item)) && !spent.has(item.instanceId)),
+      retriesExhausted: retry.length,
+      overBudget: overBudget.length,
+      budgets,
+    };
   }
   async projectStatus(caller: Caller): Promise<SessionsProjectStatus> {
     caller = structuredClone(caller);
@@ -511,7 +659,7 @@ export class SessionDispatch {
         'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=?',
         caller.projectId,
       ))!.n;
-      const queue = await this.candidates(caller, tx);
+      const { queue, retriesExhausted, budgets } = await this.candidates(caller, tx);
       return {
         // One transaction, one moment: agents cannot report a lease the leases do not.
         agents: await this.hooks.agents(caller, tx),
@@ -525,6 +673,8 @@ export class SessionDispatch {
         sessions,
         queue: queue.slice(0, 200),
         queueTotal: queue.length,
+        budgets: budgets.map(publicBudget),
+        retriesExhausted,
       };
     });
   }
@@ -691,7 +841,14 @@ export class SessionDispatch {
           platform.name,
         )
       ).map((row) => JSON.parse(row.session_json) as Session);
-      const candidates = (await this.candidates(caller, tx)).filter(
+      const admissible = await this.candidates(caller, tx);
+      // A budget only stops new automatic offers. What is running keeps running, and a human
+      // may still begin work by hand; raising or clearing the budget resumes this on the next poll.
+      if (
+        admissible.budgets.some((budget) => budget.kind === 'project' && budget.exceeded.length > 0)
+      )
+        return { session: null, reason: await decided('budget_exceeded') };
+      const candidates = admissible.queue.filter(
         (item) => !skipped.has(`${item.instanceId}:${item.expectedRevision}`),
       );
       const candidate = candidates.find(
@@ -708,7 +865,17 @@ export class SessionDispatch {
       if (!candidate)
         return {
           session: null,
-          reason: await decided(candidates.length ? 'retry_backoff' : 'no_candidates'),
+          // Work that will be tried again outranks work that is withheld: the withheld
+          // causes are named only when they are all that is left of the queue.
+          reason: await decided(
+            candidates.length
+              ? 'retry_backoff'
+              : admissible.overBudget
+                ? 'budget_exceeded'
+                : admissible.retriesExhausted
+                  ? 'retries_exhausted'
+                  : 'no_candidates',
+          ),
         };
       // Admission callbacks cannot disable dispatch or change source permission and
       // then still create an automatic lease within this transaction.

@@ -313,6 +313,70 @@ test(
 );
 
 test(
+  'a session the server closed still has its usage file reported once; a malformed file is never sent',
+  { timeout: 40_000 },
+  async (t) => {
+    const usage = { inputTokens: 4200, outputTokens: 800, costUsd: 0.25, model: 'fixture-model' };
+    const f = await fixture(t, ['--hold', `--usage=${JSON.stringify(usage)}`]);
+    const reports: unknown[] = [];
+    const runner = f.make(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.pathname.endsWith('/release') && body?.usage) reports.push(body);
+      return fetch(input, init);
+    });
+    await runner.start();
+    await f.enabled(true);
+    await until(() => childResults(f.runnerDirectory).length === 1, runner, 'holding worker');
+    // The server ends the session, as a landed handoff does; the runner never releases it.
+    await f.app.ctx.sessions.halt(f.source);
+    await until(
+      async () => (await f.app.ctx.sessions.usage(f.source)).totals.reportedSessions === 1,
+      runner,
+      'usage reported for a remotely closed session',
+    );
+    await runner.tick();
+    await runner.tick();
+    assert.equal(reports.length, 1, 'The ledger remembers the report was answered');
+    assert.deepEqual((reports[0] as { usage: unknown }).usage, usage);
+    const read = await f.app.ctx.sessions.usage(f.source, { instanceId: f.task.id });
+    assert.deepEqual(
+      [read.totals.sessions, read.totals.inputTokens, read.totals.outputTokens],
+      [1, 4200, 800],
+    );
+    assert.equal(read.totals.costMicros, 250_000);
+    assert.ok(read.totals.toolCalls >= 3, 'The worker’s own MCP calls are counted beside it');
+  },
+);
+
+test(
+  'a usage file that is not the closed report shape is not sent with the release',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t, ['--usage={"inputTokens":1,"outputTokens":1,"note":"extra"}']);
+    const releases: { usage?: unknown }[] = [];
+    const runner = f.make(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith('/release')) releases.push(JSON.parse(String(init?.body)));
+      return fetch(input, init);
+    });
+    await runner.start();
+    await f.enabled(true);
+    await until(
+      async () => (await f.sessions())[0]?.status === 'released',
+      runner,
+      'server release',
+    );
+    await f.enabled(false);
+    assert.ok(releases.length >= 1);
+    assert.ok(releases.every((body) => body.usage === undefined));
+    const read = await f.app.ctx.sessions.usage(f.source);
+    assert.deepEqual([read.totals.sessions, read.totals.reportedSessions], [1, 0]);
+    assert.ok(read.totals.wallMs > 0, 'Lease wall-clock is measured whether or not anyone reports');
+  },
+);
+
+test(
   'definitive source revocation stops a real child even when release reporting is forbidden',
   { timeout: 30_000 },
   async (t) => {

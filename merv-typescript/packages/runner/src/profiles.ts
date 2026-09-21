@@ -195,6 +195,7 @@ const PROJECT_READS = [
   'artifact.list',
   'artifact.get',
   'artifact.read',
+  'usage.read',
 ] as const;
 
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';

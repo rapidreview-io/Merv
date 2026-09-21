@@ -117,6 +117,10 @@
       "name": "@merv/sessions/api"
     },
     {
+      "id": "sessions-tools",
+      "name": "@merv/sessions/tools"
+    },
+    {
       "id": "api",
       "name": "@merv/api",
       "config": {

@@ -136,5 +136,8 @@ Fixed policies may additionally declare `workspace` as `none`, `ephemeral` or
 `effectiveWorkspace()` supplies scratch intent for absent declarations without
 changing their stored hashes. Read-only policies cannot advance central.
 `dispatchCandidates()` reads program admission and dependency/recipe metadata
-without rendering packets or resolving reference values. Actual base resolution
+without rendering packets or resolving reference values. It leaves out an instance
+whose [loop limit](BUDGETS_AND_LIMITS.md) is exhausted: a reviewer leased for it could only
+have a returning verdict refused and rolled back, and the next poll would lease another.
+A person can still begin that work by hand. Actual base resolution
 and Git provisioning remain machine-runner work. See the [runner control plane](RUNNER_CONTROL_PLANE.md).

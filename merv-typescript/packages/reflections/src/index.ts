@@ -834,6 +834,16 @@ export class ReflectionService implements Reflections {
                 max: this.limits.reviewReturns,
               },
             ],
+            // Lenses hang off the wave by this table, not by a dependency edge, and every
+            // restart makes five more: a rollup that missed them would miss most of the cost.
+            children: async ({ caller, instanceId, tx }) =>
+              (
+                await tx.all<{ id: string }>(
+                  'SELECT id FROM reflection_lenses WHERE reflection_id=? AND project_id=?',
+                  instanceId,
+                  caller.projectId,
+                )
+              ).map((row) => row.id),
           }),
       assignments,
       describe: async (context) => {

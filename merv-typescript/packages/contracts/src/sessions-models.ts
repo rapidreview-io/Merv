@@ -216,7 +216,7 @@ export interface UsageRollup {
   totals: UsageTotals;
   byWorkflow: (UsageTotals & { workflow: string })[];
   /** The fifty instances with the most wall-clock. */
-  byInstance: (UsageTotals & { instanceId: string; workflow: string | null })[];
+  byInstance: (UsageTotals & { instanceId: string; workflow: string })[];
   liveSessions: number;
   budgets: BudgetStatus[];
   accounting: {
@@ -241,4 +241,8 @@ export interface SessionsProjectStatus {
   /** Candidates currently admissible for the authenticated caller. */
   queue: WorkflowDispatchCandidate[];
   queueTotal: number;
+  /** Every budget of the project, measured at `observedAt`. */
+  budgets: BudgetStatus[];
+  /** Queued work withheld from automatic dispatch because its launches kept failing. */
+  retriesExhausted: number;
 }

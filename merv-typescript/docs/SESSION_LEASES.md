@@ -111,6 +111,16 @@ The [runner control plane](RUNNER_CONTROL_PLANE.md) adds server-selected automat
 
 Release can carry a bounded process outcome (`completed`, `host_failed`, `launch_failed`, `workspace_failed` or `crash_loop`) separately from its explanatory reason. Automatic dispatch uses canonical outcomes for retry backoff; a freeform note cannot become scheduling policy.
 
+Release may also carry `usage`, the launching machine's unverified self-report of tokens,
+cost and model. Every close writes a `session_usage` row with the lease wall-clock; the
+first report for a session is stored beside it and later ones are dropped without an
+error, including for a session its own handoff already closed. Two more lease decisions
+exist: `budget_exceeded`, when a project or instance budget is reached, and
+`retries_exhausted`, when the only queued work left has failed to launch
+`maxLaunchFailures` times on its current revision. Both only pause automatic offers.
+`GET /sessions/status` adds `budgets` and `retriesExhausted`. See
+[loop limits, usage and budgets](BUDGETS_AND_LIMITS.md).
+
 ## Remaining work
 
 This slice does not implement runner processes, workspace provisioning, durable
@@ -123,7 +133,8 @@ and [backend audit](BACKEND_PARITY_AUDIT.md).
 ## HTTP control and configuration
 
 The `sessions` provider depends on State, Scope, Workflows and Domain Events. The small `sessions-api` adapter depends only on Sessions and API.
-Neither exposes an agent tool. A normal source credential controls these routes;
+Neither exposes an agent tool; the optional `sessions-tools` adapter registers `usage.read`
+and `usage.set_budget`. A normal source credential controls these routes;
 use `X-Merv-Project-Id` when project selection is required.
 
 | Route                          | Input / result                                                                                                            |
@@ -133,7 +144,7 @@ use `X-Merv-Project-Id` when project selection is required.
 | `GET /sessions/:id`            | Returns `{session}` after checking source ownership.                                                                      |
 | `POST /sessions/:id/attach`    | `runnerId`, immutable `hostRef`; returns `{session}`.                                                                     |
 | `POST /sessions/:id/heartbeat` | `runnerId`; returns `{session}`.                                                                                          |
-| `POST /sessions/:id/release`   | `runnerId`, optional `reason`; returns `{session}`.                                                                       |
+| `POST /sessions/:id/release`   | `runnerId`, optional `reason`, `outcome` and `usage`; returns `{session}`.                                                |
 
 Generate `secret` as `ms_` followed by 32 random bytes encoded as unpadded base64url
 (43 characters). Keep it out of prompts, files, URLs and logs. Supply it as the

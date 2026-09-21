@@ -181,6 +181,9 @@ const migrations = [
   },
 ];
 
+/** The most instances one dependency closure is walked over. */
+const closureLimit = 5000;
+
 interface InstanceRow {
   id: string;
   project_id: string;
@@ -1392,6 +1395,51 @@ export class WorkflowsService implements Workflows {
 
   async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
     requireDependencies((await this.dependencies(caller, instanceId, tx)).dependencies);
+  }
+
+  /**
+   * A walk rather than a recursive query, like the cycle check beside the dependency insert:
+   * it reads the same on both backends, and it can ask each loaded policy for the children
+   * that no dependency edge names. The bound keeps a pathological graph from holding a
+   * read open; the caller reports how many instances it was given.
+   */
+  async dependencyClosure(
+    caller: Caller,
+    instanceId: string,
+    transaction?: Transaction,
+  ): Promise<string[]> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      await this.readSnapshot(tx, caller.projectId, instanceId);
+      const frontier = [instanceId],
+        seen = new Set<string>();
+      while (frontier.length && seen.size < closureLimit) {
+        const current = frontier.pop()!;
+        if (seen.has(current)) continue;
+        const row = await tx.get<{ workflow: string; version: number }>(
+          'SELECT workflow,version FROM wf_instances WHERE id=? AND project_id=?',
+          current,
+          caller.projectId,
+        );
+        if (!row) continue;
+        seen.add(current);
+        frontier.push(
+          ...(
+            await tx.all<{ target_id: string }>(
+              'SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=?',
+              caller.projectId,
+              current,
+            )
+          ).map((item) => item.target_id),
+          ...((await this.registrations
+            .get(`${row.workflow}@${row.version}`)
+            ?.policy?.children?.({ caller, instanceId: current, tx })) ?? []),
+        );
+      }
+      return [...seen];
+    });
   }
 
   async start(caller: Caller, input: WorkflowStart, tx?: Transaction): Promise<WorkflowSnapshot> {

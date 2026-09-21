@@ -1,5 +1,6 @@
 import type {
   AgentObservation,
+  BudgetStatus,
   Caller,
   Data,
   DelegationSource,
@@ -9,7 +10,9 @@ import type {
   RunnerSettings,
   SessionOutcome,
   SessionStatus,
+  SessionUsageReport,
   SessionsProjectStatus,
+  UsageRollup,
   WorkflowAssignment,
   WorkflowExecution,
   WorkflowLease,
@@ -24,6 +27,7 @@ export type {
   AgentObservation,
   AgentSummary,
   AgentToolCall,
+  BudgetStatus,
   DispatchDecision,
   DispatchState,
   RunnerHeartbeat,
@@ -35,9 +39,12 @@ export type {
   SessionRole,
   SessionStatus,
   SessionSummary,
+  SessionUsageReport,
   SessionWorkspace,
   SessionWorkspaceRecord,
   SessionsProjectStatus,
+  UsageRollup,
+  UsageTotals,
 } from '@merv/contracts';
 
 /** A continuing agent instance and its authenticated session, independent of assignments. */
@@ -203,8 +210,14 @@ export interface Sessions {
     input: SessionControl & {
       reason?: string;
       outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      /** The runner's unverified self-report; the first one stored for a session is kept. */
+      usage?: SessionUsageReport;
     },
   ): Promise<Session>;
+  /** Open to leased workers too: a reflection lens reads what the cycle it reflects on cost. */
+  usage(caller: Caller, input?: UsageQuery): Promise<UsageRollup>;
+  /** Only a project admin who is not a leased worker sets what pauses automatic dispatch. */
+  setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus>;
   /** First MCP authentication activates the offered lease using metadata only. */
   authenticate(token: string): Promise<Caller>;
   /** Rechecks a worker credential without activating an offer. */
@@ -219,8 +232,22 @@ export interface Sessions {
   ): Promise<T>;
   sweep(): Promise<void>;
 }
+export interface UsageQuery {
+  instanceId?: string;
+  /** Defaults to true: an instance is read with everything it depends on and fans out to. */
+  includeDependencies?: boolean;
+}
+/** A dimension left out keeps its value and null clears it; the project is the scope when no instance is named. */
+export interface SessionBudgetInput {
+  instanceId?: string;
+  maxWallMinutes?: number | null;
+  maxCostUsd?: number | null;
+  maxTokens?: number | null;
+}
 export interface SessionsConfig {
   sweepIntervalMs?: number;
+  /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
+  maxLaunchFailures?: number;
 }
 declare module 'cordis' {
   interface Context {

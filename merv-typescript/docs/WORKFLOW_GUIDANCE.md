@@ -24,8 +24,18 @@ normal action is recommended for this actor; terminal workflows explicitly say
 they have ended. Recovery actions such as reissuing a review remain listed when
 applicable but are not recommended as ordinary progress.
 
+`limits` lists each [loop limit](BUDGETS_AND_LIMITS.md) leaving the current state, with
+its `base`, `granted`, `max`, `used`, `remaining` and `exhausted`; it is an empty array
+elsewhere. When a limit is exhausted the gate and first blocker are
+`loop_limit_reached`: every allowed return is used, the work is not failed, and it waits
+for a human. Uncapped actions stay available, so a reviewer can still accept or fail it
+by hand, and a project admin can allow more rounds with `workflow.extend_limit`. The
+commit refuses the capped edge with the same code, before the rule's own guard.
+
 With no arguments, the tool returns a project-scoped overview of **instances**,
-including `ready`, `blocked`, `terminal`, and `unavailable` ID lists. Here `ready`
+including `ready`, `blocked`, `escalated`, `terminal`, and `unavailable` ID lists.
+`escalated` instances have an exhausted loop limit; they appear in neither `ready` nor
+`blocked`, and automatic dispatch leaves them alone. Here `ready`
 means the caller has a recommended action, including preparation needing input;
 it does not mean an execution lease can be granted. This view neither schedules
 agents nor chooses project research priorities.

@@ -11,6 +11,7 @@ import {
   MervError,
   newId,
   plain,
+  sessionUsageReportSchema,
   sessionWorkspaceSchema,
   type Caller,
   type Data,
@@ -26,6 +27,7 @@ import {
 import { SessionDispatch } from './dispatch.js';
 import { AgentDirectory, sourceCaller } from './agents.js';
 import { AgentObservations, summarizeAgent } from './observations.js';
+import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
   Session,
@@ -43,6 +45,11 @@ import type {
   SessionOutcome,
   SessionWorkspace,
   SessionWorkspaceObservation,
+  SessionBudgetInput,
+  SessionUsageReport,
+  BudgetStatus,
+  UsageQuery,
+  UsageRollup,
 } from './types.js';
 export type * from './types.js';
 
@@ -141,6 +148,12 @@ export class LeasedSessions implements Sessions {
         'invalid_sessions_config',
         'Session sweep interval must be 100–60000 milliseconds',
       );
+      const maxLaunchFailures = options.maxLaunchFailures ?? 5;
+      check(
+        Number.isInteger(maxLaunchFailures) && maxLaunchFailures >= 1 && maxLaunchFailures <= 100,
+        'invalid_sessions_config',
+        'Session maxLaunchFailures must be 1–100',
+      );
       await state.migrate('sessions', [
         {
           version: 1,
@@ -236,6 +249,34 @@ json_extract(NEW.session_json,'$.agentSessionId') IS NOT json_extract(OLD.sessio
 json_extract(NEW.session_json,'$.contextEpoch') IS NOT json_extract(OLD.session_json,'$.contextEpoch')
 BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         },
+        {
+          // A new table, because a closed session row refuses every update: what a session
+          // cost is known only at and after its close.
+          version: 4,
+          postgres: postgresMigrations[4],
+          sql: `
+      CREATE TABLE session_usage (
+        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id), project_id TEXT NOT NULL,
+        instance_id TEXT NOT NULL, revision INTEGER NOT NULL, workflow TEXT NOT NULL, state TEXT NOT NULL,
+        role TEXT NOT NULL, outcome TEXT NOT NULL, started_at TEXT, closed_at TEXT NOT NULL,
+        wall_ms INTEGER NOT NULL CHECK(wall_ms >= 0), harness TEXT, model TEXT,
+        input_tokens INTEGER CHECK(input_tokens IS NULL OR input_tokens >= 0),
+        output_tokens INTEGER CHECK(output_tokens IS NULL OR output_tokens >= 0),
+        cost_micros INTEGER CHECK(cost_micros IS NULL OR cost_micros >= 0),
+        reported_model TEXT, reported_at TEXT
+      );
+      CREATE INDEX session_usage_project ON session_usage(project_id, instance_id, revision);
+      CREATE TRIGGER session_usage_no_delete BEFORE DELETE ON session_usage
+        BEGIN SELECT RAISE(ABORT,'Session usage is retained'); END;
+      CREATE TRIGGER session_usage_write_once BEFORE UPDATE ON session_usage
+        WHEN OLD.reported_at IS NOT NULL OR NEW.session_id IS NOT OLD.session_id OR NEW.project_id IS NOT OLD.project_id OR
+          NEW.instance_id IS NOT OLD.instance_id OR NEW.revision IS NOT OLD.revision OR NEW.workflow IS NOT OLD.workflow OR
+          NEW.state IS NOT OLD.state OR NEW.role IS NOT OLD.role OR NEW.outcome IS NOT OLD.outcome OR
+          NEW.started_at IS NOT OLD.started_at OR NEW.closed_at IS NOT OLD.closed_at OR NEW.wall_ms IS NOT OLD.wall_ms OR
+          NEW.harness IS NOT OLD.harness OR NEW.model IS NOT OLD.model
+        BEGIN SELECT RAISE(ABORT,'Session usage is recorded once'); END;
+    `,
+        },
       ]);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
@@ -257,6 +298,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
             agents: async (caller, tx) => await this.agentSummaries(caller, tx),
           },
           this.clock,
+          maxLaunchFailures,
         ),
       );
       try {
@@ -509,6 +551,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     session.closeReason = reason;
     session.outcome = outcome ?? (status === 'expired' ? 'expired' : 'released');
     await this.save(tx, session);
+    await recordUsage(tx, session);
     if (session.agentId) {
       const agent = await this.directory.get(session.agentId, tx);
       if (!agent.persistent) await this.directory.retire(agent, reason, tx);
@@ -971,6 +1014,63 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);
   }
+  async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
+    this.ensureOpen();
+    return await this.dispatcher.setBudget(caller, input);
+  }
+  /**
+   * Unlike the dispatch reads this admits a leased worker: it discloses totals, never a
+   * credential or another worker's input, and a reflection lens needs it to say what a
+   * cycle cost. The scope check still bounds it to the caller's project.
+   */
+  async usage(caller: Caller, input: UsageQuery = {}): Promise<UsageRollup> {
+    caller = structuredClone(caller);
+    this.ensureOpen();
+    check(
+      input &&
+        typeof input === 'object' &&
+        Object.keys(input).every((key) => key === 'instanceId' || key === 'includeDependencies') &&
+        (input.instanceId === undefined || text(input.instanceId)) &&
+        (input.includeDependencies === undefined ||
+          (typeof input.includeDependencies === 'boolean' && input.instanceId !== undefined)),
+      'invalid_usage_query',
+      'Usage accepts an optional instanceId and, with it, includeDependencies',
+    );
+    const { instanceId, includeDependencies = true } = input;
+    return await this.reading(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const instanceIds =
+        instanceId === undefined
+          ? null
+          : includeDependencies
+            ? await this.workflows.dependencyClosure(caller, instanceId, tx)
+            : [(await this.workflows.get(caller, instanceId, tx)).id];
+      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds);
+      return {
+        scope:
+          instanceId === undefined || instanceIds === null
+            ? { kind: 'project', projectId: caller.projectId }
+            : {
+                kind: 'instance',
+                instanceId,
+                includeDependencies,
+                instanceCount: instanceIds.length,
+              },
+        ...totals,
+        liveSessions: (await tx.get<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
+          caller.projectId,
+        ))!.n,
+        budgets: await this.dispatcher.budgetsFor(caller, tx, instanceId),
+        accounting: {
+          wallClock: 'measured',
+          tokens: 'runner_reported',
+          since,
+          method: accountingMethod,
+        },
+      };
+    });
+  }
   async halt(
     caller: Caller,
     input: { sessionId?: string; reason?: string } = {},
@@ -1296,9 +1396,16 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     }: SessionControl & {
       reason?: string;
       outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      usage?: SessionUsageReport;
     },
   ): Promise<Session> {
     caller = structuredClone(caller);
+    const usage = sessionUsageReportSchema.optional().safeParse(input.usage);
+    check(
+      usage.success,
+      'invalid_usage',
+      'Usage reports non-negative token counts and an optional cost and model',
+    );
     check(
       input.outcome === undefined ||
         ['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'].includes(
@@ -1314,22 +1421,59 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     );
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      // A session whose handoff already landed is recorded as that, whoever releases it; a
-      // completed outcome is what the handoff proves, never what a release claims.
-      if (live(session) && (await this.handedOff(session, tx)))
-        return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
-      check(
-        input.outcome !== 'completed',
-        'invalid_outcome',
-        'A completed outcome is recorded by the worker’s own handoff, not by a release',
-      );
-      return await this.closeSession(
-        session,
-        input.reason ?? 'released',
-        tx,
-        'released',
-        input.outcome,
-      );
+      const released = await this.closeReleased(session, input, tx);
+      if (usage.data) await this.reportUsage(released, usage.data, tx);
+      return released;
+    });
+  }
+  private async closeReleased(
+    session: Session,
+    input: { reason?: string; outcome?: SessionOutcome },
+    tx: Transaction,
+  ): Promise<Session> {
+    // A session whose handoff already landed is recorded as that, whoever releases it; a
+    // completed outcome is what the handoff proves, never what a release claims.
+    if (live(session) && (await this.handedOff(session, tx)))
+      return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+    check(
+      input.outcome !== 'completed',
+      'invalid_outcome',
+      'A completed outcome is recorded by the worker’s own handoff, not by a release',
+    );
+    return await this.closeSession(
+      session,
+      input.reason ?? 'released',
+      tx,
+      'released',
+      input.outcome,
+    );
+  }
+  /**
+   * Most real usage arrives here for a session its own handoff already closed, which is why
+   * the report rides on release rather than on a live-session call. It is the launching
+   * machine's word, stored as that and attributed to the system, never to a reviewer of it.
+   */
+  private async reportUsage(
+    session: Session,
+    usage: SessionUsageReport,
+    tx: Transaction,
+  ): Promise<void> {
+    const stored = await reportUsage(tx, session.id, usage, this.time());
+    if (!stored) return;
+    await this.state.appendEvent(tx, {
+      projectId: session.projectId,
+      actorId: 'system:sessions',
+      type: 'session.usage_reported',
+      subjectId: session.id,
+      data: {
+        sessionId: session.id,
+        instanceId: session.instanceId,
+        revision: session.expectedRevision,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        costMicros: stored.costMicros,
+        model: usage.model ?? null,
+      },
     });
   }
   async authenticate(token: string): Promise<Caller> {
@@ -1655,9 +1799,11 @@ export const sessionsPlugin = {
     check(
       config &&
         typeof config === 'object' &&
-        Object.keys(config).every((key) => key === 'sweepIntervalMs'),
+        Object.keys(config).every(
+          (key) => key === 'sweepIntervalMs' || key === 'maxLaunchFailures',
+        ),
       'invalid_sessions_config',
-      'Sessions only supports sweepIntervalMs configuration',
+      'Sessions only supports sweepIntervalMs and maxLaunchFailures configuration',
     );
     await ctx.effect(async function* () {
       const sessions = await createService(

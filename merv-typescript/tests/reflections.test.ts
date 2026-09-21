@@ -337,6 +337,12 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.attempt, 2);
   assert.ok(wave.lenses.every((l) => !firstIds.includes(l.id) && l.artifact === null));
   assert.equal((await f.app.ctx.workflows.get(f.owner, firstIds[0]!)).state, 'complete');
+  // No dependency edge names a lens, so the wave's policy does: a usage rollup over the
+  // wave has to reach the lenses of every attempt, which are most of what it cost.
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencyClosure(f.owner, wave.id)).sort(),
+    [wave.id, ...firstIds, ...wave.lenses.map((l) => l.id)].sort(),
+  );
   wave = await f.synthesize(await f.lenses(wave));
   wave = await f.verdict(wave, reviewer, true);
   assert.equal(wave.workflow.state, 'approved');

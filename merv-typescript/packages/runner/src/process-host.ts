@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +19,13 @@ export interface ProcessLaunch {
   sessionToken: string;
   deadline: number;
 }
+/**
+ * Where a launched process, or the wrapper a profile runs it under, may leave what the run
+ * cost. The convention is vendor-neutral: Merv parses no harness output, and whoever can
+ * write the file is trusted no further than a self-report.
+ */
+export const usageFileVariable = 'MERV_USAGE_FILE';
+export const usageFile = (record: LaunchRecord) => join(record.runDirectory, 'usage.json');
 const pause = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -39,11 +47,16 @@ export class ProcessHost {
       executable: input.command.executable,
       args: [...input.command.args],
       cwd: input.command.cwd,
-      env: Object.fromEntries(Object.entries(input.command.env ?? {})),
+      env: {
+        ...Object.fromEntries(Object.entries(input.command.env ?? {})),
+        [usageFileVariable]: usageFile(record),
+      },
       ...(input.command.stdin === undefined ? {} : { stdin: input.command.stdin }),
     };
     this.validateCommand(command, input.sessionToken);
     if (record.status === 'reserved') {
+      // Only what this launch writes may be reported as its usage.
+      rmSync(usageFile(record), { force: true });
       // Multiple controllers/retries may reach spawn, but only one guardian can claim the SQL row.
       const guardian = spawn(
         process.execPath,

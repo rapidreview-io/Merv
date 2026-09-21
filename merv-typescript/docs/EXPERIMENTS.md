@@ -109,6 +109,15 @@ that attempt's revision interval. Execution repair preserves it; returning to
 planning starts a new interval with no execution start. Historical attempt
 start times remain attributed to their original attempts.
 
+Returns are [limited](BUDGETS_AND_LIMITS.md). `design_rounds` caps `revise_design` out of
+`design_review` (Experiments config `limits.designRounds`, default 4); a `fail` design
+verdict takes the same edge and counts too. `result_rounds` caps `revise_plan` and
+`revise_execution` out of `experiment_review` together (`limits.resultRounds`, default 3).
+Attempts are therefore bounded. At an exhausted limit the returning verdict is refused with
+`loop_limit_reached`, the experiment is listed as escalated and is not dispatched, and a
+human passes it, abandons it, or has an admin allow more rounds. `retry_running` is not
+capped.
+
 ## Evidence gates and immutable submissions
 
 Create retained artifacts first, then attach their IDs. The role rules are:

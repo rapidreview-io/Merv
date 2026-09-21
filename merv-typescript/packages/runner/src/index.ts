@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
+import { lstatSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, effectiveWorkspace } from '@merv/contracts';
-import type { RunnerPlatform, Session } from '@merv/sessions/types';
+import { check, effectiveWorkspace, sessionUsageReportSchema } from '@merv/contracts';
+import type { RunnerPlatform, Session, SessionUsageReport } from '@merv/sessions/types';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -13,7 +14,7 @@ import {
   type LaunchMetadata,
   type PendingLaunchRequest,
 } from './ledger.js';
-import { ProcessHost } from './process-host.js';
+import { ProcessHost, usageFile } from './process-host.js';
 import { GitWorkspaceManager } from './workspaces.js';
 import {
   buildLaunch,
@@ -390,6 +391,7 @@ export class MachineRunner implements Runner {
     let record = await this.host.inspect(initial.id);
     if (terminalLaunch(record)) await this.captureWorkspace(record);
     if (terminalLaunch(record) && record.metadata.remoteClosed === true) {
+      await this.reportUsage(record);
       await this.finishWorkspace(record);
       return;
     }
@@ -415,7 +417,10 @@ export class MachineRunner implements Runner {
     if (!liveSession(session)) {
       record = await this.host.stop(record.id);
       this.save(record.id, { remoteClosed: true, releasePending: !terminalLaunch(record) });
-      if (terminalLaunch(record)) await this.finishWorkspace(record);
+      if (terminalLaunch(record)) {
+        await this.reportUsage(record);
+        await this.finishWorkspace(record);
+      }
       return;
     }
     if (record.status === 'uncertain') return;
@@ -572,8 +577,44 @@ export class MachineRunner implements Runner {
       this.ledger.runnerId,
       outcome,
       'local_process_finished',
+      this.readUsage(record),
     );
-    this.save(record.id, { session, releasePending: false, remoteClosed: true });
+    this.save(record.id, {
+      session,
+      releasePending: false,
+      remoteClosed: true,
+      usageReported: true,
+    });
+  }
+  /**
+   * A regular file of at most 4 KB in the one closed shape, or nothing: a launched process
+   * can write anything here, so a link, a device or a malformed report is simply not sent.
+   */
+  private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
+    try {
+      const path = usageFile(record),
+        stat = lstatSync(path);
+      if (!stat.isFile() || stat.size > 4096) return;
+      const parsed = sessionUsageReportSchema.safeParse(JSON.parse(readFileSync(path, 'utf8')));
+      return parsed.success ? parsed.data : undefined;
+    } catch {
+      return;
+    }
+  }
+  /**
+   * A worker whose handoff landed is closed by the server, so this runner never releases it,
+   * and that is the ending almost all real usage has. The report is owed until the server
+   * has answered it, which the ledger remembers across restarts; a refusal is an answer.
+   */
+  private async reportUsage(record: LaunchRecord): Promise<void> {
+    if (record.metadata.usageReported === true) return;
+    const usage = this.readUsage(record);
+    try {
+      if (usage) await this.client.reportUsage(record.sessionId, this.ledger.runnerId, usage);
+    } catch (error) {
+      if (!(error instanceof RunnerControlError) || error.unavailable) throw error;
+    }
+    this.save(record.id, { usageReported: true });
   }
   private async enforceDeadlines(): Promise<void> {
     for (const record of this.ledger.list())

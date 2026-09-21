@@ -24,7 +24,7 @@ export const LENSES = [
   {
     perspective: 'next_steps',
     instructions:
-      'Identify the highest-information next experiments and project-scope changes justified by the current research. Distinguish actionable proposals from established findings.',
+      'Identify the highest-information next experiments and project-scope changes justified by the current research. Distinguish actionable proposals from established findings. Weigh what the work cost: usage.read reports it for the project or, given a research cycle id, for that cycle, and the limits in workflow.status_and_next show which loops ran out of rounds. Treat token and cost figures as runner-reported and unverified.',
   },
 ] as const;
 export const REFLECTION_WORKFLOW: WorkflowDefinition = {

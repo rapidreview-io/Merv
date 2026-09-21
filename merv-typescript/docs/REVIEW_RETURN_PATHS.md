@@ -74,3 +74,12 @@ create a new attempt or implement execution repair. Those effects belong to the
 next [Experiment integration](RESEARCH_PROGRAM_PARITY_PLAN.md).
 
 Verification evidence is recorded separately in [VERIFICATION.md](../VERIFICATION.md).
+
+## Review rounds are limited
+
+A task's `in_review` → `revise` edge is capped by the `review_rounds`
+[loop limit](BUDGETS_AND_LIMITS.md), Tasks config `limits.reviewRounds`, default 3. That
+means three returns; the fourth delivery is not reviewed automatically and waits for a
+human. A fourth `needs_changes` is refused with `loop_limit_reached` and the whole verdict
+rolls back. A reviewer can still accept or fail the task by hand, and a project admin can
+grant one more round with `workflow.extend_limit`, which buys one more automated review.

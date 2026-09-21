@@ -85,4 +85,39 @@ $merv$;
 CREATE TRIGGER worker_sessions_agent_immutable BEFORE UPDATE ON worker_sessions
 FOR EACH ROW EXECUTE FUNCTION worker_sessions_agent_immutable_guard();
 `,
+  4: `
+CREATE TABLE session_usage (
+        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id), project_id TEXT NOT NULL,
+        instance_id TEXT NOT NULL, revision BIGINT NOT NULL, workflow TEXT NOT NULL, state TEXT NOT NULL,
+        role TEXT NOT NULL, outcome TEXT NOT NULL, started_at TEXT, closed_at TEXT NOT NULL,
+        wall_ms BIGINT NOT NULL CHECK(wall_ms >= 0), harness TEXT, model TEXT,
+        input_tokens BIGINT CHECK(input_tokens IS NULL OR input_tokens >= 0),
+        output_tokens BIGINT CHECK(output_tokens IS NULL OR output_tokens >= 0),
+        cost_micros BIGINT CHECK(cost_micros IS NULL OR cost_micros >= 0),
+        reported_model TEXT, reported_at TEXT
+      );
+      CREATE INDEX session_usage_project ON session_usage(project_id, instance_id, revision);
+      CREATE OR REPLACE FUNCTION session_usage_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Session usage is retained', ERRCODE = '23514';
+  RETURN OLD;
+END;
+$merv$;
+CREATE TRIGGER session_usage_no_delete BEFORE DELETE ON session_usage
+FOR EACH ROW EXECUTE FUNCTION session_usage_no_delete_guard();
+      CREATE OR REPLACE FUNCTION session_usage_write_once_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF OLD.reported_at IS NOT NULL OR NEW.session_id IS DISTINCT FROM OLD.session_id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+          NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.workflow IS DISTINCT FROM OLD.workflow OR
+          NEW.state IS DISTINCT FROM OLD.state OR NEW.role IS DISTINCT FROM OLD.role OR NEW.outcome IS DISTINCT FROM OLD.outcome OR
+          NEW.started_at IS DISTINCT FROM OLD.started_at OR NEW.closed_at IS DISTINCT FROM OLD.closed_at OR NEW.wall_ms IS DISTINCT FROM OLD.wall_ms OR
+          NEW.harness IS DISTINCT FROM OLD.harness OR NEW.model IS DISTINCT FROM OLD.model THEN
+    RAISE EXCEPTION USING MESSAGE = 'Session usage is recorded once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_usage_write_once BEFORE UPDATE ON session_usage
+FOR EACH ROW EXECUTE FUNCTION session_usage_write_once_guard();
+`,
 };

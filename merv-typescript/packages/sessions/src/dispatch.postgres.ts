@@ -49,4 +49,14 @@ FOR EACH ROW EXECUTE FUNCTION session_runners_identity_guard();
 ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
       ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
 `,
+  3: `
+CREATE TABLE session_budgets (
+        project_id TEXT NOT NULL REFERENCES projects(id), scope_id TEXT NOT NULL,
+        max_wall_ms BIGINT CHECK(max_wall_ms IS NULL OR max_wall_ms > 0),
+        max_cost_micros BIGINT CHECK(max_cost_micros IS NULL OR max_cost_micros > 0),
+        max_tokens BIGINT CHECK(max_tokens IS NULL OR max_tokens > 0),
+        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        PRIMARY KEY(project_id, scope_id)
+      );
+`,
 };

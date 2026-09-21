@@ -10,6 +10,11 @@ The following support, task-program, claim-record and experiment gaps from the o
 
 - [Workflow guidance](WORKFLOW_GUIDANCE.md): one evaluated current gate, blockers,
   next action and input preflight shared by tools, Tasks, context and UI.
+- [Loop limits, usage and budgets](BUDGETS_AND_LIMITS.md): three new tables, each with a
+  native PostgreSQL twin using `BIGINT` integers: `wf_limit_grants` (workflows 5, no
+  update or delete), `session_usage` (sessions 4, written once, no delete) and
+  `session_budgets` (session_dispatch 3, mutable configuration). Every `SUM` over them is
+  normalised to a number, because PostgreSQL returns `numeric` as text.
 - [Task closure](TASK_CLOSURE.md): producer/operator withdrawal, safe review closure
   and explicit compatibility for older workflow versions.
 - [Work-item prerequisites](WORK_ITEM_DEPENDENCIES.md): persistent dependency DAG,
