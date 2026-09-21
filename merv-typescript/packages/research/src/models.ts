@@ -1,4 +1,4 @@
-import type { WorkflowSnapshot } from '@merv/contracts/types';
+import type { Artifact, WorkflowSnapshot } from '@merv/contracts/types';
 import type { PaperRevision } from '@merv/paper/models';
 
 export interface ResearchCreate {
@@ -62,4 +62,8 @@ export interface ResearchRecord {
   origin: ResearchOrigin | null;
   /** The cycle this one's approved plan opened, if it did. */
   successorId: string | null;
+  /** The cycle this one follows, whether a plan opened it or somebody named it; null for a first cycle. */
+  previousCycleId: string | null;
+  /** The immutable artifact that records what this cycle decided; null until it has been composed. */
+  digest: Artifact | null;
 }

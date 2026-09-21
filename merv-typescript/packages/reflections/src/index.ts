@@ -9,6 +9,7 @@ import {
   inTransaction,
   MervError,
   now,
+  reviewHistory,
   type Artifact,
   type Artifacts,
   type Caller,
@@ -16,6 +17,7 @@ import {
   type ContextInput,
   type ContextRegistration,
   type ReviewApplication,
+  type ReviewRequest,
   type Reviews,
   type Scope,
   type State,
@@ -48,6 +50,9 @@ import type {
   ReflectionSubmit,
 } from './types.js';
 export type * from './types.js';
+
+/** What the earlier rounds may take of a 24000-character recipe, so they never crowd out the assignment. */
+const REVIEW_HISTORY_CHARS = 6000;
 
 interface WaveRow {
   id: string;
@@ -519,6 +524,10 @@ export class ReflectionService implements Reflections {
     const lenses = (await this.lensRows(wave, context.tx))
       .filter((entry) => entry.artifact)
       .map((entry) => (JSON.parse(entry.artifact!) as Artifact).id);
+    const history = reviewHistory(
+      (JSON.parse(wave.feedback) as ReviewRequest[]).map((entry) => ({ review: entry })),
+      REVIEW_HISTORY_CHARS,
+    );
     return {
       assignment: {
         text: JSON.stringify({
@@ -556,6 +565,8 @@ export class ReflectionService implements Reflections {
           recovery: review?.recovery ?? null,
         }),
       },
+      // Authors only: a reviewer judges the submission in front of them, not earlier verdicts.
+      ...(!review && history.rounds.length ? { history: { text: JSON.stringify(history) } } : {}),
     };
   }
   private inputIds(inputs: Record<string, ContextInput>): string[] {
@@ -579,9 +590,7 @@ export class ReflectionService implements Reflections {
       ...(live
         ? {
             researchReviews: [
-              ...(JSON.parse(wave.feedback) as { id: string }[])
-                .slice(-1)
-                .map((review) => review.id),
+              ...(JSON.parse(wave.feedback) as { id: string }[]).map((review) => review.id),
             ],
           }
         : {}),

@@ -14,6 +14,8 @@ import { FiberState } from 'cordis';
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
 export { ordered } from './order.js';
+export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
+export type { ReviewHistory, ReviewRound } from './review-history.js';
 export { sessionWorkspaceSchema } from './workspace.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
@@ -54,6 +56,8 @@ export type {
   CodeCommandCompletion,
 } from './code.js';
 import type { Data, Json } from './data.js';
+import type { Artifact } from './artifact-models.js';
+export type { Artifact } from './artifact-models.js';
 import { visible } from './text.js';
 import type {
   Role,
@@ -762,16 +766,6 @@ export interface Scope {
   revokeCredential(caller: Caller, credentialId: string): Promise<void>;
   actors(caller: Caller): Promise<Actor[]>;
   revokeActor(caller: Caller, actorId: string): Promise<void>;
-}
-export interface Artifact {
-  id: string;
-  projectId: string;
-  createdBy: string;
-  title: string;
-  mediaType: string;
-  hash: string;
-  size: number;
-  createdAt: string;
 }
 export interface ArtifactInput {
   title: string;

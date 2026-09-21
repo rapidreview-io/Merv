@@ -1,5 +1,5 @@
 import { excludedFromReview, releasedLease, visible, recorded, mapAsync } from '@merv/contracts';
-import { clip, createService, plain } from '@merv/contracts';
+import { clip, createService, plain, reviewHistory } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -69,6 +69,14 @@ export type {
   TaskFailure,
   Tasks,
 } from '@merv/contracts';
+
+/** Rejected rounds a task remembers; later ones push the oldest out, which no repair still needs. */
+const REJECTED_REVIEWS_KEPT = 50;
+/**
+ * What the earlier rounds may add to the optional feedback section. The section is dropped whole
+ * when it does not fit, so they stay small beside the latest pinned assessment.
+ */
+const REVIEW_HISTORY_CHARS = 4000;
 
 /** Tasks have fixed routes; inspect only an ordinary optional data property. */
 function rejectReviewReturn(input: object): void {
@@ -1159,6 +1167,16 @@ DROP TABLE task_leases_backup;`,
       };
       if (typeof task.workflow.data.revisionContext === 'string') {
         const previous = task.reviewId ? await this.reviews.get(caller, task.reviewId, tx) : null;
+        const earlier = reviewHistory(
+          await mapAsync(
+            (Array.isArray(task.workflow.data.rejectedReviewIds)
+              ? (task.workflow.data.rejectedReviewIds as string[])
+              : []
+            ).filter((id) => id !== task.reviewId),
+            async (id) => ({ review: await this.reviews.get(caller, id, tx) }),
+          ),
+          REVIEW_HISTORY_CHARS,
+        );
         inputs.feedback = {
           text:
             task.workflow.data.revisionContext +
@@ -1173,6 +1191,10 @@ DROP TABLE task_leases_backup;`,
                   findings: previous.findings,
                   evidence: previous.evidence,
                 })
+              : '') +
+            (earlier.rounds.length
+              ? '\n\nEarlier review rounds, oldest first (each was answered by a later delivery; do not reintroduce what they rejected):\n' +
+                JSON.stringify(earlier)
               : ''),
         };
       }
@@ -1945,6 +1967,21 @@ DROP TABLE task_leases_backup;`,
                     : input.synopsis?.trim() || input.notes
                   : null,
               revisionContext: input.verdict === 'pass' ? null : input.notes,
+              // revisionContext holds one round, so the ids of all of them are kept beside it. A
+              // task sent back before this list existed still names that round in reviewId.
+              ...(input.verdict === 'pass'
+                ? {}
+                : {
+                    rejectedReviewIds: [
+                      ...(Array.isArray(current.data.rejectedReviewIds)
+                        ? (current.data.rejectedReviewIds as string[])
+                        : typeof current.data.revisionContext === 'string' &&
+                            typeof current.data.reviewId === 'string'
+                          ? [current.data.reviewId]
+                          : []),
+                      input.reviewId,
+                    ].slice(-REJECTED_REVIEWS_KEPT),
+                  }),
               ...(input.verdict === 'fail'
                 ? {
                     failure: {

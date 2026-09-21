@@ -6,9 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createApp } from '../src/app.js';
-import type { Artifact, Caller, ReviewApplication } from '@merv/contracts';
+import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
-import { CHANGE_SPEC_CRITERION } from '../packages/reflections/src/definitions.js';
+import {
+  CHANGE_SPEC_CRITERION,
+  REFLECTION_CRITERIA,
+} from '../packages/reflections/src/definitions.js';
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-reflection-'));
@@ -429,21 +432,90 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
 
 test('review return preserves lenses for synthesis repair and creates fresh versioned children for lens repair', async (t) => {
   const f = await fixture(t);
-  let wave = await f.synthesize(
-    await f.lenses(await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' })),
-  );
+  let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
+  // With no rejected round there is nothing to carry, and the context says so.
+  const untouched = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[0]!.id)).context!;
+  assert.ok(untouched.omitted.includes('history'));
+  assert.doesNotMatch(untouched.prompt, /Earlier review rounds/);
+  wave = await f.synthesize(await f.lenses(wave));
   const firstIds = wave.lenses.map((l) => l.id);
   const reviewer = await f.actor('Reviewer', 'reviewer');
+  const firstReview = wave.review!.id;
   wave = await f.verdict(wave, reviewer, false, 'synthesizing');
   assert.equal(wave.workflow.state, 'synthesizing');
+  // The first repair already reads the one rejected round, and the feedback section is unchanged.
+  const repair = (await f.app.ctx.workflows.assignment(f.owner, wave.id)).context!;
+  assert.ok(!repair.omitted.includes('history') && !repair.omitted.includes('feedback'));
+  assert.match(repair.prompt, /Earlier review rounds, oldest first/);
+  assert.ok(
+    repair.prompt.includes(
+      JSON.stringify({
+        previousReviews: [
+          {
+            id: firstReview,
+            synopsis:
+              'The exact submission requires repair of the documented coverage and evidence problems.',
+          },
+        ],
+        recovery: null,
+      }),
+    ),
+  );
   assert.deepEqual(
     wave.lenses.map((l) => l.id),
     firstIds,
   );
   wave = await f.synthesize(wave);
+  const secondReview = wave.review!.id;
+  // A reviewer judges the submission in front of them and is shown no earlier verdicts.
+  assert.doesNotMatch(
+    (await f.app.ctx.workflows.assignment(reviewer, wave.id)).context!.prompt,
+    /Earlier review rounds/,
+  );
   wave = await f.verdict(wave, reviewer, false, 'reflecting');
   assert.equal(wave.workflow.state, 'reflecting');
   assert.equal(wave.attempt, 2);
+  const lens = wave.lenses[0]!;
+  const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
+  assert.equal(lensContext.typeVersion, 5);
+  const history = JSON.parse(
+    lensContext.prompt.slice(lensContext.prompt.indexOf('{"rounds":')).split('\n')[0]!,
+  ) as ReviewHistory;
+  assert.equal(history.omittedRounds, 0);
+  assert.deepEqual(
+    history.rounds.map(({ round, reviewId, verdict, returnTo, notes }) => ({
+      round,
+      reviewId,
+      verdict,
+      returnTo,
+      notes,
+    })),
+    [firstReview, secondReview].map((reviewId, index) => ({
+      round: index + 1,
+      reviewId,
+      verdict: 'needs_changes',
+      returnTo: index ? 'reflecting' : 'synthesizing',
+      notes: 'Verified exact frozen sources and lens outputs.',
+    })),
+  );
+  assert.ok(
+    history.rounds.every(
+      (round) =>
+        round.unmet.length === REFLECTION_CRITERIA.length &&
+        round.unmet.every(
+          (finding, index) =>
+            finding.status === 'not_met' &&
+            finding.criterion === REFLECTION_CRITERIA[index]!.slice(0, 200),
+        ),
+    ),
+  );
+  assert.ok(!lensContext.prompt.includes(reviewer.actorId));
+  assert.ok(Buffer.byteLength(lensContext.prompt) < 16 * 1024);
+  assert.deepEqual(
+    (await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 }))
+      .references.researchReviews,
+    [firstReview, secondReview],
+  );
   assert.ok(wave.lenses.every((l) => !firstIds.includes(l.id) && l.artifact === null));
   assert.equal((await f.app.ctx.workflows.get(f.owner, firstIds[0]!)).state, 'complete');
   wave = await f.synthesize(await f.lenses(wave));

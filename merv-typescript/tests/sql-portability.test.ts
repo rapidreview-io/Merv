@@ -119,7 +119,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 52);
+  assert.equal(all.length, 53);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

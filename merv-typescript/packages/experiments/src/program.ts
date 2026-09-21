@@ -3,6 +3,7 @@ import { postgresMigrations } from './program.postgres.js';
 import {
   check,
   digest,
+  reviewHistory,
   type Artifact,
   type Artifacts,
   type Caller,
@@ -272,6 +273,11 @@ const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal',
 type Bindings = Record<string, WorkflowExecutionBinding>;
 const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
+/**
+ * What the rounds of every attempt may add to the optional feedback section. The section is
+ * dropped whole when it does not fit, so the history stays small beside the latest reviews.
+ */
+const REVIEW_HISTORY_CHARS = 8000;
 
 /** One owned program: workflow, context and lease rules. It never launches or authenticates a session. */
 export class ExperimentProgram {
@@ -647,6 +653,12 @@ DROP TABLE experiment_leases_backup;`,
     const state = experiment.workflow.state;
     const review = reviewing(state) ? await this.review(caller, experiment, tx) : null;
     const feedbackReviews = await this.feedbackReviews(caller, experiment, tx);
+    // Authors only: a reviewer already reads the current attempt's rejections in previousReviews
+    // and judges this submission, not the verdicts earlier attempts received.
+    const history = reviewHistory(
+      reviewing(state) ? [] : await this.rejectedRounds(caller, experiment, tx),
+      REVIEW_HISTORY_CHARS,
+    );
     const selected = reviewing(state)
       ? review!.artifactIds
       : this.eligibleRecovery(experiment).flatMap((evidence) => [
@@ -700,9 +712,32 @@ DROP TABLE experiment_leases_backup;`,
       feedback: own({
         interruptions: experiment.attempt.feedback,
         previousReviews: feedbackReviews,
+        ...(history.rounds.length ? { history } : {}),
         recovery: review?.recovery ?? null,
       }),
     };
+  }
+
+  /**
+   * Every rejected submission of this experiment, oldest first. A design rejection opens a new
+   * attempt that names only the review that caused it, so the rounds before it are read from the
+   * submissions, which name every review the experiment ever had.
+   */
+  private async rejectedRounds(
+    caller: Caller,
+    experiment: Experiment,
+    tx: Transaction,
+  ): Promise<{ review: ReviewRequest; label: string }[]> {
+    const rounds = await mapAsync(
+      [...experiment.submissions].sort((a, b) => a.subjectRevision - b.subjectRevision),
+      async (submission) => ({
+        review: await this.host.reviews.get(caller, submission.reviewId, tx),
+        label: `${submission.stage} attempt ${submission.attemptIndex} round ${submission.round}`,
+      }),
+    );
+    return rounds.filter(
+      ({ review }) => review.status === 'submitted' && review.verdict !== 'pass',
+    );
   }
 
   private async feedbackReviews(
@@ -752,6 +787,9 @@ DROP TABLE experiment_leases_backup;`,
             experiment.attempt.approvedReviewId,
             ...(await this.feedbackReviews(context.caller, experiment, context.tx)).map(
               (prior) => prior.id,
+            ),
+            ...(await this.rejectedRounds(context.caller, experiment, context.tx)).map(
+              (round) => round.review.id,
             ),
           ].filter((id): id is string => !!id),
         ),

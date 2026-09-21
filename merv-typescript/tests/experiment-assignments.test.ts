@@ -6,7 +6,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
-import type { Artifact, Caller, Data, ReviewApplication, WorkflowExecution } from '@merv/contracts';
+import type {
+  Artifact,
+  Caller,
+  Data,
+  ReviewApplication,
+  ReviewHistory,
+  WorkflowExecution,
+} from '@merv/contracts';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
@@ -753,6 +760,63 @@ test('revoking the source fences its live reviewer before recovery and an author
   assert.notEqual((await f.reviews.get(replacement, pending.reviewId!)).claimId, claim.claimId);
   assert.equal(next.session.source.actorId, replacementSource.actorId);
   assert.match(next.session.assignment.context!.prompt, /previousClaimId/);
+});
+
+test('a design rejected three times gives the fourth attempt every earlier round while the attempt names only the latest', async (t) => {
+  const f = await fixture(t);
+  let experiment = (await f.design()).experiment;
+  // No rejected round yet: the feedback section carries no history key at all.
+  assert.doesNotMatch(
+    (await f.workflows.assignment(f.reviewer, experiment.id)).context!.prompt,
+    /"history"/,
+  );
+  const rejected: string[] = [];
+  for (const round of [1, 2, 3]) {
+    rejected.push(experiment.reviewId!);
+    experiment = await f.verdict(experiment, 'needs_changes', 'planned');
+    assert.equal(experiment.attempt.index, round + 1);
+    assert.deepEqual(experiment.attempt.feedbackReviewIds, [rejected.at(-1)]);
+    if (round < 3) experiment = (await f.design(experiment)).experiment;
+  }
+  const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
+  const feedback = JSON.parse(
+    prompt.slice(prompt.indexOf('{"interruptions":')).split('\n')[0]!,
+  ) as { previousReviews: { id: string }[]; history: ReviewHistory };
+  assert.deepEqual(
+    feedback.previousReviews.map((review) => review.id),
+    [rejected[2]],
+  );
+  assert.equal(feedback.history.omittedRounds, 0);
+  assert.deepEqual(
+    feedback.history.rounds.map(({ round, reviewId, label, verdict, returnTo }) => ({
+      round,
+      reviewId,
+      label,
+      verdict,
+      returnTo,
+    })),
+    rejected.map((reviewId, index) => ({
+      round: index + 1,
+      reviewId,
+      label: `design attempt ${index + 1} round 1`,
+      verdict: 'needs_changes',
+      returnTo: 'planned',
+    })),
+  );
+  assert.ok(!JSON.stringify(feedback.history).includes(f.reviewer.actorId));
+  const references = (
+    await f.workflows.execution(f.source, {
+      instanceId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+    })
+  ).references;
+  assert.ok(rejected.every((id) => (references.reviews as string[]).includes(id)));
+  // A reviewer judges the submission in front of them and is shown no earlier attempts' verdicts.
+  experiment = (await f.design(experiment)).experiment;
+  assert.doesNotMatch(
+    (await f.workflows.assignment(f.reviewer, experiment.id)).context!.prompt,
+    /"history"/,
+  );
 });
 
 test('successors receive exact rejected findings and manifests across both return routes without inheriting output authorship', async (t) => {

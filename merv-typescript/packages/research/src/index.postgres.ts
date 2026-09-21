@@ -37,4 +37,17 @@ CREATE UNIQUE INDEX research_successor ON research_cycles(predecessor_id) WHERE 
 CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_cycles
 FOR EACH ROW EXECUTE FUNCTION research_identity_guard();
 `,
+  3: `
+ALTER TABLE research_cycles ADD COLUMN digest TEXT;
+CREATE OR REPLACE FUNCTION research_digest_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF OLD.digest IS NOT NULL THEN
+    RAISE EXCEPTION USING MESSAGE = 'A research cycle digest is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles
+FOR EACH ROW EXECUTE FUNCTION research_digest_guard();
+`,
 };

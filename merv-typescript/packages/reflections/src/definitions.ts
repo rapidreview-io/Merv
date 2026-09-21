@@ -63,8 +63,7 @@ export const CHANGE_SPEC_CRITERION =
   'Every next-wave work item follows from cited lens evidence, has checkable Done-when checks or a falsifiable question, names only existing claims, and orders cheap feasibility work before the experiments that depend on it; rejected alternatives and carried-over work are recorded honestly, and a stop decision is justified.';
 export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage) => ({
   name: `reflection.${stage}`,
-  // The lens text did not change when the structured change specification arrived.
-  version: stage === 'lens' ? 4 : 5,
+  version: 5,
   kind: stage === 'review' ? 'review' : 'work',
   recipe: {
     instructions:
@@ -80,6 +79,11 @@ export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map
       { key: 'submission', title: 'Exact submitted synthesis', required: stage === 'review' },
       { key: 'assessment', title: 'Review criteria and claim', required: stage === 'review' },
       { key: 'feedback', title: 'Prior review feedback and recovery', required: false },
+      // After feedback, so the latest review wins the budget; a reviewer is shown no earlier
+      // verdicts, so the review recipe has no such section.
+      ...(stage === 'review'
+        ? []
+        : [{ key: 'history', title: 'Earlier review rounds, oldest first', required: false }]),
     ],
     outputInstructions:
       stage === 'lens'

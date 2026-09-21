@@ -7,6 +7,7 @@ import {
   digest,
   inTransaction,
   now,
+  type Artifact,
   type Caller,
   type Data,
   type Scope,
@@ -108,6 +109,7 @@ interface Row {
   methods_update_id: string | null;
   results_update_id: string | null;
   predecessor_id: string | null;
+  digest: string | null;
 }
 /** The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. */
 type StoredRecord = Pick<
@@ -163,6 +165,16 @@ CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,
 ALTER TABLE research_cycles ADD COLUMN predecessor_id TEXT;
 CREATE UNIQUE INDEX research_successor ON research_cycles(predecessor_id) WHERE predecessor_id IS NOT NULL;
 CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_cycles BEGIN SELECT RAISE(ABORT,'Research inputs are immutable'); END;
+`,
+        },
+        {
+          // What a finished cycle decided, as the metadata of one immutable artifact. It is written
+          // once, possibly long after the cycle ended, so only a second write is refused.
+          version: 3,
+          postgres: postgresMigrations[3],
+          sql: `
+ALTER TABLE research_cycles ADD COLUMN digest TEXT;
+CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN OLD.digest IS NOT NULL BEGIN SELECT RAISE(ABORT,'A research cycle digest is immutable'); END;
 `,
         },
       ]);
@@ -344,6 +356,8 @@ CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_
         // The column is the one statement of which cycle this follows; the record pins the rest.
         origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
         successorId: successor?.id ?? null,
+        previousCycleId: row.predecessor_id,
+        digest: row.digest ? (JSON.parse(row.digest) as Artifact) : null,
         researchDependencies: (await this.workflows.dependencies(caller, id, tx)).dependencies
           .map((item) => item.id)
           .filter((item) => !children.includes(item)),

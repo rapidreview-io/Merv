@@ -632,6 +632,12 @@
       "published": true
     },
     {
+      "type": "reflection.lens",
+      "version": 5,
+      "hash": "97ece1ec871ab48787c5e1d09eb5b40ae78d3214986453d48e9a647ab8791668",
+      "published": false
+    },
+    {
       "type": "reflection.review",
       "version": 2,
       "hash": "a0709564f899c8cad3a3cd1fda98fafa7a8926428f0947ca0a8cbc8e9130d43c",
@@ -676,7 +682,7 @@
     {
       "type": "reflection.synthesis",
       "version": 5,
-      "hash": "b44e4193019db0a85fa0da485ba1e752f0f89d356086b2fd8a0057bc5870ecb9",
+      "hash": "66dae4914f0f83c654661391299c3190663f9610c6b2be1f601bdeafac0026b8",
       "published": false
     },
     {

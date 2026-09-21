@@ -402,6 +402,40 @@ test('a cycle follows at most one other, and which one never changes', async (t)
     );
 });
 
+test('a cycle digest is stored once, read back as artifact metadata, and never rewritten', async (t) => {
+  const f = await fixture(t);
+  const first = await f.create();
+  assert.equal(first.digest, null);
+  assert.equal(first.previousCycleId, null);
+  const artifact = await f.app.ctx.artifacts.create(f.owner, {
+    title: 'Cycle digest',
+    content: '{"formatVersion":1}',
+    mediaType: 'application/json',
+  });
+  const write = async (value: string | null) =>
+    await f.app.ctx.state.transaction(
+      async (tx) =>
+        await tx.run(
+          'UPDATE research_cycles SET digest=? WHERE id=? AND digest IS NULL',
+          value,
+          first.id,
+        ),
+    );
+  assert.equal((await write(JSON.stringify(artifact))).changes, 1);
+  assert.deepEqual((await f.research.get(f.owner, first.id)).digest, artifact);
+  // The guarded write a late composer uses finds nothing to do; an unguarded one is refused.
+  assert.equal((await write('{}')).changes, 0);
+  for (const value of ['{}', null])
+    await assert.rejects(
+      async () =>
+        await f.app.ctx.state.transaction(
+          async (tx) =>
+            await tx.run('UPDATE research_cycles SET digest=? WHERE id=?', value, first.id),
+        ),
+      /A research cycle digest is immutable/,
+    );
+});
+
 test('research owner authorization, project scoping, selected prerequisite success and request replay survive restart', async (t) => {
   const f = await fixture(t);
   await f.definition();
@@ -975,6 +1009,8 @@ test('completing a cycle with nextWave create opens the approved plan as work an
   const successor = await f.research.get(f.owner, done.successorId);
   assert.equal(successor.workflow.state, 'defining');
   assert.equal(successor.name, 'Ordering effect');
+  assert.equal(successor.previousCycleId, done.id);
+  assert.equal(done.previousCycleId, null);
   const origin = successor.origin!;
   const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
   assert.deepEqual(

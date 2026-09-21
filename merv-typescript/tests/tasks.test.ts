@@ -14,7 +14,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
-import type { Caller, Workflows } from '@merv/contracts';
+import type { Caller, ReviewHistory, Workflows } from '@merv/contracts';
 
 async function fixture() {
   const path = mkdtempSync(join(tmpdir(), 'merv-task-test-'));
@@ -351,6 +351,256 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
       ).length,
       2,
     );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('a task rejected more than once carries every earlier round into the next work context', async () => {
+  const f = await fixture();
+  try {
+    const context = async (taskId: string, expectedRevision: number) =>
+      await f.tasks.context(f.producer, {
+        taskId,
+        purpose: 'work',
+        expectedRevision,
+        requestId: `context-${taskId}-${expectedRevision}`,
+      });
+    /** One delivery sent back with a finding against the first check. */
+    const reject = async (taskId: string, revision: number, round: number) => {
+      const pending = await f.tasks.submitDelivery(
+        f.producer,
+        confirmedDelivery(
+          {
+            taskId,
+            artifactIds: [(await f.delivery(`Delivery ${taskId} ${round}`)).id],
+            expectedRevision: revision,
+            requestId: `deliver-${taskId}-${round}`,
+          },
+          2,
+        ),
+      );
+      const review = await f.reviews.start(f.reviewer, pending.reviewId!);
+      const returned = await f.tasks.submitReview(f.reviewer, {
+        ...reviewedFindings(review),
+        findings: review.criteria.map((_, index) => ({
+          criterionNumber: index + 1,
+          status: index ? ('met' as const) : ('not_met' as const),
+          evidenceIds: review.artifactIds.slice(1, -1),
+          notes: `ROUND_${round}_FINDING_${index + 1}`,
+        })),
+        reviewId: review.id,
+        claimId: review.claimId!,
+        verdict: 'needs_changes',
+        notes: `ROUND_${round}_NOTES`,
+        expectedRevision: pending.workflow.revision,
+        requestId: `reject-${taskId}-${round}`,
+      });
+      return { review, returned };
+    };
+    const task = await f.create();
+    const first = await reject(task.id, task.workflow.revision, 1);
+    assert.deepEqual(first.returned.workflow.data.rejectedReviewIds, [first.review.id]);
+    // One rejection reads exactly as it did before rounds were carried: nothing is earlier yet.
+    const once = await context(task.id, first.returned.workflow.revision);
+    assert.match(once.prompt, /ROUND_1_NOTES/);
+    assert.doesNotMatch(once.prompt, /Earlier review rounds/);
+
+    const second = await reject(task.id, first.returned.workflow.revision, 2);
+    assert.deepEqual(second.returned.workflow.data.rejectedReviewIds, [
+      first.review.id,
+      second.review.id,
+    ]);
+    assert.equal(second.returned.workflow.data.revisionContext, 'ROUND_2_NOTES');
+    const twice = await context(task.id, second.returned.workflow.revision);
+    assert.ok(!twice.omitted.includes('feedback'));
+    assert.match(twice.prompt, /Pinned review assessment[^]*ROUND_2_FINDING_1/);
+    const history = JSON.parse(
+      twice.prompt.slice(twice.prompt.indexOf('{"rounds":')).split('\n')[0]!,
+    ) as ReviewHistory;
+    assert.equal(history.omittedRounds, 0);
+    assert.deepEqual(
+      history.rounds.map(({ round, reviewId, notes, unmet }) => ({
+        round,
+        reviewId,
+        notes,
+        unmet: unmet.map((finding) => finding.notes),
+      })),
+      [
+        {
+          round: 1,
+          reviewId: first.review.id,
+          notes: 'ROUND_1_NOTES',
+          unmet: ['ROUND_1_FINDING_1'],
+        },
+      ],
+    );
+    assert.ok(!JSON.stringify(history).includes(f.reviewer.actorId));
+
+    // A pass closes the loop without touching the list of rejected rounds.
+    const third = await f.tasks.submitDelivery(
+      f.producer,
+      confirmedDelivery(
+        {
+          taskId: task.id,
+          artifactIds: [(await f.delivery('Final delivery')).id],
+          expectedRevision: second.returned.workflow.revision,
+          requestId: 'deliver-final',
+        },
+        2,
+      ),
+    );
+    const last = await f.reviews.start(f.reviewer, third.reviewId!);
+    const done = await f.tasks.submitReview(f.reviewer, {
+      ...reviewedFindings(last),
+      reviewId: last.id,
+      claimId: last.claimId!,
+      verdict: 'pass',
+      notes: 'Verified.',
+      expectedRevision: third.workflow.revision,
+      requestId: 'accept-final',
+    });
+    assert.deepEqual(done.workflow.data.rejectedReviewIds, [first.review.id, second.review.id]);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('feedback that no longer fits a nearly full recipe is reported omitted, never cut', async () => {
+  const f = await fixture();
+  const disposers: (() => void)[] = [];
+  try {
+    const work = async (taskId: string, expectedRevision: number) =>
+      await f.tasks.context(f.producer, {
+        taskId,
+        purpose: 'work',
+        expectedRevision,
+        requestId: `context-${taskId}-${expectedRevision}`,
+      });
+    const typed = async (name: string, maxChars: number) => {
+      const definition = structuredClone(TASK_TYPES[0]);
+      disposers.push(
+        await f.tasks.registerType({
+          ...definition,
+          name,
+          recipe: { ...definition.recipe, maxChars },
+        }),
+      );
+      let task = await f.tasks.create(f.producer, {
+        title: 'Adder',
+        goal: 'Build an adder.',
+        checks: ['Adds two numbers.', 'Handles negative inputs.'],
+        briefId: f.brief.id,
+        requestId: `create-${name}`,
+        type: name,
+        typeVersion: definition.version,
+      });
+      for (const round of [1, 2]) {
+        const pending = await f.tasks.submitDelivery(
+          f.producer,
+          confirmedDelivery(
+            {
+              taskId: task.id,
+              artifactIds: [(await f.delivery(`Delivery ${round}`)).id],
+              expectedRevision: task.workflow.revision,
+              requestId: `deliver-${name}-${round}`,
+            },
+            2,
+          ),
+        );
+        const review = await f.reviews.start(f.reviewer, pending.reviewId!);
+        task = await f.tasks.submitReview(f.reviewer, {
+          ...reviewedFindings(review),
+          reviewId: review.id,
+          claimId: review.claimId!,
+          verdict: 'needs_changes',
+          notes: `Round ${round} was not reproducible.`,
+          expectedRevision: pending.workflow.revision,
+          requestId: `reject-${name}-${round}`,
+        });
+      }
+      return await work(task.id, task.workflow.revision);
+    };
+    // Twice rejected under a roomy copy of the default recipe, everything fits.
+    const roomy = await typed('task.roomy', 48_000);
+    assert.ok(!roomy.omitted.includes('feedback'));
+    assert.match(roomy.prompt, /Pinned review assessment[^]*Earlier review rounds/);
+    // The same task under a budget 200 characters short of that: Context Builder drops an optional
+    // section whole. The worker is told feedback is missing and can still read every round with
+    // review.get; a half-cut assessment would mislead instead.
+    const budget = roomy.prompt.length - 200;
+    const tight = await typed('task.tight', budget);
+    assert.ok(tight.omitted.includes('feedback'));
+    assert.doesNotMatch(tight.prompt, /Pinned review assessment|Earlier review rounds/);
+    assert.ok(tight.prompt.length <= budget);
+  } finally {
+    for (const dispose of disposers) dispose();
+    await f.cleanup();
+  }
+});
+
+test('a task sent back before rounds were recorded keeps that round at its next rejection', async () => {
+  const f = await fixture();
+  try {
+    const task = await f.create();
+    const deliver = async (revision: number, round: number) =>
+      await f.tasks.submitDelivery(
+        f.producer,
+        confirmedDelivery(
+          {
+            taskId: task.id,
+            artifactIds: [(await f.delivery(`Delivery ${round}`)).id],
+            expectedRevision: revision,
+            requestId: `deliver-${round}`,
+          },
+          2,
+        ),
+      );
+    const reject = async (pending: Awaited<ReturnType<typeof deliver>>, round: number) => {
+      const review = await f.reviews.start(f.reviewer, pending.reviewId!);
+      const returned = await f.tasks.submitReview(f.reviewer, {
+        ...reviewedFindings(review),
+        reviewId: review.id,
+        claimId: review.claimId!,
+        verdict: 'needs_changes',
+        notes: `LEGACY_ROUND_${round}`,
+        expectedRevision: pending.workflow.revision,
+        requestId: `reject-${round}`,
+      });
+      return { review, returned };
+    };
+    const first = await reject(await deliver(task.workflow.revision, 1), 1);
+    // The record as an older server left it: one round in revisionContext and reviewId, no list.
+    await f.state.transaction(async (tx) => {
+      const row = (await tx.get<{ data_json: string }>(
+        'SELECT data_json FROM wf_instances WHERE id=?',
+        task.id,
+      ))!;
+      const { rejectedReviewIds: _dropped, ...legacy } = JSON.parse(row.data_json) as Record<
+        string,
+        unknown
+      >;
+      await tx.run(
+        'UPDATE wf_instances SET data_json=? WHERE id=?',
+        JSON.stringify(legacy),
+        task.id,
+      );
+    });
+    const legacy = await f.tasks.get(f.producer, task.id);
+    assert.equal(legacy.workflow.data.rejectedReviewIds, undefined);
+    const context = await f.tasks.context(f.producer, {
+      taskId: task.id,
+      purpose: 'work',
+      expectedRevision: legacy.workflow.revision,
+      requestId: 'legacy-context',
+    });
+    assert.match(context.prompt, /LEGACY_ROUND_1/);
+    assert.doesNotMatch(context.prompt, /Earlier review rounds/);
+    const second = await reject(await deliver(legacy.workflow.revision, 2), 2);
+    assert.deepEqual(second.returned.workflow.data.rejectedReviewIds, [
+      first.review.id,
+      second.review.id,
+    ]);
   } finally {
     await f.cleanup();
   }
