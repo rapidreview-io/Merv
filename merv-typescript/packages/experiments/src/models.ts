@@ -14,6 +14,8 @@ export interface ExperimentCreate {
   dependsOn?: string[];
   /** Omission preserves the original scratch program and command hashes. */
   workspace?: 'none' | 'git';
+  /** A Git task among dependsOn whose accepted delivered commit is the base of the checkout. */
+  baseTaskId?: string;
   requestId: string;
 }
 export interface ExperimentAttach {
@@ -99,6 +101,8 @@ export interface Experiment {
   testedClaimIds: string[];
   /** Present only when explicitly created with the Git program. */
   workspace?: 'git';
+  /** Present only when the Git checkout starts from that task's delivered commit. */
+  baseTaskId?: string;
   workflow: WorkflowSnapshot;
   attempt: ExperimentAttempt;
   attempts: ExperimentAttempt[];

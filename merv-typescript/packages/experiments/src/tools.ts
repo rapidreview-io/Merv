@@ -20,7 +20,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.create',
         description:
-          'Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Reuse the same requestId and input to recover a committed response.',
+          'Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace "git" (requires Code) runs the experiment in a private Git checkout; with it, optional baseTaskId names a Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of that checkout in place of the central head. Reuse the same requestId and input to recover a committed response.',
         inputSchema: experimentCreateSchema,
         handler: async (caller: Caller, input: ExperimentCreate) =>
           await experiments.create(caller, input),

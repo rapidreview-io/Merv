@@ -177,6 +177,8 @@ interface TaskLeaseRow {
 /** What only a Git task's producer must know; the published recipes stay as they are. */
 const GIT_DELIVERY =
   'This is a Git task: work in the private Git checkout prepared for this assignment. Record the work with code.commit (expectedHead is the HEAD of your local checkout), wait until code.operation reports it succeeded, then pass that operation’s commandId to task.submit_delivery. The commit must be your own, made in this assignment: if an earlier worker committed but did not deliver, commit again, which succeeds even when nothing changed. artifactIds may be empty, and a met confirmation that cites no evidenceIds is backed by the delivered commit.';
+const GIT_REVIEW =
+  'This is a Git task: the read-only checkout prepared for this assignment is pinned to the exact delivered commit named by the ‘Delivered commit’ record in your evidence; do not substitute another branch or a newer head. Cite that record’s artifact id in the findings the commit supports. Only this leased review, working in that checkout, can pass the task.';
 const normalized = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
@@ -434,6 +436,8 @@ DROP TABLE task_leases_backup;`,
       'Review is already claimed or no longer current',
       409,
     );
+    if (taskWorkspace(snapshot.version) !== 'none')
+      await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
     return 'reviewer';
   }
@@ -673,7 +677,10 @@ DROP TABLE task_leases_backup;`,
             ...(JSON.parse(row.delivery_ids) as string[]).map((id) => ({
               kind: 'artifact',
               id,
-              label: 'Submitted delivery',
+              label:
+                id === snapshot.data.deliveryCodeArtifactId
+                  ? 'Delivered commit'
+                  : 'Submitted delivery',
             })),
             ...(row.review_id
               ? [{ kind: 'review', id: row.review_id, label: 'Current independent review' }]
@@ -815,6 +822,12 @@ DROP TABLE task_leases_backup;`,
       context.input as unknown as Omit<TaskReview, 'requestId'> | undefined,
       context.tx,
     );
+    // Only a proposed verdict asks Code: the committing transition always carries its input, so
+    // this is re-checked there, while guidance read with Code unloaded still answers.
+    if (context.input && taskWorkspace(context.snapshot.version) !== 'none') {
+      await this.reviewCommit(context.caller, context.snapshot, review, context.tx);
+      if (context.input.verdict === 'pass') await this.checkoutReviewer(context, review);
+    }
     if (context.input && context.transition) {
       const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
         context.input.verdict as 'pass' | 'needs_changes' | 'fail'
@@ -825,6 +838,74 @@ DROP TABLE task_leases_backup;`,
         'The transition must match the submitted verdict',
       );
     }
+  }
+
+  /**
+   * The commit under review is re-derived from Code on every admission and verdict, never trusted
+   * from the record alone: the receipt must still be the one the delivery sealed, and the review
+   * must pin the rendered record of it. The producing revision is the stored one, because a
+   * reissued review advances the task's revision without a new delivery.
+   */
+  private async reviewCommit(
+    caller: Caller,
+    snapshot: WorkflowSnapshot,
+    review: ReviewRequest,
+    tx: Transaction,
+  ): Promise<string> {
+    const code = this.requireCode();
+    const delivered = snapshot.data.deliveryCode as unknown as TaskDeliveryCode | undefined;
+    const recordId = snapshot.data.deliveryCodeArtifactId;
+    check(
+      delivered?.ref?.kind === 'code-commit' &&
+        typeof recordId === 'string' &&
+        review.artifactIds.includes(recordId),
+      'task_commit_required',
+      'This Git task’s review does not pin a delivered commit',
+      409,
+    );
+    const capture = await code.capture(caller, delivered.ref, tx),
+      p = capture.provenance;
+    check(
+      p.projectId === caller.projectId &&
+        p.instanceId === snapshot.id &&
+        p.sessionId === delivered.sessionId &&
+        p.revision === delivered.revision &&
+        p.workflow.name === 'task' &&
+        taskWorkspace(p.workflow.version) !== 'none' &&
+        p.workflow.state === 'in_progress' &&
+        !p.readOnly &&
+        capture.status === 'ready' &&
+        capture.workspace?.headOid === delivered.headOid,
+      'task_commit_provenance',
+      'The delivered commit no longer matches the receipt its delivery sealed',
+      409,
+    );
+    return delivered.headOid;
+  }
+
+  /**
+   * A Git task passes only from the leased reviewer of this review. Its runner prepared the
+   * read-only checkout at the frozen delivered commit and refuses to launch without the objects,
+   * so an actor with no checkout at all — an interactive reviewer — may return or fail the task
+   * but cannot accept a commit it could not have fetched.
+   */
+  private async checkoutReviewer(
+    { caller, snapshot, tx }: WorkflowCheckContext,
+    review: ReviewRequest,
+  ): Promise<void> {
+    check(
+      caller.session,
+      'task_commit_unfetched',
+      'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task',
+      409,
+    );
+    const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
+    check(
+      lease.purpose === 'review' && lease.review_id === review.id,
+      'stale_lease',
+      'This worker does not hold the lease of the current review',
+      409,
+    );
   }
 
   async registerType(definition: TaskTypeDefinition): Promise<() => void> {
@@ -1383,7 +1464,13 @@ DROP TABLE task_leases_backup;`,
       context.tx,
       true,
     );
-    if (purpose === 'work' && taskWorkspace(facts.workflow.version) !== 'none') this.requireCode();
+    // An assignment check may answer 503 as a blocker, so the Code gates live here and never in
+    // the action rules a bare task.get evaluates: a stored Git task stays readable without Code.
+    if (taskWorkspace(facts.workflow.version) !== 'none') {
+      if (facts.review)
+        await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
+      else this.requireCode();
+    }
     this.contextType({ type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
     return { ...facts, purpose };
   }
@@ -1417,9 +1504,9 @@ DROP TABLE task_leases_backup;`,
         ? 'Claim the review with review.start, then refresh workflow.assignment for your current claim before assessing or submitting. Reading or beginning this assignment does not claim the review.'
         : type.definition.recipe.outputInstructions +
           // A brief the caller supplied never carries these words, so the assignment always does.
-          (purpose === 'work' && taskWorkspace(task.workflow.version) !== 'none'
-            ? ` ${GIT_DELIVERY}`
-            : '');
+          (taskWorkspace(task.workflow.version) === 'none'
+            ? ''
+            : ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}`);
     return {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
@@ -1480,12 +1567,53 @@ DROP TABLE task_leases_backup;`,
             ]),
           ].sort(),
       dependencies: (dependencies ?? []).map((dependency) => dependency.id).sort(),
+      // What the runner bases the checkout on: the reviewer's on exactly the delivered commit, a
+      // based producer's on the commit its accepted prerequisite delivered.
+      ...(taskWorkspace(snapshot.version) === 'none'
+        ? {}
+        : snapshot.state === 'in_review' && review
+          ? { code: await this.reviewCommit(caller, snapshot, review, tx) }
+          : taskWorkspace(snapshot.version) === 'reference'
+            ? { base: await this.baseCommit(caller, snapshot, tx) }
+            : {}),
       ...((await this.isProducer(caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
       ...(review ? { reviewId: review.id } : {}),
       ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId
         ? { claimId: review.claimId }
         : {}),
     };
+  }
+
+  /**
+   * Only an accepted task's commit is a base: done is terminal, so the OID a persistent checkout
+   * fixes at its first launch can never move under the work built on it.
+   */
+  private async baseCommit(
+    caller: Caller,
+    snapshot: WorkflowSnapshot,
+    tx: Transaction,
+  ): Promise<string> {
+    const baseTaskId = snapshot.data.baseTaskId;
+    const base =
+      typeof baseTaskId === 'string'
+        ? await tx.get<{ id: string }>(
+            'SELECT id FROM tasks WHERE id = ? AND project_id = ?',
+            baseTaskId,
+            caller.projectId,
+          )
+        : undefined;
+    const delivered = base ? await this.workflows.get(caller, base.id, tx) : undefined;
+    const headOid = (delivered?.data.deliveryCode as unknown as TaskDeliveryCode | undefined)
+      ?.headOid;
+    check(
+      delivered?.state === 'done' &&
+        typeof headOid === 'string' &&
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(headOid),
+      'task_base_unavailable',
+      'The base task has not been accepted with a delivered commit',
+      409,
+    );
+    return headOid;
   }
 
   private async assignmentFacts(

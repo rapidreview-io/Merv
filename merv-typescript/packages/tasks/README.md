@@ -41,6 +41,13 @@ failure. Task reads include `dependencies` and `dependents`; assignment context
 includes forward prerequisites, while reverse links remain live navigation data.
 See [dependency behavior and parity](../../docs/WORK_ITEM_DEPENDENCIES.md).
 
+`task.create` with `workspace: "git"` gives the producer a private Git checkout
+and lets it deliver a commit in place of, or beside, files; the reviewer's leased
+read-only checkout is pinned to that commit, and only that leased review can pass
+the task. `baseTaskId` bases the checkout on another Git task's accepted commit.
+Code is bound optionally: only Git tasks ask for it. See
+[delivering a commit](../../docs/STRUCTURED_TASK_EVIDENCE.md#delivering-a-commit).
+
 See [structured task evidence](../../docs/STRUCTURED_TASK_EVIDENCE.md) for the versioned contract, server-generated briefs, binary references, stable context replay and remaining review work.
 
 [Structured review assessments](../../docs/REVIEW_ASSESSMENTS.md) pin the verdict format, preserve explicit reviewer waivers and carry canonical findings into revision context. Guidance and commands use the same expected-revision and assessment guards.

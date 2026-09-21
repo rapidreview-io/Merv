@@ -4,11 +4,12 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Caller } from '@merv/contracts';
+import type { Caller, TaskReview } from '@merv/contracts';
 import type { ResearchRecord } from '@merv/research/types';
 import type { Reflection } from '@merv/reflections/types';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
+import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext, enabled: boolean) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-optional-code-'));
@@ -193,6 +194,34 @@ test('server boots without Code and completes no-code research after reflection 
   await assert.rejects(async () => await f.experiment('Needs-code', 'git'), {
     code: 'code_unavailable',
   });
+  // Only a Git task asks for Code: a task that delivers files runs to done without it.
+  const task = { title: 'Notes', goal: 'Write the notes.', checks: ['The notes exist'] };
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.tasks.create(f.owner, { ...task, workspace: 'git', requestId: 'git-task' }),
+    { code: 'code_unavailable' },
+  );
+  const scratchTask = await f.app.ctx.tasks.create(f.owner, { ...task, requestId: 'scratch-task' });
+  const delivered = await f.app.ctx.tasks.submitDelivery(f.owner, {
+    ...confirmedDelivery({ taskId: scratchTask.id, artifactIds: [f.source.id] }),
+    expectedRevision: 0,
+    requestId: 'scratch-delivery',
+  });
+  const claimed = await f.app.ctx.reviews.start(f.reviewer, delivered.reviewId!);
+  assert.equal(
+    (
+      await f.app.ctx.tasks.submitReview(f.reviewer, {
+        ...reviewedFindings(claimed),
+        reviewId: claimed.id,
+        claimId: claimed.claimId!,
+        verdict: 'pass',
+        notes: 'Read the notes against the check.',
+        expectedRevision: delivered.workflow.revision,
+        requestId: 'scratch-review',
+      } as TaskReview)
+    ).workflow.state,
+    'done',
+  );
 
   let record = await f.cycle();
   const wave = await f.app.ctx.reflections.get(f.owner, record.reflectionId!);
@@ -248,6 +277,13 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
   const git = await f.experiment('Git-work', 'git');
   const gitConsolidation = await f.consolidation('Git-consolidation');
   const scratch = await f.experiment('Scratch-work');
+  const gitTask = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Harness',
+    goal: 'Build the harness as a repository.',
+    checks: ['The harness runs'],
+    workspace: 'git',
+    requestId: 'git-task',
+  });
   const secret = `ms_${randomBytes(32).toString('base64url')}`;
   const session = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: scratch.id,
@@ -273,6 +309,10 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     await assert.rejects(async () => await f.app.ctx.workflows.assignment(f.owner, git.id), {
       code: 'code_unavailable',
     });
+    assert.equal((await f.app.ctx.tasks.get(f.owner, gitTask.id)).workspace, 'git');
+    await assert.rejects(async () => await f.app.ctx.workflows.assignment(f.owner, gitTask.id), {
+      code: 'code_unavailable',
+    });
     await assert.rejects(
       async () => await f.app.ctx.workflows.assignment(f.owner, gitConsolidation.id),
       {
@@ -293,6 +333,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
 
     await f.app.setEnabled('code', true);
     assert.equal(f.app.ctx.experiments, providers.experiments);
+    assert.match((await f.app.ctx.workflows.assignment(f.owner, gitTask.id)).brief, /Git task/);
     assert.equal(
       (await f.app.ctx.workflows.assignment(f.owner, git.id)).context?.type,
       'experiment.design',

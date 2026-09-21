@@ -128,6 +128,12 @@
       "version": 6,
       "fingerprint": "d8feae5424eb44f3a2c580f733bc539ba3f4f750537a4ec76d88924243604d6b",
       "published": false
+    },
+    {
+      "name": "experiment",
+      "version": 7,
+      "fingerprint": "4483c02ee81e0cba56d625971cabfda401b87cd61996f609e21f8961b91b24db",
+      "published": false
     }
   ],
   "policies": [
@@ -553,6 +559,34 @@
       "version": 6,
       "state": "running",
       "fingerprint": "6e698abc07bae5520280e25a3797f8bb1717f264e7222b42c1e50862c08d01d4",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 7,
+      "state": "design_review",
+      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 7,
+      "state": "experiment_review",
+      "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 7,
+      "state": "planned",
+      "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
+      "published": false
+    },
+    {
+      "workflow": "experiment",
+      "version": 7,
+      "state": "running",
+      "fingerprint": "2c3c0918fa14c2c3b55fa55738a74bac744197196834479696e683686cb98d17",
       "published": false
     }
   ],

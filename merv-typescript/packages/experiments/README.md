@@ -94,7 +94,9 @@ selects version 2: scratch planning/design review, persistent private execution,
 and read-only ephemeral attempt review. Result submission pins its actual
 worker's future final capture. Review dispatch waits for that exact observation,
 then freezes its head OID as `reference:code`; missing code never falls back to
-central. Code supplies the historical reader without a direct Experiments
+central. With `baseTaskId`, a Git task among `dependsOn`, the persistent checkout
+starts from that task's accepted delivered commit (`reference:base`, version 7)
+in place of the central head. Code supplies the historical reader without a direct Experiments
 import of Sessions or Runner. The machine configuration owns repository paths.
 No cloud execution, object transport or Git publication is implied. See
 [research inputs and capture provenance](../../docs/RESEARCH_INPUTS.md). See the [implemented contract](../../docs/EXPERIMENTS.md),

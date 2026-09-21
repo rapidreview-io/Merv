@@ -1,27 +1,27 @@
 {
-  "snapshot": "2026-09-17",
+  "snapshot": "2026-09-21",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 58,
+  "pluginCount": 60,
   "serviceProviders": 26,
-  "toolAdapters": 14,
+  "toolAdapters": 16,
   "uiAdapters": 16,
   "apiAdapters": 2,
-  "defaultEntries": 53,
-  "apiEntries": 38,
-  "serverPlugins": 57,
+  "defaultEntries": 54,
+  "apiEntries": 39,
+  "serverPlugins": 59,
   "machinePlugins": 1,
-  "directDependencyCount": 146,
-  "optionalDependencyCount": 6,
+  "directDependencyCount": 156,
+  "optionalDependencyCount": 10,
   "directConsumers": {
     "api": 3,
-    "artifacts": 12,
+    "artifacts": 13,
     "blobs": 1,
     "claims": 4,
-    "code": 6,
+    "code": 7,
     "consolidation": 3,
     "contextBuilder": 4,
     "domainEvents": 2,
-    "experiments": 3,
+    "experiments": 4,
     "feed": 2,
     "identity": 1,
     "knowledge": 3,
@@ -31,14 +31,14 @@
     "research": 2,
     "reviews": 7,
     "runner": 0,
-    "sandboxes": 1,
-    "scope": 20,
-    "sessions": 3,
+    "sandboxes": 2,
+    "scope": 21,
+    "sessions": 4,
     "state": 17,
-    "tasks": 3,
-    "tools": 17,
+    "tasks": 4,
+    "tools": 19,
     "ui": 16,
-    "workflows": 7
+    "workflows": 8
   },
   "plugins": [
     {
@@ -400,7 +400,8 @@
         "tasks",
         "experiments",
         "artifacts",
-        "reviews"
+        "reviews",
+        "workflows"
       ],
       "optional": [
         "code"
@@ -566,7 +567,10 @@
         "paper",
         "reflections",
         "knowledge",
-        "consolidation"
+        "consolidation",
+        "tasks",
+        "experiments",
+        "artifacts"
       ],
       "kind": "service",
       "runtime": "server",
@@ -666,6 +670,20 @@
       "defaultConfiguration": false
     },
     {
+      "plugin": "merv-sandboxes-tools",
+      "source": "packages/sandboxes/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "sandboxes",
+        "tools",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
       "plugin": "merv-sandboxes-ui",
       "source": "packages/sandboxes/src/ui.ts",
       "provides": [],
@@ -749,6 +767,19 @@
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-sessions-tools",
+      "source": "packages/sessions/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "sessions",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
       "plugin": "merv-sessions-ui",
       "source": "packages/sessions/src/ui.ts",
       "provides": [],
@@ -813,7 +844,9 @@
         "reviews",
         "contextBuilder"
       ],
-      "optional": [],
+      "optional": [
+        "code"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true

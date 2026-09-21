@@ -258,6 +258,9 @@ export class ExperimentService implements Experiments {
         createdAt: row.created_at,
         testedClaimIds: JSON.parse(row.tested_claim_ids),
         ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
+        ...(typeof workflow.data.baseTaskId === 'string'
+          ? { baseTaskId: workflow.data.baseTaskId }
+          : {}),
         workflow,
         attempt,
         attempts,
@@ -322,6 +325,19 @@ export class ExperimentService implements Experiments {
             'Experiment prerequisites must be tasks; order two experiments with a task between them',
           );
         }
+        check(
+          input.baseTaskId === undefined || input.workspace === 'git',
+          'invalid_workspace',
+          'baseTaskId names the base of a Git workspace; create the experiment with workspace "git"',
+        );
+        // A prerequisite succeeds before work starts, so the base commit is final by then.
+        check(
+          input.baseTaskId === undefined ||
+            (input.dependsOn.includes(input.baseTaskId) &&
+              (await this.workflows.get(caller, input.baseTaskId, tx)).data.workspace === 'git'),
+          'invalid_workspace_base',
+          'baseTaskId must be a Git task among dependsOn',
+        );
         const owner = await this.scope.authorityActor(caller, tx);
         check(
           input.workspace !== 'git' || this.code,
@@ -330,7 +346,7 @@ export class ExperimentService implements Experiments {
           503,
         );
         const workflow = await (
-          await this.program.handleFor(programVersion(input.workspace))
+          await this.program.handleFor(programVersion(input.workspace, input.baseTaskId))
         ).start(
           caller,
           {
@@ -338,7 +354,10 @@ export class ExperimentService implements Experiments {
             requestId: `experiment:create:${caller.actorId}:${input.requestId}`,
             dependsOn: input.dependsOn,
             // What waits on this experiment names it, so the instance carries the name.
-            data: { name: input.name },
+            data: {
+              name: input.name,
+              ...(input.baseTaskId === undefined ? {} : { baseTaskId: input.baseTaskId }),
+            },
           },
           tx,
         );

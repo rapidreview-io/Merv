@@ -5,7 +5,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
-import type { Caller, Data, SessionWorkspace, Task, TaskDelivery } from '@merv/contracts';
+import type {
+  Caller,
+  Data,
+  SessionWorkspace,
+  Task,
+  TaskDelivery,
+  TaskReview,
+} from '@merv/contracts';
 import { PostgresState, SqliteState } from '@merv/state';
 import { Pool } from 'pg';
 import { ProjectScope } from '@merv/scope';
@@ -97,6 +104,48 @@ async function fixture(t: TestContext, postgres = false) {
     return { session, control, workspace, worker: await sessions.authenticate(secret) };
   };
   type Lease = Awaited<ReturnType<typeof lease>>;
+  /** A leased reviewer; the runner attaches its read-only checkout at the frozen reference. */
+  const leaseReview = async (task: Task) => {
+    const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    const session = await sessions.offer(reviewer, {
+      instanceId: task.id,
+      expectedRevision: task.workflow.revision,
+      runnerId: 'task-git-test',
+      requestId: request(),
+      secret,
+    });
+    const control = { sessionId: session.id, runnerId: 'task-git-test', hostRef: 'review-launch' };
+    const checkout = (baseOid: string): SessionWorkspace => ({
+      repositoryId: 'runner-private-repository',
+      workspaceId: `task-reviews-${session.id}`,
+      mode: 'ephemeral',
+      branch: null,
+      baseOid,
+      headOid: baseOid,
+      stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+    });
+    return { session, control, checkout, worker: await sessions.authenticate(secret) };
+  };
+  const verdict = async (caller: Caller, task: Task, value: 'pass' | 'needs_changes') => {
+    const review = await reviews.get(caller, task.reviewId!);
+    const input = {
+      ...reviewedFindings(review),
+      reviewId: review.id,
+      claimId: review.claimId!,
+      verdict: value,
+      notes: 'Checked out the delivered commit and ran the harness.',
+      expectedRevision: task.workflow.revision,
+      requestId: request(),
+    } as Data;
+    return caller.session
+      ? await run(
+          caller,
+          'review.submit',
+          input,
+          async (worker, bound) => await tasks.submitReview(worker, bound as unknown as TaskReview),
+        )
+      : await tasks.submitReview(caller, input as unknown as TaskReview);
+  };
   const commit = async (held: Lease, expectedHead = held.workspace.baseOid) =>
     (
       await run(
@@ -136,8 +185,8 @@ async function fixture(t: TestContext, postgres = false) {
       { requestId: request(), ...input },
       async (caller, bound) => await tasks.submitDelivery(caller, bound as unknown as TaskDelivery),
     );
-  const release = async (sessionId: string) => {
-    await sessions.release(source, { sessionId, runnerId: 'task-git-test' });
+  const release = async (sessionId: string, caller = source) => {
+    await sessions.release(caller, { sessionId, runnerId: 'task-git-test' });
     await events.drain();
   };
   t.after(async () => {
@@ -173,6 +222,8 @@ async function fixture(t: TestContext, postgres = false) {
     create,
     run,
     lease,
+    leaseReview,
+    verdict,
     commit,
     receipt,
     deliver,
@@ -502,4 +553,136 @@ async function pinnedDelivery(t: TestContext, postgres: boolean) {
     task.briefId,
     ...again.deliveryIds,
   ]);
+}
+
+for (const postgres of [false, true])
+  test(
+    `A Git task passes only from the leased review pinned to its delivered commit, which later work builds on (${postgres ? 'PostgreSQL' : 'SQLite'})`,
+    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
+    async (t) => await pinnedReview(t, postgres),
+  );
+
+async function pinnedReview(t: TestContext, postgres: boolean) {
+  const f = await fixture(t, postgres);
+  const task = await f.create({ workspace: 'git' });
+  const based = await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] });
+  const relations = await f.workflows.dependencies(f.source, based.id);
+  assert.deepEqual(
+    relations.dependencies.map((dependency) => dependency.id),
+    [task.id],
+  );
+  // Until the base is accepted the dependent work is not assignable at all.
+  await assert.rejects(async () => await f.lease(based), { code: 'dependencies_pending' });
+
+  const held = await f.lease(task);
+  const commandId = await f.commit(held);
+  await f.receipt(held, commandId);
+  const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+  await f.release(held.session.id);
+  assert.ok(
+    delivered.guidance.references.some(
+      (reference) =>
+        reference.id === delivered.deliveryCodeArtifactId && reference.label === 'Delivered commit',
+    ),
+  );
+
+  // A reissue advances the task's revision without a new delivery; the commit stays reviewable.
+  const reissued = await f.tasks.reissueReview(f.source, {
+    taskId: task.id,
+    expectedRevision: delivered.workflow.revision,
+    reason: 'The first request named the wrong reviewer pool.',
+    requestId: f.request(),
+  });
+  assert.equal(reissued.workflow.revision, delivered.workflow.revision + 1);
+  assert.deepEqual(reissued.deliveryCode, delivered.deliveryCode);
+
+  // An interactive reviewer has no checkout: it may return the task but never pass it.
+  const claimed = await f.reviews.start(f.reviewer, reissued.reviewId!);
+  assert.ok(claimed.artifactIds.includes(delivered.deliveryCodeArtifactId!));
+  await assert.rejects(async () => await f.verdict(f.reviewer, reissued, 'pass'), {
+    code: 'task_commit_unfetched',
+  });
+  assert.deepEqual(
+    (
+      await f.workflows.evaluate(f.reviewer, task.id, {
+        action: 'submit_review',
+        input: {
+          ...reviewedFindings(claimed),
+          reviewId: claimed.id,
+          claimId: claimed.claimId!,
+          verdict: 'pass',
+          notes: 'Looks right.',
+        },
+      })
+    ).blockers.map((blocker) => blocker.code),
+    ['task_commit_unfetched'],
+  );
+  const returned = await f.verdict(f.reviewer, reissued, 'needs_changes');
+  assert.equal(returned.workflow.state, 'in_progress');
+
+  const successor = await f.lease(returned);
+  const next = await f.commit(successor, oid('b'));
+  await f.receipt(successor, next, oid('d'));
+  const again = await f.deliver(successor, {
+    artifactIds: [],
+    commandId: next,
+    confirmations: met(),
+  });
+  await f.release(successor.session.id);
+
+  // The leased reviewer's frozen reference is the new head, and no other base attaches.
+  const review = await f.leaseReview(again);
+  assert.equal(review.session.execution.references.code, oid('d'));
+  assert.equal(review.session.execution.policy.readOnly, true);
+  assert.match(review.session.assignment.brief, /pinned to the exact delivered commit/);
+  await assert.rejects(
+    async () =>
+      await f.sessions.attach(f.reviewer, {
+        ...review.control,
+        workspace: review.checkout(oid('b')),
+      }),
+    { code: 'workspace_base_conflict' },
+  );
+  await f.sessions.attach(f.reviewer, { ...review.control, workspace: review.checkout(oid('d')) });
+
+  // Without Code the stored record still reads, but no verdict and no assignment is admitted.
+  f.unbindCode();
+  const unloaded = await f.tasks.get(f.source, task.id);
+  assert.deepEqual(unloaded.deliveryCode, again.deliveryCode);
+  await assert.rejects(async () => await f.verdict(review.worker, again, 'pass'), {
+    code: 'code_unavailable',
+  });
+  const rebind = f.tasks.bindCode(f.code);
+  t.after(rebind);
+
+  const done = await f.verdict(review.worker, again, 'pass');
+  assert.equal(done.workflow.state, 'done');
+  await f.release(review.session.id, f.reviewer);
+
+  // The accepted commit is the frozen base of the task created on it.
+  const dependent = await f.lease(await f.tasks.get(f.source, based.id), oid('d'));
+  assert.equal(dependent.session.execution.references.base, oid('d'));
+  assert.equal(
+    (dependent.session.execution.policy.workspace as { base: string }).base,
+    'reference:base',
+  );
+  const other = await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] });
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  const offered = await f.sessions.offer(f.source, {
+    instanceId: other.id,
+    expectedRevision: other.workflow.revision,
+    runnerId: 'task-git-test',
+    requestId: f.request(),
+    secret,
+  });
+  await assert.rejects(
+    async () =>
+      await f.sessions.attach(f.source, {
+        sessionId: offered.id,
+        runnerId: 'task-git-test',
+        hostRef: 'launch',
+        workspace: { ...dependent.workspace, workspaceId: `tasks-${other.id}`, baseOid: oid('a') },
+      }),
+    { code: 'workspace_base_conflict' },
+  );
 }
