@@ -7,11 +7,18 @@ import { githubConfig } from './github-client.js';
 
 export const codePlugin = {
   name: 'merv-code',
-  inject: ['state', 'scope', 'sessions', 'artifacts'],
+  inject: ['state', 'scope', 'sessions', 'artifacts', 'workflows'],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.artifacts, githubConfig()),
+        new CodeService(
+          ctx.state,
+          ctx.scope,
+          ctx.sessions,
+          ctx.artifacts,
+          ctx.workflows,
+          githubConfig(),
+        ),
       );
       yield () => service.close();
       yield ctx.provide('code', service);

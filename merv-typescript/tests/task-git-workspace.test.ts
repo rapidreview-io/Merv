@@ -50,7 +50,7 @@ async function fixture(t: TestContext, postgres = false) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts));
+  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
   const unbindCode = tasks.bindCode(code);
   const boot = await scope.bootstrap({ projectName: 'Git tasks', actorName: 'Owner' });
   const source: Caller = {
@@ -672,8 +672,84 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
   const rebind = f.tasks.bindCode(f.code);
   t.after(rebind);
 
+  // A returned round accepted nothing; only the pass does.
+  await assert.rejects(async () => await f.code.unit(f.source, task.id), {
+    code: 'code_unit_not_found',
+  });
   const done = await f.verdict(review.worker, again, 'pass');
   assert.equal(done.workflow.state, 'done');
+
+  // The pass recorded the exact reviewed commit, written in the review's own transaction by a
+  // leased reviewer whose record had just ended. The task is version 4: every version records.
+  const pinned = await f.reviews.get(f.source, again.reviewId!);
+  const accepted = (await f.code.unit(f.source, task.id)).acceptance!;
+  assert.deepEqual(
+    { ...accepted, hash: '', acceptedAt: '' },
+    {
+      unitId: task.id,
+      hash: '',
+      acceptedAt: '',
+      terminalRevision: done.workflow.revision,
+      submissionRef: pinned.snapshotHash,
+      reviewRef: pinned.id,
+      acceptedBy: review.worker.actorId,
+      reference: oid('d'),
+      reviewAttached: true,
+      storage: 'legacy-local',
+    },
+  );
+  assert.equal((await f.code.unit(f.source, task.id)).base, null);
+  // A scratch task passed by hand records that it succeeded without code.
+  const scratch = await f.create();
+  const note = await f.artifacts.create(f.source, { title: 'Note', content: 'Evidence.' });
+  const handed = await f.tasks.submitDelivery(f.source, {
+    ...confirmedDelivery({ taskId: scratch.id, artifactIds: [note.id] }),
+    expectedRevision: 0,
+    requestId: f.request(),
+  });
+  await f.reviews.start(f.reviewer, handed.reviewId!);
+  const finished = await f.verdict(f.reviewer, handed, 'pass');
+  const plain = (await f.code.unit(f.source, scratch.id)).acceptance!;
+  assert.deepEqual(
+    [plain.reference, plain.reviewAttached, plain.storage, plain.acceptedBy],
+    [null, null, 'none', f.reviewer.actorId],
+  );
+
+  const accept = async (input: Data) =>
+    await f.state.transaction(
+      async (tx) =>
+        await f.code.acceptUnit(
+          f.reviewer,
+          input as unknown as Parameters<typeof f.code.acceptUnit>[1],
+          tx,
+        ),
+    );
+  const same = {
+    unitId: scratch.id,
+    terminalRevision: finished.workflow.revision,
+    submissionRef: plain.submissionRef,
+    reviewRef: plain.reviewRef,
+    codeRef: null,
+    reviewSessionId: null,
+  };
+  assert.deepEqual(await accept(same), plain, 'an equal acceptance replays');
+  await assert.rejects(async () => await accept({ ...same, reviewRef: 'another-review' }), {
+    code: 'code_acceptance_conflict',
+  });
+  // Neither a revision the unit did not succeed at, nor work that has not succeeded, nor
+  // another unit's commit can be accepted, whoever asks.
+  for (const refused of [
+    { ...same, terminalRevision: finished.workflow.revision - 1 },
+    { ...same, unitId: based.id, terminalRevision: 0 },
+    { ...same, codeRef: again.deliveryCode!.ref },
+  ])
+    await assert.rejects(async () => await accept(refused), {
+      code: 'code_acceptance_unverifiable',
+    });
+  assert.deepEqual((await f.code.unit(f.source, task.id)).acceptance, accepted);
+  const status = await f.code.status(f.source);
+  assert.equal(status.project, null);
+  assert.deepEqual(status.units.map((unit) => unit.unitId).sort(), [task.id, scratch.id].sort());
   await f.release(review.session.id, f.reviewer);
 
   // The accepted commit is the frozen base of the task created on it.

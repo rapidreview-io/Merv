@@ -16,6 +16,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkflowProvidedBlocker,
   type Workflows,
 } from '@merv/contracts';
 import type {
@@ -149,6 +150,11 @@ const uncountedOfferCodes = new Set([
   'invalid_deadline',
   'nested_session_offer',
   'agent_busy',
+  // A base that turned pending or contested between candidacy and the offer. The work is
+  // published as blocked by whoever derives bases, and nothing about the target is broken.
+  'code_base_pending',
+  'code_merge_required',
+  'code_dependencies_changed',
 ]);
 const releaseHoldSchema = z
   .object({
@@ -229,6 +235,7 @@ const stuckKinds: StuckKind[] = [
   'session_idle',
   'dispatch_held',
   'dispatch_failing',
+  'work_blocked',
   'ready_quiet',
   'dispatch_disabled',
   'no_live_runner',
@@ -918,6 +925,7 @@ export class SessionDispatch {
       dispatch: DispatchState;
       activity: Map<string, string>;
       admissible: Awaited<ReturnType<SessionDispatch['candidates']>>;
+      blockers: WorkflowProvidedBlocker[];
     },
   ): Promise<StuckReport> {
     const now = this.clock(),
@@ -981,6 +989,18 @@ export class SessionDispatch {
           : `Nothing yet: automatic dispatch tries again after ${backoffMs / 1000} seconds and holds the target at ${limits.maxLaunchFailures} failed attempts.`,
       });
     }
+    // Work its owner refuses to lease never becomes a candidate, so nothing above or below can
+    // see it. What the refusing plugin published is the only trace, and it is read from
+    // Workflows' own rows, so it is still here when that plugin is not.
+    for (const blocker of facts.blockers)
+      add({
+        kind: 'work_blocked',
+        instanceId: blocker.instanceId,
+        since: blocker.since,
+        code: blocker.code,
+        why: blocker.message,
+        next: blocker.next,
+      });
     for (const item of all) {
       const key = targetKey(item),
         operator = item.role === 'operator';
@@ -1086,6 +1106,7 @@ export class SessionDispatch {
         dispatch: await this.dispatch(caller.projectId, tx),
         activity: await this.hooks.activity(caller.projectId, tx),
         admissible: await this.candidates(caller, tx),
+        blockers: await this.workflows.blockers(caller, undefined, tx),
       });
     });
   }
@@ -1164,6 +1185,7 @@ export class SessionDispatch {
         dispatch,
         activity,
         admissible,
+        blockers: await this.workflows.blockers(caller, undefined, tx),
       });
       return {
         // One transaction, one moment: agents cannot report a lease the leases do not.

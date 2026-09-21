@@ -45,9 +45,13 @@ import type {
   WorkflowHistoryEntry,
   WorkflowExtendLimit,
   WorkflowLimitStatus,
+  WorkflowProvidedBlocker,
+  WorkflowProvidedBlockerInput,
+  WorkflowProviderRelations,
   ProcessGraph,
 } from '@merv/contracts';
 import { processGraph } from './process.js';
+import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
 import { workflowJson } from './json.js';
 import { canonical, fingerprint, validateDefinition } from './definition.js';
 import {
@@ -177,6 +181,24 @@ const migrations = [
     BEGIN SELECT RAISE(ABORT,'Workflow limit grants are immutable'); END;
   CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
     BEGIN SELECT RAISE(ABORT,'Workflow limit grants are retained'); END;
+`,
+  },
+  {
+    // The one workflow table that is rewritten and cleared: it mirrors what another plugin
+    // thinks now, and must stay readable and clearable while that plugin is unloaded.
+    version: 6,
+    postgres: postgresMigrations[6],
+    sql: `
+  CREATE TABLE wf_blockers (
+    project_id TEXT NOT NULL, instance_id TEXT NOT NULL, provider TEXT NOT NULL,
+    blocker_key TEXT NOT NULL, code TEXT NOT NULL, message TEXT NOT NULL,
+    status INTEGER NOT NULL CHECK (status BETWEEN 400 AND 599), next TEXT NOT NULL,
+    related_json TEXT NOT NULL, since TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY (instance_id,provider,blocker_key)
+  );
+  CREATE INDEX wf_blockers_project ON wf_blockers(project_id,provider);
+  CREATE TRIGGER wf_blockers_identity BEFORE UPDATE OF project_id,instance_id,provider,blocker_key ON wf_blockers
+    BEGIN SELECT RAISE(ABORT,'Workflow blocker identity is immutable'); END;
 `,
   },
 ];
@@ -508,6 +530,7 @@ export class WorkflowsService implements Workflows {
         { ...query, input },
         (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
         await limitStatuses(tx, installed?.policy, snapshot),
+        await readBlockers(tx, caller.projectId, snapshot.id),
       );
       if (installed) {
         await this.checkContext(
@@ -1394,6 +1417,53 @@ export class WorkflowsService implements Workflows {
     });
   }
 
+  async replaceBlockers(
+    input: {
+      projectId: string;
+      instanceId: string;
+      provider: string;
+      blockers: WorkflowProvidedBlockerInput[];
+    },
+    tx: Transaction,
+  ): Promise<void> {
+    this.assertOpen();
+    const snapshot = await this.readSnapshot(tx, input.projectId, input.instanceId);
+    const stored = await tx.get<{ definition_json: string }>(
+      'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
+      snapshot.workflow,
+      snapshot.version,
+    );
+    check(stored, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+    await replaceBlockers(
+      tx,
+      input,
+      (JSON.parse(stored.definition_json) as WorkflowDefinition).terminal.includes(snapshot.state),
+    );
+  }
+
+  async blockers(
+    caller: Caller,
+    instanceId?: string,
+    transaction?: Transaction,
+  ): Promise<WorkflowProvidedBlocker[]> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      if (instanceId !== undefined) await this.readSnapshot(tx, caller.projectId, instanceId);
+      return await readBlockers(tx, caller.projectId, instanceId);
+    });
+  }
+
+  async dependencyRelations(
+    projectId: string,
+    instanceId: string,
+    tx: Transaction,
+  ): Promise<WorkflowProviderRelations | null> {
+    this.assertOpen();
+    return await providerRelations(tx, projectId, instanceId);
+  }
+
   async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
     requireDependencies((await this.dependencies(caller, instanceId, tx)).dependencies);
   }
@@ -1743,6 +1813,9 @@ export class WorkflowsService implements Workflows {
         before.state,
         data,
       );
+      // Ended work waits on nothing, and the provider that spoke may not be loaded to say so.
+      if (registered.definition.terminal.includes(after.state))
+        await clearBlockers(transaction, after.id);
       // Recorded on arrival, never from a read. A step that stays in the capped state (a
       // reissued review) is not a new arrival and says nothing new.
       if (after.state !== before.state)

@@ -94,7 +94,7 @@ const capabilities: Record<string, readonly string[]> = {
   feed: ['state', 'scope', 'artifacts'],
   identity: [],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
-  code: ['state', 'scope', 'sessions', 'artifacts'],
+  code: ['state', 'scope', 'sessions', 'artifacts', 'workflows'],
   runner: [],
   // A proxy for rows a service outside this process publishes: no Merv capability at all.
   sandboxes: [],

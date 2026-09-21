@@ -116,6 +116,7 @@ export type StuckKind =
   | 'session_idle'
   | 'dispatch_held'
   | 'dispatch_failing'
+  | 'work_blocked'
   | 'ready_quiet'
   | 'dispatch_disabled'
   | 'no_live_runner'

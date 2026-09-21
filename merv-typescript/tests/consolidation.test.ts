@@ -65,7 +65,15 @@ async function fixture(t: TestContext, github = false) {
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60000 }),
   );
   const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, gh ? githubConfig : undefined, gh?.fetcher),
+    new CodeService(
+      state,
+      scope,
+      sessions,
+      artifacts,
+      workflows,
+      gh ? githubConfig : undefined,
+      gh?.fetcher,
+    ),
   );
   const fixtureDefinition = {
     name: 'approved-reflection-fixture',

@@ -5,6 +5,12 @@ design, its own redesign, and a revision after the implementing engineer's objec
 It implements the owner's ten decisions recorded below and supersedes the first draft of this file. Nothing here is
 implemented until its stage says so.
 
+## Implementation status
+
+Stage S1 is being implemented in two parts. The first part is in the code: the opaque blocker projection `wf_blockers` with its reads in `workflow.status_and_next`, the overview and `session.stuck` (`work_blocked`); the four Code tables `code_projects`, `code_units`, `code_edges` and `code_operations` on both backends; `code.local.bind`, `code.unit.get` and `code.status`; and immutable acceptances written by Tasks and Experiments inside their successful review transactions, for every workflow version, labelled `legacy-local`. Base derivation, pinning in `lease.acquire`, `task@5` and `experiment@8` are the second part. The operator's view is in [CODE_OPERATIONS.md](CODE_OPERATIONS.md#units-acceptance-and-the-local-binding).
+
+Two choices differ from the text below and hold for S1. Whether a dependency without an acceptance carried code is read from the workflow version's persisted execution manifests (did any state declare a workspace), never from a loaded plugin, so the answer is the same with its owner unloaded. `code.local.bind` requires a signed-in human administrator and moves main only by compare-and-set, because decision 1 lets no agent move main.
+
 ## The owner's decisions
 
 1. One branch per unit of work. `main` is consolidated, reviewed research: it moves only at consolidation, and no

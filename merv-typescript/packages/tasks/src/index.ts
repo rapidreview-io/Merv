@@ -143,6 +143,8 @@ const taskVersion = (workspace: TaskCreate['workspace'], baseTaskId?: string): n
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
+/** What Tasks asks of Code; a test may bind exactly this much. */
+type TaskCode = Pick<Code, 'capture' | 'acceptUnit'>;
 interface TaskRow {
   id: string;
   project_id: string;
@@ -206,7 +208,7 @@ const configuration = z
 
 export class TaskService implements Tasks {
   private closed = false;
-  private code?: Pick<Code, 'capture'>;
+  private code?: TaskCode;
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -337,7 +339,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   /** The optional Cordis child owns this binding, not the task lifecycle. */
-  bindCode(code: Pick<Code, 'capture'>): () => void {
+  bindCode(code: TaskCode): () => void {
     check(!this.closed, 'tasks_closed', 'Tasks is closed', 503);
     const binding = Symbol('code');
     this.codeBinding = binding;
@@ -350,7 +352,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   /** Only a Git task asks for Code, so a scratch task never notices that it is unloaded. */
-  private requireCode(): Pick<Code, 'capture'> {
+  private requireCode(): TaskCode {
     check(this.code, 'code_unavailable', 'Git tasks require Code captures', 503);
     return this.code;
   }
@@ -2342,7 +2344,7 @@ DROP TABLE task_leases_backup;`,
         const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
           input.verdict
         ];
-        await (
+        const moved = await (
           await this.registration(current.version)
         ).transition(
           caller,
@@ -2405,6 +2407,26 @@ DROP TABLE task_leases_backup;`,
           },
           tx,
         );
+        // Every version records its success, so work created before automatic bases can still
+        // be built on. With Code unloaded nothing is recorded, and a scratch task is later read
+        // as code-less from its workflow version alone.
+        if (input.verdict === 'pass' && this.code)
+          await this.code.acceptUnit(
+            caller,
+            {
+              unitId: row.id,
+              terminalRevision: moved.revision,
+              submissionRef: review.snapshotHash,
+              reviewRef: review.id,
+              // The accept guard has just re-derived a Git task's delivered commit from Code.
+              codeRef:
+                taskWorkspace(current.version) === 'none'
+                  ? null
+                  : (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
+              reviewSessionId: caller.session?.id ?? null,
+            },
+            tx,
+          );
         await recorded(this.state, tx, caller, 'task.review_applied', row.id, {
           reviewId: submitted.id,
           verdict: submitted.verdict,

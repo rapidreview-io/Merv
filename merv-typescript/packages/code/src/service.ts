@@ -1,5 +1,5 @@
 import { createService, codeCommandCompletionSchema, MervError } from '@merv/contracts';
-import type { Artifacts, Scope, State } from '@merv/contracts';
+import type { Artifacts, Scope, State, Workflows } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { Code } from './types.js';
 import { CodeCommandService } from './commands.js';
@@ -9,6 +9,7 @@ import { CodeGitHubService } from './github.js';
 import type { GitHubConfig } from './github-client.js';
 import { CodeTransportService } from './transport.js';
 import { CodePublicationService } from './publications.js';
+import { CodeUnitService } from './units.js';
 import type {
   Caller,
   CodeCommandCompletion,
@@ -21,6 +22,7 @@ import { parseCodeInput } from './input.js';
 export class CodeService extends CodeCommandService implements Code {
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
+  private unitStore!: CodeUnitService;
   readonly github: CodeGitHubService;
   readonly transport: CodeTransportService;
   private publicationStore: CodePublicationService;
@@ -43,6 +45,7 @@ export class CodeService extends CodeCommandService implements Code {
     scope: Scope,
     sessions: Sessions,
     artifacts: Artifacts,
+    workflows: Workflows,
     github?: GitHubConfig,
     fetcher?: typeof fetch,
   ) {
@@ -60,6 +63,7 @@ export class CodeService extends CodeCommandService implements Code {
         this.proposalStore = await createService(
           new CodeProposalService(this, state, scope, sessions, artifacts),
         );
+        this.unitStore = await createService(new CodeUnitService(state, scope, workflows, this));
         await this.github.initialize();
         await this.transport.initialize();
         await this.publicationStore.initialize();
@@ -115,6 +119,21 @@ export class CodeService extends CodeCommandService implements Code {
   mergePublication(...args: Parameters<CodePublicationService['mergePublication']>) {
     return this.network(() => this.publicationStore.mergePublication(...args));
   }
+  async declareUnit(...args: Parameters<CodeUnitService['declareUnit']>) {
+    return await this.unitStore.declareUnit(...args);
+  }
+  async acceptUnit(...args: Parameters<CodeUnitService['acceptUnit']>) {
+    return await this.unitStore.acceptUnit(...args);
+  }
+  async bindLocal(...args: Parameters<CodeUnitService['bindLocal']>) {
+    return await this.unitStore.bindLocal(...args);
+  }
+  async unit(...args: Parameters<CodeUnitService['unit']>) {
+    return await this.unitStore.unit(...args);
+  }
+  async status(...args: Parameters<CodeUnitService['status']>) {
+    return await this.unitStore.status(...args);
+  }
   async proposal(...args: Parameters<CodeProposalService['proposal']>) {
     return await this.proposalStore.proposal(...args);
   }
@@ -125,6 +144,7 @@ export class CodeService extends CodeCommandService implements Code {
     this.publicationClosed = true;
     this.captureReader?.close();
     this.proposalStore?.close();
+    this.unitStore?.close();
     super.close();
     await this.github.close();
     await Promise.allSettled([...this.networkOperations]);

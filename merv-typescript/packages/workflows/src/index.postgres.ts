@@ -117,4 +117,25 @@ $merv$;
 CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
 FOR EACH ROW EXECUTE FUNCTION wf_limit_grants_no_delete_guard();
 `,
+  6: `
+CREATE TABLE wf_blockers (
+    project_id TEXT NOT NULL, instance_id TEXT NOT NULL, provider TEXT NOT NULL,
+    blocker_key TEXT NOT NULL, code TEXT NOT NULL, message TEXT NOT NULL,
+    status BIGINT NOT NULL CHECK (status BETWEEN 400 AND 599), next TEXT NOT NULL,
+    related_json TEXT NOT NULL, since TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY (instance_id,provider,blocker_key)
+  );
+  CREATE INDEX wf_blockers_project ON wf_blockers(project_id,provider);
+  CREATE OR REPLACE FUNCTION wf_blockers_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.instance_id IS DISTINCT FROM OLD.instance_id OR
+  NEW.provider IS DISTINCT FROM OLD.provider OR NEW.blocker_key IS DISTINCT FROM OLD.blocker_key THEN
+    RAISE EXCEPTION USING MESSAGE = 'Workflow blocker identity is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER wf_blockers_identity BEFORE UPDATE ON wf_blockers
+FOR EACH ROW EXECUTE FUNCTION wf_blockers_identity_guard();
+`,
 };

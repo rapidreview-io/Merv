@@ -1,4 +1,10 @@
-import { createService, MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import {
+  createService,
+  MervError,
+  type Caller,
+  type WorkflowPolicy,
+  type WorkflowProvidedBlockerInput,
+} from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -200,6 +206,7 @@ async function fixture(
   return {
     state,
     scope,
+    workflows,
     handle,
     owner,
     source,
@@ -883,6 +890,67 @@ test('a ready step nobody takes is quiet, an operator step included, and a faili
     [['ready_quiet', 1]],
     'the new revision only waits, as old as the machine clock that stamped it',
   );
+});
+
+for (const code of ['code_base_pending', 'code_merge_required', 'code_dependencies_changed'])
+  test(`a base that turns ${code} at the offer is not counted against the target`, async (t) => {
+    const f = await fixture(t, { maxLaunchFailures: 1 });
+    await f.sessions.heartbeatRunner(f.source, presence());
+    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.instance();
+    f.onBuild(() => {
+      throw new MervError(code, 'The base cannot be pinned yet', 409);
+    });
+    // With nothing else leasable the runner is told why; the target itself is left alone.
+    await assert.rejects(async () => await f.sessions.lease(f.source, auto()), { code });
+    assert.deepEqual(await f.holds(), []);
+    assert.deepEqual(await f.events('session.dispatch_held'), []);
+    f.onBuild();
+    assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  });
+
+test('work another plugin published a blocker for is named in the stuck report until it clears', async (t) => {
+  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  f.wallClock();
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  const publish = async (blockers: WorkflowProvidedBlockerInput[]) =>
+    await f.state.transaction(
+      async (tx) =>
+        await f.workflows.replaceBlockers(
+          { projectId: f.owner.projectId, instanceId: target.id, provider: 'probe', blockers },
+          tx,
+        ),
+    );
+  await publish([
+    {
+      key: 'merge',
+      code: 'code_merge_required',
+      message: 'Two accepted commits must be combined.',
+      status: 409,
+      next: 'Recreate the work on one of them.',
+    },
+  ]);
+  const report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.instanceId, item.code, item.why, item.next]),
+    [
+      [
+        'work_blocked',
+        target.id,
+        'code_merge_required',
+        'Two accepted commits must be combined.',
+        'Recreate the work on one of them.',
+      ],
+    ],
+  );
+  assert.equal(report.items[0].since, (await f.workflows.blockers(f.owner))[0].since);
+  assert.deepEqual([report.total, report.counts.work_blocked], [1, 1]);
+  const status = await f.sessions.projectStatus(f.owner);
+  assert.deepEqual(status.stuck, { total: 1, counts: report.counts });
+  await publish([]);
+  assert.deepEqual((await f.sessions.stuck(f.owner)).counts.work_blocked, 0);
 });
 
 test('the assembled application offers the stuck report as a read tool and the go-ahead as an admin tool, neither to a leased worker', async (t) => {

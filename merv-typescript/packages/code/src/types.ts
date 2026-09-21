@@ -13,6 +13,12 @@ import type {
   CodeCommitReceipt,
   SessionWorkspace,
   CodePublicationApi,
+  CodeLocalBindInput,
+  CodeProjectBinding,
+  CodeProjectStatus,
+  CodeUnit,
+  CodeUnitAcceptance,
+  CodeUnitAcceptInput,
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
@@ -97,7 +103,23 @@ export interface CodeCaptures {
   /** Historical, project-scoped immutable facts; never renders context or admits a new command. */
   capture(caller: Caller, ref: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture>;
 }
-export interface Code extends CodeCommands, CodeProposals, CodeCaptures, CodePublicationApi {
+/**
+ * Units, their acceptances and the project's local binding. The transaction-only methods are
+ * the owner contract: no tool route reaches them, and the owner has already checked authority.
+ */
+export interface CodeUnits {
+  declareUnit(caller: Caller, unitId: string, tx: Transaction): Promise<CodeUnit>;
+  acceptUnit(
+    caller: Caller,
+    input: CodeUnitAcceptInput,
+    tx: Transaction,
+  ): Promise<CodeUnitAcceptance>;
+  bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
+  unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
+  status(caller: Caller): Promise<CodeProjectStatus>;
+}
+export interface Code
+  extends CodeCommands, CodeProposals, CodeCaptures, CodeUnits, CodePublicationApi {
   readonly github: import('@merv/contracts').CodeGitHub;
   transportGrant(
     caller: Caller,

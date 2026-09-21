@@ -391,14 +391,13 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // A record page reads its record and the gate it stands at in one answer.
   for (const id of ['tasks', 'experiments'])
     assert.equal(shell.rows.find((entry) => entry.id === id)?.readable, true);
-  assert.deepEqual((await tool('ui.read', operator, { rowId: 'code' })).body.result, {
+  const emptyCode = {
     operations: [],
     proposals: [],
-  });
-  assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, {
-    operations: [],
-    proposals: [],
-  });
+    status: { project: null, units: [], blockers: [] },
+  };
+  assert.deepEqual((await tool('ui.read', operator, { rowId: 'code' })).body.result, emptyCode);
+  assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, emptyCode);
   assert.equal(shell.plugins.length, plugins(assets).length);
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
   // A reader sees the rows, and no row asks for a number it cannot answer for

@@ -51,8 +51,18 @@ export {
   codeCommitReceiptSchema,
   codeCommandCompletionSchema,
   codeCommandRecordSchema,
+  codeLocalBindInputSchema,
 } from './code.js';
 export type {
+  CodeUnitAcceptInput,
+  CodeUnitAcceptance,
+  CodeBasePin,
+  CodeUnit,
+} from './code-units.js';
+export type {
+  CodeLocalBindInput,
+  CodeProjectBinding,
+  CodeProjectStatus,
   CodeCommitInput,
   CodeCommitCommand,
   CodeCommitReceipt,
@@ -84,6 +94,10 @@ export type {
 export type {
   WorkflowReference,
   WorkflowBlocker,
+  WorkflowProvidedBlocker,
+  WorkflowProvidedBlockerInput,
+  WorkflowProviderDependency,
+  WorkflowProviderRelations,
   WorkflowActionStatus,
   WorkflowDecision,
   WorkflowLimitStatus,
@@ -98,6 +112,9 @@ export type {
 } from './workflow-guidance.js';
 import type {
   WorkflowReference,
+  WorkflowProvidedBlocker,
+  WorkflowProvidedBlockerInput,
+  WorkflowProviderRelations,
   WorkflowDecision,
   WorkflowLimitStatus,
   WorkflowOverview,
@@ -1161,6 +1178,35 @@ export interface Workflows {
    * declare: the grouping a research cycle's usage and budget are read over.
    */
   dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
+  /**
+   * A provider's whole current opinion of one instance: the keys given are written, its other
+   * keys for that instance are removed. Transaction-only, like releaseLease, so no tool route
+   * reaches it; an ended instance keeps none.
+   */
+  replaceBlockers(
+    input: {
+      projectId: string;
+      instanceId: string;
+      provider: string;
+      blockers: WorkflowProvidedBlockerInput[];
+    },
+    tx: Transaction,
+  ): Promise<void>;
+  /** Published blockers of one instance, or of the whole project when it is left out. */
+  blockers(
+    caller: Caller,
+    instanceId?: string,
+    tx?: Transaction,
+  ): Promise<WorkflowProvidedBlocker[]>;
+  /**
+   * The dependency edges a provider derives from, read inside its caller's transaction and
+   * under that caller's already-checked authority. Null when the project holds no such instance.
+   */
+  dependencyRelations(
+    projectId: string,
+    instanceId: string,
+    tx: Transaction,
+  ): Promise<WorkflowProviderRelations | null>;
 }
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';

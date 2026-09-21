@@ -61,7 +61,7 @@ async function fixture(t: TestContext) {
       sweepIntervalMs: 60_000,
     }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts));
+  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
   const boot = await scope.bootstrap({ projectName: 'Experiment assignments', actorName: 'Owner' });
   const source: Caller = {
     actorId: boot.actor.id,
@@ -1170,6 +1170,20 @@ test('Git Experiments keep the scratch program version and wait for their exact 
   assert.equal(
     done.submissions.find((entry) => entry.id === submission.id)!.manifestHash,
     submission.manifestHash,
+  );
+  // The acceptance names the submitted commit through the reference its submission stored:
+  // the review capture itself is no longer readable once the experiment is complete.
+  const accepted = (await f.code.unit(f.source, experiment.id)).acceptance!;
+  assert.deepEqual(
+    [
+      accepted.terminalRevision,
+      accepted.submissionRef,
+      accepted.reviewRef,
+      accepted.reference,
+      accepted.reviewAttached,
+      accepted.storage,
+    ],
+    [done.workflow.revision, submission.id, review.id, final.headOid, true, 'legacy-local'],
   );
   await f.release(reviewOffer.session.id);
   await f.sessions.workspaceResult(f.source, { ...reviewControl, workspace: reviewWorkspace });

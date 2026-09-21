@@ -1,6 +1,8 @@
 import { visible } from './text.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
+import type { CodeUnit } from './code-units.js';
+import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
 
 export interface CodeCommitInput {
   expectedHead: string;
@@ -121,3 +123,38 @@ export const codeCommandRecordSchema = z
           ? value.error !== null
           : value.error === null),
   );
+
+/**
+ * Local mode: an operator names the one runner repository the project's work lives in and the
+ * commit of its main. The server cannot look inside that repository, so both are asserted.
+ */
+export interface CodeLocalBindInput {
+  repositoryId: string;
+  mainOid: string;
+  /** The main this caller last read; absent for the first binding. Moving main is a compare-and-set. */
+  expectedMainOid?: string;
+  requestId: string;
+}
+export interface CodeProjectBinding {
+  mode: 'local';
+  repositoryId: string;
+  boundBy: string;
+  boundAt: string;
+  main: { oid: string; admittedBy: string; admittedAt: string };
+  /** Accepted code stays in the runner's repository; the server claims no durability for it. */
+  durability: 'legacy-local';
+}
+export interface CodeProjectStatus {
+  project: CodeProjectBinding | null;
+  /** The newest 200 units. */
+  units: CodeUnit[];
+  blockers: WorkflowProvidedBlocker[];
+}
+export const codeLocalBindInputSchema = z
+  .object({
+    repositoryId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    mainOid: oid,
+    expectedMainOid: oid.optional(),
+    requestId: id,
+  })
+  .strict();
