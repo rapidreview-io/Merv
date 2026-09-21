@@ -35,6 +35,7 @@ import type {
   ExperimentTransition,
 } from '@merv/experiments/types';
 import { feasibilityStatement } from './feasibility-fixture.js';
+import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
@@ -978,8 +979,9 @@ test('Git Experiments keep the scratch program version and wait for their exact 
   assert.equal(old.workflow.version, 5);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
+  await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
   const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 6);
+  assert.equal(experiment.workflow.version, 8);
   assert.equal(experiment.workspace, 'git');
   const pendingDesign = (await f.design(experiment)).experiment;
   assert.deepEqual(
@@ -989,10 +991,12 @@ test('Git Experiments keep the scratch program version and wait for their exact 
   );
   const running = await f.verdict(pendingDesign, 'pass');
   const offered = await f.offer(running);
+  // The design was written by hand, so this first producing lease is the one that pins main.
+  assert.equal(offered.session.execution.references.base, 'a'.repeat(40));
   assert.deepEqual(offered.session.execution.policy.workspace, {
     mode: 'persistent',
     namespace: 'experiments',
-    base: 'central',
+    base: 'reference:base',
     perBase: false,
     retain: true,
     advancesCentral: false,
@@ -1307,6 +1311,7 @@ test('a continuing agent can acquire successive experiment leases without inheri
 test('A Git experiment may start from the commit an accepted Git task delivered', async (t) => {
   const f = await fixture(t);
   t.after(f.tasks.bindCode(f.code));
+  await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
   const head = 'b'.repeat(40);
   const task = await f.tasks.create(f.source, {
     title: 'Evaluation harness',
@@ -1355,6 +1360,17 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
   assert.equal(experiment.workflow.version, 7);
   assert.equal(experiment.baseTaskId, task.id);
   assert.deepEqual(await f.experiments.create(f.source, based), experiment);
+  // Naming no base is the newer form: the same dependency decides it once it is accepted.
+  const automatic = await f.experiments.create(f.source, {
+    ...input,
+    name: 'derived-base',
+    dependsOn: [task.id],
+    requestId: f.request(),
+  });
+  assert.equal(automatic.workflow.version, 8);
+  assert.deepEqual((await f.experiments.codeUnit(f.source, automatic.id))!.baseStatus, {
+    status: 'waiting',
+  });
 
   // The task's worker commits and delivers; its leased reviewer accepts the pinned commit.
   const control = (sessionId: string, hostRef: string) => ({
@@ -1464,6 +1480,25 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
     ...control(offered.session.id, 'experiment-launch'),
     workspace: checkout('persistent', head),
   });
+
+  // The planner's lease pins the base although planning has no checkout to name it in, and
+  // the running lease reads that same pin back as its frozen reference.
+  const planner = await f.offer(automatic);
+  assert.equal(Object.hasOwn(planner.session.execution.references, 'base'), false);
+  const pin = (await f.experiments.codeUnit(f.source, automatic.id))!.base!;
+  assert.deepEqual(
+    [pin.kind, pin.reference, pin.leaseId, pin.sources.map((item) => item.unitId)],
+    ['accepted', head, planner.session.id, [task.id]],
+  );
+  await f.release(planner.session.id);
+  const executing = await f.offer(
+    await f.verdict(
+      (await f.design(await f.experiments.get(f.source, automatic.id))).experiment,
+      'pass',
+    ),
+  );
+  assert.equal(executing.session.execution.references.base, head);
+  assert.deepEqual((await f.experiments.codeUnit(f.source, automatic.id))!.base, pin);
 });
 
 test('assigned plan and results reviewers update the paper through their scoped verdict only', async (t) => {

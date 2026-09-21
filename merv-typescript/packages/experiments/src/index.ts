@@ -7,9 +7,11 @@ import {
   check,
   digest,
   inTransaction,
+  MervError,
   newId,
   now,
   type Artifact,
+  type CodeUnit,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -60,6 +62,7 @@ import {
   EXPERIMENT_LIMITS,
   ExperimentProgram,
   feasibilityGated,
+  derivedBase,
   programVersion,
   programWorkspace,
 } from './program.js';
@@ -112,7 +115,10 @@ const configuration = z
   .default({});
 
 /** What Experiments asks of Code; a test may bind exactly this much. */
-type ExperimentCode = Pick<Code, 'capture' | 'acceptUnit'>;
+type ExperimentCode = Pick<
+  Code,
+  'capture' | 'acceptUnit' | 'declareUnit' | 'baseStatus' | 'pinBase' | 'basePin' | 'unit'
+>;
 
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService implements Experiments {
@@ -273,6 +279,21 @@ export class ExperimentService implements Experiments {
       };
     });
   }
+  /**
+   * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
+   * Null while Code is unloaded or knows no such unit. It is kept off the experiment record,
+   * which leases freeze.
+   */
+  async codeUnit(caller: Caller, id: string): Promise<CodeUnit | null> {
+    this.open();
+    caller = structuredClone(caller);
+    try {
+      return (await this.code?.unit(caller, id)) ?? null;
+    } catch (error) {
+      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
+      throw error;
+    }
+  }
   async list(caller: Caller, transaction?: Transaction): Promise<Experiment[]> {
     this.open();
     caller = structuredClone(caller);
@@ -377,6 +398,7 @@ export class ExperimentService implements Experiments {
           input.workspace ?? 'none',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
+        if (derivedBase(workflow.version)) await this.code!.declareUnit(caller, workflow.id, tx);
         await this.record(
           caller,
           'created',

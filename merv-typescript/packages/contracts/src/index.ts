@@ -53,10 +53,12 @@ export {
   codeCommandRecordSchema,
   codeLocalBindInputSchema,
 } from './code.js';
+import type { CodeUnit } from './code-units.js';
 export type {
   CodeUnitAcceptInput,
   CodeUnitAcceptance,
   CodeBasePin,
+  CodeBaseStatus,
   CodeUnit,
 } from './code-units.js';
 export type {
@@ -1527,6 +1529,8 @@ export interface Tasks {
   list(caller: Caller): Promise<TaskRecord[]>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, taskId: string): Promise<ProcessGraph>;
+  /** What the optional Code plugin holds for a Git task; null without it. */
+  codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;

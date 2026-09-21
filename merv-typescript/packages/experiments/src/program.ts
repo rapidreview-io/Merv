@@ -3,6 +3,7 @@ import { postgresMigrations } from './program.postgres.js';
 import {
   check,
   digest,
+  MervError,
   reviewHistory,
   type Artifact,
   type Artifacts,
@@ -42,8 +43,13 @@ const producing = (state: string) => state === 'planned' || state === 'running';
  * Registered program versions by workspace kind. A published execution policy is immutable, so
  * versions 1 and 2 are frozen history — their policies stay byte-identical, retired grants
  * included — and any policy change publishes a new version. New experiments start on 5 or 6, or
- * on 7 when the Git checkout starts from the commit an accepted task delivered: the base of a
- * workspace is part of the policy too.
+ * on 7 when the Git checkout starts from the commit an accepted task the creator named
+ * delivered: the base of a workspace is part of the policy too. A Git experiment that names no
+ * task starts on 8: Code derives the base from what the experiment's dependencies were accepted
+ * with and pins it when the first producing lease is acquired — normally the planner's — so
+ * execution inherits the base the plan was written against. It is pinned there and only read
+ * in references(), which runs on every assignment read and may never write. Version 6 stays
+ * registered for the experiments already on it.
  */
 const workspaces: Record<number, 'none' | 'git'> = {
   1: 'none',
@@ -53,13 +59,16 @@ const workspaces: Record<number, 'none' | 'git'> = {
   5: 'none',
   6: 'git',
   7: 'git',
+  8: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 const frozenHistory = (version: number) => version <= 2;
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-const referencedBase = (version: number) => version === 7;
+const referencedBase = (version: number) => version === 7 || version === 8;
+/** Whether Code derives and pins the base, rather than the creator naming a task. */
+export const derivedBase = (version: number) => version === 8;
 export const programVersion = (workspace?: string, baseTaskId?: string): number =>
-  workspace !== 'git' ? 5 : baseTaskId === undefined ? 6 : 7;
+  workspace !== 'git' ? 5 : baseTaskId === undefined ? 8 : 7;
 /**
  * From version 5 a design is submitted with a feasibility statement and its review cannot waive
  * the feasibility criterion. Versions 3 and 4 stay registered for the experiments already on
@@ -243,7 +252,7 @@ export interface ExperimentProgramHost {
   state: State;
   scope: Scope;
   paper: Paper;
-  code?: Pick<Code, 'capture'>;
+  code?: Pick<Code, 'capture' | 'baseStatus' | 'pinBase' | 'basePin'>;
   artifacts: Artifacts;
   workflows: Workflows;
   reviews: Reviews;
@@ -592,9 +601,10 @@ DROP TABLE experiment_leases_backup;`,
       'Git assignments require Code',
       503,
     );
-    if (producing(context.snapshot.state))
+    if (producing(context.snapshot.state)) {
       await this.assertProducer(context.caller, experiment, context.tx);
-    else {
+      await this.requireBase(context);
+    } else {
       await this.host.scope.require(context.caller, 'review', context.tx);
       const review = await this.review(context.caller, experiment, context.tx);
       if (context.caller.session) {
@@ -611,6 +621,20 @@ DROP TABLE experiment_leases_backup;`,
       else await this.host.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
     }
     return experiment;
+  }
+
+  /**
+   * Refuses producing work whose base Code cannot derive, with Code's own blocker code. This
+   * only reads: it runs under lease admission, the dispatch candidate scan and every
+   * assignment check. The refusal makes the experiment no candidate at all, so it is never
+   * launched and never held; Code publishes the reason where status and the stuck report look.
+   */
+  private async requireBase({ caller, snapshot, tx }: WorkflowCheckContext): Promise<void> {
+    if (!derivedBase(snapshot.version)) return;
+    check(this.host.code, 'code_unavailable', 'Git assignments require Code', 503);
+    const base = await this.host.code.baseStatus(caller, snapshot.id, tx);
+    if (base.status === 'blocked')
+      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
@@ -799,6 +823,19 @@ DROP TABLE experiment_leases_backup;`,
     return headOid;
   }
 
+  /**
+   * A derived base is only ever read here. Until a lease has pinned one there is none to name:
+   * an interactive producer has no checkout, and a leased one always finds its pin.
+   */
+  private async pinnedBase({
+    caller,
+    snapshot,
+    tx,
+  }: WorkflowCheckContext): Promise<{ base?: string }> {
+    const pin = await this.host.code?.basePin(caller, snapshot.id, tx);
+    return pin ? { base: pin.reference } : {};
+  }
+
   private async references(context: WorkflowCheckContext): Promise<WorkflowExecutionReferences> {
     const experiment = await this.admit(context);
     const review = experiment.reviewId
@@ -806,7 +843,9 @@ DROP TABLE experiment_leases_backup;`,
       : null;
     return {
       ...(referencedBase(context.snapshot.version) && context.snapshot.state === 'running'
-        ? { base: await this.baseCommit(context) }
+        ? derivedBase(context.snapshot.version)
+          ? await this.pinnedBase(context)
+          : { base: await this.baseCommit(context) }
         : {}),
       ...(experiment.workspace === 'git' && context.snapshot.state === 'experiment_review'
         ? {
@@ -1033,6 +1072,7 @@ DROP TABLE experiment_leases_backup;`,
         const experiment = await this.facts(context);
         if (producing(context.snapshot.state)) {
           await this.assertProducer(context.caller, experiment, context.tx);
+          await this.requireBase(context);
           return 'producer';
         }
         await this.host.scope.require(context.caller, 'review', context.tx);
@@ -1057,6 +1097,17 @@ DROP TABLE experiment_leases_backup;`,
           'The offered experiment worker must match its source and lease',
           403,
         );
+        // The first producing lease fixes the base, and it is normally the planner's; a later
+        // one reads the same pin back, so execution inherits what the plan was written against.
+        // A refused offer takes the pin back with its transaction.
+        if (producing(context.snapshot.state) && derivedBase(context.snapshot.version)) {
+          check(this.host.code, 'code_unavailable', 'Git assignments require Code', 503);
+          await this.host.code.pinBase(
+            context.source,
+            { unitId: experiment.id, leaseId: context.leaseId },
+            context.tx,
+          );
+        }
         const review = reviewing(context.snapshot.state)
           ? await this.host.reviews.start(
               context.caller,

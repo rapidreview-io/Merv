@@ -8,10 +8,12 @@ import {
   check,
   digest,
   inTransaction,
+  MervError,
   now,
   newId,
   type Artifacts,
   type Caller,
+  type CodeUnit,
   type ProcessGraph,
   type Reviews,
   type Scope,
@@ -128,7 +130,11 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
 /**
  * A published execution policy is immutable, so a task's private Git checkout belongs to the
  * workflow version it was created on and is never a field that a later edit could contradict.
- * Version 3 starts from the central head; version 4 from the commit an accepted task delivered.
+ * Version 3 starts from the central head; version 4 from the commit an accepted task the
+ * creator named delivered. Version 5 names nothing: Code derives the base from what the task's
+ * dependencies were accepted with and pins it when the first lease is acquired, because
+ * references() runs on every assignment read and may never write. It shares version 4's
+ * policies, whose `reference:base` does not say where the reference comes from.
  * Live tasks keep their version: nothing is ever upgraded into Git.
  */
 const workspaces: Record<number, TaskWorkspace> = {
@@ -136,15 +142,22 @@ const workspaces: Record<number, TaskWorkspace> = {
   2: 'none',
   3: 'central',
   4: 'reference',
+  5: 'reference',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (workspace: TaskCreate['workspace'], baseTaskId?: string): number =>
-  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId === undefined ? 3 : 4;
+  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId === undefined ? 5 : 4;
+/** Whether Code derives and pins the base, rather than the creator naming a task. */
+const derivedBase = (version: number) => version === 5;
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
+export const TASK_WORKFLOW_GIT_DERIVED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 5 };
 /** What Tasks asks of Code; a test may bind exactly this much. */
-type TaskCode = Pick<Code, 'capture' | 'acceptUnit'>;
+type TaskCode = Pick<
+  Code,
+  'capture' | 'acceptUnit' | 'declareUnit' | 'baseStatus' | 'pinBase' | 'basePin' | 'unit'
+>;
 interface TaskRow {
   id: string;
   project_id: string;
@@ -314,6 +327,7 @@ DROP TABLE task_leases_backup;`,
           TASK_WORKFLOW,
           TASK_WORKFLOW_GIT,
           TASK_WORKFLOW_GIT_BASED,
+          TASK_WORKFLOW_GIT_DERIVED,
         ]) {
           this.registrations.set(
             definition.version,
@@ -427,6 +441,7 @@ DROP TABLE task_leases_backup;`,
       if (row.producer_id !== caller.actorId) await this.scope.require(caller, 'admin', tx);
       await this.workflows.checkDependencies(caller, snapshot.id, tx);
       if (taskWorkspace(snapshot.version) !== 'none') this.requireCode();
+      await this.requireBase(caller, snapshot, tx);
       this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
       return 'producer';
     }
@@ -448,6 +463,23 @@ DROP TABLE task_leases_backup;`,
       await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
     return 'reviewer';
+  }
+
+  /**
+   * Refuses work whose base Code cannot derive, with Code's own blocker code. This only reads:
+   * it runs under lease admission, the dispatch candidate scan and every assignment check.
+   * The refusal makes the task no candidate at all, so it is never launched and never held;
+   * Code publishes the reason where status and the stuck report find it.
+   */
+  private async requireBase(
+    caller: Caller,
+    snapshot: WorkflowSnapshot,
+    tx: Transaction,
+  ): Promise<void> {
+    if (!derivedBase(snapshot.version)) return;
+    const base = await this.requireCode().baseStatus(caller, snapshot.id, tx);
+    if (base.status === 'blocked')
+      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
   }
 
   private async currentLease(
@@ -483,6 +515,10 @@ DROP TABLE task_leases_backup;`,
     await this.scope.require(caller, role === 'reviewer' ? 'review' : 'write', tx);
     const row = await this.row(tx, caller, snapshot.id);
     const purpose = role === 'reviewer' ? 'review' : 'work';
+    // The base is fixed with the lease it serves: Workflows reads references() right after
+    // this hook in the same transaction, and a refused offer takes the pin back with it.
+    if (purpose === 'work' && derivedBase(snapshot.version))
+      await this.requireCode().pinBase(source, { unitId: snapshot.id, leaseId }, tx);
     const review =
       purpose === 'review' ? await this.reviews.start(caller, row.review_id!, tx) : undefined;
     const checkpoints = await this.checkpointRows(
@@ -1249,6 +1285,7 @@ DROP TABLE task_leases_backup;`,
           typeVersion,
           JSON.stringify(contextInputs),
         );
+        if (derivedBase(version)) await this.requireCode().declareUnit(caller, workflow.id, tx);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
           briefId: brief.id,
           evidenceVersion: 2,
@@ -1256,6 +1293,21 @@ DROP TABLE task_leases_backup;`,
         return await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
       });
     });
+  }
+
+  /**
+   * What Code holds for a task: its pinned base, where a base stands, its acceptance. Null
+   * while Code is unloaded or knows no such unit. It is kept off the task record, which work
+   * contexts embed and hash.
+   */
+  async codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null> {
+    caller = structuredClone(caller);
+    try {
+      return (await this.code?.unit(caller, taskId)) ?? null;
+    } catch (error) {
+      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
+      throw error;
+    }
   }
 
   async get(caller: Caller, taskId: string): Promise<Task> {
@@ -1491,7 +1543,10 @@ DROP TABLE task_leases_backup;`,
     if (taskWorkspace(facts.workflow.version) !== 'none') {
       if (facts.review)
         await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
-      else this.requireCode();
+      else {
+        this.requireCode();
+        await this.requireBase(context.caller, facts.workflow, context.tx);
+      }
     }
     this.contextType({ type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
     return { ...facts, purpose };
@@ -1595,15 +1650,30 @@ DROP TABLE task_leases_backup;`,
         ? {}
         : snapshot.state === 'in_review' && review
           ? { code: await this.reviewCommit(caller, snapshot, review, tx) }
-          : taskWorkspace(snapshot.version) === 'reference'
-            ? { base: await this.baseCommit(caller, snapshot, tx) }
-            : {}),
+          : derivedBase(snapshot.version)
+            ? await this.pinnedBase(caller, snapshot, tx)
+            : taskWorkspace(snapshot.version) === 'reference'
+              ? { base: await this.baseCommit(caller, snapshot, tx) }
+              : {}),
       ...((await this.isProducer(caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
       ...(review ? { reviewId: review.id } : {}),
       ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId
         ? { claimId: review.claimId }
         : {}),
     };
+  }
+
+  /**
+   * A derived base is only ever read here. Until a lease has pinned one there is none to name:
+   * an interactive producer has no checkout, and a leased one always finds its pin.
+   */
+  private async pinnedBase(
+    caller: Caller,
+    snapshot: WorkflowSnapshot,
+    tx: Transaction,
+  ): Promise<{ base?: string }> {
+    const pin = await this.requireCode().basePin(caller, snapshot.id, tx);
+    return pin ? { base: pin.reference } : {};
   }
 
   /**

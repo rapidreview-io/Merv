@@ -30,6 +30,7 @@ export const experimentsUiPlugin = {
             JSON.stringify({
               experiment: await experiments.get(caller, id),
               process: await experiments.process(caller, id),
+              codeUnit: await experiments.codeUnit(caller, id),
             }),
           ) as Json;
         },

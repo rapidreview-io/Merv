@@ -1,4 +1,5 @@
 import type { CodeCaptureRef } from './code-models.js';
+import type { WorkflowProvidedBlockerInput } from './workflow-guidance.js';
 
 /**
  * What an owner plugin and Code say to each other about a unit of work. Nothing here names a
@@ -44,11 +45,23 @@ export interface CodeBasePin {
   pinnedAt: string;
   leaseId: string;
 }
+/**
+ * Where a unit's base stands. Only `pinned` is a fact; the others are what a derivation would
+ * find now, and may differ by the time a lease pins it.
+ */
+export type CodeBaseStatus =
+  | { status: 'pinned'; pin: CodeBasePin }
+  | { status: 'ready'; kind: CodeBasePin['kind']; sources: string[] }
+  /** A declared dependency has not settled; Workflows already says so, and Code adds nothing. */
+  | { status: 'waiting' }
+  | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[] };
 export interface CodeUnit {
   unitId: string;
   workflow: string;
   version: number;
   declaredAt: string;
   base: CodeBasePin | null;
+  /** Null once the unit has ended or been accepted without ever taking a base. */
+  baseStatus: CodeBaseStatus | null;
   acceptance: CodeUnitAcceptance | null;
 }

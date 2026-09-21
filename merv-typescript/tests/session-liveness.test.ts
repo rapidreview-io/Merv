@@ -252,7 +252,10 @@ async function fixture(
         ))!.session_json,
       ),
     /** One automatic lease on the runner that the launching machine reports as failed. */
-    async fail(runnerId = 'machine', outcome: 'launch_failed' | 'host_failed' = 'launch_failed') {
+    async fail(
+      runnerId = 'machine',
+      outcome: 'launch_failed' | 'host_failed' | 'workspace_failed' = 'launch_failed',
+    ) {
       const leased = await sessions.lease(source, auto(runnerId));
       assert.ok(leased.session, leased.reason);
       await sessions.release(source, { sessionId: leased.session.id, runnerId, outcome });
@@ -308,6 +311,20 @@ for (const backend of backends)
       );
     },
   );
+
+test('a runner whose repository lacks the pinned base counts a launch failure, which is why one project has one local runner', async (t) => {
+  // The baseline stage S1 of docs/GIT_MODEL.md accepts: nothing yet keeps work away from a
+  // runner that does not hold the commit, so its failed checkout is counted like any other.
+  const f = await fixture(t, { maxLaunchFailures: 3 });
+  await f.sessions.heartbeatRunner(f.source, presence('elsewhere'));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  await f.fail('elsewhere', 'workspace_failed');
+  assert.deepEqual(
+    (await f.holds()).map((row) => [row.instance_id, row.attempts, row.last_code]),
+    [[target.id, 1, 'workspace_failed']],
+  );
+});
 
 for (const backend of backends)
   test(

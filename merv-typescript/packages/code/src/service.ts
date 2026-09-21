@@ -125,6 +125,22 @@ export class CodeService extends CodeCommandService implements Code {
   async acceptUnit(...args: Parameters<CodeUnitService['acceptUnit']>) {
     return await this.unitStore.acceptUnit(...args);
   }
+  async baseStatus(...args: Parameters<CodeUnitService['baseStatus']>) {
+    return await this.unitStore.baseStatus(...args);
+  }
+  async pinBase(...args: Parameters<CodeUnitService['pinBase']>) {
+    return await this.unitStore.pinBase(...args);
+  }
+  async basePin(...args: Parameters<CodeUnitService['basePin']>) {
+    return await this.unitStore.basePin(...args);
+  }
+  /** Plugin wiring, not part of the Code contract: no other plugin reconciles Code's view. */
+  async reconcileAll() {
+    await this.unitStore.reconcileAll();
+  }
+  async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
+    await this.unitStore.transitioned(...args);
+  }
   async bindLocal(...args: Parameters<CodeUnitService['bindLocal']>) {
     return await this.unitStore.bindLocal(...args);
   }

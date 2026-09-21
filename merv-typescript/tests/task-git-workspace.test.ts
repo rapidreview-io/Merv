@@ -25,6 +25,7 @@ import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code/service';
+import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 const oid = (char: string) => char.repeat(40);
@@ -58,6 +59,8 @@ async function fixture(t: TestContext, postgres = false) {
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
+  // Main is where every lease below attaches unless it names another base.
+  await boundProject(state, source.projectId, oid('a'));
   const issued = await scope.issueActor(source, { name: 'reviewer', role: 'reviewer' });
   const reviewer: Caller = {
     projectId: source.projectId,
@@ -275,7 +278,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
     requestId: f.request(),
   };
   const git = await f.tasks.create(f.source, gitInput);
-  assert.equal(git.workflow.version, 3);
+  assert.equal(git.workflow.version, 5);
   assert.equal(git.workspace, 'git');
   assert.deepEqual(await f.tasks.create(f.source, gitInput), git);
   await assert.rejects(
@@ -294,7 +297,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
   assert.deepEqual(work.workspace, {
     mode: 'persistent',
     namespace: 'tasks',
-    base: 'central',
+    base: 'reference:base',
     perBase: false,
     retain: true,
     advancesCentral: false,
@@ -673,14 +676,12 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
   t.after(rebind);
 
   // A returned round accepted nothing; only the pass does.
-  await assert.rejects(async () => await f.code.unit(f.source, task.id), {
-    code: 'code_unit_not_found',
-  });
+  assert.equal((await f.code.unit(f.source, task.id)).acceptance, null);
   const done = await f.verdict(review.worker, again, 'pass');
   assert.equal(done.workflow.state, 'done');
 
   // The pass recorded the exact reviewed commit, written in the review's own transaction by a
-  // leased reviewer whose record had just ended. The task is version 4: every version records.
+  // leased reviewer whose record had just ended.
   const pinned = await f.reviews.get(f.source, again.reviewId!);
   const accepted = (await f.code.unit(f.source, task.id)).acceptance!;
   assert.deepEqual(
@@ -698,7 +699,9 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
       storage: 'legacy-local',
     },
   );
-  assert.equal((await f.code.unit(f.source, task.id)).base, null);
+  // The task named no dependency, so its first lease pinned the project's main.
+  const pin = (await f.code.unit(f.source, task.id)).base!;
+  assert.deepEqual([pin.kind, pin.reference, pin.sources], ['main', oid('a'), []]);
   // A scratch task passed by hand records that it succeeded without code.
   const scratch = await f.create();
   const note = await f.artifacts.create(f.source, { title: 'Note', content: 'Evidence.' });
@@ -748,7 +751,8 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
     });
   assert.deepEqual((await f.code.unit(f.source, task.id)).acceptance, accepted);
   const status = await f.code.status(f.source);
-  assert.equal(status.project, null);
+  assert.equal(status.project!.main.oid, oid('a'));
+  // The task with an explicit base is version 4, which Code hears of only when it is accepted.
   assert.deepEqual(status.units.map((unit) => unit.unitId).sort(), [task.id, scratch.id].sort());
   await f.release(review.session.id, f.reviewer);
 
@@ -777,5 +781,23 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
         workspace: { ...dependent.workspace, workspaceId: `tasks-${other.id}`, baseOid: oid('a') },
       }),
     { code: 'workspace_base_conflict' },
+  );
+
+  // Naming no base gives the same commit: the one dependency was accepted with exactly it, and
+  // the lease that pins it carries it in its frozen references.
+  const automatic = await f.create({ workspace: 'git', dependsOn: [task.id] });
+  assert.equal(automatic.workflow.version, 5);
+  assert.equal(Object.hasOwn(automatic, 'baseTaskId'), false);
+  assert.deepEqual((await f.code.unit(f.source, automatic.id)).baseStatus, {
+    status: 'ready',
+    kind: 'accepted',
+    sources: [task.id],
+  });
+  const derived = await f.lease(automatic, oid('d'));
+  assert.equal(derived.session.execution.references.base, oid('d'));
+  const taken = (await f.code.unit(f.source, automatic.id)).base!;
+  assert.deepEqual(
+    [taken.kind, taken.reference, taken.leaseId, taken.sources.map((item) => item.unitId)],
+    ['accepted', oid('d'), derived.session.id, [task.id]],
   );
 }

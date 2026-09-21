@@ -338,6 +338,15 @@ context. Later captures cannot substitute, and a missing reference or local Git
 object has no central fallback. New observations include a real tree OID;
 legacy reports can remain without one.
 
+A Git experiment created without `baseTaskId` starts on version 8. Its base is not
+named: Code derives it from what the `dependsOn` tasks were accepted with and pins it
+when the first producing lease is acquired. That is normally the planner's, although
+planning has no checkout, so the plan is written against a fixed base and the `running`
+checkout inherits it as `reference:base`; a revised plan or a new attempt keeps the same
+pin. While no base can be derived the experiment is not offered and shows
+`code_base_pending` or `code_merge_required` ([workspaces](WORKSPACES.md#the-derived-base)).
+Version 6, based on `central`, stays registered for the experiments already on it.
+
 With `workspace: "git"`, optional `baseTaskId` names a Git task that is also among
 `dependsOn`; the experiment then starts on version 7, whose `running` checkout is
 based on `reference:base`, frozen to the commit that task delivered once it is

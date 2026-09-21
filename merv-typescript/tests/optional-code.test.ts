@@ -9,6 +9,7 @@ import type { ResearchRecord } from '@merv/research/types';
 import type { Reflection } from '@merv/reflections/types';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
+import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext, enabled: boolean) {
@@ -284,6 +285,39 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     workspace: 'git',
     requestId: 'git-task',
   });
+  // The project names no repository yet, so Code published why neither unit can start. The
+  // rows are Workflows', which is what keeps them readable below while Code is unloaded.
+  const blockedWork = async () => ({
+    gate: (await f.app.ctx.workflows.evaluate(f.owner, gitTask.id)).currentGate,
+    next: (await f.app.ctx.workflows.evaluate(f.owner, gitTask.id)).nextAction,
+    published: (await f.app.ctx.workflows.blockers(f.owner)).map((item) => [
+      item.instanceId,
+      item.provider,
+      item.code,
+      item.key,
+    ]),
+    stuck: (await f.app.ctx.sessions.stuck(f.owner)).items
+      .filter((item) => item.kind === 'work_blocked')
+      .map((item) => [item.instanceId, item.code]),
+  });
+  const unbound = {
+    gate: 'code_base_pending',
+    next: null,
+    published: [
+      [git.id, 'code', 'code_base_pending', 'main'],
+      [gitTask.id, 'code', 'code_base_pending', 'main'],
+    ],
+    stuck: [
+      [git.id, 'code_base_pending'],
+      [gitTask.id, 'code_base_pending'],
+    ],
+  };
+  assert.deepEqual(await blockedWork(), unbound);
+  const candidates = (await f.app.ctx.workflows.dispatchCandidates(f.owner)).map(
+    (item) => item.instanceId,
+  );
+  assert.equal(candidates.includes(scratch.id), true);
+  assert.equal(candidates.includes(git.id) || candidates.includes(gitTask.id), false);
   const secret = `ms_${randomBytes(32).toString('base64url')}`;
   const session = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: scratch.id,
@@ -313,6 +347,19 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     await assert.rejects(async () => await f.app.ctx.workflows.assignment(f.owner, gitTask.id), {
       code: 'code_unavailable',
     });
+    assert.equal(await f.app.ctx.tasks.codeUnit(f.owner, gitTask.id), null);
+    if (cycle === 0) {
+      // What Code said before it left still reads, and the project is bound in its absence.
+      assert.deepEqual(await blockedWork(), unbound);
+      await boundProject(f.app.ctx.state, f.owner.projectId, 'a'.repeat(40));
+    } else {
+      // Work that was never blocked has no row: unloaded Code shows only as the refusal to
+      // begin it, which status_and_next reports and the stuck report does not.
+      const guidance = await f.app.ctx.workflows.evaluate(f.owner, gitTask.id);
+      assert.deepEqual(guidance.providerBlockers, []);
+      assert.ok(JSON.stringify(guidance).includes('code_unavailable'));
+      assert.deepEqual((await blockedWork()).stuck, []);
+    }
     await assert.rejects(
       async () => await f.app.ctx.workflows.assignment(f.owner, gitConsolidation.id),
       {
@@ -333,6 +380,13 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
 
     await f.app.setEnabled('code', true);
     assert.equal(f.app.ctx.experiments, providers.experiments);
+    // Loading Code derives every unpinned unit again, so the binding made meanwhile clears them.
+    assert.deepEqual((await blockedWork()).published, []);
+    assert.deepEqual((await f.app.ctx.tasks.codeUnit(f.owner, gitTask.id))!.baseStatus, {
+      status: 'ready',
+      kind: 'main',
+      sources: [],
+    });
     assert.match((await f.app.ctx.workflows.assignment(f.owner, gitTask.id)).brief, /Git task/);
     assert.equal(
       (await f.app.ctx.workflows.assignment(f.owner, git.id)).context?.type,

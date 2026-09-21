@@ -13,6 +13,8 @@ import type {
   CodeCommitReceipt,
   SessionWorkspace,
   CodePublicationApi,
+  CodeBasePin,
+  CodeBaseStatus,
   CodeLocalBindInput,
   CodeProjectBinding,
   CodeProjectStatus,
@@ -114,6 +116,16 @@ export interface CodeUnits {
     input: CodeUnitAcceptInput,
     tx: Transaction,
   ): Promise<CodeUnitAcceptance>;
+  /** What a lease would find now; a pure read, safe under every admission and candidate scan. */
+  baseStatus(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBaseStatus>;
+  /** Only an owner's lease acquisition calls this: the base is fixed with the lease it serves. */
+  pinBase(
+    caller: Caller,
+    input: { unitId: string; leaseId: string },
+    tx: Transaction,
+  ): Promise<CodeBasePin>;
+  /** The pin alone, never a derivation, for an owner's references(). */
+  basePin(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBasePin | null>;
   bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
   status(caller: Caller): Promise<CodeProjectStatus>;
