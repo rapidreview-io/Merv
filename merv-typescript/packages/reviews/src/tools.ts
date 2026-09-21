@@ -16,7 +16,7 @@ export const reviewToolsPlugin = {
       {
         name: 'review.list',
         description:
-          'List immutable review requests and their claim/verdict status in the current project.',
+          'List immutable review requests, their claim/verdict status, whether you may claim them in the current project.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller: Parameters<typeof ctx.reviews.list>[0]) =>
@@ -25,7 +25,7 @@ export const reviewToolsPlugin = {
       {
         name: 'review.get',
         description:
-          'Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.',
+          'Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.',
         inputSchema: z.object({ reviewId: z.string().min(1) }).strict(),
         readOnly: true,
         handler: async (
@@ -36,7 +36,7 @@ export const reviewToolsPlugin = {
       {
         name: 'review.start',
         description:
-          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.',
+          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. For owner-certified reviews, both you and your directing authority must be independent of every retained contributor.',
         inputSchema: z.object({ reviewId: z.string().min(1) }).strict(),
         handler: async (
           caller: Parameters<typeof ctx.reviews.start>[0],
@@ -46,7 +46,7 @@ export const reviewToolsPlugin = {
       {
         name: 'review.submit',
         description:
-          'Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.',
+          'Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews reject returnTo: pass completes the task, needs_changes returns it for work, and fail ends ordinary tasks or suspends service tasks. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.',
         inputSchema: z
           .object({
             reviewId: id,

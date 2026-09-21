@@ -52,6 +52,7 @@ async function fixture(t: TestContext, backend: Backend) {
         workflows,
         { capture: async () => assert.fail('a migration reads no capture') },
         new CodeWriterService(state, scope, workflows, 900),
+        { contributors: async () => assert.fail('a migration reads no contributors') },
       ).initialize();
     } finally {
       state.migrate = migrate;
@@ -210,6 +211,47 @@ for (const backend of backends)
       await assert.rejects(
         f.run("DELETE FROM code_operations WHERE id='up2'"),
         refused(/retained/),
+      );
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `${backend}: accepted commit lookup indexes populated unit storage`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.upTo(3);
+      await f.run(
+        "INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES ('p','local','r','{}','{}','{}','[]','t')",
+      );
+      const acceptance = JSON.stringify({ code: { commit: oid('a') } });
+      await f.run(
+        "INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at,acceptance_json,acceptance_hash,accepted_at) VALUES ('p','u','experiment',9,'t',?,'h','t')",
+        acceptance,
+      );
+      await f.upTo(4);
+      await f.upTo(4);
+      const field =
+        backend === 'postgres'
+          ? "(acceptance_json::jsonb #>> '{code,commit}')"
+          : "json_extract(acceptance_json,'$.code.commit')";
+      assert.deepEqual(
+        {
+          ...(await f.get<{ unit_id: string; acceptance_json: string }>(
+            `SELECT unit_id,acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL AND ${field}=?`,
+            'p',
+            oid('a'),
+          )),
+        },
+        { unit_id: 'u', acceptance_json: acceptance },
+      );
+      assert.ok(
+        await f.get(
+          backend === 'postgres'
+            ? "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND indexname='code_units_accepted_commit'"
+            : "SELECT name FROM sqlite_master WHERE type='index' AND name='code_units_accepted_commit'",
+        ),
       );
     },
   );

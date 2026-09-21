@@ -245,19 +245,30 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
     ).map((row) => this.record(row));
   }
 
+  async forTask(sql: Sql, projectId: string, taskId: string): Promise<CodeBaseRecord | null> {
+    const row = await sql.get<BaseRow>(
+      `SELECT ${columns} FROM code_bases WHERE project_id=? AND resolution_task_id=?`,
+      projectId,
+      taskId,
+    );
+    return row ? this.record(row) : null;
+  }
+
   /** Walk the frozen plan, including resolved steps; future waiters retain their prerequisite. */
   async path(sql: Sql, projectId: string, root: string): Promise<CodeBaseRecord[]> {
-    const records = new Map(
-      (await this.records(sql, projectId)).map((record) => [record.key, record]),
-    );
     const seen = new Set<string>(),
       result: CodeBaseRecord[] = [],
       queue = [root];
     for (let key = queue.pop(); key; key = queue.pop()) {
       if (seen.has(key)) continue;
       seen.add(key);
-      const record = records.get(key);
-      if (!record) continue;
+      const row = await sql.get<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
+        projectId,
+        key,
+      );
+      if (!row) continue;
+      const record = this.record(row);
       result.push(record);
       queue.push(record.left, record.right);
     }

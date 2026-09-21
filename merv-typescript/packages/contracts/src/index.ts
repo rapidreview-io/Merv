@@ -556,9 +556,12 @@ export interface SessionAuthority {
 /** A domain's event as every domain records it: who, what, on which record, from where. */
 /** A review's producer and its excluded contributors cannot be its reviewer. */
 export const excludedFromReview = (
-  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds'>,
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
   actorId: string,
-) => review.producerId === actorId || (review.excludedActorIds ?? []).includes(actorId);
+) =>
+  review.producerId === actorId ||
+  (review.excludedActorIds ?? []).includes(actorId) ||
+  (review.provenance?.excludedActorIds ?? []).includes(actorId);
 export const recorded = async (
   state: Pick<State, 'appendEvent'>,
   tx: Transaction,
@@ -654,6 +657,8 @@ export function eventSource(caller: Caller): Data {
       : {};
 }
 export interface Actor {
+  /** Credentialless service owning this actor, when present. */
+  serviceOwner?: string;
   id: string;
   projectId: string;
   name: string;
@@ -1289,7 +1294,24 @@ export type ReviewFinding = {
   evidenceIds: string[];
   notes: string;
 };
+/** Owner-derived identities and a digest of the retained records that justify them. */
+export interface ReviewProvenance {
+  formatVersion: 1;
+  provider: string;
+  reference: string;
+  sourceHash: string;
+  excludedActorIds: string[];
+  hash: string;
+}
+export type ReviewProvenanceResolver = (
+  projectId: string,
+  subjectId: string,
+  tx: Transaction,
+) => Promise<ReviewProvenance>;
 export interface ReviewRequest {
+  provenance?: ReviewProvenance;
+  /** Why no independent reviewer can currently take this request. */
+  waiting?: string;
   id: string;
   projectId: string;
   subjectId: string;
@@ -1327,6 +1349,8 @@ export interface ReviewRequest {
   createdAt: string;
 }
 export interface ReviewInput {
+  /** Trusted owner capability; callers never provide a certificate or its identities. */
+  provenanceOwner?: string;
   subjectId: string;
   subjectRevision: number;
   producerId: string;
@@ -1372,6 +1396,7 @@ export interface ReviewSubmitOwner {
   submit(caller: Caller, input: ReviewApplication, tx: Transaction): Promise<unknown>;
 }
 export interface Reviews {
+  provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;

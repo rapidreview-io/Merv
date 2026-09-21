@@ -21,7 +21,7 @@ import type { Backend } from './code-store.js';
 export async function resolutionFixture(
   t: TestContext,
   backend: Backend,
-  versions: { workflows?: number; scope?: number; human?: boolean } = {},
+  versions: { workflows?: number; scope?: number; reviews?: number; human?: boolean } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-resolution-'));
   const schema = `resolution_${randomUUID().replaceAll('-', '')}`;
@@ -36,7 +36,9 @@ export async function resolutionFixture(
         ? versions.scope
         : component === 'workflows'
           ? versions.workflows
-          : undefined;
+          : component === 'reviews'
+            ? versions.reviews
+            : undefined;
     return migrate(
       component,
       version === undefined ? migrations : migrations.filter((item) => item.version <= version),
@@ -44,11 +46,11 @@ export async function resolutionFixture(
   };
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
-  state.migrate = migrate;
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
   );
   const reviews = await createService(new ReviewService(state, scope, artifacts));
+  state.migrate = migrate;
   const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
     new TaskService(state, scope, artifacts, workflows, reviews, context),

@@ -172,6 +172,14 @@ export interface SessionWorkspaceObservation {
   eventId: number | null;
 }
 export interface Sessions {
+  /** Retained producers only; their delegation is historical, never current authority. */
+  contributors(
+    projectId: string,
+    instanceId: string,
+    beforeRevision: number | null,
+    tx: Transaction,
+  ): Promise<{ ref: string; actorId: string; authorityId: string }[]>;
+
   registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent>;
   agents(caller: Caller): Promise<AgentStatus[]>;
   agent(caller: Caller, agentId: string): Promise<AgentStatus>;

@@ -120,4 +120,5 @@ $merv$;
 CREATE TRIGGER session_usage_write_once BEFORE UPDATE ON session_usage
 FOR EACH ROW EXECUTE FUNCTION session_usage_write_once_guard();
 `,
+  5: `CREATE INDEX worker_sessions_instance ON worker_sessions(project_id,instance_id,revision);`,
 };

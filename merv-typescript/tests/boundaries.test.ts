@@ -104,6 +104,7 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
+  code: ['reviews'],
   experiments: ['code'],
   research: [
     'domainEvents',

@@ -106,7 +106,7 @@ export class CodeService extends CodeCommandService implements Code {
           repositories?.finalizeGraceSeconds ?? 900,
         );
         this.unitStore = await createService(
-          new CodeUnitService(state, scope, workflows, this, this.writerStore),
+          new CodeUnitService(state, scope, workflows, this, this.writerStore, sessions),
         );
         if (repositories) {
           // Published only once it holds the writer lock and has finished what a crash left.
@@ -216,6 +216,18 @@ export class CodeService extends CodeCommandService implements Code {
   }
   mergePublication(...args: Parameters<CodePublicationService['mergePublication']>) {
     return this.network(() => this.publicationStore.mergePublication(...args));
+  }
+  bindReviews(reviews: import('@merv/contracts').Reviews): () => void {
+    this.unitStore.reviews = reviews;
+    const release = reviews
+      .provenance('code')
+      .register((projectId, subjectId, tx) =>
+        this.unitStore.reviewProvenance(projectId, subjectId, tx),
+      );
+    return () => {
+      release();
+      if (this.unitStore.reviews === reviews) this.unitStore.reviews = undefined;
+    };
   }
   bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void {
     this.unitStore.resolutionTasks = provider;

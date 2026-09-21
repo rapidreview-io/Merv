@@ -55,6 +55,9 @@ export const codePlugin = {
         ),
       );
       yield () => service.close();
+      ctx.inject(['reviews'], (ctx) => {
+        ctx.effect(() => service.bindReviews(ctx.reviews));
+      });
       // The cursor starts now because the start-up pass below covers everything before it;
       // afterwards the consumer catches up on whatever ended while Code was unloaded.
       yield await ctx.domainEvents.subscribe({

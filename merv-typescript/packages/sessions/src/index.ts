@@ -327,6 +327,11 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         BEGIN SELECT RAISE(ABORT,'Session usage is recorded once'); END;
     `,
         },
+        {
+          version: 5,
+          postgres: postgresMigrations[5],
+          sql: `CREATE INDEX worker_sessions_instance ON worker_sessions(project_id,instance_id,revision);`,
+        },
       ]);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
@@ -690,6 +695,30 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       );
     }
   }
+  async contributors(
+    projectId: string,
+    instanceId: string,
+    beforeRevision: number | null,
+    tx: Transaction,
+  ) {
+    this.state.assertTransaction(tx);
+    const writable =
+      tx.dialect === 'postgres'
+        ? "(session_json::jsonb #>> '{execution,policy,readOnly}')='false'"
+        : "json_extract(session_json,'$.execution.policy.readOnly')=0";
+    const rows = await tx.all<{ id: string; actor_id: string; session_json: string }>(
+      `SELECT id,actor_id,session_json FROM worker_sessions WHERE project_id=? AND instance_id=? AND ${writable}${beforeRevision === null ? '' : ' AND revision<?'} ORDER BY id`,
+      projectId,
+      instanceId,
+      ...(beforeRevision === null ? [] : [beforeRevision]),
+    );
+    return rows.map((row) => ({
+      ref: row.id,
+      actorId: row.actor_id,
+      authorityId: (JSON.parse(row.session_json) as Session).source.actorId,
+    }));
+  }
+
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
     ({ caller, input } = structuredClone({ caller, input }));
     check(

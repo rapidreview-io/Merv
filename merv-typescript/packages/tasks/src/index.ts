@@ -769,9 +769,11 @@ DROP TABLE task_leases_backup;`,
                 ? 'delivery_required'
                 : recovering
                   ? 'review_recovery_pending'
-                  : review?.status === 'requested'
-                    ? 'review_required'
-                    : 'independent_review',
+                  : review?.waiting
+                    ? 'review_provenance_blocked'
+                    : review?.status === 'requested'
+                      ? 'review_required'
+                      : 'independent_review',
           waiting:
             snapshot.state === 'suspended'
               ? 'This service task is suspended. A signed-in human operator can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.'
@@ -779,9 +781,11 @@ DROP TABLE task_leases_backup;`,
                 ? 'The task producer must complete and submit the delivery.'
                 : recovering
                   ? 'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.'
-                  : review?.status === 'requested'
-                    ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
-                    : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
+                  : review?.waiting
+                    ? review.waiting
+                    : review?.status === 'requested'
+                      ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
+                      : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
           references: [
             ...(dependencies ?? []).map((dependency) => ({
               kind: 'workflow',
@@ -2476,6 +2480,17 @@ DROP TABLE task_leases_backup;`,
           {
             subjectId: row.id,
             subjectRevision: moved.revision,
+            ...(serviceOwned(current.version)
+              ? {
+                  provenanceOwner: (
+                    await this.scope.require(
+                      { projectId: caller.projectId, actorId: row.producer_id },
+                      'read',
+                      tx,
+                    )
+                  ).serviceOwner,
+                }
+              : {}),
             producerId: caller.actorId,
             // A service owns the task but never directs a worker. Reviews retains the
             // authenticated runner source as the delivery's administrative authority.

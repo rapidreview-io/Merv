@@ -10,8 +10,8 @@
   "apiEntries": 38,
   "serverPlugins": 59,
   "machinePlugins": 1,
-  "directDependencyCount": 155,
-  "optionalDependencyCount": 10,
+  "directDependencyCount": 159,
+  "optionalDependencyCount": 12,
   "directConsumers": {
     "api": 3,
     "artifacts": 13,
@@ -20,7 +20,7 @@
     "code": 7,
     "consolidation": 3,
     "contextBuilder": 4,
-    "domainEvents": 2,
+    "domainEvents": 4,
     "experiments": 4,
     "feed": 2,
     "identity": 1,
@@ -29,7 +29,7 @@
     "paper": 5,
     "reflections": 3,
     "research": 2,
-    "reviews": 7,
+    "reviews": 8,
     "runner": 0,
     "sandboxes": 2,
     "scope": 21,
@@ -38,7 +38,7 @@
     "tasks": 4,
     "tools": 19,
     "ui": 16,
-    "workflows": 8
+    "workflows": 9
   },
   "plugins": [
     {
@@ -162,9 +162,13 @@
         "state",
         "scope",
         "sessions",
-        "artifacts"
+        "artifacts",
+        "workflows",
+        "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "reviews"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true

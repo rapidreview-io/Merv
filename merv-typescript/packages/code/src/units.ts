@@ -35,6 +35,7 @@ import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 import type { CodeWriterService } from './writers.js';
 import type { CodeBaseService, CodeBaseRecord } from './bases.js';
+import { resolutionProvenance } from './provenance.js';
 import { baseKey } from './base-plan.js';
 import { acceptedRef } from './store/refs.js';
 
@@ -116,6 +117,7 @@ export class CodeUnitService implements CodeUnits {
   private closed = false;
   /** Set once the project repositories exist; without it several commits are never merged. */
   bases?: CodeBaseService;
+  reviews?: import('@merv/contracts').Reviews;
   resolutionTasks?: import('@merv/contracts').ServiceTaskCreator;
   constructor(
     private readonly state: State,
@@ -123,7 +125,18 @@ export class CodeUnitService implements CodeUnits {
     private readonly workflows: Workflows,
     private readonly captures: CodeCaptures,
     private readonly writers: CodeWriterService,
+    private readonly sessions: Pick<import('@merv/sessions/types').Sessions, 'contributors'>,
   ) {}
+
+  reviewProvenance(projectId: string, taskId: string, tx: Transaction) {
+    check(
+      !this.closed && this.bases,
+      'code_provenance_unverifiable',
+      'Base provenance is unavailable',
+      503,
+    );
+    return resolutionProvenance(tx, this.bases, this.sessions, projectId, taskId);
+  }
 
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
@@ -268,6 +281,11 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
 CREATE TRIGGER code_unit_inputs_no_update BEFORE UPDATE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are immutable'); END;
 CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are retained'); END;`,
         postgres: postgresMigrations[3],
+      },
+      {
+        version: 4,
+        sql: `CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(acceptance_json,'$.code.commit')) WHERE acceptance_json IS NOT NULL;`,
+        postgres: postgresMigrations[4],
       },
     ]);
     await migratePendingMerges(this.state);
@@ -482,6 +500,12 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     }
     const pending = await pendingMerge(tx, caller.projectId, input.unitId);
     if (pending) {
+      check(
+        await this.resolutionReview(caller, tx, input),
+        'code_provenance_unverifiable',
+        'Resolution acceptance requires a passing review with the current retained contributor provenance.',
+        409,
+      );
       const proof = receipt
         ? await tx.get<{ result_json: string }>(
             "SELECT result_json FROM code_operations WHERE id=? AND status='completed'",
@@ -1195,6 +1219,26 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
           await this.bases.recordAcceptance(tx, projectId, base, accepted.code.commit);
       }
     }
+  }
+
+  /** The accepting transaction compares the exact reviewed certificate once. */
+  private async resolutionReview(
+    caller: Caller,
+    tx: Transaction,
+    input: CodeUnitAcceptInput,
+  ): Promise<boolean> {
+    check(this.reviews, 'code_provenance_unverifiable', 'The review service is unavailable', 503);
+    const review = await this.reviews.get(caller, input.reviewRef, tx);
+    const provenance = await this.reviewProvenance(caller.projectId, input.unitId, tx);
+    return (
+      review.subjectId === input.unitId &&
+      review.subjectRevision === input.terminalRevision - 1 &&
+      review.snapshotHash === input.submissionRef &&
+      review.status === 'submitted' &&
+      review.verdict === 'pass' &&
+      !!review.provenance &&
+      canonical(review.provenance) === canonical(provenance)
+    );
   }
 
   private async resolutionBrief(

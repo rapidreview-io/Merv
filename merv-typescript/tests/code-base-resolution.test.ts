@@ -56,6 +56,47 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
   await bases.initialize();
   units.bases = bases;
   const unbind = f.tasks.bindCode(code);
+  const unbindReviews = code.bindReviews(f.reviews);
+  f.beforeClose.push(unbindReviews);
+  const inputAuthor = {
+    projectId: f.admin.projectId,
+    actorId: (await f.scope.issueActor(f.admin, { name: 'Input author', role: 'operator' })).actor
+      .id,
+  };
+  const producingSession = async (
+    unitId: string,
+    actorId = inputAuthor.actorId,
+    authorityId = actorId,
+    revision = 0,
+  ) => {
+    const id = `source-${randomBytes(8).toString('hex')}`;
+    await f.state.transaction(async (tx) => {
+      await tx.run(
+        "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,'released',?)",
+        id,
+        f.admin.projectId,
+        actorId,
+        unitId,
+        revision,
+        id,
+        id,
+        id,
+        id,
+        id,
+        JSON.stringify({
+          id,
+          projectId: f.admin.projectId,
+          actorId,
+          instanceId: unitId,
+          expectedRevision: revision,
+          status: 'released',
+          source: { actorId: authorityId },
+          execution: { policy: { readOnly: false } },
+        }),
+      );
+    });
+    return id;
+  };
   const unsubscribe = await f.events.subscribe({
     id: 'code.reconcile.v1',
     types: ['workflow.transition'],
@@ -163,7 +204,11 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
       );
     });
   };
-  const accept = async (work: WorkflowSnapshot, commit: string) => {
+  const accept = async (
+    work: WorkflowSnapshot,
+    commit: string,
+    reviewRef = `review-${work.id}`,
+  ) => {
     const commandId = `accepted-${work.id}`;
     captures.set(commandId, {
       ref: { kind: 'code-commit', commandId },
@@ -191,8 +236,14 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
         {
           unitId: work.id,
           terminalRevision: work.revision,
-          submissionRef: commandId,
-          reviewRef: `review-${work.id}`,
+          submissionRef:
+            (
+              await tx.get<{ snapshot_hash: string }>(
+                'SELECT snapshot_hash FROM reviews WHERE id=?',
+                reviewRef,
+              )
+            )?.snapshot_hash ?? commandId,
+          reviewRef,
           codeRef: { kind: 'code-commit', commandId },
           reviewSessionId: null,
         },
@@ -208,7 +259,7 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
       );
     });
   };
-  const input = async (name: string, commit: string) => {
+  const input = async (name: string, commit: string, producer = inputAuthor) => {
     const requestId = `input-${++sequence}`;
     let work = await handle.start(f.admin, {
       workflow: 'input',
@@ -221,6 +272,7 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
       expectedRevision: 0,
       requestId: `${requestId}-accept`,
     });
+    await producingSession(work.id, producer.actorId);
     await accept(work, commit);
     return work;
   };
@@ -256,6 +308,21 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
     source.git('push', bare, `${commit}:refs/heads/resolved`);
     return commit;
   };
+  const requestReview = async (taskId: string, subjectRevision = 1, producer = inputAuthor) => {
+    const output = await f.artifacts.create(producer, {
+      title: 'Resolution',
+      content: 'Verified resolution evidence.',
+    });
+    return f.reviews.request(producer, {
+      subjectId: taskId,
+      subjectRevision,
+      producerId: producer.actorId,
+      artifactIds: [output.id],
+      criteria: ['The resolution is correct.'],
+      provenanceOwner: 'code',
+      requestId: `resolution-${taskId}`,
+    });
+  };
   const acceptResolution = async (commit: string) => {
     const taskId = (await record())!.resolutionTaskId!;
     // The owner-review protocol is tested in task-git-workspace; here its committed terminal
@@ -266,7 +333,17 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
         .then(() => undefined),
     );
     await admission(taskId, commit, `admitted-${taskId}`);
-    await accept(await f.workflows.get(f.admin, taskId), commit);
+    await producingSession(taskId);
+    const request = await requestReview(taskId, 0);
+    const claim = await f.reviews.start(f.admin, request.id);
+    await f.reviews.submit(f.admin, {
+      reviewId: request.id,
+      claimId: claim.claimId!,
+      verdict: 'pass',
+      notes: 'Verified.',
+      requestId: `pass-${taskId}`,
+    });
+    await accept(await f.workflows.get(f.admin, taskId), commit, request.id);
     await code.reconcileAll();
     await bases.work(f.admin.projectId);
   };
@@ -292,17 +369,163 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
     record,
     resolveCommit,
     acceptResolution,
+    requestReview,
+    accept,
     admission,
     repositories,
     captures,
+    inputAuthor,
+    producingSession,
     handle,
     input,
     unbind,
+    unbindReviews,
     unsubscribe,
   };
 }
 
 for (const backend of backends) {
+  test(
+    `${backend}: Code refuses acceptance when another unit accepts a member commit after the review was pinned`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.waiter();
+      await f.bases.work(f.admin.projectId);
+      const taskId = (await f.record())!.resolutionTaskId!;
+      const commit = await f.resolveCommit();
+      await f.admission(taskId, commit, 'admitted');
+      const request = await f.requestReview(taskId, 0);
+      const claim = await f.reviews.start(f.admin, request.id);
+      await f.input('Another unit with the same commit', f.a, f.admin);
+      await f.reviews.submit(f.admin, {
+        reviewId: request.id,
+        claimId: claim.claimId!,
+        verdict: 'pass',
+        notes: 'Checked',
+        requestId: 'wrong-pass',
+      });
+      assert.deepEqual((await f.reviews.get(f.admin, request.id)).provenance, request.provenance);
+      await f.state.transaction(async (tx) => {
+        await tx.run("UPDATE wf_instances SET state='done',revision=1 WHERE id=?", taskId);
+      });
+      const work = await f.workflows.get(f.admin, taskId);
+      await assert.rejects(f.accept(work, commit, request.id), {
+        code: 'code_provenance_unverifiable',
+      });
+      assert.equal((await f.code.unit(f.admin, taskId)).acceptance, null);
+      assert.equal((await f.record())!.state, 'awaiting_resolution');
+    },
+  );
+
+  test(
+    `${backend}: frozen-plan provenance excludes indirect authors, authorities and every earlier resolution round`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const issue = async (name: string) => ({
+        projectId: f.admin.projectId,
+        actorId: (await f.scope.issueActor(f.admin, { name, role: 'operator' })).actor.id,
+      });
+      const indirect = await issue('Indirect input writer');
+      const authority = await issue('Directing authority');
+      const earlier = await issue('Earlier resolution writer');
+      await f.producingSession(f.extra.id, indirect.actorId, authority.actorId);
+      await f.waiter([f.left, f.extra]);
+      await f.bases.work(f.admin.projectId);
+      f.source.git('checkout', '--detach', f.d);
+      const e = f.source.commit({ 'h.txt': 'E' });
+      f.source.git(
+        'push',
+        f.repositories.paths(f.admin.projectId).repository,
+        `${e}:refs/heads/fourth`,
+      );
+      const fourth = await f.input('Fourth input', e);
+      await f.waiter([f.left, f.extra, fourth]);
+      await f.bases.work(f.admin.projectId);
+      await f.waiter([f.left, f.right, f.extra, fourth]);
+      await f.bases.work(f.admin.projectId);
+      const base = (await f.state.read((sql) =>
+        f.bases.find(sql, f.admin.projectId, [f.a, f.c, f.d, e]),
+      ))!;
+      const path = await f.state.read((sql) => f.bases.path(sql, f.admin.projectId, base.key));
+      assert.equal(path.length, 3, 'the indirect input is two frozen plan steps below the root');
+      const taskId = base.resolutionTaskId!;
+      await f.producingSession(taskId, earlier.actorId, authority.actorId);
+      const request = await f.requestReview(taskId, 1, await issue('Current resolution writer'));
+      assert.deepEqual(
+        request.provenance,
+        await f.state.transaction((tx) => f.units.reviewProvenance(f.admin.projectId, taskId, tx)),
+      );
+      for (const caller of [f.inputAuthor, indirect, authority, earlier]) {
+        await assert.rejects(f.reviews.start(caller, request.id), { code: 'review_independence' });
+        assert.equal(
+          (await f.reviews.list(caller)).find((item) => item.id === request.id)!.claimable,
+          false,
+        );
+      }
+      const claim = await f.reviews.start(f.admin, request.id);
+      const verdict = {
+        reviewId: request.id,
+        claimId: claim.claimId!,
+        verdict: 'pass' as const,
+        notes: 'Checked.',
+        requestId: 'pass',
+      };
+      assert.equal((await f.reviews.submit(f.admin, verdict)).verdict, 'pass');
+      assert.equal(
+        (await f.reviews.submit(f.admin, verdict)).provenance?.hash,
+        request.provenance?.hash,
+      );
+    },
+  );
+
+  test(
+    `${backend}: every reviewer excluded is visible on the resolution task and pinned reviews survive Code unload`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.waiter();
+      await f.bases.work(f.admin.projectId);
+      const taskId = (await f.record())!.resolutionTaskId!;
+      await f.producingSession(taskId, f.admin.actorId);
+      const request = await f.requestReview(taskId);
+      await f.state.transaction(async (tx) => {
+        await tx.run("UPDATE wf_instances SET state='in_review',revision=1 WHERE id=?", taskId);
+        await tx.run('UPDATE tasks SET review_id=? WHERE id=?', request.id, taskId);
+      });
+      assert.match(
+        (await f.reviews.get(f.admin, request.id)).waiting!,
+        /Every eligible reviewer.*contributor or directing authority/,
+      );
+      assert.match(
+        JSON.stringify(await f.workflows.evaluate(f.admin, taskId)),
+        /Every eligible reviewer/,
+      );
+      f.unbind();
+      f.unbindReviews();
+      await assert.rejects(f.reviews.start(f.admin, request.id), { code: 'review_independence' });
+      const independent = {
+        projectId: f.admin.projectId,
+        actorId: (await f.scope.issueActor(f.admin, { name: 'Independent', role: 'reviewer' }))
+          .actor.id,
+      };
+      const certifiedClaim = await f.reviews.start(independent, request.id);
+      assert.equal(
+        (
+          await f.reviews.submit(independent, {
+            reviewId: request.id,
+            claimId: certifiedClaim.claimId!,
+            verdict: 'pass',
+            notes: 'Checked',
+            requestId: 'certified-pass',
+          })
+        ).verdict,
+        'pass',
+      );
+    },
+  );
+
   test(
     `${backend}: a resolution title names the contributing work on an intermediate union with bounded sides`,
     optional(backend),
