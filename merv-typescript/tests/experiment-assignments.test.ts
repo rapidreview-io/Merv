@@ -1290,65 +1290,6 @@ test('a continuing agent can acquire successive experiment leases without inheri
   );
 });
 
-test('assigned plan and results reviewers update the paper through their scoped verdict only', async (t) => {
-  for (const stage of ['design', 'results'] as const)
-    await t.test(stage, async (t) => {
-      const f = await fixture(t);
-      const pending =
-        stage === 'design' ? (await f.design()).experiment : await f.results(await f.running());
-      const offered = await f.offer(pending);
-      const worker = await f.sessions.authenticate(offered.secret);
-      const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
-      assert.match(offered.session.assignment.context!.prompt, /You are responsible for updating/);
-      await assert.rejects(
-        f.sessions.prepare(worker, 'paper.patch', {
-          kind: 'methods',
-          expectedRevision: 0,
-          requestId: 'direct-review-edit',
-          changes: [{ id: pending.id, title: 'Method', content: 'Bypass the verdict' }],
-        }),
-        { code: 'execution_tool_forbidden' },
-      );
-      const review = await f.reviews.get(worker, pending.reviewId!);
-      const edit = {
-        documents: [
-          {
-            kind: 'methods',
-            expectedRevision: 0,
-            changes: [
-              {
-                id: pending.id,
-                title: 'Comparison',
-                content:
-                  stage === 'design'
-                    ? 'Planned comparison; results pending.'
-                    : 'The comparison found no difference.',
-              },
-            ],
-          },
-        ],
-      };
-      const completed = await f.run(
-        worker,
-        'review.submit',
-        {
-          ...reviewedFindings(review),
-          verdict: 'pass',
-          notes: 'Verified the evidence and updated Methods.',
-          paperChanges: edit,
-          requestId: f.request(),
-        } as Data,
-        (caller, input) =>
-          f.experiments.submitReview(caller, input as unknown as ReviewApplication),
-      );
-      assert.equal(completed.workflow.state, stage === 'design' ? 'running' : 'complete');
-      const document = (await paper.read(f.source)).documents.methods;
-      assert.equal(document.current.updatedBy, worker.actorId);
-      assert.equal(document.published?.publication.reviewId, review.id);
-      assert.equal(document.current.sections[0].content, edit.documents[0].changes[0].content);
-      await f.release(offered.session.id);
-    });
-
 test('A Git experiment may start from the commit an accepted Git task delivered', async (t) => {
   const f = await fixture(t);
   t.after(f.tasks.bindCode(f.code));
@@ -1509,4 +1450,64 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
     ...control(offered.session.id, 'experiment-launch'),
     workspace: checkout('persistent', head),
   });
+});
+
+test('assigned plan and results reviewers update the paper through their scoped verdict only', async (t) => {
+  for (const stage of ['design', 'results'] as const)
+    await t.test(stage, async (t) => {
+      const f = await fixture(t);
+      const pending =
+        stage === 'design' ? (await f.design()).experiment : await f.results(await f.running());
+      const offered = await f.offer(pending);
+      const worker = await f.sessions.authenticate(offered.secret);
+      const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
+      assert.match(offered.session.assignment.context!.prompt, /You are responsible for updating/);
+      await assert.rejects(
+        f.sessions.prepare(worker, 'paper.patch', {
+          kind: 'methods',
+          expectedRevision: 0,
+          requestId: 'direct-review-edit',
+          changes: [{ id: pending.id, title: 'Method', content: 'Bypass the verdict' }],
+        }),
+        { code: 'execution_tool_forbidden' },
+      );
+      const review = await f.reviews.get(worker, pending.reviewId!);
+      const edit = {
+        documents: [
+          {
+            kind: 'methods',
+            expectedRevision: 0,
+            changes: [
+              {
+                id: pending.id,
+                title: 'Comparison',
+                content:
+                  stage === 'design'
+                    ? 'Planned comparison; results pending.'
+                    : 'The comparison found no difference.',
+              },
+            ],
+          },
+        ],
+      };
+      const completed = await f.run(
+        worker,
+        'review.submit',
+        {
+          ...reviewedFindings(review),
+          verdict: 'pass',
+          notes: 'Verified the evidence and updated Methods.',
+          paperChanges: edit,
+          requestId: f.request(),
+        } as Data,
+        (caller, input) =>
+          f.experiments.submitReview(caller, input as unknown as ReviewApplication),
+      );
+      assert.equal(completed.workflow.state, stage === 'design' ? 'running' : 'complete');
+      const document = (await paper.read(f.source)).documents.methods;
+      assert.equal(document.current.updatedBy, worker.actorId);
+      assert.equal(document.published?.publication.reviewId, review.id);
+      assert.equal(document.current.sections[0].content, edit.documents[0].changes[0].content);
+      await f.release(offered.session.id);
+    });
 });

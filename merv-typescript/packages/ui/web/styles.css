@@ -1583,6 +1583,148 @@ select.input,
   padding: 12px 0;
 }
 
+/* JSON. ------------------------------------------------------------------ */
+/* A JSON file read as a tree (json-view.tsx): keys and scalars are machine text and
+   take the mono, a string is somebody's words and takes the sans. Each kind of
+   value has an ink of its own from the tokens, all of them 4.5:1 on every ground,
+   and says its kind a second way — quotes round a string, digits, a bare word — so
+   colour is never the only cue. Depth is the indent alone: no guide, no edge. A
+   tree too deep for a phone scrolls inside its own block and never moves the page. */
+.json {
+  padding: 10px 0;
+  max-width: 96ch;
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+.json-list {
+  list-style: none;
+  padding-left: var(--space-4);
+}
+.json-list--root {
+  padding-left: 0;
+}
+.json-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: 22px;
+  padding: 1px 0;
+}
+/* A value under a toggle's key starts where the keys beside it do. */
+.json-row--leaf {
+  padding-left: var(--space-4);
+}
+.json-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 1 auto;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* The key is as small as it reads; what the pointer lands on is a target tall. */
+.json-toggle::after {
+  content: '';
+  position: absolute;
+  inset: 50% -4px auto;
+  height: var(--hit);
+  transform: translateY(-50%);
+}
+.json-caret {
+  flex: none;
+  align-self: center;
+  width: var(--space-4);
+  padding-right: var(--space-1);
+  color: var(--faint);
+  transition: transform var(--motion-fast);
+  transform-origin: 6px 50%;
+}
+.json-toggle[aria-expanded='true'] > .json-caret {
+  transform: rotate(90deg);
+}
+.json-toggle:hover > :is(.json-caret, .json-key) {
+  color: var(--text);
+}
+.json-key,
+.json-count,
+.json-number,
+.json-boolean,
+.json-null,
+.json-hash {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.json-key {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+/* Beside its value a key keeps half the row at most, and wraps inside it. */
+.json-row--leaf > .json-key {
+  flex: none;
+  max-width: 50%;
+}
+/* Places in an array are numbers in a column: set flush right, their values line up. */
+.json-key--index {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.json-key--index,
+.json-count,
+.json-null {
+  color: var(--faint);
+}
+.json-count {
+  white-space: nowrap;
+}
+/* Wide enough to be read before it wraps: a row too deep for the page makes the
+   block scroll rather than set its value one letter to a line. */
+.json-value {
+  min-width: 14ch;
+  overflow-wrap: anywhere;
+}
+.json-string::before {
+  content: '\201c';
+  color: var(--faint);
+}
+.json-string::after {
+  content: '\201d';
+  color: var(--faint);
+}
+.json-string {
+  white-space: pre-wrap;
+}
+.json-number {
+  color: var(--kind-teal);
+  font-variant-numeric: tabular-nums;
+}
+.json-boolean {
+  color: var(--kind-purple);
+}
+.json-hash {
+  color: var(--muted);
+}
+.json-link {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+.json-link:hover {
+  color: var(--active);
+}
+@media (pointer: coarse) {
+  .json-row {
+    min-height: var(--hit);
+    align-items: center;
+  }
+}
+
 /* Markdown. -------------------------------------------------------------- */
 /* A brief, a delivery or a report, read as the document it is (markdown.tsx): the
    body sans at a reading measure, and nothing in it louder than the page around
