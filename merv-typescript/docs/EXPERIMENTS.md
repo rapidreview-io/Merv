@@ -244,6 +244,16 @@ The program owns four recipes: `experiment.design`,
 the exact approved plan where applicable, numbered review criteria, selected
 evidence, interruption feedback and retained rejected assessments.
 
+A design rejection opens a new attempt whose `feedbackReviewIds` names only the
+review that caused it, so `feedback.previousReviews` covers the current attempt
+alone. Design and execution packets therefore also carry `feedback.history`:
+every rejected round of the experiment across all attempts, oldest first,
+labelled `<stage> attempt N round M`, in the bounded form described in
+[Rework history](RECOVERY_AND_CONTEXT.md#rework-history) (8000 characters).
+`references.reviews` names each of those reviews. Stored attempts and
+`feedbackReviewIds` are unchanged. Reviewing packets carry no history: a design
+or result reviewer is shown no verdicts from earlier attempts.
+
 A session offer freezes the selected artifact metadata, figure references,
 recovery associations and context inputs, including the Scope-owned Project
 Introduction. Later Introduction edits affect later offers; refreshing an

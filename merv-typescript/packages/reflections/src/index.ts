@@ -330,13 +330,21 @@ export class ReflectionService implements Reflections {
           'invalid_title',
           'Reflection title is limited to 300 characters',
         );
+        if (input.previousCycleDigestId)
+          await this.artifacts.get(caller, input.previousCycleDigestId, tx);
         const workflow = await this.parents.get(2)!.start(
           caller,
           {
             workflow: 'reflection',
             version: 2,
             requestId: requestKey(caller, 'wave', input.requestId),
-            data: { title },
+            // Later transitions pass no such key, so the wave keeps the digest it started with.
+            data: {
+              title,
+              ...(input.previousCycleDigestId
+                ? { previousCycleDigestId: input.previousCycleDigestId }
+                : {}),
+            },
           },
           tx,
         );
@@ -528,6 +536,9 @@ export class ReflectionService implements Reflections {
       (JSON.parse(wave.feedback) as ReviewRequest[]).map((entry) => ({ review: entry })),
       REVIEW_HISTORY_CHARS,
     );
+    const previousCycle = (
+      lens ? await this.workflows.get(context.caller, wave.id, context.tx) : context.snapshot
+    ).data.previousCycleDigestId;
     return {
       assignment: {
         text: JSON.stringify({
@@ -539,7 +550,12 @@ export class ReflectionService implements Reflections {
         }),
       },
       research: {
-        text: 'Read current research with project.records, task.get, experiment.get_state and paper.read. Inspect source evidence with artifact.read and its reviews with review.get. Existing work can progress during this wave; revisit relevant records before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.',
+        text: `Read current research with project.records, task.get, experiment.get_state and paper.read. Inspect source evidence with artifact.read and its reviews with review.get. Existing work can progress during this wave; revisit relevant records before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.${
+          // Only a wave Research started carries a digest, so only there is the tool named.
+          typeof previousCycle === 'string'
+            ? ' This research cycle follows an earlier one: research.lineage lists the cycles before it with their digests.'
+            : ''
+        }`,
       },
       ...(!lens ? { lenses: { artifactIds: lenses, mode: 'references' as const } } : {}),
       ...(review && submission
@@ -567,6 +583,9 @@ export class ReflectionService implements Reflections {
       },
       // Authors only: a reviewer judges the submission in front of them, not earlier verdicts.
       ...(!review && history.rounds.length ? { history: { text: JSON.stringify(history) } } : {}),
+      ...(typeof previousCycle === 'string'
+        ? { previousCycle: { artifactIds: [previousCycle], mode: 'auto' as const } }
+        : {}),
     };
   }
   private inputIds(inputs: Record<string, ContextInput>): string[] {

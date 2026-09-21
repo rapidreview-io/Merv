@@ -114,7 +114,15 @@ const capabilities: Record<string, readonly string[]> = {
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
   experiments: ['code'],
-  research: ['paper', 'reflections', 'knowledge', 'consolidation', 'tasks', 'experiments'],
+  research: [
+    'paper',
+    'reflections',
+    'knowledge',
+    'consolidation',
+    'tasks',
+    'experiments',
+    'artifacts',
+  ],
   knowledge: ['code'],
 };
 

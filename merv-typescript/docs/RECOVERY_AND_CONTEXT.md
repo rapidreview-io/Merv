@@ -51,6 +51,48 @@ New `experiment.plan` tasks start on version 2. Merv appends one feasibility che
 
 The brief must still contain the goal and each Done-when check. Required recipe inputs must be present and accessible at creation. The task pins its type version and context references. Additional types register directly through `ctx.tasks.registerType(definition)`; disposal withdraws that type's recipe handle. Work recipes must require `task` and `brief` sections. There is no separate plugin per recipe.
 
+## Rework history
+
+A producer returning to rejected work is shown every earlier rejected round, not only the last one. The rounds were always stored; what changed is the projection. `reviewHistory()` in Contracts turns the rejected reviews of one subject, oldest first, into a bounded `ReviewHistory`:
+
+```ts
+interface ReviewHistory {
+  rounds: ReviewRound[];
+  omittedRounds: number;
+}
+interface ReviewRound {
+  round: number; // 1-based among all rejected rounds, oldest first
+  reviewId: string;
+  subjectRevision: number;
+  label?: string;
+  verdict: 'needs_changes' | 'fail';
+  returnTo?: string;
+  synopsis: string | null;
+  unmet: {
+    criterionNumber: number;
+    criterion: string;
+    status: 'not_met' | 'not_verified';
+    notes: string;
+  }[];
+  notes: string | null;
+}
+```
+
+Passed and unsubmitted reviews are left out. Notes are clipped to 800 characters, finding notes to 300 and criterion text to 200. No actor ID is copied: a history says what was rejected and why, never who said so. When the rounds exceed the domain's budget the oldest are dropped first and counted in `omittedRounds`; the latest round is always kept. Each `reviewId` can be opened in full with `review.get`.
+
+| Domain        | Where the history appears                                              | Budget |
+| ------------- | ---------------------------------------------------------------------- | ------ |
+| Reflections   | Its own optional `history` section, after `feedback`                   | 6000   |
+| Tasks         | Appended to the `feedback` text as "Earlier review rounds"             | 4000   |
+| Experiments   | `feedback.history`, labelled `<stage> attempt N round M`               | 8000   |
+| Consolidation | Unchanged: its `feedback` section already carried every rejected round | —      |
+
+Context Builder never truncates: an optional section that does not fit is left out whole and named in `omitted`. That is why reflections, whose recipes changed version anyway, give the history a section of its own after `feedback`, so the latest review wins the budget. Tasks and experiments keep it inside `feedback` under a small budget instead of publishing new recipe versions; there, an oversized `feedback` section is omitted whole, latest assessment included, and the worker reads `feedback` in `omitted` and opens the review with `review.get`.
+
+Only producers are shown a history. Reflection reviewers, experiment design and result reviewers and task reviewers judge the submission in front of them and are shown no earlier verdicts.
+
+A task remembers its rejected rounds in `workflow.data.rejectedReviewIds` (at most the last 50), appended by each `needs_changes` or `fail` and left untouched by a pass. `revisionContext` keeps its meaning: the notes of the latest rejection. A task already in rework when this was introduced has no such list; its first later rejection seeds it with the review that put it into rework, and until then its context uses the current review alone.
+
 ## Context and checkpoints over MCP/HTTP
 
 `task.context` takes `taskId`, `purpose` (`work` or `review`), `expectedRevision`, `requestId`, and a required current `claimId` for review work. It returns the complete persisted context package. Work context requires the task producer or a project operator. Review context requires the current independent reviewer. The read/claim checks and package write share one transaction.

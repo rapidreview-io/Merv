@@ -84,6 +84,13 @@ export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map
       ...(stage === 'review'
         ? []
         : [{ key: 'history', title: 'Earlier review rounds, oldest first', required: false }]),
+      // Last, so rework feedback wins the budget. A digest that does not fit is reported omitted
+      // and stays readable with artifact.read.
+      {
+        key: 'previousCycle',
+        title: 'Predecessor cycle digest (decisions already made; verify before relying on it)',
+        required: false,
+      },
     ],
     outputInstructions:
       stage === 'lens'

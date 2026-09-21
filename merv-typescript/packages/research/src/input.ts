@@ -10,6 +10,12 @@ export const createSchema = z
       .default('none')
       .describe('none: finish after reflection approval; git: add code implementation and review'),
     consolidationDependsOn: z.array(id).max(100).default([]),
+    // Optional with no default, so the stored input of a request made before it existed still replays.
+    previousCycleId: id
+      .optional()
+      .describe(
+        "A complete, abandoned or failed cycle this one follows; its digest is carried into this cycle's reflection",
+      ),
     requestId: id,
   })
   .strict();

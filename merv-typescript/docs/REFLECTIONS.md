@@ -14,7 +14,11 @@ The pause stays now that an approved plan can become work. That work is created 
 
 ## Context and reads
 
-A lens receives its assignment, perspective, live-read instructions and any relevant feedback. Synthesis and review receive references to submitted reports instead of their complete contents. No complete research corpus is embedded in an assignment. These contexts use version-3 reflection recipes; historical version-2 recipes remain available to old waves.
+A lens receives its assignment, perspective, live-read instructions and any relevant feedback. Synthesis and review receive references to submitted reports instead of their complete contents. No complete research corpus is embedded in an assignment. These contexts use version-5 reflection recipes; packages saved under earlier versions remain readable.
+
+Version 5 adds two optional sections after `feedback`. `history` gives a lens or synthesis author every earlier rejected round of the wave, oldest first, in the bounded form described in [Rework history](RECOVERY_AND_CONTEXT.md#rework-history) (6000 characters, oldest rounds dropped first); the `feedback` section itself is unchanged, and the reviewer's recipe has no `history` section, so a reviewer is shown no earlier verdicts. `references.researchReviews` names the review of every rejected round. `previousCycle` embeds the digest of the research cycle before this wave's, under the heading "Predecessor cycle digest (decisions already made; verify before relying on it)"; all three stages receive it. It comes last, so rework feedback wins the budget: a digest that does not fit is named in `omitted` and stays in `references.artifacts` for `artifact.read`. Only such a wave's live-read instructions name `research.lineage`.
+
+The digest reaches a wave through `ReflectionCreate.previousCycleDigestId`, which Research sets when it advances a cycle that follows another. It is validated as an artifact of the project and kept in the wave's workflow start data, which no later transition rewrites. The `reflection.create` tool does not accept it: otherwise any writer could present an artifact of their choosing to every lens and reviewer as decisions already made.
 
 Agents use existing tools: `project.records`, `task.get`, `experiment.get_state`, `paper.read`, `review.get`, `artifact.get` and `artifact.read`. No tools or tool schemas were added. `project.records` still returns the existing full metadata inventory on demand; this change does not add pagination or automatic summarization.
 

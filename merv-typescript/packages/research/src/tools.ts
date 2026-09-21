@@ -36,7 +36,7 @@ export const researchToolsPlugin = {
       {
         name: 'research.create',
         description:
-          'Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Paper edits are reviewed within scientific workflows.',
+          "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows.",
         inputSchema: createSchema,
         handler: async (caller: Caller, input: ResearchCreate) =>
           await research.create(caller, input),
@@ -56,6 +56,15 @@ export const researchToolsPlugin = {
         inputSchema: getSchema,
         handler: async (caller: Caller, input: { researchId: string }) =>
           await research.get(caller, input.researchId),
+      },
+      {
+        name: 'research.lineage',
+        description:
+          'Read the cycles a research cycle follows, oldest first, each with its immutable digest artifact of what that cycle decided, and the cycle that follows it. Read a digest with artifact.read.',
+        readOnly: true,
+        inputSchema: getSchema,
+        handler: async (caller: Caller, input: { researchId: string }) =>
+          await research.lineage(caller, input.researchId),
       },
       {
         name: 'research.replan',

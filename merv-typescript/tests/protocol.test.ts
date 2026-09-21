@@ -97,7 +97,7 @@ test('SDK-supported legacy versions negotiate and list/call the native stack', a
       version,
     );
     assert.equal(listed.status, 200);
-    assert.equal(listed.body.result.tools.length, 68);
+    assert.equal(listed.body.result.tools.length, 69);
     const called = await request(
       {
         jsonrpc: '2.0',
@@ -176,7 +176,7 @@ test('unsupported or conflicting request versions are refused before dispatch', 
     '2025-11-25',
   );
   assert.equal(supportedMeta.status, 200);
-  assert.equal(supportedMeta.body.result.tools.length, 68);
+  assert.equal(supportedMeta.body.result.tools.length, 69);
   const discover = await request({ jsonrpc: '2.0', id: 12, method: 'server/discover' });
   assert.equal(discover.body.error.code, -32601);
 });

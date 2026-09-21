@@ -114,6 +114,12 @@ export interface ApprovedReflection {
 export interface ReflectionCreate {
   requestId: string;
   title?: string;
+  /**
+   * The digest of the research cycle before this wave's, shown to the wave under a heading the
+   * server wrote. Research alone sets it; no tool accepts it, so nobody can present an artifact
+   * of their choosing as decisions already made.
+   */
+  previousCycleDigestId?: string;
 }
 export interface ReflectionLensSubmit {
   lensId: string;

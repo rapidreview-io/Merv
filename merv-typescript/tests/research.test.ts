@@ -10,6 +10,8 @@ import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchRecord } from '../packages/research/src/types.js';
 import type { Caller, ReviewApplication, WorkflowDefinition } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
+import type { ConsolidationDecision } from '@merv/consolidation/types';
+import type { ResearchDigest } from '../packages/research/src/types.js';
 import {
   CONSOLIDATION_LIMITS,
   createSchema as consolidationCreateSchema,
@@ -27,7 +29,7 @@ async function fixture(t: TestContext) {
       !entry.id.endsWith('-ui'),
   );
   let app = await createApp({ directory, config });
-  const service = async () =>
+  const service = async (digests = true) =>
     await createService(
       new ResearchService(
         app.ctx.state,
@@ -39,6 +41,7 @@ async function fixture(t: TestContext) {
         app.ctx.knowledge,
         app.ctx.tasks,
         app.ctx.experiments,
+        digests ? app.ctx.artifacts : undefined,
       ),
     );
   let research = await service(),
@@ -189,13 +192,13 @@ async function fixture(t: TestContext) {
     });
     return (await review(wave.review!.id, wave.workflow.revision)) as Reflection;
   };
-  const consolidate = async (record: ResearchRecord) => {
+  const consolidate = async (record: ResearchRecord, decisions: ConsolidationDecision[] = []) => {
     const work = await app.ctx.consolidation.get(owner, record.consolidationId!);
     const submitted = await app.ctx.consolidation.submit(owner, {
       consolidationId: work.id,
       expectedRevision: work.workflow.revision,
       reportArtifactId: (await artifact(owner, 'Consolidation report')).id,
-      decisions: [],
+      decisions,
       requestId: id(),
     });
     return await review(submitted.reviewId!, submitted.workflow.revision);
@@ -223,6 +226,11 @@ async function fixture(t: TestContext) {
     reflect,
     consolidate,
     legacy,
+    /** The same storage with Artifacts unbound or bound again, as when a plugin is unloaded. */
+    async rebind(digests: boolean) {
+      research.close();
+      research = await service(digests);
+    },
     async restart() {
       research.close();
       await app.stop();
@@ -434,6 +442,297 @@ test('a cycle digest is stored once, read back as artifact metadata, and never r
         ),
       /A research cycle digest is immutable/,
     );
+});
+
+const digestOf = async (f: Awaited<ReturnType<typeof fixture>>, record: ResearchRecord) => {
+  const read = await f.app.ctx.artifacts.read(f.owner, record.digest!.id);
+  assert.equal(read.artifact.mediaType, 'application/json');
+  assert.ok(read.content.length <= 12000);
+  return { digest: JSON.parse(read.content) as ResearchDigest, content: read.content };
+};
+
+test('completing a cycle digests what it decided, once, without naming anyone', async (t) => {
+  const f = await fixture(t);
+  await f.definition();
+  let record = await f.advance(await f.advance(await f.create()));
+  assert.equal(record.digest, null);
+  await f.reflect(record);
+  const completing = {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    requestId: 'complete-and-digest',
+  };
+  record = await f.research.advance(f.owner, completing);
+  assert.equal(record.workflow.state, 'complete');
+  const { digest, content } = await digestOf(f, record);
+  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  assert.deepEqual(digest.cycle, {
+    id: record.id,
+    name: record.name,
+    outcome: 'complete',
+    reason: null,
+    createdAt: record.createdAt,
+    composedAt: digest.cycle.composedAt,
+    late: false,
+  });
+  assert.deepEqual(digest.reflection!.changeSpec, {
+    id: approved.changeSpec.id,
+    title: approved.changeSpec.title,
+    hash: approved.changeSpec.hash,
+  });
+  assert.equal(digest.reflection!.reviewId, approved.reviewId);
+  assert.equal(digest.consolidation, null);
+  assert.equal(digest.omitted, 0);
+  // Handing the digest to a later worker or reviewer must say nothing about who did the work.
+  for (const actor of await f.app.ctx.scope.actors(f.owner))
+    assert.ok(!content.includes(actor.id), `the digest names actor ${actor.id}`);
+  const artifacts = (await f.app.ctx.artifacts.list(f.owner)).length;
+  assert.equal((await f.research.advance(f.owner, completing)).digest!.id, record.digest!.id);
+  assert.equal((await f.app.ctx.artifacts.list(f.owner)).length, artifacts);
+  const guidance = await f.app.ctx.workflows.evaluate(f.owner, record.id);
+  assert.ok(
+    guidance.references.some(
+      (reference) => reference.id === record.digest!.id && reference.label === 'Cycle digest',
+    ),
+  );
+});
+
+test('a consolidated cycle digests each consolidation decision', async (t) => {
+  const f = await fixture(t);
+  const claim = await f.app.ctx.claims.create(f.owner, {
+    statement: 'The approach is feasible on the frozen corpus.',
+    requestId: f.id(),
+  });
+  const experiment = await f.app.ctx.experiments.create(f.owner, {
+    name: 'ruled-out',
+    intent: 'Evaluate whether the approach is feasible',
+    testedClaimIds: [claim.id],
+    requestId: f.id(),
+  });
+  await f.definition();
+  // A cycle from before consolidation became optional consolidates without a Git workspace.
+  let record = await f.advance(await f.advance(await f.legacy()));
+  await f.app.ctx.experiments.attach(f.owner, {
+    experimentId: experiment.id,
+    artifactId: (await f.artifact(f.owner, 'Plan')).id,
+    role: 'plan',
+    path: 'plan.md',
+    attemptIndex: 1,
+    expectedRevision: 0,
+    requestId: f.id(),
+  });
+  await f.reflect(record);
+  const current = await f.app.ctx.experiments.get(f.owner, experiment.id);
+  await f.app.ctx.experiments.transition(f.owner, {
+    experimentId: current.id,
+    expectedRevision: current.workflow.revision,
+    transition: 'abandon',
+    evidence: { reason: 'The feasibility analysis ruled out this approach.' },
+    requestId: f.id(),
+  });
+  record = await f.advance(record);
+  const rationale = 'Its code encodes the approach the analysis ruled out.';
+  await f.consolidate(record, [{ experimentId: experiment.id, decision: 'drop', rationale }]);
+  record = await f.advance(record);
+  const { digest } = await digestOf(f, record);
+  assert.equal(digest.consolidation!.id, record.consolidationId);
+  assert.deepEqual(
+    digest.experiments.map(({ id, state, decision, rationale }) => ({
+      id,
+      state,
+      decision,
+      rationale,
+    })),
+    [{ id: experiment.id, state: 'abandoned', decision: 'drop', rationale }],
+  );
+  assert.deepEqual(digest.dropped, [experiment.id]);
+  assert.deepEqual(digest.claims, [
+    {
+      id: claim.id,
+      statement: claim.statement,
+      status: claim.status,
+      confidence: claim.confidence,
+      testedBy: [experiment.id],
+    },
+  ]);
+  assert.deepEqual(digest.openQuestions, [{ claimId: claim.id, statement: claim.statement }]);
+});
+
+test('an ended cycle digests its reason and the selected work it leaves unfinished', async (t) => {
+  const f = await fixture(t);
+  const task = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Survey the corpus',
+    goal: 'List what the frozen corpus contains.',
+    checks: ['The list exists'],
+    requestId: f.id(),
+  });
+  const cycle = await f.research.create(f.owner, {
+    name: 'Cut short',
+    dependsOn: [task.id],
+    requestId: f.id(),
+  });
+  const reason = 'The corpus was withdrawn before the survey finished.';
+  const ended = await f.research.end(f.owner, {
+    researchId: cycle.id,
+    expectedRevision: cycle.workflow.revision,
+    outcome: 'failed',
+    reason,
+    requestId: f.id(),
+  });
+  const { digest } = await digestOf(f, ended);
+  assert.equal(digest.cycle.outcome, 'failed');
+  assert.equal(digest.cycle.reason, reason);
+  assert.equal(digest.reflection, null);
+  assert.deepEqual(digest.tasks, [{ id: task.id, title: task.title, state: task.workflow.state }]);
+  assert.deepEqual(digest.carriedOver, [task.id]);
+});
+
+test('a digest stays within its bound by leaving entries out and counting them', async (t) => {
+  const f = await fixture(t);
+  const dependsOn: string[] = [];
+  for (let index = 0; index < 60; index++)
+    dependsOn.push(
+      (
+        await f.app.ctx.tasks.create(f.owner, {
+          title: `${'A long title that fills the digest. '.repeat(8)}${index}`,
+          goal: 'Fill the digest.',
+          checks: ['It is full'],
+          requestId: f.id(),
+        })
+      ).id,
+    );
+  const cycle = await f.research.create(f.owner, { name: 'Wide', dependsOn, requestId: f.id() });
+  const ended = await f.research.end(f.owner, {
+    researchId: cycle.id,
+    expectedRevision: cycle.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'Too wide to finish.',
+    requestId: f.id(),
+  });
+  const { digest } = await digestOf(f, ended);
+  assert.ok(digest.omitted > 0);
+  assert.equal(digest.tasks.length + digest.carriedOver.length + digest.omitted, 120);
+});
+
+test('ending and completing never wait for a digest; the successor composes it late', async (t) => {
+  const f = await fixture(t);
+  await f.rebind(false);
+  const end = async (name: string) => {
+    const cycle = await f.research.create(f.owner, { name, requestId: f.id() });
+    return await f.research.end(f.owner, {
+      researchId: cycle.id,
+      expectedRevision: cycle.workflow.revision,
+      outcome: 'abandoned',
+      reason: 'Nothing was worth selecting.',
+      requestId: f.id(),
+    });
+  };
+  const first = await end('Undigested');
+  assert.equal(first.workflow.state, 'abandoned');
+  assert.equal(first.digest, null);
+  // The caller asked for the digest to be carried forward, so here its absence is refused.
+  const following = { name: 'Successor', previousCycleId: first.id, requestId: 'follow-first' };
+  await assert.rejects(async () => await f.research.create(f.owner, following), {
+    code: 'artifacts_unavailable',
+  });
+  assert.equal((await f.research.list(f.owner)).length, 1);
+  await f.rebind(true);
+  // Any writer may follow a finished cycle: the digest is the server's composition, not theirs.
+  const writer = await f.issue('producer');
+  const successor = await f.research.create(writer, following);
+  assert.equal(successor.previousCycleId, first.id);
+  assert.equal(successor.origin, null);
+  const digested = await f.research.get(f.owner, first.id);
+  assert.equal(digested.successorId, successor.id);
+  const { digest } = await digestOf(f, digested);
+  assert.equal(digest.cycle.late, true);
+  assert.equal(digest.cycle.reason, 'Nothing was worth selecting.');
+  assert.deepEqual(await f.research.create(writer, following), successor);
+  await assert.rejects(
+    async () =>
+      await f.research.create(f.owner, { ...following, name: 'Rival', requestId: 'rival' }),
+    { code: 'previous_cycle_followed', status: 409 },
+  );
+});
+
+test('only a finished cycle of this project can be followed, and never by a leased worker', async (t) => {
+  const f = await fixture(t);
+  const open = await f.create();
+  const follow = async (caller: Caller, previousCycleId: string) =>
+    await f.research.create(caller, { name: 'Successor', previousCycleId, requestId: f.id() });
+  await assert.rejects(async () => await follow(f.owner, open.id), {
+    code: 'previous_cycle_open',
+    status: 409,
+  });
+  await assert.rejects(async () => await follow(f.owner, 'research_unknown'), {
+    code: 'research_not_found',
+    status: 404,
+  });
+  const ended = await f.research.end(f.owner, {
+    researchId: open.id,
+    expectedRevision: open.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'Stopped.',
+    requestId: f.id(),
+  });
+  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  await assert.rejects(
+    async () =>
+      await follow(
+        {
+          projectId: other.project.id,
+          actorId: other.actor.id,
+          credentialId: other.credential.id,
+        },
+        ended.id,
+      ),
+    { code: 'research_not_found', status: 404 },
+  );
+  await assert.rejects(
+    async () => await follow({ ...f.owner, session: { id: 'session_leased' } }, ended.id),
+    { code: 'forbidden', status: 403 },
+  );
+  assert.equal((await f.research.get(f.owner, ended.id)).successorId, null);
+});
+
+test('lineage reads the cycles before this one, oldest first, and the one after', async (t) => {
+  const f = await fixture(t);
+  let previousCycleId: string | undefined;
+  const ids: string[] = [];
+  for (let index = 0; index < 22; index++) {
+    const cycle = await f.research.create(f.owner, {
+      name: `Cycle ${index}`,
+      ...(previousCycleId ? { previousCycleId } : {}),
+      requestId: f.id(),
+    });
+    ids.push(cycle.id);
+    if (index === 21) break;
+    await f.research.end(f.owner, {
+      researchId: cycle.id,
+      expectedRevision: cycle.workflow.revision,
+      outcome: 'abandoned',
+      reason: 'Superseded by the next cycle.',
+      requestId: f.id(),
+    });
+    previousCycleId = cycle.id;
+  }
+  const reader = await f.issue('reader');
+  const short = await f.research.lineage(reader, ids[2]!);
+  assert.deepEqual(
+    short.cycles.map((cycle) => cycle.id),
+    ids.slice(0, 3),
+  );
+  assert.equal(short.truncated, false);
+  assert.equal(short.successor!.id, ids[3]);
+  assert.ok(short.cycles.every((cycle) => cycle.digest && cycle.state === 'abandoned'));
+  const long = await f.research.lineage(reader, ids[21]!);
+  assert.deepEqual(
+    long.cycles.map((cycle) => cycle.id),
+    ids.slice(2),
+  );
+  assert.equal(long.truncated, true);
+  assert.equal(long.successor, null);
+  assert.equal(long.cycles.at(-1)!.digest, null);
 });
 
 test('research owner authorization, project scoping, selected prerequisite success and request replay survive restart', async (t) => {

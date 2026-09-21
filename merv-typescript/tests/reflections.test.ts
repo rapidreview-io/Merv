@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { createApp } from '../src/app.js';
 import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
+import type { ResearchLineage } from '../packages/research/src/types.js';
 import {
   CHANGE_SPEC_CRITERION,
   REFLECTION_CRITERIA,
@@ -521,6 +522,132 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   wave = await f.synthesize(await f.lenses(wave));
   wave = await f.verdict(wave, reviewer, true);
   assert.equal(wave.workflow.state, 'approved');
+});
+
+test('a cycle that follows another hands its wave the predecessor digest, and a leased lens can read the lineage', async (t) => {
+  const f = await fixture(t);
+  const research = f.app.ctx.research;
+  const first = await research.create(f.owner, { name: 'First cycle', requestId: 'first' });
+  const ended = await research.end(f.owner, {
+    researchId: first.id,
+    expectedRevision: first.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'The first question was answered elsewhere.',
+    requestId: 'end-first',
+  });
+  let cycle = await research.create(f.owner, {
+    name: 'Second cycle',
+    previousCycleId: first.id,
+    requestId: 'second',
+  });
+  await f.app.ctx.paper.patch(f.owner, {
+    kind: 'problem',
+    expectedRevision: (await f.app.ctx.paper.read(f.owner)).documents.problem.current.revision,
+    requestId: 'define',
+    changes: [
+      { id: 'problem', content: 'Can this comparison be evaluated reliably?' },
+      { id: 'scope', content: 'A bounded local comparison.' },
+      { id: 'goals', content: 'Retain independently verified evidence.' },
+      { id: 'constraints', content: 'Use only the frozen available corpus.' },
+    ],
+  });
+  for (const requestId of ['to-researching', 'to-reflecting'])
+    cycle = await research.advance(f.owner, {
+      researchId: cycle.id,
+      expectedRevision: cycle.workflow.revision,
+      requestId,
+    });
+  const wave = await f.app.ctx.reflections.get(f.owner, cycle.reflectionId!);
+  const lens = wave.lenses[0]!;
+  const context = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
+  assert.ok(!context.omitted.includes('previousCycle'));
+  assert.match(context.prompt, /Predecessor cycle digest \(decisions already made/);
+  assert.ok(context.prompt.includes('The first question was answered elsewhere.'));
+  assert.match(context.prompt, /research\.lineage/);
+  assert.ok(context.sources.some((source) => source.id === ended.digest!.id));
+  assert.ok(Buffer.byteLength(context.prompt) < 16 * 1024);
+
+  const secret = token();
+  await f.app.ctx.sessions.registerAgent(f.owner, {
+    name: 'Lens agent',
+    runnerId: 'external',
+    requestId: 'agent',
+    secret,
+  });
+  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+    instanceId: lens.id,
+    expectedRevision: 0,
+    requestId: 'assign-lens',
+  });
+  assert.match(execution.assignment.context!.prompt, /Predecessor cycle digest/);
+  const caller = await f.app.ctx.sessions.authenticate(secret);
+  const lineage = (await f.app.ctx.tools.call('research.lineage', caller, {
+    researchId: cycle.id,
+  })) as ResearchLineage;
+  assert.deepEqual(
+    lineage.cycles.map((entry) => [entry.id, entry.digest?.id ?? null]),
+    [
+      [first.id, ended.digest!.id],
+      [cycle.id, null],
+    ],
+  );
+  assert.ok(await f.app.ctx.tools.call('artifact.read', caller, { artifactId: ended.digest!.id }));
+});
+
+test('a standalone wave names no lineage, and a digest that does not fit is omitted yet stays readable', async (t) => {
+  const f = await fixture(t);
+  const oversized = await f.app.ctx.artifacts.create(f.owner, {
+    title: 'Cycle digest: oversized',
+    content: JSON.stringify({ formatVersion: 1, filler: 'x'.repeat(30000) }),
+    mediaType: 'application/json',
+  });
+  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const foreign = await f.app.ctx.artifacts.create(
+    { projectId: other.project.id, actorId: other.actor.id, credentialId: other.credential.id },
+    { title: 'Foreign digest', content: '{}', mediaType: 'application/json' },
+  );
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.reflections.create(f.owner, {
+        previousCycleDigestId: foreign.id,
+        requestId: 'foreign',
+      }),
+    { status: 404 },
+  );
+  // No tool accepts the field: only Research may say what the predecessor decided.
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.tools.call('reflection.create', f.owner, {
+        previousCycleDigestId: oversized.id,
+        requestId: 'by-tool',
+      }),
+    { status: 400 },
+  );
+  let wave = await f.app.ctx.reflections.create(f.owner, {
+    previousCycleDigestId: oversized.id,
+    requestId: 'carrying',
+  });
+  const lens = wave.lenses[0]!;
+  const context = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
+  assert.ok(context.omitted.includes('previousCycle'));
+  assert.ok(!context.prompt.includes('Predecessor cycle digest'));
+  assert.ok(
+    (
+      await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 })
+    ).references.artifacts.includes(oversized.id),
+  );
+  // The digest stays with the wave through rework: no later transition rewrites it.
+  const reviewer = await f.actor('Reviewer', 'reviewer');
+  wave = await f.synthesize(await f.lenses(wave));
+  wave = await f.verdict(wave, reviewer, false, 'synthesizing');
+  assert.ok(
+    (
+      await f.app.ctx.workflows.execution(f.owner, {
+        instanceId: wave.id,
+        expectedRevision: wave.workflow.revision,
+      })
+    ).references.artifacts.includes(oversized.id),
+  );
 });
 
 test('leased lens calls use exact execution evidence, retain context through release and recover independent review claims', async (t) => {

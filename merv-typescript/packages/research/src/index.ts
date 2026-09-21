@@ -8,6 +8,7 @@ import {
   inTransaction,
   now,
   type Artifact,
+  type Artifacts,
   type Caller,
   type Data,
   type Scope,
@@ -33,7 +34,9 @@ import type {
   Research,
   ResearchAdvance,
   ResearchCreate,
+  ResearchDigest,
   ResearchEnd,
+  ResearchLineage,
   ResearchOrigin,
   ResearchRecord,
   ResearchReplan,
@@ -58,6 +61,7 @@ interface Capabilities {
   knowledge: Knowledge;
   tasks: Tasks;
   experiments: Experiments;
+  artifacts: Artifacts;
 }
 /** An approved reflection whose plan says the project continues. */
 type Continuing = ApprovedReflection & {
@@ -74,9 +78,22 @@ const unavailable = {
     'Creating the approved plan\'s work needs Tasks; enable it, or complete this cycle with nextWave: "skip"',
   experiments:
     'Creating the approved plan\'s experiments needs Experiments; enable it, or complete this cycle with nextWave: "skip"',
+  artifacts: "Artifacts are unavailable, so the predecessor cycle's digest cannot be retained",
 };
 const nextWaveGuidance =
   'When the approved reflection carries a structured plan that continues, completing the cycle requires nextWave: "create" opens the plan\'s tasks, experiments and the next research cycle in the same transaction, and "skip" completes without them. A text change specification creates nothing; follow-on work is then the owner\'s to create.';
+/** A cycle in one of these states is over: it may be digested and it may be followed. */
+const over = new Set(['complete', 'abandoned', 'failed']);
+/**
+ * A digest rides inside a 24000-character reflection context, behind the assignment and any
+ * rework feedback. At this bound it still fits beside them instead of being omitted whole.
+ */
+const DIGEST_MAX_CHARS = 12000;
+const DIGEST_TEXT_CHARS = 300;
+const ENDING_REASON_CHARS = 2000;
+const DIGEST_LIST_LIMIT = 100;
+/** How far research.lineage walks back before it says the chain goes on. */
+const LINEAGE_LIMIT = 20;
 /** Experiments counts these states as no longer active; the plan's experiments are sized against the rest. */
 const finishedExperiment = new Set(['complete', 'abandoned', 'failed']);
 const instructions: Record<Stage, string> = {
@@ -142,6 +159,7 @@ export class ResearchService implements Research {
     knowledge?: Knowledge,
     tasks?: Tasks,
     experiments?: Experiments,
+    artifacts?: Artifacts,
   ) {
     this.initialize = async () => {
       await state.migrate('research', [
@@ -218,6 +236,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
         if (knowledge) this.bindKnowledge(knowledge);
         if (tasks) this.bindTasks(tasks);
         if (experiments) this.bindExperiments(experiments);
+        if (artifacts) this.bindArtifacts(artifacts);
       } catch (error) {
         for (const handle of this.handles.values()) handle.dispose();
         throw error;
@@ -230,6 +249,9 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       successStates: ['complete'],
       describe: async (context) => {
         const record = await this.get(context.caller, context.snapshot.id, context.tx);
+        const previous = record.previousCycleId
+          ? await this.row(context.caller, record.previousCycleId, context.tx)
+          : null;
         return {
           label: record.name,
           gate: context.snapshot.state,
@@ -242,6 +264,18 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
             })),
             ...(record.successorId
               ? [{ kind: 'workflow', id: record.successorId, label: 'Next research cycle' }]
+              : []),
+            ...(record.digest
+              ? [{ kind: 'artifact', id: record.digest.id, label: 'Cycle digest' }]
+              : []),
+            ...(previous?.digest
+              ? [
+                  {
+                    kind: 'artifact',
+                    id: (JSON.parse(previous.digest) as Artifact).id,
+                    label: 'Predecessor cycle digest',
+                  },
+                ]
               : []),
           ],
         };
@@ -337,12 +371,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     parse(getSchema, { researchId: id });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const row = await tx.get<Row>(
-        'SELECT * FROM research_cycles WHERE id=? AND project_id=?',
-        id,
-        caller.projectId,
-      );
-      check(row, 'research_not_found', 'Research cycle was not found in this project', 404);
+      const row = await this.row(caller, id, tx);
       // The selection is what the cycle waits on now, not what it was created with.
       const children = [row.reflection_id, row.consolidation_id];
       const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
@@ -367,6 +396,15 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
         consolidationId: row.consolidation_id,
       };
     });
+  }
+  private async row(caller: Caller, id: string, tx: Transaction): Promise<Row> {
+    const row = await tx.get<Row>(
+      'SELECT * FROM research_cycles WHERE id=? AND project_id=?',
+      id,
+      caller.projectId,
+    );
+    check(row, 'research_not_found', 'Research cycle was not found in this project', 404);
+    return row;
   }
   async list(caller: Caller, transaction?: Transaction): Promise<ResearchRecord[]> {
     this.open();
@@ -394,14 +432,43 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     const input = parse(createSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      return await this.command(
-        caller,
-        'create',
-        input,
-        tx,
-        async () => await this.begin(caller, input, 'create', null, tx),
-      );
+      const checks: BindingChecks = [];
+      const result = await this.command(caller, 'create', input, tx, async () => {
+        if (input.previousCycleId) await this.follow(caller, input.previousCycleId, tx, checks);
+        return await this.begin(caller, input, 'create', null, tx);
+      });
+      checks.forEach((check) => check());
+      return result;
     });
+  }
+  /**
+   * What naming a predecessor requires: it is over, nothing follows it yet, and it has a digest.
+   * A predecessor that ended before digests existed, or while a capability was unbound, is
+   * digested here. Any writer may cause that, not only the predecessor's owner or an admin:
+   * the digest is composed by the server from records the caller can already read, it can be
+   * written once, and nothing the caller supplies reaches it. Here a missing capability is
+   * refused, because the caller asked for the digest to be carried forward.
+   */
+  private async follow(
+    caller: Caller,
+    previousCycleId: string,
+    tx: Transaction,
+    checks: BindingChecks,
+  ): Promise<void> {
+    const previous = await this.get(caller, previousCycleId, tx);
+    check(
+      over.has(previous.workflow.state),
+      'previous_cycle_open',
+      'The predecessor cycle is still open; complete or end it before starting its successor',
+      409,
+    );
+    check(
+      !previous.successorId,
+      'previous_cycle_followed',
+      `The predecessor cycle is already followed by ${previous.successorId}; follow that cycle instead, or read the chain with research.lineage`,
+      409,
+    );
+    await this.digested(caller, previous, tx, checks, { late: true, required: true });
   }
   /**
    * Opens a cycle inside a command its caller already recorded. research_commands has one row
@@ -439,7 +506,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       },
       tx,
     );
-    let predecessorId: string | null = null;
+    let predecessorId = input.previousCycleId ?? null;
     let pinned: StoredRecord['origin'];
     if (origin) ({ researchId: predecessorId, ...pinned } = origin);
     const record: StoredRecord = {
@@ -464,7 +531,10 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       caller,
       'created',
       workflow.id,
-      { dependsOn: record.researchDependencies },
+      {
+        dependsOn: record.researchDependencies,
+        ...(input.previousCycleId ? { previousCycleId: input.previousCycleId } : {}),
+      },
       tx,
     );
     return await this.get(caller, workflow.id, tx);
@@ -767,6 +837,230 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
   }
 
   /**
+   * The cycle's digest, composed and stored if it has none. Completing and ending a cycle must
+   * never wait on it, so there a missing capability leaves the column empty and whoever names
+   * the cycle as a predecessor composes it late; `required` refuses instead.
+   *
+   * Two creators naming one undigested predecessor may both compose. The guarded update keeps
+   * one: SQLite serialises the writers, Postgres makes the second wait and then match no row
+   * or fail its transaction. Either way the stored digest is re-read and returned, and the
+   * loser's artifact stays unreferenced.
+   */
+  private async digested(
+    caller: Caller,
+    record: ResearchRecord,
+    tx: Transaction,
+    checks: BindingChecks,
+    options: { late: boolean; required: boolean },
+  ): Promise<Artifact | null> {
+    if (record.digest) return record.digest;
+    const needed: (keyof Capabilities)[] = [
+      'artifacts',
+      'knowledge',
+      ...(record.reflectionId ? (['reflections'] as const) : []),
+      ...(record.consolidationId ? (['consolidation'] as const) : []),
+    ];
+    if (!options.required && needed.some((name) => !this.bindings[name])) return null;
+    const content = JSON.stringify(await this.compose(caller, record, tx, checks, options.late));
+    const artifact = await this.use('artifacts', checks, (service) =>
+      service.create(
+        caller,
+        {
+          title: `Cycle digest: ${clip(record.name, 180)}`,
+          content,
+          mediaType: 'application/json',
+        },
+        tx,
+      ),
+    );
+    await tx.run(
+      'UPDATE research_cycles SET digest=? WHERE id=? AND digest IS NULL',
+      JSON.stringify(artifact),
+      record.id,
+    );
+    const stored = JSON.parse((await this.row(caller, record.id, tx)).digest!) as Artifact;
+    if (stored.id === artifact.id)
+      await this.event(
+        caller,
+        'digested',
+        record.id,
+        { artifactId: artifact.id, late: options.late },
+        tx,
+      );
+    return stored;
+  }
+
+  /** Derived from records only, and naming no actor: see ResearchDigest. */
+  private async compose(
+    caller: Caller,
+    record: ResearchRecord,
+    tx: Transaction,
+    checks: BindingChecks,
+    late: boolean,
+  ): Promise<ResearchDigest> {
+    const text = (value: string) => clip(value, DIGEST_TEXT_CHARS);
+    const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
+    const records = await this.use('knowledge', checks, (service) => service.records(caller, tx));
+    const children = this.children(record);
+    const selected = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.filter(
+      (item) => !children.includes(item.id),
+    );
+    // A cycle ended while reflecting or consolidating has a child with nothing approved in it.
+    const reflection = record.reflectionId
+      ? await this.use('reflections', checks, async (service) =>
+          (await service.get(caller, record.reflectionId!, tx)).workflow.state === 'approved'
+            ? await service.approved(caller, record.reflectionId!, tx)
+            : null,
+        )
+      : null;
+    const consolidation = record.consolidationId
+      ? await this.use('consolidation', checks, async (service) => {
+          const work = await service.get(caller, record.consolidationId!, tx);
+          return work.completion ? work : null;
+        })
+      : null;
+    const approvedSubmission = consolidation?.submissions.find(
+      (submission) => submission.id === consolidation.completion!.submissionId,
+    );
+    const decisions = new Map(
+      (approvedSubmission?.decisions ?? []).map((decision) => [decision.experimentId, decision]),
+    );
+    const experimentIds = new Set([
+      ...selected.filter((item) => item.workflow === 'experiment').map((item) => item.id),
+      ...(reflection?.experimentIds ?? []),
+      ...decisions.keys(),
+    ]);
+    const experiments = records.experiments.filter((entry) => experimentIds.has(entry.id));
+    const taskIds = new Set(
+      selected.filter((item) => item.workflow === 'task').map((item) => item.id),
+    );
+    const claims = records.claims.flatMap((claim) => {
+      const testedBy = experiments
+        .filter((entry) => entry.testedClaimIds.includes(claim.id))
+        .map((entry) => entry.id);
+      return testedBy.length ? [{ claim, testedBy }] : [];
+    });
+    const decided = (decision: string) =>
+      [...decisions.values()]
+        .filter((entry) => entry.decision === decision)
+        .map((entry) => entry.experimentId);
+    const lists = {
+      experiments: experiments.map((entry) => ({
+        id: entry.id,
+        name: text(entry.name),
+        state: entry.workflow.state,
+        attempts: entry.attempts.length,
+        submissions: entry.submissions.length,
+        testedClaimIds: entry.testedClaimIds,
+        conclusion: entry.conclusion === null ? null : text(entry.conclusion),
+        decision: decisions.get(entry.id)?.decision ?? null,
+        rationale: decisions.has(entry.id) ? text(decisions.get(entry.id)!.rationale) : null,
+      })),
+      tasks: records.tasks
+        .filter((task) => taskIds.has(task.id))
+        .map((task) => ({ id: task.id, title: text(task.title), state: task.workflow.state })),
+      claims: claims.map(({ claim, testedBy }) => ({
+        id: claim.id,
+        statement: text(claim.statement),
+        status: claim.status,
+        confidence: claim.confidence,
+        testedBy,
+      })),
+      dropped: [
+        ...new Set([
+          ...selected.filter((item) => item.failed).map((item) => item.id),
+          ...decided('drop'),
+        ]),
+      ],
+      carriedOver: [
+        ...new Set([
+          ...selected.filter((item) => !item.settled).map((item) => item.id),
+          ...decided('adapt'),
+        ]),
+      ],
+      openQuestions: claims
+        .filter(({ claim }) => claim.status === 'draft' || claim.status === 'active')
+        .map(({ claim }) => ({ claimId: claim.id, statement: text(claim.statement) })),
+    };
+    const composedAt = now();
+    let omitted = 0;
+    for (const list of Object.values(lists)) omitted += list.splice(DIGEST_LIST_LIMIT).length;
+    const reason = record.workflow.data.reason;
+    const composed = (): ResearchDigest => ({
+      formatVersion: 1,
+      cycle: {
+        id: record.id,
+        name: text(record.name),
+        outcome: record.workflow.state as ResearchDigest['cycle']['outcome'],
+        reason: typeof reason === 'string' ? text(reason) : null,
+        createdAt: record.createdAt,
+        composedAt,
+        late,
+      },
+      previousCycleId: record.previousCycleId,
+      reflection: reflection && {
+        id: reflection.id,
+        reviewId: reflection.reviewId,
+        approvedAt: reflection.approvedAt,
+        report: ref(reflection.report),
+        changeSpec: ref(reflection.changeSpec),
+      },
+      consolidation:
+        consolidation && approvedSubmission
+          ? {
+              id: consolidation.id,
+              reviewId: consolidation.completion!.reviewId,
+              report: ref(approvedSubmission.report),
+            }
+          : null,
+      ...lists,
+      omitted,
+    });
+    // The bound is a promise to every later context, so entries go, longest list first, until
+    // it holds; what is left out is counted, and the records themselves remain readable.
+    let digest = composed();
+    while (JSON.stringify(digest).length > DIGEST_MAX_CHARS) {
+      const longest = Object.values(lists).reduce((a, b) => (b.length > a.length ? b : a));
+      if (!longest.length) break;
+      longest.pop();
+      omitted++;
+      digest = composed();
+    }
+    return digest;
+  }
+
+  async lineage(caller: Caller, id: string, transaction?: Transaction): Promise<ResearchLineage> {
+    this.open();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      const asked = await this.get(caller, id, tx);
+      const cycles = [asked];
+      while (cycles[0].previousCycleId && cycles.length < LINEAGE_LIMIT)
+        cycles.unshift(await this.get(caller, cycles[0].previousCycleId, tx));
+      const successor = asked.successorId ? await this.get(caller, asked.successorId, tx) : null;
+      return {
+        researchId: id,
+        cycles: cycles.map((cycle) => ({
+          id: cycle.id,
+          name: cycle.name,
+          state: cycle.workflow.state,
+          createdAt: cycle.createdAt,
+          previousCycleId: cycle.previousCycleId,
+          reflectionId: cycle.reflectionId,
+          consolidationId: cycle.consolidationId,
+          digest: cycle.digest,
+        })),
+        truncated: !!cycles[0].previousCycleId,
+        successor: successor && {
+          id: successor.id,
+          name: successor.name,
+          state: successor.workflow.state,
+        },
+      };
+    });
+  }
+
+  /**
    * The owner reselects the work a cycle waits on while it is still defining or researching:
    * an experiment abandoned after selection would otherwise hold the cycle forever. The
    * cycle's own children (its reflection, its consolidation) are never part of the selection.
@@ -821,7 +1115,8 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
-      return await this.command(caller, 'end', input, tx, async () => {
+      const checks: BindingChecks = [];
+      const result = await this.command(caller, 'end', input, tx, async () => {
         const handle = this.handles.get(record.workflow.version);
         check(
           handle && record.workflow.version >= 4,
@@ -836,6 +1131,8 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
             expectedRevision: input.expectedRevision,
             action: input.outcome === 'failed' ? 'mark_failed' : 'abandon',
             input: { outcome: input.outcome, reason: input.reason },
+            // Kept on the cycle, clipped, so a digest composed later can still say why it ended.
+            data: { reason: clip(input.reason, ENDING_REASON_CHARS) },
             requestId: this.request(caller, input.requestId, 'end'),
           },
           tx,
@@ -847,8 +1144,14 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
           { from: record.workflow.state, to: moved.state, reason: input.reason },
           tx,
         );
+        await this.digested(caller, await this.get(caller, record.id, tx), tx, checks, {
+          late: false,
+          required: false,
+        });
         return await this.get(caller, record.id, tx);
       });
+      checks.forEach((check) => check());
+      return result;
     });
   }
 
@@ -897,11 +1200,24 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
             );
             break;
           case 'researching': {
+            // A predecessor a plan opened this cycle from may have no digest yet; without the
+            // capabilities to compose one the wave simply starts without it.
+            const carried = record.previousCycleId
+              ? await this.digested(
+                  caller,
+                  await this.get(caller, record.previousCycleId, tx),
+                  tx,
+                  checks,
+                  { late: true, required: false },
+                )
+              : null;
             const wave = await this.use('reflections', checks, (service) =>
               service.create(
                 caller,
                 {
                   title: `${clip(record.name, 288)}: reflection`,
+                  // Absent rather than null, so a cycle that follows nothing replays as before.
+                  ...(carried ? { previousCycleDigestId: carried.id } : {}),
                   requestId: this.request(caller, input.requestId, 'reflection'),
                 },
                 tx,
@@ -995,6 +1311,11 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
           },
           tx,
         );
+        if (moved.state === 'complete')
+          await this.digested(caller, await this.get(caller, record.id, tx), tx, checks, {
+            late: false,
+            required: false,
+          });
         return await this.get(caller, record.id, tx);
       });
       checks.forEach((check) => check());
@@ -1023,6 +1344,9 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
   }
   bindExperiments(experiments: Experiments): () => void {
     return this.bind('experiments', experiments);
+  }
+  bindArtifacts(artifacts: Artifacts): () => void {
+    return this.bind('artifacts', artifacts);
   }
   bindKnowledge(knowledge: Knowledge): () => void {
     this.open();
@@ -1136,6 +1460,9 @@ export const researchPlugin = {
       });
       ctx.inject(['experiments'], (ctx) => {
         ctx.effect(() => service.bindExperiments(ctx.experiments));
+      });
+      ctx.inject(['artifacts'], (ctx) => {
+        ctx.effect(() => service.bindArtifacts(ctx.artifacts));
       });
       yield ctx.provide('research', service);
     });
