@@ -730,6 +730,7 @@ test('failed workflow routing rolls back verdict, request record, and events ato
     let fail = true;
     const wrapped: Workflows = {
       registerReadReferences: f.workflows.registerReadReferences.bind(f.workflows),
+      systemPrerequisites: f.workflows.systemPrerequisites.bind(f.workflows),
       dispatchCandidates: f.workflows.dispatchCandidates.bind(f.workflows),
       extendLimit: f.workflows.extendLimit.bind(f.workflows),
       dependencyClosure: f.workflows.dependencyClosure.bind(f.workflows),

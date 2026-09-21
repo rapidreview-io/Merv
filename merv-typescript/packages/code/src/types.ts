@@ -110,7 +110,12 @@ export interface CodeCaptures {
  * the owner contract: no tool route reaches them, and the owner has already checked authority.
  */
 export interface CodeUnits {
-  declareUnit(caller: Caller, unitId: string, tx: Transaction): Promise<CodeUnit>;
+  declareUnit(
+    caller: Caller,
+    unitId: string,
+    tx: Transaction,
+    baseReference?: string,
+  ): Promise<CodeUnit>;
   acceptUnit(
     caller: Caller,
     input: CodeUnitAcceptInput,
@@ -182,6 +187,7 @@ export interface Code
     CodeWriters,
     CodeRepositoryControls,
     CodePublicationApi {
+  bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
   readonly github: import('@merv/contracts').CodeGitHub;
   transportGrant(
     caller: Caller,

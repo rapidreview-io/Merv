@@ -201,6 +201,31 @@ const migrations = [
     BEGIN SELECT RAISE(ABORT,'Workflow blocker identity is immutable'); END;
 `,
   },
+  {
+    version: 7,
+    rebuild: true,
+    sql: `CREATE TEMP TABLE wf_dependencies_backup AS SELECT * FROM wf_dependencies;
+DROP TABLE wf_dependencies;
+CREATE TABLE wf_dependencies (
+  project_id TEXT NOT NULL,source_id TEXT NOT NULL,target_id TEXT NOT NULL,
+  target_workflow TEXT NOT NULL,target_version INTEGER NOT NULL,
+  target_success_json TEXT NOT NULL,target_terminal_json TEXT NOT NULL,created_at TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system')),
+  owner TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(source_id,target_id,kind,owner),CHECK(source_id<>target_id),
+  CHECK((kind='declared' AND owner='') OR (kind='system' AND owner<>''))
+);
+INSERT INTO wf_dependencies(project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at)
+SELECT * FROM wf_dependencies_backup;
+DROP TABLE wf_dependencies_backup;
+CREATE INDEX wf_dependencies_source ON wf_dependencies(project_id,source_id);
+CREATE INDEX wf_dependencies_target ON wf_dependencies(project_id,target_id);
+CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies WHEN NEW.kind IS NOT OLD.kind OR NEW.owner IS NOT OLD.owner BEGIN SELECT RAISE(ABORT,'Dependency contracts are immutable'); END;
+CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
+CREATE TRIGGER wf_system_requests_no_update BEFORE UPDATE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are immutable'); END;
+CREATE TRIGGER wf_system_requests_no_delete BEFORE DELETE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are retained'); END;`,
+    postgres: postgresMigrations[7],
+  },
 ];
 
 /** The most instances one dependency closure is walked over. */
@@ -1453,6 +1478,67 @@ export class WorkflowsService implements Workflows {
       if (instanceId !== undefined) await this.readSnapshot(tx, caller.projectId, instanceId);
       return await readBlockers(tx, caller.projectId, instanceId);
     });
+  }
+
+  systemPrerequisites(provider: string): ReturnType<Workflows['systemPrerequisites']> {
+    check(
+      typeof provider === 'string' && provider.trim().length > 0,
+      'invalid_provider',
+      'A provider is required',
+    );
+    return {
+      replace: async (input, tx) => {
+        input = structuredClone(input);
+        this.assertOpen();
+        this.state.assertTransaction(tx);
+        check(
+          typeof input.requestId === 'string' && input.requestId.trim().length > 0,
+          'invalid_request',
+          'A requestId is required',
+        );
+        const fingerprint = canonical({
+          instanceId: input.instanceId,
+          dependencies: [...new Set(input.dependencies)].sort(),
+        });
+        const previous = await tx.get<{ fingerprint: string }>(
+          'SELECT fingerprint FROM wf_system_requests WHERE project_id=? AND provider=? AND request_id=?',
+          input.projectId,
+          provider,
+          input.requestId,
+        );
+        check(
+          !previous || previous.fingerprint === fingerprint,
+          'idempotency_conflict',
+          'System prerequisite request changed',
+          409,
+        );
+        if (previous) return;
+        const source = await this.readSnapshot(tx, input.projectId, input.instanceId);
+        const old = await tx.all<{ target_id: string }>(
+          "SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind='system' AND owner=?",
+          input.projectId,
+          input.instanceId,
+          provider,
+        );
+        await attachDependencies(tx, source, input.dependencies, provider);
+        for (const edge of old)
+          if (!input.dependencies.includes(edge.target_id))
+            await tx.run(
+              "DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind='system' AND owner=?",
+              input.projectId,
+              input.instanceId,
+              edge.target_id,
+              provider,
+            );
+        await tx.run(
+          'INSERT INTO wf_system_requests(project_id,provider,request_id,fingerprint) VALUES (?,?,?,?)',
+          input.projectId,
+          provider,
+          input.requestId,
+          fingerprint,
+        );
+      },
+    };
   }
 
   async dependencyRelations(

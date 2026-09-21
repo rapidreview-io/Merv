@@ -51,6 +51,7 @@ import {
   type WorkflowLease,
   type Role,
   type Data,
+  type ServiceTaskCreator,
 } from '@merv/contracts';
 
 import type { Code, CodeCapture } from '@merv/code/types';
@@ -136,7 +137,8 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
  * references() runs on every assignment read and may never write. It shares version 4's
  * policies, whose `reference:base` does not say where the reference comes from. Version 6 is
  * version 5 in a project whose history Code keeps: its checkouts name Code's workspace driver,
- * and every lease of its producer is the next writer generation of the unit.
+ * and every lease of its producer is the next writer generation of the unit. Version 7 is
+ * owned by a service: only its internal binding creates it and supplies an opaque fixed base.
  * Live tasks keep their version: nothing is ever upgraded into Git.
  */
 const workspaces: Record<number, TaskWorkspace> = {
@@ -146,6 +148,7 @@ const workspaces: Record<number, TaskWorkspace> = {
   4: 'reference',
   5: 'reference',
   6: 'code',
+  7: 'code',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (
@@ -155,12 +158,15 @@ const taskVersion = (
 ): number =>
   workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId !== undefined ? 4 : hosted ? 6 : 5;
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
-const derivedBase = (version: number) => version === 5 || version === 6;
+const derivedBase = (version: number) => version === 5 || version === 6 || serviceOwned(version);
+/** Only the internal service binding may create these tasks; their producer has no credential. */
+const serviceOwned = (version: number) => version === TASK_WORKFLOW_SERVICE.version;
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
 export const TASK_WORKFLOW_GIT_DERIVED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 5 };
 export const TASK_WORKFLOW_GIT_HOSTED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 6 };
+export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = { ...TASK_WORKFLOW, version: 7 };
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
@@ -174,6 +180,7 @@ type TaskCode = Pick<
   | 'hosted'
   | 'reserveWriter'
   | 'writerStatus'
+  | 'bindServiceTasks'
 >;
 interface TaskRow {
   id: string;
@@ -346,6 +353,7 @@ DROP TABLE task_leases_backup;`,
           TASK_WORKFLOW_GIT_BASED,
           TASK_WORKFLOW_GIT_DERIVED,
           TASK_WORKFLOW_GIT_HOSTED,
+          TASK_WORKFLOW_SERVICE,
         ]) {
           this.registrations.set(
             definition.version,
@@ -376,7 +384,9 @@ DROP TABLE task_leases_backup;`,
     const binding = Symbol('code');
     this.codeBinding = binding;
     this.code = code;
+    const release = code.bindServiceTasks(this.serviceTasks('code'));
     return () => {
+      release();
       if (this.codeBinding !== binding) return;
       this.codeBinding = undefined;
       this.code = undefined;
@@ -456,7 +466,9 @@ DROP TABLE task_leases_backup;`,
     const row = await this.row(tx, caller, snapshot.id);
     if (snapshot.state === 'in_progress') {
       await this.scope.require(caller, 'write', tx);
-      if (row.producer_id !== caller.actorId) await this.scope.require(caller, 'admin', tx);
+      // Version 7 is created only by the service binding; its runner remains a producer.
+      if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
+        await this.scope.require(caller, 'admin', tx);
       await this.workflows.checkDependencies(caller, snapshot.id, tx);
       if (taskWorkspace(snapshot.version) !== 'none') this.requireCode();
       await this.requireBase(caller, snapshot, tx);
@@ -1117,12 +1129,45 @@ DROP TABLE task_leases_backup;`,
     return result;
   }
 
+  /** The binding captures its provider; a public create can never select this version. */
+  private serviceTasks(provider: string): ServiceTaskCreator {
+    return {
+      create: async (input, tx) => {
+        input = structuredClone(input);
+        this.state.assertTransaction(tx);
+        const caller = await this.scope.serviceActor(provider, input.projectId, tx);
+        return await this.createTask(
+          caller,
+          {
+            title: input.title,
+            goal: input.goal,
+            checks: input.checks,
+            workspace: 'git',
+            requestId: input.requestId,
+          },
+          tx,
+          { provider, baseReference: input.baseReference },
+        );
+      },
+    };
+  }
+
   async create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task> {
+    return await this.createTask(caller, input, transaction);
+  }
+
+  private async createTask(
+    caller: Caller,
+    input: TaskCreate,
+    transaction?: Transaction,
+    service?: { provider: string; baseReference: string },
+  ): Promise<Task> {
     caller = structuredClone(caller);
     input = plain<TaskCreate>(input);
+    const body = service ? { input, service } : input;
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      return await this.command(tx, caller, input.requestId, 'create', input, async () => {
+      return await this.command(tx, caller, input.requestId, 'create', body, async () => {
         const typeName = input.type ?? 'task.work',
           typeVersion = input.typeVersion ?? this.newestType(typeName);
         const type = this.types.get(`${typeName}@${typeVersion}`)?.definition;
@@ -1268,7 +1313,9 @@ DROP TABLE task_leases_backup;`,
           input.workspace === 'git' &&
           input.baseTaskId === undefined &&
           (await this.requireCode().hosted(caller, tx));
-        const version = taskVersion(input.workspace, input.baseTaskId, hosted);
+        const version = service
+          ? TASK_WORKFLOW_SERVICE.version
+          : taskVersion(input.workspace, input.baseTaskId, hosted);
         const workflow = await (
           await this.registration(version)
         ).start(
@@ -1316,7 +1363,7 @@ DROP TABLE task_leases_backup;`,
           JSON.stringify(contextInputs),
         );
         if (derivedBase(workflow.version))
-          await this.requireCode().declareUnit(caller, workflow.id, tx);
+          await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
           briefId: brief.id,
           evidenceVersion: 2,
@@ -2311,7 +2358,11 @@ DROP TABLE task_leases_backup;`,
             subjectId: row.id,
             subjectRevision: moved.revision,
             producerId: caller.actorId,
-            administrativeActorId: row.producer_id,
+            // A service owns the task but never directs a worker. Reviews retains the
+            // authenticated runner source as the delivery's administrative authority.
+            administrativeActorId: serviceOwned(current.version)
+              ? (await this.scope.authorityActor(caller, tx)).id
+              : row.producer_id,
             // Neither the owner nor the authority that directed a worker is independent of its delivery.
             ...(caller.session
               ? {

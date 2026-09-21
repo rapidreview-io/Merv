@@ -33,7 +33,8 @@ import { postgresMigrations } from './units.postgres.js';
 import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 import type { CodeWriterService } from './writers.js';
-import type { CodeBaseService } from './bases.js';
+import type { CodeBaseService, CodeBaseRecord } from './bases.js';
+import { baseKey } from './base-plan.js';
 import { acceptedRef } from './store/refs.js';
 
 interface ProjectRow {
@@ -94,7 +95,7 @@ type Derived =
   | { status: 'waiting' }
   /** `merge` names the accepted commits a base has still to be made from. */
   | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[]; merge?: string[] }
-  | { status: 'ready'; body: BaseBody };
+  | { status: 'ready'; body: BaseBody; merge?: string[] };
 const PROVIDER = 'code';
 const EXPLICIT_BASE =
   'Recreate this work with baseTaskId naming one accepted Git task, which is the explicit form of a base';
@@ -114,6 +115,7 @@ export class CodeUnitService implements CodeUnits {
   private closed = false;
   /** Set once the project repositories exist; without it several commits are never merged. */
   bases?: CodeBaseService;
+  resolutionTasks?: import('@merv/contracts').ServiceTaskCreator;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -259,10 +261,22 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
   BEGIN SELECT RAISE(ABORT,'A writer generation cannot change while an admitted upload is unresolved'); END;
 `,
       },
+      {
+        version: 3,
+        sql: `CREATE TABLE code_unit_inputs(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,reference TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
+CREATE TRIGGER code_unit_inputs_no_update BEFORE UPDATE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are immutable'); END;
+CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are retained'); END;`,
+        postgres: postgresMigrations[3],
+      },
     ]);
   }
 
-  async declareUnit(caller: Caller, unitId: string, tx: Transaction): Promise<CodeUnit> {
+  async declareUnit(
+    caller: Caller,
+    unitId: string,
+    tx: Transaction,
+    baseReference?: string,
+  ): Promise<CodeUnit> {
     this.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
@@ -279,6 +293,32 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
         relations.instance.version,
         now(),
       );
+    if (baseReference !== undefined) {
+      check(
+        !caller.session && oid.test(baseReference),
+        'invalid_base',
+        'Only an owner can declare a fixed unit input',
+        403,
+      );
+      const existing = await tx.get<{ reference: string }>(
+        'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
+        caller.projectId,
+        unitId,
+      );
+      check(
+        !existing || existing.reference === baseReference,
+        'code_base_conflict',
+        'This unit already has another fixed input',
+        409,
+      );
+      if (!existing)
+        await tx.run(
+          'INSERT INTO code_unit_inputs(project_id,unit_id,reference) VALUES (?,?,?)',
+          caller.projectId,
+          unitId,
+          baseReference,
+        );
+    }
     // A unit that cannot start is shown from the moment it exists, not from its first poll.
     await this.reconcileUnit(tx, caller.projectId, unitId);
     return await this.record(tx, (await this.row(tx, caller.projectId, unitId))!);
@@ -327,7 +367,10 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
     const relations = await this.relations(tx, caller.projectId, unitId);
-    const declared = relations.dependencies.map((item) => item.id).sort();
+    const declared = relations.dependencies
+      .filter((item) => item.kind !== 'system')
+      .map((item) => item.id)
+      .sort();
     const existing = await this.row(tx, caller.projectId, unitId);
     if (existing?.base_json) {
       check(
@@ -458,6 +501,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
         'This unit already has a different acceptance',
         409,
       );
+      this.bases?.soon(caller.projectId);
       return this.acceptance(existing)!;
     }
     const at = now();
@@ -513,6 +557,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
         at,
       );
     }
+    this.bases?.soon(caller.projectId);
     return this.acceptance((await this.row(tx, caller.projectId, input.unitId))!)!;
   }
 
@@ -747,6 +792,10 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     projectId: string,
     relations: WorkflowProviderRelations,
   ): Promise<Derived> {
+    relations = {
+      ...relations,
+      dependencies: relations.dependencies.filter((item) => item.kind !== 'system'),
+    };
     if (relations.dependencies.some((item) => !item.settled)) return { status: 'waiting' };
     const pending = (
       key: string,
@@ -789,6 +838,24 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
           ),
         ],
       };
+    const fixed = await tx.get<{ reference: string }>(
+      'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
+      projectId,
+      relations.instance.id,
+    );
+    if (fixed)
+      return {
+        status: 'ready',
+        body: {
+          formatVersion: 1,
+          kind: 'accepted',
+          reference: fixed.reference,
+          repositoryId: bound.repository_id,
+          dependencies: [],
+          sources: [],
+          main: null,
+        },
+      };
     const blockers: WorkflowProvidedBlockerInput[] = [];
     const commits = new Map<
       string,
@@ -806,7 +873,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
       const intact = !accepted || digest(accepted) === unit!.acceptance_hash;
       if (intact && (accepted ? accepted.code === null : !node.declaresWorkspace)) {
         const below = await this.workflows.dependencyRelations(projectId, node.id, tx);
-        for (const child of below?.dependencies ?? [])
+        for (const child of (below?.dependencies ?? []).filter((item) => item.kind !== 'system'))
           if (child.settled) queue.push(child);
           else
             blockers.push(
@@ -876,6 +943,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
       if (base?.state === 'resolved' && base.result && !base.quarantined)
         return {
           status: 'ready',
+          merge: [...commits.keys()],
           body: {
             formatVersion: 1,
             kind: 'merged',
@@ -888,6 +956,36 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
             main: null,
           },
         };
+      const resolutions =
+        base && !base.quarantined
+          ? (await this.bases.path(tx, projectId, base.key)).filter(
+              (record) => record.resolutionTaskId && record.state !== 'resolved',
+            )
+          : [];
+      const resolutionBlockers: WorkflowProvidedBlockerInput[] = [];
+      for (const record of resolutions) {
+        const task = await this.workflows.dependencyRelations(
+          projectId,
+          record.resolutionTaskId!,
+          tx,
+        );
+        resolutionBlockers.push({
+          key: `resolution:${record.key}`,
+          code: 'code_merge_conflict',
+          status: 409,
+          message: `Base resolution task “${task?.instance.name ?? record.resolutionTaskId}” (${record.resolutionTaskId}) is ${task?.instance.state ?? 'missing'}. ${record.resolutionError ?? `Conflicting paths: ${(record.conflict?.paths ?? []).join(', ')}`}`,
+          next: 'Complete the existing resolution task and its independent review; this unit continues from the accepted result.',
+          related: [
+            {
+              kind: 'task',
+              id: record.resolutionTaskId!,
+              label: task?.instance.name ?? record.resolutionTaskId!,
+            },
+          ],
+        });
+      }
+      if (resolutionBlockers.length)
+        return { status: 'blocked', merge: [...commits.keys()], blockers: resolutionBlockers };
       const waiting =
         !base || ['waiting_inputs', 'queued', 'running', 'retry_wait'].includes(base.state);
       const conflicted = base?.state === 'awaiting_resolution';
@@ -993,11 +1091,37 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     let derived = await this.derive(tx, projectId, relations);
     // The first unit to wait on a set writes its record and plan; this is a writing path,
     // which a derivation itself never is.
-    if (derived.status === 'blocked' && derived.merge && this.bases) {
-      await this.bases.ensure(tx, projectId, derived.merge);
+    let prerequisites: string[] = [];
+    if (derived.status !== 'waiting' && derived.merge && this.bases) {
+      const base = await this.bases.ensure(tx, projectId, derived.merge);
+      let path = await this.bases.path(tx, projectId, base.key);
+      if (
+        path.some((record) => record.state === 'awaiting_resolution' && !record.resolutionTaskId)
+      ) {
+        await this.resolveBases(tx, projectId);
+        path = await this.bases.path(tx, projectId, base.key);
+      }
+      prerequisites = path
+        .flatMap((record) => (record.resolutionTaskId ? [record.resolutionTaskId] : []))
+        .sort();
       derived = await this.derive(tx, projectId, relations);
-      this.bases.soon(projectId);
+      // A pending task has no automatic work to wake; waking it here would schedule another reconciliation forever.
+      if (base.state === 'queued') this.bases.soon(projectId);
     }
+    const attached = relations.dependencies
+      .filter((edge) => edge.kind === 'system' && edge.owner === PROVIDER)
+      .map((edge) => edge.id)
+      .sort();
+    if (JSON.stringify(attached) !== JSON.stringify(prerequisites))
+      await this.workflows.systemPrerequisites(PROVIDER).replace(
+        {
+          projectId,
+          instanceId: unitId,
+          dependencies: prerequisites,
+          requestId: `base:${unitId}:${relations.instance.revision}:${digest(prerequisites)}`,
+        },
+        tx,
+      );
     await this.workflows.replaceBlockers(
       {
         projectId,
@@ -1009,6 +1133,90 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     );
   }
 
+  /** Creation and linkage share the caller's transaction, so a crash never leaves an orphan. */
+  private async resolveBases(tx: Transaction, projectId: string): Promise<void> {
+    if (!this.bases?.enabled) return;
+    for (const base of await this.bases.records(tx, projectId)) {
+      if (base.state !== 'awaiting_resolution' || base.quarantined) continue;
+      if (!base.resolutionTaskId && this.resolutionTasks) {
+        const [left, right] = await this.bases.inputs(tx, projectId, base);
+        if (!left || !right) continue;
+        const brief = await this.resolutionBrief(tx, projectId, base, left, right);
+        const task = await this.resolutionTasks.create(
+          {
+            projectId,
+            requestId: `base:${base.key}`,
+            ...brief,
+            baseReference: left,
+            checks: [
+              `Deliver one commit with exactly two parents: the task branch descending from ${left}, and the frozen right input ${right}, in that order.`,
+              'Resolve every conflicting path and leave no conflict markers.',
+              'Run the project build and tests as far as this workspace permits; retain commands, results, and any checks that could not run as review evidence.',
+            ],
+          },
+          tx,
+        );
+        await this.bases.linkTask(tx, projectId, base.key, task.id);
+        base.resolutionTaskId = task.id;
+      }
+      if (base.resolutionTaskId) {
+        const unit = await this.row(tx, projectId, base.resolutionTaskId);
+        const accepted = unit?.acceptance_json
+          ? (JSON.parse(unit.acceptance_json) as AcceptanceBody)
+          : null;
+        if (accepted?.code && digest(accepted) === unit!.acceptance_hash)
+          await this.bases.recordAcceptance(tx, projectId, base, accepted.code.commit);
+      }
+    }
+  }
+
+  private async resolutionBrief(
+    tx: Transaction,
+    projectId: string,
+    base: CodeBaseRecord,
+    left: string,
+    right: string,
+  ): Promise<{ title: string; goal: string }> {
+    const records = await this.bases!.records(tx, projectId);
+    const inputs = (key: string) =>
+      records.find((record) => record.key === key)?.members ??
+      base.members.filter((commit) => baseKey([commit]) === key);
+    const names = new Map<string, string[]>();
+    const titles = new Map<string, string[]>();
+    for (const unit of await tx.all<UnitRow>(
+      `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
+      projectId,
+    )) {
+      const accepted = JSON.parse(unit.acceptance_json!) as AcceptanceBody;
+      if (!accepted.code || !base.members.includes(accepted.code.commit)) continue;
+      const facts = await this.workflows.dependencyRelations(projectId, unit.unit_id, tx);
+      const title = facts?.instance.name ?? 'Accepted work';
+      titles.set(accepted.code.commit, [...(titles.get(accepted.code.commit) ?? []), title]);
+      const entries = names.get(accepted.code.commit) ?? [];
+      entries.push(
+        `${facts?.instance.name ?? unit.unit_id} (${unit.unit_id}): ${facts?.instance.goal ?? 'No goal was recorded.'}`,
+      );
+      names.set(accepted.code.commit, entries);
+    }
+    const side = (key: string) =>
+      inputs(key)
+        .map((commit) => `${commit}: ${(names.get(commit) ?? ['Accepted input']).join('; ')}`)
+        .join('\n');
+    // Each section gets its own room, so long provenance cannot push the right input or Git's diagnostics out of the brief.
+    const bounded = (value: string, limit: number) =>
+      value.length <= limit ? value : `${value.slice(0, limit)}\n[Truncated in the task brief.]`;
+    const titleSide = (key: string) => {
+      const items = inputs(key).flatMap((commit) => titles.get(commit) ?? ['Accepted work']);
+      const first = items[0] ?? 'Accepted work';
+      const label = first.length > 80 ? `${first.slice(0, 79)}…` : first;
+      return `‘${label}’${items.length > 1 ? ` and ${items.length - 1} more` : ''}`;
+    };
+    return {
+      title: `Merge ${titleSide(base.left)} with ${titleSide(base.right)}`,
+      goal: `Resolve the frozen base ${base.key}.\n\nLeft input ${left} (the workspace starts here):\n${bounded(side(base.left), 8000)}\n\nRight input ${right} (frozen):\n${bounded(side(base.right), 8000)}\n\nConflicting paths:\n${bounded((base.conflict?.paths ?? []).join('\n'), 4000)}\n\nGit messages:\n${bounded(base.conflict?.messages ?? '', 4000)}`,
+    };
+  }
+
   /** The project's repository gained history, which a unit may have been waiting for. */
   async imported(tx: Transaction, projectId: string): Promise<void> {
     this.state.assertTransaction(tx);
@@ -1017,6 +1225,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
 
   /** Every unpinned unit of a project: for a new main, and for a start after Code was away. */
   private async reconcileProject(tx: Transaction, projectId: string): Promise<void> {
+    await this.resolveBases(tx, projectId);
     for (const { unit_id } of await tx.all<{ unit_id: string }>(
       'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL ORDER BY unit_id',
       projectId,
@@ -1043,6 +1252,15 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
     const ended = await this.workflows.dependencyRelations(event.projectId, event.subjectId, tx);
+    if (
+      this.bases?.enabled &&
+      (await this.bases.records(tx, event.projectId)).some(
+        (base) => base.resolutionTaskId === event.subjectId,
+      )
+    ) {
+      await this.reconcileProject(tx, event.projectId);
+      return;
+    }
     if (!ended?.instance.terminal) return;
     const seen = new Set<string>();
     const queue = [...ended.dependents];

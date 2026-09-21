@@ -47,6 +47,8 @@ export async function persistSuccess(
 }
 
 interface EdgeRow {
+  kind: 'declared' | 'system';
+  owner: string | null;
   source_id: string;
   target_id: string;
   target_workflow: string;
@@ -111,8 +113,8 @@ export async function relations(
         edge.target_id,
         projectId,
       );
-      dependencies.push(
-        classify(
+      dependencies.push({
+        ...classify(
           target,
           edge.target_id,
           edge.target_workflow,
@@ -120,7 +122,8 @@ export async function relations(
           edge.target_success_json,
           edge.target_terminal_json,
         ),
-      );
+        ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner, failed: false } : {}),
+      });
     }
     if (edge.target_id === instanceId) {
       const source = await sql.get<NodeRow>(
@@ -139,8 +142,8 @@ export async function relations(
         source.workflow,
         source.version,
       );
-      dependents.push(
-        classify(
+      dependents.push({
+        ...classify(
           source,
           source.id,
           source.workflow,
@@ -150,7 +153,8 @@ export async function relations(
             ? canonical((JSON.parse(graph.definition_json) as WorkflowDefinition).terminal)
             : undefined,
         ),
-      );
+        ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
+      });
     }
   }
   return { dependencies, dependents };
@@ -184,7 +188,7 @@ export async function detachDependencies(
     if (
       (
         await tx.run(
-          'DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=?',
+          "DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind='declared'",
           source.projectId,
           source.id,
           targetId,
@@ -200,15 +204,18 @@ export async function attachDependencies(
   tx: Transaction,
   source: WorkflowSnapshot,
   ids: string[],
+  owner?: string,
 ): Promise<string[]> {
   const added: string[] = [];
   for (const targetId of ids) {
     check(targetId !== source.id, 'dependency_cycle', 'A workflow cannot depend on itself', 409);
-    const existing = await tx.get(
-      'SELECT 1 FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=?',
+    const existing = await tx.get<{ kind: string; owner: string | null }>(
+      'SELECT kind,owner FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind=? AND owner=?',
       source.projectId,
       source.id,
       targetId,
+      owner ? 'system' : 'declared',
+      owner ?? '',
     );
     if (existing) continue;
     const target = await tx.get<NodeRow>(
@@ -257,7 +264,7 @@ export async function attachDependencies(
       );
     }
     await tx.run(
-      'INSERT INTO wf_dependencies (project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at) VALUES (?,?,?,?,?,?,?,?)',
+      'INSERT INTO wf_dependencies (project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at,kind,owner) VALUES (?,?,?,?,?,?,?,?,?,?)',
       source.projectId,
       source.id,
       targetId,
@@ -266,6 +273,8 @@ export async function attachDependencies(
       success.success_json,
       canonical((JSON.parse(definition.definition_json) as WorkflowDefinition).terminal),
       now(),
+      owner ? 'system' : 'declared',
+      owner ?? '',
     );
     added.push(targetId);
   }

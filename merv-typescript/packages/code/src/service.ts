@@ -217,6 +217,14 @@ export class CodeService extends CodeCommandService implements Code {
   mergePublication(...args: Parameters<CodePublicationService['mergePublication']>) {
     return this.network(() => this.publicationStore.mergePublication(...args));
   }
+  bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void {
+    this.unitStore.resolutionTasks = provider;
+    void this.unitStore.reconcileAll().catch(() => undefined);
+    return () => {
+      if (this.unitStore.resolutionTasks === provider) this.unitStore.resolutionTasks = undefined;
+    };
+  }
+
   async declareUnit(...args: Parameters<CodeUnitService['declareUnit']>) {
     return await this.unitStore.declareUnit(...args);
   }

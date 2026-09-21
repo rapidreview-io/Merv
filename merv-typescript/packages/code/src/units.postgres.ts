@@ -210,4 +210,7 @@ $merv$;
 CREATE TRIGGER code_units_generation BEFORE UPDATE ON code_units
 FOR EACH ROW EXECUTE FUNCTION code_units_generation_guard();
 `,
+  3: `CREATE TABLE code_unit_inputs(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,reference TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
+CREATE FUNCTION code_unit_inputs_guard() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'Unit inputs are immutable and retained'; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_unit_inputs_guard BEFORE UPDATE OR DELETE ON code_unit_inputs FOR EACH ROW EXECUTE FUNCTION code_unit_inputs_guard();`,
 };

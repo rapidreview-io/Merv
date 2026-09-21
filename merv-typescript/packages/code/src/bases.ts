@@ -32,6 +32,7 @@ export interface CodeBaseRecord {
   result: { method: 'auto' | 'task'; commit: string; tree: string | null; engine: string } | null;
   conflict: { paths: string[]; messages: string } | null;
   resolutionTaskId: string | null;
+  resolutionError: string | null;
   attempts: number;
   updatedAt: string;
 }
@@ -46,12 +47,14 @@ interface BaseRow {
   result_json: string | null;
   conflict_json: string | null;
   resolution_task_id: string | null;
+  resolution_error: string | null;
+  resolution_commit: string | null;
   attempts: number | string;
   next_at: string | null;
   updated_at: string;
 }
 const columns =
-  'project_id,base_key,members_json,left_key,right_key,state,health,result_json,conflict_json,resolution_task_id,attempts,next_at,updated_at';
+  'project_id,base_key,members_json,left_key,right_key,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,updated_at';
 const RETRIES = 5;
 const now = () => new Date().toISOString();
 
@@ -149,7 +152,26 @@ export class CodeBaseService {
   private timer?: NodeJS.Timeout;
 
   async initialize(): Promise<void> {
-    await this.state.migrate('code_bases', [{ version: 1, sql: sqlite, postgres }]);
+    await this.state.migrate('code_bases', [
+      { version: 1, sql: sqlite, postgres },
+      {
+        version: 2,
+        sql: 'ALTER TABLE code_bases ADD COLUMN resolution_error TEXT;',
+        postgres: 'ALTER TABLE code_bases ADD COLUMN resolution_error TEXT;',
+      },
+      {
+        version: 3,
+        sql: `ALTER TABLE code_bases ADD COLUMN resolution_commit TEXT;
+CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases
+WHEN (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS NOT OLD.resolution_commit) OR (NEW.resolution_commit IS NOT NULL AND NEW.resolution_task_id IS NULL)
+BEGIN SELECT RAISE(ABORT,'A resolution acceptance is recorded once for its task'); END;`,
+        postgres: `ALTER TABLE code_bases ADD COLUMN resolution_commit TEXT;
+CREATE FUNCTION code_bases_acceptance_guard() RETURNS trigger AS $$ BEGIN
+IF (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS DISTINCT FROM OLD.resolution_commit) OR (NEW.resolution_commit IS NOT NULL AND NEW.resolution_task_id IS NULL) THEN RAISE EXCEPTION 'A resolution acceptance is recorded once for its task'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_acceptance_guard();`,
+      },
+    ]);
   }
 
   /**
@@ -188,6 +210,7 @@ export class CodeBaseService {
         ? (JSON.parse(row.conflict_json) as CodeBaseRecord['conflict'])
         : null,
       resolutionTaskId: row.resolution_task_id,
+      resolutionError: row.resolution_error,
       attempts: Number(row.attempts),
       updatedAt: row.updated_at,
     };
@@ -210,6 +233,124 @@ export class CodeBaseService {
     if (row.members_json !== JSON.stringify(wanted))
       throw new MervError('code_base_key_collision', 'A base key names a different set', 500);
     return this.record(row);
+  }
+
+  async records(sql: Sql, projectId: string): Promise<CodeBaseRecord[]> {
+    return (
+      await sql.all<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? ORDER BY base_key`,
+        projectId,
+      )
+    ).map((row) => this.record(row));
+  }
+
+  /** Walk the frozen plan, including resolved steps; future waiters retain their prerequisite. */
+  async path(sql: Sql, projectId: string, root: string): Promise<CodeBaseRecord[]> {
+    const records = new Map(
+      (await this.records(sql, projectId)).map((record) => [record.key, record]),
+    );
+    const seen = new Set<string>(),
+      result: CodeBaseRecord[] = [],
+      queue = [root];
+    for (let key = queue.pop(); key; key = queue.pop()) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const record = records.get(key);
+      if (!record) continue;
+      result.push(record);
+      queue.push(record.left, record.right);
+    }
+    return result;
+  }
+
+  async inputs(
+    sql: Sql,
+    projectId: string,
+    base: CodeBaseRecord,
+  ): Promise<[string | null, string | null]> {
+    return [
+      await this.input(sql, projectId, base.left, base.members),
+      await this.input(sql, projectId, base.right, base.members),
+    ];
+  }
+
+  async linkTask(tx: Transaction, projectId: string, key: string, taskId: string): Promise<void> {
+    this.state.assertTransaction(tx);
+    await tx.run(
+      'UPDATE code_bases SET resolution_task_id=?,updated_at=? WHERE project_id=? AND base_key=? AND resolution_task_id IS NULL',
+      taskId,
+      now(),
+      projectId,
+      key,
+    );
+  }
+
+  /** Keep the intact acceptance as durable work; Git never runs in the caller's transaction. */
+  async recordAcceptance(
+    tx: Transaction,
+    projectId: string,
+    base: CodeBaseRecord,
+    commit: string,
+  ): Promise<void> {
+    this.state.assertTransaction(tx);
+    const recorded = await tx.run(
+      "UPDATE code_bases SET resolution_commit=?,updated_at=? WHERE project_id=? AND base_key=? AND state='awaiting_resolution' AND health='healthy' AND resolution_task_id=? AND resolution_commit IS NULL",
+      commit,
+      now(),
+      projectId,
+      base.key,
+      base.resolutionTaskId,
+    );
+    if (recorded.changes) this.soon(projectId);
+  }
+
+  /** Repeating verification after a crash finds the same immutable acceptance and ref. */
+  private async acceptTask(projectId: string, base: CodeBaseRecord, commit: string): Promise<void> {
+    const inputs = await this.state.read((sql) => this.inputs(sql, projectId, base));
+    const env = this.repositories.environment(projectId);
+    const missing: string[] = [];
+    for (const input of inputs) {
+      if (!input) {
+        missing.push('unresolved planned input');
+        continue;
+      }
+      const ancestry = await this.repositories.git.run(
+        ['merge-base', '--is-ancestor', input, commit],
+        { env },
+      );
+      if (ancestry.code !== 0) missing.push(input);
+    }
+    const error = missing.length
+      ? `Accepted resolution commit ${commit} does not contain both planned inputs as ancestors; missing or unverifiable: ${missing.join(', ')}`
+      : null;
+    let result: CodeBaseRecord['result'] = null;
+    if (!error) {
+      const ref = `refs/merv/bases/${base.key}`;
+      const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], { env });
+      if (held.code !== 0) await this.repositories.git.ok(['update-ref', ref, commit, ''], { env });
+      else if (held.stdout.toString('utf8').trim() !== commit)
+        throw new MervError('code_base_diverged', 'A base ref names another commit', 500);
+      const tree = (await this.repositories.git.ok(['rev-parse', `${commit}^{tree}`], { env }))
+        .toString('utf8')
+        .trim();
+      result = { method: 'task', commit, tree, engine: MERGE_ENGINE };
+    }
+    await this.state.transaction(async (tx) => {
+      const updated = await tx.run(
+        "UPDATE code_bases SET state=?,result_json=?,resolution_error=?,updated_at=? WHERE project_id=? AND base_key=? AND state='awaiting_resolution' AND health='healthy' AND resolution_task_id=? AND resolution_commit=? AND resolution_error IS NULL",
+        result ? 'resolved' : 'awaiting_resolution',
+        result ? JSON.stringify(result) : null,
+        error,
+        now(),
+        projectId,
+        base.key,
+        base.resolutionTaskId,
+        commit,
+      );
+      if (!updated.changes) return;
+      await this.promote(tx, projectId);
+      await this.hooks.changed(tx, projectId);
+    });
   }
 
   /**
@@ -302,6 +443,16 @@ export class CodeBaseService {
   }
 
   private async drain(projectId: string): Promise<void> {
+    const accepted = await this.state.read((sql) =>
+      sql.all<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? AND state='awaiting_resolution' AND health='healthy' AND resolution_commit IS NOT NULL AND resolution_error IS NULL ORDER BY base_key`,
+        projectId,
+      ),
+    );
+    for (const row of accepted) {
+      if (this.closed) return;
+      await this.acceptTask(projectId, this.record(row), row.resolution_commit!);
+    }
     for (;;) {
       const due = await this.state.transaction(async (tx) => {
         const row = await tx.get<BaseRow>(
@@ -408,7 +559,8 @@ export class CodeBaseService {
       await this.state.read(
         async (sql) =>
           await sql.all<{ project_id: string }>(
-            "SELECT DISTINCT project_id FROM code_bases WHERE health='healthy' AND state IN ('queued','running','retry_wait') ORDER BY project_id",
+            "SELECT DISTINCT project_id FROM code_bases WHERE health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL)) ORDER BY project_id",
+            new Date(this.clock()).toISOString(),
           ),
       )
     ).map((row) => row.project_id);

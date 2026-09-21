@@ -7,6 +7,9 @@ export interface WorkflowReference {
 }
 
 export interface WorkflowDependency {
+  /** Present on edge reads; a provider's instance itself has no incoming edge to classify. */
+  kind?: 'declared' | 'system';
+  owner?: string | null;
   id: string;
   workflow: string;
   version: number;
@@ -51,6 +54,7 @@ export interface WorkflowProvidedBlocker extends WorkflowBlocker {
  */
 export interface WorkflowProviderDependency extends WorkflowDependency {
   revision: number;
+  goal?: string;
   terminal: boolean;
   declaresWorkspace: boolean;
   /** The workspace drivers that version's states name, from the same manifests; opaque here. */

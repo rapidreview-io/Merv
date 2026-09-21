@@ -138,4 +138,14 @@ $merv$;
 CREATE TRIGGER wf_blockers_identity BEFORE UPDATE ON wf_blockers
 FOR EACH ROW EXECUTE FUNCTION wf_blockers_identity_guard();
 `,
+  7: `ALTER TABLE wf_dependencies ADD COLUMN kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system'));
+ALTER TABLE wf_dependencies ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE wf_dependencies DROP CONSTRAINT wf_dependencies_pkey;
+ALTER TABLE wf_dependencies ADD PRIMARY KEY(source_id,target_id,kind,owner);
+ALTER TABLE wf_dependencies ADD CHECK((kind='declared' AND owner='') OR (kind='system' AND owner<>''));
+CREATE FUNCTION wf_dependencies_identity_guard() RETURNS trigger AS $$ BEGIN IF NEW.kind IS DISTINCT FROM OLD.kind OR NEW.owner IS DISTINCT FROM OLD.owner THEN RAISE EXCEPTION 'Dependency contracts are immutable'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies FOR EACH ROW EXECUTE FUNCTION wf_dependencies_identity_guard();
+CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
+CREATE FUNCTION wf_system_requests_guard() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'System requests are immutable and retained'; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER wf_system_requests_guard BEFORE UPDATE OR DELETE ON wf_system_requests FOR EACH ROW EXECUTE FUNCTION wf_system_requests_guard();`,
 };

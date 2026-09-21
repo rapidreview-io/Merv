@@ -743,6 +743,8 @@ export interface ProjectMembership {
   revokedAt: string | null;
 }
 export interface Scope {
+  /** A credential-free producer owned by a server provider, scoped to one project. */
+  serviceActor(provider: string, projectId: string, tx: Transaction): Promise<Caller>;
   readonly toolPolicy: ToolPolicy;
   delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource>;
   requireDelegation(
@@ -1248,6 +1250,13 @@ export interface Workflows {
     instanceId?: string,
     tx?: Transaction,
   ): Promise<WorkflowProvidedBlocker[]>;
+  /** Internal provider capability; never exposed through a tool or a lease. */
+  systemPrerequisites(provider: string): {
+    replace(
+      input: { projectId: string; instanceId: string; requestId: string; dependencies: string[] },
+      tx: Transaction,
+    ): Promise<void>;
+  };
   /**
    * The dependency edges a provider derives from, read inside its caller's transaction and
    * under that caller's already-checked authority. Null when the project holds no such instance.
@@ -1568,6 +1577,21 @@ export interface TaskMarkFailed {
   reason: string;
   requestId: string;
 }
+/** An owner capability passed between server plugins; no public task input selects it. */
+export interface ServiceTaskCreator {
+  create(
+    input: {
+      projectId: string;
+      requestId: string;
+      title: string;
+      goal: string;
+      checks: string[];
+      baseReference: string;
+    },
+    tx: Transaction,
+  ): Promise<{ id: string }>;
+}
+
 export interface Tasks {
   registerType(definition: TaskTypeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;

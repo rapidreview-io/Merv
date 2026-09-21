@@ -263,7 +263,7 @@ export async function providerRelations(
     row.workflow,
     Number(row.version),
   );
-  const data = JSON.parse(row.data_json) as { title?: unknown; name?: unknown };
+  const data = JSON.parse(row.data_json) as { title?: unknown; name?: unknown; goal?: unknown };
   const settled = !!success && (JSON.parse(success.success_json) as string[]).includes(row.state);
   const edges = await relations(sql, projectId, instanceId);
   const instance = await extend({
@@ -278,7 +278,11 @@ export async function providerRelations(
     failed: false,
   });
   return {
-    instance: { ...instance, failed: instance.terminal && !settled },
+    instance: {
+      ...instance,
+      ...(typeof data.goal === 'string' ? { goal: data.goal } : {}),
+      failed: instance.terminal && !settled,
+    },
     dependencies: await mapAsync(edges.dependencies, extend),
     dependents: await mapAsync(edges.dependents, extend),
   };
