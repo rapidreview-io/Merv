@@ -964,7 +964,14 @@ test('a lease freezes its project Introduction without changing the registered r
   assert.match(successor.session.assignment.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
 });
 
-test('Git Experiments keep the scratch program version and wait for their exact late final capture before independent review', async (t) => {
+// Version 6 starts from the runner's central branch. Nothing creates it any more, but the
+// deployed server did and those experiments still run, so the whole round is driven on both.
+for (const version of [8, 6])
+  test(`Git Experiments keep the scratch program version and wait for their exact late final capture before independent review (experiment@${version})`, async (t) => {
+    await gitExperiment(t, version);
+  });
+
+async function gitExperiment(t: TestContext, version: number) {
   const f = await fixture(t);
   const oldInput = {
     name: 'legacy-workspace-input',
@@ -980,9 +987,18 @@ test('Git Experiments keep the scratch program version and wait for their exact 
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
+  // Create reaches for the newest Git version; the older one's handle is put in its place.
+  const program = (f.experiments as unknown as { program: { handleFor(version: number): unknown } })
+    .program;
+  const registered = program.handleFor.bind(program);
+  const swapped = t.mock.method(program, 'handleFor', (wanted: number) =>
+    registered(wanted === 8 ? version : wanted),
+  );
   const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 8);
+  swapped.mock.restore();
+  assert.equal(experiment.workflow.version, version);
   assert.equal(experiment.workspace, 'git');
+  assert.equal((await f.experiments.codeUnit(f.source, experiment.id)) === null, version === 6);
   const pendingDesign = (await f.design(experiment)).experiment;
   assert.deepEqual(
     (await f.workflows.execution(f.reviewer, { instanceId: experiment.id, expectedRevision: 1 }))
@@ -991,12 +1007,16 @@ test('Git Experiments keep the scratch program version and wait for their exact 
   );
   const running = await f.verdict(pendingDesign, 'pass');
   const offered = await f.offer(running);
-  // The design was written by hand, so this first producing lease is the one that pins main.
-  assert.equal(offered.session.execution.references.base, 'a'.repeat(40));
+  // The design was written by hand, so this first producing lease is the one that pins main;
+  // the central-base version names no base at all.
+  assert.equal(
+    offered.session.execution.references.base,
+    version === 8 ? 'a'.repeat(40) : undefined,
+  );
   assert.deepEqual(offered.session.execution.policy.workspace, {
     mode: 'persistent',
     namespace: 'experiments',
-    base: 'reference:base',
+    base: version === 8 ? 'reference:base' : 'central',
     perBase: false,
     retain: true,
     advancesCentral: false,
@@ -1189,6 +1209,11 @@ test('Git Experiments keep the scratch program version and wait for their exact 
     ],
     [done.workflow.revision, submission.id, review.id, final.headOid, true, 'legacy-local'],
   );
+  // Only the version that derives its base ever had one pinned.
+  assert.equal(
+    (await f.code.unit(f.source, experiment.id)).base?.reference,
+    version === 8 ? 'a'.repeat(40) : undefined,
+  );
   await f.release(reviewOffer.session.id);
   await f.sessions.workspaceResult(f.source, { ...reviewControl, workspace: reviewWorkspace });
   assert.deepEqual(
@@ -1196,7 +1221,7 @@ test('Git Experiments keep the scratch program version and wait for their exact 
     capture,
     'A later reviewer capture cannot overwrite the exact producer observation',
   );
-});
+}
 
 test('historical observations stay project-scoped and pure after source revocation', async (t) => {
   const f = await fixture(t);

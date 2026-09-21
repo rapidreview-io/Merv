@@ -1285,7 +1285,8 @@ DROP TABLE task_leases_backup;`,
           typeVersion,
           JSON.stringify(contextInputs),
         );
-        if (derivedBase(version)) await this.requireCode().declareUnit(caller, workflow.id, tx);
+        if (derivedBase(workflow.version))
+          await this.requireCode().declareUnit(caller, workflow.id, tx);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
           briefId: brief.id,
           evidenceVersion: 2,

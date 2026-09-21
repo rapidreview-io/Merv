@@ -83,6 +83,30 @@ async function fixture(t: TestContext, postgres = false) {
     input: Data,
     handler: (worker: Caller, bound: Data) => T | Promise<T>,
   ) => sessions.run(await sessions.prepare(caller, tool, input), handler);
+  /**
+   * A Git task on version 3, whose checkout starts from the runner's central branch. Nothing
+   * creates one any more, but the deployed server did and those tasks still run, so the handle
+   * of the version they were started on is put where create reaches for the newest.
+   */
+  const createCentral = async () => {
+    type Handle = Awaited<ReturnType<typeof workflows.register>>;
+    const owner = tasks as unknown as { registration(version: number): Handle };
+    const registered = owner.registration.bind(tasks);
+    const swapped = t.mock.method(owner, 'registration', (version: number): Handle => {
+      if (version !== 5) return registered(version);
+      const central = registered(3);
+      return {
+        ...central,
+        start: async (caller, input, tx) =>
+          await central.start(caller, { ...input, version: 3 }, tx),
+      };
+    });
+    try {
+      return await create({ workspace: 'git' });
+    } finally {
+      swapped.mock.restore();
+    }
+  };
   /** A leased producer attached to its private checkout, as the runner leaves it at launch. */
   const lease = async (task: Task, baseOid = oid('a')) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
@@ -223,6 +247,7 @@ async function fixture(t: TestContext, postgres = false) {
     reviewer,
     request,
     create,
+    createCentral,
     run,
     lease,
     leaseReview,
@@ -801,3 +826,156 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
     ['accepted', oid('d'), derived.session.id, [task.id]],
   );
 }
+
+/** Drives a Git task through its leased delivery and its leased, attached review to done. */
+async function accepted(f: Awaited<ReturnType<typeof fixture>>, task: Task, headOid: string) {
+  const held = await f.lease(task);
+  const commandId = await f.commit(held);
+  await f.receipt(held, commandId, headOid);
+  const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+  await f.release(held.session.id);
+  const review = await f.leaseReview(delivered);
+  await f.sessions.attach(f.reviewer, { ...review.control, workspace: review.checkout(headOid) });
+  const done = await f.verdict(review.worker, delivered, 'pass');
+  assert.equal(done.workflow.state, 'done');
+  await f.release(review.session.id, f.reviewer);
+  return { held, done };
+}
+
+for (const postgres of [false, true])
+  test(
+    `A Git task whose dependencies were accepted at different commits is shown blocked and never launched (${postgres ? 'PostgreSQL' : 'SQLite'})`,
+    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
+    async (t) => {
+      const f = await fixture(t, postgres);
+      const left = await f.create({ workspace: 'git' });
+      const right = await f.create({ workspace: 'git' });
+      await accepted(f, left, oid('b'));
+      await accepted(f, right, oid('d'));
+      const merged = await f.create({ workspace: 'git', dependsOn: [left.id, right.id] });
+      assert.equal(merged.workflow.version, 5);
+
+      // Tasks' own gate refuses it, so the published blocker is what keeps it in sight.
+      const decision = await f.workflows.evaluate(f.source, merged.id);
+      assert.deepEqual(
+        [
+          decision.currentGate,
+          decision.nextAction,
+          decision.providerBlockers.map((item) => [item.provider, item.key, item.code]),
+        ],
+        ['code_merge_required', null, [['code', 'merge', 'code_merge_required']]],
+      );
+      assert.deepEqual(
+        decision.providerBlockers[0]!.related.map((item) => item.id).sort(),
+        [left.id, right.id].sort(),
+      );
+      const overview = await f.workflows.overview(f.source);
+      assert.ok(overview.blocked.includes(merged.id));
+      assert.equal(overview.ready.includes(merged.id), false);
+      assert.equal((await f.tasks.get(f.source, merged.id)).guidance.nextAction, null);
+      assert.equal(
+        (await f.workflows.dispatchCandidates(f.source)).some(
+          (candidate) => candidate.instanceId === merged.id,
+        ),
+        false,
+      );
+      await assert.rejects(
+        async () =>
+          await f.workflows.leaseRole(f.source, { instanceId: merged.id, expectedRevision: 0 }),
+        { code: 'code_merge_required' },
+      );
+      await assert.rejects(async () => await f.lease(merged), { code: 'code_merge_required' });
+      await assert.rejects(async () => await f.workflows.assignment(f.source, merged.id), {
+        code: 'code_merge_required',
+      });
+
+      // A runner polling for work is offered nothing, and the wait is not held against the task.
+      await f.sessions.heartbeatRunner(f.source, {
+        runnerId: 'task-git-test',
+        machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+        platforms: [
+          {
+            name: 'codex',
+            harness: 'codex',
+            model: 'fixture-model',
+            enabled: true,
+            parallelism: 4,
+          },
+        ],
+        capacity: 1,
+      });
+      await f.sessions.setDispatch(f.source, { enabled: true });
+      const polled = await f.sessions.lease(f.source, {
+        runnerId: 'task-git-test',
+        requestId: f.request(),
+        secret: `ms_${randomBytes(32).toString('base64url')}`,
+        platform: { name: 'codex', harness: 'codex', model: 'fixture-model' },
+      });
+      assert.deepEqual([polled.session, polled.reason], [null, 'no_candidates']);
+      const stored = await f.state.read(async (sql) => ({
+        holds: await sql.all('SELECT instance_id FROM session_dispatch_holds'),
+        leases: await sql.all('SELECT id FROM worker_sessions WHERE instance_id=?', merged.id),
+      }));
+      assert.deepEqual(stored, { holds: [], leases: [] });
+      assert.deepEqual(
+        (await f.sessions.stuck(f.source)).items
+          .filter((item) => item.kind === 'work_blocked')
+          .map((item) => [item.instanceId, item.code]),
+        [[merged.id, 'code_merge_required']],
+      );
+      const unit = await f.code.unit(f.source, merged.id);
+      assert.equal(unit.base, null);
+      assert.equal(unit.baseStatus!.status, 'blocked');
+
+      // Blocked work can still be ended, and nothing about it stays published.
+      await f.tasks.markFailed(f.source, {
+        taskId: merged.id,
+        expectedRevision: 0,
+        reason: 'Recreated on one accepted task.',
+        requestId: f.request(),
+      });
+      assert.deepEqual(await f.workflows.blockers(f.source), []);
+    },
+  );
+
+test('A Git task started on the central-base version still runs to an acceptance later work builds on', async (t) => {
+  const f = await fixture(t);
+  const task = await f.createCentral();
+  assert.equal(task.workflow.version, 3);
+  assert.equal(task.workspace, 'git');
+  assert.equal(
+    await f.tasks.codeUnit(f.source, task.id),
+    null,
+    'Code is told of no base to derive',
+  );
+
+  const held = await f.lease(task);
+  assert.equal((held.session.execution.policy.workspace as { base: string }).base, 'central');
+  assert.equal(Object.hasOwn(held.session.execution.references, 'base'), false);
+  const commandId = await f.commit(held);
+  await f.receipt(held, commandId);
+  const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+  await f.release(held.session.id);
+  const review = await f.leaseReview(delivered);
+  assert.equal(review.session.execution.references.code, oid('b'));
+  await f.sessions.attach(f.reviewer, { ...review.control, workspace: review.checkout(oid('b')) });
+  const done = await f.verdict(review.worker, delivered, 'pass');
+  assert.equal(done.workflow.state, 'done');
+  await f.release(review.session.id, f.reviewer);
+
+  // The pass is recorded like any other, and no base was ever pinned for the old version.
+  const unit = await f.code.unit(f.source, task.id);
+  assert.equal(unit.version, 3);
+  assert.equal(unit.base, null);
+  assert.deepEqual(
+    [
+      unit.acceptance!.reference,
+      unit.acceptance!.reviewAttached,
+      unit.acceptance!.storage,
+      unit.acceptance!.terminalRevision,
+    ],
+    [oid('b'), true, 'legacy-local', done.workflow.revision],
+  );
+  const next = await f.create({ workspace: 'git', dependsOn: [task.id] });
+  assert.equal((await f.lease(next, oid('b'))).session.execution.references.base, oid('b'));
+});
