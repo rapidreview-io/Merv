@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import { parseCodeInput } from '../input.js';
 import type { WriterFence } from '../writers.js';
 import { admit, AdmissionRejected, bundleHeader, defaultLimits } from './admission.js';
+import { enqueueMirror } from './mirror.js';
 import { acceptedRef, workRef } from './refs.js';
 import {
   CodeRepositories,
@@ -807,11 +808,11 @@ export class CodeStore {
     const read = await this.state.read(async (sql) => ({
       project: await this.project(sql, projectId),
       open: await sql.all<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND phase IS NOT NULL ORDER BY created_at,id LIMIT 100`,
+        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND phase IS NOT NULL AND kind IN ('import','upload','accept-ref') ORDER BY created_at,id LIMIT 100`,
         projectId,
       ),
       failed: await sql.all<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='failed' AND phase IS NOT NULL ORDER BY completed_at DESC,id LIMIT 10`,
+        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='failed' AND phase IS NOT NULL AND kind IN ('import','upload','accept-ref') ORDER BY completed_at DESC,id LIMIT 10`,
         projectId,
       ),
       imports: await sql.all<{ result_json: string }>(
@@ -1262,7 +1263,17 @@ export class CodeStore {
           at,
           id,
         );
-        if (payload.source === 'accept-ref') return;
+        if (payload.source === 'accept-ref') {
+          // The accepted ref exists; what publishes it is the server's own later work.
+          await enqueueMirror(
+            tx,
+            row!.project_id,
+            'mirror-accepted',
+            payload.unitId,
+            progress.target!,
+          );
+          return;
+        }
         if (upload) return await this.admitted(tx, id, row!.project_id, upload);
         await tx.run(
           'UPDATE code_projects SET store_json=?,updated_at=? WHERE project_id=? AND store_json IS NULL',
@@ -1314,6 +1325,10 @@ export class CodeStore {
       operationId: id,
       final,
     });
+    // The branch is durable here, which is what a handoff needs; publishing it is the
+    // server's own asynchronous work and is never on anybody's path.
+    if (payload.bundle)
+      await enqueueMirror(tx, projectId, 'mirror-work', payload.unitId, payload.tip);
     await this.state.appendEvent(tx, {
       projectId,
       actorId: payload.actorId,

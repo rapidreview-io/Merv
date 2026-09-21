@@ -180,6 +180,53 @@ The final capture is the one thing a machine may still send after its session cl
 
 `code.unit.fence` (a signed-in project administrator, with a `requestId`) ends a generation that will not end by itself. It first lets every admitted upload of the unit finish, refuses with `code_operation_unresolved` while one cannot, ends what was only receiving as `code_generation_stale` — those bytes are kept under `held/`, never admitted and never served — closes the writer at the last admitted head and clears the blockers. The next lease continues from that head as generation g+1, on any machine.
 
+## Mirroring
+
+Code's own repository is where work lives; the linked GitHub repository is where it is
+published. Publication is the server's own asynchronous work and is never on anybody's path: a
+handoff is complete the moment Code holds the commit, and a repository that is away, refusing
+or moved by another hand leaves the publication queued, retrying or blocked while every
+session, review and acceptance goes on exactly as before.
+
+- **What is published.** `refs/merv/work/<unit>` becomes `refs/heads/merv/work/<unit>` and only
+  ever fast-forwards; `refs/merv/accepted/<unit>` becomes `refs/heads/merv/accepted/<unit>` and
+  is only ever created. Nothing else is touched, and nothing is ever deleted or forced.
+- **What authorises it.** The owner's linked repository together with the write automation they
+  turned on (`github.configure_automation` with `mode: write`). The server reads that link with
+  no caller: turning the automation off, or unlinking the repository, is the off switch. Without
+  either, `code.status`'s `mirror.state` is `off` and `blockedBy` says which — that is quiet, not
+  an error.
+- **What it uses.** One installation token per push, scoped to that one repository and to
+  `contents`, passed only in the environment of the one Git child and given up again however the
+  push ends. No GitHub credential ever reaches a machine.
+- **How it decides.** The published ref is read first. Equal to what Code holds: done. Absent:
+  created. For a work branch, the published commit must be an ancestor of what Code holds, asked
+  of Code's own repository; `--force-with-lease` is then the compare-and-set on top of that. Anything
+  else is `code_mirror_diverged`. A push whose answer was lost is read again, never repeated blindly.
+- **When it is behind.** Requests for one ref coalesce, and the newest head is what a run
+  publishes, so a delayed run can never put an older commit back. A failure is retried with a
+  doubling backoff and, after five attempts, waits for an operator. `code.status` says how many
+  refs are waiting, since when, the last error and every blocked ref; `mirroredHead` and
+  `mirroredAt` on a unit say how far publication has come, beside `canonicalHead`.
+- **Putting one right.** `code.mirror.retry` (a project administrator, with a `requestId`) queues a
+  blocked ref again. For `code_mirror_diverged` it also wants `acknowledgeRemote` set to exactly
+  the commit the published ref holds, which records that the operator has seen it; the push still
+  only ever fast-forwards, so the ref moves only once that commit is behind Code's or gone.
+- **Where it is shown.** The `mirror` block and `warnings` of `code.status`, and the
+  `code.mirror_blocked` event. A blocked mirror is never a blocker of the unit and never
+  withholds work from a machine.
+
+## The machine protocol on the wire
+
+Machines reach all of this under `/code/v2/`, inside the same non-session branch of the HTTP
+API as `/code/commands/*`: a leased worker's credential can never reach it. The API forwards
+opaque JSON bodies (at most 64 KiB) and the bytes of one part (`application/octet-stream`, at
+most 4 MiB) and reads neither; only Code interprets them. `workspace` gives a machine the
+manifest of what to prepare, `uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>`
+carry it, `uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a
+bundle back. The legacy `/code/transport/*` grant routes are untouched and still serve
+GitHub-mode machines on the legacy workflow versions.
+
 ## Trust boundary and next integration
 
 The server authenticates the original source, checks ownership and validates replay consistency. It does not independently fetch Git objects or prove the reported tree and statistics. Source revocation or loss of authority leaves cleanup awaiting authorized reconciliation; there is no alternate credential bypass.

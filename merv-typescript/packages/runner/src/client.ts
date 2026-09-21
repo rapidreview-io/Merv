@@ -17,6 +17,8 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   Session,
+  SessionDeferral,
+  SessionReleaseOutcome,
   SessionUsageReport,
   SessionWorkspace,
 } from '@merv/sessions/types';
@@ -394,9 +396,11 @@ export class RunnerClient {
   async release(
     id: string,
     runnerId: string,
-    outcome: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop',
+    outcome: SessionReleaseOutcome,
     reason: string,
     usage?: SessionUsageReport,
+    /** Named with a deferred preparation, and only then: why the checkout was put off. */
+    deferral?: SessionDeferral,
   ): Promise<Session> {
     return this.session(
       (
@@ -404,6 +408,7 @@ export class RunnerClient {
           runnerId,
           outcome,
           reason,
+          ...(deferral ? { deferral } : {}),
           ...(usage ? { usage } : {}),
         })
       )?.session,

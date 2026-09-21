@@ -256,6 +256,8 @@ for (const backend of backends) {
         project: null,
         store: null,
         operations: [],
+        mirror: null,
+        warnings: [],
         units: [],
         blockers: [],
       });
@@ -347,6 +349,8 @@ for (const backend of backends) {
         project: null,
         store: null,
         operations: [],
+        mirror: null,
+        warnings: [],
         units: [],
         blockers: [],
       });

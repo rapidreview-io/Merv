@@ -138,7 +138,8 @@ export interface SessionApiProvider {
       sessionId: string;
       runnerId: string;
       reason?: string;
-      outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      outcome?: import('@merv/contracts').SessionReleaseOutcome;
+      deferral?: import('@merv/contracts').SessionDeferral;
       usage?: SessionUsageReport;
     },
   ): Promise<unknown>;

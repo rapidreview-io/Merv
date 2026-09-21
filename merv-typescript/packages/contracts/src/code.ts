@@ -1,7 +1,12 @@
 import { visible } from './text.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
-import type { CodeStoreOperation, CodeStoreStatus } from './code-store.js';
+import type {
+  CodeMirrorStatus,
+  CodeStoreOperation,
+  CodeStoreStatus,
+  CodeStoreWarning,
+} from './code-store.js';
 import type { CodeUnit } from './code-units.js';
 import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
 
@@ -156,6 +161,10 @@ export interface CodeProjectStatus {
   store: CodeStoreStatus | null;
   /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
   operations: CodeStoreOperation[];
+  /** How the project's work reaches the repository it is published to; null with no store. */
+  mirror: CodeMirrorStatus | null;
+  /** What is worth saying about the repository and stops nothing, newest first. */
+  warnings: CodeStoreWarning[];
   /** The newest 200 units. */
   units: CodeUnit[];
   blockers: WorkflowProvidedBlocker[];

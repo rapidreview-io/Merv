@@ -189,6 +189,16 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
       limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
     },
     operations: [],
+    mirror: {
+      state: 'off',
+      repository: null,
+      blockedBy: 'github_unconfigured',
+      pending: 0,
+      oldestPendingAt: null,
+      lastError: null,
+      blockedRefs: [],
+    },
+    warnings: [],
     units: [],
     blockers: [],
   };

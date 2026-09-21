@@ -15,6 +15,7 @@ import {
   type CodeLocalBindInput,
   type CodeProjectBinding,
   type CodeProjectStatus,
+  type CodeStoreWarning,
   type CodeUnit,
   type CodeUnitAcceptance,
   type CodeUnitAcceptInput,
@@ -694,10 +695,16 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      const warnings = await tx.get<{ warnings_json: string }>(
+        'SELECT warnings_json FROM code_projects WHERE project_id=?',
+        caller.projectId,
+      );
       return {
         project: await this.project(tx, caller.projectId),
         store: null,
         operations: [],
+        mirror: null,
+        warnings: JSON.parse(warnings?.warnings_json ?? '[]') as CodeStoreWarning[],
         units: await mapAsync(
           await tx.all<UnitRow>(
             `SELECT ${unitColumns} FROM code_units WHERE project_id=? ORDER BY declared_at DESC,unit_id LIMIT 200`,

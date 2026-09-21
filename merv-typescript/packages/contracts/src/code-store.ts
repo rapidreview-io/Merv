@@ -117,6 +117,40 @@ export interface CodeStoreStatus {
   limits: CodeStoreLimits;
 }
 
+/** Something about a project's repository that needs saying and stops nothing. */
+export interface CodeStoreWarning {
+  code: string;
+  /** The ref it is about, where it is about one. */
+  ref: string | null;
+  message: string;
+  at: string;
+}
+/**
+ * How a project's work reaches the repository it is published to. Mirroring is the server's
+ * own asynchronous work: it never blocks a machine, a handoff or an acceptance, so a mirror
+ * that is behind, retrying or blocked is a fact to read here and nothing that holds anyone up.
+ */
+export interface CodeMirrorStatus {
+  /** `off` while nothing is linked or write automation is not configured. */
+  state: 'off' | 'idle' | 'pending' | 'retrying' | 'blocked';
+  /** The linked repository, or the reason nothing is published. */
+  repository: string | null;
+  blockedBy: string | null;
+  /** Refs whose canonical commit has not reached the repository yet. */
+  pending: number;
+  oldestPendingAt: string | null;
+  lastError: string | null;
+  /** Refs no push may move without an operator, newest first. */
+  blockedRefs: {
+    operationId: string;
+    unitId: string | null;
+    ref: string;
+    code: string;
+    message: string;
+    at: string;
+  }[];
+}
+
 const control = z.object({ sessionId: id, runnerId: id, hostRef: id }).strict();
 export const codeWorkspaceManifestInputSchema = z
   .object({ sessionId: id, runnerId: id, hostRef: id.optional() })

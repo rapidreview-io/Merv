@@ -54,6 +54,8 @@ export type {
   CodeRepositoryImportInput,
   CodeStoreOperation,
   CodeStoreStatus,
+  CodeStoreWarning,
+  CodeMirrorStatus,
   CodeWorkspaceManifestInput,
   CodeWorkspaceManifest,
   CodeUploadBegin,

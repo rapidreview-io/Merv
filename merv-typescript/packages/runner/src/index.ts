@@ -8,11 +8,17 @@ import {
   check,
   effectiveWorkspace,
   sessionUsageReportSchema,
+  WorkspaceDeferred,
   type CodeCommitCommand,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
 } from '@merv/contracts';
-import type { RunnerPlatform, Session, SessionUsageReport } from '@merv/sessions/types';
+import type {
+  RunnerPlatform,
+  Session,
+  SessionDeferral,
+  SessionUsageReport,
+} from '@merv/sessions/types';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -113,6 +119,14 @@ const diagnostic = (error: unknown) =>
       ? (error as { code: string }).code
       : 'runner_operation_failed';
 class RunnerSourceRefusal extends RunnerControlError {}
+/** What a put-off preparation recorded on the launch, as the release route carries it. */
+const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
+  if (record.metadata.releaseOutcome !== 'preparation_deferred') return undefined;
+  const deferral = record.metadata.deferral as { cause?: unknown; code?: unknown } | undefined;
+  return typeof deferral?.cause === 'string' && typeof deferral.code === 'string'
+    ? { cause: deferral.cause, code: deferral.code }
+    : { cause: 'code_unavailable', code: 'workspace_deferred' };
+};
 
 /** Machine-local actuator. Every server operation uses HTTP; no server service is injected. */
 export class MachineRunner implements Runner {
@@ -513,7 +527,18 @@ export class MachineRunner implements Runner {
         workspace = await this.driverFor(record).prepare(record, session);
       } catch (error) {
         record = await this.host.stop(record.id);
-        this.save(record.id, { releaseOutcome: 'workspace_failed' });
+        // A preparation that could not happen yet is not a failure of this work or this
+        // machine: it is released as deferred and nothing counts it.
+        this.save(
+          record.id,
+          error instanceof WorkspaceDeferred
+            ? {
+                releaseOutcome: 'preparation_deferred',
+                deferral: { cause: error.cause, code: error.code },
+                lastError: error.code,
+              }
+            : { releaseOutcome: 'workspace_failed' },
+        );
         if (terminalLaunch(record)) await this.release(this.ledger.get(record.id)!);
         throw error;
       }
@@ -621,7 +646,9 @@ export class MachineRunner implements Runner {
     const requested = record.metadata.releaseOutcome;
     // A successful process exit does not prove that its workflow gate was completed.
     const outcome =
-      requested === 'launch_failed' || requested === 'workspace_failed'
+      requested === 'launch_failed' ||
+      requested === 'workspace_failed' ||
+      requested === 'preparation_deferred'
         ? requested
         : this.clock() - record.createdAt < 10_000
           ? 'crash_loop'
@@ -632,6 +659,7 @@ export class MachineRunner implements Runner {
       outcome,
       'local_process_finished',
       this.readUsage(record),
+      deferralOf(record),
     );
     this.save(record.id, {
       session,
@@ -722,11 +750,14 @@ export class MachineRunner implements Runner {
     if (result && record.metadata.attachAttempted === true && record.metadata.attached !== true) {
       // A lost attach reply is ambiguous. Close the lease before interpreting a null host,
       // so no delayed attach can commit after we release the local checkout reservation.
+      const deferral = deferralOf(record);
       const session = await this.client.release(
         record.sessionId,
         this.ledger.runnerId,
-        'launch_failed',
+        deferral ? 'preparation_deferred' : 'launch_failed',
         'stopped_before_attach_confirmed',
+        undefined,
+        deferral,
       );
       record = this.save(record.id, {
         session,

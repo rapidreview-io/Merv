@@ -140,6 +140,15 @@ export const failureReasons = new Set([
   'launch_failed',
 ]);
 /**
+ * The closes that count against nobody: the machine was ready and willing, and the place this
+ * work's history lives was away, busy or full. No hold can form from them; they only space the
+ * attempts out, exactly as a failure's backoff does.
+ */
+const deferredReasons = new Set(['preparation_deferred']);
+/** How long three deferred closes in a row must run before an operator is told about them. */
+const deferredRun = 3;
+const deferredSinceMs = 7 * 24 * 3600_000;
+/**
  * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
  * built. Counting them would let a revoked key, a replayed secret or a lost race hold every
  * healthy target in the queue until an admin came.
@@ -247,6 +256,7 @@ const stuckKinds: StuckKind[] = [
   'dispatch_held',
   'dispatch_failing',
   'work_blocked',
+  'work_deferred',
   'ready_quiet',
   'dispatch_disabled',
   'no_live_runner',
@@ -1031,10 +1041,56 @@ export class SessionDispatch {
         why: blocker.message,
         next: blocker.next,
       });
+    // A target nobody could prepare a checkout for is not failing and is never held, so no
+    // counter above would ever show it. A run of deferred closes is what says it is not
+    // simply quiet: where that work's history lives has been away, busy or full since then.
+    const deferred = new Set<string>();
+    const runs = new Map<string, Session[]>();
+    for (const row of await tx.all<SessionRow>(
+      tx.dialect === 'postgres'
+        ? "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')>?"
+        : "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND json_extract(session_json,'$.closedAt')>?",
+      projectId,
+      new Date(now - deferredSinceMs).toISOString(),
+    )) {
+      const session: Session = JSON.parse(row.session_json);
+      const key = `${session.instanceId}:${session.expectedRevision}`;
+      if (!waiting.has(key) || failing.has(key)) continue;
+      const run = runs.get(key) ?? [];
+      run.push(session);
+      runs.set(key, run);
+    }
+    for (const [key, sessions] of runs) {
+      const last = sessions
+        .sort((a, b) => (a.closedAt! < b.closedAt! ? 1 : a.closedAt === b.closedAt ? 0 : -1))
+        .slice(0, deferredRun);
+      if (last.length < deferredRun || !last.every((s) => deferredReasons.has(s.outcome ?? '')))
+        continue;
+      const item = waiting.get(key)!,
+        newest = last[0];
+      deferred.add(key);
+      add({
+        kind: 'work_deferred',
+        instanceId: item.instanceId,
+        expectedRevision: item.expectedRevision,
+        sessionId: newest.id,
+        label: item.label,
+        since: last[last.length - 1].closedAt!,
+        code: newest.deferral?.cause ?? 'preparation_deferred',
+        attempts: last.length,
+        why: `The last ${last.length} machines that took this work could not prepare its checkout and put it off (${newest.deferral?.code ?? 'preparation_deferred'}). Nothing counts that against the work, so it is offered again and again.`,
+        next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
+      });
+    }
     for (const item of all) {
       const key = targetKey(item),
         operator = item.role === 'operator';
-      if (live.has(key) || failing.has(key) || !older(item.updatedAt, limits.quietReadySeconds))
+      if (
+        live.has(key) ||
+        failing.has(key) ||
+        deferred.has(key) ||
+        !older(item.updatedAt, limits.quietReadySeconds)
+      )
         continue;
       // With dispatch off, one dispatch_disabled item says why all of them wait.
       if (!operator && !dispatch.enabled) continue;
@@ -1430,7 +1486,8 @@ export class SessionDispatch {
             (session) =>
               session.instanceId === item.instanceId &&
               session.expectedRevision === item.expectedRevision &&
-              failureReasons.has(session.outcome ?? '') &&
+              (failureReasons.has(session.outcome ?? '') ||
+                deferredReasons.has(session.outcome ?? '')) &&
               session.closedAt &&
               Date.parse(session.closedAt) + backoffMs > this.clock(),
           ),

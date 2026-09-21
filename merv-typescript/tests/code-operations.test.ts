@@ -626,4 +626,45 @@ for (const backend of backends) {
       assert.deepEqual(readdirSync(f.paths.quarantine), []);
     },
   );
+
+  test(
+    `${backend}: unloading Code waits for the admission that is running, then gives up the lock`,
+    optional(backend),
+    async (t) => {
+      const source = gitSource(t);
+      const one = source.commit({
+        'README.md': 'one\n',
+        'rows.txt': Array.from({ length: 20_000 }, (_, index) => `row ${index}`).join('\n'),
+      });
+      const f = await codeStoreFixture(t, backend, { settleMs: 1 }, one);
+      const bundle = source.bundle(one);
+      const begun = await f.code.importRepository(f.admin, {
+        source: 'bundle',
+        tip: one,
+        bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
+        requestId: 'drain',
+      });
+      await f.code.v2!.putPart(f.admin, begun.id, 0, bundle.content);
+      // The admission outlives the call that started it; unloading is asked for at once.
+      const admitting = complete(f, begun.id);
+      await f.code.close();
+      await admitting.catch(() => {});
+      const after = (await f.operationRow(begun.id))!;
+      assert.ok(
+        after.status === 'completed' || after.phase !== null,
+        'it either finished or said where it stopped',
+      );
+
+      // The lock is given up either way, so the next start takes it and finishes the work.
+      await f.open();
+      let settled = await complete(f, begun.id);
+      for (let tries = 0; settled.status === 'prepared' && tries < 200; tries++) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        settled = await complete(f, begun.id);
+      }
+      assert.equal(settled.status, 'completed');
+      assert.equal((await f.code.status(f.admin)).store!.hosted, true);
+      assert.deepEqual(f.refs(), [`refs/merv/imports/${begun.id} ${one}`]);
+    },
+  );
 }

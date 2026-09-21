@@ -10,11 +10,14 @@ services:
     ports:
       - 127.0.0.1:3081:3081
     volumes:
+      # Code's repositories live here, under code/, beside the database and the blobs. One
+      # server writes to this volume at a time, which Code enforces with a lock of its own.
       - /var/lib/merv-ts:/var/lib/merv-ts
     networks:
       - legacy_database
     read_only: true
     tmpfs:
+      # Git children of the server read and write under the data volume, never here.
       - /tmp:rw,nosuid,nodev,size=64m,mode=1777
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

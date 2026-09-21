@@ -33,6 +33,8 @@ export interface WriterRow {
   writer_changed_at: string | null;
   head_oid: string | null;
   head_operation_id: string | null;
+  mirrored_oid: string | null;
+  mirrored_at: string | null;
   quarantine_operation_id: string | null;
 }
 /** Everything a mutation of a unit's branch names; the server compares all of it. */
@@ -47,7 +49,7 @@ export interface WriterFence {
   moves: boolean;
 }
 const writerColumns =
-  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,quarantine_operation_id';
+  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id';
 const PROVIDER = 'code';
 const FENCE =
   'A signed-in project administrator reads the findings in code.status and runs code.unit.fence, which closes this writer at the last commit Code admitted; the next lease continues from there.';
@@ -380,12 +382,19 @@ export class CodeWriterService {
     sql: Sql,
     projectId: string,
     unitId: string,
-  ): Promise<Pick<CodeUnit, 'generation' | 'writerState' | 'canonicalHead' | 'quarantine'>> {
+  ): Promise<
+    Pick<
+      CodeUnit,
+      'generation' | 'writerState' | 'canonicalHead' | 'mirroredHead' | 'mirroredAt' | 'quarantine'
+    >
+  > {
     const row = await this.row(sql, projectId, unitId);
     return {
       generation: Number(row?.generation ?? 0),
       writerState: row?.writer_state ?? 'idle',
       canonicalHead: row?.head_oid ?? null,
+      mirroredHead: row?.mirrored_oid ?? null,
+      mirroredAt: row?.mirrored_at ?? null,
       quarantine: row?.quarantine_operation_id
         ? { operationId: row.quarantine_operation_id }
         : null,

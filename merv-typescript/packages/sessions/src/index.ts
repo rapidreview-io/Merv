@@ -1,5 +1,6 @@
 import { visible, createService, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
@@ -44,7 +45,9 @@ import type {
   RunnerSettings,
   SessionsProjectStatus,
   StuckReport,
+  SessionDeferral,
   SessionOutcome,
+  SessionReleaseOutcome,
   SessionWorkspace,
   SessionWorkspaceObservation,
   SessionBudgetInput,
@@ -72,6 +75,21 @@ const configKeys = new Set([
 ]);
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
+const releaseOutcomes = new Set<string>([
+  'completed',
+  'host_failed',
+  'launch_failed',
+  'workspace_failed',
+  'preparation_deferred',
+  'crash_loop',
+]);
+/** Opaque to Sessions: whatever prepares checkouts names the cause, and Sessions records it. */
+const deferralSchema = z
+  .object({
+    cause: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    code: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+  })
+  .strict();
 /**
  * Why a session that has already ended is refusing. The reason survives the first refusal
  * because a worker whose response was lost has nothing else to go on: retrying its handoff
@@ -611,6 +629,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         revision: session.expectedRevision,
         status,
         outcome: session.outcome,
+        ...(session.deferral ? { deferral: { ...session.deferral } } : {}),
         reason,
         source: session.source,
       },
@@ -1457,7 +1476,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       ...input
     }: SessionControl & {
       reason?: string;
-      outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      outcome?: SessionReleaseOutcome;
+      deferral?: SessionDeferral;
       usage?: SessionUsageReport;
     },
   ): Promise<Session> {
@@ -1469,12 +1489,17 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       'Usage reports non-negative token counts and an optional cost and model',
     );
     check(
-      input.outcome === undefined ||
-        ['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'].includes(
-          input.outcome,
-        ),
+      input.outcome === undefined || releaseOutcomes.has(input.outcome),
       'invalid_outcome',
       'Unknown session process outcome',
+    );
+    // A deferral is what keeps a put-off preparation out of the counters, so it is named or
+    // the close is an ordinary failure. Nothing else carries one.
+    check(
+      (input.outcome === 'preparation_deferred') ===
+        deferralSchema.safeParse(input.deferral).success,
+      'invalid_deferral',
+      'A deferred preparation names its cause and code, and no other outcome carries one',
     );
     check(
       input.reason === undefined || text(input.reason, 200),
@@ -1490,7 +1515,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   private async closeReleased(
     session: Session,
-    input: { reason?: string; outcome?: SessionOutcome },
+    input: { reason?: string; outcome?: SessionOutcome; deferral?: SessionDeferral },
     tx: Transaction,
   ): Promise<Session> {
     // A session whose handoff already landed is recorded as that, whoever releases it; a
@@ -1502,6 +1527,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       'invalid_outcome',
       'A completed outcome is recorded by the worker’s own handoff, not by a release',
     );
+    if (input.deferral) session.deferral = structuredClone(input.deferral);
     return await this.closeSession(
       session,
       input.reason ?? 'released',

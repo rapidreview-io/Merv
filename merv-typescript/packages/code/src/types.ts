@@ -167,6 +167,11 @@ export interface CodeRepositoryControls {
     caller: Caller,
     input: import('@merv/contracts').CodeUnitFenceInput,
   ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  /** Put a ref publication that waits for an operator back in the queue; it never forces. */
+  retryMirror(
+    caller: Caller,
+    input: import('@merv/contracts').CodeMirrorRetryInput,
+  ): Promise<import('@merv/contracts').CodeMirrorStatus>;
 }
 export interface Code
   extends

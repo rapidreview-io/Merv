@@ -7,6 +7,7 @@ import {
   type WorkflowDefinition,
   type WorkflowPolicy,
 } from '@merv/contracts';
+import type { CodeStoreOptions } from '@merv/code/service';
 import { codeStoreFixture, gitSource, type Backend, type Bundle } from './code-store.js';
 
 const definition: WorkflowDefinition = {
@@ -46,7 +47,12 @@ export const refused = (code: string) => (error: unknown) => {
 };
 
 /** A hosted project with one unit, and sessions the test plays itself. */
-export async function writerFixture(t: TestContext, backend: Backend, grace = 900) {
+export async function writerFixture(
+  t: TestContext,
+  backend: Backend,
+  grace = 900,
+  options: Pick<CodeStoreOptions, 'mirror' | 'mirrorConfig'> = {},
+) {
   const source = gitSource(t);
   const root = source.commit({ 'README.md': 'root\n' });
   const sessions = new Map<string, Record<string, unknown>>();
@@ -57,7 +63,7 @@ export async function writerFixture(t: TestContext, backend: Backend, grace = 90
       return structuredClone(session) as never;
     },
   });
-  await f.open({ finalizeGraceSeconds: grace });
+  await f.open({ finalizeGraceSeconds: grace, ...options });
   assert.equal((await f.deliver(source.bundle(root))).status, 'completed');
   await f.workflows.register(definition, policy);
   const unit = await f.workflows.start(f.admin, { workflow: 'build', requestId: 'unit' });

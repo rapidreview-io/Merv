@@ -28,7 +28,25 @@ export type SessionOutcome =
   | 'host_failed'
   | 'launch_failed'
   | 'workspace_failed'
+  /**
+   * The machine could not prepare a checkout yet although nothing about the launch was wrong:
+   * where the history lives is away, busy or full. It is never counted against the work.
+   */
+  | 'preparation_deferred'
   | 'crash_loop';
+/** What a machine may report a launch ended as; only a worker's own handoff records completion. */
+export type SessionReleaseOutcome =
+  | 'completed'
+  | 'host_failed'
+  | 'launch_failed'
+  | 'workspace_failed'
+  | 'preparation_deferred'
+  | 'crash_loop';
+/** Why a preparation was put off, in the words of whatever prepares checkouts. */
+export interface SessionDeferral {
+  cause: string;
+  code: string;
+}
 
 export interface DispatchState {
   enabled: boolean;
@@ -124,6 +142,7 @@ export type StuckKind =
   | 'dispatch_held'
   | 'dispatch_failing'
   | 'work_blocked'
+  | 'work_deferred'
   | 'ready_quiet'
   | 'dispatch_disabled'
   | 'no_live_runner'

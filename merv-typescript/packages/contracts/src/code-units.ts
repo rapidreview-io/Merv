@@ -83,6 +83,9 @@ export interface CodeUnit {
   writerState: CodeWriterState;
   /** The newest commit Code admitted for this unit, which is what a successor resumes from. */
   canonicalHead: string | null;
+  /** The newest commit a mirror push put on the published repository; behind while it catches up. */
+  mirroredHead: string | null;
+  mirroredAt: string | null;
   /** A final capture admission refused; the unit waits for an operator until it is fenced. */
   quarantine: { operationId: string } | null;
 }

@@ -233,7 +233,22 @@ const sessionReleaseInput = z
     runnerId: nonblank,
     reason: nonblank.optional(),
     outcome: z
-      .enum(['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'])
+      .enum([
+        'completed',
+        'host_failed',
+        'launch_failed',
+        'workspace_failed',
+        'preparation_deferred',
+        'crash_loop',
+      ])
+      .optional(),
+    /** Required with a deferred preparation; Sessions refuses one with every other outcome. */
+    deferral: z
+      .object({
+        cause: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+        code: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+      })
+      .strict()
       .optional(),
     usage: sessionUsageReportSchema.optional(),
   })

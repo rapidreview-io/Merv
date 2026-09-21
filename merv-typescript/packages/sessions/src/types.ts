@@ -9,7 +9,9 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   RunnerSettings,
+  SessionDeferral,
   SessionOutcome,
+  SessionReleaseOutcome,
   SessionStatus,
   SessionUsageReport,
   SessionsProjectStatus,
@@ -37,7 +39,9 @@ export type {
   RunnerPlatform,
   RunnerPresence,
   RunnerSettings,
+  SessionDeferral,
   SessionOutcome,
+  SessionReleaseOutcome,
   SessionPlatform,
   SessionRole,
   SessionStatus,
@@ -109,6 +113,8 @@ export interface Session {
   closedAt: string | null;
   closeReason: string | null;
   outcome?: SessionOutcome | null;
+  /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
+  deferral?: SessionDeferral | null;
   /** Set by the sweep while the session is alive without progressing; cleared when it moves. */
   quietSince?: string | null;
   assignment: WorkflowAssignment;
@@ -217,7 +223,9 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & {
       reason?: string;
-      outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      outcome?: SessionReleaseOutcome;
+      /** Required with `preparation_deferred`, and refused with every other outcome. */
+      deferral?: SessionDeferral;
       /** The runner's unverified self-report; the first one stored for a session is kept. */
       usage?: SessionUsageReport;
     },

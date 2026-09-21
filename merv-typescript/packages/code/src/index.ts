@@ -19,6 +19,8 @@ const configuration = z
         drainSeconds: z.number().int().min(1).max(3600).optional(),
         /** How long a closed session's machine has to hand over its final capture. */
         finalizeGraceSeconds: z.number().int().min(1).max(86_400).optional(),
+        /** How often the server looks for refs to publish; zero publishes only when asked. */
+        mirrorSeconds: z.number().int().min(0).max(86_400).optional(),
       })
       .strict()
       .optional(),
@@ -42,9 +44,11 @@ export const codePlugin = {
           githubConfig(),
           undefined,
           config.repositories &&
-            (({ finalizeGraceSeconds, ...store }) => ({ config: store, finalizeGraceSeconds }))(
-              config.repositories,
-            ),
+            (({ finalizeGraceSeconds, mirrorSeconds, ...store }) => ({
+              config: store,
+              finalizeGraceSeconds,
+              ...(mirrorSeconds === undefined ? {} : { mirrorConfig: { mirrorSeconds } }),
+            }))(config.repositories),
         ),
       );
       yield () => service.close();

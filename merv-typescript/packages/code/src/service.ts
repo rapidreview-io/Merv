@@ -18,6 +18,12 @@ import {
   type CodeStoreConfig,
   type FaultPoint,
 } from './store/operations.js';
+import {
+  CodeMirrorService,
+  GitMirrorTransport,
+  type CodeMirrorConfig,
+  type MirrorTransport,
+} from './store/mirror.js';
 import type {
   Caller,
   CodeCommandCompletion,
@@ -34,6 +40,9 @@ export interface CodeStoreOptions {
   fault?: (point: FaultPoint) => void;
   /** How long a closed session's machine has to hand over its final capture. */
   finalizeGraceSeconds?: number;
+  /** Replaces the linked GitHub repository as the place work is published to. */
+  mirror?: MirrorTransport;
+  mirrorConfig?: Partial<CodeMirrorConfig>;
 }
 
 /** One Code capability; immutable proposals and machine commands retain separate records. */
@@ -43,6 +52,7 @@ export class CodeService extends CodeCommandService implements Code {
   private unitStore!: CodeUnitService;
   private writerStore!: CodeWriterService;
   private store?: CodeStore;
+  private mirrorStore?: CodeMirrorService;
   private protocol?: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
   readonly transport: CodeTransportService;
@@ -113,8 +123,19 @@ export class CodeService extends CodeCommandService implements Code {
           await store.initialize();
           this.store = store;
           this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
+          const mirror = new CodeMirrorService(
+            state,
+            scope,
+            store.repositories,
+            repositories.mirror ?? new GitMirrorTransport(store.repositories, this.published()),
+            repositories.mirrorConfig,
+          );
+          this.mirrorStore = mirror;
         }
         await this.github.initialize();
+        // The mirror reads the project's GitHub link, so it only starts looking for refs to
+        // publish once that store exists.
+        this.mirrorStore?.initialize();
         await this.transport.initialize();
         await this.publicationStore.initialize();
       } catch (error) {
@@ -208,6 +229,15 @@ export class CodeService extends CodeCommandService implements Code {
   async maintainStore() {
     await this.store?.maintain();
   }
+  /** One publication pass now, as the timer would make it. */
+  async mirrorStep() {
+    await this.mirrorStore?.run();
+  }
+  async retryMirror(caller: Caller, input: unknown) {
+    if (!this.mirrorStore)
+      throw new MervError('code_store_unavailable', 'This server keeps no Code repositories', 503);
+    return await this.mirrorStore.retry(caller, input);
+  }
   async sessionChanged(...args: Parameters<CodeWriterService['sessionChanged']>) {
     await this.writerStore.sessionChanged(...args);
   }
@@ -247,7 +277,12 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async status(caller: Caller) {
     const status = await this.unitStore.status(caller);
-    return this.store ? { ...status, ...(await this.store.describe(caller.projectId)) } : status;
+    if (!this.store) return status;
+    return {
+      ...status,
+      ...(await this.store.describe(caller.projectId)),
+      mirror: (await this.mirrorStore?.describe(caller.projectId)) ?? null,
+    };
   }
   private requireStore(): CodeStore {
     if (!this.store)
@@ -273,6 +308,24 @@ export class CodeService extends CodeCommandService implements Code {
         protocol.putPart(caller, operationId, offset, bytes),
       readPart: (caller: Caller, exportId: string, input: unknown) =>
         protocol.readPart(caller, exportId, input),
+    };
+  }
+  /**
+   * What the server publishes a project's work to, with no caller: the owner's link and the
+   * write automation they turned on are the authorisation, and unlinking is the off switch.
+   */
+  private published() {
+    return {
+      target: async (projectId: string) => {
+        const found = await this.github.mirrorTarget(projectId);
+        return 'blocked' in found ? found : { id: found.id, fullName: found.fullName };
+      },
+      token: async <T>(projectId: string, use: (token: string) => Promise<T>): Promise<T> => {
+        const found = await this.github.mirrorTarget(projectId);
+        if ('blocked' in found)
+          throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
+        return await this.network(() => this.github.mirrorToken(found, use));
+      },
     };
   }
   /** An import reads GitHub as the administrator who asked, with a token that ends with the call. */
@@ -309,6 +362,9 @@ export class CodeService extends CodeCommandService implements Code {
   }
   override async close(): Promise<void> {
     this.publicationClosed = true;
+    // Publication stops before the repositories drain: it is the one thing here nothing waits
+    // for, and a push that was interrupted is simply queued again by the next start.
+    this.mirrorStore?.close();
     this.captureReader?.close();
     this.proposalStore?.close();
     this.unitStore?.close();
