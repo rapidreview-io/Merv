@@ -74,6 +74,24 @@ test('registered workflow definitions and execution policies match every version
     }
     assert.equal(registeredDefinitions.get(key), row.fingerprint, remedy(key, 'definition', row));
   }
+  // The other direction: a registered version this file does not list would be frozen by its
+  // first release with nothing here to catch a later edit.
+  const unlisted = [
+    ...[...registeredDefinitions]
+      .filter(([key]) => !published.definitions.some((row) => `${row.name}@${row.version}` === key))
+      .map(([key, fingerprint]) => `definition ${key} ${fingerprint}`),
+    ...[...registeredPolicies]
+      .filter(
+        ([key]) =>
+          !published.policies.some((row) => `${row.workflow}@${row.version}/${row.state}` === key),
+      )
+      .map(([key, fingerprint]) => `execution policy ${key} ${fingerprint}`),
+  ];
+  assert.deepEqual(
+    unlisted,
+    [],
+    'registered but not listed in tests/fixtures/published-policies.json; add each with its fingerprint and published: false until it ships',
+  );
   const registeredRecipes = new Map(recipes.map((row) => [`${row.type}@${row.version}`, row.hash]));
   // Only the current recipe version registers, so a published older version is not rechecked;
   // every registered version must be listed, and a listed published version must be unchanged.
