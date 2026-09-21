@@ -30,6 +30,40 @@ export type {
 } from './code-publications.js';
 export { codeTransportInputSchema, codeTransportGrantSchema } from './code-transport.js';
 export type { CodeTransportInput, CodeTransportGrant } from './code-transport.js';
+export {
+  CODE_BUNDLE_MAX_BYTES,
+  CODE_PART_MAX_BYTES,
+  codeFindingSchema,
+  codeStoreLimitsSchema,
+  codeRepositoryConfigureInputSchema,
+  codeRepositoryImportInputSchema,
+  codeWorkspaceManifestInputSchema,
+  codeWorkspaceManifestSchema,
+  codeUploadBeginSchema,
+  codeUploadFinalizeSchema,
+  codeDownloadBeginSchema,
+  codeDownloadReadSchema,
+  codeUnitFenceInputSchema,
+  codeMirrorRetryInputSchema,
+  codeDeferralCauseSchema,
+} from './code-store.js';
+export type {
+  CodeFinding,
+  CodeStoreLimits,
+  CodeRepositoryConfigureInput,
+  CodeRepositoryImportInput,
+  CodeStoreOperation,
+  CodeStoreStatus,
+  CodeWorkspaceManifestInput,
+  CodeWorkspaceManifest,
+  CodeUploadBegin,
+  CodeUploadFinalize,
+  CodeDownloadBegin,
+  CodeDownloadRead,
+  CodeUnitFenceInput,
+  CodeMirrorRetryInput,
+  CodeDeferralCause,
+} from './code-store.js';
 export type {
   UiManifest,
   UiManifestRow,

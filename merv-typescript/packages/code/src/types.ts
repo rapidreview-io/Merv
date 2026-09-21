@@ -130,8 +130,25 @@ export interface CodeUnits {
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
   status(caller: Caller): Promise<CodeProjectStatus>;
 }
+/** The project's repository on the server's disk; refused where the server keeps none. */
+export interface CodeRepositoryControls {
+  importRepository(
+    caller: Caller,
+    input: import('@merv/contracts').CodeRepositoryImportInput,
+  ): Promise<import('@merv/contracts').CodeStoreOperation>;
+  configureRepository(
+    caller: Caller,
+    input: import('@merv/contracts').CodeRepositoryConfigureInput,
+  ): Promise<import('@merv/contracts').CodeStoreLimits>;
+}
 export interface Code
-  extends CodeCommands, CodeProposals, CodeCaptures, CodeUnits, CodePublicationApi {
+  extends
+    CodeCommands,
+    CodeProposals,
+    CodeCaptures,
+    CodeUnits,
+    CodeRepositoryControls,
+    CodePublicationApi {
   readonly github: import('@merv/contracts').CodeGitHub;
   transportGrant(
     caller: Caller,

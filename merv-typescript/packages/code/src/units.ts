@@ -37,6 +37,7 @@ interface ProjectRow {
   repository_id: string;
   binding_json: string;
   main_json: string;
+  store_json: string | null;
 }
 interface UnitRow {
   project_id: string;
@@ -200,6 +201,49 @@ CREATE TRIGGER code_operations_result BEFORE UPDATE ON code_operations
   BEGIN SELECT RAISE(ABORT,'A finished Code operation is immutable'); END;
 CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
   BEGIN SELECT RAISE(ABORT,'Code operations are retained'); END;
+`,
+      },
+      {
+        // The project's own repository, the writer fence of a unit and the journal of what
+        // moves objects and refs. Version 1 is pinned by its hash, so everything is added.
+        version: 2,
+        postgres: postgresMigrations[2],
+        sql: `
+ALTER TABLE code_projects ADD COLUMN store_json TEXT;
+CREATE TRIGGER code_projects_store BEFORE UPDATE ON code_projects
+  WHEN OLD.store_json IS NOT NULL AND NEW.store_json IS NOT OLD.store_json
+  BEGIN SELECT RAISE(ABORT,'The repository of a project is recorded once and is immutable'); END;
+ALTER TABLE code_units ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE code_units ADD COLUMN writer_state TEXT NOT NULL DEFAULT 'idle' CHECK (writer_state IN ('idle','reserved','active','closing','closed','recovery_required'));
+ALTER TABLE code_units ADD COLUMN writer_session_id TEXT;
+ALTER TABLE code_units ADD COLUMN writer_lease_id TEXT;
+ALTER TABLE code_units ADD COLUMN writer_changed_at TEXT;
+ALTER TABLE code_units ADD COLUMN head_oid TEXT;
+ALTER TABLE code_units ADD COLUMN head_operation_id TEXT;
+ALTER TABLE code_units ADD COLUMN mirrored_oid TEXT;
+ALTER TABLE code_units ADD COLUMN mirrored_at TEXT;
+ALTER TABLE code_units ADD COLUMN quarantine_operation_id TEXT;
+ALTER TABLE code_operations ADD COLUMN unit_id TEXT;
+ALTER TABLE code_operations ADD COLUMN generation INTEGER;
+ALTER TABLE code_operations ADD COLUMN phase TEXT;
+ALTER TABLE code_operations ADD COLUMN progress_json TEXT;
+ALTER TABLE code_operations ADD COLUMN detail_json TEXT;
+ALTER TABLE code_operations ADD COLUMN claim_id TEXT;
+ALTER TABLE code_operations ADD COLUMN claim_until TEXT;
+ALTER TABLE code_operations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE code_operations ADD COLUMN next_at TEXT;
+ALTER TABLE code_operations ADD COLUMN updated_at TEXT;
+CREATE UNIQUE INDEX code_operations_unit_open ON code_operations(project_id,unit_id,kind) WHERE status='prepared' AND unit_id IS NOT NULL;
+CREATE INDEX code_operations_due ON code_operations(status,kind,next_at);
+CREATE TRIGGER code_units_generation BEFORE UPDATE ON code_units
+  WHEN NEW.generation < OLD.generation OR NEW.generation > OLD.generation + 1
+  BEGIN SELECT RAISE(ABORT,'A writer generation only advances by one'); END;
+CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
+  WHEN NEW.generation IS NOT OLD.generation AND EXISTS (
+    SELECT 1 FROM code_operations
+    WHERE project_id=OLD.project_id AND unit_id=OLD.unit_id AND kind='upload' AND status='prepared' AND phase IN ('admitting','objects_durable','refs_applied')
+  )
+  BEGIN SELECT RAISE(ABORT,'A writer generation cannot change while an admitted upload is unresolved'); END;
 `,
       },
     ]);
@@ -453,8 +497,14 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
    * Main is consolidated research, so only a signed-in human administrator names it, and
    * moving it is a compare-and-set against the main that human last read: a replayed or
    * racing call cannot move it backwards. A pin already taken keeps the commit it copied.
+   * `stored` is what Code's own repository said of that commit before this transaction began,
+   * so that nothing in here, or in an owner's create transaction later, has to ask Git.
    */
-  async bindLocal(caller: Caller, value: CodeLocalBindInput): Promise<CodeProjectBinding> {
+  async bindLocal(
+    caller: Caller,
+    value: CodeLocalBindInput,
+    stored = false,
+  ): Promise<CodeProjectBinding> {
     this.assertOpen();
     caller = structuredClone(caller);
     const input = parseCodeInput(codeLocalBindInputSchema, value);
@@ -491,6 +541,7 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
         admittedBy: caller.actorId,
         admittedAt: at,
         operationId,
+        ...(stored ? { stored: true } : {}),
       });
       const bound = await this.project(tx, caller.projectId);
       if (!bound) {
@@ -577,6 +628,8 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
       await this.scope.require(caller, 'read', tx);
       return {
         project: await this.project(tx, caller.projectId),
+        store: null,
+        operations: [],
         units: await mapAsync(
           await tx.all<UnitRow>(
             `SELECT ${unitColumns} FROM code_units WHERE project_id=? ORDER BY declared_at DESC,unit_id LIMIT 200`,
@@ -630,7 +683,7 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
       related: related.map((item) => ({ kind: 'workflow', id: item.id, label: item.name })),
     });
     const bound = await tx.get<ProjectRow>(
-      'SELECT project_id,repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
+      'SELECT project_id,repository_id,binding_json,main_json,store_json FROM code_projects WHERE project_id=?',
       projectId,
     );
     if (!bound)
@@ -770,6 +823,12 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
     );
   }
 
+  /** The project's repository gained history, which a unit may have been waiting for. */
+  async imported(tx: Transaction, projectId: string): Promise<void> {
+    this.state.assertTransaction(tx);
+    await this.reconcileProject(tx, projectId);
+  }
+
   /** Every unpinned unit of a project: for a new main, and for a start after Code was away. */
   private async reconcileProject(tx: Transaction, projectId: string): Promise<void> {
     for (const { unit_id } of await tx.all<{ unit_id: string }>(
@@ -815,7 +874,7 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
 
   private async project(sql: Sql, projectId: string): Promise<CodeProjectBinding | null> {
     const row = await sql.get<ProjectRow>(
-      'SELECT project_id,repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
+      'SELECT project_id,repository_id,binding_json,main_json,store_json FROM code_projects WHERE project_id=?',
       projectId,
     );
     if (!row) return null;
@@ -826,8 +885,15 @@ CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
       repositoryId: row.repository_id,
       boundBy: binding.boundBy,
       boundAt: binding.boundAt,
-      main: { oid: main.oid, admittedBy: main.admittedBy, admittedAt: main.admittedAt },
-      durability: 'legacy-local',
+      main: {
+        oid: main.oid,
+        admittedBy: main.admittedBy,
+        admittedAt: main.admittedAt,
+        stored: main.stored === true,
+      },
+      // Once imported a project stays with Code's repository: a main it does not hold yet
+      // blocks work, it never sends new work back to a runner's own repository.
+      durability: row.store_json === null ? 'legacy-local' : 'code',
     };
   }
 

@@ -19,6 +19,7 @@ import {
   codeCommandCompletionSchema,
   codeCommandControlSchema,
   codeTransportInputSchema,
+  CODE_PART_MAX_BYTES,
   sessionUsageReportSchema,
   sessionWorkspaceSchema,
   plain,
@@ -74,6 +75,54 @@ function json(res: ServerResponse, status: number, value: unknown): void {
     'x-content-type-options': 'nosniff',
   });
   res.end(JSON.stringify(value));
+}
+
+function octets(res: ServerResponse, value: Buffer): void {
+  if (res.headersSent || res.destroyed) return;
+  res.writeHead(200, {
+    'content-type': 'application/octet-stream',
+    'content-length': value.length,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  res.end(value);
+}
+
+/** One bounded body of opaque bytes, under the same two caps as a JSON body. */
+function readBytes(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  if (req.destroyed) throw new ApiError('request_aborted', 'Request was aborted');
+  if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/octet-stream') {
+    req.resume();
+    throw new ApiError(
+      'unsupported_media_type',
+      'Content-Type must be application/octet-stream',
+      415,
+    );
+  }
+  const length = Number(req.headers['content-length']);
+  if (Number.isFinite(length) && length > maxBytes) {
+    req.resume();
+    throw new ApiError('body_too_large', 'Request body exceeds the configured limit', 413);
+  }
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let rejected = false;
+    req.on('data', (chunk: Buffer) => {
+      if (rejected) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        rejected = true;
+        chunks.length = 0;
+        reject(new ApiError('body_too_large', 'Request body exceeds the configured limit', 413));
+      } else chunks.push(chunk);
+    });
+    req.once('end', () => {
+      if (!rejected) resolve(Buffer.concat(chunks));
+    });
+    req.once('error', reject);
+    req.once('aborted', () => reject(new ApiError('request_aborted', 'Request was aborted')));
+  });
 }
 
 function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
@@ -703,6 +752,40 @@ export class ApiServer {
             ? await provider.transportGrant(caller, input)
             : await provider.verifyTransport(caller, input),
         );
+        return;
+      }
+      if (path.startsWith('/code/v2/')) {
+        if (url.search)
+          throw new ApiError('invalid_input', 'Code routes do not accept query parameters');
+        const caller = await this.scope.caller(
+          principal,
+          projectSelection(req.headers['x-merv-project-id']),
+        );
+        await this.scope.require(caller, 'read');
+        const route = path.slice('/code/v2/'.length);
+        const part = /^uploads\/([A-Za-z0-9_]{1,80})\/parts\/(0|[1-9][0-9]{0,14})$/.exec(route);
+        const read = /^downloads\/([A-Za-z0-9_]{1,80})\/read$/.exec(route);
+        if (req.method !== (part ? 'PUT' : 'POST')) {
+          res.setHeader('allow', part ? 'PUT' : 'POST');
+          json(res, 405, {
+            error: { code: 'method_not_allowed', message: 'Use PUT for a part and POST otherwise' },
+          });
+          return;
+        }
+        const body = part ? await readBytes(req, CODE_PART_MAX_BYTES) : await readJson(req, 65536);
+        // Body streaming may outlive credential authority or the optional adapter.
+        await this.scope.require(caller, 'read');
+        const v2 = this.codeProvider().v2;
+        if (!v2)
+          throw new ApiError(
+            'code_store_unavailable',
+            'This server keeps no Code repositories',
+            503,
+          );
+        if (part)
+          json(res, 200, await v2.putPart(caller, part[1], Number(part[2]), body as Buffer));
+        else if (read && v2.readPart) octets(res, await v2.readPart(caller, read[1], body));
+        else json(res, 200, await v2.call(caller, route, body));
         return;
       }
       if (path === '/code/commands/next' || path === '/code/commands/complete') {

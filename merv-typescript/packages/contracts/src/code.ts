@@ -1,6 +1,7 @@
 import { visible } from './text.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
+import type { CodeStoreOperation, CodeStoreStatus } from './code-store.js';
 import type { CodeUnit } from './code-units.js';
 import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
 
@@ -140,12 +141,21 @@ export interface CodeProjectBinding {
   repositoryId: string;
   boundBy: string;
   boundAt: string;
-  main: { oid: string; admittedBy: string; admittedAt: string };
-  /** Accepted code stays in the runner's repository; the server claims no durability for it. */
-  durability: 'legacy-local';
+  /** `stored` says Code's own repository holds that commit, so work can be prepared from it. */
+  main: { oid: string; admittedBy: string; admittedAt: string; stored: boolean };
+  /**
+   * `legacy-local`: accepted code stays in the runner's repository and the server claims no
+   * durability for it. `code`: the project was imported, and Code's repository is where new
+   * work is kept. A project never goes back.
+   */
+  durability: 'legacy-local' | 'code';
 }
 export interface CodeProjectStatus {
   project: CodeProjectBinding | null;
+  /** Null when this server keeps no repositories. */
+  store: CodeStoreStatus | null;
+  /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
+  operations: CodeStoreOperation[];
   /** The newest 200 units. */
   units: CodeUnit[];
   blockers: WorkflowProvidedBlocker[];

@@ -394,7 +394,23 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   const emptyCode = {
     operations: [],
     proposals: [],
-    status: { project: null, units: [], blockers: [] },
+    status: {
+      project: null,
+      // The default composition keeps repositories; this project has imported nothing.
+      store: {
+        hosted: false,
+        objectFormat: null,
+        rootOid: null,
+        source: null,
+        tips: [],
+        diskBytes: 0,
+        quotaBytes: 10 * 1024 * 1024 * 1024,
+        limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+      },
+      operations: [],
+      units: [],
+      blockers: [],
+    },
   };
   assert.deepEqual((await tool('ui.read', operator, { rowId: 'code' })).body.result, emptyCode);
   assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, emptyCode);

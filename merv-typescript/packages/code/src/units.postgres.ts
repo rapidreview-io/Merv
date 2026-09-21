@@ -159,4 +159,55 @@ $merv$;
 CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
 FOR EACH ROW EXECUTE FUNCTION code_operations_no_delete_guard();
 `,
+  2: `
+ALTER TABLE code_projects ADD COLUMN store_json TEXT;
+CREATE OR REPLACE FUNCTION code_projects_store_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF OLD.store_json IS NOT NULL AND NEW.store_json IS DISTINCT FROM OLD.store_json THEN
+    RAISE EXCEPTION USING MESSAGE = 'The repository of a project is recorded once and is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER code_projects_store BEFORE UPDATE ON code_projects
+FOR EACH ROW EXECUTE FUNCTION code_projects_store_guard();
+ALTER TABLE code_units ADD COLUMN generation BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE code_units ADD COLUMN writer_state TEXT NOT NULL DEFAULT 'idle' CHECK (writer_state IN ('idle','reserved','active','closing','closed','recovery_required'));
+ALTER TABLE code_units ADD COLUMN writer_session_id TEXT;
+ALTER TABLE code_units ADD COLUMN writer_lease_id TEXT;
+ALTER TABLE code_units ADD COLUMN writer_changed_at TEXT;
+ALTER TABLE code_units ADD COLUMN head_oid TEXT;
+ALTER TABLE code_units ADD COLUMN head_operation_id TEXT;
+ALTER TABLE code_units ADD COLUMN mirrored_oid TEXT;
+ALTER TABLE code_units ADD COLUMN mirrored_at TEXT;
+ALTER TABLE code_units ADD COLUMN quarantine_operation_id TEXT;
+ALTER TABLE code_operations ADD COLUMN unit_id TEXT;
+ALTER TABLE code_operations ADD COLUMN generation BIGINT;
+ALTER TABLE code_operations ADD COLUMN phase TEXT;
+ALTER TABLE code_operations ADD COLUMN progress_json TEXT;
+ALTER TABLE code_operations ADD COLUMN detail_json TEXT;
+ALTER TABLE code_operations ADD COLUMN claim_id TEXT;
+ALTER TABLE code_operations ADD COLUMN claim_until TEXT;
+ALTER TABLE code_operations ADD COLUMN attempts BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE code_operations ADD COLUMN next_at TEXT;
+ALTER TABLE code_operations ADD COLUMN updated_at TEXT;
+CREATE UNIQUE INDEX code_operations_unit_open ON code_operations(project_id,unit_id,kind) WHERE status='prepared' AND unit_id IS NOT NULL;
+CREATE INDEX code_operations_due ON code_operations(status,kind,next_at);
+CREATE OR REPLACE FUNCTION code_units_generation_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.generation < OLD.generation OR NEW.generation > OLD.generation + 1 THEN
+    RAISE EXCEPTION USING MESSAGE = 'A writer generation only advances by one', ERRCODE = '23514';
+  END IF;
+  IF NEW.generation IS DISTINCT FROM OLD.generation AND EXISTS (
+    SELECT 1 FROM code_operations
+    WHERE project_id=OLD.project_id AND unit_id=OLD.unit_id AND kind='upload' AND status='prepared' AND phase IN ('admitting','objects_durable','refs_applied')
+  ) THEN
+    RAISE EXCEPTION USING MESSAGE = 'A writer generation cannot change while an admitted upload is unresolved', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER code_units_generation BEFORE UPDATE ON code_units
+FOR EACH ROW EXECUTE FUNCTION code_units_generation_guard();
+`,
 };

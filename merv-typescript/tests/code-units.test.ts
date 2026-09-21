@@ -252,7 +252,13 @@ for (const backend of backends) {
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
-      assert.deepEqual(await f.code.status(f.admin), { project: null, units: [], blockers: [] });
+      assert.deepEqual(await f.code.status(f.admin), {
+        project: null,
+        store: null,
+        operations: [],
+        units: [],
+        blockers: [],
+      });
       const first = { repositoryId: 'runner-repository', mainOid: oid('a'), requestId: 'bind' };
 
       const issued = await f.scope.createKey(f.principal, { projectId: f.project.id });
@@ -337,7 +343,13 @@ for (const backend of backends) {
       });
       const outsider = await f.scope.caller(f.principal, elsewhere.id);
       await assert.rejects(f.code.unit(outsider, work.id), { code: 'code_unit_not_found' });
-      assert.deepEqual(await f.code.status(outsider), { project: null, units: [], blockers: [] });
+      assert.deepEqual(await f.code.status(outsider), {
+        project: null,
+        store: null,
+        operations: [],
+        units: [],
+        blockers: [],
+      });
       assert.equal((await f.code.unit(f.admin, work.id)).unitId, work.id);
     },
   );

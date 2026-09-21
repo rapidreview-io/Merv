@@ -175,7 +175,23 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   };
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
   // The unit tools are the project's, never a worker's: an actor key reads them and may not bind.
-  const unbound = { project: null, units: [], blockers: [] };
+  // The default composition keeps repositories under the data directory; nothing is imported.
+  const unbound = {
+    project: null,
+    store: {
+      hosted: false,
+      objectFormat: null,
+      rootOid: null,
+      source: null,
+      tips: [],
+      diskBytes: 0,
+      quotaBytes: 10 * 1024 * 1024 * 1024,
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+    },
+    operations: [],
+    units: [],
+    blockers: [],
+  };
   assert.deepEqual((await ok('/tools/code.status', {})).result, unbound);
   assert.deepEqual((await ok('/tools/ui.read', { rowId: 'code' })).result.status, unbound);
   assert.equal(

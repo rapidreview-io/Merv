@@ -78,6 +78,9 @@ set('api', {
   allowedOrigins: [httpsOrigin('MERV_TS_PUBLIC_ORIGIN')],
 });
 set('ui', {});
+// Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
+// small tmpfs, and the repositories must survive the container.
+set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
 // Rows and acts published by merv-sandboxes. Absent until the operator names the service, so
 // a deployment that has not connected one composes exactly the plugins it composed before.
 if (process.env.MERV_SANDBOXES_URL !== undefined) {

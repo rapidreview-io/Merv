@@ -7,7 +7,7 @@ implemented until its stage says so.
 
 ## Implementation status
 
-**Stage S1 (automatic single base, local mode) is implemented.** Nothing of S2 to S4 is. The operator's view is in [CODE_OPERATIONS.md](CODE_OPERATIONS.md#units-acceptance-and-automatic-bases) and the checkout rules in [WORKSPACES.md](WORKSPACES.md#the-derived-base).
+**Stage S1 (automatic single base, local mode) is implemented.** S2 is in progress (below); nothing of S3 and S4 is. The operator's view is in [CODE_OPERATIONS.md](CODE_OPERATIONS.md#units-acceptance-and-automatic-bases) and the checkout rules in [WORKSPACES.md](WORKSPACES.md#the-derived-base).
 
 What shipped:
 
@@ -31,6 +31,22 @@ Where S1 differs from the text below, deliberately:
 Not in S1: any merge (`code_bases`, resolution tasks, system prerequisites), the shared Code remote with bundles, admission and durability, writer generations and unit lifecycle, runner capabilities, import of successes that predate S1, any GitHub change, and research materialisation passing workspaces (cycle-created work stays workspace-free).
 
 **Deploying S1.** Every project must be bound with `code.local.bind` before new Git work can start: until then `task@5` and `experiment@8` units show `code_base_pending` and are not offered. A Git task or experiment that succeeded before this release has no acceptance, so work that depends on it cannot derive a base automatically; recreate that work with `baseTaskId` naming the accepted Git task (tasks only), or redo the prerequisite.
+
+**Stage S2 (shared Code remote) is in progress.** Shipped so far: the repository Code keeps for each project on the server's disk, closure admission, the operation journal with crash recovery, and import (`code.repository.import` from an operator's bundle or the linked GitHub repository, `code.repository.configure`, the `code-import` command, the `/code/v2/uploads/*` routes). The operator's view is in [CODE_OPERATIONS.md](CODE_OPERATIONS.md#the-code-repository). Not yet: writer generations and unit uploads, downloads, `task@6`/`experiment@9`, runner capabilities and the driver, `preparation_deferred`, mirroring. Until they land nothing selects the new storage for work: importing a project changes what `code.status` reports and nothing else.
+
+Tables: migration `code_units` version 2 adds to the S1 tables only (`code_projects.store_json`, the writer columns of `code_units`, the journal columns of `code_operations` with a partial unique index of one open operation per unit and kind), on SQLite and Postgres; there is no new server table.
+
+Where S2 differs from the text below so far, deliberately:
+
+- **Parts, not one stream.** The HTTP server ends any request after 30 seconds and buffers bodies, so a bundle travels as parts of at most 4 MiB that append to a file whose size is the progress; the sha256 of the whole is checked before anything reads it. The part size is the server's to lower.
+- **Completion is asynchronous.** Admitting up to 2 GiB cannot fit a request. `complete` starts admission in the project's turn, answers with the operation after a short wait, and is asked again; it never starts a second admission.
+- **The writer lock is a bound unix socket** in the root, because Node has no `flock`: the operating system releases it with the process. Two servers starting in the same instant on one volume are not excluded; one server per volume is the deployment.
+- **No server-local import source.** The design marks it optional. The operator command and the GitHub source cover local and connected projects, and no tool names a server path.
+- **The GitHub import reads as the administrator who asked**, through the same owner-delegated authority every GitHub automation uses, with a read-only installation token that lives in one Git child's environment. It fetches into quarantine and is then bundled, so it takes the uploaded bundle's path with identical checks and can be replayed after a crash.
+- **Surplus** is "every object of the pack is in the delivered history or is a thin-fix copy of a kept object", not set equality: a history may reach kept objects that are not in the pack.
+- **No per-capture exception.** A false positive is answered with the project's `secretExemptGlobs`.
+- **Hosted is sticky and a database fact**: `store_json` is set. A main the repository does not hold is a blocker on new work (`main.stored` is recorded when an import brings it or a bind names a held commit), never a reason to go back to runner-local storage.
+- `code_projects.mode` stays `local`, and `refs/merv/main` is not kept: main is still named by `code.local.bind`.
 
 ## The owner's decisions
 

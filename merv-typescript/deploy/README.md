@@ -2,7 +2,6 @@
 
 > **Production switched on 2026-09-16.** Read [the execution record](CUTOVER_2026-09-16.md) for the actual image, final schema, import, public routing and rollback state; [client reconnection](CLIENT_CUTOVER.md) replaces the legacy plugin setup. Older staging/planning instructions below are historical.
 
-
 These files prepare the TypeScript backend and its `/ui/` application for the existing Azure VM. They do not deploy anything by themselves. Stage independently, finish the authenticated checks below, then change routing. The user selected preservation through import. The importer and isolated rehearsal are described in `LEGACY_REHEARSAL.md`; unfinished legacy work is retained as history until a separate continuity decision is made.
 
 ## Observed production layout — September 16, 2026
@@ -19,7 +18,7 @@ These files prepare the TypeScript backend and its `/ui/` application for the ex
 | Legacy browser UI               | Vercel: `https://rapidreview.io/merv` → `https://research-suite-chi.vercel.app/merv`                         |
 | Main website routing repository | `/Users/guraltoo/Documents/dev/proj/experiments/RR_Site`, `rapidreview-io/RR_Site`, Vercel project `rr-site` |
 | Backend secrets                 | `/etc/merv/control.env`, mode 0600; database administration values in `/etc/merv/database.env`               |
-| New staging port                | `127.0.0.1:3081`, separate TypeScript staging service                                                                      |
+| New staging port                | `127.0.0.1:3081`, separate TypeScript staging service                                                        |
 
 The old UI is **not** a static directory or a separate container on Azure. Stopping Caddy, the Python backend, or the entire RapidReview Vercel project would affect more than the UI. Sandboxes, the SSH gateway, Hatchet, and their databases are separate services and must remain untouched. Existing production retention instructions keep the previous database/configuration/volumes through at least **2026-10-10**.
 
@@ -58,7 +57,7 @@ Transfer the image using the existing release mechanism, or `docker save`/`docke
 2. Take a PostgreSQL custom-format backup and a roles/configuration backup into a root-owned mode-0700 directory. Backup files must be mode 0600; roles/configuration can contain secrets. Check `pg_restore --list` and record the backup checksum. Preserve the current Docker volumes and remote objects. A route rollback must not restore an older database over new writes.
 3. With the database administrator, create only the dedicated login/schema described above. Set its password through a private credential channel, never command-line arguments, logs, or chat. Verify it cannot create schemas or read legacy application tables. Do not alter the `merv_app` role or the `public` schema.
 4. Prepare `/etc/merv/typescript.env` as root:root 0600 using `typescript.env.example`. Copy only the named required values internally from the existing private configuration; never print the file. Use a new database-role password and the new artifact prefix. If the database is moved off the local Docker network, configure verified TLS in State rather than adding an unchecked URI TLS option.
-5. Create `/var/lib/merv-ts`, owned by container UID/GID 1000, mode 0700. It stores local runtime state; it is not the metadata database or artifact storage. Do not reuse the legacy data directory.
+5. Create `/var/lib/merv-ts`, owned by container UID/GID 1000, mode 0700. It stores local runtime state; it is not the metadata database or artifact storage. Do not reuse the legacy data directory. Code keeps one Git repository per project beneath it (`/var/lib/merv-ts/code`), which is authoritative and must be backed up with the database; see [Code operations](../docs/CODE_OPERATIONS.md#the-code-repository).
 6. Start the separate Compose project with its immutable image. Use `sudo` if needed to read the private environment file. Avoid `docker compose config` without `--quiet`, because rendering can print secrets.
 
 ```sh
