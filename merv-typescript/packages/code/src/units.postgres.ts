@@ -214,4 +214,9 @@ FOR EACH ROW EXECUTE FUNCTION code_units_generation_guard();
 CREATE FUNCTION code_unit_inputs_guard() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'Unit inputs are immutable and retained'; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_unit_inputs_guard BEFORE UPDATE OR DELETE ON code_unit_inputs FOR EACH ROW EXECUTE FUNCTION code_unit_inputs_guard();`,
   4: `CREATE INDEX code_units_accepted_commit ON code_units(project_id,((acceptance_json::jsonb #>> '{code,commit}'))) WHERE acceptance_json IS NOT NULL;`,
+  5: `ALTER TABLE code_units ADD COLUMN quarantine_base_key TEXT;
+CREATE FUNCTION code_units_base_quarantine_guard() RETURNS trigger AS $$ BEGIN
+IF OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS DISTINCT FROM OLD.quarantine_base_key THEN RAISE EXCEPTION 'Base quarantine is retained'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units FOR EACH ROW EXECUTE FUNCTION code_units_base_quarantine_guard();`,
 };

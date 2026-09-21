@@ -1,6 +1,8 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
+import { baseControlSchema } from './bases.js';
+import type { CodeBaseControlInput } from '@merv/contracts';
 import { z } from 'zod';
 import {
   codeCommitInputSchema,
@@ -57,6 +59,31 @@ export const codeToolsPlugin = {
           await ctx.code.operation(caller, input.commandId),
       }),
     );
+    for (const [action, instruction] of [
+      ['retry', 'Retry infrastructure work on this same base with five new attempts.'],
+      ['suspend', 'Suspend this base while retaining its current work and history.'],
+      [
+        'resume',
+        'Resume a suspended base in its prior work state. A resolution task suspended by its review budget still needs workflow.extend_limit.',
+      ],
+      [
+        'cancel',
+        'Cancel this unresolved base permanently. Replan its waiters with corrective work.',
+      ],
+      [
+        'quarantine',
+        'Quarantine this base and its descendants, including existing pins and acceptances. Its immutable result stays retained and cannot be reused; create corrective work and replan.',
+      ],
+    ] as const)
+      ctx.effect(() =>
+        ctx.tools.register({
+          name: `code.base.${action}`,
+          description: `${instruction} Supply the key from code.status, a reason and a stable requestId. Only a human or operator key with project admin permission may call it, never a leased worker.`,
+          inputSchema: baseControlSchema.omit({ action: true }),
+          handler: async (caller: Caller, input: Omit<CodeBaseControlInput, 'action'>) =>
+            ctx.code.controlBase(caller, { ...input, action }),
+        }),
+      );
     // Nothing below is granted by any execution policy, so no leased worker calls it.
     ctx.effect(() =>
       ctx.tools.register({
@@ -85,7 +112,7 @@ export const codeToolsPlugin = {
       ctx.tools.register({
         name: 'code.status',
         description:
-          'Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.',
+          'Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; code.base.retry, code.base.suspend/resume, code.base.cancel and code.base.quarantine handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller: Caller) => await ctx.code.status(caller),
@@ -125,7 +152,7 @@ export const codeToolsPlugin = {
       ctx.tools.register({
         name: 'code.mirror.retry',
         description:
-          'Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.',
+          'Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted and base refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.',
         inputSchema: codeMirrorRetryInputSchema,
         handler: async (caller: Caller, input: CodeMirrorRetryInput) =>
           await ctx.code.retryMirror(caller, input),

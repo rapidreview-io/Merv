@@ -14,15 +14,17 @@ import {
 import { CodeService } from '@merv/code/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeCapture } from '@merv/code/types';
+import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
 import { CodeBaseService } from '../packages/code/src/bases.js';
 import type { CodeUnitService } from '../packages/code/src/units.js';
-import { backends, optional, gitSource, type Backend } from './fixtures/code-store.js';
+import { backends, optional, gitSource, git, type Backend } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { boundProject } from './fixtures/code-binding.js';
 
 async function fixture(t: TestContext, backend: Backend, human = false) {
   const f = await resolutionFixture(t, backend, { human });
+  await f.sessions.setDispatch(f.admin, { enabled: true });
   const code = await createService(
     new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
   );
@@ -47,12 +49,12 @@ async function fixture(t: TestContext, backend: Backend, human = false) {
     );
     return gitRun(...args);
   });
-  const bases = new CodeBaseService(
-    f.state,
-    repositories,
-    { changed: (tx, projectId) => units.imported(tx, projectId) },
-    true,
-  );
+  const bases = new CodeBaseService(f.state, repositories, {
+    changed: (tx, projectId) => units.imported(tx, projectId),
+    sponsors: (tx, projectId, members) => units.baseSponsors(tx, projectId, members),
+    serviceWork: f.sessions.serviceWork,
+    resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
+  });
   await bases.initialize();
   units.bases = bases;
   const unbind = f.tasks.bindCode(code);
@@ -620,12 +622,12 @@ for (const backend of backends) {
         ),
       );
       await f.bases.close();
-      const restarted = new CodeBaseService(
-        f.state,
-        f.repositories,
-        { changed: (tx, projectId) => f.units.imported(tx, projectId) },
-        true,
-      );
+      const restarted = new CodeBaseService(f.state, f.repositories, {
+        changed: (tx, projectId) => f.units.imported(tx, projectId),
+        sponsors: (tx, projectId, members) => f.units.baseSponsors(tx, projectId, members),
+        serviceWork: f.sessions.serviceWork,
+        resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
+      });
       await restarted.initialize();
       f.beforeClose.push(() => restarted.close());
       f.units.bases = restarted;
@@ -1513,3 +1515,186 @@ for (const backend of backends) {
     },
   );
 }
+
+for (const backend of backends) {
+  test(
+    `${backend}: base operator controls retain history, deny workers, and explain each disposition to waiters`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      t.mock.method(f.bases, 'soon', () => {});
+      const waiter = await f.waiter();
+      const key = (await f.record())!.key;
+      const control = (action: string, requestId = action) =>
+        f.bases.control(f.scope, f.admin, { key, action, requestId, reason: `Operator ${action}` });
+      const service = await f.state.transaction((tx) =>
+        f.scope.serviceActor('fixture', f.admin.projectId, tx),
+      );
+      await assert.rejects(
+        f.bases.control(f.scope, service, {
+          key,
+          action: 'cancel',
+          requestId: 'forbidden',
+          reason: 'No authority',
+        }),
+        { status: 403 },
+      );
+      const suspended = await control('suspend');
+      assert.equal(suspended.state, 'suspended');
+      assert.deepEqual(await control('suspend'), suspended);
+      let blocker = (await f.workflows.blockers(f.admin, waiter.id))[0]!;
+      assert.equal(blocker.code, 'code_base_blocked');
+      assert.match(blocker.message, /suspended.*Operator suspend/);
+      assert.match(blocker.next, /resume/);
+      await f.bases.work(f.admin.projectId);
+      assert.equal((await f.record())!.attempts, 0);
+      assert.equal((await control('resume')).state, 'queued');
+      await f.bases.work(f.admin.projectId);
+      const task = (await f.record())!.resolutionTaskId;
+      assert.ok(task);
+      await control('suspend', 'suspend-conflict');
+      const resolutionStatus = await f.state.transaction((tx) =>
+        f.code.baseStatus(f.admin, task!, tx),
+      );
+      assert.equal(resolutionStatus.status, 'blocked');
+      await control('resume', 'resume-conflict');
+      assert.equal((await f.record())!.resolutionTaskId, task);
+      assert.equal((await control('cancel')).state, 'cancelled');
+      blocker = (await f.workflows.blockers(f.admin, waiter.id))[0]!;
+      assert.match(blocker.message, /cancelled/);
+      assert.match(blocker.next, /replan/);
+      await assert.rejects(control('resume', 'cancelled-resume'), { code: 'code_base_changed' });
+      const quarantined = await control('quarantine');
+      assert.equal(quarantined.quarantined, true);
+      assert.equal(quarantined.resolutionTaskId, task);
+      blocker = (await f.workflows.blockers(f.admin, waiter.id))[0]!;
+      assert.equal(blocker.code, 'code_quarantined');
+      const history = await f.state.read((sql) =>
+        sql.all<{ payload_json: string }>(
+          "SELECT payload_json FROM code_operations WHERE project_id=? AND kind='base-control' ORDER BY created_at,id",
+          f.admin.projectId,
+        ),
+      );
+      assert.equal(history.length, 6);
+      assert.equal(
+        (await f.state.read((sql) =>
+          sql.get<{ n: number }>(
+            'SELECT COUNT(*) AS n FROM code_bases WHERE project_id=?',
+            f.admin.projectId,
+          ),
+        ))!.n,
+        1,
+      );
+    },
+  );
+  test(
+    `${backend}: a resolved base reaches the existing mirror journal and an outage never changes it or its waiters`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      t.mock.method(f.bases, 'soon', () => {});
+      const waiter = await f.waiter([f.left, f.extra]);
+      await f.bases.work(f.admin.projectId);
+      const base = (await f.state.read((sql) => f.bases.find(sql, f.admin.projectId, [f.a, f.d])))!;
+      assert.equal(base.state, 'resolved');
+      const remote = join(f.directory, 'mirror.git');
+      git(f.directory, ['init', '--bare', '--quiet', remote]);
+      let outage = true;
+      const transport = {
+        target: async () => ({ repository: 'fixture/remote' }),
+        lsRemote: async (_projectId: string, ref: string) => {
+          if (outage) throw new Error('Mirror unavailable');
+          const found = git(f.directory, ['ls-remote', remote, ref]);
+          return found ? found.split('\t')[0]! : null;
+        },
+        push: async (
+          _projectId: string,
+          update: { ref: string; oid: string; expectedRemote: string | null },
+        ) => {
+          git(f.repositories.paths(f.admin.projectId).repository, [
+            'push',
+            '--porcelain',
+            `--force-with-lease=${update.ref}:${update.expectedRemote ?? ''}`,
+            remote,
+            `${update.oid}:${update.ref}`,
+          ]);
+          return 'ok' as const;
+        },
+      };
+      const mirror = new CodeMirrorService(f.state, f.scope, f.repositories, transport, {
+        mirrorSeconds: 0,
+        backoffMs: 0,
+      });
+      f.beforeClose.push(() => mirror.close());
+      await mirror.run();
+      assert.equal((await mirror.describe(f.admin.projectId)).state, 'retrying');
+      assert.deepEqual(
+        await f.state.read((sql) => f.bases.find(sql, f.admin.projectId, [f.a, f.d])),
+        base,
+      );
+      assert.deepEqual(await f.workflows.blockers(f.admin, waiter.id), []);
+      outage = false;
+      await mirror.run();
+      assert.equal(
+        git(f.directory, ['--git-dir', remote, 'rev-parse', `refs/heads/merv/bases/${base.key}`]),
+        base.result!.commit,
+      );
+      await mirror.run();
+      assert.equal((await mirror.describe(f.admin.projectId)).pending, 0);
+      const operations = await f.state.read((sql) =>
+        sql.all<{ status: string }>("SELECT status FROM code_operations WHERE kind='mirror-base'"),
+      );
+      assert.deepEqual(
+        operations.map((row) => row.status),
+        ['completed'],
+      );
+    },
+  );
+}
+
+for (const backend of backends)
+  test(
+    `${backend}: budget admission reaches the stuck report and consumes neither launch holds nor review rounds`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      t.mock.method(f.bases, 'soon', () => {});
+      const waiter = await f.waiter([f.left, f.extra]);
+      const admission = t.mock.method(f.sessions.serviceWork!, 'admit', async () => ({
+        admitted: false as const,
+        reason: 'budget_exceeded' as const,
+      }));
+      await f.bases.work(f.admin.projectId);
+      const base = (await f.state.read((sql) => f.bases.find(sql, f.admin.projectId, [f.a, f.d])))!;
+      assert.equal(base.attempts, 0);
+      assert.equal(base.resolutionTaskId, null);
+      assert.equal(base.blocker, 'budget_exceeded');
+      const blockers = await f.workflows.blockers(f.admin, waiter.id);
+      assert.equal(blockers[0]!.code, 'code_base_admission');
+      const stuck = await f.sessions.stuck(f.admin);
+      assert.ok(
+        stuck.items.some(
+          (item) =>
+            item.instanceId === waiter.id &&
+            item.code === 'code_base_admission' &&
+            item.why.includes('budget_exceeded'),
+        ),
+      );
+      const holds = await f.state.read((sql) =>
+        sql.get<{ n: number }>(
+          'SELECT COUNT(*) AS n FROM session_dispatch_holds WHERE project_id=? AND attempts>0',
+          f.admin.projectId,
+        ),
+      );
+      assert.equal(holds!.n, 0);
+      admission.mock.restore();
+      await f.bases.control(f.scope, f.admin, {
+        key: base.key,
+        action: 'retry',
+        reason: 'Budget raised; retry now',
+        requestId: 'budget-ready',
+      });
+      await f.bases.work(f.admin.projectId);
+      assert.deepEqual(await f.workflows.blockers(f.admin, waiter.id), []);
+    },
+  );

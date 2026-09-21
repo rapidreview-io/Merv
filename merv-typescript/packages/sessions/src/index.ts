@@ -28,6 +28,7 @@ import {
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { AgentDirectory, sourceCaller } from './agents.js';
 import { AgentObservations, lastActivity, summarizeAgent } from './observations.js';
+import { SessionServiceWork } from './service-work.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
@@ -71,6 +72,7 @@ const secondsDefaults = {
 const configKeys = new Set([
   'sweepIntervalMs',
   'maxLaunchFailures',
+  'serviceConcurrency',
   ...Object.keys(secondsDefaults),
 ]);
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -163,6 +165,7 @@ export class LeasedSessions implements Sessions {
   private closing?: Promise<void>;
   private closed = false;
   private dispatcher!: SessionDispatch;
+  serviceWork!: SessionServiceWork;
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
   /** Complete storage migrations before publishing this service. */
@@ -357,6 +360,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           this.thresholds,
         ),
       );
+      this.serviceWork = new SessionServiceWork(
+        state,
+        scope,
+        workflows,
+        this.clock,
+        options.serviceConcurrency ?? 1,
+      );
+      await this.serviceWork.initialize();
       try {
         this.disposers.push(
           scope.registerSessionAuthority({
@@ -1155,7 +1166,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           : includeDependencies
             ? await this.workflows.dependencyClosure(caller, instanceId, tx)
             : [(await this.workflows.get(caller, instanceId, tx)).id];
-      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds);
+      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds, instanceId);
       return {
         scope:
           instanceId === undefined || instanceIds === null
@@ -1928,6 +1939,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     };
   }
   private async sweepTransaction(tx: Transaction): Promise<void> {
+    await this.serviceWork.expire(tx);
     const idle = this.idlePass(tx);
     for (const row of await tx.all<Row>(
       tx.dialect === 'postgres'

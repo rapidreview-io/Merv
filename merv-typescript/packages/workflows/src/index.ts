@@ -1573,6 +1573,48 @@ export class WorkflowsService implements Workflows {
     requireDependencies((await this.dependencies(caller, instanceId, tx)).dependencies);
   }
 
+  /** The provider freezes these roots before later dependencies can move a shared charge. */
+  async sponsoringRoots(
+    projectId: string,
+    instanceIds: string[],
+    tx: Transaction,
+  ): Promise<string[]> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    const caller = await this.scope.serviceActor('workflows', projectId, tx);
+    const parents = new Map<string, Set<string>>();
+    const link = (child: string, parent: string) => {
+      if (!parents.has(child)) parents.set(child, new Set());
+      parents.get(child)!.add(parent);
+    };
+    for (const row of await tx.all<{ source_id: string; target_id: string }>(
+      "SELECT source_id,target_id FROM wf_dependencies WHERE project_id=? AND kind='declared'",
+      projectId,
+    ))
+      link(row.target_id, row.source_id);
+    for (const row of await tx.all<{ id: string; workflow: string; version: number }>(
+      'SELECT id,workflow,version FROM wf_instances WHERE project_id=?',
+      projectId,
+    ))
+      for (const child of (await this.registrations
+        .get(`${row.workflow}@${row.version}`)
+        ?.policy?.children?.({ caller, instanceId: row.id, tx })) ?? [])
+        link(child, row.id);
+    const seen = new Set<string>(),
+      roots = new Set<string>(),
+      queue = [...instanceIds];
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const above = parents.get(id);
+      if (!above?.size) roots.add(id);
+      else queue.push(...above);
+    }
+    // Policy children can form a cycle even though declared dependencies cannot.
+    return [...(roots.size ? roots : new Set(instanceIds))].sort();
+  }
+
   /**
    * A walk rather than a recursive query, like the cycle check beside the dependency insert:
    * it reads the same on both backends, and it can ask each loaded policy for the children

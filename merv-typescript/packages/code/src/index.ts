@@ -19,7 +19,7 @@ const configuration = z
         drainSeconds: z.number().int().min(1).max(3600).optional(),
         /** How long a closed session's machine has to hand over its final capture. */
         finalizeGraceSeconds: z.number().int().min(1).max(86_400).optional(),
-        /** Merge several accepted commits into one base on the server; off unless set. */
+        /** Merge several accepted commits into one base on the server; on unless disabled. */
         autoMerge: z.boolean().optional(),
         /** How often the server looks for refs to publish; zero publishes only when asked. */
         mirrorSeconds: z.number().int().min(0).max(86_400).optional(),

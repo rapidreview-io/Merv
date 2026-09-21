@@ -109,6 +109,9 @@ export type {
   CodeUnitAcceptInput,
   CodeUnitAcceptance,
   CodeBasePin,
+  CodeBaseRecord,
+  CodeBaseControlInput,
+  CodeBaseState,
   CodeBaseStatus,
   CodeUnit,
   CodeWriterState,
@@ -1249,6 +1252,8 @@ export interface Workflows {
    * declare: the grouping a research cycle's usage and budget are read over.
    */
   dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
+  /** Roots whose current dependency or child closure contains this work, frozen by its provider. */
+  sponsoringRoots(projectId: string, instanceIds: string[], tx: Transaction): Promise<string[]>;
   /**
    * A provider's whole current opinion of one instance: the keys given are written, its other
    * keys for that instance are removed. Transaction-only, like releaseLease, so no tool route

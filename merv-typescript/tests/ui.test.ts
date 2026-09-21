@@ -420,6 +420,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       },
       warnings: [],
       units: [],
+      bases: [],
       blockers: [],
     },
   };

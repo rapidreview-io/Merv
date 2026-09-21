@@ -36,6 +36,7 @@ export interface WriterRow {
   mirrored_oid: string | null;
   mirrored_at: string | null;
   quarantine_operation_id: string | null;
+  quarantine_base_key: string | null;
 }
 /** Everything a mutation of a unit's branch names; the server compares all of it. */
 export interface WriterFence {
@@ -49,7 +50,7 @@ export interface WriterFence {
   moves: boolean;
 }
 const writerColumns =
-  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id';
+  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id,quarantine_base_key';
 const PROVIDER = 'code';
 const FENCE =
   'A signed-in project administrator reads the findings in code.status and runs code.unit.fence, which closes this writer at the last commit Code admitted; the next lease continues from there.';
@@ -85,6 +86,7 @@ export class CodeWriterService {
     await this.scope.require(caller, 'read', tx);
     const row = await this.row(tx, caller.projectId, unitId);
     check(row?.base_json, 'code_base_pending', 'This unit has no base to write from yet', 409);
+    check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
     if (row.writer_lease_id === leaseId && row.writer_state !== 'idle') return this.view(row);
     const refusal = this.refusal(row, true);
     if (refusal) throw new MervError(refusal.code, refusal.message, 409);
@@ -164,6 +166,7 @@ export class CodeWriterService {
   async fenced(tx: Transaction, fence: WriterFence, kind: 'checkpoint' | 'final') {
     const row = await this.row(tx, fence.projectId, fence.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
+    check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
     check(
       Number(row.generation) === fence.generation &&
         row.writer_session_id === fence.sessionId &&
@@ -282,6 +285,7 @@ export class CodeWriterService {
     }
     const row = await this.row(tx, caller.projectId, input.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
+    check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
     check(
       !(await tx.get(
         "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'",
@@ -423,6 +427,11 @@ export class CodeWriterService {
   }
 
   private refusal(row: WriterRow, reserving: boolean): CodeWriterStatus['blocked'] {
+    if (row.quarantine_base_key)
+      return {
+        code: 'code_quarantined',
+        message: `This unit uses quarantined base ${row.quarantine_base_key}; create corrective work and replan.`,
+      };
     if (row.quarantine_operation_id !== null)
       return {
         code: 'code_capture_quarantined',

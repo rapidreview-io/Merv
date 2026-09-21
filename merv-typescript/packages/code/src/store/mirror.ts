@@ -56,7 +56,7 @@ export const defaultMirrorConfig: CodeMirrorConfig = {
 const MAX_BACKOFF_MS = 3600_000;
 const WARNINGS = 20;
 const PRINCIPAL = 'system:code';
-const kinds = ['mirror-work', 'mirror-accepted'] as const;
+const kinds = ['mirror-work', 'mirror-accepted', 'mirror-base'] as const;
 export type MirrorKind = (typeof kinds)[number];
 /** Where a ref of Code's own repository is published under. */
 const published = (ref: string) => ref.replace(/^refs\/merv\//, 'refs/heads/merv/');
@@ -99,7 +99,12 @@ export async function enqueueMirror(
   unitId: string,
   tip: string,
 ): Promise<void> {
-  const ref = kind === 'mirror-work' ? workRef(unitId) : acceptedRef(unitId);
+  const ref =
+    kind === 'mirror-base'
+      ? `refs/merv/bases/${unitId}`
+      : kind === 'mirror-work'
+        ? workRef(unitId)
+        : acceptedRef(unitId);
   const requestId = `${kind}:${unitId}:${tip}`;
   const open = await tx.get<{ id: string }>(
     "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind=? AND status='prepared'",
@@ -141,7 +146,7 @@ export async function enqueueMirror(
  * has moved by another hand only leaves this work queued, retrying or blocked, and says so.
  *
  * Work refs only ever move forward, which is checked in Code's own repository before a push,
- * and accepted refs are only ever created. Nothing here forces, and nothing here deletes.
+ * and accepted and base refs are only ever created. Nothing here forces, and nothing here deletes.
  */
 export class CodeMirrorService {
   private closed = false;
@@ -176,7 +181,7 @@ export class CodeMirrorService {
         const due = await this.state.read(
           async (sql) =>
             await sql.all<MirrorRow>(
-              `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) ORDER BY next_at,created_at,id LIMIT 50`,
+              `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) ORDER BY next_at,created_at,id LIMIT 50`,
               at,
             ),
         );
@@ -211,7 +216,7 @@ export class CodeMirrorService {
     const rows = await this.state.read(
       async (sql) =>
         await sql.all<MirrorRow>(
-          `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('mirror-work','mirror-accepted') ORDER BY created_at,id LIMIT 200`,
+          `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base') ORDER BY created_at,id LIMIT 200`,
           projectId,
         ),
     );
@@ -375,12 +380,26 @@ export class CodeMirrorService {
         at.toISOString(),
       );
       if (changed.changes !== 1) return null;
+      if (payload.kind === 'mirror-base') {
+        const base = await tx.get<{ health: string }>(
+          "SELECT health FROM code_bases WHERE project_id=? AND base_key=? AND state='resolved'",
+          row.project_id,
+          payload.unitId,
+        );
+        return base
+          ? {
+              head_oid: payload.tip,
+              mirrored_oid: null,
+              quarantine_operation_id: base.health === 'healthy' ? null : row.id,
+            }
+          : null;
+      }
       return await tx.get<{
         head_oid: string | null;
         mirrored_oid: string | null;
         quarantine_operation_id: string | null;
       }>(
-        'SELECT head_oid,mirrored_oid,quarantine_operation_id FROM code_units WHERE project_id=? AND unit_id=?',
+        'SELECT head_oid,mirrored_oid,COALESCE(quarantine_base_key,quarantine_operation_id) AS quarantine_operation_id FROM code_units WHERE project_id=? AND unit_id=?',
         row.project_id,
         payload.unitId,
       );
@@ -443,7 +462,7 @@ export class CodeMirrorService {
           message:
             payload.kind === 'mirror-work'
               ? 'The published branch holds a commit that is not behind what Code has, so no fast-forward can be made'
-              : 'The published accepted ref already holds another commit',
+              : 'The published immutable ref already holds another commit',
           remote: remote ?? '',
           target,
           mirrored: mirrored ?? '',

@@ -734,6 +734,7 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       dispatchCandidates: f.workflows.dispatchCandidates.bind(f.workflows),
       limitStatus: f.workflows.limitStatus.bind(f.workflows),
       extendLimit: f.workflows.extendLimit.bind(f.workflows),
+      sponsoringRoots: f.workflows.sponsoringRoots.bind(f.workflows),
       dependencyClosure: f.workflows.dependencyClosure.bind(f.workflows),
       replaceBlockers: f.workflows.replaceBlockers.bind(f.workflows),
       blockers: f.workflows.blockers.bind(f.workflows),

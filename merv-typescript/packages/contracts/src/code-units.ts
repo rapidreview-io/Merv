@@ -90,3 +90,42 @@ export interface CodeUnit {
   /** A final capture admission refused; the unit waits for an operator until it is fenced. */
   quarantine: { operationId: string } | null;
 }
+
+export type CodeBaseState =
+  | 'waiting_inputs'
+  | 'queued'
+  | 'running'
+  | 'retry_wait'
+  | 'blocked_infra'
+  | 'awaiting_resolution'
+  | 'resolved'
+  | 'suspended'
+  | 'cancelled';
+export interface CodeBaseRecord {
+  key: string;
+  members: string[];
+  left: string;
+  right: string;
+  state: CodeBaseState;
+  quarantined: boolean;
+  /** How the result was made: by this server's merge, or by the one task that resolved it. */
+  result: { method: 'auto' | 'task'; commit: string; tree: string | null; engine: string } | null;
+  conflict: { paths: string[]; messages: string } | null;
+  resolutionTaskId: string | null;
+  resolutionError: string | null;
+  attempts: number;
+  executionEpoch: number;
+  deadline: string | null;
+  sponsors: string[];
+  blocker: string | null;
+  operatorReason: string | null;
+  updatedAt: string;
+}
+
+/** Operator disposition of one retained base; every request retains its reason. */
+export interface CodeBaseControlInput {
+  key: string;
+  action: 'retry' | 'suspend' | 'resume' | 'cancel' | 'quarantine';
+  reason: string;
+  requestId: string;
+}

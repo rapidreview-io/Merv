@@ -12,7 +12,7 @@ const chunk = 500;
 const topInstances = 50;
 
 export const accountingMethod =
-  'Wall-clock is lease wall-clock: Merv measures it from activation to close of each closed session, and a close may lag the death of the process by up to the expiry window; live sessions are not yet counted. Tokens, cost and model are reported by the runner that launched the process, or by the process itself, and are not verified; reportedSessions of sessions says how many reported. Model context, reasoning, provider billing and anything done outside a Merv-launched process are unknown to Merv. Counting began when this feature was installed.';
+  'Server service work adds measured wall time, or the reserved deadline duration after a lost process, once per execution. A project counts shared work once; each frozen sponsoring root counts its full cost. Service work has no worker session or model tokens. Wall-clock is lease wall-clock: Merv measures it from activation to close of each closed session, and a close may lag the death of the process by up to the expiry window; live sessions are not yet counted. Tokens, cost and model are reported by the runner that launched the process, or by the process itself, and are not verified; reportedSessions of sessions says how many reported. Model context, reasoning, provider billing and anything done outside a Merv-launched process are unknown to Merv. Counting began when this feature was installed.';
 
 /** PostgreSQL SUM(bigint) is numeric and arrives as text; every public sum is normalised here. */
 function sum(value: number | string | null): number {
@@ -171,6 +171,7 @@ export async function usageTotals(
   tx: Transaction,
   projectId: string,
   instanceIds: string[] | null,
+  serviceScopeId?: string,
 ): Promise<Pick<UsageRollup, 'totals' | 'byWorkflow' | 'byInstance'> & { since: string | null }> {
   const totals = empty(),
     workflows = new Map<string, UsageTotals>(),
@@ -182,6 +183,27 @@ export async function usageTotals(
     add(workflows.get(row.workflow)!, item);
     byInstance.push({ ...item, instanceId: row.instance_id, workflow: row.workflow });
     if (row.since && (since === null || row.since < since)) since = row.since;
+  }
+  // Shared server work is charged once to the project and in full to each frozen sponsor.
+  // It has no worker session or tokens, and therefore cannot make reporting incomplete.
+  for (const row of await tx.all<{
+    sponsors_json: string;
+    wall_ms: number | string;
+    settled_at: string;
+  }>(
+    'SELECT sponsors_json,wall_ms,settled_at FROM session_service_work WHERE project_id=? AND settled_at IS NOT NULL',
+    projectId,
+  )) {
+    const sponsors = JSON.parse(row.sponsors_json) as string[];
+    if (
+      instanceIds !== null &&
+      !(serviceScopeId
+        ? sponsors.includes(serviceScopeId)
+        : sponsors.some((id) => instanceIds.includes(id)))
+    )
+      continue;
+    totals.wallMs += sum(row.wall_ms);
+    if (since === null || row.settled_at < since) since = row.settled_at;
   }
   return {
     totals,
@@ -215,7 +237,7 @@ export async function budgetStatuses(
   const result: (BudgetStatus & { instanceIds: string[] | null })[] = [];
   for (const row of rows) {
     const instanceIds = row.scope_id === projectId ? null : await closure(row.scope_id);
-    const { totals } = await usageTotals(tx, projectId, instanceIds);
+    const { totals } = await usageTotals(tx, projectId, instanceIds, row.scope_id);
     const unreportedSessions = totals.sessions - totals.reportedSessions;
     // What nobody reported is unknown, not nothing.
     const known = totals.sessions === 0 || totals.reportedSessions > 0;

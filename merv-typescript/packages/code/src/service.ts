@@ -21,6 +21,7 @@ import {
 } from './store/operations.js';
 import {
   CodeMirrorService,
+  enqueueMirror,
   GitMirrorTransport,
   type CodeMirrorConfig,
   type MirrorTransport,
@@ -44,7 +45,7 @@ export interface CodeStoreOptions {
   /** Replaces the linked GitHub repository as the place work is published to. */
   mirror?: MirrorTransport;
   mirrorConfig?: Partial<CodeMirrorConfig>;
-  /** Merge several accepted commits into one base on the server. Off unless set. */
+  /** Merge several accepted commits into one base on the server. On unless disabled. */
   autoMerge?: boolean;
 }
 
@@ -62,6 +63,7 @@ export class CodeService extends CodeCommandService implements Code {
   readonly transport: CodeTransportService;
   private publicationStore: CodePublicationService;
   private storage: State;
+  private readonly baseScope: Scope;
   private publicationClosed = false;
   private networkOperations = new Set<Promise<unknown>>();
   private network<T>(operation: () => Promise<T>): Promise<T> {
@@ -87,6 +89,7 @@ export class CodeService extends CodeCommandService implements Code {
   ) {
     super(state, scope, sessions);
     this.storage = state;
+    this.baseScope = scope;
     this.github = new CodeGitHubService(state, scope, github, fetcher);
     this.transport = new CodeTransportService(state, sessions, this, this.github);
     this.publicationStore = new CodePublicationService(state, scope, this.github, this.transport);
@@ -135,13 +138,18 @@ export class CodeService extends CodeCommandService implements Code {
             repositories.mirrorConfig,
           );
           this.mirrorStore = mirror;
-          // Several accepted commits are merged here, once per set; it stays off until a
-          // deployment turns it on, because a conflict needs its resolution task to exist.
           const bases = new CodeBaseService(
             state,
             store.repositories,
-            { changed: (tx, projectId) => this.unitStore.imported(tx, projectId) },
-            repositories.autoMerge === true,
+            {
+              changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
+              sponsors: (tx, projectId, members) =>
+                this.unitStore.baseSponsors(tx, projectId, members),
+              serviceWork: sessions.serviceWork,
+              resolved: (tx, projectId, key, commit) =>
+                enqueueMirror(tx, projectId, 'mirror-base', key, commit),
+            },
+            repositories.autoMerge !== false,
           );
           await bases.initialize();
           this.unitStore.bases = bases;
@@ -269,6 +277,11 @@ export class CodeService extends CodeCommandService implements Code {
   async mirrorStep() {
     await this.mirrorStore?.run();
   }
+  async controlBase(caller: Caller, input: unknown) {
+    if (!this.baseStore)
+      throw new MervError('code_unavailable', 'Hosted bases are unavailable', 503);
+    return this.baseStore.control(this.baseScope, caller, input);
+  }
   async retryMirror(caller: Caller, input: unknown) {
     if (!this.mirrorStore)
       throw new MervError('code_store_unavailable', 'This server keeps no Code repositories', 503);
@@ -316,6 +329,9 @@ export class CodeService extends CodeCommandService implements Code {
     if (!this.store) return status;
     return {
       ...status,
+      bases: await this.storage.read(
+        (sql) => this.baseStore?.records(sql, caller.projectId) ?? Promise.resolve([]),
+      ),
       ...(await this.store.describe(caller.projectId)),
       mirror: (await this.mirrorStore?.describe(caller.projectId)) ?? null,
     };

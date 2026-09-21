@@ -34,7 +34,8 @@ import { postgresMigrations } from './units.postgres.js';
 import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 import type { CodeWriterService } from './writers.js';
-import type { CodeBaseService, CodeBaseRecord } from './bases.js';
+import type { CodeBaseRecord } from '@merv/contracts';
+import type { CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
 import { baseKey } from './base-plan.js';
 import { acceptedRef } from './store/refs.js';
@@ -59,6 +60,7 @@ interface UnitRow {
   acceptance_json: string | null;
   acceptance_hash: string | null;
   accepted_at: string | null;
+  quarantine_base_key: string | null;
 }
 /** The hashed body of an acceptance. It carries no time, so a repeated acceptance is byte-equal. */
 interface AcceptanceBody {
@@ -102,7 +104,7 @@ const PROVIDER = 'code';
 const EXPLICIT_BASE =
   'Recreate this work with baseTaskId naming one accepted Git task, which is the explicit form of a base';
 const unitColumns =
-  'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at';
+  'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key';
 const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** The workspace driver whose units live in Code's own repository. */
 export const CODE_DRIVER = 'code.v2';
@@ -287,6 +289,14 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
         sql: `CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(acceptance_json,'$.code.commit')) WHERE acceptance_json IS NOT NULL;`,
         postgres: postgresMigrations[4],
       },
+      {
+        version: 5,
+        sql: `ALTER TABLE code_units ADD COLUMN quarantine_base_key TEXT;
+CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
+WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key
+BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
+        postgres: postgresMigrations[5],
+      },
     ]);
     await migratePendingMerges(this.state);
   }
@@ -344,6 +354,28 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     return await this.record(tx, (await this.row(tx, caller.projectId, unitId))!);
   }
 
+  /** A base's disposition also gates its resolution task, without changing Tasks' history. */
+  private async resolutionBlocker(
+    tx: Transaction,
+    projectId: string,
+    unitId: string,
+  ): Promise<WorkflowProvidedBlockerInput | null> {
+    const base = await this.bases?.forTask(tx, projectId, unitId);
+    if (!base || (!base.quarantined && !['suspended', 'cancelled'].includes(base.state)))
+      return null;
+    return {
+      key: 'resolution-base',
+      code: base.quarantined ? 'code_quarantined' : 'code_base_blocked',
+      status: 409,
+      message: `Resolution base ${base.key} is ${base.quarantined ? 'quarantined' : base.state}: ${base.operatorReason ?? 'operator control'}.`,
+      next:
+        base.state === 'suspended' && !base.quarantined
+          ? 'An administrator uses code.base.resume before this resolution can continue.'
+          : 'The base is retained but unusable; an administrator creates corrective work and replans the waiters.',
+      related: [],
+    };
+  }
+
   /**
    * What a lease would find now. It never writes: lease admission, assignment checks and the
    * dispatch candidate scan all ask, and any of them may run for a caller who holds no lease.
@@ -353,7 +385,11 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
+    const disposition = await this.resolutionBlocker(tx, caller.projectId, unitId);
+    if (disposition) return { status: 'blocked', blockers: [disposition] };
     const row = await this.row(tx, caller.projectId, unitId);
+    if (row?.quarantine_base_key)
+      return { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] };
     if (row?.base_json) return { status: 'pinned', pin: this.pin(row)! };
     return this.baseState(
       await this.derive(tx, caller.projectId, await this.relations(tx, caller.projectId, unitId)),
@@ -386,12 +422,20 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
+    const disposition = await this.resolutionBlocker(tx, caller.projectId, unitId);
+    if (disposition) throw new MervError(disposition.code, disposition.message, 409);
     const relations = await this.relations(tx, caller.projectId, unitId);
     const declared = relations.dependencies
       .filter((item) => item.kind !== 'system')
       .map((item) => item.id)
       .sort();
     const existing = await this.row(tx, caller.projectId, unitId);
+    check(
+      !existing?.quarantine_base_key,
+      'code_quarantined',
+      'This unit retains a quarantined base; corrective work must use a new unit',
+      409,
+    );
     if (existing?.base_json) {
       check(
         canonical((JSON.parse(existing.base_json) as BaseBody).dependencies) ===
@@ -473,6 +517,15 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
       relations?.instance.settled && relations.instance.revision === input.terminalRevision,
       'code_acceptance_unverifiable',
       'Only a unit that has just succeeded at the revision named can be accepted',
+      409,
+    );
+    const disposition = await this.resolutionBlocker(tx, caller.projectId, input.unitId);
+    if (disposition) throw new MervError(disposition.code, disposition.message, 409);
+    const health = await this.row(tx, caller.projectId, input.unitId);
+    check(
+      !health?.quarantine_base_key,
+      'code_quarantined',
+      'This unit retains a quarantined base and cannot be accepted',
       409,
     );
     const code =
@@ -917,6 +970,10 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
       const accepted = unit?.acceptance_json
         ? (JSON.parse(unit.acceptance_json) as AcceptanceBody)
         : null;
+      if (unit?.quarantine_base_key) {
+        blockers.push(this.quarantineBlocker(unit.quarantine_base_key));
+        continue;
+      }
       const intact = !accepted || digest(accepted) === unit!.acceptance_hash;
       if (intact && (accepted ? accepted.code === null : !node.declaresWorkspace)) {
         const below = await this.workflows.dependencyRelations(projectId, node.id, tx);
@@ -987,6 +1044,47 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     // Several accepted commits are one base, made once for everyone who waits on that set.
     if (commits.size > 1 && kept && this.bases?.enabled) {
       const base = await this.bases.find(tx, projectId, commits.keys());
+      const path = base ? await this.bases.path(tx, projectId, base.key) : [];
+      const held = path.find(
+        (record) =>
+          record.quarantined ||
+          ['suspended', 'cancelled', 'blocked_infra'].includes(record.state) ||
+          record.blocker,
+      );
+      if (held)
+        return {
+          status: 'blocked',
+          merge: [...commits.keys()],
+          blockers: [
+            {
+              key: 'merge',
+              code: held.quarantined
+                ? 'code_quarantined'
+                : [
+                      'sessions_unavailable',
+                      'dispatch_disabled',
+                      'capacity_full',
+                      'budget_exceeded',
+                      'usage_unavailable',
+                    ].includes(held.blocker ?? '')
+                  ? 'code_base_admission'
+                  : 'code_base_blocked',
+              status: 409,
+              message: `Base ${held.key} is ${held.quarantined ? 'quarantined' : held.state}: ${held.blocker ?? held.operatorReason ?? 'operator control'}.`,
+              next:
+                held.quarantined || held.state === 'cancelled'
+                  ? 'An operator must create corrective work and replan these waiters; this retained base cannot be used.'
+                  : held.state === 'suspended'
+                    ? 'An administrator uses code.base.resume and a reason.'
+                    : held.state === 'blocked_infra'
+                      ? 'An administrator repairs the infrastructure, then uses code.base.retry.'
+                      : held.attempts > 0
+                        ? 'The server retries this infrastructure failure automatically; after five failed executions an administrator uses code.base.retry.'
+                        : 'Enable project dispatch, restore Sessions, free service capacity, or raise/clear the budget with usage.set_budget. Admission retries automatically without consuming launch or review limits.',
+              related,
+            },
+          ],
+        };
       if (base?.state === 'resolved' && base.result && !base.quarantined)
         return {
           status: 'ready',
@@ -1077,7 +1175,7 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
           {
             key: 'merge',
             code: 'code_merge_required',
-            message: `The dependencies of this unit were accepted with ${commits.size} different commits, and they are not merged automatically yet`,
+            message: `The dependencies of this unit were accepted with ${commits.size} different commits, and automatic merging is disabled or this repository is runner-owned`,
             status: 409,
             next: `${EXPLICIT_BASE}, or make one dependency carry the combined code.`,
             related,
@@ -1135,6 +1233,18 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
    */
   private async reconcileUnit(tx: Transaction, projectId: string, unitId: string): Promise<void> {
     const row = await this.row(tx, projectId, unitId);
+    if (row?.quarantine_base_key) {
+      await this.workflows.replaceBlockers(
+        {
+          projectId,
+          instanceId: unitId,
+          provider: PROVIDER,
+          blockers: [this.quarantineBlocker(row.quarantine_base_key)],
+        },
+        tx,
+      );
+      return;
+    }
     if (!row || row.base_json !== null || row.acceptance_json !== null) return;
     const relations = await this.workflows.dependencyRelations(projectId, unitId, tx);
     if (!relations || relations.instance.terminal) return;
@@ -1181,6 +1291,26 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
       },
       tx,
     );
+  }
+
+  /** All current waiters contribute their roots before the shared record becomes immutable. */
+  async baseSponsors(tx: Transaction, projectId: string, members: string[]): Promise<string[]> {
+    const waiters: string[] = [];
+    for (const row of await tx.all<{ unit_id: string }>(
+      'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL',
+      projectId,
+    )) {
+      const relations = await this.workflows.dependencyRelations(projectId, row.unit_id, tx);
+      if (!relations || relations.instance.terminal) continue;
+      const derived = await this.derive(tx, projectId, relations);
+      if (
+        'merge' in derived &&
+        derived.merge &&
+        members.every((member) => derived.merge!.includes(member))
+      )
+        waiters.push(row.unit_id);
+    }
+    return this.workflows.sponsoringRoots(projectId, waiters, tx);
   }
 
   /** Creation and linkage share the caller's transaction, so a crash never leaves an orphan. */
@@ -1294,9 +1424,108 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
     await this.reconcileProject(tx, projectId);
   }
 
+  private quarantineBlocker(key: string): WorkflowProvidedBlockerInput {
+    return {
+      key: 'quarantine',
+      code: 'code_quarantined',
+      status: 409,
+      message: `This unit uses quarantined base ${key}. Its retained pin and acceptance cannot be reused.`,
+      next: 'An administrator creates corrective work and replans the waiters. Fencing a capture cannot clear base quarantine.',
+      related: [],
+    };
+  }
+
+  /** Quarantine follows retained lineage, including pins and successes that already left the queue. */
+  private async propagateQuarantine(tx: Transaction, projectId: string): Promise<void> {
+    if (!this.bases) return;
+    const records = await this.bases.records(tx, projectId);
+    const units = await tx.all<UnitRow>(
+      `SELECT ${unitColumns} FROM code_units WHERE project_id=?`,
+      projectId,
+    );
+    const tainted = new Map<string, string>();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const base of records) {
+        const from = records.find((b) => b.quarantined && [base.left, base.right].includes(b.key));
+        const cause = from?.key ?? base.members.map((c) => tainted.get(c)).find(Boolean);
+        if (!base.quarantined && cause) {
+          await tx.run(
+            "UPDATE code_bases SET health='quarantined',operator_reason=?,updated_at=? WHERE project_id=? AND base_key=?",
+            `Input inherits quarantine from ${cause}`,
+            now(),
+            projectId,
+            base.key,
+          );
+          base.quarantined = true;
+          changed = true;
+        }
+        if (base.quarantined && base.result && !tainted.has(base.result.commit)) {
+          tainted.set(base.result.commit, base.key);
+          changed = true;
+        }
+      }
+      for (const unit of units) {
+        const pin = unit.base_json ? (JSON.parse(unit.base_json) as BaseBody) : null;
+        const cause =
+          pin &&
+          (tainted.get(pin.reference) ??
+            pin.sources
+              .map((source) => units.find((u) => u.unit_id === source.unitId)?.quarantine_base_key)
+              .find(Boolean));
+        const resolution = records.find(
+          (b) => b.quarantined && b.resolutionTaskId === unit.unit_id,
+        );
+        if (!unit.quarantine_base_key && (cause || resolution)) {
+          unit.quarantine_base_key = cause || resolution!.key;
+          await tx.run(
+            "UPDATE code_units SET quarantine_base_key=?,writer_state=CASE WHEN writer_state IN ('reserved','active','closing') THEN 'recovery_required' ELSE writer_state END WHERE project_id=? AND unit_id=?",
+            unit.quarantine_base_key,
+            projectId,
+            unit.unit_id,
+          );
+          changed = true;
+        }
+        const accepted = unit.acceptance_json
+          ? (JSON.parse(unit.acceptance_json) as AcceptanceBody)
+          : null;
+        if (unit.quarantine_base_key && accepted?.code && !tainted.has(accepted.code.commit)) {
+          tainted.set(accepted.code.commit, unit.quarantine_base_key);
+          changed = true;
+        }
+      }
+    }
+    for (const unit of units.filter((u) => u.quarantine_base_key))
+      await this.workflows.replaceBlockers(
+        {
+          projectId,
+          instanceId: unit.unit_id,
+          provider: PROVIDER,
+          blockers: [this.quarantineBlocker(unit.quarantine_base_key!)],
+        },
+        tx,
+      );
+  }
+
   /** Every unpinned unit of a project: for a new main, and for a start after Code was away. */
   private async reconcileProject(tx: Transaction, projectId: string): Promise<void> {
+    await this.propagateQuarantine(tx, projectId);
     await this.resolveBases(tx, projectId);
+    for (const base of (await this.bases?.records(tx, projectId)) ?? []) {
+      if (!base.resolutionTaskId) continue;
+      const blocker = await this.resolutionBlocker(tx, projectId, base.resolutionTaskId);
+      if (blocker || base.operatorReason)
+        await this.workflows.replaceBlockers(
+          {
+            projectId,
+            instanceId: base.resolutionTaskId,
+            provider: PROVIDER,
+            blockers: blocker ? [blocker] : [],
+          },
+          tx,
+        );
+    }
     for (const { unit_id } of await tx.all<{ unit_id: string }>(
       'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL ORDER BY unit_id',
       projectId,
@@ -1424,11 +1653,13 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
       version: Number(row.version),
       declaredAt: row.declared_at,
       base,
-      baseStatus: base
-        ? { status: 'pinned', pin: base }
-        : open && !open.instance.terminal
-          ? this.baseState(await this.derive(tx, row.project_id, open))
-          : null,
+      baseStatus: row.quarantine_base_key
+        ? { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] }
+        : base
+          ? { status: 'pinned', pin: base }
+          : open && !open.instance.terminal
+            ? this.baseState(await this.derive(tx, row.project_id, open))
+            : null,
       acceptance: this.acceptance(row),
       ...(await this.writers.facts(tx, row.project_id, row.unit_id)),
     };

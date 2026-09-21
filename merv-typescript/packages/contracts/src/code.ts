@@ -7,7 +7,7 @@ import type {
   CodeStoreStatus,
   CodeStoreWarning,
 } from './code-store.js';
-import type { CodeUnit } from './code-units.js';
+import type { CodeUnit, CodeBaseRecord } from './code-units.js';
 import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
 
 export interface CodeCommitInput {
@@ -162,6 +162,8 @@ export interface CodeProjectBinding {
   durability: 'legacy-local' | 'code';
 }
 export interface CodeProjectStatus {
+  /** Shared base records and their retained admission and recovery state, when hosted. */
+  bases?: CodeBaseRecord[];
   project: CodeProjectBinding | null;
   /** Null when this server keeps no repositories. */
   store: CodeStoreStatus | null;

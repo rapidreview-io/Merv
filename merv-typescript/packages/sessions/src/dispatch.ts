@@ -171,6 +171,7 @@ const uncountedOfferCodes = new Set([
   // A base made from several accepted commits that is still being merged, waits for the one
   // task that resolves its conflict, or needs an operator: a wait, never the target's fault.
   'code_base_wait',
+  'code_base_admission',
   'code_merge_conflict',
   'code_base_blocked',
   'code_quarantined',

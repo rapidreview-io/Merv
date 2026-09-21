@@ -1,5 +1,16 @@
-import { MervError } from '@merv/contracts';
-import type { State, Sql, Transaction } from '@merv/contracts';
+import { canonical, check, digest, newId, MervError } from '@merv/contracts';
+import type {
+  CodeBaseRecord,
+  CodeBaseState,
+  Caller,
+  Scope,
+  State,
+  Sql,
+  Transaction,
+} from '@merv/contracts';
+import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
+import { z } from 'zod';
+import { parseCodeInput } from './input.js';
 import { verifyResolution } from './pending-merge.js';
 import { baseKey, members, planBase, type PlannedBase } from './base-plan.js';
 import { MERGE_ENGINE, mergeBases } from './base-merge.js';
@@ -12,31 +23,6 @@ import type { CodeRepositories } from './store/repository.js';
  * record is never invalidated, because the commits it names never change.
  */
 
-export type CodeBaseState =
-  | 'waiting_inputs'
-  | 'queued'
-  | 'running'
-  | 'retry_wait'
-  | 'blocked_infra'
-  | 'awaiting_resolution'
-  | 'resolved'
-  | 'suspended'
-  | 'cancelled';
-export interface CodeBaseRecord {
-  key: string;
-  members: string[];
-  left: string;
-  right: string;
-  state: CodeBaseState;
-  quarantined: boolean;
-  /** How the result was made: by this server's merge, or by the one task that resolved it. */
-  result: { method: 'auto' | 'task'; commit: string; tree: string | null; engine: string } | null;
-  conflict: { paths: string[]; messages: string } | null;
-  resolutionTaskId: string | null;
-  resolutionError: string | null;
-  attempts: number;
-  updatedAt: string;
-}
 interface BaseRow {
   project_id: string;
   base_key: string;
@@ -52,10 +38,16 @@ interface BaseRow {
   resolution_commit: string | null;
   attempts: number | string;
   next_at: string | null;
+  execution_epoch: number | string;
+  deadline: string | null;
+  sponsors_json: string | null;
+  blocker: string | null;
+  operator_reason: string | null;
+  resume_state: CodeBaseState | null;
   updated_at: string;
 }
 const columns =
-  'project_id,base_key,members_json,left_key,right_key,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,updated_at';
+  'project_id,base_key,members_json,left_key,right_key,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,updated_at';
 const RETRIES = 5;
 const now = () => new Date().toISOString();
 
@@ -133,21 +125,41 @@ CREATE TRIGGER code_bases_guard BEFORE UPDATE OR DELETE ON code_bases
   FOR EACH ROW EXECUTE FUNCTION code_bases_guard();
 `;
 
-export interface CodeBaseHooks {
+interface CodeBaseHooks {
   /** A record reached an end, so the units that wait on it may have a base, or a new reason. */
   changed(tx: Transaction, projectId: string): Promise<void>;
+  sponsors(tx: Transaction, projectId: string, members: string[]): Promise<string[]>;
+  serviceWork?: ServiceWork;
+  /** Journal publication in the transaction that seals the result. */
+  resolved?(tx: Transaction, projectId: string, key: string, commit: string): Promise<void>;
+}
+
+export const baseControlSchema = z
+  .object({
+    key: z.string().regex(/^[0-9a-f]{64}$/),
+    action: z.enum(['retry', 'suspend', 'resume', 'cancel', 'quarantine']),
+    reason: z.string().trim().min(1).max(2000),
+    requestId: z.string().min(1).max(200),
+  })
+  .strict();
+
+interface Execution {
+  base: CodeBaseRecord;
+  input: ServiceWorkInput;
 }
 
 export class CodeBaseService {
   private readonly busy = new Map<string, Promise<void>>();
   private closed = false;
+  private readonly executions = new Map<string, AbortController>();
   constructor(
     private readonly state: State,
     private readonly repositories: CodeRepositories,
     private readonly hooks: CodeBaseHooks,
-    /** Automatic merging stays off until everything that recovers from a conflict is in. */
-    readonly enabled: boolean,
+    /** A deployment may pause automatic merges while keeping their records readable. */
+    readonly enabled: boolean = true,
     private readonly clock: () => number = Date.now,
+    private readonly deadlineMs = 120_000,
   ) {}
 
   private timer?: NodeJS.Timeout;
@@ -172,7 +184,38 @@ IF (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS DISTINCT FROM
 RETURN NEW; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_acceptance_guard();`,
       },
+      {
+        version: 4,
+        sql: `ALTER TABLE code_bases ADD COLUMN execution_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE code_bases ADD COLUMN deadline TEXT;
+ALTER TABLE code_bases ADD COLUMN sponsors_json TEXT;
+ALTER TABLE code_bases ADD COLUMN blocker TEXT;
+ALTER TABLE code_bases ADD COLUMN operator_reason TEXT;
+ALTER TABLE code_bases ADD COLUMN resume_state TEXT;
+CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases
+WHEN OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS NOT OLD.sponsors_json
+BEGIN SELECT RAISE(ABORT,'Base sponsorship is frozen'); END;`,
+        postgres: `ALTER TABLE code_bases ADD COLUMN execution_epoch BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE code_bases ADD COLUMN deadline TEXT;
+ALTER TABLE code_bases ADD COLUMN sponsors_json TEXT;
+ALTER TABLE code_bases ADD COLUMN blocker TEXT;
+ALTER TABLE code_bases ADD COLUMN operator_reason TEXT;
+ALTER TABLE code_bases ADD COLUMN resume_state TEXT;
+CREATE FUNCTION code_bases_sponsors_guard() RETURNS trigger AS $$ BEGIN
+IF OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS DISTINCT FROM OLD.sponsors_json THEN RAISE EXCEPTION 'Base sponsorship is frozen'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_sponsors_guard();`,
+      },
     ]);
+    if (this.hooks.resolved)
+      await this.state.transaction(async (tx) => {
+        for (const row of await tx.all<BaseRow>(
+          `SELECT ${columns} FROM code_bases WHERE state='resolved' AND health='healthy'`,
+        )) {
+          const base = this.record(row);
+          await this.hooks.resolved!(tx, row.project_id, base.key, base.result!.commit);
+        }
+      });
   }
 
   /**
@@ -213,6 +256,11 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
       resolutionTaskId: row.resolution_task_id,
       resolutionError: row.resolution_error,
       attempts: Number(row.attempts),
+      executionEpoch: Number(row.execution_epoch),
+      deadline: row.deadline,
+      sponsors: JSON.parse(row.sponsors_json ?? '[]') as string[],
+      blocker: row.blocker,
+      operatorReason: row.operator_reason,
       updatedAt: row.updated_at,
     };
   }
@@ -354,6 +402,7 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
         commit,
       );
       if (!updated.changes) return;
+      if (result) await this.hooks.resolved?.(tx, projectId, base.key, result.commit);
       await this.promote(tx, projectId);
       await this.hooks.changed(tx, projectId);
     });
@@ -388,8 +437,8 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
     for (const step of planBase(wanted, existing)) {
       const ready = await this.inputsResolved(tx, projectId, [step.left, step.right]);
       await tx.run(
-        `INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (project_id,base_key) DO NOTHING`,
+        `INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,sponsors_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (project_id,base_key) DO NOTHING`,
         projectId,
         step.key,
         JSON.stringify(step.members),
@@ -399,6 +448,7 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
         ready ? 'queued' : 'waiting_inputs',
         at,
         at,
+        JSON.stringify(await this.hooks.sponsors(tx, projectId, step.members)),
       );
     }
     return (await this.find(tx, projectId, wanted))!;
@@ -460,88 +510,375 @@ CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EX
       await this.acceptTask(projectId, this.record(row), row.resolution_commit!);
     }
     for (;;) {
-      const due = await this.state.transaction(async (tx) => {
-        const row = await tx.get<BaseRow>(
-          `SELECT ${columns} FROM code_bases WHERE project_id=? AND health='healthy' AND (state='queued' OR state='running' OR (state='retry_wait' AND next_at<=?)) ORDER BY base_key LIMIT 1`,
-          projectId,
-          new Date(this.clock()).toISOString(),
-        );
-        if (!row) return null;
-        await tx.run(
-          "UPDATE code_bases SET state='running',attempts=attempts+1,updated_at=? WHERE project_id=? AND base_key=?",
-          now(),
-          projectId,
-          row.base_key,
-        );
-        return this.record({ ...row, attempts: Number(row.attempts) + 1 });
-      });
-      if (!due || this.closed) return;
-      await this.merge(projectId, due);
+      const execution = await this.state.transaction(
+        async (tx): Promise<Execution | false | null> => {
+          const at = new Date(this.clock()).toISOString();
+          const row = await tx.get<BaseRow>(
+            `SELECT ${columns} FROM code_bases WHERE project_id=? AND health='healthy' AND
+          (state='queued' OR (state='running' AND (deadline IS NULL OR deadline<=?)) OR (state='retry_wait' AND next_at<=?)) ORDER BY base_key LIMIT 1`,
+            projectId,
+            at,
+            at,
+          );
+          if (!row) return null;
+          const base = this.record(row);
+          if (!row.sponsors_json) {
+            base.sponsors = await this.hooks.sponsors(tx, projectId, base.members);
+            await tx.run(
+              'UPDATE code_bases SET sponsors_json=? WHERE project_id=? AND base_key=? AND sponsors_json IS NULL',
+              JSON.stringify(base.sponsors),
+              projectId,
+              base.key,
+            );
+          }
+          if (row.state === 'running' && base.deadline && this.hooks.serviceWork) {
+            await this.hooks.serviceWork.settle(tx, this.execution(projectId, base), 'expired');
+            await this.failed(
+              tx,
+              projectId,
+              base,
+              'The execution deadline elapsed before its result was retained.',
+            );
+            return false;
+          }
+          const input: ServiceWorkInput = {
+            provider: 'code',
+            projectId,
+            operationId: `${projectId}:${base.key}`,
+            executionEpoch: base.executionEpoch + 1,
+            sponsors: base.sponsors,
+            deadline: new Date(this.clock() + this.deadlineMs).toISOString(),
+          };
+          const admitted = await this.hooks.serviceWork?.admit(tx, input);
+          if (!admitted?.admitted) {
+            await tx.run(
+              "UPDATE code_bases SET state='retry_wait',next_at=?,blocker=?,updated_at=? WHERE project_id=? AND base_key=?",
+              new Date(this.clock() + 5000).toISOString(),
+              admitted?.reason ?? 'sessions_unavailable',
+              at,
+              projectId,
+              base.key,
+            );
+            await this.hooks.changed(tx, projectId);
+            return false;
+          }
+          check(
+            !admitted.settled,
+            'code_base_changed',
+            'A fresh execution epoch is already settled',
+            409,
+          );
+          await tx.run(
+            "UPDATE code_bases SET state='running',attempts=attempts+1,execution_epoch=?,deadline=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=?",
+            input.executionEpoch,
+            input.deadline,
+            at,
+            projectId,
+            base.key,
+          );
+          return {
+            base: {
+              ...base,
+              state: 'running',
+              attempts: base.attempts + 1,
+              executionEpoch: input.executionEpoch,
+              deadline: input.deadline,
+            },
+            input,
+          };
+        },
+      );
+      if (execution === null || this.closed) return;
+      if (execution === false) continue;
+      await this.merge(projectId, execution);
     }
   }
 
-  private async merge(projectId: string, base: CodeBaseRecord): Promise<void> {
+  private execution(projectId: string, base: CodeBaseRecord): ServiceWorkInput {
+    return {
+      provider: 'code',
+      projectId,
+      operationId: `${projectId}:${base.key}`,
+      executionEpoch: base.executionEpoch,
+      sponsors: base.sponsors,
+      deadline: base.deadline!,
+    };
+  }
+
+  private async failed(
+    tx: Transaction,
+    projectId: string,
+    base: CodeBaseRecord,
+    reason: string,
+  ): Promise<void> {
+    const exhausted = base.attempts >= RETRIES;
+    const changed = await tx.run(
+      "UPDATE code_bases SET state=?,next_at=?,blocker=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+      exhausted ? 'blocked_infra' : 'retry_wait',
+      exhausted ? null : new Date(this.clock() + 1000 * 2 ** base.attempts).toISOString(),
+      reason,
+      now(),
+      projectId,
+      base.key,
+      base.executionEpoch,
+    );
+    if (changed.changes) await this.hooks.changed(tx, projectId);
+  }
+
+  private async merge(projectId: string, { base, input }: Execution): Promise<void> {
+    const abort = new AbortController();
+    const executionKey = `${projectId}:${base.key}`;
+    this.executions.set(executionKey, abort);
+    let timer: NodeJS.Timeout | undefined;
     try {
-      const [left, right] = await this.state.read(async (sql) => [
-        await this.input(sql, projectId, base.left, base.members),
-        await this.input(sql, projectId, base.right, base.members),
+      const outcome = await Promise.race([
+        (async () => {
+          const [left, right] = await this.state.read((sql) => this.inputs(sql, projectId, base));
+          if (!left || !right)
+            throw new MervError('code_base_inputs', 'An input has no result', 409);
+          const env = this.repositories.environment(projectId);
+          const result = await mergeBases(
+            this.repositories.git,
+            env,
+            left,
+            right,
+            base.key,
+            abort.signal,
+          );
+          if (abort.signal.aborted || this.clock() >= Date.parse(input.deadline))
+            throw new MervError(
+              'code_base_deadline',
+              'The merge exceeded its execution deadline',
+              409,
+            );
+          if (result.outcome !== 'conflict') {
+            const ref = `refs/merv/bases/${base.key}`;
+            const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], {
+              env,
+              signal: abort.signal,
+            });
+            if (held.code !== 0)
+              await this.repositories.git.ok(['update-ref', ref, result.commit, ''], {
+                env,
+                signal: abort.signal,
+              });
+            else if (held.stdout.toString('utf8').trim() !== result.commit)
+              throw new MervError('code_base_diverged', 'A base ref names another commit', 500);
+          }
+          return result;
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => {
+              abort.abort();
+              reject(
+                new MervError(
+                  'code_base_deadline',
+                  'The merge exceeded its execution deadline',
+                  409,
+                ),
+              );
+            },
+            Math.max(0, Date.parse(input.deadline) - this.clock()),
+          );
+        }),
       ]);
-      if (!left || !right) throw new MervError('code_base_inputs', 'An input has no result', 409);
-      const env = this.repositories.environment(projectId);
-      const outcome = await mergeBases(this.repositories.git, env, left, right, base.key);
-      if (outcome.outcome !== 'conflict') {
-        // The ref holds the objects before the record says there is a result; made again
-        // after a crash, the merge is the same commit and the ref already names it.
-        const ref = `refs/merv/bases/${base.key}`;
-        const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], { env });
-        if (held.code !== 0)
-          await this.repositories.git.ok(['update-ref', ref, outcome.commit, ''], { env });
-        else if (held.stdout.toString('utf8').trim() !== outcome.commit)
-          throw new MervError('code_base_diverged', 'A base ref names another commit', 500);
-      }
       await this.state.transaction(async (tx) => {
-        const at = now();
-        if (outcome.outcome === 'conflict')
-          await tx.run(
-            "UPDATE code_bases SET state='awaiting_resolution',conflict_json=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running'",
-            JSON.stringify({ paths: outcome.paths, messages: outcome.messages }),
-            at,
+        const current = await tx.get<BaseRow>(
+          `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
+          projectId,
+          base.key,
+        );
+        if (
+          !current ||
+          current.state !== 'running' ||
+          Number(current.execution_epoch) !== base.executionEpoch ||
+          current.health !== 'healthy'
+        ) {
+          await this.hooks.serviceWork!.settle(tx, input, 'cancelled');
+          return;
+        }
+        if (this.clock() >= Date.parse(input.deadline)) {
+          await this.hooks.serviceWork!.settle(tx, input, 'expired');
+          await this.failed(
+            tx,
             projectId,
-            base.key,
+            base,
+            'The execution deadline elapsed before its result was retained.',
           );
-        else
-          await tx.run(
-            "UPDATE code_bases SET state='resolved',result_json=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running'",
-            JSON.stringify({
-              method: 'auto',
-              commit: outcome.commit,
-              tree: outcome.outcome === 'merged' ? outcome.tree : null,
-              engine: MERGE_ENGINE,
-            }),
-            at,
-            projectId,
-            base.key,
-          );
+          return;
+        }
+        await this.hooks.serviceWork!.settle(tx, input, 'completed');
+        const result =
+          outcome.outcome === 'conflict'
+            ? null
+            : {
+                method: 'auto',
+                commit: outcome.commit,
+                tree: outcome.outcome === 'merged' ? outcome.tree : null,
+                engine: MERGE_ENGINE,
+              };
+        const changed = await tx.run(
+          "UPDATE code_bases SET state=?,result_json=?,conflict_json=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+          result ? 'resolved' : 'awaiting_resolution',
+          result ? JSON.stringify(result) : null,
+          outcome.outcome === 'conflict'
+            ? JSON.stringify({ paths: outcome.paths, messages: outcome.messages })
+            : null,
+          now(),
+          projectId,
+          base.key,
+          base.executionEpoch,
+        );
+        if (!changed.changes) return;
+        if (result) await this.hooks.resolved?.(tx, projectId, base.key, result.commit);
         await this.promote(tx, projectId);
         await this.hooks.changed(tx, projectId);
       });
     } catch (error) {
-      // Git or the disk failed, not the repository's content: it is tried again a bounded
-      // number of times and then waits, visibly, for an operator.
-      const exhausted = base.attempts >= RETRIES;
       await this.state.transaction(async (tx) => {
-        await tx.run(
-          "UPDATE code_bases SET state=?,next_at=?,conflict_json=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='running'",
-          exhausted ? 'blocked_infra' : 'retry_wait',
-          exhausted ? null : new Date(this.clock() + 1000 * 2 ** base.attempts).toISOString(),
-          now(),
+        const current = await tx.get<{ state: string; execution_epoch: number }>(
+          'SELECT state,execution_epoch FROM code_bases WHERE project_id=? AND base_key=?',
           projectId,
           base.key,
         );
-        if (exhausted) await this.hooks.changed(tx, projectId);
+        if (
+          current?.state !== 'running' ||
+          Number(current.execution_epoch) !== base.executionEpoch
+        ) {
+          await this.hooks.serviceWork!.settle(tx, input, 'cancelled');
+          return;
+        }
+        await this.hooks.serviceWork!.settle(
+          tx,
+          input,
+          this.clock() >= Date.parse(input.deadline) ? 'expired' : 'failed',
+        );
+        await this.failed(
+          tx,
+          projectId,
+          base,
+          error instanceof Error ? error.message : 'The merge could not run.',
+        );
       });
-      if (!(error instanceof MervError)) throw error;
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      this.executions.delete(executionKey);
     }
+  }
+
+  /** An operator changes disposition, never the plan or a sealed result. Receipts retain every reason. */
+  async control(scope: Scope, caller: Caller, value: unknown): Promise<CodeBaseRecord> {
+    caller = structuredClone(caller);
+    const input = parseCodeInput(baseControlSchema, value);
+    let interrupted = false;
+    const result = await this.state.transaction(async (tx) => {
+      await scope.require(caller, 'admin', tx);
+      check(
+        !caller.session,
+        'session_forbidden',
+        'A leased worker cannot control server work',
+        403,
+      );
+      const { requestId, ...body } = input;
+      const principal = `actor:${caller.actorId}`;
+      const previous = await tx.get<{ input_hash: string; result_json: string }>(
+        'SELECT input_hash,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+        caller.projectId,
+        principal,
+        requestId,
+      );
+      if (previous) {
+        check(
+          previous.input_hash === digest(body),
+          'request_conflict',
+          'This request id was used with different input',
+          409,
+        );
+        return JSON.parse(previous.result_json) as CodeBaseRecord;
+      }
+      const row = await tx.get<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
+        caller.projectId,
+        input.key,
+      );
+      check(row, 'code_base_not_found', 'No such base in this project', 404);
+      const base = this.record(row);
+      const action = input.action;
+      interrupted = base.state === 'running';
+      check(
+        action === 'quarantine' ||
+          (!base.quarantined && !['resolved', 'cancelled'].includes(base.state)),
+        'code_base_changed',
+        'This base cannot make that transition',
+        409,
+      );
+      check(
+        action !== 'retry' || ['blocked_infra', 'retry_wait'].includes(base.state),
+        'code_base_changed',
+        'Only infrastructure work can be retried',
+        409,
+      );
+      check(
+        action !== 'resume' || base.state === 'suspended',
+        'code_base_changed',
+        'This base is not suspended',
+        409,
+      );
+      check(
+        action !== 'suspend' || base.state !== 'suspended',
+        'code_base_changed',
+        'This base is already suspended',
+        409,
+      );
+      const resume = ['running', 'retry_wait'].includes(base.state) ? 'queued' : base.state;
+      const state =
+        action === 'quarantine'
+          ? base.state
+          : action === 'retry'
+            ? 'queued'
+            : action === 'resume'
+              ? (row.resume_state ?? resume)
+              : action === 'suspend'
+                ? 'suspended'
+                : 'cancelled';
+      await tx.run(
+        'UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,updated_at=? WHERE project_id=? AND base_key=?',
+        state,
+        action === 'quarantine' ? 'quarantined' : row.health,
+        action === 'suspend' ? resume : row.resume_state,
+        input.reason,
+        action === 'retry' ? 0 : base.attempts,
+        now(),
+        caller.projectId,
+        input.key,
+      );
+      await this.promote(tx, caller.projectId);
+      await this.hooks.changed(tx, caller.projectId);
+      const result = (await this.records(tx, caller.projectId)).find((b) => b.key === input.key)!;
+      const at = now();
+      await tx.run(
+        'INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        newId('cop'),
+        caller.projectId,
+        principal,
+        requestId,
+        'base-control',
+        digest(body),
+        canonical(body),
+        'completed',
+        canonical(result),
+        at,
+        at,
+      );
+      this.soon(caller.projectId);
+      return result;
+    });
+    // Capacity stays reserved until the child stops. A crash here leaves a reservation
+    // for Sessions to expire, while the disposition already fences every late result.
+    if (interrupted) this.executions.get(`${caller.projectId}:${input.key}`)?.abort();
+    return result;
   }
 
   /** A record whose two inputs now have results may run. */

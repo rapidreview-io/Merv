@@ -8,7 +8,7 @@ import {
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
@@ -241,6 +241,8 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
     ).map((row) => [row.relation, row.target_ref]);
   return {
     state,
+    scope,
+    sessions,
     workflows,
     code,
     admin,
@@ -541,7 +543,8 @@ for (const backend of backends)
         quotaBytes: 1024 * 1024 * 1024,
         reservedFreeBytes: 1,
       });
-      await repositories.open();
+      mkdirSync(join(root, 'code', 'tmp'), { recursive: true });
+      mkdirSync(join(root, 'code', 'empty-template'));
       await repositories.ensure(f.project.id, repository, 'sha1');
       const bare = repositories.paths(f.project.id).repository;
       const work = join(root, 'work');
@@ -575,15 +578,20 @@ for (const backend of backends)
           unitStore: {
             bases?: CodeBaseService;
             imported(tx: unknown, projectId: string): Promise<void>;
+            baseSponsors(
+              tx: import('@merv/contracts').Transaction,
+              projectId: string,
+              members: string[],
+            ): Promise<string[]>;
           };
         }
       ).unitStore;
-      const bases = new CodeBaseService(
-        f.state,
-        repositories,
-        { changed: async (tx, projectId) => await units.imported(tx, projectId) },
-        true,
-      );
+      await f.sessions.setDispatch(f.admin, { enabled: true });
+      const bases = new CodeBaseService(f.state, repositories, {
+        changed: async (tx, projectId) => await units.imported(tx, projectId),
+        sponsors: (tx, projectId, members) => units.baseSponsors(tx, projectId, members),
+        serviceWork: f.sessions.serviceWork,
+      });
       await bases.initialize();
       units.bases = bases;
       t.after(async () => {
@@ -614,9 +622,28 @@ for (const backend of backends)
         await f.succeeded(c),
       ];
 
+      // A deployment may still disable the switch; the same hosted work stays visibly blocked.
+      const disabled = new CodeBaseService(
+        f.state,
+        repositories,
+        {
+          changed: (tx, id) => units.imported(tx, id),
+          sponsors: (tx, id, members) => units.baseSponsors(tx, id, members),
+          serviceWork: f.sessions.serviceWork,
+        },
+        false,
+      );
+      units.bases = disabled;
+      const paused = await f.declare([left.work, right.work], 'kept');
+      assert.deepEqual(await f.published(paused), [['code', 'code_merge_required', 'merge']]);
+      await assert.rejects(f.pin(paused), { code: 'code_merge_required' });
+      units.bases = bases;
+      await f.state.transaction((tx) => units.imported(tx, f.project.id));
+      await disabled.close();
+
       // Three units on the same two dependencies: one record, one merge, one base for all.
-      const waiters = [];
-      for (let index = 0; index < 3; index++)
+      const waiters = [paused];
+      for (let index = 1; index < 3; index++)
         waiters.push(await f.declare([left.work, right.work], 'kept'));
       for (const waiter of waiters)
         assert.deepEqual(await f.published(waiter), [['code', 'code_base_wait', 'merge']]);
@@ -666,5 +693,38 @@ for (const backend of backends)
       // the server merges nothing: it keeps the older answer.
       const legacy = await f.declare([left.work, right.work]);
       assert.deepEqual(await f.published(legacy), [['code', 'code_merge_required', 'merge']]);
+      await f.state.transaction((tx) =>
+        f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' }, tx),
+      );
+      const merged = (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!;
+      await bases.control(f.scope, f.admin, {
+        key: merged.key,
+        action: 'quarantine',
+        reason: 'Incorrect combined result',
+        requestId: 'quarantine',
+      });
+      const writer = await f.state.transaction((tx) =>
+        f.code.writerStatus(f.admin, waiters[0]!.id, tx),
+      );
+      assert.equal(writer.state, 'recovery_required');
+      assert.equal(writer.blocked?.code, 'code_quarantined');
+      await assert.rejects(
+        f.state.transaction((tx) =>
+          f.code.reserveWriter(
+            f.admin,
+            { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' },
+            tx,
+          ),
+        ),
+        { code: 'code_quarantined' },
+      );
+      for (const waiter of waiters) {
+        await assert.rejects(f.pin(waiter), { code: 'code_quarantined' });
+        assert.equal((await f.code.unit(f.admin, waiter.id)).baseStatus?.status, 'blocked');
+      }
+      assert.equal(
+        (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!.result!.commit,
+        pins[0]!.reference,
+      );
     },
   );

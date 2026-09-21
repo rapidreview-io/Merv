@@ -164,6 +164,10 @@ export interface CodeWriters {
 }
 /** The project's repository on the server's disk; refused where the server keeps none. */
 export interface CodeRepositoryControls {
+  controlBase(
+    caller: Caller,
+    input: import('@merv/contracts').CodeBaseControlInput,
+  ): Promise<import('@merv/contracts').CodeBaseRecord>;
   importRepository(
     caller: Caller,
     input: import('@merv/contracts').CodeRepositoryImportInput,

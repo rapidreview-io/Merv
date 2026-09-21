@@ -171,7 +171,36 @@ export interface SessionWorkspaceObservation {
   observedAt: string | null;
   eventId: number | null;
 }
+/** A server provider reserves one physical execution; no worker credential is created. */
+export interface ServiceWorkInput {
+  provider: string;
+  operationId: string;
+  executionEpoch: number;
+  projectId: string;
+  sponsors: string[];
+  deadline: string;
+}
+export interface ServiceWork {
+  admit(
+    tx: Transaction,
+    input: ServiceWorkInput,
+  ): Promise<
+    | { admitted: true; startedAt: string; deadline: string; settled: boolean }
+    | {
+        admitted: false;
+        reason: 'dispatch_disabled' | 'capacity_full' | 'budget_exceeded' | 'usage_unavailable';
+      }
+  >;
+  settle(
+    tx: Transaction,
+    input: ServiceWorkInput,
+    outcome: 'completed' | 'failed' | 'expired' | 'cancelled',
+  ): Promise<void>;
+}
+
 export interface Sessions {
+  /** Server-only admission. Older providers may omit it; callers must then wait. */
+  readonly serviceWork?: ServiceWork;
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(
     projectId: string,
@@ -276,6 +305,8 @@ export interface SessionBudgetInput {
   maxTokens?: number | null;
 }
 export interface SessionsConfig {
+  /** Maximum simultaneous server executions in one project, across every provider. */
+  serviceConcurrency?: number;
   sweepIntervalMs?: number;
   /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
   maxLaunchFailures?: number;

@@ -200,6 +200,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     },
     warnings: [],
     units: [],
+    bases: [],
     blockers: [],
   };
   assert.deepEqual((await ok('/tools/code.status', {})).result, unbound);
