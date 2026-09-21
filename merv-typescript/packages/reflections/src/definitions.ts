@@ -102,3 +102,21 @@ export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map
     maxChars: 24000,
   },
 }));
+
+// Live version-2 waves keep their published instructions when the server restarts.
+export const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
+  (recipe) => recipe.name !== 'reflection.lens',
+).map((recipe) => ({
+  ...recipe,
+  version: 8,
+  recipe: {
+    ...recipe.recipe,
+    instructions: `${recipe.recipe.instructions} Every version-2 plan item declares workspace: {provider: "none"} or {provider: "code", version: 1}. Choose code when the item's deliverable is code in the project's repository; choose none for analysis, reports or other work that needs no repository checkout. Verify that each declaration matches its deliverable. Dependencies determine the base: never supply baseTaskId, a commit or a branch.`,
+    outputInstructions:
+      recipe.name === 'reflection.synthesis'
+        ? recipe.recipe.outputInstructions
+            .replace('{version: 1,', '{version: 2,')
+            .replaceAll('dependsOn, rationale}', 'dependsOn, rationale, workspace}')
+        : recipe.recipe.outputInstructions,
+  },
+}));

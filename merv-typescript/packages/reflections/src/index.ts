@@ -37,6 +37,7 @@ import {
   LENSES,
   LENS_WORKFLOW,
   RECIPES,
+  WORKSPACE_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
 } from './definitions.js';
@@ -175,7 +176,7 @@ export class ReflectionService implements Reflections {
         },
       ]);
       try {
-        for (const recipe of RECIPES)
+        for (const recipe of [...RECIPES, ...WORKSPACE_RECIPES])
           this.contexts.set(
             `${recipe.name}@${recipe.version}`,
             await contextBuilder.register(recipe),
@@ -185,7 +186,7 @@ export class ReflectionService implements Reflections {
             definition.version,
             await workflows.register(definition, this.policy(true, true)),
           );
-        for (const definition of [REFLECTION_WORKFLOW])
+        for (const definition of [REFLECTION_WORKFLOW, { ...REFLECTION_WORKFLOW, version: 3 }])
           this.parents.set(
             definition.version,
             await workflows.register(definition, this.policy(false, true)),
@@ -352,11 +353,11 @@ export class ReflectionService implements Reflections {
         );
         if (input.previousCycleDigestId)
           await this.artifacts.get(caller, input.previousCycleDigestId, tx);
-        const workflow = await this.parents.get(2)!.start(
+        const workflow = await this.parents.get(3)!.start(
           caller,
           {
             workflow: 'reflection',
-            version: 2,
+            version: 3,
             requestId: requestKey(caller, 'wave', input.requestId),
             // Later transitions pass no such key, so the wave keeps the digest it started with.
             data: {
@@ -389,7 +390,7 @@ export class ReflectionService implements Reflections {
     });
   }
   private async createLenses(caller: Caller, row: WaveRow, tx: Transaction): Promise<void> {
-    const version = (await this.workflows.get(caller, row.id, tx)).version;
+    const version = LENS_WORKFLOW.version;
     for (const lens of LENSES) {
       const workflow = await this.children.get(version)!.start(
         caller,
@@ -661,7 +662,8 @@ export class ReflectionService implements Reflections {
     const inputs = context.caller.session
       ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipe = RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
+    const recipes = !lens && context.snapshot.version >= 3 ? WORKSPACE_RECIPES : RECIPES;
+    const recipe = recipes.find((entry) => entry.name === `reflection.${stage}`)!;
     const preview = await this.contexts
       .get(`${recipe.name}@${recipe.version}`)!
       .preview(
@@ -997,7 +999,13 @@ export class ReflectionService implements Reflections {
                       c.input.changeSpecArtifactId,
                       c.tx,
                     );
-                    await this.plan(c.caller, artifact, c.tx, c.snapshot.data.requirePlan === true);
+                    await this.plan(
+                      c.caller,
+                      artifact,
+                      c.tx,
+                      c.snapshot.version,
+                      c.snapshot.data.requirePlan === true,
+                    );
                   }
                 },
               },
@@ -1097,6 +1105,7 @@ export class ReflectionService implements Reflections {
     caller: Caller,
     changeSpec: Artifact,
     tx: Transaction,
+    workflowVersion: number,
     required = false,
   ): Promise<ChangeSpec | undefined> {
     check(
@@ -1107,6 +1116,12 @@ export class ReflectionService implements Reflections {
     );
     if (changeSpec.mediaType !== 'application/json') return undefined;
     const plan = parseChangeSpec((await this.artifacts.read(caller, changeSpec.id)).content);
+    const version = workflowVersion === 2 ? 1 : 2;
+    check(
+      plan.version === version,
+      'invalid_change_spec',
+      `This reflection@${workflowVersion} wave writes change-spec version ${version}`,
+    );
     // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
     for (const { workflowId } of plan.carriedOver) {
       const carried = await this.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
@@ -1233,6 +1248,7 @@ export class ReflectionService implements Reflections {
           caller,
           submission.changeSpec,
           tx,
+          snapshot.version,
           snapshot.data.requirePlan === true,
         );
         if (plan) submission.plan = plan;

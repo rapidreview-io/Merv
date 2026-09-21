@@ -43,8 +43,7 @@ export interface ChangeSpecExperiment {
 }
 export type WorkItem = ChangeSpecTask | ChangeSpecExperiment;
 /** A change specification submitted as application/json: the next wave's work, stated as records. */
-export interface ChangeSpec {
-  version: 1;
+interface ChangeSpecBody {
   /** What a text change specification says: scope, claim and consolidation changes, as prose. */
   changes: string;
   next:
@@ -54,11 +53,20 @@ export interface ChangeSpec {
         reason: 'goal_met' | 'no_worthwhile_next_step' | 'needs_owner';
         rationale: string;
       };
-  items: WorkItem[];
   /** Existing tasks and experiments the next research cycle still waits on. */
   carriedOver: { workflowId: string; reason: string }[];
   rejected: { title: string; reason: string }[];
 }
+export type ChangeSpec = ChangeSpecBody &
+  (
+    | { version: 1; items: (WorkItem & { workspace?: never })[] }
+    | {
+        version: 2;
+        items: (WorkItem & {
+          workspace: { provider: 'none' } | { provider: 'code'; version: 1 };
+        })[];
+      }
+  );
 export interface ReflectionLens {
   id: string;
   reflectionId: string;

@@ -803,6 +803,10 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
    * plan reported ready and refused on every attempt would leave skipping as the only way on,
    * and skipping discards the reviewed plan. Only whether a tested claim exists is left to
    * creation: Research holds no Claims.
+   *
+   * A workspace declaration is also admitted by the item's owner at creation, not pre-checked
+   * here: a refusal while Code is unloaded rolls the whole advance back and leaves the
+   * approved plan to retry.
    */
   private async creatable(
     caller: Caller,
@@ -891,12 +895,14 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     const { plan } = approved;
     this.checkAutomaticContinuation(caller, record);
     const created = new Map<string, string>();
-    for (const item of ordered(plan.items)!) {
+    for (const item of ordered<ChangeSpec['items'][number]>(plan.items)!) {
       // The text was written by a leased agent and is filed under the owner who accepted it;
       // this line is what lets a reader of the record trace it back to the reviewed plan.
       const provenance = `\n\nWhy: ${item.rationale}\n\nOrigin: reflection ${approved.id}, change specification ${approved.changeSpec.id} (${approved.changeSpec.hash}), item ${item.key}.`;
       const dependsOn = item.dependsOn.map((key) => created.get(key)!);
       const itemRequestId = this.request(caller, requestId, `item:${item.key}`);
+      // Retained v1 plans never requested a workspace; only an explicit declaration does.
+      const workspace = item.workspace?.provider === 'code' ? ('git' as const) : undefined;
       const work =
         item.kind === 'task'
           ? await this.use('tasks', checks, (service) =>
@@ -907,6 +913,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
                   goal: `${item.goal}${provenance}`,
                   checks: item.checks,
                   dependsOn,
+                  ...(workspace ? { workspace } : {}),
                   requestId: itemRequestId,
                 },
                 tx,
@@ -920,6 +927,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
                   intent: item.question,
                   details: `${item.details}${provenance}`.trimStart(),
                   dependsOn,
+                  ...(workspace ? { workspace } : {}),
                   requestId: itemRequestId,
                 },
                 tx,
@@ -1351,7 +1359,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
           }
           case 'reflecting': {
             if (!this.needsConsolidation(record)) break;
-            const reflection = await this.use('reflections', checks, (service) =>
+            await this.use('reflections', checks, (service) =>
               service.approved(caller, record.reflectionId!, tx),
             );
             // Live research is selected at this handoff, not asserted to be part

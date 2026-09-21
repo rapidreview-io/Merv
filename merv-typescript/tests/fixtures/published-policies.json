@@ -158,6 +158,12 @@
       "version": 5,
       "fingerprint": "d3154e15e68fdf3b5cd7645cab9fd5323873e2f99b3098041b4f8a9196a9afa3",
       "published": false
+    },
+    {
+      "name": "reflection",
+      "version": 3,
+      "fingerprint": "5e0093bff552b86ce6278304b51fd50782dc67fa366bdb06d3b4d1780538edcb",
+      "published": false
     }
   ],
   "policies": [
@@ -703,6 +709,27 @@
       "state": "researching",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
       "published": false
+    },
+    {
+      "workflow": "reflection",
+      "version": 3,
+      "state": "in_review",
+      "fingerprint": "765f26fc31dab023fbd7676c38ff38c7901c7ed318555ac0656f87a42389d1b6",
+      "published": false
+    },
+    {
+      "workflow": "reflection",
+      "version": 3,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "reflection",
+      "version": 3,
+      "state": "synthesizing",
+      "fingerprint": "dec725959810b5c636b232643f33bd0f2408d60c7312107b77659c7e0a0b359f",
+      "published": false
     }
   ],
   "recipes": [
@@ -1053,6 +1080,18 @@
       "version": 9,
       "hash": "c03ab038efed6ec5e2254d7c8be446f79ffb34fc95e8868d2f08415212e3c97f",
       "published": true
+    },
+    {
+      "type": "reflection.review",
+      "version": 8,
+      "hash": "2e8e834ffabe7329510ee54737f1aefb6c503566d6345fdcf68e6d4839382160",
+      "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 8,
+      "hash": "d8c490d4eff3b9cb20d2ff85dee6df1ff1268bd7a8e0acc22603bb67a5e07b80",
+      "published": false
     }
   ]
 }

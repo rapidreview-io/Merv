@@ -6,7 +6,7 @@ It implements the owner's ten decisions recorded below and supersedes the first 
 
 ## Implementation status
 
-This release deploys the automatic-base, shared-repository and merge work together (S1–S3). None has been deployed before it. S4 and S5 remain unimplemented. Operator procedures are in [CODE_OPERATIONS.md](CODE_OPERATIONS.md), and checkout and capability rules in [WORKSPACES.md](WORKSPACES.md) and [MACHINE_RUNNER.md](MACHINE_RUNNER.md).
+This release deploys the automatic-base, shared-repository and merge work together (S1–S3). None has been deployed before it. S4-1 adds executable workspace declarations; the rest of S4 and S5 remain unimplemented. Operator procedures are in [CODE_OPERATIONS.md](CODE_OPERATIONS.md), and checkout and capability rules in [WORKSPACES.md](WORKSPACES.md) and [MACHINE_RUNNER.md](MACHINE_RUNNER.md).
 
 - **Versions and rollout.** New Git work without `baseTaskId` stays on production's `task@3` / `experiment@6` until Code hosts the project. Hosted work uses `task@5` / `experiment@8`, whose policies name `code.v2`; service-owned resolution uses `task@6`. Explicit `baseTaskId` keeps `task@4` / `experiment@7`. Published definitions, policies and recipes remain unchanged. No runner-local automatic-base version ships.
 - **Acceptance.** Every workflow version records its immutable acceptance inside the successful review transaction whenever Code is loaded. Code-less successes record no commit. Legacy Git acceptances retain `storage: legacy-local`; importing a project does not change an in-flight unit's capture contract. A unit with a writer generation requires an admitted receipt and records `storage: code`. Legacy experiment reviews may have `reviewAttached: false`, preserving their published review rule.
@@ -22,7 +22,7 @@ This release deploys the automatic-base, shared-repository and merge work togeth
 - **Mirroring.** Work, accepted and resolved-base refs publish asynchronously through the same journal. Work refs fast-forward; accepted/base refs are create-only. Only the server receives a per-operation installation token, revoked after use. Mirroring needs a linked repository and enabled write automation; divergence is visible in `code.status` and requires operator acknowledgment. Mirror lag never gates a lease, acceptance or base. `code_projects.mode` remains `local`; main is named through `code.local.bind`, without a `refs/merv/main` ref.
 - **Storage.** Both dialects create `code_units@1` (project/unit/edge/operation/input tables), `code_bases@1`, `code_pending_merges@1` and `session_service_work@1` directly from their unreleased definitions. Existing scopes receive only new migrations: workflow blockers/system prerequisites, service actors, review provenance and contributor lookup. The runtime image installs Git; startup refuses an unsupported version.
 
-Consolidation/publication changes remain S4. Executable checks and their sandbox, separate Apps and repository rebinding remain S5. The legacy Git manager, push-grant route and runner ledger still serve `task@3/4`, `experiment@6/7` and older live versions. Research-created work remains workspace-free.
+Consolidation/publication changes remain S4. Executable checks and their sandbox, separate Apps and repository rebinding remain S5. The legacy Git manager, push-grant route and runner ledger still serve `task@3/4`, `experiment@6/7` and older live versions. New `reflection@3` waves use synthesis/review recipe 8 to request `change-spec@2`, whose items explicitly choose no workspace or Code. Research passes Git declarations atomically to Tasks/Experiments, which retain their hosted-versus-legacy routing. Version-1 specs remain workspace-free and unchanged.
 
 ### Deploying
 
@@ -524,7 +524,7 @@ workspace: { provider: "none" } | { provider: "code"; version: 1 }
 
 No explicit `baseTaskId` or commit appears. Research materialization passes this declaration through atomically. Version 1 keeps its historical behavior.
 
-Both changes are necessary: the current strict schema lacks workspace, and the materializer omits it. [change-spec.ts:30](../packages/reflections/src/change-spec.ts:30), [research/index.ts:766](../packages/research/src/index.ts:766)
+S4-1 implements both the strict version-2 schema and transactional materialisation. Code absence refuses creation with the item owner’s `code_unavailable`, leaving the approved reflection retryable; an unhosted project keeps the legacy Git versions.
 
 **10. Reconciliation, admission, and visibility**
 
@@ -637,7 +637,7 @@ S1–S3 ship together as described in Implementation status: hosted automatic ba
 
 **S4 — consolidation and executable workspace declarations**
 
-- **Versions:** `consolidation@5`, `reflection@3`, `research@5`; `change-spec@2`; new synthesis/review recipes, preserving existing recipe versions.
+- **Versions:** S4-1 implements `reflection@3`, `change-spec@2`, and synthesis/review recipe 8; lens workflow 2 and recipe 7 stay unchanged. Research uses its existing wave machinery without another version. Consolidation/publication version numbers remain to be chosen against the published registry.
 - **Tables:** versioned payload additions to existing consolidation/proposal/publication/review records; no new server table.
 - **Tools:** existing consolidation and publication tools with frozen candidates, decision manifest, stale-base handling; research materialization accepts v2 workspace declarations.
 - **UI:** candidate decisions, retained frontier, ancestry conflicts, exact reviewed tree/base, PR, enforcement warnings, publication state.

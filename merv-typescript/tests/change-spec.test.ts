@@ -29,7 +29,9 @@ const experiment = (key: string, dependsOn: string[] = []): ChangeSpecExperiment
   dependsOn,
   rationale: 'The evidence lens found the control missing.',
 });
-const plan = (patch: Partial<ChangeSpec> = {}): ChangeSpec => ({
+const plan = (
+  patch: Partial<Extract<ChangeSpec, { version: 1 }>> = {},
+): Extract<ChangeSpec, { version: 1 }> => ({
   version: 1,
   changes: 'Narrow the scope to the controlled setting.',
   next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
@@ -93,7 +95,7 @@ test('every field may reach its limit, and the whole stays small enough to revie
 test('a malformed, extended or wrongly versioned change specification is refused by field', () => {
   refused('{not json', /valid JSON/);
   refused({ ...plan(), extra: true }, /extra|input/i);
-  refused({ ...plan(), version: 2 }, /version/);
+  refused({ ...plan(), version: 3 }, /version/);
   refused(plan({ items: [{ ...task('a'), type: 'task.work' } as ChangeSpecTask] }), /items\.0/);
   refused(plan({ items: [{ ...task('A') }] }), /items\.0\.key/);
   refused(plan({ items: [{ ...task('a'), title: 'two\nlines' }] }), /items\.0\.title/);
@@ -150,4 +152,49 @@ test('items are ordered prerequisites first, otherwise as listed', () => {
     ['first', 'mid', 'last', 'free'],
   );
   assert.equal(ordered([task('a', ['b']), task('b', ['a'])]), undefined);
+});
+
+test('version 2 requires explicit workspaces and refuses every way to smuggle a base', () => {
+  const spec = {
+    ...plan(),
+    version: 2,
+    items: [
+      { ...task('notes'), workspace: { provider: 'none' } },
+      { ...task('harness'), workspace: { provider: 'code', version: 1 } },
+      { ...experiment('trial', ['harness']), workspace: { provider: 'code', version: 1 } },
+    ],
+  };
+  assert.deepEqual(parseChangeSpec(JSON.stringify(spec)), spec);
+  for (const item of spec.items) {
+    for (const field of ['baseTaskId', 'commit', 'branch']) {
+      refused({ ...spec, items: [{ ...item, [field]: 'smuggled' }] }, /items/);
+      refused(
+        { ...spec, items: [{ ...item, workspace: { ...item.workspace, [field]: 'smuggled' } }] },
+        /workspace/,
+      );
+    }
+    for (const workspace of [
+      undefined,
+      {},
+      { provider: 'none', version: 1 },
+      { provider: 'code' },
+      { provider: 'code', version: 2 },
+      { provider: 'git' },
+    ])
+      refused(
+        {
+          ...spec,
+          items: [
+            {
+              ...task('one'),
+              kind: item.kind,
+              ...(item.kind === 'experiment' ? experiment('one') : {}),
+              workspace,
+            },
+          ],
+        },
+        /items/,
+      );
+  }
+  refused({ ...plan(), items: [{ ...task('one'), workspace: { provider: 'none' } }] }, /items/);
 });

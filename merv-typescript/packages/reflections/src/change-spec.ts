@@ -56,7 +56,7 @@ const experiment = z
     rationale: reason,
   })
   .strict();
-export const changeSpecSchema = z
+const specification = z
   .object({
     version: z.literal(1),
     changes: text(8000),
@@ -79,6 +79,25 @@ export const changeSpecSchema = z
       .max(CHANGE_SPEC_LIMITS.rejected),
   })
   .strict();
+
+const workspace = z.discriminatedUnion('provider', [
+  z.object({ provider: z.literal('none') }).strict(),
+  z.object({ provider: z.literal('code'), version: z.literal(1) }).strict(),
+]);
+const changeSpecSchema = z.discriminatedUnion('version', [
+  specification,
+  specification.extend({
+    version: z.literal(2),
+    items: z
+      .array(
+        z.discriminatedUnion('kind', [
+          task.extend({ workspace }),
+          experiment.extend({ workspace }),
+        ]),
+      )
+      .max(CHANGE_SPEC_LIMITS.items),
+  }),
+]);
 
 // Reflections cannot import Tasks, so its sense of two checks being the same one is repeated
 // here. A pair Tasks would refuse is refused while the author can still reword it, not after

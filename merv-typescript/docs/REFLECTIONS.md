@@ -2,7 +2,7 @@
 
 Reflections is a peer domain program alongside Tasks and Experiments. Research coordinates the outer cycle; Reflections owns five independent lenses, synthesis, and independent review. It depends on State, Scope, Artifacts, Paper, Workflows, Reviews and Context Builder. It does not depend on Knowledge or Research.
 
-New waves use `reflection@2` and `reflection.lens@2`. They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
+New waves use `reflection@3` and `reflection.lens@2`. They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
 
 ## Work during a wave
 
@@ -48,18 +48,20 @@ The change specification has two formats, told apart by the artifact's media typ
 
 ```ts
 {
-  version: 1,
+  version: 2,
   changes: string,                    // prose scope and consolidation changes, ≤ 8000
   next: { decision: 'continue', name: string, rationale: string }
       | { decision: 'stop', reason: 'goal_met' | 'no_worthwhile_next_step' | 'needs_owner', rationale: string },
   items: (                            // ≤ 12, of which ≤ 7 experiments
-    | { key, kind: 'task', title, goal, checks: string[], dependsOn: string[], rationale }
-    | { key, kind: 'experiment', name, question, details, dependsOn: string[], rationale }
+    | { key, kind: 'task', title, goal, checks: string[], dependsOn: string[], rationale, workspace }
+    | { key, kind: 'experiment', name, question, details, dependsOn: string[], rationale, workspace }
   )[],
   carriedOver: { workflowId, reason }[],  // ≤ 20 existing tasks or experiments
   rejected: { title, reason }[],          // ≤ 20
 }
 ```
+
+Each item requires `workspace: { provider: "none" } | { provider: "code", version: 1 }`. Choose Code when the deliverable is code in the project's repository, and none for analysis, reports or work needing no checkout. The strict schema rejects `baseTaskId`, commits and branches, including inside `workspace`; dependencies determine the base. A `reflection@2` wave submits version 1 without workspace fields; a `reflection@3` wave submits version 2. Submission and preflight refuse the other version. Historical reads preserve retained specifications, their exact artifact hashes and parsed shape; version-1 plans still create workspace-free work.
 
 The whole document is at most 64,000 bytes; `goal`, `question` and `details` at most 4000 characters, each `rationale` and `reason` at most 1000, a task 1–12 one-line checks, distinct without regard to case or spacing as Tasks compares them. The limits follow what a reviewer can read from a bounded context, since the plan travels in the submission, the approval and every `reflection.get`. Keys are unique; `dependsOn` names other items' keys, never the item's own, without cycles or repeats; an experiment depends only on tasks; experiment names are unique without regard to case. `stop` carries no items and no carried-over work; `continue` carries at least one of either. Each `carriedOver.workflowId` is checked at submit to be a task or experiment in this project, named once. What depends on later project state — name conflicts, the active-experiment limit — is judged by Research when the work is created.
 
@@ -67,7 +69,7 @@ A parsed plan adds one frozen criterion to the synthesis review, covering these 
 
 `reflection.get` returns the parsed `plan` (null for a text specification), and approval retains it in the immutable `ApprovedReflection.plan`. Nothing in Reflections creates work and no tool or grant was added: synthesis still holds exactly `artifact.create` and `reflection.submit`. The project owner decides whether the plan becomes work when completing the research cycle; see [Research: Next wave](RESEARCH.md#next-wave). A standalone wave's plan is reviewed and retained but creates nothing.
 
-Synthesis and review use version-5 recipes that describe both formats; the review text speaks of the plan only "when `reflection.get` returns a plan", because waves already open when the recipes changed receive them too. The lens recipe stays at version 4.
+New version-3 waves use synthesis/review recipe 8, which describes version-2 plans and asks reviewers to verify each workspace declaration against its deliverable. Live version-2 waves keep published recipe 7. Both use lens workflow 2 and lens recipe 7. The review context references the exact specification artifact, and `reflection.get` exposes every declaration in the parsed plan.
 
 ## Existing tools
 
@@ -78,4 +80,4 @@ Synthesis and review use version-5 recipes that describe both formats; the revie
 - `reflection.submit`: submit synthesis for review.
 - `review.submit`: pass or return synthesis/lenses through the existing review owner.
 
-Mutation replay, revision checks, independent review, lease recovery and immutable outputs are unchanged. Existing version-1 waves and their snapshots remain supported; new waves return `corpus: null` and `paper: null`.
+Mutation replay, revision checks, independent review, lease recovery and immutable outputs are unchanged. Retired version-1 workflows remain retired; retained approved snapshots remain readable; new waves return `corpus: null` and `paper: null`.
