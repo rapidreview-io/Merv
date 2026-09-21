@@ -1,3 +1,4 @@
+import { migratePendingMerges, pinMerge } from '../packages/code/src/pending-merge.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +49,13 @@ const receipt = (command: CodeCommitCommand): CodeCommitReceipt => ({
 
 async function fixture(
   t: TestContext,
-  options: { readOnly?: boolean; scratch?: boolean; grant?: boolean; fixedMessage?: string } = {},
+  options: {
+    readOnly?: boolean;
+    scratch?: boolean;
+    grant?: boolean;
+    fixedMessage?: string;
+    merge?: boolean;
+  } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-commands-'));
   let clock = Date.now(),
@@ -116,6 +123,7 @@ async function fixture(
                   },
                 ]),
             { name: 'code.operation', alternatives: [{}] },
+            ...(options.merge ? [{ name: 'code.merge', alternatives: [{}] }] : []),
           ],
           workspace: options.scratch
             ? { mode: 'none' }
@@ -182,7 +190,27 @@ async function fixture(
     });
     const control = { sessionId: session.id, runnerId: 'runner', hostRef: 'launch' };
     const attach = async () =>
-      await sessions.attach(source, { ...control, ...(options.scratch ? {} : { workspace }) });
+      await sessions.attach(source, {
+        ...control,
+        ...(options.scratch
+          ? {}
+          : {
+              workspace: {
+                ...workspace,
+                ...(options.merge
+                  ? {
+                      pendingMerge: {
+                        plan: 'd'.repeat(64),
+                        firstParent: oid('a'),
+                        secondParent: oid('f'),
+                        checkpoint: oid('a'),
+                        firstMerge: null,
+                      },
+                    }
+                  : {}),
+              },
+            }),
+      });
     return {
       session,
       control,
@@ -711,4 +739,47 @@ test('events and operation writes roll back together, including an existing call
   assert.equal((raced[2] as PromiseRejectedResult).reason.code, 'code_command_pending');
   assert.equal((await f.code.list(f.source)).length, 1);
   assert.equal((await f.events('queued')).length, 1);
+});
+
+test('merge commands require their service grant and frozen plan, replay by input, and stop after the first completed merge', async (t) => {
+  const f = await fixture(t, { merge: true });
+  const worker = await f.ready();
+  await migratePendingMerges(f.state);
+  await f.state.transaction((tx) =>
+    pinMerge(tx, f.source.projectId, worker.session.instanceId, 'd'.repeat(64), oid('a'), oid('f')),
+  );
+  const request = { ...input('merge'), operation: 'complete' as const };
+  const first = await f.code.merge(worker.caller, request);
+  assert.equal(first.command.merge, 'complete');
+  assert.deepEqual(await f.code.merge(worker.caller, request), first);
+  await assert.rejects(f.code.merge(worker.caller, { ...request, operation: 'start' }), {
+    code: 'code_request_conflict',
+  });
+  const command = (await f.code.nextCommand(f.source, worker.control))!;
+  const completed = await f.code.completeCommand(f.source, {
+    ...worker.control,
+    commandId: command.id,
+    receipt: receipt(command),
+  });
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE code_pending_merges SET first_merge=? WHERE unit_id=?',
+      oid('b'),
+      worker.session.instanceId,
+    ),
+  );
+  assert.deepEqual(await f.code.merge(worker.caller, request), completed);
+  await assert.rejects(f.code.merge(worker.caller, { ...request, requestId: 'second-merge' }), {
+    code: 'code_merge_completed',
+  });
+  const ordinary = await f.code.commit(worker.caller, {
+    ...input('correction'),
+    expectedHead: oid('b'),
+  });
+  assert.equal(ordinary.command.merge, undefined);
+  const other = await fixture(t);
+  const ordinaryWorker = await other.ready();
+  await assert.rejects(other.code.merge(ordinaryWorker.caller, request), {
+    code: 'execution_tool_forbidden',
+  });
 });

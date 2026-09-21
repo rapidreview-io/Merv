@@ -66,7 +66,9 @@ A task whose product is a code repository should not be cut into 2 MB artifacts.
 `task.create` with `workspace: "git"` (default none; requires Code) gives the
 producing worker a runner-prepared private Git checkout and the `code.commit` and
 `code.operation` tools. The choice is carried by the task's workflow version
-(`task@3`, or `task@4` with `baseTaskId`), so it is fixed at creation; tasks created
+(`task@5`, whose base Code derives from the task's accepted prerequisites, or
+`task@4` with an explicit `baseTaskId`; `task@3` remains for the tasks already on it),
+so it is fixed at creation; tasks created
 without it are unchanged. See [workspaces](WORKSPACES.md) for the checkouts and for
 building later work on the delivered commit.
 
@@ -120,17 +122,19 @@ building later work on the delivered commit.
   an admin replaces the review with `task.reissue_review`; the fresh review is
   unclaimed, pins the same delivered commit, and can be leased.
 
-| Code                     | Meaning                                                                                    |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| `invalid_workspace`      | Unknown workspace, or `baseTaskId` without `workspace: "git"`.                             |
-| `invalid_workspace_base` | The base is not a non-failed Git task of this project, or is not among `dependsOn`.        |
-| `code_unavailable` (503) | Code is unloaded: a Git task cannot be created, assigned, delivered or reviewed.           |
-| `task_commit_required`   | A Git delivery without its worker's `commandId`, or a `commandId` on a scratch task.       |
-| `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.         |
-| `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |
-| `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery. |
-| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; reissue if claimed.  |
-| `task_base_unavailable`  | A based task's prerequisite has not been accepted with a delivered commit.                 |
+| Code                     | Meaning                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| `invalid_workspace`      | Unknown workspace, or `baseTaskId` without `workspace: "git"`.                              |
+| `invalid_workspace_base` | The base is not a non-failed Git task of this project, or is not among `dependsOn`.         |
+| `code_unavailable` (503) | Code is unloaded: a Git task cannot be created, assigned, delivered or reviewed.            |
+| `code_base_pending`      | No base can be derived yet: the project is unbound, or a prerequisite's code is unverified. |
+| `code_merge_required`    | The prerequisites were accepted with different commits; nothing merges them yet.            |
+| `task_commit_required`   | A Git delivery without its worker's `commandId`, or a `commandId` on a scratch task.        |
+| `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.          |
+| `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.             |
+| `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery.  |
+| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; reissue if claimed.   |
+| `task_base_unavailable`  | A based task's prerequisite has not been accepted with a delivered commit.                  |
 
 With Code unloaded, Git task records stay readable (`deliveryCode` is stored data)
 and artifact-only tasks are unaffected.

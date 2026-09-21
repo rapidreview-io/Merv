@@ -46,6 +46,7 @@ function fixture() {
       instruction: 'Finished',
       actions: [],
       blockers: [],
+      providerBlockers: [],
       references: [],
     },
     workflow: {

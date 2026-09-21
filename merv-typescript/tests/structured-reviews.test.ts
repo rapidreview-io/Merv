@@ -631,6 +631,7 @@ test('a real pre-v4 database gains format defaults without rewriting immutable s
           return_to: returnTo,
           excluded_actor_ids: exclusions,
           required_criteria: required,
+          provenance_json: provenance,
           ...row
         }) => {
           assert.equal(administrator, null);
@@ -638,6 +639,7 @@ test('a real pre-v4 database gains format defaults without rewriting immutable s
           assert.equal(returnTo, null);
           assert.equal(exclusions, null);
           assert.equal(required, null);
+          assert.equal(provenance, null);
           return row;
         },
       ),

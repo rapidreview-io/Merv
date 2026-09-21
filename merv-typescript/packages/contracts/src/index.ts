@@ -20,7 +20,11 @@ export { clip, visible } from './text.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
-export { sessionWorkspaceSchema } from './workspace.js';
+export {
+  sessionWorkspaceSchema,
+  codePendingMergeSchema,
+  type CodePendingMerge,
+} from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
@@ -30,6 +34,42 @@ export type {
 } from './code-publications.js';
 export { codeTransportInputSchema, codeTransportGrantSchema } from './code-transport.js';
 export type { CodeTransportInput, CodeTransportGrant } from './code-transport.js';
+export {
+  CODE_BUNDLE_MAX_BYTES,
+  CODE_PART_MAX_BYTES,
+  codeFindingSchema,
+  codeStoreLimitsSchema,
+  codeRepositoryConfigureInputSchema,
+  codeRepositoryImportInputSchema,
+  codeWorkspaceManifestInputSchema,
+  codeWorkspaceManifestSchema,
+  codeUploadBeginSchema,
+  codeUploadFinalizeSchema,
+  codeDownloadBeginSchema,
+  codeDownloadReadSchema,
+  codeUnitFenceInputSchema,
+  codeMirrorRetryInputSchema,
+  codeDeferralCauseSchema,
+} from './code-store.js';
+export type {
+  CodeFinding,
+  CodeStoreLimits,
+  CodeRepositoryConfigureInput,
+  CodeRepositoryImportInput,
+  CodeStoreOperation,
+  CodeStoreStatus,
+  CodeStoreWarning,
+  CodeMirrorStatus,
+  CodeWorkspaceManifestInput,
+  CodeWorkspaceManifest,
+  CodeUploadBegin,
+  CodeUploadFinalize,
+  CodeDownloadBegin,
+  CodeDownloadRead,
+  CodeUnitFenceInput,
+  CodeMirrorRetryInput,
+  CodeDeferralCause,
+} from './code-store.js';
 export type {
   UiManifest,
   UiManifestRow,
@@ -44,16 +84,45 @@ export type {
   UiDetail,
 } from './ui-manifest.js';
 export type * from './sessions-models.js';
+export { WorkspaceDeferred } from './workspace-driver.js';
+export type {
+  WorkspaceDriver,
+  WorkspaceDriverFactory,
+  WorkspaceDriverHost,
+  WorkspaceHandle,
+  WorkspaceLaunch,
+  WorkspaceSession,
+  WorkspaceTransport,
+} from './workspace-driver.js';
 export {
   codeCommitInputSchema,
+  codeMergeInputSchema,
   codeCommandControlSchema,
   codeCommitCommandSchema,
   codeCommitReceiptSchema,
   codeCommandCompletionSchema,
   codeCommandRecordSchema,
+  codeLocalBindInputSchema,
 } from './code.js';
+import type { CodeUnit } from './code-units.js';
 export type {
+  CodeUnitAcceptInput,
+  CodeUnitAcceptance,
+  CodeBasePin,
+  CodeBaseRecord,
+  CodeBaseControlInput,
+  CodeBaseState,
+  CodeBaseStatus,
+  CodeUnit,
+  CodeWriterState,
+  CodeWriterStatus,
+} from './code-units.js';
+export type {
+  CodeLocalBindInput,
+  CodeProjectBinding,
+  CodeProjectStatus,
   CodeCommitInput,
+  CodeMergeInput,
   CodeCommitCommand,
   CodeCommitReceipt,
   CodeCommandRecord,
@@ -84,6 +153,10 @@ export type {
 export type {
   WorkflowReference,
   WorkflowBlocker,
+  WorkflowProvidedBlocker,
+  WorkflowProvidedBlockerInput,
+  WorkflowProviderDependency,
+  WorkflowProviderRelations,
   WorkflowActionStatus,
   WorkflowDecision,
   WorkflowLimitStatus,
@@ -98,6 +171,9 @@ export type {
 } from './workflow-guidance.js';
 import type {
   WorkflowReference,
+  WorkflowProvidedBlocker,
+  WorkflowProvidedBlockerInput,
+  WorkflowProviderRelations,
   WorkflowDecision,
   WorkflowLimitStatus,
   WorkflowOverview,
@@ -483,9 +559,12 @@ export interface SessionAuthority {
 /** A domain's event as every domain records it: who, what, on which record, from where. */
 /** A review's producer and its excluded contributors cannot be its reviewer. */
 export const excludedFromReview = (
-  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds'>,
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
   actorId: string,
-) => review.producerId === actorId || (review.excludedActorIds ?? []).includes(actorId);
+) =>
+  review.producerId === actorId ||
+  (review.excludedActorIds ?? []).includes(actorId) ||
+  (review.provenance?.excludedActorIds ?? []).includes(actorId);
 export const recorded = async (
   state: Pick<State, 'appendEvent'>,
   tx: Transaction,
@@ -581,6 +660,8 @@ export function eventSource(caller: Caller): Data {
       : {};
 }
 export interface Actor {
+  /** Credentialless service owning this actor, when present. */
+  serviceOwner?: string;
   id: string;
   projectId: string;
   name: string;
@@ -676,6 +757,8 @@ export interface ProjectMembership {
   revokedAt: string | null;
 }
 export interface Scope {
+  /** A credential-free producer owned by a server provider, scoped to one project. */
+  serviceActor(provider: string, projectId: string, tx: Transaction): Promise<Caller>;
   readonly toolPolicy: ToolPolicy;
   delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource>;
   requireDelegation(
@@ -871,7 +954,7 @@ export interface WorkflowLoopLimit {
   actions: string[];
   max: number;
 }
-/** An admin's append-only allowance of more traversals on one instance; it changes no revision. */
+/** An admin's append-only allowance; an owner's resume hook may also advance suspended work. */
 export interface WorkflowExtendLimit {
   instanceId: string;
   limit: string;
@@ -887,6 +970,8 @@ export interface WorkflowPolicy {
    * it governs every live instance of the version at once, counted from its whole history.
    */
   limits?: WorkflowLoopLimit[];
+  /** The owner may resume suspended work in the same transaction as a human's allowance. */
+  limitExtended?(context: WorkflowCheckContext, status: WorkflowLimitStatus): Promise<void>;
   /** Immutable per version; only these terminal states satisfy downstream work. */
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
@@ -1147,6 +1232,12 @@ export interface Workflows {
     input: WorkflowExtendLimit,
     tx?: Transaction,
   ): Promise<WorkflowLimitStatus>;
+  limitStatus(
+    caller: Caller,
+    instanceId: string,
+    name: string,
+    tx: Transaction,
+  ): Promise<WorkflowLimitStatus>;
   dependencies(
     caller: Caller,
     instanceId: string,
@@ -1161,6 +1252,44 @@ export interface Workflows {
    * declare: the grouping a research cycle's usage and budget are read over.
    */
   dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
+  /** Roots whose current dependency or child closure contains this work, frozen by its provider. */
+  sponsoringRoots(projectId: string, instanceIds: string[], tx: Transaction): Promise<string[]>;
+  /**
+   * A provider's whole current opinion of one instance: the keys given are written, its other
+   * keys for that instance are removed. Transaction-only, like releaseLease, so no tool route
+   * reaches it; an ended instance keeps none.
+   */
+  replaceBlockers(
+    input: {
+      projectId: string;
+      instanceId: string;
+      provider: string;
+      blockers: WorkflowProvidedBlockerInput[];
+    },
+    tx: Transaction,
+  ): Promise<void>;
+  /** Published blockers of one instance, or of the whole project when it is left out. */
+  blockers(
+    caller: Caller,
+    instanceId?: string,
+    tx?: Transaction,
+  ): Promise<WorkflowProvidedBlocker[]>;
+  /** Internal provider capability; never exposed through a tool or a lease. */
+  systemPrerequisites(provider: string): {
+    replace(
+      input: { projectId: string; instanceId: string; requestId: string; dependencies: string[] },
+      tx: Transaction,
+    ): Promise<void>;
+  };
+  /**
+   * The dependency edges a provider derives from, read inside its caller's transaction and
+   * under that caller's already-checked authority. Null when the project holds no such instance.
+   */
+  dependencyRelations(
+    projectId: string,
+    instanceId: string,
+    tx: Transaction,
+  ): Promise<WorkflowProviderRelations | null>;
 }
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';
@@ -1170,7 +1299,24 @@ export type ReviewFinding = {
   evidenceIds: string[];
   notes: string;
 };
+/** Owner-derived identities and a digest of the retained records that justify them. */
+export interface ReviewProvenance {
+  formatVersion: 1;
+  provider: string;
+  reference: string;
+  sourceHash: string;
+  excludedActorIds: string[];
+  hash: string;
+}
+export type ReviewProvenanceResolver = (
+  projectId: string,
+  subjectId: string,
+  tx: Transaction,
+) => Promise<ReviewProvenance>;
 export interface ReviewRequest {
+  provenance?: ReviewProvenance;
+  /** Why no independent reviewer can currently take this request. */
+  waiting?: string;
   id: string;
   projectId: string;
   subjectId: string;
@@ -1208,6 +1354,8 @@ export interface ReviewRequest {
   createdAt: string;
 }
 export interface ReviewInput {
+  /** Trusted owner capability; callers never provide a certificate or its identities. */
+  provenanceOwner?: string;
   subjectId: string;
   subjectRevision: number;
   producerId: string;
@@ -1253,6 +1401,7 @@ export interface ReviewSubmitOwner {
   submit(caller: Caller, input: ReviewApplication, tx: Transaction): Promise<unknown>;
 }
 export interface Reviews {
+  provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
@@ -1351,7 +1500,7 @@ export interface TaskTypeDefinition {
   recipe: ContextRecipe;
 }
 export type ContextInput =
-  | { text: string }
+  | { text: string; omitted?: string[] }
   | {
       artifactIds: string[];
       /** Text is strict UTF-8; auto retains binary references; references never embeds bytes. */
@@ -1472,6 +1621,21 @@ export interface TaskMarkFailed {
   reason: string;
   requestId: string;
 }
+/** An owner capability passed between server plugins; no public task input selects it. */
+export interface ServiceTaskCreator {
+  create(
+    input: {
+      projectId: string;
+      requestId: string;
+      title: string;
+      goal: string;
+      checks: string[];
+      baseReference: string;
+    },
+    tx: Transaction,
+  ): Promise<{ id: string }>;
+}
+
 export interface Tasks {
   registerType(definition: TaskTypeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;
@@ -1481,12 +1645,14 @@ export interface Tasks {
   list(caller: Caller): Promise<TaskRecord[]>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, taskId: string): Promise<ProcessGraph>;
+  /** What the optional Code plugin holds for a Git task; null without it. */
+  codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;
   reissueReview(caller: Caller, input: TaskReissue): Promise<Task>;
-  markFailed(caller: Caller, input: TaskMarkFailed): Promise<Task>;
+  markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
 }
 declare module 'cordis' {
   interface Context {

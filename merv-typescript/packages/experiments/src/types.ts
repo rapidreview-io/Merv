@@ -1,4 +1,10 @@
-import type { Caller, ProcessGraph, ReviewApplication, Transaction } from '@merv/contracts';
+import type {
+  Caller,
+  CodeUnit,
+  ProcessGraph,
+  ReviewApplication,
+  Transaction,
+} from '@merv/contracts';
 import type {} from 'cordis';
 import type {
   Experiment,
@@ -19,6 +25,8 @@ export interface Experiments {
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, experimentId: string): Promise<ProcessGraph>;
+  /** What the optional Code plugin holds for a Git experiment; null without it. */
+  codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
   submitReview(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<Experiment>;
   /** Withdraw generic review routing before the provider's dependent consumers drain. */
   withdrawReviewOwner(): void;

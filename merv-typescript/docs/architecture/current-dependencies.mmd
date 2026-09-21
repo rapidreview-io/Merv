@@ -83,6 +83,9 @@ flowchart BT
   code --> scope
   code --> sessions
   code --> artifacts
+  code --> workflows
+  code --> domainEvents
+  code -. optional .-> reviews
   merv_code_api --> api
   merv_code_api --> code
   merv_code_tools --> code
@@ -161,6 +164,7 @@ flowchart BT
   research --> state
   research --> scope
   research --> workflows
+  research -. optional .-> domainEvents
   research -. optional .-> paper
   research -. optional .-> reflections
   research -. optional .-> knowledge

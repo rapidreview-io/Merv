@@ -7,6 +7,9 @@ export interface WorkflowReference {
 }
 
 export interface WorkflowDependency {
+  /** Present on edge reads; a provider's instance itself has no incoming edge to classify. */
+  kind?: 'declared' | 'system';
+  owner?: string | null;
   id: string;
   workflow: string;
   version: number;
@@ -20,6 +23,47 @@ export interface WorkflowBlocker {
   code: string;
   message: string;
   status: number;
+}
+/** What a provider hands Workflows: its current opinion of why one instance cannot proceed. */
+export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
+  /** Stable within one provider and instance, so a repeated opinion updates its own row. */
+  key: string;
+  /** The recovery action, in words an operator can follow. */
+  next: string;
+  related?: WorkflowReference[];
+}
+/**
+ * A blocker a plugin other than the owner published for an instance. Workflows stores it
+ * without reading it, so it stays visible while the provider is unloaded; the owner's own
+ * hooks refuse the work, never this projection.
+ */
+export interface WorkflowProvidedBlocker extends WorkflowBlocker {
+  instanceId: string;
+  provider: string;
+  key: string;
+  next: string;
+  related: WorkflowReference[];
+  /** When this key first took this code; a changed code starts a new age. */
+  since: string;
+  updatedAt: string;
+}
+/**
+ * A dependency as a provider needs it: the workflow's own classification plus whether any
+ * state of that workflow version declared a workspace. The second is read from the
+ * persisted execution manifests, so it holds with the owning plugin unloaded.
+ */
+export interface WorkflowProviderDependency extends WorkflowDependency {
+  revision: number;
+  goal?: string;
+  terminal: boolean;
+  declaresWorkspace: boolean;
+  /** The workspace drivers that version's states name, from the same manifests; opaque here. */
+  workspaceDrivers: string[];
+}
+export interface WorkflowProviderRelations {
+  instance: WorkflowProviderDependency;
+  dependencies: WorkflowProviderDependency[];
+  dependents: WorkflowProviderDependency[];
 }
 export interface WorkflowActionStatus {
   action: string;
@@ -71,6 +115,8 @@ export interface WorkflowDecision {
   instruction: string;
   actions: WorkflowActionStatus[];
   blockers: WorkflowBlocker[];
+  /** Every blocker another plugin published for this instance, whatever action was asked about. */
+  providerBlockers: WorkflowProvidedBlocker[];
   references: WorkflowReference[];
   dependencies: WorkflowDependency[];
   /** Loop limits leaving the current state; empty when it has none or the work has ended. */

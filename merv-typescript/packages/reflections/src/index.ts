@@ -361,6 +361,7 @@ export class ReflectionService implements Reflections {
             // Later transitions pass no such key, so the wave keeps the digest it started with.
             data: {
               title,
+              ...(input.requirePlan ? { requirePlan: true } : {}),
               ...(input.previousCycleDigestId
                 ? { previousCycleDigestId: input.previousCycleDigestId }
                 : {}),
@@ -566,6 +567,12 @@ export class ReflectionService implements Reflections {
           title: wave.title,
           attempt: wave.attempt,
           workflow: context.snapshot,
+          ...(context.snapshot.data.requirePlan
+            ? {
+                nextWave:
+                  'Automatic research: submit an application/json change specification with an explicit continue or stop decision. A prose-only specification cannot finish this wave.',
+              }
+            : {}),
           ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
         }),
       },
@@ -671,7 +678,10 @@ export class ReflectionService implements Reflections {
         ...preview.sources.map((a) => ({ kind: 'artifact', id: a.id, label: a.title })),
       ],
       handoff: {
-        instruction: recipe.recipe.outputInstructions,
+        instruction:
+          context.snapshot.data.requirePlan && stage === 'synthesis'
+            ? `${recipe.recipe.outputInstructions} This automatic research wave requires the application/json format and an explicit continue or stop decision.`
+            : recipe.recipe.outputInstructions,
         tools: [
           stage === 'lens'
             ? 'reflection.submit_lens'
@@ -981,6 +991,14 @@ export class ReflectionService implements Reflections {
                 }),
                 check: async (c: WorkflowCheckContext) => {
                   await this.admit(c);
+                  if (typeof c.input?.changeSpecArtifactId === 'string') {
+                    const artifact = await this.author(
+                      c.caller,
+                      c.input.changeSpecArtifactId,
+                      c.tx,
+                    );
+                    await this.plan(c.caller, artifact, c.tx, c.snapshot.data.requirePlan === true);
+                  }
                 },
               },
               {
@@ -1079,7 +1097,14 @@ export class ReflectionService implements Reflections {
     caller: Caller,
     changeSpec: Artifact,
     tx: Transaction,
+    required = false,
   ): Promise<ChangeSpec | undefined> {
+    check(
+      !required || changeSpec.mediaType === 'application/json',
+      'reflection_plan_required',
+      'Automatic research requires an application/json change specification with a continue or stop decision',
+      409,
+    );
     if (changeSpec.mediaType !== 'application/json') return undefined;
     const plan = parseChangeSpec((await this.artifacts.read(caller, changeSpec.id)).content);
     // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
@@ -1204,7 +1229,12 @@ export class ReflectionService implements Reflections {
           changeSpec: await this.author(caller, input.changeSpecArtifactId, tx),
           producerId: caller.actorId,
         };
-        const plan = await this.plan(caller, submission.changeSpec, tx);
+        const plan = await this.plan(
+          caller,
+          submission.changeSpec,
+          tx,
+          snapshot.data.requirePlan === true,
+        );
         if (plan) submission.plan = plan;
         const lenses = await this.lensRows(wave, tx);
         check(

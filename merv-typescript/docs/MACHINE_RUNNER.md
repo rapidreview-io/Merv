@@ -114,6 +114,12 @@ Sessions' source-owned `get` now reconciles current expiry and workflow admissio
 without activating work or rebuilding context. That lets the runner discover
 closed or invalid assignments even when the child makes no further MCP calls.
 
+## Workspace drivers and capabilities
+
+The runner schedules, launches and reports through one generic driver interface and never learns how a checkout is made. Its own local repository is the driver for every workspace policy that names none. `merv runner` also composes the runner with Code's `code.v2` driver, which needs only `/usr/bin/git`: no `workspace` configuration, no local source repository and no GitHub credential. Each driver the machine can run is advertised in the heartbeat as a capability, and the server offers work whose policy names a driver only to runners that list it; a runner without the capability keeps receiving everything else. A launch records the driver it was reserved for, so a restart finishes it with the same one. The server must be deployed before such a runner: an older server refuses a heartbeat that carries `capabilities`.
+
+When a driver cannot prepare a checkout because the place that work's history lives is away, busy or full, the lease goes back as `preparation_deferred` with the cause rather than as a failure of the launch: nothing counts it, no hold forms, and the target is simply offered again after the usual backoff. Everything else — a bad launch, a checkout that could not be made, a process that would not stay up — is reported exactly as before.
+
 ## Git workspace lifecycle
 
 Runner owns a private bare clone of the configured local source and never changes

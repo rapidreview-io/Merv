@@ -133,4 +133,12 @@ $merv$;
 CREATE TRIGGER reviews_required_immutable BEFORE UPDATE OF required_criteria ON reviews
 FOR EACH ROW EXECUTE FUNCTION reviews_required_immutable_guard();
 `,
+  9: `ALTER TABLE reviews ADD COLUMN provenance_json TEXT CHECK(
+    provenance_json IS NULL OR ((provenance_json IS JSON) AND COALESCE((provenance_json::jsonb ->> 'formatVersion')='1',false))
+  );
+  CREATE FUNCTION reviews_certificate_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    RAISE EXCEPTION USING MESSAGE = 'Review provenance certificate is immutable', ERRCODE = '23514';
+  END; $$;
+  CREATE TRIGGER reviews_certificate_immutable BEFORE UPDATE OF provenance_json ON reviews
+    FOR EACH ROW EXECUTE FUNCTION reviews_certificate_immutable_guard();`,
 };

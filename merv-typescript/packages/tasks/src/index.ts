@@ -8,10 +8,12 @@ import {
   check,
   digest,
   inTransaction,
+  MervError,
   now,
   newId,
   type Artifacts,
   type Caller,
+  type CodeUnit,
   type ProcessGraph,
   type Reviews,
   type Scope,
@@ -49,6 +51,7 @@ import {
   type WorkflowLease,
   type Role,
   type Data,
+  type ServiceTaskCreator,
 } from '@merv/contracts';
 
 import type { Code, CodeCapture } from '@merv/code/types';
@@ -128,7 +131,14 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
 /**
  * A published execution policy is immutable, so a task's private Git checkout belongs to the
  * workflow version it was created on and is never a field that a later edit could contradict.
- * Version 3 starts from the central head; version 4 from the commit an accepted task delivered.
+ * Version 3 starts from the central head; version 4 from the commit an accepted task the
+ * creator named delivered. Version 5 names nothing: Code derives the base from what the task's
+ * dependencies were accepted with and pins it when the first lease is acquired, because
+ * references() runs on every assignment read and may never write. It shares version 4's
+ * policies, whose `reference:base` does not say where the reference comes from. Version 6 is
+ * version 5 in a project whose history Code keeps: its checkouts name Code's workspace driver,
+ * and every lease of its producer is the next writer generation of the unit. Version 7 is
+ * owned by a service: only its internal binding creates it and supplies an opaque fixed base.
  * Live tasks keep their version: nothing is ever upgraded into Git.
  */
 const workspaces: Record<number, TaskWorkspace> = {
@@ -136,13 +146,54 @@ const workspaces: Record<number, TaskWorkspace> = {
   2: 'none',
   3: 'central',
   4: 'reference',
+  5: 'reference',
+  6: 'code',
+  7: 'resolution',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
-const taskVersion = (workspace: TaskCreate['workspace'], baseTaskId?: string): number =>
-  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId === undefined ? 3 : 4;
+const taskVersion = (
+  workspace: TaskCreate['workspace'],
+  baseTaskId: string | undefined,
+  hosted: boolean,
+): number =>
+  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId !== undefined ? 4 : hosted ? 6 : 5;
+/** Whether Code derives and pins the base, rather than the creator naming a task. */
+const derivedBase = (version: number) => version === 5 || version === 6 || serviceOwned(version);
+/** Only the internal service binding may create these tasks; their producer has no credential. */
+const serviceOwned = (version: number) => version === TASK_WORKFLOW_SERVICE.version;
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
+export const TASK_WORKFLOW_GIT_DERIVED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 5 };
+export const TASK_WORKFLOW_GIT_HOSTED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 6 };
+export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = {
+  ...TASK_WORKFLOW,
+  version: 7,
+  states: ['in_progress', 'in_review', 'suspended', 'done'],
+  terminal: ['done'],
+  edges: [
+    ...TASK_WORKFLOW.edges.map((edge) =>
+      edge.to === 'failed' ? { ...edge, to: 'suspended' } : edge,
+    ),
+    { from: 'in_review', action: 'revise_suspended', to: 'suspended' },
+    { from: 'suspended', action: 'resume', to: 'in_progress' },
+  ],
+};
+/** What Tasks asks of Code; a test may bind exactly this much. */
+type TaskCode = Pick<
+  Code,
+  | 'capture'
+  | 'acceptUnit'
+  | 'declareUnit'
+  | 'baseStatus'
+  | 'pinBase'
+  | 'basePin'
+  | 'unit'
+  | 'hosted'
+  | 'reserveWriter'
+  | 'writerStatus'
+  | 'bindServiceTasks'
+>;
 interface TaskRow {
   id: string;
   project_id: string;
@@ -206,7 +257,7 @@ const configuration = z
 
 export class TaskService implements Tasks {
   private closed = false;
-  private code?: Pick<Code, 'capture'>;
+  private code?: TaskCode;
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -312,6 +363,9 @@ DROP TABLE task_leases_backup;`,
           TASK_WORKFLOW,
           TASK_WORKFLOW_GIT,
           TASK_WORKFLOW_GIT_BASED,
+          TASK_WORKFLOW_GIT_DERIVED,
+          TASK_WORKFLOW_GIT_HOSTED,
+          TASK_WORKFLOW_SERVICE,
         ]) {
           this.registrations.set(
             definition.version,
@@ -337,12 +391,14 @@ DROP TABLE task_leases_backup;`,
   }
 
   /** The optional Cordis child owns this binding, not the task lifecycle. */
-  bindCode(code: Pick<Code, 'capture'>): () => void {
+  bindCode(code: TaskCode): () => void {
     check(!this.closed, 'tasks_closed', 'Tasks is closed', 503);
     const binding = Symbol('code');
     this.codeBinding = binding;
     this.code = code;
+    const release = code.bindServiceTasks(this.serviceTasks('code'));
     return () => {
+      release();
       if (this.codeBinding !== binding) return;
       this.codeBinding = undefined;
       this.code = undefined;
@@ -350,7 +406,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   /** Only a Git task asks for Code, so a scratch task never notices that it is unloaded. */
-  private requireCode(): Pick<Code, 'capture'> {
+  private requireCode(): TaskCode {
     check(this.code, 'code_unavailable', 'Git tasks require Code captures', 503);
     return this.code;
   }
@@ -422,9 +478,12 @@ DROP TABLE task_leases_backup;`,
     const row = await this.row(tx, caller, snapshot.id);
     if (snapshot.state === 'in_progress') {
       await this.scope.require(caller, 'write', tx);
-      if (row.producer_id !== caller.actorId) await this.scope.require(caller, 'admin', tx);
+      // Version 7 is created only by the service binding; its runner remains a producer.
+      if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
+        await this.scope.require(caller, 'admin', tx);
       await this.workflows.checkDependencies(caller, snapshot.id, tx);
       if (taskWorkspace(snapshot.version) !== 'none') this.requireCode();
+      await this.requireBase(caller, snapshot, tx);
       this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
       return 'producer';
     }
@@ -446,6 +505,27 @@ DROP TABLE task_leases_backup;`,
       await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
     return 'reviewer';
+  }
+
+  /**
+   * Refuses work whose base Code cannot derive, with Code's own blocker code. This only reads:
+   * it runs under lease admission, the dispatch candidate scan and every assignment check.
+   * The refusal makes the task no candidate at all, so it is never launched and never held;
+   * Code publishes the reason where status and the stuck report find it.
+   */
+  private async requireBase(
+    caller: Caller,
+    snapshot: WorkflowSnapshot,
+    tx: Transaction,
+  ): Promise<void> {
+    if (!derivedBase(snapshot.version)) return;
+    const base = await this.requireCode().baseStatus(caller, snapshot.id, tx);
+    if (base.status === 'blocked')
+      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
+    if (!['code', 'resolution'].includes(taskWorkspace(snapshot.version))) return;
+    // The last writer's machine still owes its final capture, or an operator must fence it.
+    const writer = await this.requireCode().writerStatus(caller, snapshot.id, tx);
+    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
   }
 
   private async currentLease(
@@ -481,6 +561,13 @@ DROP TABLE task_leases_backup;`,
     await this.scope.require(caller, role === 'reviewer' ? 'review' : 'write', tx);
     const row = await this.row(tx, caller, snapshot.id);
     const purpose = role === 'reviewer' ? 'review' : 'work';
+    // The base is fixed with the lease it serves: Workflows reads references() right after
+    // this hook in the same transaction, and a refused offer takes the pin back with it.
+    if (purpose === 'work' && derivedBase(snapshot.version)) {
+      await this.requireCode().pinBase(source, { unitId: snapshot.id, leaseId }, tx);
+      if (['code', 'resolution'].includes(taskWorkspace(snapshot.version)))
+        await this.requireCode().reserveWriter(source, { unitId: snapshot.id, leaseId }, tx);
+    }
     const review =
       purpose === 'review' ? await this.reviews.start(caller, row.review_id!, tx) : undefined;
     const checkpoints = await this.checkpointRows(
@@ -618,11 +705,29 @@ DROP TABLE task_leases_backup;`,
       limits: [
         {
           name: 'review_rounds',
-          from: 'in_review',
-          actions: ['revise'],
+          from: serviceOwned(version) ? 'in_progress' : 'in_review',
+          actions: serviceOwned(version) ? ['submit_delivery', 'mark_failed'] : ['revise'],
           max: this.limits.reviewRounds,
         },
       ],
+      ...(serviceOwned(version)
+        ? {
+            limitExtended: async (context: WorkflowCheckContext) => {
+              if (context.snapshot.state !== 'suspended') return;
+              await this.registration(version).transition(
+                context.caller,
+                {
+                  instanceId: context.snapshot.id,
+                  expectedRevision: context.snapshot.revision,
+                  action: 'resume',
+                  requestId: `task:resume:${context.input!.requestId}`,
+                  input: context.input,
+                },
+                context.tx,
+              );
+            },
+          }
+        : {}),
       assignments: [
         {
           state: 'in_progress',
@@ -658,21 +763,29 @@ DROP TABLE task_leases_backup;`,
         return {
           label: row.title,
           gate:
-            snapshot.state === 'in_progress'
-              ? 'delivery_required'
-              : recovering
-                ? 'review_recovery_pending'
-                : review?.status === 'requested'
-                  ? 'review_required'
-                  : 'independent_review',
+            snapshot.state === 'suspended'
+              ? 'suspended'
+              : snapshot.state === 'in_progress'
+                ? 'delivery_required'
+                : recovering
+                  ? 'review_recovery_pending'
+                  : review?.waiting
+                    ? 'review_provenance_blocked'
+                    : review?.status === 'requested'
+                      ? 'review_required'
+                      : 'independent_review',
           waiting:
-            snapshot.state === 'in_progress'
-              ? 'The task producer must complete and submit the delivery.'
-              : recovering
-                ? 'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.'
-                : review?.status === 'requested'
-                  ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
-                  : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
+            snapshot.state === 'suspended'
+              ? 'This service task is suspended. A signed-in human operator can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.'
+              : snapshot.state === 'in_progress'
+                ? 'The task producer must complete and submit the delivery.'
+                : recovering
+                  ? 'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.'
+                  : review?.waiting
+                    ? review.waiting
+                    : review?.status === 'requested'
+                      ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
+                      : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
           references: [
             ...(dependencies ?? []).map((dependency) => ({
               kind: 'workflow',
@@ -695,6 +808,40 @@ DROP TABLE task_leases_backup;`,
         };
       },
       actions: [
+        ...(serviceOwned(version)
+          ? [
+              {
+                name: 'resume',
+                states: ['suspended'],
+                transitions: ['resume'],
+                tool: 'workflow.extend_limit',
+                suggested: false,
+                instruction:
+                  'A signed-in human operator extends review_rounds to resume this same task.',
+                check: async ({ caller, tx, snapshot }: WorkflowCheckContext) => {
+                  check(
+                    caller.human && !caller.session && !caller.key,
+                    'forbidden',
+                    'Only a signed-in human operator resumes service work',
+                    403,
+                  );
+                  await this.scope.require(caller, 'admin', tx);
+                  const limit = await this.workflows.limitStatus(
+                    caller,
+                    snapshot.id,
+                    'review_rounds',
+                    tx,
+                  );
+                  check(
+                    !limit.exhausted,
+                    'workflow_limit_exhausted',
+                    'Extend review_rounds before resuming',
+                    409,
+                  );
+                },
+              },
+            ]
+          : []),
         {
           name: 'submit_delivery',
           states: ['in_progress'],
@@ -719,7 +866,12 @@ DROP TABLE task_leases_backup;`,
         {
           name: 'submit_review',
           states: ['in_review'],
-          transitions: ['accept', 'revise', 'fail_review'],
+          transitions: [
+            'accept',
+            'revise',
+            'fail_review',
+            ...(serviceOwned(version) ? ['revise_suspended'] : []),
+          ],
           tool: 'review.submit',
           instruction:
             'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. For formatVersion 2, include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
@@ -784,14 +936,31 @@ DROP TABLE task_leases_backup;`,
           suggested: false,
           requiredInput: ['reason'],
           arguments: taskArguments,
-          instruction:
-            'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
+          instruction: serviceOwned(version)
+            ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a human operator can extend review_rounds to resume the same task.'
+            : 'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
           check: async (context) => {
             await this.checkFailure(context);
           },
         },
       ],
     };
+  }
+
+  private async reviewAction(
+    context: WorkflowCheckContext,
+    verdict: 'pass' | 'needs_changes' | 'fail',
+  ): Promise<string> {
+    if (verdict === 'needs_changes' && serviceOwned(context.snapshot.version)) {
+      const limit = await this.workflows.limitStatus(
+        context.caller,
+        context.snapshot.id,
+        'review_rounds',
+        context.tx,
+      );
+      if (limit.exhausted) return 'revise_suspended';
+    }
+    return { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[verdict];
   }
 
   private async currentReview({
@@ -836,9 +1005,10 @@ DROP TABLE task_leases_backup;`,
       if (context.input.verdict === 'pass') await this.checkoutReviewer(context, review, headOid);
     }
     if (context.input && context.transition) {
-      const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
-        context.input.verdict as 'pass' | 'needs_changes' | 'fail'
-      ];
+      const action = await this.reviewAction(
+        context,
+        context.input.verdict as 'pass' | 'needs_changes' | 'fail',
+      );
       check(
         context.transition === action,
         'invalid_verdict',
@@ -1054,12 +1224,45 @@ DROP TABLE task_leases_backup;`,
     return result;
   }
 
+  /** The binding captures its provider; a public create can never select this version. */
+  private serviceTasks(provider: string): ServiceTaskCreator {
+    return {
+      create: async (input, tx) => {
+        input = structuredClone(input);
+        this.state.assertTransaction(tx);
+        const caller = await this.scope.serviceActor(provider, input.projectId, tx);
+        return await this.createTask(
+          caller,
+          {
+            title: input.title,
+            goal: input.goal,
+            checks: input.checks,
+            workspace: 'git',
+            requestId: input.requestId,
+          },
+          tx,
+          { provider, baseReference: input.baseReference },
+        );
+      },
+    };
+  }
+
   async create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task> {
+    return await this.createTask(caller, input, transaction);
+  }
+
+  private async createTask(
+    caller: Caller,
+    input: TaskCreate,
+    transaction?: Transaction,
+    service?: { provider: string; baseReference: string },
+  ): Promise<Task> {
     caller = structuredClone(caller);
     input = plain<TaskCreate>(input);
+    const body = service ? { input, service } : input;
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      return await this.command(tx, caller, input.requestId, 'create', input, async () => {
+      return await this.command(tx, caller, input.requestId, 'create', body, async () => {
         const typeName = input.type ?? 'task.work',
           typeVersion = input.typeVersion ?? this.newestType(typeName);
         const type = this.types.get(`${typeName}@${typeVersion}`)?.definition;
@@ -1200,7 +1403,14 @@ DROP TABLE task_leases_backup;`,
           'invalid_brief',
           'The pinned brief must contain the task goal and every Done-when check',
         );
-        const version = taskVersion(input.workspace, input.baseTaskId);
+        // Once Code keeps the project's history, new Git work lives there and nowhere else.
+        const hosted =
+          input.workspace === 'git' &&
+          input.baseTaskId === undefined &&
+          (await this.requireCode().hosted(caller, tx));
+        const version = service
+          ? TASK_WORKFLOW_SERVICE.version
+          : taskVersion(input.workspace, input.baseTaskId, hosted);
         const workflow = await (
           await this.registration(version)
         ).start(
@@ -1247,6 +1457,8 @@ DROP TABLE task_leases_backup;`,
           typeVersion,
           JSON.stringify(contextInputs),
         );
+        if (derivedBase(workflow.version))
+          await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
           briefId: brief.id,
           evidenceVersion: 2,
@@ -1254,6 +1466,21 @@ DROP TABLE task_leases_backup;`,
         return await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
       });
     });
+  }
+
+  /**
+   * What Code holds for a task: its pinned base, where a base stands, its acceptance. Null
+   * while Code is unloaded or knows no such unit. It is kept off the task record, which work
+   * contexts embed and hash.
+   */
+  async codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null> {
+    caller = structuredClone(caller);
+    try {
+      return (await this.code?.unit(caller, taskId)) ?? null;
+    } catch (error) {
+      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
+      throw error;
+    }
   }
 
   async get(caller: Caller, taskId: string): Promise<Task> {
@@ -1404,7 +1631,10 @@ DROP TABLE task_leases_backup;`,
               ? (task.workflow.data.rejectedReviewIds as string[])
               : []
             ).filter((id) => id !== task.reviewId),
-            async (id) => ({ review: await this.reviews.get(caller, id, tx) }),
+            async (id) => {
+              const review = await this.reviews.get(caller, id, tx);
+              return { review, label: `Submitted evidence: ${review.artifactIds.join(', ')}` };
+            },
           ),
           REVIEW_HISTORY_CHARS,
         );
@@ -1412,11 +1642,17 @@ DROP TABLE task_leases_backup;`,
           text:
             task.workflow.data.revisionContext +
             (previous?.status === 'submitted' &&
-            (previous.synopsis || previous.findings.length || Object.keys(previous.evidence).length)
+            (previous.notes ||
+              previous.synopsis ||
+              previous.findings.length ||
+              Object.keys(previous.evidence).length)
               ? '\n\nPinned review assessment (verify cited evidence before revising):\n' +
                 JSON.stringify({
                   reviewId: previous.id,
                   snapshotHash: previous.snapshotHash,
+                  artifactIds: previous.artifactIds,
+                  verdict: previous.verdict,
+                  notes: previous.notes,
                   criteria: previous.criteria,
                   synopsis: previous.synopsis,
                   findings: previous.findings,
@@ -1427,6 +1663,10 @@ DROP TABLE task_leases_backup;`,
               ? '\n\nEarlier review rounds, oldest first (each was answered by a later delivery; do not reintroduce what they rejected):\n' +
                 JSON.stringify(earlier)
               : ''),
+          omitted: Array.from(
+            { length: earlier.omittedRounds },
+            (_, index) => `feedback:round:${index + 1}`,
+          ),
         };
       }
     }
@@ -1489,7 +1729,10 @@ DROP TABLE task_leases_backup;`,
     if (taskWorkspace(facts.workflow.version) !== 'none') {
       if (facts.review)
         await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
-      else this.requireCode();
+      else {
+        this.requireCode();
+        await this.requireBase(context.caller, facts.workflow, context.tx);
+      }
     }
     this.contextType({ type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
     return { ...facts, purpose };
@@ -1593,15 +1836,30 @@ DROP TABLE task_leases_backup;`,
         ? {}
         : snapshot.state === 'in_review' && review
           ? { code: await this.reviewCommit(caller, snapshot, review, tx) }
-          : taskWorkspace(snapshot.version) === 'reference'
-            ? { base: await this.baseCommit(caller, snapshot, tx) }
-            : {}),
+          : derivedBase(snapshot.version)
+            ? await this.pinnedBase(caller, snapshot, tx)
+            : taskWorkspace(snapshot.version) === 'reference'
+              ? { base: await this.baseCommit(caller, snapshot, tx) }
+              : {}),
       ...((await this.isProducer(caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
       ...(review ? { reviewId: review.id } : {}),
       ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId
         ? { claimId: review.claimId }
         : {}),
     };
+  }
+
+  /**
+   * A derived base is only ever read here. Until a lease has pinned one there is none to name:
+   * an interactive producer has no checkout, and a leased one always finds its pin.
+   */
+  private async pinnedBase(
+    caller: Caller,
+    snapshot: WorkflowSnapshot,
+    tx: Transaction,
+  ): Promise<{ base?: string }> {
+    const pin = await this.requireCode().basePin(caller, snapshot.id, tx);
+    return pin ? { base: pin.reference } : {};
   }
 
   /**
@@ -2051,9 +2309,13 @@ DROP TABLE task_leases_backup;`,
     }
   }
 
-  async markFailed(caller: Caller, input: TaskMarkFailed): Promise<Task> {
+  async markFailed(
+    caller: Caller,
+    input: TaskMarkFailed,
+    transaction?: Transaction,
+  ): Promise<Task> {
     ({ caller, input } = structuredClone({ caller, input }));
-    return await this.state.transaction(async (tx) => {
+    return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'mark_failed', input, async () => {
         check(
@@ -2095,12 +2357,23 @@ DROP TABLE task_leases_backup;`,
             action: 'mark_failed',
             input: { ...input, expectedRevision: current.revision },
             requestId: `${caller.actorId}:task:failure:${input.requestId}`,
-            data: { outcome: input.reason, failure: { ...failure } },
+            data: {
+              outcome: input.reason,
+              failure: { ...failure },
+              ...(serviceOwned(current.version) ? { revisionContext: input.reason } : {}),
+            },
           },
           tx,
         );
         if (reviewId) await this.reviews.supersede(caller, reviewId, tx);
-        await recorded(this.state, tx, caller, 'task.failed', row.id, { ...failure });
+        await recorded(
+          this.state,
+          tx,
+          caller,
+          serviceOwned(current.version) ? 'task.suspended' : 'task.failed',
+          row.id,
+          { ...failure },
+        );
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
     });
@@ -2207,8 +2480,23 @@ DROP TABLE task_leases_backup;`,
           {
             subjectId: row.id,
             subjectRevision: moved.revision,
+            ...(serviceOwned(current.version)
+              ? {
+                  provenanceOwner: (
+                    await this.scope.require(
+                      { projectId: caller.projectId, actorId: row.producer_id },
+                      'read',
+                      tx,
+                    )
+                  ).serviceOwner,
+                }
+              : {}),
             producerId: caller.actorId,
-            administrativeActorId: row.producer_id,
+            // A service owns the task but never directs a worker. Reviews retains the
+            // authenticated runner source as the delivery's administrative authority.
+            administrativeActorId: serviceOwned(current.version)
+              ? (await this.scope.authorityActor(caller, tx)).id
+              : row.producer_id,
             // Neither the owner nor the authority that directed a worker is independent of its delivery.
             ...(caller.session
               ? {
@@ -2339,10 +2627,8 @@ DROP TABLE task_leases_backup;`,
           409,
         );
         await this.reviews.checkSubmit(caller, input.reviewId, input, tx);
-        const action = { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[
-          input.verdict
-        ];
-        await (
+        const action = await this.reviewAction({ caller, snapshot: current, tx }, input.verdict);
+        const moved = await (
           await this.registration(current.version)
         ).transition(
           caller,
@@ -2405,6 +2691,26 @@ DROP TABLE task_leases_backup;`,
           },
           tx,
         );
+        // Every version records its success, so work created before automatic bases can still
+        // be built on. With Code unloaded nothing is recorded, and a scratch task is later read
+        // as code-less from its workflow version alone.
+        if (input.verdict === 'pass' && this.code)
+          await this.code.acceptUnit(
+            caller,
+            {
+              unitId: row.id,
+              terminalRevision: moved.revision,
+              submissionRef: review.snapshotHash,
+              reviewRef: review.id,
+              // The accept guard has just re-derived a Git task's delivered commit from Code.
+              codeRef:
+                taskWorkspace(current.version) === 'none'
+                  ? null
+                  : (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
+              reviewSessionId: caller.session?.id ?? null,
+            },
+            tx,
+          );
         await recorded(this.state, tx, caller, 'task.review_applied', row.id, {
           reviewId: submitted.id,
           verdict: submitted.verdict,

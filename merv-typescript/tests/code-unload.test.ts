@@ -174,6 +174,51 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     requestId: 'commit',
   };
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
+  // The unit tools are the project's, never a worker's: an actor key reads them and may not bind.
+  // The default composition keeps repositories under the data directory; nothing is imported.
+  const unbound = {
+    project: null,
+    store: {
+      hosted: false,
+      objectFormat: null,
+      rootOid: null,
+      source: null,
+      tips: [],
+      diskBytes: 0,
+      quotaBytes: 10 * 1024 * 1024 * 1024,
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+    },
+    operations: [],
+    mirror: {
+      state: 'off',
+      repository: null,
+      blockedBy: 'github_unconfigured',
+      pending: 0,
+      oldestPendingAt: null,
+      lastError: null,
+      blockedRefs: [],
+    },
+    warnings: [],
+    units: [],
+    bases: [],
+    blockers: [],
+  };
+  assert.deepEqual((await ok('/tools/code.status', {})).result, unbound);
+  assert.deepEqual((await ok('/tools/ui.read', { rowId: 'code' })).result.status, unbound);
+  assert.equal(
+    (await http('/tools/code.unit.get', { unitId: instance.id })).body.error.code,
+    'code_unit_not_found',
+  );
+  assert.equal(
+    (
+      await http('/tools/code.local.bind', {
+        repositoryId: 'repository',
+        mainOid: oid('a'),
+        requestId: 'bind',
+      })
+    ).body.error.code,
+    'code_human_required',
+  );
   const queued = await invoke('code.commit', input);
   assert.equal(queued.status, 'queued');
   assert.equal(queued.command.actorId, session.actorId);
@@ -206,6 +251,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     (await http('/tools/code.operation', { commandId: queued.command.id })).body.error.code,
     'unknown_tool',
   );
+  assert.equal((await http('/tools/code.status', {})).body.error.code, 'unknown_tool');
   const absent = await http('/code/commands/next', control);
   assert.equal(absent.status, 503);
   assert.equal(absent.body.error.code, 'code_unavailable');

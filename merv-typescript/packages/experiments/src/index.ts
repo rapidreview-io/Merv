@@ -7,9 +7,11 @@ import {
   check,
   digest,
   inTransaction,
+  MervError,
   newId,
   now,
   type Artifact,
+  type CodeUnit,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -60,6 +62,7 @@ import {
   EXPERIMENT_LIMITS,
   ExperimentProgram,
   feasibilityGated,
+  derivedBase,
   programVersion,
   programWorkspace,
 } from './program.js';
@@ -111,6 +114,21 @@ const configuration = z
   .strict()
   .default({});
 
+/** What Experiments asks of Code; a test may bind exactly this much. */
+type ExperimentCode = Pick<
+  Code,
+  | 'capture'
+  | 'acceptUnit'
+  | 'declareUnit'
+  | 'baseStatus'
+  | 'pinBase'
+  | 'basePin'
+  | 'unit'
+  | 'hosted'
+  | 'reserveWriter'
+  | 'writerStatus'
+>;
+
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService implements Experiments {
   private closed = false;
@@ -126,7 +144,7 @@ export class ExperimentService implements Experiments {
     private readonly workflows: Workflows,
     private readonly reviews: Reviews,
     contextBuilder: ContextBuilder,
-    private code: Pick<Code, 'capture'> | undefined,
+    private code: ExperimentCode | undefined,
     private readonly paper: Paper,
     limits = EXPERIMENT_LIMITS,
   ) {
@@ -170,7 +188,7 @@ export class ExperimentService implements Experiments {
     };
   }
   /** The optional Cordis child owns this binding, not the experiment lifecycle. */
-  bindCode(code: Pick<Code, 'capture'>): () => void {
+  bindCode(code: ExperimentCode): () => void {
     this.open();
     const binding = Symbol('code');
     this.codeBinding = binding;
@@ -270,6 +288,21 @@ export class ExperimentService implements Experiments {
       };
     });
   }
+  /**
+   * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
+   * Null while Code is unloaded or knows no such unit. It is kept off the experiment record,
+   * which leases freeze.
+   */
+  async codeUnit(caller: Caller, id: string): Promise<CodeUnit | null> {
+    this.open();
+    caller = structuredClone(caller);
+    try {
+      return (await this.code?.unit(caller, id)) ?? null;
+    } catch (error) {
+      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
+      throw error;
+    }
+  }
   async list(caller: Caller, transaction?: Transaction): Promise<Experiment[]> {
     this.open();
     caller = structuredClone(caller);
@@ -344,7 +377,16 @@ export class ExperimentService implements Experiments {
           503,
         );
         const workflow = await (
-          await this.program.handleFor(programVersion(input.workspace, input.baseTaskId))
+          await this.program.handleFor(
+            programVersion(
+              input.workspace,
+              input.baseTaskId,
+              // Once Code keeps the project's history, new Git work lives there and nowhere else.
+              input.workspace === 'git' &&
+                input.baseTaskId === undefined &&
+                (await this.code!.hosted(caller, tx)),
+            ),
+          )
         ).start(
           caller,
           {
@@ -374,6 +416,7 @@ export class ExperimentService implements Experiments {
           input.workspace ?? 'none',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
+        if (derivedBase(workflow.version)) await this.code!.declareUnit(caller, workflow.id, tx);
         await this.record(
           caller,
           'created',
@@ -1093,13 +1136,30 @@ export class ExperimentService implements Experiments {
           await tx.run('UPDATE experiments SET attempt_index=? WHERE id=?', index, experiment.id);
         } else if (action === 'revise_execution')
           await this.feedback(experiment, input.notes, tx, review.id);
-        else if (action === 'accept_results')
+        else if (action === 'accept_results') {
           await tx.run(
             'UPDATE experiment_attempts SET ended_revision=? WHERE experiment_id=? AND attempt_index=?',
             moved.revision,
             experiment.id,
             experiment.attempt.index,
           );
+          // Every version records its success, so later work can take its base from it. The
+          // reference is the one the submission stored: the review capture is read only while
+          // the experiment is under review, and checkReview has just verified it there.
+          if (this.code)
+            await this.code.acceptUnit(
+              caller,
+              {
+                unitId: experiment.id,
+                terminalRevision: moved.revision,
+                submissionRef: submission.id,
+                reviewRef: review.id,
+                codeRef: experiment.workspace === 'git' ? submission.codeCaptureRef! : null,
+                reviewSessionId: caller.session?.id ?? null,
+              },
+              tx,
+            );
+        }
         await tx.run(
           'UPDATE experiments SET review_id=NULL,conclusion=? WHERE id=?',
           conclusion,

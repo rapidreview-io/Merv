@@ -23,6 +23,7 @@ import { postgresMigrations as migrations21 } from '../packages/sessions/src/ind
 import { postgresMigrations as migrations22 } from '../packages/sessions/src/observations.postgres.js';
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
+import { postgresMigrations as migrations25 } from '../packages/code/src/units.postgres.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -59,6 +60,7 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/sessions/src/observations.ts': migrations22,
   'packages/tasks/src/index.ts': migrations23,
   'packages/workflows/src/index.ts': migrations24,
+  'packages/code/src/units.ts': migrations25,
 };
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function migrations(): Promise<DomainMigration[]> {
@@ -119,7 +121,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 57);
+  assert.equal(all.length, 69);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

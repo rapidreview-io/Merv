@@ -9,7 +9,9 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   RunnerSettings,
+  SessionDeferral,
   SessionOutcome,
+  SessionReleaseOutcome,
   SessionStatus,
   SessionUsageReport,
   SessionsProjectStatus,
@@ -37,7 +39,9 @@ export type {
   RunnerPlatform,
   RunnerPresence,
   RunnerSettings,
+  SessionDeferral,
   SessionOutcome,
+  SessionReleaseOutcome,
   SessionPlatform,
   SessionRole,
   SessionStatus,
@@ -109,6 +113,8 @@ export interface Session {
   closedAt: string | null;
   closeReason: string | null;
   outcome?: SessionOutcome | null;
+  /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
+  deferral?: SessionDeferral | null;
   /** Set by the sweep while the session is alive without progressing; cleared when it moves. */
   quietSince?: string | null;
   assignment: WorkflowAssignment;
@@ -165,7 +171,44 @@ export interface SessionWorkspaceObservation {
   observedAt: string | null;
   eventId: number | null;
 }
+/** A server provider reserves one physical execution; no worker credential is created. */
+export interface ServiceWorkInput {
+  provider: string;
+  operationId: string;
+  executionEpoch: number;
+  projectId: string;
+  sponsors: string[];
+  deadline: string;
+}
+export interface ServiceWork {
+  admit(
+    tx: Transaction,
+    input: ServiceWorkInput,
+  ): Promise<
+    | { admitted: true; startedAt: string; deadline: string; settled: boolean }
+    | {
+        admitted: false;
+        reason: 'dispatch_disabled' | 'capacity_full' | 'budget_exceeded' | 'usage_unavailable';
+      }
+  >;
+  settle(
+    tx: Transaction,
+    input: ServiceWorkInput,
+    outcome: 'completed' | 'failed' | 'expired' | 'cancelled',
+  ): Promise<void>;
+}
+
 export interface Sessions {
+  /** Server-only admission. Older providers may omit it; callers must then wait. */
+  readonly serviceWork?: ServiceWork;
+  /** Retained producers only; their delegation is historical, never current authority. */
+  contributors(
+    projectId: string,
+    instanceId: string,
+    beforeRevision: number | null,
+    tx: Transaction,
+  ): Promise<{ ref: string; actorId: string; authorityId: string }[]>;
+
   registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent>;
   agents(caller: Caller): Promise<AgentStatus[]>;
   agent(caller: Caller, agentId: string): Promise<AgentStatus>;
@@ -217,7 +260,9 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & {
       reason?: string;
-      outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      outcome?: SessionReleaseOutcome;
+      /** Required with `preparation_deferred`, and refused with every other outcome. */
+      deferral?: SessionDeferral;
       /** The runner's unverified self-report; the first one stored for a session is kept. */
       usage?: SessionUsageReport;
     },
@@ -260,6 +305,8 @@ export interface SessionBudgetInput {
   maxTokens?: number | null;
 }
 export interface SessionsConfig {
+  /** Maximum simultaneous server executions in one project, across every provider. */
+  serviceConcurrency?: number;
   sweepIntervalMs?: number;
   /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
   maxLaunchFailures?: number;

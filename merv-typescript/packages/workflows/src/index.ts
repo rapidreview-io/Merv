@@ -45,9 +45,13 @@ import type {
   WorkflowHistoryEntry,
   WorkflowExtendLimit,
   WorkflowLimitStatus,
+  WorkflowProvidedBlocker,
+  WorkflowProvidedBlockerInput,
+  WorkflowProviderRelations,
   ProcessGraph,
 } from '@merv/contracts';
 import { processGraph } from './process.js';
+import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
 import { workflowJson } from './json.js';
 import { canonical, fingerprint, validateDefinition } from './definition.js';
 import {
@@ -178,6 +182,49 @@ const migrations = [
   CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
     BEGIN SELECT RAISE(ABORT,'Workflow limit grants are retained'); END;
 `,
+  },
+  {
+    // The one workflow table that is rewritten and cleared: it mirrors what another plugin
+    // thinks now, and must stay readable and clearable while that plugin is unloaded.
+    version: 6,
+    postgres: postgresMigrations[6],
+    sql: `
+  CREATE TABLE wf_blockers (
+    project_id TEXT NOT NULL, instance_id TEXT NOT NULL, provider TEXT NOT NULL,
+    blocker_key TEXT NOT NULL, code TEXT NOT NULL, message TEXT NOT NULL,
+    status INTEGER NOT NULL CHECK (status BETWEEN 400 AND 599), next TEXT NOT NULL,
+    related_json TEXT NOT NULL, since TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY (instance_id,provider,blocker_key)
+  );
+  CREATE INDEX wf_blockers_project ON wf_blockers(project_id,provider);
+  CREATE TRIGGER wf_blockers_identity BEFORE UPDATE OF project_id,instance_id,provider,blocker_key ON wf_blockers
+    BEGIN SELECT RAISE(ABORT,'Workflow blocker identity is immutable'); END;
+`,
+  },
+  {
+    version: 7,
+    rebuild: true,
+    sql: `CREATE TEMP TABLE wf_dependencies_backup AS SELECT * FROM wf_dependencies;
+DROP TABLE wf_dependencies;
+CREATE TABLE wf_dependencies (
+  project_id TEXT NOT NULL,source_id TEXT NOT NULL,target_id TEXT NOT NULL,
+  target_workflow TEXT NOT NULL,target_version INTEGER NOT NULL,
+  target_success_json TEXT NOT NULL,target_terminal_json TEXT NOT NULL,created_at TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system')),
+  owner TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(source_id,target_id,kind,owner),CHECK(source_id<>target_id),
+  CHECK((kind='declared' AND owner='') OR (kind='system' AND owner<>''))
+);
+INSERT INTO wf_dependencies(project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at)
+SELECT * FROM wf_dependencies_backup;
+DROP TABLE wf_dependencies_backup;
+CREATE INDEX wf_dependencies_source ON wf_dependencies(project_id,source_id);
+CREATE INDEX wf_dependencies_target ON wf_dependencies(project_id,target_id);
+CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies WHEN NEW.kind IS NOT OLD.kind OR NEW.owner IS NOT OLD.owner BEGIN SELECT RAISE(ABORT,'Dependency contracts are immutable'); END;
+CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
+CREATE TRIGGER wf_system_requests_no_update BEFORE UPDATE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are immutable'); END;
+CREATE TRIGGER wf_system_requests_no_delete BEFORE DELETE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are retained'); END;`,
+    postgres: postgresMigrations[7],
   },
 ];
 
@@ -508,6 +555,7 @@ export class WorkflowsService implements Workflows {
         { ...query, input },
         (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
         await limitStatuses(tx, installed?.policy, snapshot),
+        await readBlockers(tx, caller.projectId, snapshot.id),
       );
       if (installed) {
         await this.checkContext(
@@ -1282,9 +1330,9 @@ export class WorkflowsService implements Workflows {
 
   /**
    * An engine command rather than a program's, so it reaches managed workflows too. It writes
-   * a grant and nothing else: the instance keeps its revision, so a review pinned to it and a
-   * dispatch expecting it both stay valid. A grant only ever raises a cap, which is why one
-   * landing beside a transition needs no ordering between them.
+   * a grant without changing an active assignment's revision, so a pinned review stays valid.
+   * An owner may resume suspended work through its hook in this same transaction; if the
+   * owner refuses, the allowance and the resume both roll back.
    */
   async extendLimit(
     caller: Caller,
@@ -1345,8 +1393,8 @@ export class WorkflowsService implements Workflows {
         'Terminal workflow instances cannot be allowed more rounds',
         409,
       );
-      // History is transitions and this is not one, so the request is kept without a history
-      // row or a transition event; the grant table is the record.
+      // The grant has its own record. An owner's optional resume writes its own transition
+      // receipt, so retrying this request cannot advance suspended work twice.
       await tx.run(
         'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
         caller.projectId,
@@ -1366,6 +1414,10 @@ export class WorkflowsService implements Workflows {
         now(),
       );
       const status = await limitStatus(tx, limit, snapshot.id);
+      await registered.policy?.limitExtended?.(
+        { caller, snapshot, tx, input: { reason, requestId: input.requestId } },
+        status,
+      );
       await recorded(this.state, tx, caller, 'workflow.limit_extended', snapshot.id, {
         workflow: snapshot.workflow,
         version: snapshot.version,
@@ -1378,6 +1430,21 @@ export class WorkflowsService implements Workflows {
       this.requireActive(registered);
       return status;
     });
+  }
+
+  async limitStatus(
+    caller: Caller,
+    instanceId: string,
+    name: string,
+    tx: Transaction,
+  ): Promise<WorkflowLimitStatus> {
+    await this.scope.require(caller, 'read', tx);
+    const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
+    const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
+      (item) => item.name === name,
+    );
+    check(limit, 'unknown_limit', 'This workflow has no such limit', 404);
+    return await limitStatus(tx, limit, instanceId);
   }
 
   async dependencies(
@@ -1394,8 +1461,158 @@ export class WorkflowsService implements Workflows {
     });
   }
 
+  async replaceBlockers(
+    input: {
+      projectId: string;
+      instanceId: string;
+      provider: string;
+      blockers: WorkflowProvidedBlockerInput[];
+    },
+    tx: Transaction,
+  ): Promise<void> {
+    this.assertOpen();
+    const snapshot = await this.readSnapshot(tx, input.projectId, input.instanceId);
+    const stored = await tx.get<{ definition_json: string }>(
+      'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
+      snapshot.workflow,
+      snapshot.version,
+    );
+    check(stored, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+    await replaceBlockers(
+      tx,
+      input,
+      (JSON.parse(stored.definition_json) as WorkflowDefinition).terminal.includes(snapshot.state),
+    );
+  }
+
+  async blockers(
+    caller: Caller,
+    instanceId?: string,
+    transaction?: Transaction,
+  ): Promise<WorkflowProvidedBlocker[]> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      if (instanceId !== undefined) await this.readSnapshot(tx, caller.projectId, instanceId);
+      return await readBlockers(tx, caller.projectId, instanceId);
+    });
+  }
+
+  systemPrerequisites(provider: string): ReturnType<Workflows['systemPrerequisites']> {
+    check(
+      typeof provider === 'string' && provider.trim().length > 0,
+      'invalid_provider',
+      'A provider is required',
+    );
+    return {
+      replace: async (input, tx) => {
+        input = structuredClone(input);
+        this.assertOpen();
+        this.state.assertTransaction(tx);
+        check(
+          typeof input.requestId === 'string' && input.requestId.trim().length > 0,
+          'invalid_request',
+          'A requestId is required',
+        );
+        const fingerprint = canonical({
+          instanceId: input.instanceId,
+          dependencies: [...new Set(input.dependencies)].sort(),
+        });
+        const previous = await tx.get<{ fingerprint: string }>(
+          'SELECT fingerprint FROM wf_system_requests WHERE project_id=? AND provider=? AND request_id=?',
+          input.projectId,
+          provider,
+          input.requestId,
+        );
+        check(
+          !previous || previous.fingerprint === fingerprint,
+          'idempotency_conflict',
+          'System prerequisite request changed',
+          409,
+        );
+        if (previous) return;
+        const source = await this.readSnapshot(tx, input.projectId, input.instanceId);
+        const old = await tx.all<{ target_id: string }>(
+          "SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind='system' AND owner=?",
+          input.projectId,
+          input.instanceId,
+          provider,
+        );
+        await attachDependencies(tx, source, input.dependencies, provider);
+        for (const edge of old)
+          if (!input.dependencies.includes(edge.target_id))
+            await tx.run(
+              "DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind='system' AND owner=?",
+              input.projectId,
+              input.instanceId,
+              edge.target_id,
+              provider,
+            );
+        await tx.run(
+          'INSERT INTO wf_system_requests(project_id,provider,request_id,fingerprint) VALUES (?,?,?,?)',
+          input.projectId,
+          provider,
+          input.requestId,
+          fingerprint,
+        );
+      },
+    };
+  }
+
+  async dependencyRelations(
+    projectId: string,
+    instanceId: string,
+    tx: Transaction,
+  ): Promise<WorkflowProviderRelations | null> {
+    this.assertOpen();
+    return await providerRelations(tx, projectId, instanceId);
+  }
+
   async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
     requireDependencies((await this.dependencies(caller, instanceId, tx)).dependencies);
+  }
+
+  /** The provider freezes these roots before later dependencies can move a shared charge. */
+  async sponsoringRoots(
+    projectId: string,
+    instanceIds: string[],
+    tx: Transaction,
+  ): Promise<string[]> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    const caller = await this.scope.serviceActor('workflows', projectId, tx);
+    const parents = new Map<string, Set<string>>();
+    const link = (child: string, parent: string) => {
+      if (!parents.has(child)) parents.set(child, new Set());
+      parents.get(child)!.add(parent);
+    };
+    for (const row of await tx.all<{ source_id: string; target_id: string }>(
+      "SELECT source_id,target_id FROM wf_dependencies WHERE project_id=? AND kind='declared'",
+      projectId,
+    ))
+      link(row.target_id, row.source_id);
+    for (const row of await tx.all<{ id: string; workflow: string; version: number }>(
+      'SELECT id,workflow,version FROM wf_instances WHERE project_id=?',
+      projectId,
+    ))
+      for (const child of (await this.registrations
+        .get(`${row.workflow}@${row.version}`)
+        ?.policy?.children?.({ caller, instanceId: row.id, tx })) ?? [])
+        link(child, row.id);
+    const seen = new Set<string>(),
+      roots = new Set<string>(),
+      queue = [...instanceIds];
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const above = parents.get(id);
+      if (!above?.size) roots.add(id);
+      else queue.push(...above);
+    }
+    // Policy children can form a cycle even though declared dependencies cannot.
+    return [...(roots.size ? roots : new Set(instanceIds))].sort();
   }
 
   /**
@@ -1743,6 +1960,9 @@ export class WorkflowsService implements Workflows {
         before.state,
         data,
       );
+      // Ended work waits on nothing, and the provider that spoke may not be loaded to say so.
+      if (registered.definition.terminal.includes(after.state))
+        await clearBlockers(transaction, after.id);
       // Recorded on arrival, never from a read. A step that stays in the capped state (a
       // reissued review) is not a new arrival and says nothing new.
       if (after.state !== before.state)

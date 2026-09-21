@@ -562,6 +562,39 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     check(row.repository_json, 'github_repository_required', 'Link a GitHub repository first', 409);
     return JSON.parse(row.repository_json) as GitHubRepository;
   }
+  /**
+   * Where the server publishes a project's own work, with no caller and no human token: the
+   * owner's link and the write automation they turned on are the whole authorisation, and
+   * unlinking or turning it off is the off switch. A refusal is a state, not an error: work
+   * never waits for publication, so the mirror simply says why it is not running.
+   */
+  async mirrorTarget(projectId: string): Promise<GitHubRepository | { blocked: string }> {
+    if (this.#closed || !this.#client) return { blocked: 'github_unconfigured' };
+    if (!this.#client.automationConfigured) return { blocked: 'github_automation_unconfigured' };
+    const row = await this.state.read(async (sql) => await this.row(sql, projectId));
+    if (!row.repository_json) return { blocked: 'github_repository_required' };
+    if (row.automation !== 'write') return { blocked: 'github_automation_disabled' };
+    return JSON.parse(row.repository_json) as GitHubRepository;
+  }
+  /**
+   * One installation token for one repository, for the length of one operation. It is minted
+   * per operation and given up again however that operation ends, and it never leaves the
+   * server: no runner is ever lent write access to the linked repository.
+   */
+  async mirrorToken<T>(
+    repository: GitHubRepository,
+    use: (token: string) => Promise<T>,
+  ): Promise<T> {
+    return await this.run(repository, async (repository) => {
+      const client = this.client();
+      const grant = await client.installationToken(repository, true);
+      try {
+        return await use(grant.token);
+      } finally {
+        await client.revokeInstallationToken(grant.token).catch(() => {});
+      }
+    });
+  }
   async assertBinding(
     caller: Caller,
     binding: GitHubBinding,

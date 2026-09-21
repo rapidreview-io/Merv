@@ -10,6 +10,19 @@ Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.
 ssh ResearchSuite_Control 'sudo bash -c "cd /opt/merv-typescript/releases/<previous-id>/source/deploy && MERV_TS_IMAGE=merv-typescript:<previous-id> docker compose -f compose.yml up -d"'
 ```
 
+**Before the release that carries the shared Code repository (Git model stage S2).** The server
+must be deployed before any machine built from it: a runner that advertises `capabilities` is
+refused by an older server's closed heartbeat schema, so deploy here first and update the
+machines afterwards. The runtime image now installs Git, and the server refuses to start with
+`code_git_unsupported` without one of at least 2.38 — check the build log for its version.
+Code's repositories live on the data volume at `/var/lib/merv-ts/code`, are authoritative for
+any project that has been imported, and must be backed up together with the database; one
+server writes to that volume at a time. Nothing changes for a project until an administrator
+imports it with `merv code-import`; from then on new Git work is created on `task@6` and
+`experiment@9` and only machines carrying the `code.v2` driver take it, so drain in-flight
+Git work on the machines that hold it first. Publication to GitHub stays off until the
+repository is linked and write automation is turned on.
+
 | When (UTC)        | Release                                  | Image id       | Plugins active/total | Result | Checks                                                                                                                                                                                                                                                                                                                                                                                                     | Rollback                                                                  |
 | ----------------- | ---------------------------------------- | -------------- | -------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | 2026-09-16 19:48Z | `20260916T190552Z-be69497b-3a026ebca252` | `3235cf85425f` | 54/54                | pass   | see [CUTOVER_2026-09-16.md](CUTOVER_2026-09-16.md)                                                                                                                                                                                                                                                                                                                                                         | legacy Python, see cutover record                                         |

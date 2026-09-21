@@ -29,6 +29,7 @@ export const taskUiPlugin = {
             JSON.stringify({
               task: await tasks.get(caller, id),
               process: await tasks.process(caller, id),
+              codeUnit: await tasks.codeUnit(caller, id),
             }),
           ) as Json;
         },

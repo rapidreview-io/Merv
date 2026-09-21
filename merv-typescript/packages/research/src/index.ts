@@ -1,4 +1,10 @@
-import { mapAsync } from '@merv/contracts';
+import { mapAsync, type DomainEvents } from '@merv/contracts';
+import {
+  automaticResearch,
+  automaticRequest,
+  automaticStatus,
+  type AutomaticRow,
+} from './automatic.js';
 import { clip, createService, ordered, recorded, replayed, visible } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -33,6 +39,7 @@ import type { Consolidation } from '@merv/consolidation/types';
 import type {
   Research,
   ResearchAdvance,
+  ResearchAutomation,
   ResearchCreate,
   ResearchDigest,
   ResearchEnd,
@@ -144,6 +151,7 @@ type StoredRecord = Pick<
 /** A small coordinator over existing workflows; child programs own their actual assignments. */
 export class ResearchService implements Research {
   private closed = false;
+  private automaticBound = false;
   private releaseReadReferences?: () => void;
   private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -195,11 +203,23 @@ ALTER TABLE research_cycles ADD COLUMN digest TEXT;
 CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN OLD.digest IS NOT NULL BEGIN SELECT RAISE(ABORT,'A research cycle digest is immutable'); END;
 `,
         },
+        {
+          version: 4,
+          postgres: postgresMigrations[4],
+          sql: `
+CREATE TABLE research_automation (
+ research_id TEXT PRIMARY KEY REFERENCES research_cycles(id),project_id TEXT NOT NULL,
+ source_json TEXT NOT NULL,root_id TEXT NOT NULL REFERENCES research_cycles(id),
+ cycle_index INTEGER NOT NULL,max_cycles INTEGER NOT NULL,blocker_json TEXT);
+CREATE TRIGGER research_automation_identity BEFORE UPDATE OF research_id,project_id,source_json,root_id,cycle_index,max_cycles ON research_automation BEGIN SELECT RAISE(ABORT,'Research automation authority is immutable'); END;
+CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation BEGIN SELECT RAISE(ABORT,'Research automation is retained'); END;
+`,
+        },
       ]);
       try {
         // Existing cycles keep their immutable state machine; only new cycles may skip
         // consolidation, and only version 4 can be ended before it reaches an answer.
-        for (const version of [2, 3, 4]) {
+        for (const version of [2, 3, 4, 5]) {
           const ends = version >= 4;
           this.handles.set(
             version,
@@ -255,7 +275,10 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
         return {
           label: record.name,
           gate: context.snapshot.state,
-          waiting: instructions[context.snapshot.state as Stage],
+          waiting:
+            version >= 5 && context.snapshot.state === 'researching'
+              ? 'Wait for the selected work to finish, including failed and abandoned work, then open reflection.'
+              : instructions[context.snapshot.state as Stage],
           references: [
             ...this.children(record).map((id) => ({
               kind: 'workflow',
@@ -280,8 +303,8 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
           ],
         };
       },
-      // A cycle whose selected work cannot succeed is ended, not advanced.
-      ...(version >= 4 ? { dependencyFailureAction: 'end' } : {}),
+      // Legacy v4 treats selected failures as a reason to end; v5 reflects on them.
+      ...(version === 4 ? { dependencyFailureAction: 'end' } : {}),
       actions: [
         ...(version >= 4
           ? [
@@ -314,8 +337,11 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
           transitions:
             version >= 3 && stage === 'reflecting' ? ['advance', 'complete'] : ['advance'],
           tool: 'research.advance',
-          instruction: instructions[stage],
-          requiresDependencies: stage !== 'defining',
+          instruction:
+            version >= 5 && stage === 'researching'
+              ? 'Reflect once all selected work has finished. Failed and abandoned work are outcomes to examine.'
+              : instructions[stage],
+          requiresDependencies: version < 5 && stage !== 'defining',
           arguments: (context: WorkflowCheckContext) => ({
             researchId: context.snapshot.id,
             expectedRevision: context.snapshot.revision,
@@ -380,8 +406,27 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
         id,
         caller.projectId,
       );
+      const automatic = await tx.get<AutomaticRow>(
+        'SELECT * FROM research_automation WHERE research_id=?',
+        id,
+      );
       return {
         ...record,
+        automation: automatic
+          ? {
+              ...automaticStatus(automatic),
+              ...(!this.automaticBound &&
+              !over.has((await this.workflows.get(caller, id, tx)).state)
+                ? {
+                    blocker: {
+                      code: 'research_automatic_unavailable',
+                      message:
+                        'Automatic research is waiting for its durable event consumer to be available',
+                    },
+                  }
+                : {}),
+            }
+          : null,
         // The column is the one statement of which cycle this follows; the record pins the rest.
         origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
         successorId: successor?.id ?? null,
@@ -495,11 +540,31 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     // Validate every prerequisite in this project even if consolidation starts much later.
     for (const id of [...input.dependsOn, ...input.consolidationDependsOn])
       await this.workflows.get(caller, id, tx);
-    const workflow = await this.handles.get(4)!.start(
+    check(
+      input.automatic || input.maxCycles === undefined,
+      'invalid_research_input',
+      'maxCycles requires automatic mode',
+    );
+    if (input.automatic) {
+      check(
+        input.dependsOn.length > 0,
+        'research_work_required',
+        'Select at least one task or experiment for automatic research',
+      );
+      for (const id of input.dependsOn) {
+        const work = await this.workflows.get(caller, id, tx);
+        check(
+          ['task', 'experiment'].includes(work.workflow),
+          'invalid_research_input',
+          'Automatic research selects tasks and experiments',
+        );
+      }
+    }
+    const workflow = await this.handles.get(5)!.start(
       caller,
       {
         workflow: 'research',
-        version: 4,
+        version: 5,
         requestId: this.request(caller, input.requestId, step),
         dependsOn: input.dependsOn,
         data: { name: input.name },
@@ -527,6 +592,25 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       JSON.stringify(record),
       predecessorId,
     );
+    const inherited = origin
+      ? await tx.get<AutomaticRow>(
+          'SELECT * FROM research_automation WHERE research_id=?',
+          origin.researchId,
+        )
+      : undefined;
+    if (input.automatic || inherited) {
+      const source =
+        inherited?.source_json ?? JSON.stringify(await this.scope.delegationSource(caller, tx));
+      await tx.run(
+        'INSERT INTO research_automation(research_id,project_id,source_json,root_id,cycle_index,max_cycles) VALUES(?,?,?,?,?,?)',
+        workflow.id,
+        caller.projectId,
+        source,
+        inherited?.root_id ?? workflow.id,
+        inherited ? inherited.cycle_index + 1 : 1,
+        inherited?.max_cycles ?? input.maxCycles ?? 10,
+      );
+    }
     await this.event(
       caller,
       'created',
@@ -634,7 +718,20 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     }
     if (stage === 'consolidating' || (stage === 'reflecting' && this.needsConsolidation(record)))
       this.requireCapability('consolidation', checks);
-    await this.workflows.checkDependencies(caller, record.id, tx);
+    if (record.workflow.version < 5) {
+      await this.workflows.checkDependencies(caller, record.id, tx);
+    } else if (stage === 'researching') {
+      const selection = new Set(record.researchDependencies);
+      const pending = (
+        await this.workflows.dependencies(caller, record.id, tx)
+      ).dependencies.filter((item) => selection.has(item.id) && !item.settled && !item.failed);
+      check(
+        !pending.length,
+        'dependencies_pending',
+        `Waiting for research outcomes: ${pending.map((item) => `${item.name} (${item.state})`).join(', ')}`,
+        409,
+      );
+    }
     if (stage === 'reflecting') {
       check(
         record.reflectionId,
@@ -676,8 +773,10 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     // whose Reflections is gone. Anything else must know whether a plan waits for an answer.
     if (nextWave !== 'skip') {
       const approved = await this.continuing(caller, record, tx, checks);
-      if (approved && nextWave === 'create')
-        await this.creatable(caller, approved.plan, tx, checks);
+      if (approved && nextWave === 'create') {
+        this.checkAutomaticContinuation(caller, record);
+        await this.creatable(caller, approved.plan, tx, checks, record.workflow.version >= 5);
+      }
     }
     checks.forEach((check) => check());
   }
@@ -710,6 +809,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     plan: ChangeSpec,
     tx: Transaction,
     checks: BindingChecks,
+    acceptsFailures = false,
   ): Promise<void> {
     this.requireCapability('tasks', checks);
     const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
@@ -750,9 +850,26 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       );
       // The next cycle ends when work it waits on has died, so it would be opened already dead.
       check(
-        !['failed', 'abandoned'].includes(carried.state),
+        acceptsFailures || !['failed', 'abandoned'].includes(carried.state),
         'next_wave_inapplicable',
         `Carried-over work ${workflowId} has ${carried.state} and cannot be waited on; complete this cycle with nextWave: "skip"`,
+        409,
+      );
+    }
+  }
+
+  private checkAutomaticContinuation(caller: Caller, record: ResearchRecord) {
+    if (record.automation) {
+      check(
+        caller.actorId === record.ownerId,
+        'automatic_owner_required',
+        'Only the authorizing owner creates an automatic successor',
+        403,
+      );
+      check(
+        record.automation.cycle < record.automation.maxCycles,
+        'research_cycle_limit',
+        'The automatic research run has reached its cycle limit; complete with nextWave: skip',
         409,
       );
     }
@@ -772,6 +889,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     checks: BindingChecks,
   ): Promise<ResearchRecord> {
     const { plan } = approved;
+    this.checkAutomaticContinuation(caller, record);
     const created = new Map<string, string>();
     for (const item of ordered(plan.items)!) {
       // The text was written by a leased agent and is filed under the owner who accepted it;
@@ -1057,7 +1175,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
 
   /**
    * The owner reselects the work a cycle waits on while it is still defining or researching:
-   * an experiment abandoned after selection would otherwise hold the cycle forever. The
+   * legacy cycles may need to remove unsuccessful prerequisites; v5 retains them as outcomes. The
    * cycle's own children (its reflection, its consolidation) are never part of the selection.
    */
   async replan(
@@ -1131,6 +1249,10 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
             requestId: this.request(caller, input.requestId, 'end'),
           },
           tx,
+        );
+        await tx.run(
+          'UPDATE research_automation SET blocker_json=NULL WHERE research_id=?',
+          record.id,
         );
         await this.event(
           caller,
@@ -1211,6 +1333,7 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
                 caller,
                 {
                   title: `${clip(record.name, 288)}: reflection`,
+                  ...(record.automation ? { requirePlan: true } : {}),
                   // Absent rather than null, so a cycle that follows nothing replays as before.
                   ...(carried ? { previousCycleDigestId: carried.id } : {}),
                   requestId: this.request(caller, input.requestId, 'reflection'),
@@ -1291,6 +1414,10 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
             },
             tx,
           );
+        await tx.run(
+          'UPDATE research_automation SET blocker_json=NULL WHERE research_id=?',
+          record.id,
+        );
         await this.event(
           caller,
           'advanced',
@@ -1317,6 +1444,195 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       return result;
     });
   }
+  /** Subscribe through the existing engine's durable events; workers keep their fixed grants. */
+  async bindAutomatic(events: DomainEvents): Promise<() => Promise<void>> {
+    this.open();
+    const release = await automaticResearch(
+      this.state,
+      this.scope,
+      events,
+      async (caller, row, tx) => await this.reconcileAutomatic(caller, row, tx),
+    );
+    this.automaticBound = true;
+    try {
+      await this.wakeAutomatic();
+    } catch (error) {
+      this.automaticBound = false;
+      await release();
+      throw error;
+    }
+    return async () => {
+      this.automaticBound = false;
+      await release();
+    };
+  }
+
+  /** Startup and provider restoration must also revisit events previously consumed while blocked. */
+  async wakeAutomatic(): Promise<void> {
+    if (!this.automaticBound || this.closed) return;
+    await this.state.transaction(async (tx) => {
+      const rows = await tx.all<{ project_id: string; source_json: string; research_id: string }>(
+        "SELECT a.project_id,a.source_json,a.research_id FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE w.state NOT IN ('complete','abandoned','failed')",
+      );
+      const projects = new Set<string>();
+      for (const row of rows) {
+        if (projects.has(row.project_id)) continue;
+        projects.add(row.project_id);
+        await this.state.appendEvent(tx, {
+          projectId: row.project_id,
+          actorId: JSON.parse(row.source_json).actorId,
+          type: 'research.resume',
+          subjectId: row.research_id,
+          data: { performedBy: 'system:research' },
+        });
+      }
+    });
+  }
+
+  private async reconcileAutomatic(
+    caller: Caller,
+    automatic: AutomaticRow,
+    tx: Transaction,
+  ): Promise<ResearchAutomation['blocker']> {
+    this.open();
+    const record = await this.get(caller, automatic.research_id, tx);
+    await this.authorize(caller, record, tx);
+    if (over.has(record.workflow.state)) return null;
+    if (record.workflow.state === 'defining' && record.previousCycleId) {
+      const previous = await this.get(caller, record.previousCycleId, tx);
+      const current = await this.definition(caller, tx, []);
+      check(
+        !previous.problem || current.revision === previous.problem.revision,
+        'research_definition_changed',
+        'The project definition changed; explicitly accept it before continuing this automatic run',
+        409,
+      );
+    }
+    if (record.workflow.state === 'researching') await this.closeBlockedWork(caller, record, tx);
+    const atLimit = automatic.cycle_index >= automatic.max_cycles;
+    const nextWave = atLimit ? 'skip' : 'create';
+    const guidance = await this.workflows.evaluate(
+      caller,
+      record.id,
+      {
+        action: `advance_${record.workflow.state}`,
+        input: { nextWave },
+      },
+      tx,
+    );
+    const action = guidance.nextAction;
+    if (!action || action.status !== 'ready') {
+      const blocker = guidance.blockers[0] ?? guidance.actions.flatMap((item) => item.blockers)[0];
+      return blocker
+        ? { code: blocker.code, message: clip(blocker.message, 2000) }
+        : { code: 'research_waiting', message: guidance.instruction };
+    }
+    const stoppedByLimit = atLimit && !!(await this.continuing(caller, record, tx, []));
+    const advanced = await this.advance(
+      caller,
+      {
+        researchId: record.id,
+        expectedRevision: record.workflow.revision,
+        nextWave,
+        requestId: automaticRequest(record.id, record.workflow.revision, 'advance'),
+      },
+      tx,
+    );
+    await this.event(
+      caller,
+      'automatically_advanced',
+      record.id,
+      {
+        performedBy: 'system:research',
+        from: record.workflow.state,
+        to: advanced.workflow.state,
+        ...(advanced.successorId ? { successorId: advanced.successorId } : {}),
+      },
+      tx,
+    );
+    return stoppedByLimit && advanced.workflow.state === 'complete'
+      ? {
+          code: 'research_cycle_limit',
+          message: `Finished the authorized ${automatic.max_cycles} research cycles; no further wave was created`,
+        }
+      : null;
+  }
+
+  /** A permanently failed input cannot strand never-started work in this selected wave. */
+  private async closeBlockedWork(caller: Caller, record: ResearchRecord, tx: Transaction) {
+    const remaining = new Set(record.researchDependencies);
+    for (let pass = 0; remaining.size && pass < record.researchDependencies.length; pass++) {
+      let changed = false;
+      for (const id of [...remaining]) {
+        const work = await this.workflows.get(caller, id, tx);
+        if (
+          !['task', 'experiment'].includes(work.workflow) ||
+          !['in_progress', 'planned'].includes(work.state)
+        ) {
+          remaining.delete(id);
+          continue;
+        }
+        // Never cancel a running producer or review to close a wave.
+        if ((await this.workflows.workStarts(caller, id, tx)).length) {
+          remaining.delete(id);
+          continue;
+        }
+        const failed = (await this.workflows.dependencies(caller, id, tx)).dependencies.filter(
+          (item) => item.failed,
+        );
+        if (!failed.length) continue;
+        const reason = clip(
+          `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. Retained for reflection in ${record.name}.`,
+          16000,
+        );
+        const requestId = automaticRequest(record.id, work.revision, `close:${id}`);
+        if (work.workflow === 'task') {
+          await this.use('tasks', [], (service) =>
+            service.markFailed(
+              caller,
+              {
+                taskId: id,
+                expectedRevision: work.revision,
+                reason,
+                requestId,
+              },
+              tx,
+            ),
+          );
+        } else {
+          await this.use('experiments', [], (service) =>
+            service.transition(
+              caller,
+              {
+                experimentId: id,
+                expectedRevision: work.revision,
+                transition: 'abandon',
+                evidence: { reason },
+                requestId,
+              },
+              tx,
+            ),
+          );
+        }
+        await this.event(
+          caller,
+          'blocked_work_closed',
+          record.id,
+          {
+            performedBy: 'system:research',
+            workflowId: id,
+            failedInputs: failed.map((item) => item.id),
+            reason,
+          },
+          tx,
+        );
+        remaining.delete(id);
+        changed = true;
+      }
+      if (!changed) break;
+    }
+  }
+
   private bind<K extends keyof Capabilities>(name: K, value: Capabilities[K]): () => void {
     this.open();
     const binding = { value };
@@ -1438,26 +1754,50 @@ export const researchPlugin = {
     await ctx.effect(async function* () {
       const service = await createService(new ResearchService(ctx.state, ctx.scope, ctx.workflows));
       yield () => service.close();
+      ctx.inject(['domainEvents'], (ctx) => {
+        ctx.effect(async () => await service.bindAutomatic(ctx.domainEvents));
+      });
       ctx.inject(['paper'], (ctx) => {
-        ctx.effect(() => service.bindPaper(ctx.paper));
+        ctx.effect(async function* () {
+          yield service.bindPaper(ctx.paper);
+          await service.wakeAutomatic();
+        });
       });
       ctx.inject(['reflections'], (ctx) => {
-        ctx.effect(() => service.bindReflections(ctx.reflections));
+        ctx.effect(async function* () {
+          yield service.bindReflections(ctx.reflections);
+          await service.wakeAutomatic();
+        });
       });
       ctx.inject(['knowledge'], (ctx) => {
-        ctx.effect(() => service.bindKnowledge(ctx.knowledge));
+        ctx.effect(async function* () {
+          yield service.bindKnowledge(ctx.knowledge);
+          await service.wakeAutomatic();
+        });
       });
       ctx.inject(['consolidation'], (ctx) => {
-        ctx.effect(() => service.bindConsolidation(ctx.consolidation));
+        ctx.effect(async function* () {
+          yield service.bindConsolidation(ctx.consolidation);
+          await service.wakeAutomatic();
+        });
       });
       ctx.inject(['tasks'], (ctx) => {
-        ctx.effect(() => service.bindTasks(ctx.tasks));
+        ctx.effect(async function* () {
+          yield service.bindTasks(ctx.tasks);
+          await service.wakeAutomatic();
+        });
       });
       ctx.inject(['experiments'], (ctx) => {
-        ctx.effect(() => service.bindExperiments(ctx.experiments));
+        ctx.effect(async function* () {
+          yield service.bindExperiments(ctx.experiments);
+          await service.wakeAutomatic();
+        });
       });
       ctx.inject(['artifacts'], (ctx) => {
-        ctx.effect(() => service.bindArtifacts(ctx.artifacts));
+        ctx.effect(async function* () {
+          yield service.bindArtifacts(ctx.artifacts);
+          await service.wakeAutomatic();
+        });
       });
       yield ctx.provide('research', service);
     });

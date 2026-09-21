@@ -71,6 +71,21 @@ four hours, and the hard deadline twenty-four hours, capped at seven days.
 Heartbeat renews an active, unexpired lease only. Release, expiry and lost source
 authority close the execution permanently. Continuing agents remain registered unless their source authority is lost or they are explicitly retired.
 
+A machine reports how its launch ended: `launch_failed`, `workspace_failed`, `host_failed` or
+`crash_loop` count against the target and end, after `maxLaunchFailures`, in a hold only an
+admin clears. `preparation_deferred` is none of those: the machine was ready and willing and
+the place that work's history lives was away, busy or full (its `deferral` names the cause —
+`code_unavailable`, `transport_unavailable`, `store_busy`, `base_pending` — and the refusal
+code beneath it). It counts against nobody, forms no hold, and only spaces the attempts out by
+the same thirty seconds a failure does; three such closes in a row are shown in `session.stuck`
+as `work_deferred`, with the cause. A `completed` outcome is still recorded only by the
+worker's own handoff, never by a release.
+
+Work whose workspace policy names a driver is offered only to a machine whose heartbeat lists
+that driver among its `capabilities`; the automatic lease answers `runner_incompatible` when
+that is all that is left of the queue, and a hand offer to such a machine is refused when it
+attaches. Everything else in the queue still reaches every machine.
+
 Closed work leaves durable events for the responsible domain plugin to release
 the exact ownership handle. Cleanup can wait while that plugin is unavailable.
 A successor execution receives a new ownership handle; an explicitly continuing agent retains its worker identity, while logical task ownership,

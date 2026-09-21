@@ -62,19 +62,34 @@ There are two base forms:
 
 A workspace belongs to a workflow **version**, because a published execution policy is immutable. The choice is made once, at creation, and nothing is ever upgraded into Git.
 
-| Work                                  | Writable checkout                                                 | Reviewer checkout                                                 |
-| ------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Git experiment (`experiment@2/4/6`)   | `running`: persistent shared `experiments`, base `central`        | `experiment_review`: ephemeral read-only, `reference:code`        |
-| Based Git experiment (`experiment@7`) | `running`: persistent shared `experiments`, base `reference:base` | as above                                                          |
-| Git task (`task@3`)                   | `in_progress`: persistent shared `tasks`, base `central`          | `in_review`: ephemeral read-only `task-reviews`, `reference:code` |
-| Based Git task (`task@4`)             | `in_progress`: persistent shared `tasks`, base `reference:base`   | as above                                                          |
-| Consolidation                         | its own persistent checkout (see `docs/CODE_OPERATIONS.md`)       | —                                                                 |
+| Work                                          | Writable checkout                                                 | Reviewer checkout                                                 |
+| --------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Git experiment (`experiment@2/4/6`)           | `running`: persistent shared `experiments`, base `central`        | `experiment_review`: ephemeral read-only, `reference:code`        |
+| Based Git experiment (`experiment@7`)         | `running`: persistent shared `experiments`, base `reference:base` | as above                                                          |
+| Git experiment, derived base (`experiment@8`) | as `experiment@7`                                                 | as above                                                          |
+| Git task (`task@3`)                           | `in_progress`: persistent shared `tasks`, base `central`          | `in_review`: ephemeral read-only `task-reviews`, `reference:code` |
+| Based Git task (`task@4`)                     | `in_progress`: persistent shared `tasks`, base `reference:base`   | as above                                                          |
+| Git task, derived base (`task@5`)             | as `task@4`                                                       | as above                                                          |
+| Consolidation                                 | its own persistent checkout (see `docs/CODE_OPERATIONS.md`)       | —                                                                 |
 
-`task.create` and `experiment.create` take `workspace: "git"`; omitted means scratch, and every earlier task and experiment is unchanged. A Git task's producer is granted `code.commit` and `code.operation` explicitly and delivers that operation's `commandId` (see `docs/STRUCTURED_TASK_EVIDENCE.md`). After a returned review the successor lease re-enters the same `tasks` checkout at the previous head. The reviewer's `reference:code` is the delivered commit's head, never the branch tip: a close-time WIP capture added above the delivered commit is not under review.
+`task.create` and `experiment.create` take `workspace: "git"`; omitted means scratch, and every earlier task and experiment is unchanged. Without `baseTaskId` new Git work starts on `task@5` or `experiment@8`; `task@3` and `experiment@6`, which start from `central`, stay registered for the work already on them and nothing new is created there. A Git task's producer is granted `code.commit` and `code.operation` explicitly and delivers that operation's `commandId` (see `docs/STRUCTURED_TASK_EVIDENCE.md`). After a returned review the successor lease re-enters the same `tasks` checkout at the previous head. The reviewer's `reference:code` is the delivered commit's head, never the branch tip: a close-time WIP capture added above the delivered commit is not under review.
+
+### The derived base
+
+`task@5` and `experiment@8` declare the same `reference:base` as the versions above, but nobody names the base. Code derives it from the work's `dependsOn` prerequisites (stage S1 of [the Git model](GIT_MODEL.md)):
+
+- a prerequisite accepted with code contributes exactly its reviewed commit, and nothing beneath it is looked at;
+- a prerequisite that succeeded without code is looked through, to what it depended on;
+- a prerequisite on a workspace version that has no verifiable acceptance (it succeeded before acceptances existed, while Code was unloaded, or in another repository) blocks, as does a code-less success whose own prerequisites are unfinished: `code_base_pending`;
+- no commit at all gives the project's main as bound by `code.local.bind`; one commit, reached by however many paths, is the base; several different commits are `code_merge_required`, because nothing merges them yet.
+
+The base is pinned inside the transaction that acquires the first lease — a task's first producer, an experiment's first planner or, if the design was written by hand, its first running worker — and is immutable: a returned task, a revised plan and a main that has moved since all reuse it. The frozen `references.base` is read from that pin and from nothing else, so reading an assignment never derives or writes. Work whose base cannot be derived is refused at lease admission, so it is never a dispatch candidate, never launched and never counted as a launch failure; Code publishes why as a blocker, which `workflow.status_and_next` gates on, the overview lists under `blocked` and `session.stuck` reports as `work_blocked`. An interactive producer has no checkout and therefore no `base`.
+
+S1 is local mode with exactly one runner repository per project: nothing keeps this work away from a runner whose repository lacks the pinned commit, and such a runner reports `workspace_failed`, which is a counted launch failure.
 
 ### Building on a delivered commit
 
-A Git task or Git experiment created with `baseTaskId` runs on `reference:base`, frozen to the head that task delivered. The base must be a Git task and must also be one of the new work's `dependsOn` prerequisites, so it has been accepted (`done`, which is terminal) before any checkout is prepared; the OID a shared persistent slot fixes at its first launch therefore never moves. Only an accepted Git task's delivered commit can be a base: an experiment capture, a consolidation or an arbitrary OID cannot. There is no fallback to `central`; an unresolvable base answers `task_base_unavailable` or `experiment_base_unavailable`.
+This is the older explicit form, kept on `task@4` and `experiment@7`. A Git task or Git experiment created with `baseTaskId` runs on `reference:base`, frozen to the head that task delivered. The base must be a Git task and must also be one of the new work's `dependsOn` prerequisites, so it has been accepted (`done`, which is terminal) before any checkout is prepared; the OID a shared persistent slot fixes at its first launch therefore never moves. Only an accepted Git task's delivered commit can be a base: an experiment capture, a consolidation or an arbitrary OID cannot. There is no fallback to `central`; an unresolvable base answers `task_base_unavailable` or `experiment_base_unavailable`.
 
 The delivered objects exist only in the private repository of the runner machine that produced them, rooted under `refs/merv/commands/`. The review of a Git task, and any work based on its commit, must therefore run on that machine; elsewhere the runner refuses the launch with `workspace_base_missing`. This is the same limit Git experiments have: there is no cross-machine object transport.
 
@@ -83,6 +98,18 @@ The delivered objects exist only in the private repository of the runner machine
 The source is cloned once into a private bare repository without local hardlinks, alternates, or a retained source remote. The original repository is not changed. No fetch or network clone runs. The configured local source must remain available for current manager validation; importing newer source commits and transferring objects between machines remain open work.
 
 Persistent branches start with `codex/merv/`. Shared persistent, per-base persistent and ephemeral checkouts occupy separate directory roots, so valid policy changes cannot nest one checkout inside another. Git-unsafe namespace components are encoded without collisions; full base OIDs distinguish per-base lineages.
+
+## The `code.v2` driver
+
+A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). `task@6` and `experiment@9` name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Everything else on this page describes the runner's own driver, which serves every policy that names none.
+
+The driver belongs to Code and lives beside the runner's ledger under `code-v2/`, with its own tables (`code_v2_repositories`, `code_v2_workspaces`, `code_v2_transfers`); it never touches the runner's repository or tables, needs no local source and holds no GitHub credential.
+
+- **Prepare.** The driver asks Code for the session's manifest, which only reads: exactly the newest commit Code admitted for a writer (a resumed unit continues on any machine, including the trailing work the last session left), exactly the referenced commit for a reviewer. It downloads a bundle in parts, telling Code which commits its cache already holds; should that claim be wrong the import fails and the one retry claims nothing. The cache is a bare repository without a remote. A writer's checkout stands on the local branch `merv/work/<unit>`, put on exactly the named head; a reviewer's is detached and removed afterwards.
+- **Commit.** `code.commit` builds the same deterministic commit as the runner's own driver, but keeps it aside under `refs/merv/pending/*`, uploads it under the writer fence and moves HEAD only when Code has admitted it. A commit Code quarantines leaves the checkout exactly as it was and fails the command with `code_capture_quarantined`; the agent removes what was found and commits again under a new request. An interrupted upload continues from the byte Code says it holds.
+- **Final capture.** After the process has stopped, what is uncommitted becomes one `merv: capture <session>` commit. It is journalled before Code hears of it, so a restart hands over that same commit and never builds another. The session's result names the head Code acknowledged: when the final capture is quarantined or its generation was fenced, that is the last admitted head, and the refused work stays in the machine's checkout and in Code's `held/` directory.
+- **Deferral.** When Code, its store or the network cannot serve, the driver raises a deferral with a cause (`code_unavailable`, `transport_unavailable`, `store_busy`, `base_pending`) instead of a failure of the launch. The runner gives the lease back as `preparation_deferred` with that cause: nothing counts it, no hold can form from it, and the target is offered again after the usual backoff. A deferral during a commit or a final capture is simply retried on the next cycle, because the machine still owes that handover.
+- **Publication.** None of this touches GitHub. Code publishes `refs/merv/work/**` and `refs/merv/accepted/**` itself, asynchronously, long after the handoff is complete; a machine holds no credential for it and never waits for it.
 
 ## Ownership, capture and cleanup
 

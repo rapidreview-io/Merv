@@ -13,6 +13,10 @@ export interface ResearchCreate {
    * this cycle's reflection receives it. A cycle is followed by at most one other.
    */
   previousCycleId?: string;
+  /** Run the cycle and its approved successors without manual advances. Opt-in. */
+  automatic?: boolean;
+  /** Maximum cycles in this automatic run, including this one; defaults to 10. */
+  maxCycles?: number;
   requestId: string;
 }
 /** What every command on an existing cycle names: the cycle, the revision it read, the request. */
@@ -49,10 +53,18 @@ export interface ResearchOrigin {
   items: { key: string; kind: 'task' | 'experiment'; id: string }[];
   carriedOver: string[];
 }
+export interface ResearchAutomation {
+  rootId: string;
+  cycle: number;
+  maxCycles: number;
+  /** Why automatic progress is waiting or has stopped; no source credentials are exposed. */
+  blocker: { code: string; message: string } | null;
+}
 export interface ResearchRecord {
   id: string;
   projectId: string;
   ownerId: string;
+  automation?: ResearchAutomation | null;
   name: string;
   createdAt: string;
   researchDependencies: string[];

@@ -25,7 +25,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     writeFileSync(
       join(directory, 'dist/config/default.json'),
       JSON.stringify({
-        plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui'].map((id) => ({
+        plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui', 'code'].map((id) => ({
           id,
           name: id,
         })),
@@ -52,7 +52,10 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       });
     assert.equal(run().status, 0);
     let config = JSON.parse(readFileSync(output));
-    assert.equal(config.plugins.length, 6);
+    assert.equal(config.plugins.length, 7);
+    assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
+      repositories: { root: '/var/lib/merv-ts/code' },
+    });
     assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts');
     assert.equal(statSync(output).mode & 0o077, 0);
     assert.equal(
@@ -60,7 +63,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       0,
     );
     config = JSON.parse(readFileSync(output));
-    assert.equal(config.plugins.length, 7);
+    assert.equal(config.plugins.length, 8);
     assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
     const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
     assert.deepEqual(history.config, { sourceId: 'source-v2' });

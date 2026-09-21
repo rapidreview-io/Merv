@@ -2,9 +2,11 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Context } from 'cordis';
-import { runnerPlugin, validateRunnerConfig } from '@merv/runner';
+import { runnerWith, validateRunnerConfig } from '@merv/runner';
+import { codeWorkspaceDriver } from '@merv/code/driver/index';
 import { createApp } from './app.js';
 import { uploadArtifact } from './artifact-upload.js';
+import { importRepository } from './code-import.js';
 import { defaultConfigFile, loadConfiguration } from './config.js';
 import type {} from '@merv/identity/types';
 import { check, MervError, type Credentials, type Role } from '@merv/contracts';
@@ -14,15 +16,17 @@ function options(command: string, args: string[]) {
   const allowed = new Set(
     command === 'artifact-upload'
       ? ['url', 'file', 'token-env', 'project', 'title', 'media-type']
-      : command === 'runner'
-        ? ['config']
-        : command === 'serve'
-          ? ['dir', 'host', 'port', 'config']
-          : command === 'adopt-project'
-            ? ['dir', 'project', 'config', 'token-env', 'repair-reason']
-            : command === 'init'
-              ? ['dir', 'name']
-              : ['dir', 'name', 'role'],
+      : command === 'code-import'
+        ? ['url', 'repository', 'ref', 'token-env', 'project']
+        : command === 'runner'
+          ? ['config']
+          : command === 'serve'
+            ? ['dir', 'host', 'port', 'config']
+            : command === 'adopt-project'
+              ? ['dir', 'project', 'config', 'token-env', 'repair-reason']
+              : command === 'init'
+                ? ['dir', 'name']
+                : ['dir', 'name', 'role'],
   );
   for (let i = 0; i < args.length; i++) {
     check(
@@ -90,7 +94,7 @@ async function runMachine(configPath: string) {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
-    const fiber = ctx.plugin(runnerPlugin, config);
+    const fiber = ctx.plugin(runnerWith([codeWorkspaceDriver]), config);
     await fiber.await();
     if (stopping) return;
     const runner = ctx.get('runner');
@@ -123,6 +127,7 @@ async function main() {
   npm run cli -- adopt-project --project ID --config PATH --token-env ENV_NAME [--dir .merv] [--repair-reason TEXT]
   npm run cli -- runner --config PATH
   npm run cli -- artifact-upload --url URL --file PATH --token-env ENV_NAME [--project ID] [--title TEXT] [--media-type TYPE]
+  npm run cli -- code-import --url URL --repository PATH --ref REF --token-env ENV_NAME [--project ID]
   npm start -- [--dir .merv] [--config PATH] [--port 3081] [--host 127.0.0.1]
 
 init writes the local operator credential to credentials.json (mode 0600).
@@ -143,11 +148,24 @@ Its directory and executable paths containing '/' resolve relative to that confi
 Bare executable names use PATH; command arguments remain literal and run from the
 assigned workspace. SIGINT/SIGTERM stops owned workers and releases their leases.
 artifact-upload reads a local file (up to 2 MB) and calls artifact.create through MCP.
-It prints only the artifact receipt; file/base64 contents never pass through the agent prompt.`);
+It prints only the artifact receipt; file/base64 contents never pass through the agent prompt.
+code-import brings one branch or tag of a local Git repository into the repository the server
+keeps for a project, as a project administrator. It cuts a bundle that leaves out what the
+server already holds, sends it in parts and waits for admission; the local repository is only
+read. It prints the operation, with findings when the history was refused. A history larger
+than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
     return;
   }
   check(
-    ['init', 'actor', 'serve', 'adopt-project', 'runner', 'artifact-upload'].includes(command),
+    [
+      'init',
+      'actor',
+      'serve',
+      'adopt-project',
+      'runner',
+      'artifact-upload',
+      'code-import',
+    ].includes(command),
     'arguments',
     `Unknown command: ${command}`,
   );
@@ -177,6 +195,29 @@ It prints only the artifact receipt; file/base64 contents never pass through the
         }),
       ),
     );
+    return;
+  }
+  if (command === 'code-import') {
+    check(
+      args.url &&
+        args.repository &&
+        args.ref &&
+        args['token-env'] &&
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(args['token-env']),
+      'arguments',
+      'code-import requires --url URL --repository PATH --ref REF --token-env ENV_NAME',
+    );
+    const token = process.env[args['token-env']];
+    check(token, 'arguments', 'The named credential environment variable is empty');
+    const operation = await importRepository({
+      url: args.url,
+      repository: resolve(args.repository),
+      ref: args.ref,
+      token,
+      projectId: args.project,
+    });
+    console.log(JSON.stringify(operation));
+    if (operation.status !== 'completed') process.exitCode = 1;
     return;
   }
   if (command === 'runner') {

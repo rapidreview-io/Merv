@@ -1,4 +1,10 @@
-import { createService, MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import {
+  createService,
+  MervError,
+  type Caller,
+  type WorkflowPolicy,
+  type WorkflowProvidedBlockerInput,
+} from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -200,6 +206,7 @@ async function fixture(
   return {
     state,
     scope,
+    workflows,
     handle,
     owner,
     source,
@@ -245,10 +252,25 @@ async function fixture(
         ))!.session_json,
       ),
     /** One automatic lease on the runner that the launching machine reports as failed. */
-    async fail(runnerId = 'machine', outcome: 'launch_failed' | 'host_failed' = 'launch_failed') {
+    async fail(
+      runnerId = 'machine',
+      outcome:
+        | 'launch_failed'
+        | 'host_failed'
+        | 'workspace_failed'
+        | 'preparation_deferred' = 'launch_failed',
+      deferral?: { cause: string; code: string },
+    ) {
       const leased = await sessions.lease(source, auto(runnerId));
       assert.ok(leased.session, leased.reason);
-      await sessions.release(source, { sessionId: leased.session.id, runnerId, outcome });
+      await sessions.release(source, {
+        sessionId: leased.session.id,
+        runnerId,
+        outcome,
+        ...(outcome === 'preparation_deferred'
+          ? { deferral: deferral ?? { cause: 'store_busy', code: 'code_store_full' } }
+          : {}),
+      });
       return leased.session;
     },
     /** Past the thirty-second backoff, with every runner still fresh. */
@@ -301,6 +323,20 @@ for (const backend of backends)
       );
     },
   );
+
+test('a runner whose repository lacks the pinned base counts a launch failure, which is why one project has one local runner', async (t) => {
+  // The baseline stage S1 of docs/GIT_MODEL.md accepts: nothing yet keeps work away from a
+  // runner that does not hold the commit, so its failed checkout is counted like any other.
+  const f = await fixture(t, { maxLaunchFailures: 3 });
+  await f.sessions.heartbeatRunner(f.source, presence('elsewhere'));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  await f.fail('elsewhere', 'workspace_failed');
+  assert.deepEqual(
+    (await f.holds()).map((row) => [row.instance_id, row.attempts, row.last_code]),
+    [[target.id, 1, 'workspace_failed']],
+  );
+});
 
 for (const backend of backends)
   test(
@@ -885,6 +921,67 @@ test('a ready step nobody takes is quiet, an operator step included, and a faili
   );
 });
 
+for (const code of ['code_base_pending', 'code_merge_required', 'code_dependencies_changed'])
+  test(`a base that turns ${code} at the offer is not counted against the target`, async (t) => {
+    const f = await fixture(t, { maxLaunchFailures: 1 });
+    await f.sessions.heartbeatRunner(f.source, presence());
+    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.instance();
+    f.onBuild(() => {
+      throw new MervError(code, 'The base cannot be pinned yet', 409);
+    });
+    // With nothing else leasable the runner is told why; the target itself is left alone.
+    await assert.rejects(async () => await f.sessions.lease(f.source, auto()), { code });
+    assert.deepEqual(await f.holds(), []);
+    assert.deepEqual(await f.events('session.dispatch_held'), []);
+    f.onBuild();
+    assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  });
+
+test('work another plugin published a blocker for is named in the stuck report until it clears', async (t) => {
+  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  f.wallClock();
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  const publish = async (blockers: WorkflowProvidedBlockerInput[]) =>
+    await f.state.transaction(
+      async (tx) =>
+        await f.workflows.replaceBlockers(
+          { projectId: f.owner.projectId, instanceId: target.id, provider: 'probe', blockers },
+          tx,
+        ),
+    );
+  await publish([
+    {
+      key: 'merge',
+      code: 'code_merge_required',
+      message: 'Two accepted commits must be combined.',
+      status: 409,
+      next: 'Recreate the work on one of them.',
+    },
+  ]);
+  const report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.instanceId, item.code, item.why, item.next]),
+    [
+      [
+        'work_blocked',
+        target.id,
+        'code_merge_required',
+        'Two accepted commits must be combined.',
+        'Recreate the work on one of them.',
+      ],
+    ],
+  );
+  assert.equal(report.items[0].since, (await f.workflows.blockers(f.owner))[0].since);
+  assert.deepEqual([report.total, report.counts.work_blocked], [1, 1]);
+  const status = await f.sessions.projectStatus(f.owner);
+  assert.deepEqual(status.stuck, { total: 1, counts: report.counts });
+  await publish([]);
+  assert.deepEqual((await f.sessions.stuck(f.owner)).counts.work_blocked, 0);
+});
+
 test('the assembled application offers the stuck report as a read tool and the go-ahead as an admin tool, neither to a leased worker', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-stuck-tools-'));
   const env = `MERV_STUCK_TEST_${randomUUID().replaceAll('-', '')}`;
@@ -970,4 +1067,95 @@ test('the assembled application offers the stuck report as a read tool and the g
       async () => await app.ctx.tools.call(tool, worker, input),
       (error: MervError) => error.status === 403,
     );
+});
+
+for (const backend of backends)
+  test(
+    `a preparation nobody could make is deferred: it names its cause, never counts, and is offered again after the backoff (${backend.name})`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, { postgres: backend.postgres, maxLaunchFailures: 3 });
+      await f.sessions.heartbeatRunner(f.source, presence());
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      const target = await f.instance();
+
+      // The cause is what keeps a deferral out of the counters, so it is named or refused.
+      const leased = await f.sessions.lease(f.source, auto());
+      assert.ok(leased.session, leased.reason);
+      const control = { sessionId: leased.session.id, runnerId: 'machine' };
+      await assert.rejects(
+        async () =>
+          await f.sessions.release(f.source, { ...control, outcome: 'preparation_deferred' }),
+        { code: 'invalid_deferral' },
+      );
+      await assert.rejects(
+        async () =>
+          await f.sessions.release(f.source, {
+            ...control,
+            outcome: 'workspace_failed',
+            deferral: { cause: 'store_busy', code: 'code_store_full' },
+          }),
+        { code: 'invalid_deferral' },
+      );
+      const deferred = await f.sessions.release(f.source, {
+        ...control,
+        outcome: 'preparation_deferred',
+        deferral: { cause: 'store_busy', code: 'code_store_full' },
+      });
+      assert.deepEqual(
+        [deferred.outcome, deferred.deferral],
+        ['preparation_deferred', { cause: 'store_busy', code: 'code_store_full' }],
+      );
+      assert.deepEqual(
+        (await f.events('session.closed')).at(-1)!.data.deferral,
+        { cause: 'store_busy', code: 'code_store_full' },
+        'the durable event carries the cause too',
+      );
+
+      // The same target is not offered again inside the backoff, and is after it.
+      assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retry_backoff');
+      for (let attempt = 0; attempt < 9; attempt++) {
+        await f.pastBackoff();
+        await f.fail('machine', 'preparation_deferred');
+      }
+      assert.deepEqual(await f.holds(), [], 'ten deferred closes hold nothing');
+
+      // The same target failing once counts, which is the difference.
+      await f.pastBackoff();
+      await f.fail('machine', 'workspace_failed');
+      assert.deepEqual(
+        (await f.holds()).map((row) => [row.instance_id, row.attempts, row.last_code]),
+        [[target.id, 1, 'workspace_failed']],
+      );
+    },
+  );
+
+test('a run of deferred preparations is shown as work nobody could take, with its cause', async (t) => {
+  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  f.wallClock();
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  const kinds = async () => (await f.sessions.stuck(f.owner)).items.map((item) => item.kind);
+
+  await f.fail('machine', 'preparation_deferred');
+  await f.pastBackoff();
+  await f.fail('machine', 'preparation_deferred');
+  f.advance(11 * minute);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  assert.deepEqual(await kinds(), ['ready_quiet'], 'two are not yet a run');
+
+  await f.fail('machine', 'preparation_deferred', {
+    cause: 'code_unavailable',
+    code: 'code_unavailable',
+  });
+  const report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.instanceId, item.code, item.attempts]),
+    [['work_deferred', target.id, 'code_unavailable', 3]],
+    'the deferred item replaces the quiet one',
+  );
+  assert.equal(report.total, 1, 'nothing counts it, so only this report asks for someone');
+  assert.match(report.items[0].why, /could not prepare its checkout/);
+  assert.match(report.items[0].next, /code\.status/);
 });

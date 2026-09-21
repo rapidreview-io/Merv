@@ -5,6 +5,7 @@
  * changes production routes, or deletes retained test data.
  */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -93,6 +94,23 @@ export async function exerciseRuntime(start) {
       credentialId: boot.credential.id,
     };
     const operator = await connect(boot.token);
+
+    // Code keeps one Git repository per project on the data volume. This image must carry a
+    // Git the server can run, and the repository root must be writable where the volume is.
+    checkpoint('code-repository');
+    const codeStatus = await call(operator, 'code.status');
+    assert.ok(codeStatus.store, 'This image must keep Code repositories');
+    assert.equal(codeStatus.store.hosted, false, 'A synthetic project imports nothing');
+    assert.ok(codeStatus.store.quotaBytes > 0);
+    assert.equal(codeStatus.mirror.state, 'off', 'Nothing is published for a synthetic project');
+    console.log(
+      JSON.stringify({
+        acceptance: 'running',
+        stage: 'code-repository',
+        git: execFileSync('/usr/bin/git', ['--version'], { encoding: 'utf8' }).trim(),
+      }),
+    );
+
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
     const { agent } = await http('/sessions/agents', boot.token, {
       name: 'Smoke continuing agent',

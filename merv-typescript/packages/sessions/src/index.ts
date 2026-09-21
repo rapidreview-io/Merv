@@ -1,5 +1,6 @@
 import { visible, createService, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
@@ -27,6 +28,7 @@ import {
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { AgentDirectory, sourceCaller } from './agents.js';
 import { AgentObservations, lastActivity, summarizeAgent } from './observations.js';
+import { SessionServiceWork } from './service-work.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
@@ -44,7 +46,9 @@ import type {
   RunnerSettings,
   SessionsProjectStatus,
   StuckReport,
+  SessionDeferral,
   SessionOutcome,
+  SessionReleaseOutcome,
   SessionWorkspace,
   SessionWorkspaceObservation,
   SessionBudgetInput,
@@ -68,10 +72,26 @@ const secondsDefaults = {
 const configKeys = new Set([
   'sweepIntervalMs',
   'maxLaunchFailures',
+  'serviceConcurrency',
   ...Object.keys(secondsDefaults),
 ]);
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
+const releaseOutcomes = new Set<string>([
+  'completed',
+  'host_failed',
+  'launch_failed',
+  'workspace_failed',
+  'preparation_deferred',
+  'crash_loop',
+]);
+/** Opaque to Sessions: whatever prepares checkouts names the cause, and Sessions records it. */
+const deferralSchema = z
+  .object({
+    cause: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    code: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+  })
+  .strict();
 /**
  * Why a session that has already ended is refusing. The reason survives the first refusal
  * because a worker whose response was lost has nothing else to go on: retrying its handoff
@@ -145,6 +165,7 @@ export class LeasedSessions implements Sessions {
   private closing?: Promise<void>;
   private closed = false;
   private dispatcher!: SessionDispatch;
+  serviceWork!: SessionServiceWork;
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
   /** Complete storage migrations before publishing this service. */
@@ -309,6 +330,11 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         BEGIN SELECT RAISE(ABORT,'Session usage is recorded once'); END;
     `,
         },
+        {
+          version: 5,
+          postgres: postgresMigrations[5],
+          sql: `CREATE INDEX worker_sessions_instance ON worker_sessions(project_id,instance_id,revision);`,
+        },
       ]);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
@@ -334,6 +360,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           this.thresholds,
         ),
       );
+      this.serviceWork = new SessionServiceWork(
+        state,
+        scope,
+        workflows,
+        this.clock,
+        options.serviceConcurrency ?? 1,
+      );
+      await this.serviceWork.initialize();
       try {
         this.disposers.push(
           scope.registerSessionAuthority({
@@ -611,6 +645,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         revision: session.expectedRevision,
         status,
         outcome: session.outcome,
+        ...(session.deferral ? { deferral: { ...session.deferral } } : {}),
         reason,
         source: session.source,
       },
@@ -671,6 +706,30 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       );
     }
   }
+  async contributors(
+    projectId: string,
+    instanceId: string,
+    beforeRevision: number | null,
+    tx: Transaction,
+  ) {
+    this.state.assertTransaction(tx);
+    const writable =
+      tx.dialect === 'postgres'
+        ? "(session_json::jsonb #>> '{execution,policy,readOnly}')='false'"
+        : "json_extract(session_json,'$.execution.policy.readOnly')=0";
+    const rows = await tx.all<{ id: string; actor_id: string; session_json: string }>(
+      `SELECT id,actor_id,session_json FROM worker_sessions WHERE project_id=? AND instance_id=? AND ${writable}${beforeRevision === null ? '' : ' AND revision<?'} ORDER BY id`,
+      projectId,
+      instanceId,
+      ...(beforeRevision === null ? [] : [beforeRevision]),
+    );
+    return rows.map((row) => ({
+      ref: row.id,
+      actorId: row.actor_id,
+      authorityId: (JSON.parse(row.session_json) as Session).source.actorId,
+    }));
+  }
+
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
     ({ caller, input } = structuredClone({ caller, input }));
     check(
@@ -813,6 +872,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           tx,
         ),
     );
+    const workspace = effectiveWorkspace(frozen.execution.policy);
+    if (workspace.mode !== 'none' && workspace.driver !== undefined)
+      check(
+        await this.dispatcher.capable(caller, input.runnerId, workspace.driver, tx),
+        'runner_incompatible',
+        'This runner does not advertise the workspace driver the assignment needs',
+        409,
+      );
     for (const packet of [
       frozen.assignment,
       frozen.execution.policy,
@@ -1099,7 +1166,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
           : includeDependencies
             ? await this.workflows.dependencyClosure(caller, instanceId, tx)
             : [(await this.workflows.get(caller, instanceId, tx)).id];
-      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds);
+      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds, instanceId);
       return {
         scope:
           instanceId === undefined || instanceIds === null
@@ -1264,6 +1331,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         'Attachment must match the frozen workspace mode',
         409,
       );
+      // A hand offer names its runner itself, so the driver it needs is asked for here too.
+      if (policy.mode !== 'none' && policy.driver !== undefined)
+        check(
+          await this.dispatcher.capable(caller, session.runnerId, policy.driver, tx),
+          'runner_incompatible',
+          'This runner does not advertise the workspace driver the assignment needs',
+          409,
+        );
       if (workspace && policy.mode !== 'none') {
         if (policy.base.startsWith('reference:')) {
           const name = policy.base.slice('reference:'.length);
@@ -1449,7 +1524,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       ...input
     }: SessionControl & {
       reason?: string;
-      outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      outcome?: SessionReleaseOutcome;
+      deferral?: SessionDeferral;
       usage?: SessionUsageReport;
     },
   ): Promise<Session> {
@@ -1461,12 +1537,17 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       'Usage reports non-negative token counts and an optional cost and model',
     );
     check(
-      input.outcome === undefined ||
-        ['completed', 'host_failed', 'launch_failed', 'workspace_failed', 'crash_loop'].includes(
-          input.outcome,
-        ),
+      input.outcome === undefined || releaseOutcomes.has(input.outcome),
       'invalid_outcome',
       'Unknown session process outcome',
+    );
+    // A deferral is what keeps a put-off preparation out of the counters, so it is named or
+    // the close is an ordinary failure. Nothing else carries one.
+    check(
+      (input.outcome === 'preparation_deferred') ===
+        deferralSchema.safeParse(input.deferral).success,
+      'invalid_deferral',
+      'A deferred preparation names its cause and code, and no other outcome carries one',
     );
     check(
       input.reason === undefined || text(input.reason, 200),
@@ -1482,7 +1563,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   }
   private async closeReleased(
     session: Session,
-    input: { reason?: string; outcome?: SessionOutcome },
+    input: { reason?: string; outcome?: SessionOutcome; deferral?: SessionDeferral },
     tx: Transaction,
   ): Promise<Session> {
     // A session whose handoff already landed is recorded as that, whoever releases it; a
@@ -1494,6 +1575,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       'invalid_outcome',
       'A completed outcome is recorded by the worker’s own handoff, not by a release',
     );
+    if (input.deferral) session.deferral = structuredClone(input.deferral);
     return await this.closeSession(
       session,
       input.reason ?? 'released',
@@ -1857,6 +1939,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     };
   }
   private async sweepTransaction(tx: Transaction): Promise<void> {
+    await this.serviceWork.expire(tx);
     const idle = this.idlePass(tx);
     for (const row of await tx.all<Row>(
       tx.dialect === 'postgres'

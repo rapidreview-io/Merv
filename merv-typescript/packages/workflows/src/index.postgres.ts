@@ -117,4 +117,35 @@ $merv$;
 CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
 FOR EACH ROW EXECUTE FUNCTION wf_limit_grants_no_delete_guard();
 `,
+  6: `
+CREATE TABLE wf_blockers (
+    project_id TEXT NOT NULL, instance_id TEXT NOT NULL, provider TEXT NOT NULL,
+    blocker_key TEXT NOT NULL, code TEXT NOT NULL, message TEXT NOT NULL,
+    status BIGINT NOT NULL CHECK (status BETWEEN 400 AND 599), next TEXT NOT NULL,
+    related_json TEXT NOT NULL, since TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY (instance_id,provider,blocker_key)
+  );
+  CREATE INDEX wf_blockers_project ON wf_blockers(project_id,provider);
+  CREATE OR REPLACE FUNCTION wf_blockers_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.instance_id IS DISTINCT FROM OLD.instance_id OR
+  NEW.provider IS DISTINCT FROM OLD.provider OR NEW.blocker_key IS DISTINCT FROM OLD.blocker_key THEN
+    RAISE EXCEPTION USING MESSAGE = 'Workflow blocker identity is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER wf_blockers_identity BEFORE UPDATE ON wf_blockers
+FOR EACH ROW EXECUTE FUNCTION wf_blockers_identity_guard();
+`,
+  7: `ALTER TABLE wf_dependencies ADD COLUMN kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system'));
+ALTER TABLE wf_dependencies ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE wf_dependencies DROP CONSTRAINT wf_dependencies_pkey;
+ALTER TABLE wf_dependencies ADD PRIMARY KEY(source_id,target_id,kind,owner);
+ALTER TABLE wf_dependencies ADD CHECK((kind='declared' AND owner='') OR (kind='system' AND owner<>''));
+CREATE FUNCTION wf_dependencies_identity_guard() RETURNS trigger AS $$ BEGIN IF NEW.kind IS DISTINCT FROM OLD.kind OR NEW.owner IS DISTINCT FROM OLD.owner THEN RAISE EXCEPTION 'Dependency contracts are immutable'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies FOR EACH ROW EXECUTE FUNCTION wf_dependencies_identity_guard();
+CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
+CREATE FUNCTION wf_system_requests_guard() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'System requests are immutable and retained'; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER wf_system_requests_guard BEFORE UPDATE OR DELETE ON wf_system_requests FOR EACH ROW EXECUTE FUNCTION wf_system_requests_guard();`,
 };

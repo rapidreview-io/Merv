@@ -1,6 +1,14 @@
 import { visible } from './text.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
+import type {
+  CodeMirrorStatus,
+  CodeStoreOperation,
+  CodeStoreStatus,
+  CodeStoreWarning,
+} from './code-store.js';
+import type { CodeUnit, CodeBaseRecord } from './code-units.js';
+import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
 
 export interface CodeCommitInput {
   expectedHead: string;
@@ -21,6 +29,7 @@ export interface CodeCommitCommand {
   expectedHead: string;
   message: string;
   createdAt: string;
+  merge?: 'start' | 'complete';
 }
 /** An immutable, authenticated runner observation of this exact commit operation. */
 export interface CodeCommitReceipt {
@@ -59,6 +68,10 @@ const message = z
 export const codeCommitInputSchema = z
   .object({ expectedHead: oid, message, requestId: id })
   .strict();
+export const codeMergeInputSchema = codeCommitInputSchema
+  .extend({ operation: z.enum(['start', 'complete']) })
+  .strict();
+export type CodeMergeInput = z.infer<typeof codeMergeInputSchema>;
 export const codeCommandControlSchema = z
   .object({ sessionId: id, runnerId: id, hostRef: id })
   .strict();
@@ -76,6 +89,7 @@ export const codeCommitCommandSchema = z
     expectedHead: oid,
     message,
     createdAt: z.string().datetime(),
+    merge: z.enum(['start', 'complete']).optional(),
   })
   .strict()
   .refine((value) => value.expectedHead.length === value.workspace.baseOid.length);
@@ -121,3 +135,53 @@ export const codeCommandRecordSchema = z
           ? value.error !== null
           : value.error === null),
   );
+
+/**
+ * Local mode: an operator names the one runner repository the project's work lives in and the
+ * commit of its main. The server cannot look inside that repository, so both are asserted.
+ */
+export interface CodeLocalBindInput {
+  repositoryId: string;
+  mainOid: string;
+  /** The main this caller last read; absent for the first binding. Moving main is a compare-and-set. */
+  expectedMainOid?: string;
+  requestId: string;
+}
+export interface CodeProjectBinding {
+  mode: 'local';
+  repositoryId: string;
+  boundBy: string;
+  boundAt: string;
+  /** `stored` says Code's own repository holds that commit, so work can be prepared from it. */
+  main: { oid: string; admittedBy: string; admittedAt: string; stored: boolean };
+  /**
+   * `legacy-local`: accepted code stays in the runner's repository and the server claims no
+   * durability for it. `code`: the project was imported, and Code's repository is where new
+   * work is kept. A project never goes back.
+   */
+  durability: 'legacy-local' | 'code';
+}
+export interface CodeProjectStatus {
+  /** Shared base records and their retained admission and recovery state, when hosted. */
+  bases?: CodeBaseRecord[];
+  project: CodeProjectBinding | null;
+  /** Null when this server keeps no repositories. */
+  store: CodeStoreStatus | null;
+  /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
+  operations: CodeStoreOperation[];
+  /** How the project's work reaches the repository it is published to; null with no store. */
+  mirror: CodeMirrorStatus | null;
+  /** What is worth saying about the repository and stops nothing, newest first. */
+  warnings: CodeStoreWarning[];
+  /** The newest 200 units. */
+  units: CodeUnit[];
+  blockers: WorkflowProvidedBlocker[];
+}
+export const codeLocalBindInputSchema = z
+  .object({
+    repositoryId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    mainOid: oid,
+    expectedMainOid: oid.optional(),
+    requestId: id,
+  })
+  .strict();

@@ -19,6 +19,7 @@ export const codeUiPlugin = {
           ({
             operations: await ctx.code.list(caller),
             proposals: await ctx.code.proposals(caller),
+            status: await ctx.code.status(caller),
           }) as unknown as Json,
       }),
     );

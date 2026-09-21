@@ -351,11 +351,13 @@ test('migration adds nullable route storage without rewriting old submitted rows
           return_to: route,
           excluded_actor_ids: exclusions,
           required_criteria: required,
+          provenance_json: provenance,
           ...row
         }) => {
           assert.equal(route, null);
           assert.equal(exclusions, null);
           assert.equal(required, null);
+          assert.equal(provenance, null);
           return row;
         },
       ),

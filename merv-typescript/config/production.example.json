@@ -101,7 +101,12 @@
     },
     {
       "id": "code",
-      "name": "@merv/code"
+      "name": "@merv/code",
+      "config": {
+        "repositories": {
+          "root": "${directory}/code"
+        }
+      }
     },
     {
       "id": "sessions-api",

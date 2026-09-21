@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { request as httpRequest } from 'node:http';
 import { PostgresState } from '@merv/state';
-import { createService, type State, type Caller } from '@merv/contracts';
+import { createService, type State } from '@merv/contracts';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { CodeGitHubService } from '../packages/code/src/github.js';

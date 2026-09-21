@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-export type { SessionWorkspace, SessionWorkspaceRecord } from './sessions-models.js';
+export type {
+  SessionWorkspace,
+  SessionWorkspaceRecord,
+  CodePendingMerge,
+} from './sessions-models.js';
 
 const label = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
@@ -22,6 +26,17 @@ const branch = z
       value !== '@' &&
       value.split('/').every((part) => !part.startsWith('.') && !part.endsWith('.lock')),
   );
+/** The frozen merge and admitted checkpoint carried by a Code workspace. */
+export const codePendingMergeSchema = z
+  .object({
+    plan: z.string().regex(/^[0-9a-f]{64}$/),
+    firstParent: oid,
+    secondParent: oid,
+    checkpoint: oid,
+    firstMerge: oid.nullable(),
+  })
+  .strict();
+
 const fields = ['repositoryId', 'workspaceId', 'mode', 'branch', 'baseOid', 'headOid', 'stats'];
 const stats = ['commitCount', 'filesChanged', 'insertions', 'deletions'];
 function dataRecord(
@@ -50,7 +65,18 @@ function dataRecord(
 export const sessionWorkspaceSchema = z
   .unknown()
   .superRefine((value, ctx) => {
-    if (!dataRecord(value, fields, ['treeOid']) || !dataRecord(value.stats, stats))
+    if (
+      !dataRecord(value, fields, ['treeOid', 'pendingMerge']) ||
+      !dataRecord(value.stats, stats) ||
+      (value.pendingMerge !== undefined &&
+        !dataRecord(value.pendingMerge, [
+          'plan',
+          'firstParent',
+          'secondParent',
+          'checkpoint',
+          'firstMerge',
+        ]))
+    )
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Workspace metadata must be a closed plain JSON object',
@@ -67,6 +93,7 @@ export const sessionWorkspaceSchema = z
         baseOid: oid,
         headOid: oid,
         treeOid: oid.optional(),
+        pendingMerge: codePendingMergeSchema.optional(),
         stats: z
           .object({ commitCount: count, filesChanged: count, insertions: count, deletions: count })
           .strict(),
@@ -75,7 +102,14 @@ export const sessionWorkspaceSchema = z
       .refine(
         (value) =>
           value.baseOid.length === value.headOid.length &&
-          (value.treeOid === undefined || value.treeOid.length === value.baseOid.length),
+          (value.treeOid === undefined || value.treeOid.length === value.baseOid.length) &&
+          (!value.pendingMerge ||
+            (value.pendingMerge.checkpoint === value.headOid &&
+              [
+                value.pendingMerge.firstParent,
+                value.pendingMerge.secondParent,
+                value.pendingMerge.firstMerge ?? value.baseOid,
+              ].every((commit) => commit.length === value.baseOid.length))),
         'Workspace OIDs must use the same Git object format',
       ),
   );

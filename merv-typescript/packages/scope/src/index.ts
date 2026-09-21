@@ -52,6 +52,7 @@ interface ActorRow {
   user_subject?: string | null;
   session_id?: string | null;
   agent_id?: string | null;
+  service_owner?: string | null;
 }
 interface CredentialRow {
   id: string;
@@ -71,6 +72,7 @@ const actor = (row: ActorRow): Actor => ({
   role: row.role,
   active: !!row.active,
   ...(row.user_issuer ? { user: { issuer: row.user_issuer, subject: row.user_subject! } } : {}),
+  ...(row.service_owner ? { serviceOwner: row.service_owner } : {}),
   ...(row.agent_id ? { agentId: row.agent_id } : {}),
   ...(row.session_id ? { sessionId: row.session_id } : {}),
 });
@@ -188,6 +190,28 @@ export class ProjectScope implements Scope {
           BEGIN SELECT RAISE(ABORT,'Managed actor identity is immutable'); END;
       `,
         },
+        {
+          version: 8,
+          sql: `ALTER TABLE actors ADD COLUMN service_owner TEXT;
+CREATE UNIQUE INDEX actors_service ON actors(project_id,service_owner) WHERE service_owner IS NOT NULL;
+CREATE TRIGGER actors_service_identity BEFORE UPDATE ON actors
+WHEN NEW.service_owner IS NOT OLD.service_owner OR (OLD.service_owner IS NOT NULL AND (NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.role IS NOT OLD.role))
+BEGIN SELECT RAISE(ABORT,'Service actor identity is immutable'); END;
+CREATE TRIGGER actors_service_no_delete BEFORE DELETE ON actors WHEN OLD.service_owner IS NOT NULL
+BEGIN SELECT RAISE(ABORT,'Service actors are retained'); END;
+CREATE TRIGGER actors_service_role BEFORE INSERT ON actors WHEN NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT,'Service actors are credential-free producers'); END;
+CREATE TRIGGER actor_credentials_no_service BEFORE INSERT ON actor_credentials WHEN EXISTS(SELECT 1 FROM actors WHERE id=NEW.actor_id AND service_owner IS NOT NULL)
+BEGIN SELECT RAISE(ABORT,'Service actors cannot receive credentials'); END;`,
+          postgres: postgresMigrations[8],
+        },
+        {
+          version: 9,
+          sql: `CREATE TRIGGER actors_service_update BEFORE UPDATE ON actors
+WHEN NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT,'Service actors are credential-free producers'); END;`,
+          postgres: postgresMigrations[9],
+        },
       ]);
       this.members = new Memberships(
         state,
@@ -202,6 +226,25 @@ export class ProjectScope implements Scope {
       );
     };
   }
+  async serviceActor(provider: string, projectId: string, tx: Transaction): Promise<Caller> {
+    this.state.assertTransaction(tx);
+    check(provider.trim().length > 0, 'invalid_provider', 'A service provider is required');
+    await tx.run(
+      "INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,'producer',1,?) ON CONFLICT DO NOTHING",
+      newId('actor'),
+      projectId,
+      `${provider} service`,
+      provider,
+    );
+    const row = await tx.get<{ id: string }>(
+      'SELECT id FROM actors WHERE project_id=? AND service_owner=?',
+      projectId,
+      provider,
+    );
+    check(row, 'service_unavailable', 'The service actor is unavailable', 503);
+    return { projectId, actorId: row.id };
+  }
+
   async acceptVerifiedIdentity(identity: VerifiedIdentity) {
     return await this.members.acceptVerifiedIdentity(identity);
   }
@@ -1067,9 +1110,9 @@ export class ProjectScope implements Scope {
   }
   private machineActor(row: ActorRow): void {
     check(
-      !row.user_issuer && !row.session_id,
+      !row.user_issuer && !row.session_id && !row.service_owner,
       'member_actor',
-      'Member and session actors carry no independent credentials; their membership or session governs them',
+      'Member, session, and service actors carry no independent credentials',
       403,
     );
   }

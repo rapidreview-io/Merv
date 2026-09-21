@@ -1,6 +1,15 @@
 /** Portable session, runner and agent read models, shared by the server and the browser. */
 import type { WorkflowDispatchCandidate } from './workflow-models.js';
 
+/** Frozen plan and checkpoint metadata, carried only by a merge-capable workspace driver. */
+export type CodePendingMerge = {
+  plan: string;
+  firstParent: string;
+  secondParent: string;
+  checkpoint: string;
+  firstMerge: string | null;
+};
+
 /** Source-authenticated runner observations; the server does not verify Git objects. */
 export interface SessionWorkspace {
   repositoryId: string;
@@ -11,6 +20,7 @@ export interface SessionWorkspace {
   headOid: string;
   /** Observed Git tree; absent on older reports, never inferred by the server. */
   treeOid?: string;
+  pendingMerge?: CodePendingMerge;
   stats: { commitCount: number; filesChanged: number; insertions: number; deletions: number };
 }
 export interface SessionWorkspaceRecord {
@@ -28,7 +38,25 @@ export type SessionOutcome =
   | 'host_failed'
   | 'launch_failed'
   | 'workspace_failed'
+  /**
+   * The machine could not prepare a checkout yet although nothing about the launch was wrong:
+   * where the history lives is away, busy or full. It is never counted against the work.
+   */
+  | 'preparation_deferred'
   | 'crash_loop';
+/** What a machine may report a launch ended as; only a worker's own handoff records completion. */
+export type SessionReleaseOutcome =
+  | 'completed'
+  | 'host_failed'
+  | 'launch_failed'
+  | 'workspace_failed'
+  | 'preparation_deferred'
+  | 'crash_loop';
+/** Why a preparation was put off, in the words of whatever prepares checkouts. */
+export interface SessionDeferral {
+  cause: string;
+  code: string;
+}
 
 export interface DispatchState {
   enabled: boolean;
@@ -69,6 +97,11 @@ export interface RunnerHeartbeat {
   platforms: RunnerPlatform[];
   capacity: number;
   appliedVersion?: number;
+  /**
+   * What this machine can do beyond running a platform, as opaque names: a workspace policy
+   * that names a driver is offered only to a runner that lists it. An older runner sends none.
+   */
+  capabilities?: string[];
 }
 /** Every answer an automatic lease request can receive, and the whole stored vocabulary. */
 export type DispatchDecision =
@@ -83,6 +116,8 @@ export type DispatchDecision =
   | 'budget_exceeded'
   | 'usage_unavailable'
   | 'retries_exhausted'
+  /** Everything left in the queue needs a workspace driver this runner does not advertise. */
+  | 'runner_incompatible'
   | 'no_candidates';
 export interface RunnerPresence extends RunnerHeartbeat {
   id: string;
@@ -116,6 +151,8 @@ export type StuckKind =
   | 'session_idle'
   | 'dispatch_held'
   | 'dispatch_failing'
+  | 'work_blocked'
+  | 'work_deferred'
   | 'ready_quiet'
   | 'dispatch_disabled'
   | 'no_live_runner'

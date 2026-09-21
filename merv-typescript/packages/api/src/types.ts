@@ -138,7 +138,8 @@ export interface SessionApiProvider {
       sessionId: string;
       runnerId: string;
       reason?: string;
-      outcome?: 'completed' | 'host_failed' | 'launch_failed' | 'workspace_failed' | 'crash_loop';
+      outcome?: import('@merv/contracts').SessionReleaseOutcome;
+      deferral?: import('@merv/contracts').SessionDeferral;
       usage?: SessionUsageReport;
     },
   ): Promise<unknown>;
@@ -160,6 +161,16 @@ export interface CodeApiProvider {
   ): Promise<{ verified: boolean }>;
   nextCommand(caller: Caller, input: CodeCommandControl): Promise<CodeCommitCommand | null>;
   completeCommand(caller: Caller, input: CodeCommandCompletion): Promise<CodeCommandRecord>;
+  /**
+   * The second workspace protocol. The API authenticates, bounds and forwards: a route below
+   * `/code/v2/` with its JSON body, or the bytes of one part. Only Code reads either, and it
+   * is absent where the server keeps no repositories.
+   */
+  readonly v2?: {
+    call(caller: Caller, route: string, body: unknown): Promise<unknown>;
+    putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer): Promise<unknown>;
+    readPart?(caller: Caller, exportId: string, input: unknown): Promise<Buffer>;
+  };
 }
 /** An unauthenticated handler for one plugin-owned path prefix, such as a browser bundle. */
 export type MountHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;

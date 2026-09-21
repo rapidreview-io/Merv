@@ -549,7 +549,10 @@ test('a deployment composes the sandboxes plugins only when the service is named
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui'].map((id) => ({ id, name: id })),
+      plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui', 'code'].map((id) => ({
+        id,
+        name: id,
+      })),
     }),
   );
   const output = join(directory, 'rendered.json');
@@ -573,7 +576,7 @@ test('a deployment composes the sandboxes plugins only when the service is named
     (JSON.parse(readFileSync(output, 'utf8')) as { plugins: { name: string; config?: Json }[] })
       .plugins;
   assert.equal(run({}), 0);
-  assert.equal(rendered().length, 6, 'a deployment that has named no service composes none of it');
+  assert.equal(rendered().length, 7, 'a deployment that has named no service composes none of it');
   const connections = [
     { projectId: 'project_one', namespace: 'research', tokenEnv: 'MERV_SANDBOXES_TOKEN' },
   ];
@@ -584,7 +587,7 @@ test('a deployment composes the sandboxes plugins only when the service is named
   assert.equal(run(named), 0);
   assert.deepEqual(
     rendered()
-      .slice(6)
+      .slice(7)
       .map((entry) => entry.name),
     ['@merv/sandboxes/tools', '@merv/sandboxes/ui', '@merv/sandboxes'],
   );

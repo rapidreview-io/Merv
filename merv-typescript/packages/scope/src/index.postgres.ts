@@ -99,4 +99,22 @@ $merv$;
 CREATE TRIGGER actors_session_immutable BEFORE UPDATE ON actors
 FOR EACH ROW EXECUTE FUNCTION actors_session_immutable_guard();
 `,
+  8: `ALTER TABLE actors ADD COLUMN service_owner TEXT;
+CREATE UNIQUE INDEX actors_service ON actors(project_id,service_owner) WHERE service_owner IS NOT NULL;
+CREATE FUNCTION actors_service_guard() RETURNS trigger AS $$ BEGIN
+IF TG_OP='DELETE' THEN IF OLD.service_owner IS NOT NULL THEN RAISE EXCEPTION 'Service actors are retained'; END IF; RETURN OLD; END IF;
+IF TG_OP='UPDATE' THEN
+ IF NEW.service_owner IS DISTINCT FROM OLD.service_owner OR (OLD.service_owner IS NOT NULL AND (NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.role IS DISTINCT FROM OLD.role)) THEN RAISE EXCEPTION 'Service actor identity is immutable'; END IF;
+END IF;
+IF NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL) THEN RAISE EXCEPTION 'Service actors are credential-free producers'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER actors_service_guard BEFORE INSERT OR UPDATE OR DELETE ON actors FOR EACH ROW EXECUTE FUNCTION actors_service_guard();
+CREATE FUNCTION actor_credentials_service_guard() RETURNS trigger AS $$ BEGIN
+IF EXISTS(SELECT 1 FROM actors WHERE id=NEW.actor_id AND service_owner IS NOT NULL) THEN RAISE EXCEPTION 'Service actors cannot receive credentials'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER actor_credentials_no_service BEFORE INSERT ON actor_credentials FOR EACH ROW EXECUTE FUNCTION actor_credentials_service_guard();`,
+  9: `CREATE FUNCTION actors_service_update_guard() RETURNS trigger AS $$ BEGIN
+IF NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL) THEN RAISE EXCEPTION 'Service actors are credential-free producers'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER actors_service_update BEFORE UPDATE ON actors FOR EACH ROW EXECUTE FUNCTION actors_service_update_guard();`,
 };

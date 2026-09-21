@@ -1,4 +1,4 @@
-import { visible, recorded, mapAsync } from '@merv/contracts';
+import { excludedFromReview, canonical, visible, recorded, mapAsync } from '@merv/contracts';
 import { createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -12,6 +12,8 @@ import {
   type Artifacts,
   type Caller,
   type ReviewInput,
+  type ReviewProvenance,
+  type ReviewProvenanceResolver,
   type ReviewRequest,
   type Reviews,
   type ReviewSubmit,
@@ -184,6 +186,7 @@ interface ReviewRow {
   pinned_input_ids: string;
   excluded_actor_ids: string | null;
   required_criteria: string | null;
+  provenance_json: string | null;
   artifact_ids: string;
   criteria: string;
   format_version: 1 | 2;
@@ -203,6 +206,7 @@ interface ReviewRow {
   created_at: string;
 }
 const hydrate = (row: ReviewRow): ReviewRequest => ({
+  ...(row.provenance_json == null ? {} : { provenance: JSON.parse(row.provenance_json) }),
   id: row.id,
   projectId: row.project_id,
   subjectId: row.subject_id,
@@ -235,6 +239,7 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
 /** Generic assessment of immutable evidence. Target state changes belong to the integrating program. */
 export class ReviewService implements Reviews {
   private readonly owners = new Map<string, Readonly<ReviewSubmitOwner>>();
+  private readonly provenanceOwners = new Map<string, ReviewProvenanceResolver>();
   private ownerEpoch = 0;
   private closed = false;
   /** Complete storage migrations before publishing this service. */
@@ -345,8 +350,82 @@ export class ReviewService implements Reviews {
         CREATE TRIGGER reviews_required_immutable BEFORE UPDATE OF required_criteria ON reviews
           BEGIN SELECT RAISE(ABORT,'Required review criteria are immutable'); END;`,
         },
+        {
+          version: 9,
+          postgres: postgresMigrations[9],
+          sql: `ALTER TABLE reviews ADD COLUMN provenance_json TEXT CHECK(
+            provenance_json IS NULL OR (json_valid(provenance_json) AND json_type(provenance_json)='object' AND json_extract(provenance_json,'$.formatVersion') IS 1)
+          );
+          CREATE TRIGGER reviews_certificate_immutable BEFORE UPDATE OF provenance_json ON reviews
+            BEGIN SELECT RAISE(ABORT,'Review provenance certificate is immutable'); END;`,
+        },
       ]);
     };
+  }
+
+  provenance(provider: string): ReturnType<Reviews['provenance']> {
+    check(provider.trim().length > 0, 'invalid_provider', 'A provenance owner is required');
+    return {
+      register: (resolve) => {
+        check(
+          !this.closed && !this.provenanceOwners.has(provider),
+          'review_owner_conflict',
+          'Provenance owner is already registered or unavailable',
+          409,
+        );
+        this.provenanceOwners.set(provider, resolve);
+        return () => {
+          if (this.provenanceOwners.get(provider) === resolve)
+            this.provenanceOwners.delete(provider);
+        };
+      },
+    };
+  }
+
+  private async certificate(
+    provider: string,
+    projectId: string,
+    subjectId: string,
+    tx: Transaction,
+  ): Promise<ReviewProvenance> {
+    const resolve = this.provenanceOwners.get(provider);
+    check(
+      !this.closed && resolve,
+      'review_owner_unavailable',
+      'The review provenance owner is unavailable',
+      503,
+    );
+    const certificate = structuredClone(await resolve(projectId, subjectId, tx));
+    const { hash, ...body } = certificate;
+    check(
+      this.provenanceOwners.get(provider) === resolve,
+      'review_owner_unavailable',
+      'The review provenance owner changed',
+      503,
+    );
+    check(
+      body.formatVersion === 1 &&
+        body.provider === provider &&
+        hash === digest(body) &&
+        canonical(body.excludedActorIds) === canonical([...new Set(body.excludedActorIds)].sort()),
+      'invalid_review_owner',
+      'The owner supplied an invalid provenance certificate',
+      409,
+    );
+    return certificate;
+  }
+
+  private async independent(
+    caller: Caller,
+    review: ReviewRequest,
+    tx: Transaction,
+  ): Promise<boolean> {
+    // Existing evidence exclusions and owner-certified contributors share one identity rule.
+    return (
+      !excludedFromReview(review, caller.actorId) &&
+      (!review.provenance ||
+        !excludedFromReview(review, (await this.scope.authorityActor(caller, tx)).id))
+    );
   }
 
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void {
@@ -450,6 +529,7 @@ export class ReviewService implements Reviews {
   close(): void {
     this.closed = true;
     this.owners.clear();
+    this.provenanceOwners.clear();
     this.ownerEpoch++;
   }
 
@@ -564,6 +644,9 @@ export class ReviewService implements Reviews {
       return await this.saveRequest(
         caller,
         {
+          ...(row.provenance_json
+            ? { provenanceOwner: (JSON.parse(row.provenance_json) as ReviewProvenance).provider }
+            : {}),
           subjectId: row.subject_id,
           subjectRevision: input.subjectRevision,
           producerId: row.producer_id,
@@ -688,9 +771,13 @@ export class ReviewService implements Reviews {
         'Every output artifact must belong to the producer; other inputs must be explicitly pinned',
         403,
       );
+      const provenance = input.provenanceOwner
+        ? await this.certificate(input.provenanceOwner, caller.projectId, input.subjectId, tx)
+        : undefined;
       const id = newId('review');
       const createdAt = now();
       const snapshotHash = digest({
+        ...(provenance ? { provenance } : {}),
         subjectId: input.subjectId,
         subjectRevision: input.subjectRevision,
         producerId: input.producerId,
@@ -708,7 +795,7 @@ export class ReviewService implements Reviews {
       });
       await tx.run(
         `INSERT INTO reviews (id, project_id, subject_id, subject_revision, producer_id, artifact_ids,
-          criteria, manifest, snapshot_hash, status, created_at, format_version, administrative_actor_id, pinned_input_ids${excludedActorIds === undefined ? '' : ', excluded_actor_ids'}${required === undefined ? '' : ', required_criteria'}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?${excludedActorIds === undefined ? '' : ', ?'}${required === undefined ? '' : ', ?'})`,
+          criteria, manifest, snapshot_hash, status, created_at, format_version, administrative_actor_id, pinned_input_ids${excludedActorIds === undefined ? '' : ', excluded_actor_ids'}${required === undefined ? '' : ', required_criteria'}${provenance ? ', provenance_json' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?${excludedActorIds === undefined ? '' : ', ?'}${required === undefined ? '' : ', ?'}${provenance ? ', ?' : ''})`,
         id,
         caller.projectId,
         input.subjectId,
@@ -724,6 +811,7 @@ export class ReviewService implements Reviews {
         JSON.stringify(pinnedInputIds),
         ...(excludedActorIds === undefined ? [] : [JSON.stringify(excludedActorIds)]),
         ...(required === undefined ? [] : [JSON.stringify(required)]),
+        ...(provenance ? [canonical(provenance)] : []),
       );
       await recorded(this.state, tx, caller, 'review.requested', id, {
         subjectId: input.subjectId,
@@ -739,8 +827,7 @@ export class ReviewService implements Reviews {
   /**
    * Whose move each unclaimed review is, answered for the reader so that no client has to
    * restate the three clauses checkStart applies: the permission, the producer, and the
-   * immutable contributor exclusions. A list is where that question is asked; get answers
-   * with the stored review exactly as it is held.
+   * immutable contributor exclusions. The directing authority is checked once for the list.
    */
   private async claimableBy(
     caller: Caller,
@@ -751,24 +838,51 @@ export class ReviewService implements Reviews {
       reviews.some((review) => review.status === 'requested') &&
       !!caller.actorId &&
       (await this.scope.eligible(caller.projectId, caller.actorId, 'review', tx));
+    const authorityId =
+      reviewer && reviews.some((review) => review.provenance && review.status === 'requested')
+        ? (await this.scope.authorityActor(caller, tx)).id
+        : caller.actorId;
     return reviews.map((review) => ({
       ...review,
       claimable:
         reviewer &&
         review.status === 'requested' &&
-        review.producerId !== caller.actorId &&
-        !(review.excludedActorIds ?? []).includes(caller.actorId!),
+        !excludedFromReview(review, caller.actorId) &&
+        (!review.provenance || !excludedFromReview(review, authorityId)),
     }));
   }
 
   async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
     caller = structuredClone(caller);
-    await this.scope.require(caller, 'read', transaction);
+    const reader = await this.scope.require(caller, 'read', transaction);
+    const read = async (sql: Sql) => {
+      const review = hydrate(await this.row(sql, caller, reviewId));
+      if (
+        reader.role === 'operator' &&
+        !reader.sessionId &&
+        review.provenance &&
+        review.status === 'requested'
+      ) {
+        for (const actor of await this.scope.actors(caller))
+          if (
+            !actor.sessionId &&
+            !excludedFromReview(review, actor.id) &&
+            (await this.scope.eligible(caller.projectId, actor.id, 'review', transaction))
+          )
+            return review;
+        return {
+          ...review,
+          waiting:
+            'Every eligible reviewer is a retained contributor or directing authority. An operator must provide an independent reviewer.',
+        };
+      }
+      return review;
+    };
     if (transaction) {
       this.state.assertTransaction(transaction);
-      return hydrate(await this.row(transaction, caller, reviewId));
+      return await read(transaction);
     }
-    return await this.state.read(async (sql) => hydrate(await this.row(sql, caller, reviewId)));
+    return await this.state.read(read);
   }
 
   async list(caller: Caller): Promise<ReviewRequest[]> {
@@ -797,11 +911,11 @@ export class ReviewService implements Reviews {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
       const row = await this.row(tx, caller, reviewId);
+      const current = hydrate(row);
       check(
-        row.producer_id !== caller.actorId &&
-          !(JSON.parse(row.excluded_actor_ids ?? '[]') as string[]).includes(caller.actorId),
+        await this.independent(caller, current, tx),
         'review_independence',
-        'A producer or excluded contributor cannot review their own submission',
+        'A producer, contributor or directing authority cannot review their own work',
         403,
       );
       check(
@@ -863,10 +977,9 @@ export class ReviewService implements Reviews {
         'Review must be claimed and open before a verdict can be submitted',
         409,
       );
+      const current = hydrate(row);
       check(
-        row.reviewer_id === caller.actorId &&
-          row.producer_id !== caller.actorId &&
-          !(JSON.parse(row.excluded_actor_ids ?? '[]') as string[]).includes(caller.actorId),
+        row.reviewer_id === caller.actorId && (await this.independent(caller, current, tx)),
         'review_independence',
         'Only the independent reviewer who claimed this review may submit',
         403,

@@ -13,11 +13,23 @@ import type {
   CodeCommitReceipt,
   SessionWorkspace,
   CodePublicationApi,
+  CodeBasePin,
+  CodeBaseStatus,
+  CodeLocalBindInput,
+  CodeProjectBinding,
+  CodeProjectStatus,
+  CodeUnit,
+  CodeUnitAcceptance,
+  CodeUnitAcceptInput,
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 
 export interface CodeCommands {
+  merge(
+    caller: Caller,
+    input: import('@merv/contracts').CodeMergeInput,
+  ): Promise<CodeCommandRecord>;
   list(caller: Caller): Promise<CodeCommandRecord[]>;
   commit(caller: Caller, input: CodeCommitInput): Promise<CodeCommandRecord>;
   operation(caller: Caller, commandId: string): Promise<CodeCommandRecord>;
@@ -97,7 +109,93 @@ export interface CodeCaptures {
   /** Historical, project-scoped immutable facts; never renders context or admits a new command. */
   capture(caller: Caller, ref: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture>;
 }
-export interface Code extends CodeCommands, CodeProposals, CodeCaptures, CodePublicationApi {
+/**
+ * Units, their acceptances and the project's local binding. The transaction-only methods are
+ * the owner contract: no tool route reaches them, and the owner has already checked authority.
+ */
+export interface CodeUnits {
+  declareUnit(
+    caller: Caller,
+    unitId: string,
+    tx: Transaction,
+    baseReference?: string,
+  ): Promise<CodeUnit>;
+  acceptUnit(
+    caller: Caller,
+    input: CodeUnitAcceptInput,
+    tx: Transaction,
+  ): Promise<CodeUnitAcceptance>;
+  /** What a lease would find now; a pure read, safe under every admission and candidate scan. */
+  baseStatus(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBaseStatus>;
+  /** Only an owner's lease acquisition calls this: the base is fixed with the lease it serves. */
+  pinBase(
+    caller: Caller,
+    input: { unitId: string; leaseId: string },
+    tx: Transaction,
+  ): Promise<CodeBasePin>;
+  /** The pin alone, never a derivation, for an owner's references(). */
+  basePin(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBasePin | null>;
+  bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
+  unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
+  /**
+   * Whether Code keeps this project's history in its own repository. It never turns false
+   * again, and it is read from the database alone, so an owner may ask inside a create.
+   */
+  hosted(caller: Caller, tx: Transaction): Promise<boolean>;
+  status(caller: Caller): Promise<CodeProjectStatus>;
+}
+/** The writer fence of a unit; like CodeUnits, reached only inside an owner's transaction. */
+export interface CodeWriters {
+  /**
+   * Only an owner's lease acquisition calls this, right after pinBase and for a writable
+   * checkout that Code's driver prepares: the lease becomes the unit's next writer generation.
+   */
+  reserveWriter(
+    caller: Caller,
+    input: { unitId: string; leaseId: string },
+    tx: Transaction,
+  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  /** Whether a new writer could be leased now; a pure read, like baseStatus. */
+  writerStatus(
+    caller: Caller,
+    unitId: string,
+    tx: Transaction,
+  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+}
+/** The project's repository on the server's disk; refused where the server keeps none. */
+export interface CodeRepositoryControls {
+  controlBase(
+    caller: Caller,
+    input: import('@merv/contracts').CodeBaseControlInput,
+  ): Promise<import('@merv/contracts').CodeBaseRecord>;
+  importRepository(
+    caller: Caller,
+    input: import('@merv/contracts').CodeRepositoryImportInput,
+  ): Promise<import('@merv/contracts').CodeStoreOperation>;
+  configureRepository(
+    caller: Caller,
+    input: import('@merv/contracts').CodeRepositoryConfigureInput,
+  ): Promise<import('@merv/contracts').CodeStoreLimits>;
+  fenceUnit(
+    caller: Caller,
+    input: import('@merv/contracts').CodeUnitFenceInput,
+  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  /** Put a ref publication that waits for an operator back in the queue; it never forces. */
+  retryMirror(
+    caller: Caller,
+    input: import('@merv/contracts').CodeMirrorRetryInput,
+  ): Promise<import('@merv/contracts').CodeMirrorStatus>;
+}
+export interface Code
+  extends
+    CodeCommands,
+    CodeProposals,
+    CodeCaptures,
+    CodeUnits,
+    CodeWriters,
+    CodeRepositoryControls,
+    CodePublicationApi {
+  bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
   readonly github: import('@merv/contracts').CodeGitHub;
   transportGrant(
     caller: Caller,

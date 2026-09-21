@@ -16,6 +16,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkflowProvidedBlocker,
   type Workflows,
 } from '@merv/contracts';
 import type {
@@ -88,6 +89,11 @@ const heartbeatSchema = z
     platforms: platformsSchema,
     capacity: z.number().int().min(0).max(256),
     appliedVersion: z.number().int().nonnegative().safe().optional(),
+    capabilities: z
+      .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
+      .max(16)
+      .refine((items) => new Set(items).size === items.length)
+      .optional(),
   })
   .strict();
 const leaseSchema = z
@@ -134,6 +140,15 @@ export const failureReasons = new Set([
   'launch_failed',
 ]);
 /**
+ * The closes that count against nobody: the machine was ready and willing, and the place this
+ * work's history lives was away, busy or full. No hold can form from them; they only space the
+ * attempts out, exactly as a failure's backoff does.
+ */
+const deferredReasons = new Set(['preparation_deferred']);
+/** How long three deferred closes in a row must run before an operator is told about them. */
+const deferredRun = 3;
+const deferredSinceMs = 7 * 24 * 3600_000;
+/**
  * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
  * built. Counting them would let a revoked key, a replayed secret or a lost race hold every
  * healthy target in the queue until an admin came.
@@ -149,6 +164,24 @@ const uncountedOfferCodes = new Set([
   'invalid_deadline',
   'nested_session_offer',
   'agent_busy',
+  // A base that turned pending or contested between candidacy and the offer. The work is
+  // published as blocked by whoever derives bases, and nothing about the target is broken.
+  'code_base_pending',
+  'code_merge_required',
+  // A base made from several accepted commits that is still being merged, waits for the one
+  // task that resolves its conflict, or needs an operator: a wait, never the target's fault.
+  'code_base_wait',
+  'code_base_admission',
+  'code_merge_conflict',
+  'code_base_blocked',
+  'code_quarantined',
+  'code_dependencies_changed',
+  // The unit's last writer ended between candidacy and the offer and its machine has not
+  // handed over what it left, or that handover needs an operator. Both are published where
+  // blocked work is shown; neither says anything against the target.
+  'code_writer_busy',
+  'code_recovery_required',
+  'code_capture_quarantined',
 ]);
 const releaseHoldSchema = z
   .object({
@@ -229,6 +262,8 @@ const stuckKinds: StuckKind[] = [
   'session_idle',
   'dispatch_held',
   'dispatch_failing',
+  'work_blocked',
+  'work_deferred',
   'ready_quiet',
   'dispatch_disabled',
   'no_live_runner',
@@ -357,6 +392,25 @@ export class SessionDispatch {
   private async owner(caller: Caller, tx: Transaction) {
     const source = await this.scope.delegationSource(caller, tx);
     return { source, hash: digest(source) };
+  }
+  /** Whether the caller's own runner last said it has a capability. No presence means no. */
+  async capable(
+    caller: Caller,
+    runnerId: string,
+    capability: string,
+    tx: Transaction,
+  ): Promise<boolean> {
+    const runner = await tx.get<RunnerRow>(
+      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
+      (await this.owner(caller, tx)).hash,
+      runnerId,
+    );
+    return (
+      !!runner &&
+      ((JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? []).includes(
+        capability,
+      )
+    );
   }
   private async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
     const row = await tx.get<DispatchRow>(
@@ -918,6 +972,7 @@ export class SessionDispatch {
       dispatch: DispatchState;
       activity: Map<string, string>;
       admissible: Awaited<ReturnType<SessionDispatch['candidates']>>;
+      blockers: WorkflowProvidedBlocker[];
     },
   ): Promise<StuckReport> {
     const now = this.clock(),
@@ -981,10 +1036,68 @@ export class SessionDispatch {
           : `Nothing yet: automatic dispatch tries again after ${backoffMs / 1000} seconds and holds the target at ${limits.maxLaunchFailures} failed attempts.`,
       });
     }
+    // Work its owner refuses to lease never becomes a candidate, so nothing above or below can
+    // see it. What the refusing plugin published is the only trace, and it is read from
+    // Workflows' own rows, so it is still here when that plugin is not.
+    for (const blocker of facts.blockers)
+      add({
+        kind: 'work_blocked',
+        instanceId: blocker.instanceId,
+        since: blocker.since,
+        code: blocker.code,
+        why: blocker.message,
+        next: blocker.next,
+      });
+    // A target nobody could prepare a checkout for is not failing and is never held, so no
+    // counter above would ever show it. A run of deferred closes is what says it is not
+    // simply quiet: where that work's history lives has been away, busy or full since then.
+    const deferred = new Set<string>();
+    const runs = new Map<string, Session[]>();
+    for (const row of await tx.all<SessionRow>(
+      tx.dialect === 'postgres'
+        ? "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')>?"
+        : "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND json_extract(session_json,'$.closedAt')>?",
+      projectId,
+      new Date(now - deferredSinceMs).toISOString(),
+    )) {
+      const session: Session = JSON.parse(row.session_json);
+      const key = `${session.instanceId}:${session.expectedRevision}`;
+      if (!waiting.has(key) || failing.has(key)) continue;
+      const run = runs.get(key) ?? [];
+      run.push(session);
+      runs.set(key, run);
+    }
+    for (const [key, sessions] of runs) {
+      const last = sessions
+        .sort((a, b) => (a.closedAt! < b.closedAt! ? 1 : a.closedAt === b.closedAt ? 0 : -1))
+        .slice(0, deferredRun);
+      if (last.length < deferredRun || !last.every((s) => deferredReasons.has(s.outcome ?? '')))
+        continue;
+      const item = waiting.get(key)!,
+        newest = last[0];
+      deferred.add(key);
+      add({
+        kind: 'work_deferred',
+        instanceId: item.instanceId,
+        expectedRevision: item.expectedRevision,
+        sessionId: newest.id,
+        label: item.label,
+        since: last[last.length - 1].closedAt!,
+        code: newest.deferral?.cause ?? 'preparation_deferred',
+        attempts: last.length,
+        why: `The last ${last.length} machines that took this work could not prepare its checkout and put it off (${newest.deferral?.code ?? 'preparation_deferred'}). Nothing counts that against the work, so it is offered again and again.`,
+        next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
+      });
+    }
     for (const item of all) {
       const key = targetKey(item),
         operator = item.role === 'operator';
-      if (live.has(key) || failing.has(key) || !older(item.updatedAt, limits.quietReadySeconds))
+      if (
+        live.has(key) ||
+        failing.has(key) ||
+        deferred.has(key) ||
+        !older(item.updatedAt, limits.quietReadySeconds)
+      )
         continue;
       // With dispatch off, one dispatch_disabled item says why all of them wait.
       if (!operator && !dispatch.enabled) continue;
@@ -1086,6 +1199,7 @@ export class SessionDispatch {
         dispatch: await this.dispatch(caller.projectId, tx),
         activity: await this.hooks.activity(caller.projectId, tx),
         admissible: await this.candidates(caller, tx),
+        blockers: await this.workflows.blockers(caller, undefined, tx),
       });
     });
   }
@@ -1164,6 +1278,7 @@ export class SessionDispatch {
         dispatch,
         activity,
         admissible,
+        blockers: await this.workflows.blockers(caller, undefined, tx),
       });
       return {
         // One transaction, one moment: agents cannot report a lease the leases do not.
@@ -1359,7 +1474,18 @@ export class SessionDispatch {
           session: null,
           reason: await decided(project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable'),
         };
-      const candidates = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+      // A checkout some driver must prepare goes only to a machine that says it has that
+      // driver; everything else in the queue is still this runner's to take.
+      const capabilities = new Set(
+        (JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? [],
+      );
+      const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+      const candidates = open.filter(
+        (item) =>
+          item.workspace.mode === 'none' ||
+          item.workspace.driver === undefined ||
+          capabilities.has(item.workspace.driver),
+      );
       const candidate = candidates.find(
         (item) =>
           !admissible.backoff.has(targetKey(item)) &&
@@ -1367,7 +1493,8 @@ export class SessionDispatch {
             (session) =>
               session.instanceId === item.instanceId &&
               session.expectedRevision === item.expectedRevision &&
-              failureReasons.has(session.outcome ?? '') &&
+              (failureReasons.has(session.outcome ?? '') ||
+                deferredReasons.has(session.outcome ?? '')) &&
               session.closedAt &&
               Date.parse(session.closedAt) + backoffMs > this.clock(),
           ),
@@ -1380,13 +1507,15 @@ export class SessionDispatch {
           reason: await decided(
             candidates.length
               ? 'retry_backoff'
-              : admissible.overBudget
-                ? admissible.unaccountedOnly
-                  ? 'usage_unavailable'
-                  : 'budget_exceeded'
-                : admissible.retriesExhausted
-                  ? 'retries_exhausted'
-                  : 'no_candidates',
+              : open.length
+                ? 'runner_incompatible'
+                : admissible.overBudget
+                  ? admissible.unaccountedOnly
+                    ? 'usage_unavailable'
+                    : 'budget_exceeded'
+                  : admissible.retriesExhausted
+                    ? 'retries_exhausted'
+                    : 'no_candidates',
           ),
         };
       // Admission callbacks cannot disable dispatch or change source permission and

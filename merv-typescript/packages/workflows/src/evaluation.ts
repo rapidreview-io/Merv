@@ -10,6 +10,7 @@ import type {
   WorkflowLimitStatus,
   WorkflowLoopLimit,
   WorkflowPolicy,
+  WorkflowProvidedBlocker,
   WorkflowAssignmentRule,
   WorkflowWorkStart,
 } from '@merv/contracts';
@@ -234,6 +235,7 @@ export function validatePolicy(
     ...(policy.successStates === undefined
       ? {}
       : { successStates: Object.freeze([...policy.successStates].sort()) as unknown as string[] }),
+    ...(policy.limitExtended ? { limitExtended: policy.limitExtended } : {}),
     ...(policy.dependencyFailureAction === undefined
       ? {}
       : { dependencyFailureAction: policy.dependencyFailureAction }),
@@ -336,6 +338,13 @@ export async function checkAssignment(
   }
 }
 
+/**
+ * What another plugin published outranks the owner's next step, because the owner's hooks
+ * will refuse that step for the same reason and an overview that called the work ready
+ * would send someone to find that out. A named action is still answered on its own terms,
+ * so ending blocked work stays possible, and the two gates under which nothing is
+ * dispatched anyway keep their own explanation.
+ */
 export async function decision(
   definition: WorkflowDefinition,
   policy: WorkflowPolicy | undefined,
@@ -343,6 +352,35 @@ export async function decision(
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null = null,
   limits: WorkflowLimitStatus[] = [],
+  provided: WorkflowProvidedBlocker[] = [],
+): Promise<WorkflowDecision> {
+  const result = await ownDecision(definition, policy, context, query, workStart, limits);
+  result.providerBlockers = structuredClone(provided);
+  if (
+    !provided.length ||
+    result.terminal ||
+    !result.available ||
+    query.action ||
+    ['dependency_failed', 'loop_limit_reached'].includes(result.currentGate)
+  )
+    return result;
+  result.nextAction = null;
+  result.currentGate = provided[0].code;
+  result.blockers = [
+    ...provided.map(({ code, message, status }) => ({ code, message, status })),
+    ...result.blockers,
+  ];
+  result.instruction = `${provided[0].message} ${provided[0].next}`;
+  return result;
+}
+
+async function ownDecision(
+  definition: WorkflowDefinition,
+  policy: WorkflowPolicy | undefined,
+  context: WorkflowCheckContext,
+  query: WorkflowEvaluationInput,
+  workStart: WorkflowWorkStart | null,
+  limits: WorkflowLimitStatus[],
 ): Promise<WorkflowDecision> {
   const snapshot = context.snapshot;
   const terminal = definition.terminal.includes(snapshot.state);
@@ -360,6 +398,7 @@ export async function decision(
     instruction: '',
     actions: [],
     blockers: [],
+    providerBlockers: [],
     references: [],
     dependencies: structuredClone(context.dependencies ?? []),
     limits: [],

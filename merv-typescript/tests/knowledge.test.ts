@@ -69,7 +69,7 @@ async function fixture(t: TestContext) {
     );
     events = await createService(new DurableEvents(state));
     sessions = await createService(new LeasedSessions(state, scope, workflows, events));
-    code = await createService(new CodeService(state, scope, sessions, artifacts));
+    code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
     experiments = await createService(
       new ExperimentService(
         state,

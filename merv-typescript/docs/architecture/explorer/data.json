@@ -311,9 +311,13 @@
         "state",
         "scope",
         "sessions",
-        "artifacts"
+        "artifacts",
+        "workflows",
+        "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "reviews"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -329,8 +333,48 @@
           "readOnly": false
         },
         {
+          "name": "code.local.bind",
+          "description": "Bind this project to the one local runner repository its Git work lives in, and name the commit of its main. Only a signed-in project administrator may call it; an API key or a leased worker is refused. repositoryId is the repository identity the runner reports for its checkouts, and mainOid is the full commit work without code-bearing dependencies starts from; the server cannot look inside a local repository, so both are taken as stated. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required. Supply a stable requestId: the same request replays its result, and a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.merge",
+          "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.",
+          "readOnly": false
+        },
+        {
+          "name": "code.mirror.retry",
+          "description": "Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
           "name": "code.operation",
           "description": "Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.",
+          "readOnly": true
+        },
+        {
+          "name": "code.repository.configure",
+          "description": "Set what this project’s repository refuses beyond the fixed limits. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. Only a project administrator may call it. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.import",
+          "description": "Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker, and the project must already be bound with code.local.bind. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.status",
+          "description": "Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
+          "readOnly": true
+        },
+        {
+          "name": "code.unit.fence",
+          "description": "End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.unit.get",
+          "description": "Read what Code holds about one unit of work, named by its task or experiment id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.",
           "readOnly": true
         }
       ]
@@ -378,8 +422,48 @@
           "readOnly": false
         },
         {
+          "name": "code.local.bind",
+          "description": "Bind this project to the one local runner repository its Git work lives in, and name the commit of its main. Only a signed-in project administrator may call it; an API key or a leased worker is refused. repositoryId is the repository identity the runner reports for its checkouts, and mainOid is the full commit work without code-bearing dependencies starts from; the server cannot look inside a local repository, so both are taken as stated. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required. Supply a stable requestId: the same request replays its result, and a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.merge",
+          "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.",
+          "readOnly": false
+        },
+        {
+          "name": "code.mirror.retry",
+          "description": "Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
           "name": "code.operation",
           "description": "Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.",
+          "readOnly": true
+        },
+        {
+          "name": "code.repository.configure",
+          "description": "Set what this project’s repository refuses beyond the fixed limits. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. Only a project administrator may call it. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.import",
+          "description": "Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker, and the project must already be bound with code.local.bind. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.status",
+          "description": "Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
+          "readOnly": true
+        },
+        {
+          "name": "code.unit.fence",
+          "description": "End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.unit.get",
+          "description": "Read what Code holds about one unit of work, named by its task or experiment id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.",
           "readOnly": true
         }
       ]
@@ -595,7 +679,7 @@
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout; with it, optional baseTaskId names a Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of that checkout in place of the central head. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Its base is derived from the code the dependsOn tasks were accepted with, looking through tasks that succeeded without code, or the project’s main when there is none; it is pinned when the first planning or running worker is leased, so execution starts from what the plan was written against. Tasks accepted with different commits are not merged yet: the experiment then shows code_merge_required, and code_base_pending while a base cannot be derived (an administrator binds the project with code.local.bind), and neither is launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -645,7 +729,7 @@
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout; with it, optional baseTaskId names a Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of that checkout in place of the central head. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Its base is derived from the code the dependsOn tasks were accepted with, looking through tasks that succeeded without code, or the project’s main when there is none; it is pinned when the first planning or running worker is leased, so execution starts from what the plan was written against. Tasks accepted with different commits are not merged yet: the experiment then shows code_merge_required, and code_base_pending while a base cannot be derived (an administrator binds the project with code.local.bind), and neither is launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -1158,6 +1242,7 @@
         "workflows"
       ],
       "optional": [
+        "domainEvents",
         "paper",
         "reflections",
         "knowledge",
@@ -1182,12 +1267,12 @@
         },
         {
           "name": "research.advance",
-          "description": "Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.",
+          "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.",
           "readOnly": false
         },
         {
           "name": "research.create",
-          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows.",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
           "readOnly": false
         },
         {
@@ -1212,7 +1297,7 @@
         },
         {
           "name": "research.replan",
-          "description": "Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it when a selected experiment was abandoned or failed and the cycle should carry on without it.",
+          "description": "Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it to change the wave scope. New cycles retain failed and abandoned work for reflection.",
           "readOnly": false
         }
       ]
@@ -1242,12 +1327,12 @@
         },
         {
           "name": "research.advance",
-          "description": "Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.",
+          "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.",
           "readOnly": false
         },
         {
           "name": "research.create",
-          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows.",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
           "readOnly": false
         },
         {
@@ -1272,7 +1357,7 @@
         },
         {
           "name": "research.replan",
-          "description": "Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it when a selected experiment was abandoned or failed and the cycle should carry on without it.",
+          "description": "Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it to change the wave scope. New cycles retain failed and abandoned work for reflection.",
           "readOnly": false
         }
       ]
@@ -1316,22 +1401,22 @@
       "exposedTools": [
         {
           "name": "review.get",
-          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.",
+          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.",
           "readOnly": true
         },
         {
           "name": "review.list",
-          "description": "List immutable review requests and their claim/verdict status in the current project.",
+          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project.",
           "readOnly": true
         },
         {
           "name": "review.start",
-          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.",
+          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. For owner-certified reviews, both you and your directing authority must be independent of every retained contributor.",
           "readOnly": false
         },
         {
           "name": "review.submit",
-          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.",
+          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews reject returnTo: pass completes the task, needs_changes returns it for work, and fail ends ordinary tasks or suspends service tasks. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.",
           "readOnly": false
         }
       ]
@@ -1379,22 +1464,22 @@
       "exposedTools": [
         {
           "name": "review.get",
-          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted.",
+          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.",
           "readOnly": true
         },
         {
           "name": "review.list",
-          "description": "List immutable review requests and their claim/verdict status in the current project.",
+          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project.",
           "readOnly": true
         },
         {
           "name": "review.start",
-          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically.",
+          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. For owner-certified reviews, both you and your directing authority must be independent of every retained contributor.",
           "readOnly": false
         },
         {
           "name": "review.submit",
-          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews have fixed routes (pass→done, needs_changes→in_progress, fail→failed) and reject returnTo. Claim with review.start and include its claimId. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.",
+          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews reject returnTo: pass completes the task, needs_changes returns it for work, and fail ends ordinary tasks or suspends service tasks. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. For review formatVersion 2, supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.",
           "readOnly": false
         }
       ]
@@ -1685,7 +1770,7 @@
         },
         {
           "name": "session.stuck",
-          "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
+          "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
           "readOnly": true
         },
         {
@@ -1744,7 +1829,7 @@
         },
         {
           "name": "session.stuck",
-          "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
+          "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
           "readOnly": true
         },
         {
@@ -1826,7 +1911,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. With workspace \"git\", optional baseTaskId names another Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of this task’s checkout. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. The base of that checkout is derived: the code the task’s dependsOn prerequisites were accepted with, looking through prerequisites that succeeded without code, or the project’s main when there is none; it is pinned when the first worker is leased and never moves. Prerequisites accepted with different commits are not merged yet: the task then shows code_merge_required, and code_base_pending while a base cannot be derived (an administrator binds the project with code.local.bind), and neither is launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -1841,7 +1926,7 @@
         },
         {
           "name": "task.mark_failed",
-          "description": "Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
+          "description": "Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
           "readOnly": false
         },
         {
@@ -1913,7 +1998,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. With workspace \"git\", optional baseTaskId names another Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base of this task’s checkout. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. The base of that checkout is derived: the code the task’s dependsOn prerequisites were accepted with, looking through prerequisites that succeeded without code, or the project’s main when there is none; it is pinned when the first worker is leased and never moves. Prerequisites accepted with different commits are not merged yet: the task then shows code_merge_required, and code_base_pending while a base cannot be derived (an administrator binds the project with code.local.bind), and neither is launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -1928,7 +2013,7 @@
         },
         {
           "name": "task.mark_failed",
-          "description": "Producer/operator: end an active task as failed with a specific reason. Closes any unfinished review, preserves its evidence and prior verdicts, and prevents further work on this task. This is terminal; use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
+          "description": "Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
           "readOnly": false
         },
         {
@@ -2203,6 +2288,21 @@
       "from": "code",
       "to": "artifacts",
       "optional": false
+    },
+    {
+      "from": "code",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "code",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "code",
+      "to": "reviews",
+      "optional": true
     },
     {
       "from": "merv-code-api",
@@ -2596,6 +2696,11 @@
     },
     {
       "from": "research",
+      "to": "domainEvents",
+      "optional": true
+    },
+    {
+      "from": "research",
       "to": "paper",
       "optional": true
     },
@@ -2884,7 +2989,7 @@
     "plugins": 60,
     "providers": 26,
     "adapters": 34,
-    "dependencies": 155
+    "dependencies": 159
   },
   "network": [
     {

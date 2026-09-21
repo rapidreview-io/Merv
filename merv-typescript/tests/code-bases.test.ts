@@ -1,0 +1,533 @@
+import test, { type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createService } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
+import { WorkflowsService } from '@merv/workflows';
+import { DurableEvents } from '@merv/domain-events';
+import { DiskBlobs } from '@merv/blobs';
+import { ArtifactStore } from '@merv/artifacts';
+import { CodeService } from '@merv/code/service';
+import { mergeBases } from '../packages/code/src/base-merge.js';
+import { LeasedSessions } from '@merv/sessions';
+import { SqliteState, PostgresState } from '@merv/state';
+import { CodeRepositories } from '@merv/code/store/repository';
+import { CodeBaseService } from '../packages/code/src/bases.js';
+import { baseKey } from '../packages/code/src/base-plan.js';
+import { backends, optional, type Backend } from './fixtures/code-store.js';
+
+/** A project repository holding four accepted commits off one main: a and c collide, b and d do not. */
+async function fixture(t: TestContext, backend: Backend, enabled = true) {
+  const root = mkdtempSync(join(tmpdir(), 'merv-bases-'));
+  const schema = `code_bases_${randomUUID().replaceAll('-', '')}`;
+  const state =
+    backend === 'sqlite'
+      ? new SqliteState(join(root, 'state.sqlite'))
+      : await PostgresState.open({
+          connectionString: process.env.MERV_TEST_POSTGRES_URL!,
+          schema,
+        });
+  let time = Date.now();
+  const scope = await createService(new ProjectScope(state));
+  const workflows = await createService(new WorkflowsService(state, scope));
+  const events = await createService(new DurableEvents(state));
+  const sessions = await createService(
+    new LeasedSessions(state, scope, workflows, events, {
+      sweepIntervalMs: 60_000,
+      clock: () => time,
+    }),
+  );
+  const boot = await scope.bootstrap({ projectName: 'Bases', actorName: 'Owner' });
+  const PROJECT = boot.project.id;
+  const admin = { projectId: PROJECT, actorId: boot.actor.id, credentialId: boot.credential.id };
+  await sessions.setDispatch(admin, { enabled: true });
+  const repositories = new CodeRepositories({
+    root: join(root, 'code'),
+    quotaBytes: 1024 * 1024 * 1024,
+    reservedFreeBytes: 1,
+  });
+  // Repository content tests need no process-wide socket lock.
+  mkdirSync(join(root, 'code', 'tmp'), { recursive: true });
+  mkdirSync(join(root, 'code', 'empty-template'));
+  await repositories.ensure(PROJECT, 'repository-bases', 'sha1');
+  const bare = repositories.paths(PROJECT).repository;
+  const work = join(root, 'work');
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: work,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+    }).trim();
+  execFileSync('git', ['init', '-q', '-b', 'main', work]);
+  git('config', 'user.email', 'test@localhost');
+  git('config', 'user.name', 'Test');
+  for (const file of ['f', 'g', 'h']) writeFileSync(join(work, `${file}.txt`), 'base\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const commit = (branch: string, file: string, text: string) => {
+    git('checkout', '-q', '-B', branch, 'main');
+    writeFileSync(join(work, file), text);
+    git('commit', '-q', '-am', branch);
+    git('push', '-q', bare, `${branch}:refs/heads/${branch}`);
+    return git('rev-parse', 'HEAD');
+  };
+  const commits = {
+    a: commit('a', 'f.txt', 'base\nA\n'),
+    b: commit('b', 'g.txt', 'base\nB\n'),
+    c: commit('c', 'f.txt', 'base\nC\n'),
+    d: commit('d', 'h.txt', 'base\nD\n'),
+  };
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(root, 'blobs'))),
+  );
+  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
+  let changes = 0;
+  const hooks = {
+    changed: async () => void (changes += 1),
+    sponsors: async () => ['root-a', 'root-b'],
+    serviceWork: sessions.serviceWork,
+  };
+  const workers: CodeBaseService[] = [];
+  const worker = (admission = true, deadlineMs = 120_000) => {
+    const base = new CodeBaseService(
+      state,
+      repositories,
+      { ...hooks, serviceWork: admission ? sessions.serviceWork : undefined },
+      true,
+      () => time,
+      deadlineMs,
+    );
+    workers.push(base);
+    return base;
+  };
+  const bases = new CodeBaseService(state, repositories, hooks, enabled, () => time);
+  await bases.initialize();
+  t.after(async () => {
+    await bases.close();
+    for (const worker of workers) await worker.close();
+    await code.close();
+    await repositories.close(1000);
+    await sessions.close();
+    await events.close();
+    workflows.close();
+    await state.close();
+    rmSync(root, { recursive: true, force: true });
+    if (backend === 'postgres') {
+      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
+      try {
+        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
+      } finally {
+        await pool.end();
+      }
+    }
+  });
+  const parents = (oid: string) =>
+    execFileSync('git', ['--git-dir', bare, 'rev-list', '--parents', '-n', '1', oid], {
+      encoding: 'utf8',
+    })
+      .trim()
+      .split(' ')
+      .slice(1);
+  const rows = async () =>
+    await state.read(
+      async (sql) =>
+        await sql.all<{ base_key: string; state: string }>(
+          'SELECT base_key,state FROM code_bases WHERE project_id=? ORDER BY base_key',
+          PROJECT,
+        ),
+    );
+  return {
+    state,
+    hooks,
+    worker,
+    clock: () => time,
+    advance: (ms: number) => {
+      time += ms;
+    },
+    sessions,
+    scope,
+    workflows,
+    admin,
+    projectId: PROJECT,
+    repositories,
+    bases,
+    commits,
+    parents,
+    rows,
+    bare,
+    changed: () => changes,
+  };
+}
+
+for (const backend of backends)
+  test(
+    `[${backend}] three units waiting on the same two commits are one record, one merge and one commit`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b } = f.commits;
+      // Each waiter asks in its own transaction, in whatever order it knows the commits.
+      const asked = [];
+      for (const set of [
+        [a, b],
+        [b, a],
+        [a, b, a],
+      ])
+        asked.push(
+          await f.state.transaction(async (tx) => await f.bases.ensure(tx, f.projectId, set)),
+        );
+      assert.deepEqual(new Set(asked.map((record) => record.key)), new Set([baseKey([a, b])]));
+      assert.equal((await f.rows()).length, 1);
+      assert.equal(asked[0]!.state, 'queued');
+      await Promise.all([
+        f.bases.work(f.projectId),
+        f.bases.work(f.projectId),
+        f.bases.work(f.projectId),
+      ]);
+      const done = (await f.state.read(
+        async (sql) => await f.bases.find(sql, f.projectId, [a, b]),
+      ))!;
+      assert.equal(done.state, 'resolved');
+      assert.equal(done.result!.method, 'auto');
+      assert.deepEqual(f.parents(done.result!.commit).sort(), [a, b].sort());
+      assert.equal(done.attempts, 1, 'the merge ran once');
+      assert.equal(f.changed(), 1, 'and whoever waits is told once');
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `[${backend}] {A,B} then {A,B,D}: the reconciled pair is reused, and only D is merged into it`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b, d } = f.commits;
+      await f.state.transaction(async (tx) => await f.bases.ensure(tx, f.projectId, [a, b]));
+      await f.bases.work(f.projectId);
+      const pair = (await f.state.read(
+        async (sql) => await f.bases.find(sql, f.projectId, [a, b]),
+      ))!;
+      const triple = await f.state.transaction(
+        async (tx) => await f.bases.ensure(tx, f.projectId, [a, b, d]),
+      );
+      assert.deepEqual([triple.left, triple.right].sort(), [pair.key, baseKey([d])].sort());
+      assert.equal((await f.rows()).length, 2, 'no second record for the pair');
+      await f.bases.work(f.projectId);
+      const made = (await f.state.read(
+        async (sql) => await f.bases.find(sql, f.projectId, [a, b, d]),
+      ))!;
+      assert.equal(made.state, 'resolved');
+      assert.deepEqual(f.parents(made.result!.commit).sort(), [pair.result!.commit, d].sort());
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `[${backend}] a larger set asked first writes every union on the way, and a later waiter on the pair finds it`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b, d } = f.commits;
+      await f.state.transaction(async (tx) => await f.bases.ensure(tx, f.projectId, [a, b, d]));
+      const written = await f.rows();
+      assert.deepEqual(written.map((row) => row.state).sort(), ['queued', 'waiting_inputs']);
+      await f.bases.work(f.projectId);
+      assert.deepEqual(
+        (await f.rows()).map((row) => row.state),
+        ['resolved', 'resolved'],
+      );
+      const pairKey = written.find((row) => row.state === 'queued')!.base_key;
+      const pair = await f.state.read(async (sql) => {
+        for (const set of [
+          [a, b],
+          [a, d],
+          [b, d],
+        ])
+          if (baseKey(set) === pairKey) return await f.bases.find(sql, f.projectId, set);
+        return null;
+      });
+      assert.equal(pair?.state, 'resolved');
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `[${backend}] a conflict is recorded once with its paths, waits for resolution, and holds what is built on it`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, c, d } = f.commits;
+      await f.state.transaction(async (tx) => await f.bases.ensure(tx, f.projectId, [a, c]));
+      await f.bases.work(f.projectId);
+      const conflicted = (await f.state.read(
+        async (sql) => await f.bases.find(sql, f.projectId, [a, c]),
+      ))!;
+      assert.equal(conflicted.state, 'awaiting_resolution');
+      assert.deepEqual(conflicted.conflict!.paths, ['f.txt']);
+      assert.equal(conflicted.result, null);
+      // The automatic merge never restarts for that key, and a superset waits behind it
+      // rather than being planned round it.
+      await f.bases.work(f.projectId);
+      assert.equal(
+        (await f.state.read(async (sql) => await f.bases.find(sql, f.projectId, [a, c])))!.attempts,
+        1,
+      );
+      const above = await f.state.transaction(
+        async (tx) => await f.bases.ensure(tx, f.projectId, [a, c, d]),
+      );
+      assert.ok([above.left, above.right].includes(conflicted.key));
+      assert.equal(above.state, 'waiting_inputs');
+      await f.bases.work(f.projectId);
+      assert.equal(
+        (await f.state.read(async (sql) => await f.bases.find(sql, f.projectId, [a, c, d])))!.state,
+        'waiting_inputs',
+      );
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `${backend}: a plan, sponsors and result are frozen, and records are retained`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b } = f.commits;
+      await f.state.transaction(async (tx) => await f.bases.ensure(tx, f.projectId, [a, b]));
+      await f.bases.work(f.projectId);
+      for (const sql of [
+        "UPDATE code_bases SET left_key='x'",
+        "UPDATE code_bases SET sponsors_json='[]'",
+        `UPDATE code_bases SET result_json='{"commit":"x"}'`,
+        'DELETE FROM code_bases',
+      ])
+        await assert.rejects(f.state.transaction(async (tx) => await tx.run(sql)));
+    },
+  );
+
+for (const backend of backends) {
+  for (const boundary of ['before merge', 'after ref'] as const)
+    test(
+      `${backend}: a crash ${boundary} settles its old epoch once and recovers the same base`,
+      optional(backend),
+      async (t) => {
+        const f = await fixture(t, backend);
+        const { a, b } = f.commits;
+        const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+        const input = {
+          provider: 'code',
+          operationId: `${f.projectId}:${base.key}`,
+          executionEpoch: 1,
+          projectId: f.projectId,
+          sponsors: base.sponsors,
+          deadline: new Date(f.clock() + 100).toISOString(),
+        };
+        await f.state.transaction(async (tx) => {
+          assert.equal((await f.sessions.serviceWork.admit(tx, input)).admitted, true);
+          await tx.run(
+            "UPDATE code_bases SET state='running',attempts=1,execution_epoch=1,deadline=? WHERE project_id=? AND base_key=?",
+            input.deadline,
+            f.projectId,
+            base.key,
+          );
+        });
+        if (boundary === 'after ref') {
+          const inputs = await f.state.read((sql) => f.bases.inputs(sql, f.projectId, base));
+          const outcome = await mergeBases(
+            f.repositories.git,
+            f.repositories.environment(f.projectId),
+            inputs[0]!,
+            inputs[1]!,
+            base.key,
+          );
+          assert.notEqual(outcome.outcome, 'conflict');
+          if (outcome.outcome !== 'conflict')
+            await f.repositories.git.ok(
+              ['update-ref', `refs/merv/bases/${base.key}`, outcome.commit, ''],
+              { env: f.repositories.environment(f.projectId) },
+            );
+        }
+        const restarted = f.worker();
+        await restarted.initialize();
+        await restarted.work(f.projectId);
+        assert.equal(
+          (await f.state.read((sql) => restarted.find(sql, f.projectId, [a, b])))!.executionEpoch,
+          1,
+          'an unexpired reservation is not duplicated',
+        );
+        f.advance(101);
+        await restarted.work(f.projectId);
+        f.advance(3000);
+        await restarted.work(f.projectId);
+        const result = (await f.state.read((sql) => restarted.find(sql, f.projectId, [a, b])))!;
+        assert.equal(result.state, 'resolved');
+        assert.equal(result.executionEpoch, 2);
+        await restarted.work(f.projectId);
+        const usage = await f.state.read((sql) =>
+          sql.all<{ execution_epoch: number; outcome: string; wall_ms: number }>(
+            'SELECT execution_epoch,outcome,wall_ms FROM session_service_work ORDER BY execution_epoch',
+          ),
+        );
+        assert.deepEqual(
+          usage.map((row) => ({ ...row })),
+          [
+            { execution_epoch: 1, outcome: 'expired', wall_ms: 100 },
+            { execution_epoch: 2, outcome: 'completed', wall_ms: 0 },
+          ],
+        );
+      },
+    );
+  test(
+    `${backend}: a deadline overrun abandons the job and refuses its late result after a new epoch seals`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b } = f.commits;
+      await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+      const git = f.repositories.git.run.bind(f.repositories.git);
+      let release!: () => void, entered!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let hold = true;
+      t.mock.method(f.repositories.git, 'run', async (...args: Parameters<typeof git>) => {
+        if (hold && args[0].includes('merge-tree')) {
+          hold = false;
+          entered();
+          await held;
+          return git(args[0], { ...args[1], signal: undefined });
+        }
+        return git(...args);
+      });
+      const worker = f.worker(true, 1000);
+      await worker.initialize();
+      const running = worker.work(f.projectId);
+      await started;
+      f.advance(1001);
+      await running;
+      assert.equal(
+        (await f.state.read((sql) => worker.find(sql, f.projectId, [a, b])))!.state,
+        'retry_wait',
+      );
+      f.advance(3000);
+      await worker.work(f.projectId);
+      const sealed = (await f.state.read((sql) => worker.find(sql, f.projectId, [a, b])))!;
+      assert.equal(sealed.state, 'resolved');
+      assert.equal(sealed.executionEpoch, 2);
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(await f.state.read((sql) => worker.find(sql, f.projectId, [a, b])), sealed);
+    },
+  );
+  test(
+    `${backend}: admission absence, capacity and budgets wait visibly without consuming attempts`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b } = f.commits;
+      await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+      const absent = f.worker(false);
+      await absent.initialize();
+      await absent.work(f.projectId);
+      let base = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+      assert.equal(base.blocker, 'sessions_unavailable');
+      assert.equal(base.attempts, 0);
+      const other = {
+        provider: 'other',
+        operationId: 'held',
+        executionEpoch: 1,
+        projectId: f.projectId,
+        sponsors: ['root-a'],
+        deadline: new Date(f.clock() + 100_000).toISOString(),
+      };
+      await f.state.transaction((tx) => f.sessions.serviceWork.admit(tx, other));
+      f.advance(6000);
+      await f.bases.work(f.projectId);
+      base = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+      assert.equal(base.blocker, 'capacity_full');
+      assert.equal(base.attempts, 0);
+      f.advance(60_000);
+      await f.state.transaction((tx) => f.sessions.serviceWork.settle(tx, other, 'completed'));
+      await f.sessions.setBudget(f.admin, { maxWallMinutes: 1 });
+      await f.bases.work(f.projectId);
+      base = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+      assert.equal(base.blocker, 'budget_exceeded');
+      assert.equal(base.attempts, 0);
+      await f.sessions.setBudget(f.admin, { maxWallMinutes: null });
+      f.advance(6000);
+      await f.bases.work(f.projectId);
+      assert.equal(
+        (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!.state,
+        'resolved',
+      );
+    },
+  );
+  test(
+    `${backend}: five infrastructure failures block one retained record and an idempotent operator retry revives it`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b } = f.commits;
+      const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+      const git = f.repositories.git.run.bind(f.repositories.git);
+      const mock = t.mock.method(f.repositories.git, 'run', async () => {
+        throw new Error('disk unavailable');
+      });
+      for (let i = 0; i < 5; i++) {
+        await f.bases.work(f.projectId);
+        f.advance(100_000);
+      }
+      const blocked = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+      assert.equal(blocked.state, 'blocked_infra');
+      assert.equal(blocked.attempts, 5);
+      assert.match(blocked.blocker!, /disk unavailable/);
+      await f.bases.work(f.projectId);
+      assert.equal(mock.mock.callCount(), 5);
+      await f.bases.control(f.scope, f.admin, {
+        key: base.key,
+        action: 'suspend',
+        reason: 'Investigating',
+        requestId: 'suspend',
+      });
+      const resumed = await f.bases.control(f.scope, f.admin, {
+        key: base.key,
+        action: 'resume',
+        reason: 'Investigation complete',
+        requestId: 'resume',
+      });
+      assert.equal(
+        resumed.state,
+        'blocked_infra',
+        'resume cannot bypass the exhausted infrastructure allowance',
+      );
+      assert.equal(resumed.attempts, 5);
+      const input = { key: base.key, action: 'retry', reason: 'Disk repaired', requestId: 'retry' };
+      const receipt = await f.bases.control(f.scope, f.admin, input);
+      assert.equal(receipt.attempts, 0);
+      assert.equal(receipt.state, 'queued');
+      assert.deepEqual(await f.bases.control(f.scope, f.admin, input), receipt);
+      await assert.rejects(f.bases.control(f.scope, f.admin, { ...input, reason: 'Changed' }), {
+        code: 'request_conflict',
+      });
+      t.mock.method(f.repositories.git, 'run', git);
+      await f.bases.work(f.projectId);
+      assert.equal(
+        (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!.state,
+        'resolved',
+      );
+      const count = await f.state.read((sql) =>
+        sql.get<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM code_operations WHERE kind='base-control'",
+        ),
+      );
+      assert.equal(count!.n, 3);
+    },
+  );
+}

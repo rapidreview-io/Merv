@@ -269,7 +269,10 @@ const LOST = ['failed', 'abandoned'];
  * prerequisite; these two lists are the ones the Work page is made of, and the
  * same two reads it has already made.
  */
-export function useWorkPicks(): { options: Pickable[]; loading: boolean } {
+export function useWorkPicks({ includeFailed = false }: { includeFailed?: boolean } = {}): {
+  options: Pickable[];
+  loading: boolean;
+} {
   const tasks = useTool<(Listed & { title: string })[]>('task.list');
   const experiments = useTool<(Listed & { name: string })[]>('experiment.list');
   const pick = (kind: string, item: Listed, name: string): Pickable => ({
@@ -282,7 +285,7 @@ export function useWorkPicks(): { options: Pickable[]; loading: boolean } {
     options: [
       ...(tasks.data ?? []).map((item) => pick('tasks', item, item.title)),
       ...(experiments.data ?? []).map((item) => pick('experiments', item, item.name)),
-    ].filter((option) => !LOST.includes(option.state ?? '')),
+    ].filter((option) => includeFailed || !LOST.includes(option.state ?? '')),
     loading: tasks.loading || experiments.loading,
   };
 }
