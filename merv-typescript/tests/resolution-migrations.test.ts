@@ -9,7 +9,6 @@ import {
 } from '../packages/code/src/pending-merge.js';
 import { backends, optional } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
-import { boundProject } from './fixtures/code-binding.js';
 
 for (const backend of backends)
   test(
@@ -33,12 +32,8 @@ for (const backend of backends)
       );
       f.beforeClose.push(() => code.close());
       f.state.migrate = migrate;
-      await boundProject(f.state, f.admin.projectId, 'a'.repeat(40));
-      await f.state.transaction((tx) => code.declareUnit(f.admin, task.id, tx));
-      const beforeUnit = await code.unit(f.admin, task.id);
       await migratePendingMerges(f.state);
       assert.deepEqual(await f.tasks.get(f.admin, task.id), beforeTask);
-      assert.deepEqual(await code.unit(f.admin, task.id), beforeUnit);
       await f.state.transaction(async (tx) => {
         await pinMerge(
           tx,

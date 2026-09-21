@@ -202,15 +202,11 @@ BEGIN SELECT RAISE(ABORT,'Service actors are retained'); END;
 CREATE TRIGGER actors_service_role BEFORE INSERT ON actors WHEN NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL)
 BEGIN SELECT RAISE(ABORT,'Service actors are credential-free producers'); END;
 CREATE TRIGGER actor_credentials_no_service BEFORE INSERT ON actor_credentials WHEN EXISTS(SELECT 1 FROM actors WHERE id=NEW.actor_id AND service_owner IS NOT NULL)
-BEGIN SELECT RAISE(ABORT,'Service actors cannot receive credentials'); END;`,
-          postgres: postgresMigrations[8],
-        },
-        {
-          version: 9,
-          sql: `CREATE TRIGGER actors_service_update BEFORE UPDATE ON actors
+BEGIN SELECT RAISE(ABORT,'Service actors cannot receive credentials'); END;
+CREATE TRIGGER actors_service_update BEFORE UPDATE ON actors
 WHEN NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL)
 BEGIN SELECT RAISE(ABORT,'Service actors are credential-free producers'); END;`,
-          postgres: postgresMigrations[9],
+          postgres: postgresMigrations[8],
         },
       ]);
       this.members = new Memberships(

@@ -155,7 +155,8 @@ CREATE TABLE code_projects (
   main_json TEXT NOT NULL,
   limits_json TEXT NOT NULL,
   warnings_json TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  store_json TEXT
 );
 CREATE TABLE code_units (
   project_id TEXT NOT NULL,
@@ -170,6 +171,17 @@ CREATE TABLE code_units (
   acceptance_json TEXT,
   acceptance_hash TEXT,
   accepted_at TEXT,
+  generation INTEGER NOT NULL DEFAULT 0,
+  writer_state TEXT NOT NULL DEFAULT 'idle' CHECK (writer_state IN ('idle','reserved','active','closing','closed','recovery_required')),
+  writer_session_id TEXT,
+  writer_lease_id TEXT,
+  writer_changed_at TEXT,
+  head_oid TEXT,
+  head_operation_id TEXT,
+  mirrored_oid TEXT,
+  mirrored_at TEXT,
+  quarantine_operation_id TEXT,
+  quarantine_base_key TEXT,
   PRIMARY KEY (project_id,unit_id),
   CHECK ((base_json IS NULL)=(base_hash IS NULL) AND (base_json IS NULL)=(base_lease_id IS NULL) AND (base_json IS NULL)=(based_at IS NULL)),
   CHECK ((acceptance_json IS NULL)=(acceptance_hash IS NULL) AND (acceptance_json IS NULL)=(accepted_at IS NULL))
@@ -197,6 +209,16 @@ CREATE TABLE code_operations (
   error TEXT,
   created_at TEXT NOT NULL,
   completed_at TEXT,
+  unit_id TEXT,
+  generation INTEGER,
+  phase TEXT,
+  progress_json TEXT,
+  detail_json TEXT,
+  claim_id TEXT,
+  claim_until TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_at TEXT,
+  updated_at TEXT,
   UNIQUE (project_id,principal_scope,request_id),
   CHECK (
     (status='prepared' AND result_json IS NULL AND error IS NULL AND completed_at IS NULL) OR
@@ -232,38 +254,9 @@ CREATE TRIGGER code_operations_result BEFORE UPDATE ON code_operations
   BEGIN SELECT RAISE(ABORT,'A finished Code operation is immutable'); END;
 CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
   BEGIN SELECT RAISE(ABORT,'Code operations are retained'); END;
-`,
-      },
-      {
-        // The project's own repository, the writer fence of a unit and the journal of what
-        // moves objects and refs. Version 1 is pinned by its hash, so everything is added.
-        version: 2,
-        postgres: postgresMigrations[2],
-        sql: `
-ALTER TABLE code_projects ADD COLUMN store_json TEXT;
 CREATE TRIGGER code_projects_store BEFORE UPDATE ON code_projects
   WHEN OLD.store_json IS NOT NULL AND NEW.store_json IS NOT OLD.store_json
   BEGIN SELECT RAISE(ABORT,'The repository of a project is recorded once and is immutable'); END;
-ALTER TABLE code_units ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE code_units ADD COLUMN writer_state TEXT NOT NULL DEFAULT 'idle' CHECK (writer_state IN ('idle','reserved','active','closing','closed','recovery_required'));
-ALTER TABLE code_units ADD COLUMN writer_session_id TEXT;
-ALTER TABLE code_units ADD COLUMN writer_lease_id TEXT;
-ALTER TABLE code_units ADD COLUMN writer_changed_at TEXT;
-ALTER TABLE code_units ADD COLUMN head_oid TEXT;
-ALTER TABLE code_units ADD COLUMN head_operation_id TEXT;
-ALTER TABLE code_units ADD COLUMN mirrored_oid TEXT;
-ALTER TABLE code_units ADD COLUMN mirrored_at TEXT;
-ALTER TABLE code_units ADD COLUMN quarantine_operation_id TEXT;
-ALTER TABLE code_operations ADD COLUMN unit_id TEXT;
-ALTER TABLE code_operations ADD COLUMN generation INTEGER;
-ALTER TABLE code_operations ADD COLUMN phase TEXT;
-ALTER TABLE code_operations ADD COLUMN progress_json TEXT;
-ALTER TABLE code_operations ADD COLUMN detail_json TEXT;
-ALTER TABLE code_operations ADD COLUMN claim_id TEXT;
-ALTER TABLE code_operations ADD COLUMN claim_until TEXT;
-ALTER TABLE code_operations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE code_operations ADD COLUMN next_at TEXT;
-ALTER TABLE code_operations ADD COLUMN updated_at TEXT;
 CREATE UNIQUE INDEX code_operations_unit_open ON code_operations(project_id,unit_id,kind) WHERE status='prepared' AND unit_id IS NOT NULL;
 CREATE INDEX code_operations_due ON code_operations(status,kind,next_at);
 CREATE TRIGGER code_units_generation BEFORE UPDATE ON code_units
@@ -275,27 +268,14 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     WHERE project_id=OLD.project_id AND unit_id=OLD.unit_id AND kind='upload' AND status='prepared' AND phase IN ('admitting','objects_durable','refs_applied')
   )
   BEGIN SELECT RAISE(ABORT,'A writer generation cannot change while an admitted upload is unresolved'); END;
-`,
-      },
-      {
-        version: 3,
-        sql: `CREATE TABLE code_unit_inputs(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,reference TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
+CREATE TABLE code_unit_inputs(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,reference TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
 CREATE TRIGGER code_unit_inputs_no_update BEFORE UPDATE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are immutable'); END;
-CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are retained'); END;`,
-        postgres: postgresMigrations[3],
-      },
-      {
-        version: 4,
-        sql: `CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(acceptance_json,'$.code.commit')) WHERE acceptance_json IS NOT NULL;`,
-        postgres: postgresMigrations[4],
-      },
-      {
-        version: 5,
-        sql: `ALTER TABLE code_units ADD COLUMN quarantine_base_key TEXT;
+CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are retained'); END;
+CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(acceptance_json,'$.code.commit')) WHERE acceptance_json IS NOT NULL;
 CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
 WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key
-BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
-        postgres: postgresMigrations[5],
+BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
+`,
       },
     ]);
     await migratePendingMerges(this.state);
@@ -910,34 +890,11 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
       next,
       related: related.map((item) => ({ kind: 'workflow', id: item.id, label: item.name })),
     });
-    const bound = await tx.get<ProjectRow>(
-      'SELECT project_id,repository_id,binding_json,main_json,store_json FROM code_projects WHERE project_id=?',
+    // Only hosted workflow versions declare units; the binding and imported store are retained.
+    const bound = (await tx.get<Pick<ProjectRow, 'repository_id' | 'main_json'>>(
+      'SELECT repository_id,main_json FROM code_projects WHERE project_id=?',
       projectId,
-    );
-    if (!bound)
-      return {
-        status: 'blocked',
-        blockers: [
-          pending(
-            'main',
-            'This project is not bound to a repository, so no base can be derived',
-            'A signed-in project administrator runs code.local.bind, naming the runner’s repository and the commit that is main.',
-          ),
-        ],
-      };
-    // A unit whose checkouts Code's driver prepares can only start from what Code holds.
-    const kept = relations.instance.workspaceDrivers.some((driver) => driver === CODE_DRIVER);
-    if (kept && bound.store_json === null)
-      return {
-        status: 'blocked',
-        blockers: [
-          pending(
-            'main',
-            'This project’s repository has not been imported into Code, so no base can be prepared',
-            `${IMPORT}, naming the commit that is main.`,
-          ),
-        ],
-      };
+    ))!;
     const fixed = await tx.get<{ reference: string }>(
       'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
       projectId,
@@ -1006,7 +963,6 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
         continue;
       }
       if (
-        kept &&
         accepted.storage !== 'code' &&
         !(await tx.get(
           "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND result_json LIKE ? LIMIT 1",
@@ -1042,7 +998,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((item) => ({ kind: 'workflow', id: item.id, label: item.name }));
     // Several accepted commits are one base, made once for everyone who waits on that set.
-    if (commits.size > 1 && kept && this.bases?.enabled) {
+    if (commits.size > 1 && this.bases?.enabled) {
       const base = await this.bases.find(tx, projectId, commits.keys());
       const path = base ? await this.bases.path(tx, projectId, base.key) : [];
       const held = path.find(
@@ -1175,7 +1131,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
           {
             key: 'merge',
             code: 'code_merge_required',
-            message: `The dependencies of this unit were accepted with ${commits.size} different commits, and automatic merging is disabled or this repository is runner-owned`,
+            message: `The dependencies of this unit were accepted with ${commits.size} different commits, and automatic merging is disabled`,
             status: 409,
             next: `${EXPLICIT_BASE}, or make one dependency carry the combined code.`,
             related,
@@ -1188,7 +1144,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;`,
       stored?: boolean;
     };
     const [accepted] = [...commits];
-    if (kept && !accepted && main.stored !== true)
+    if (!accepted && main.stored !== true)
       return {
         status: 'blocked',
         blockers: [

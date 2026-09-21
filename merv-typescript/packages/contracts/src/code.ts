@@ -137,8 +137,8 @@ export const codeCommandRecordSchema = z
   );
 
 /**
- * Local mode: an operator names the one runner repository the project's work lives in and the
- * commit of its main. The server cannot look inside that repository, so both are asserted.
+ * An operator binds the project's repository identity and names main before importing history.
+ * Main is usable by hosted work only when Code holds that commit.
  */
 export interface CodeLocalBindInput {
   repositoryId: string;

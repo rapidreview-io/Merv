@@ -66,32 +66,32 @@ A workspace belongs to a workflow **version**, because a published execution pol
 | --------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
 | Git experiment (`experiment@2/4/6`)           | `running`: persistent shared `experiments`, base `central`        | `experiment_review`: ephemeral read-only, `reference:code`        |
 | Based Git experiment (`experiment@7`)         | `running`: persistent shared `experiments`, base `reference:base` | as above                                                          |
-| Git experiment, derived base (`experiment@8`) | as `experiment@7`                                                 | as above                                                          |
+| Git experiment, derived base (`experiment@8`) | `running`: `reference:base`, driver `code.v2`                     | as above                                                          |
 | Git task (`task@3`)                           | `in_progress`: persistent shared `tasks`, base `central`          | `in_review`: ephemeral read-only `task-reviews`, `reference:code` |
 | Based Git task (`task@4`)                     | `in_progress`: persistent shared `tasks`, base `reference:base`   | as above                                                          |
-| Git task, derived base (`task@5`)             | as `task@4`                                                       | as above                                                          |
+| Git task, derived base (`task@5`)             | `in_progress`: `reference:base`, driver `code.v2`                 | as above                                                          |
 | Consolidation                                 | its own persistent checkout (see `docs/CODE_OPERATIONS.md`)       | —                                                                 |
 
-`task.create` and `experiment.create` take `workspace: "git"`; omitted means scratch, and every earlier task and experiment is unchanged. Without `baseTaskId` new Git work starts on `task@5` or `experiment@8`; `task@3` and `experiment@6`, which start from `central`, stay registered for the work already on them and nothing new is created there. A Git task's producer is granted `code.commit` and `code.operation` explicitly and delivers that operation's `commandId` (see `docs/STRUCTURED_TASK_EVIDENCE.md`). After a returned review the successor lease re-enters the same `tasks` checkout at the previous head. The reviewer's `reference:code` is the delivered commit's head, never the branch tip: a close-time WIP capture added above the delivered commit is not under review.
+`task.create` and `experiment.create` take `workspace: "git"`; omitted means scratch, and every earlier task and experiment is unchanged. Without `baseTaskId`, new Git work starts on `task@3` / `experiment@6` with the runner's `central` base until the project is bound and imported. Hosted projects select `task@5` / `experiment@8` and the `code.v2` driver; existing work retains its version. A Git task's producer is granted `code.commit` and `code.operation` explicitly and delivers that operation's `commandId` (see `docs/STRUCTURED_TASK_EVIDENCE.md`). After a returned review the successor lease re-enters the same `tasks` checkout at the previous head. The reviewer's `reference:code` is the delivered commit's head, never the branch tip: a close-time WIP capture added above the delivered commit is not under review.
 
 ### The derived base
 
-`task@5` and `experiment@8` declare the same `reference:base` as the versions above, but nobody names the base. Code derives it from the work's `dependsOn` prerequisites (stage S1 of [the Git model](GIT_MODEL.md)):
+`task@5` and `experiment@8` use `reference:base` and `code.v2` for both producer and review checkouts. Code derives the base from `dependsOn` prerequisites in its own repository ([the Git model](GIT_MODEL.md)):
 
 - a prerequisite accepted with code contributes exactly its reviewed commit, and nothing beneath it is looked at;
 - a prerequisite that succeeded without code is looked through, to what it depended on;
 - a prerequisite on a workspace version that has no verifiable acceptance (it succeeded before acceptances existed, while Code was unloaded, or in another repository) blocks, as does a code-less success whose own prerequisites are unfinished: `code_base_pending`;
-- no commit at all gives the project's main as bound by `code.local.bind`; one commit, reached by however many paths, is the base; several different commits are `code_merge_required`, because nothing merges them yet.
+- no commit at all gives the project's imported main; one commit, reached by however many paths, is the base; several commits share a retained merge plan. Conflicts create one reviewed `task@6` per base. `code_merge_required` means automatic merging is disabled.
 
 The base is pinned inside the transaction that acquires the first lease — a task's first producer, an experiment's first planner or, if the design was written by hand, its first running worker — and is immutable: a returned task, a revised plan and a main that has moved since all reuse it. The frozen `references.base` is read from that pin and from nothing else, so reading an assignment never derives or writes. Work whose base cannot be derived is refused at lease admission, so it is never a dispatch candidate, never launched and never counted as a launch failure; Code publishes why as a blocker, which `workflow.status_and_next` gates on, the overview lists under `blocked` and `session.stuck` reports as `work_blocked`. An interactive producer has no checkout and therefore no `base`.
 
-S1 is local mode with exactly one runner repository per project: nothing keeps this work away from a runner whose repository lacks the pinned commit, and such a runner reports `workspace_failed`, which is a counted launch failure.
+A legacy-local acceptance needs its accepted commit imported before hosted work can use it. Until then Code publishes `code_base_pending` with an import recovery sentence; the work is never launched.
 
 ### Building on a delivered commit
 
 This is the older explicit form, kept on `task@4` and `experiment@7`. A Git task or Git experiment created with `baseTaskId` runs on `reference:base`, frozen to the head that task delivered. The base must be a Git task and must also be one of the new work's `dependsOn` prerequisites, so it has been accepted (`done`, which is terminal) before any checkout is prepared; the OID a shared persistent slot fixes at its first launch therefore never moves. Only an accepted Git task's delivered commit can be a base: an experiment capture, a consolidation or an arbitrary OID cannot. There is no fallback to `central`; an unresolvable base answers `task_base_unavailable` or `experiment_base_unavailable`.
 
-The delivered objects exist only in the private repository of the runner machine that produced them, rooted under `refs/merv/commands/`. The review of a Git task, and any work based on its commit, must therefore run on that machine; elsewhere the runner refuses the launch with `workspace_base_missing`. This is the same limit Git experiments have: there is no cross-machine object transport.
+The delivered objects exist only in the private repository of the runner machine that produced them, rooted under `refs/merv/commands/`. The review of a Git task, and any work based on its commit, must therefore run on that machine; elsewhere the runner refuses the launch with `workspace_base_missing`. This also limits legacy Git experiments; hosted versions instead download their exact checkpoint from Code.
 
 `advancesCentral` is retained in the versioned declaration but causes no publication in this implementation. Even `true` supplies no central-update authority or receipt. Programs must not treat captured code as published code.
 
@@ -101,7 +101,7 @@ Persistent branches start with `codex/merv/`. Shared persistent, per-base persis
 
 ## The `code.v2` driver
 
-A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). `task@6` and `experiment@9` name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Everything else on this page describes the runner's own driver, which serves every policy that names none.
+A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). `task@5`, service-owned `task@6` and `experiment@8` name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Policies that name none use the runner's legacy manager.
 
 The driver belongs to Code and lives beside the runner's ledger under `code-v2/`, with its own tables (`code_v2_repositories`, `code_v2_workspaces`, `code_v2_transfers`); it never touches the runner's repository or tables, needs no local source and holds no GitHub credential.
 

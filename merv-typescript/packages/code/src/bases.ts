@@ -68,6 +68,14 @@ CREATE TABLE code_bases (
   next_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  resolution_error TEXT,
+  resolution_commit TEXT,
+  execution_epoch INTEGER NOT NULL DEFAULT 0,
+  deadline TEXT,
+  sponsors_json TEXT,
+  blocker TEXT,
+  operator_reason TEXT,
+  resume_state TEXT,
   PRIMARY KEY (project_id,base_key),
   CHECK ((state='resolved')=(result_json IS NOT NULL))
 );
@@ -84,6 +92,12 @@ CREATE TRIGGER code_bases_task BEFORE UPDATE ON code_bases
   BEGIN SELECT RAISE(ABORT,'A base has one resolution task'); END;
 CREATE TRIGGER code_bases_no_delete BEFORE DELETE ON code_bases
   BEGIN SELECT RAISE(ABORT,'Base records are retained'); END;
+CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases
+WHEN (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS NOT OLD.resolution_commit) OR (NEW.resolution_commit IS NOT NULL AND NEW.resolution_task_id IS NULL)
+BEGIN SELECT RAISE(ABORT,'A resolution acceptance is recorded once for its task'); END;
+CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases
+WHEN OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS NOT OLD.sponsors_json
+BEGIN SELECT RAISE(ABORT,'Base sponsorship is frozen'); END;
 `;
 const postgres = `
 CREATE TABLE code_bases (
@@ -123,7 +137,23 @@ BEGIN
 END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_bases_guard BEFORE UPDATE OR DELETE ON code_bases
   FOR EACH ROW EXECUTE FUNCTION code_bases_guard();
-`;
+
+ALTER TABLE code_bases ADD COLUMN resolution_error TEXT;
+ALTER TABLE code_bases ADD COLUMN resolution_commit TEXT;
+CREATE FUNCTION code_bases_acceptance_guard() RETURNS trigger AS $$ BEGIN
+IF (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS DISTINCT FROM OLD.resolution_commit) OR (NEW.resolution_commit IS NOT NULL AND NEW.resolution_task_id IS NULL) THEN RAISE EXCEPTION 'A resolution acceptance is recorded once for its task'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_acceptance_guard();
+ALTER TABLE code_bases ADD COLUMN execution_epoch BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE code_bases ADD COLUMN deadline TEXT;
+ALTER TABLE code_bases ADD COLUMN sponsors_json TEXT;
+ALTER TABLE code_bases ADD COLUMN blocker TEXT;
+ALTER TABLE code_bases ADD COLUMN operator_reason TEXT;
+ALTER TABLE code_bases ADD COLUMN resume_state TEXT;
+CREATE FUNCTION code_bases_sponsors_guard() RETURNS trigger AS $$ BEGIN
+IF OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS DISTINCT FROM OLD.sponsors_json THEN RAISE EXCEPTION 'Base sponsorship is frozen'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_sponsors_guard();`;
 
 interface CodeBaseHooks {
   /** A record reached an end, so the units that wait on it may have a base, or a new reason. */
@@ -165,48 +195,7 @@ export class CodeBaseService {
   private timer?: NodeJS.Timeout;
 
   async initialize(): Promise<void> {
-    await this.state.migrate('code_bases', [
-      { version: 1, sql: sqlite, postgres },
-      {
-        version: 2,
-        sql: 'ALTER TABLE code_bases ADD COLUMN resolution_error TEXT;',
-        postgres: 'ALTER TABLE code_bases ADD COLUMN resolution_error TEXT;',
-      },
-      {
-        version: 3,
-        sql: `ALTER TABLE code_bases ADD COLUMN resolution_commit TEXT;
-CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases
-WHEN (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS NOT OLD.resolution_commit) OR (NEW.resolution_commit IS NOT NULL AND NEW.resolution_task_id IS NULL)
-BEGIN SELECT RAISE(ABORT,'A resolution acceptance is recorded once for its task'); END;`,
-        postgres: `ALTER TABLE code_bases ADD COLUMN resolution_commit TEXT;
-CREATE FUNCTION code_bases_acceptance_guard() RETURNS trigger AS $$ BEGIN
-IF (OLD.resolution_commit IS NOT NULL AND NEW.resolution_commit IS DISTINCT FROM OLD.resolution_commit) OR (NEW.resolution_commit IS NOT NULL AND NEW.resolution_task_id IS NULL) THEN RAISE EXCEPTION 'A resolution acceptance is recorded once for its task'; END IF;
-RETURN NEW; END $$ LANGUAGE plpgsql;
-CREATE TRIGGER code_bases_acceptance BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_acceptance_guard();`,
-      },
-      {
-        version: 4,
-        sql: `ALTER TABLE code_bases ADD COLUMN execution_epoch INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE code_bases ADD COLUMN deadline TEXT;
-ALTER TABLE code_bases ADD COLUMN sponsors_json TEXT;
-ALTER TABLE code_bases ADD COLUMN blocker TEXT;
-ALTER TABLE code_bases ADD COLUMN operator_reason TEXT;
-ALTER TABLE code_bases ADD COLUMN resume_state TEXT;
-CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases
-WHEN OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS NOT OLD.sponsors_json
-BEGIN SELECT RAISE(ABORT,'Base sponsorship is frozen'); END;`,
-        postgres: `ALTER TABLE code_bases ADD COLUMN execution_epoch BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE code_bases ADD COLUMN deadline TEXT;
-ALTER TABLE code_bases ADD COLUMN sponsors_json TEXT;
-ALTER TABLE code_bases ADD COLUMN blocker TEXT;
-ALTER TABLE code_bases ADD COLUMN operator_reason TEXT;
-ALTER TABLE code_bases ADD COLUMN resume_state TEXT;
-CREATE FUNCTION code_bases_sponsors_guard() RETURNS trigger AS $$ BEGIN
-IF OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS DISTINCT FROM OLD.sponsors_json THEN RAISE EXCEPTION 'Base sponsorship is frozen'; END IF;
-RETURN NEW; END $$ LANGUAGE plpgsql;
-CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_sponsors_guard();`,
-      },
-    ]);
+    await this.state.migrate('code_bases', [{ version: 1, sql: sqlite, postgres }]);
     if (this.hooks.resolved)
       await this.state.transaction(async (tx) => {
         for (const row of await tx.all<BaseRow>(
@@ -522,15 +511,6 @@ CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases FOR EACH ROW EXEC
           );
           if (!row) return null;
           const base = this.record(row);
-          if (!row.sponsors_json) {
-            base.sponsors = await this.hooks.sponsors(tx, projectId, base.members);
-            await tx.run(
-              'UPDATE code_bases SET sponsors_json=? WHERE project_id=? AND base_key=? AND sponsors_json IS NULL',
-              JSON.stringify(base.sponsors),
-              projectId,
-              base.key,
-            );
-          }
           if (row.state === 'running' && base.deadline && this.hooks.serviceWork) {
             await this.hooks.serviceWork.settle(tx, this.execution(projectId, base), 'expired');
             await this.failed(

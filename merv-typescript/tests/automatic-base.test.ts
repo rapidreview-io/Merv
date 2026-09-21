@@ -130,7 +130,7 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
   const plain = await workflows.register(definition, policy(false));
   const coded = await workflows.register({ ...definition, name: 'coded' }, policy(true));
   // `kept` names the driver that prepares its checkouts from Code's own repository.
-  await workflows.register({ ...definition, name: 'kept' }, policy(true, 'code.v2'));
+  const kept = await workflows.register({ ...definition, name: 'kept' }, policy(true, 'code.v2'));
   let sequence = 0;
   const request = () => `request-${++sequence}`;
   const start = async (dependsOn: WorkflowSnapshot[] = [], workflow = 'build') =>
@@ -153,7 +153,12 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
    * An acceptance as an owner's review leaves it. The code-less one goes through acceptUnit; a
    * commit would need a runner's capture, so its row is written with the hash Code checks.
    */
-  const accept = async (work: WorkflowSnapshot, commit: string | null, from = repository) => {
+  const accept = async (
+    work: WorkflowSnapshot,
+    commit: string | null,
+    from = repository,
+    storage = 'code',
+  ) => {
     const ended = await workflows.get(admin, work.id);
     if (commit === null)
       return await state.transaction(
@@ -187,7 +192,7 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
         repositoryId: from,
         reviewAttached: true,
       },
-      storage: 'legacy-local',
+      storage,
     };
     await state.transaction(
       async (tx) =>
@@ -210,18 +215,30 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
     await move(work);
     return { work, acceptance: await accept(work, commit) };
   };
-  const declare = async (dependsOn: WorkflowSnapshot[], workflow = 'coded') => {
+  const declare = async (dependsOn: WorkflowSnapshot[], workflow = 'kept') => {
     const work = await start(dependsOn, workflow);
     await state.transaction(async (tx) => await code.declareUnit(admin, work.id, tx));
     return work;
   };
-  const bind = async (mainOid: string, expectedMainOid?: string) =>
+  const bind = async (mainOid: string, expectedMainOid?: string, hosted = true) => {
     await code.bindLocal(admin, {
       repositoryId: repository,
       mainOid,
       ...(expectedMainOid === undefined ? {} : { expectedMainOid }),
       requestId: request(),
     });
+    if (hosted) {
+      await state.transaction(async (tx) => {
+        await tx.run(
+          'UPDATE code_projects SET store_json=COALESCE(store_json,?),main_json=? WHERE project_id=?',
+          JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: mainOid }),
+          JSON.stringify({ oid: mainOid, operationId: 'fixture', stored: true }),
+          project.id,
+        );
+      });
+      await code.reconcileAll();
+    }
+  };
   const pin = async (work: WorkflowSnapshot, leaseId = `lease-${work.id}`) =>
     await state.transaction(
       async (tx) => await code.pinBase(admin, { unitId: work.id, leaseId }, tx),
@@ -249,6 +266,7 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
     project,
     plain,
     coded,
+    kept,
     request,
     start,
     move,
@@ -268,17 +286,10 @@ for (const backend of backends) {
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
+      await f.bind(oid('a'));
       const note = await f.succeeded(null);
       const work = await f.declare([note.work]);
-      // Unbound, nothing can be derived; the blocker is there from the moment the unit exists.
-      assert.deepEqual(await f.published(work), [['code', 'code_base_pending', 'main']]);
-      await assert.rejects(f.pin(work), { code: 'code_base_pending', status: 409 });
-      const gated = await f.workflows.evaluate(f.admin, work.id);
-      assert.deepEqual([gated.currentGate, gated.nextAction], ['code_base_pending', null]);
-      assert.match(gated.instruction, /code\.local\.bind/);
-
-      await f.bind(oid('a'));
-      assert.deepEqual(await f.published(work), [], 'binding derives every waiting unit again');
+      assert.deepEqual(await f.published(work), []);
       assert.deepEqual((await f.code.unit(f.admin, work.id)).baseStatus, {
         status: 'ready',
         kind: 'main',
@@ -318,7 +329,7 @@ for (const backend of backends) {
 
       // Declared dependencies are part of the pin.
       const extra = await f.succeeded(null);
-      await f.coded.addDependencies(f.admin, {
+      await f.kept.addDependencies(f.admin, {
         instanceId: work.id,
         dependsOn: [extra.work.id],
         expectedRevision: work.revision,
@@ -375,48 +386,6 @@ for (const backend of backends) {
   );
 
   test(
-    `${backend}: different accepted commits wait for a merge, and the blocker follows the work that ends`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.bind(oid('a'));
-      const left = await f.succeeded(oid('c'));
-      const right = await f.start([], 'coded');
-      const work = await f.declare([left.work, right]);
-      assert.deepEqual(await f.published(work), []);
-
-      // The second dependency ends while nobody is looking at the unit. An owner writes the
-      // acceptance in the transaction of that transition, so it is there before the consumer
-      // of the event derives what waits on the ended work; the next drain delivers it.
-      const ended = await f.workflows.transition(f.admin, {
-        instanceId: right.id,
-        action: 'finish',
-        requestId: f.request(),
-        expectedRevision: 0,
-      });
-      await f.accept(ended, oid('d'));
-      await f.move(await f.start());
-      assert.deepEqual(await f.published(work), [['code', 'code_merge_required', 'merge']]);
-      const [blocker] = await f.workflows.blockers(f.admin, work.id);
-      assert.deepEqual(
-        blocker!.related.map((item) => item.id).sort(),
-        [left.work.id, right.id].sort(),
-      );
-      assert.match(blocker!.next, /baseTaskId/);
-      await assert.rejects(f.pin(work), { code: 'code_merge_required', status: 409 });
-      assert.equal((await f.code.unit(f.admin, work.id)).base, null);
-      const overview = await f.workflows.overview(f.admin);
-      assert.ok(overview.blocked.includes(work.id));
-      assert.ok(!overview.ready.includes(work.id));
-
-      // Ending the blocked work is still possible, and takes its blockers with it.
-      await f.move(work, 'abandon');
-      assert.deepEqual(await f.published(work), []);
-      assert.equal((await f.code.unit(f.admin, work.id)).baseStatus, null);
-    },
-  );
-
-  test(
     `${backend}: a success that cannot be verified blocks, whether or not its owner is loaded`,
     optional(backend),
     async (t) => {
@@ -462,41 +431,29 @@ for (const backend of backends) {
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
-      await f.bind(oid('a'));
-      const harness = await f.succeeded(oid('c'));
-      const work = await f.declare([harness.work], 'kept');
-      const beside = await f.declare([harness.work]);
+      await f.bind(oid('a'), undefined, false);
+      const harness = await f.start([], 'coded');
+      await f.move(harness);
+      await f.accept(harness, oid('c'), repository, 'legacy-local');
+      await f.state.transaction(async (tx) => {
+        await tx.run(
+          'UPDATE code_projects SET store_json=? WHERE project_id=?',
+          JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: oid('a') }),
+          f.project.id,
+        );
+      });
+      const work = await f.declare([harness]);
       const run = async (sql: string, ...values: string[]) =>
         await f.state.transaction(async (tx) => {
           await tx.run(sql, ...values);
         });
-      const status = async (unit: WorkflowSnapshot) =>
-        (await f.code.unit(f.admin, unit.id)).baseStatus?.status;
-      const hosted = async () =>
-        await f.state.transaction(async (tx) => await f.code.hosted(f.admin, tx));
-
-      // Not imported: nothing can be prepared, while a runner's own repository still serves
-      // the unit beside it, which names no driver.
-      assert.equal(await hosted(), false);
-      assert.deepEqual(await f.published(work), [['code', 'code_base_pending', 'main']]);
-      assert.equal(await status(beside), 'ready');
-
-      // Imported, which is a fact of the database alone and never turns false again.
-      await run(
-        'UPDATE code_projects SET store_json=? WHERE project_id=?',
-        JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: oid('a') }),
-        f.project.id,
-      );
-      assert.equal(await hosted(), true);
-      await f.code.reconcileAll();
       // The dependency was accepted from a runner's repository: its commit must be imported.
       assert.deepEqual(await f.published(work), [
-        ['code', 'code_base_pending', `acceptance:${harness.work.id}`],
+        ['code', 'code_base_pending', `acceptance:${harness.id}`],
       ]);
       const [blocker] = await f.workflows.blockers(f.admin, work.id);
       assert.match(blocker!.next, /code-import/);
       await assert.rejects(f.pin(work), { code: 'code_base_pending', status: 409 });
-      assert.equal(await status(beside), 'ready');
 
       await run(
         "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_import',?,'actor:fixture','import','import','hash','{}','completed',?,'now','now','refs_applied')",
@@ -600,7 +557,7 @@ for (const backend of backends)
         rmSync(root, { recursive: true, force: true });
       });
 
-      await f.bind(oid('a'));
+      await f.bind(oid('a'), undefined, false);
       await f.state.transaction(async (tx) => {
         await tx.run(
           'UPDATE code_projects SET store_json=? WHERE project_id=?',
@@ -689,10 +646,6 @@ for (const backend of backends)
       assert.match(blocker!.message, /f\.txt/);
       await assert.rejects(f.pin(clash), { code: 'code_merge_conflict', status: 409 });
 
-      // A unit that names no Code driver is prepared by a runner's own repository, where
-      // the server merges nothing: it keeps the older answer.
-      const legacy = await f.declare([left.work, right.work]);
-      assert.deepEqual(await f.published(legacy), [['code', 'code_merge_required', 'merge']]);
       await f.state.transaction((tx) =>
         f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' }, tx),
       );

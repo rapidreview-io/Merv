@@ -187,6 +187,7 @@ const migrations = [
     // The one workflow table that is rewritten and cleared: it mirrors what another plugin
     // thinks now, and must stay readable and clearable while that plugin is unloaded.
     version: 6,
+    rebuild: true,
     postgres: postgresMigrations[6],
     sql: `
   CREATE TABLE wf_blockers (
@@ -199,12 +200,8 @@ const migrations = [
   CREATE INDEX wf_blockers_project ON wf_blockers(project_id,provider);
   CREATE TRIGGER wf_blockers_identity BEFORE UPDATE OF project_id,instance_id,provider,blocker_key ON wf_blockers
     BEGIN SELECT RAISE(ABORT,'Workflow blocker identity is immutable'); END;
-`,
-  },
-  {
-    version: 7,
-    rebuild: true,
-    sql: `CREATE TEMP TABLE wf_dependencies_backup AS SELECT * FROM wf_dependencies;
+
+CREATE TEMP TABLE wf_dependencies_backup AS SELECT * FROM wf_dependencies;
 DROP TABLE wf_dependencies;
 CREATE TABLE wf_dependencies (
   project_id TEXT NOT NULL,source_id TEXT NOT NULL,target_id TEXT NOT NULL,
@@ -224,7 +221,6 @@ CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies WHEN NE
 CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
 CREATE TRIGGER wf_system_requests_no_update BEFORE UPDATE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are immutable'); END;
 CREATE TRIGGER wf_system_requests_no_delete BEFORE DELETE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are retained'); END;`,
-    postgres: postgresMigrations[7],
   },
 ];
 

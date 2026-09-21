@@ -10,7 +10,7 @@ Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.
 ssh ResearchSuite_Control 'sudo bash -c "cd /opt/merv-typescript/releases/<previous-id>/source/deploy && MERV_TS_IMAGE=merv-typescript:<previous-id> docker compose -f compose.yml up -d"'
 ```
 
-**Before the release that carries the shared Code repository (Git model stage S2).** The server
+**Before the release that carries the shared Code repository and automatic bases (Git model S1–S3 together).** The server
 must be deployed before any machine built from it: a runner that advertises `capabilities` is
 refused by an older server's closed heartbeat schema, so deploy here first and update the
 machines afterwards. The runtime image now installs Git, and the server refuses to start with
@@ -18,9 +18,11 @@ machines afterwards. The runtime image now installs Git, and the server refuses 
 Code's repositories live on the data volume at `/var/lib/merv-ts/code`, are authoritative for
 any project that has been imported, and must be backed up together with the database; one
 server writes to that volume at a time. Nothing changes for a project until an administrator
-imports it with `merv code-import`; from then on new Git work is created on `task@6` and
-`experiment@9` and only machines carrying the `code.v2` driver take it, so drain in-flight
-Git work on the machines that hold it first. Publication to GitHub stays off until the
+binds it with `code.local.bind` and imports it with `merv code-import`; from then on new Git
+work without `baseTaskId` is created on `task@5` and `experiment@8` and only machines carrying the `code.v2` driver take it, so drain in-flight
+legacy Git work on the machines that hold it. Explicit `baseTaskId` keeps `task@4` /
+`experiment@7`. Deploy the pending-merge driver before resolution work (`task@6`); automatic
+merging defaults on and respects project dispatch, capacity and budgets. Publication to GitHub stays off until the
 repository is linked and write automation is turned on.
 
 | When (UTC)        | Release                                  | Image id       | Plugins active/total | Result | Checks                                                                                                                                                                                                                                                                                                                                                                                                     | Rollback                                                                  |

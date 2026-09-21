@@ -150,19 +150,7 @@
     {
       "name": "task",
       "version": 6,
-      "fingerprint": "50cf313a75e283c670732c5e21ece1a8cc5b63148fe1c93dbd13b235ba370c8c",
-      "published": false
-    },
-    {
-      "name": "experiment",
-      "version": 9,
-      "fingerprint": "7cf727cbe07b75c5468739bb9aea831dac8301f6afa1d5c3c5b6b053bcd5b19e",
-      "published": false
-    },
-    {
-      "name": "task",
-      "version": 7,
-      "fingerprint": "4598e515ade021a30dcb1700020e55255d6b4f27b3430d8bf31a848821d1e32e",
+      "fingerprint": "e29afcff1e37ca0cb6ca9bcc09cb1dee5919d0cfbcd29a69b91b1d63131a1485",
       "published": false
     }
   ],
@@ -623,103 +611,61 @@
       "workflow": "task",
       "version": 5,
       "state": "in_progress",
-      "fingerprint": "ffba0d266dcc81508c7e9af90196952c947227a12f377321a53ba8b38d797107",
+      "fingerprint": "54988e217898af66654a91286b135739864ce4ed39b4c7d459c873ae70cb7080",
       "published": false
     },
     {
       "workflow": "task",
       "version": 5,
       "state": "in_review",
-      "fingerprint": "4941934dd76ac21323999df84e90e7ac4bfa9b6f42589d20ec51b02225800f63",
-      "published": false
-    },
-    {
-      "workflow": "experiment",
-      "version": 8,
-      "state": "design_review",
-      "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
-    },
-    {
-      "workflow": "experiment",
-      "version": 8,
-      "state": "experiment_review",
-      "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
-      "published": false
-    },
-    {
-      "workflow": "experiment",
-      "version": 8,
-      "state": "planned",
-      "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
-      "published": false
-    },
-    {
-      "workflow": "experiment",
-      "version": 8,
-      "state": "running",
-      "fingerprint": "2c3c0918fa14c2c3b55fa55738a74bac744197196834479696e683686cb98d17",
-      "published": false
-    },
-    {
-      "workflow": "task",
-      "version": 6,
-      "state": "in_progress",
-      "fingerprint": "54988e217898af66654a91286b135739864ce4ed39b4c7d459c873ae70cb7080",
-      "published": false
-    },
-    {
-      "workflow": "task",
-      "version": 6,
-      "state": "in_review",
       "fingerprint": "2ac88b616bd85eead8754472eabf39614a1c0ed82dd973e3e9fa5d317f5736b4",
       "published": false
     },
     {
       "workflow": "experiment",
-      "version": 9,
+      "version": 8,
       "state": "design_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
       "published": false
     },
     {
       "workflow": "experiment",
-      "version": 9,
+      "version": 8,
       "state": "experiment_review",
       "fingerprint": "24721bc33e628190da2bc7addd65ff845ea5aec71355efbf3a41a6465673321c",
       "published": false
     },
     {
       "workflow": "experiment",
-      "version": 9,
+      "version": 8,
       "state": "planned",
       "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
       "published": false
     },
     {
       "workflow": "experiment",
-      "version": 9,
+      "version": 8,
       "state": "running",
       "fingerprint": "9e85275753deec322da0bcae5cbc2b3325ef93fb2ba420dff1ef84eb9efa317d",
       "published": false
     },
     {
       "workflow": "task",
-      "version": 7,
+      "version": 6,
       "state": "in_progress",
       "fingerprint": "83ac6ef778e3f079b8308c19e850f4dd8c4cf87fad211c6926faf3d437202cf1",
       "published": false
     },
     {
       "workflow": "task",
-      "version": 7,
+      "version": 6,
       "state": "in_review",
       "fingerprint": "2ac88b616bd85eead8754472eabf39614a1c0ed82dd973e3e9fa5d317f5736b4",
       "published": false
     },
     {
       "workflow": "task",
-      "version": 7,
+      "version": 6,
       "state": "suspended",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
       "published": false

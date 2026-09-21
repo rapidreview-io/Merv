@@ -137,8 +137,8 @@ END;
 $merv$;
 CREATE TRIGGER wf_blockers_identity BEFORE UPDATE ON wf_blockers
 FOR EACH ROW EXECUTE FUNCTION wf_blockers_identity_guard();
-`,
-  7: `ALTER TABLE wf_dependencies ADD COLUMN kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system'));
+
+ALTER TABLE wf_dependencies ADD COLUMN kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system'));
 ALTER TABLE wf_dependencies ADD COLUMN owner TEXT NOT NULL DEFAULT '';
 ALTER TABLE wf_dependencies DROP CONSTRAINT wf_dependencies_pkey;
 ALTER TABLE wf_dependencies ADD PRIMARY KEY(source_id,target_id,kind,owner);

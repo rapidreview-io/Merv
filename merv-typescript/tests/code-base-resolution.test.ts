@@ -697,7 +697,7 @@ for (const backend of backends) {
       assert.equal(base.state, 'awaiting_resolution');
       assert.ok(base.resolutionTaskId);
       const task = await f.tasks.get(f.admin, base.resolutionTaskId);
-      assert.equal(task.workflow.version, 7);
+      assert.equal(task.workflow.version, 6);
       assert.match(task.title, /^Merge ‘[AC]’ with ‘[AC]’$/);
       assert.ok(!task.title.includes(base.key.slice(0, 12)));
       assert.match(task.goal, /Implement A/);
@@ -731,7 +731,7 @@ for (const backend of backends) {
       );
       for (let i = 0; i < 3; i++) await f.code.reconcileAll();
       assert.equal(
-        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 7).length,
+        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
         1,
       );
       const pin = await f.state.transaction((tx) =>
@@ -775,7 +775,7 @@ for (const backend of backends) {
           0,
         );
       assert.equal(
-        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 7).length,
+        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
         1,
       );
     },
@@ -800,7 +800,7 @@ for (const backend of backends) {
       };
       await assert.rejects(f.code.reconcileAll(), /Crash before linkage/);
       assert.equal(
-        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 7).length,
+        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
         0,
       );
       assert.equal((await f.record())!.resolutionTaskId, null);
@@ -813,7 +813,7 @@ for (const backend of backends) {
       const record = (await f.record())!;
       assert.ok(record.resolutionTaskId);
       assert.equal(
-        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 7).length,
+        (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
         1,
       );
       assert.equal(
@@ -1015,7 +1015,7 @@ for (const backend of backends) {
             sessionId: session.id,
             actorId: worker.actorId,
             revision: task.workflow.revision,
-            workflow: { name: 'task', version: 7, state: 'in_progress' },
+            workflow: { name: 'task', version: 6, state: 'in_progress' },
             readOnly: false,
           } as CodeCapture['provenance'],
           workspace,
@@ -1131,7 +1131,7 @@ for (const backend of backends) {
         assert.ok(context.prompt.includes(submissions[prior - 1]));
       }
       assert.equal(
-        (await f.tasks.list(f.admin)).filter((task) => task.workflow.version === 7).length,
+        (await f.tasks.list(f.admin)).filter((task) => task.workflow.version === 6).length,
         1,
       );
       const stopped = await f.tasks.markFailed(f.admin, {
@@ -1300,7 +1300,7 @@ for (const backend of backends) {
             sessionId: session.id,
             actorId: worker.actorId,
             revision: 0,
-            workflow: { name: 'task', version: 7, state: 'in_progress' },
+            workflow: { name: 'task', version: 6, state: 'in_progress' },
             readOnly: false,
           } as CodeCapture['provenance'],
           workspace,
@@ -1424,7 +1424,7 @@ for (const backend of backends) {
           assert.ok(context.prompt.includes('"verdict":"fail"'));
         }
         assert.equal(
-          (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 7).length,
+          (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
           1,
         );
       },

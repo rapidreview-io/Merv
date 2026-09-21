@@ -56,7 +56,6 @@ async function fixture(t: TestContext) {
     new TaskService(state, scope, artifacts, workflows, reviews, builder),
   );
   const events = await createService(new DurableEvents(state));
-  const access = scope.toolPolicy;
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, {
       sweepIntervalMs: 60_000,
@@ -964,14 +963,7 @@ test('a lease freezes its project Introduction without changing the registered r
   assert.match(successor.session.assignment.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
 });
 
-// Version 6 starts from the runner's central branch. Nothing creates it any more, but the
-// deployed server did and those experiments still run, so the whole round is driven on both.
-for (const version of [8, 6])
-  test(`Git Experiments keep the scratch program version and wait for their exact late final capture before independent review (experiment@${version})`, async (t) => {
-    await gitExperiment(t, version);
-  });
-
-async function gitExperiment(t: TestContext, version: number) {
+test('Git experiments retain the central-base protocol and wait for their exact final capture before independent review', async (t) => {
   const f = await fixture(t);
   const oldInput = {
     name: 'legacy-workspace-input',
@@ -987,18 +979,10 @@ async function gitExperiment(t: TestContext, version: number) {
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
-  // Create reaches for the newest Git version; the older one's handle is put in its place.
-  const program = (f.experiments as unknown as { program: { handleFor(version: number): unknown } })
-    .program;
-  const registered = program.handleFor.bind(program);
-  const swapped = t.mock.method(program, 'handleFor', (wanted: number) =>
-    registered(wanted === 8 ? version : wanted),
-  );
   const experiment = await f.create([], 'git');
-  swapped.mock.restore();
-  assert.equal(experiment.workflow.version, version);
+  assert.equal(experiment.workflow.version, 6);
   assert.equal(experiment.workspace, 'git');
-  assert.equal((await f.experiments.codeUnit(f.source, experiment.id)) === null, version === 6);
+  assert.equal(await f.experiments.codeUnit(f.source, experiment.id), null);
   const pendingDesign = (await f.design(experiment)).experiment;
   assert.deepEqual(
     (await f.workflows.execution(f.reviewer, { instanceId: experiment.id, expectedRevision: 1 }))
@@ -1007,16 +991,11 @@ async function gitExperiment(t: TestContext, version: number) {
   );
   const running = await f.verdict(pendingDesign, 'pass');
   const offered = await f.offer(running);
-  // The design was written by hand, so this first producing lease is the one that pins main;
-  // the central-base version names no base at all.
-  assert.equal(
-    offered.session.execution.references.base,
-    version === 8 ? 'a'.repeat(40) : undefined,
-  );
+  assert.equal(offered.session.execution.references.base, undefined);
   assert.deepEqual(offered.session.execution.policy.workspace, {
     mode: 'persistent',
     namespace: 'experiments',
-    base: version === 8 ? 'reference:base' : 'central',
+    base: 'central',
     perBase: false,
     retain: true,
     advancesCentral: false,
@@ -1209,11 +1188,8 @@ async function gitExperiment(t: TestContext, version: number) {
     ],
     [done.workflow.revision, submission.id, review.id, final.headOid, true, 'legacy-local'],
   );
-  // Only the version that derives its base ever had one pinned.
-  assert.equal(
-    (await f.code.unit(f.source, experiment.id)).base?.reference,
-    version === 8 ? 'a'.repeat(40) : undefined,
-  );
+  // Legacy work records acceptance without deriving a base.
+  assert.equal((await f.code.unit(f.source, experiment.id)).base?.reference, undefined);
   await f.release(reviewOffer.session.id);
   await f.sessions.workspaceResult(f.source, { ...reviewControl, workspace: reviewWorkspace });
   assert.deepEqual(
@@ -1221,7 +1197,7 @@ async function gitExperiment(t: TestContext, version: number) {
     capture,
     'A later reviewer capture cannot overwrite the exact producer observation',
   );
-}
+});
 
 test('historical observations stay project-scoped and pure after source revocation', async (t) => {
   const f = await fixture(t);
@@ -1385,18 +1361,6 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
   assert.equal(experiment.workflow.version, 7);
   assert.equal(experiment.baseTaskId, task.id);
   assert.deepEqual(await f.experiments.create(f.source, based), experiment);
-  // Naming no base is the newer form: the same dependency decides it once it is accepted.
-  const automatic = await f.experiments.create(f.source, {
-    ...input,
-    name: 'derived-base',
-    dependsOn: [task.id],
-    requestId: f.request(),
-  });
-  assert.equal(automatic.workflow.version, 8);
-  assert.deepEqual((await f.experiments.codeUnit(f.source, automatic.id))!.baseStatus, {
-    status: 'waiting',
-  });
-
   // The task's worker commits and delivers; its leased reviewer accepts the pinned commit.
   const control = (sessionId: string, hostRef: string) => ({
     sessionId,
@@ -1505,25 +1469,6 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
     ...control(offered.session.id, 'experiment-launch'),
     workspace: checkout('persistent', head),
   });
-
-  // The planner's lease pins the base although planning has no checkout to name it in, and
-  // the running lease reads that same pin back as its frozen reference.
-  const planner = await f.offer(automatic);
-  assert.equal(Object.hasOwn(planner.session.execution.references, 'base'), false);
-  const pin = (await f.experiments.codeUnit(f.source, automatic.id))!.base!;
-  assert.deepEqual(
-    [pin.kind, pin.reference, pin.leaseId, pin.sources.map((item) => item.unitId)],
-    ['accepted', head, planner.session.id, [task.id]],
-  );
-  await f.release(planner.session.id);
-  const executing = await f.offer(
-    await f.verdict(
-      (await f.design(await f.experiments.get(f.source, automatic.id))).experiment,
-      'pass',
-    ),
-  );
-  assert.equal(executing.session.execution.references.base, head);
-  assert.deepEqual((await f.experiments.codeUnit(f.source, automatic.id))!.base, pin);
 });
 
 test('assigned plan and results reviewers update the paper through their scoped verdict only', async (t) => {
@@ -1598,7 +1543,7 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     name: 'runner-kept',
     requestId: f.request(),
   });
-  assert.equal(before.workflow.version, 8);
+  assert.equal(before.workflow.version, 6);
   await f.state.transaction(async (tx) => {
     await tx.run(
       'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
@@ -1612,11 +1557,11 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     name: 'code-kept',
     requestId: f.request(),
   });
-  assert.equal(experiment.workflow.version, 9);
+  assert.equal(experiment.workflow.version, 8);
   const policies = await f.state.read(
     async (sql) =>
       await sql.all<{ state: string; manifest_json: string }>(
-        "SELECT state,manifest_json FROM wf_execution_policies WHERE workflow='experiment' AND version=9 ORDER BY state",
+        "SELECT state,manifest_json FROM wf_execution_policies WHERE workflow='experiment' AND version=8 ORDER BY state",
       ),
   );
   assert.deepEqual(

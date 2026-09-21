@@ -324,9 +324,9 @@ for (const backend of backends)
     },
   );
 
-test('a runner whose repository lacks the pinned base counts a launch failure, which is why one project has one local runner', async (t) => {
-  // The baseline stage S1 of docs/GIT_MODEL.md accepts: nothing yet keeps work away from a
-  // runner that does not hold the commit, so its failed checkout is counted like any other.
+test('a legacy runner whose repository lacks the pinned base counts a launch failure', async (t) => {
+  // Legacy workspace policies do not select a driver or require runner capabilities. A
+  // runner that lacks the commit counts its failed checkout like any other launch failure.
   const f = await fixture(t, { maxLaunchFailures: 3 });
   await f.sessions.heartbeatRunner(f.source, presence('elsewhere'));
   await f.sessions.setDispatch(f.owner, { enabled: true });

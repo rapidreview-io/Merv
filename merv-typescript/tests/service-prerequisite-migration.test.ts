@@ -17,7 +17,7 @@ for (const backend of backends) {
     `${backend}: workflow prerequisites upgrade populated v6 dependencies without changing declared contracts`,
     optional(backend),
     async (t) => {
-      const f = await resolutionFixture(t, backend, { workflows: 6 });
+      const f = await resolutionFixture(t, backend, { workflows: 5 });
       const handle = await f.workflows.register(
         {
           name: 'migration',

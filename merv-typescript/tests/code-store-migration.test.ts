@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
-import { createService, type Migration, type SqlValue } from '@merv/contracts';
+import { createService, type SqlValue } from '@merv/contracts';
 import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
@@ -37,43 +37,31 @@ async function fixture(t: TestContext, backend: Backend) {
       await pool.end();
     }
   });
-  const migrate = state.migrate.bind(state);
-  /** Code's unit storage as a release applied it: up to and including `version`. */
-  const upTo = async (version: number) => {
-    state.migrate = async (component: string, migrations: Migration[]) =>
-      await migrate(
-        component,
-        migrations.filter((migration) => migration.version <= version),
-      );
-    try {
-      await new CodeUnitService(
-        state,
-        scope,
-        workflows,
-        { capture: async () => assert.fail('a migration reads no capture') },
-        new CodeWriterService(state, scope, workflows, 900),
-        { contributors: async () => assert.fail('a migration reads no contributors') },
-      ).initialize();
-    } finally {
-      state.migrate = migrate;
-    }
-  };
+  const initialize = async () =>
+    await new CodeUnitService(
+      state,
+      scope,
+      workflows,
+      { capture: async () => assert.fail('a migration reads no capture') },
+      new CodeWriterService(state, scope, workflows, 900),
+      { contributors: async () => assert.fail('a migration reads no contributors') },
+    ).initialize();
   const run = async (sql: string, ...params: SqlValue[]) =>
     await state.transaction(async (tx) => await tx.run(sql, ...params));
   const get = async <T>(sql: string, ...params: SqlValue[]) =>
     await state.read(async (reader) => await reader.get<T>(sql, ...params));
-  return { upTo, run, get };
+  return { initialize, run, get };
 }
 
 for (const backend of backends)
   test(
-    `${backend}: the repository, writer and journal columns are added to populated unit storage, with their guards`,
+    `${backend}: unit storage creates the repository, writer and journal with their guards`,
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
       // SQLite says which guard refused; PostgreSQL's words never leave the state store.
       const refused = (pattern: RegExp) => (backend === 'sqlite' ? pattern : { code: /^state_/ });
-      await f.upTo(1);
+      await f.initialize();
       await f.run(
         "INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES ('p','local','r','{}','{}','{}','[]','t')",
       );
@@ -83,11 +71,10 @@ for (const backend of backends)
       await f.run(
         "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES ('bind','p','actor:a','one','local_bind','h','{}','completed','{}','t','t')",
       );
-      await f.upTo(2);
       // A second start applies nothing twice.
-      await f.upTo(2);
+      await f.initialize();
 
-      // What was there reads as a unit nobody writes and a project that is not hosted.
+      // A new unit has no writer and a new binding is not yet hosted.
       const unit = await f.get<Record<string, unknown>>(
         "SELECT generation,writer_state,writer_session_id,head_oid,mirrored_oid,quarantine_operation_id FROM code_units WHERE unit_id='u'",
       );
@@ -216,42 +203,37 @@ for (const backend of backends)
   );
 
 for (const backend of backends)
-  test(
-    `${backend}: accepted commit lookup indexes populated unit storage`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.upTo(3);
-      await f.run(
-        "INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES ('p','local','r','{}','{}','{}','[]','t')",
-      );
-      const acceptance = JSON.stringify({ code: { commit: oid('a') } });
-      await f.run(
-        "INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at,acceptance_json,acceptance_hash,accepted_at) VALUES ('p','u','experiment',9,'t',?,'h','t')",
-        acceptance,
-      );
-      await f.upTo(4);
-      await f.upTo(4);
-      const field =
+  test(`${backend}: unit storage indexes accepted commits`, optional(backend), async (t) => {
+    const f = await fixture(t, backend);
+    await f.initialize();
+    await f.run(
+      "INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES ('p','local','r','{}','{}','{}','[]','t')",
+    );
+    const acceptance = JSON.stringify({ code: { commit: oid('a') } });
+    await f.run(
+      "INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at,acceptance_json,acceptance_hash,accepted_at) VALUES ('p','u','experiment',8,'t',?,'h','t')",
+      acceptance,
+    );
+    await f.initialize();
+    const field =
+      backend === 'postgres'
+        ? "(acceptance_json::jsonb #>> '{code,commit}')"
+        : "json_extract(acceptance_json,'$.code.commit')";
+    assert.deepEqual(
+      {
+        ...(await f.get<{ unit_id: string; acceptance_json: string }>(
+          `SELECT unit_id,acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL AND ${field}=?`,
+          'p',
+          oid('a'),
+        )),
+      },
+      { unit_id: 'u', acceptance_json: acceptance },
+    );
+    assert.ok(
+      await f.get(
         backend === 'postgres'
-          ? "(acceptance_json::jsonb #>> '{code,commit}')"
-          : "json_extract(acceptance_json,'$.code.commit')";
-      assert.deepEqual(
-        {
-          ...(await f.get<{ unit_id: string; acceptance_json: string }>(
-            `SELECT unit_id,acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL AND ${field}=?`,
-            'p',
-            oid('a'),
-          )),
-        },
-        { unit_id: 'u', acceptance_json: acceptance },
-      );
-      assert.ok(
-        await f.get(
-          backend === 'postgres'
-            ? "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND indexname='code_units_accepted_commit'"
-            : "SELECT name FROM sqlite_master WHERE type='index' AND name='code_units_accepted_commit'",
-        ),
-      );
-    },
-  );
+          ? "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND indexname='code_units_accepted_commit'"
+          : "SELECT name FROM sqlite_master WHERE type='index' AND name='code_units_accepted_commit'",
+      ),
+    );
+  });

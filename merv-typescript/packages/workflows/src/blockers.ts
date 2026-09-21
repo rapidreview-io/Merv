@@ -177,10 +177,10 @@ export async function readBlockers(
  */
 async function declaredWorkspaces(
   sql: Sql,
-  known: Map<string, { declares: boolean; drivers: string[] }>,
+  known: Map<string, boolean>,
   workflow: string,
   version: number,
-): Promise<{ declares: boolean; drivers: string[] }> {
+): Promise<boolean> {
   const key = `${workflow}@${version}`;
   if (!known.has(key)) {
     const rows = await sql.all<{ manifest_json: string }>(
@@ -193,19 +193,12 @@ async function declaredWorkspaces(
         (row) =>
           (
             JSON.parse(row.manifest_json) as {
-              workspace?: { mode?: string; driver?: string };
+              workspace?: { mode?: string };
             } | null
           )?.workspace,
       )
       .filter((workspace) => (workspace?.mode ?? 'none') !== 'none');
-    known.set(key, {
-      declares: workspaces.length > 0,
-      drivers: [
-        ...new Set(
-          workspaces.flatMap((workspace) => (workspace?.driver ? [workspace.driver] : [])),
-        ),
-      ].sort(),
-    });
+    known.set(key, workspaces.length > 0);
   }
   return known.get(key)!;
 }
@@ -228,7 +221,7 @@ export async function providerRelations(
     projectId,
   );
   if (!row) return null;
-  const known = new Map<string, { declares: boolean; drivers: string[] }>();
+  const known = new Map<string, boolean>();
   const facts = new Map<string, { revision: number; terminal: boolean }>();
   const extend = async (item: WorkflowDependency): Promise<WorkflowProviderDependency> => {
     if (!facts.has(item.id)) {
@@ -254,8 +247,7 @@ export async function providerRelations(
     return {
       ...item,
       ...facts.get(item.id)!,
-      declaresWorkspace: declared.declares,
-      workspaceDrivers: declared.drivers,
+      declaresWorkspace: declared,
     };
   };
   const success = await sql.get<{ success_json: string }>(

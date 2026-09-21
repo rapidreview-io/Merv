@@ -215,7 +215,7 @@ test(
       workspace: 'git',
       requestId: 'hosted',
     });
-    assert.equal(task.workflow.version, 6, 'new Git work lives in Code once the project is hosted');
+    assert.equal(task.workflow.version, 5, 'new Git work lives in Code once the project is hosted');
 
     let finalizes = 0;
     let dropped = false;
