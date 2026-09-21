@@ -2051,9 +2051,13 @@ DROP TABLE task_leases_backup;`,
     }
   }
 
-  async markFailed(caller: Caller, input: TaskMarkFailed): Promise<Task> {
+  async markFailed(
+    caller: Caller,
+    input: TaskMarkFailed,
+    transaction?: Transaction,
+  ): Promise<Task> {
     ({ caller, input } = structuredClone({ caller, input }));
-    return await this.state.transaction(async (tx) => {
+    return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'mark_failed', input, async () => {
         check(

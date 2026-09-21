@@ -36,7 +36,7 @@ review decisions. Producers supply evidence and reports. Paper creates no assign
 or context recipes. [Consolidation](docs/CONSOLIDATION.md)
 consumes retained artifacts and explicit work prerequisites without depending on
 Reflections. A [Research cycle](docs/RESEARCH.md) coordinates research, reflection and
-consolidation; it creates no separate paper-writing workflows.
+consolidation; [automatic mode](docs/CONTINUOUS_RESEARCH.md) advances on finished work, including failures, and creates reviewed successor waves within a cycle limit. It creates no separate paper-writing workflows.
 
 Domain Events and Context Builder are implemented as two independent services. Task types own their versioned recipes directly, with no context-adapter plugins. `task.context` builds a persisted starting package; `task.checkpoint` saves attributed progress. Built-in recipes cover ordinary work, experiment planning, project reflection and independent review. See [the contract and examples](docs/RECOVERY_AND_CONTEXT.md), [Domain Events](packages/domain-events/README.md), and [Context Builder](packages/context-builder/README.md). Server-side scheduling, native execution and Git workspace capture are integrated. Experiments owns its production planning, execution and independent review recipes. Reflections and Consolidation own their workflow recipes; Paper is a document store. Reviewed central publication remains open.
 

@@ -1486,7 +1486,7 @@ export interface Tasks {
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;
   reissueReview(caller: Caller, input: TaskReissue): Promise<Task>;
-  markFailed(caller: Caller, input: TaskMarkFailed): Promise<Task>;
+  markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
 }
 declare module 'cordis' {
   interface Context {

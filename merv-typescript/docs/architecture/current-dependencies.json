@@ -563,6 +563,7 @@
         "workflows"
       ],
       "optional": [
+        "domainEvents",
         "paper",
         "reflections",
         "knowledge",

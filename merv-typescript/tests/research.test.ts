@@ -365,12 +365,12 @@ test('new no-code research completes after approved reflection without consolida
     ),
     false,
   );
-  await assert.rejects(async () => await f.advance(record), { code: 'dependencies_pending' });
+  await assert.rejects(async () => await f.advance(record), { code: 'reflection_not_approved' });
   await f.reflect(record);
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'complete');
-  // 4 is 3 with a way out: a cycle that cannot reach an answer can be ended.
-  assert.equal(record.workflow.version, 4);
+  // New cycles observe failed outcomes instead of requiring successful experiments.
+  assert.equal(record.workflow.version, 5);
   assert.equal(record.consolidationId, null);
   assert.equal((await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.length, 1);
   assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 0);
@@ -1491,7 +1491,7 @@ test('a consolidated cycle creates the plan when consolidation completes, not at
   const successor = await f.research.get(f.owner, record.successorId!);
   assert.equal(successor.origin?.items.length, 4);
   // What follows a retained cycle is a cycle of today.
-  assert.equal(successor.workflow.version, 4);
+  assert.equal(successor.workflow.version, 5);
 
   let git = await f.advance(await f.advance(await f.create('git')));
   await f.reflect(git, planned({ items: planned().items.slice(0, 1) }));
@@ -1542,7 +1542,7 @@ test('what would refuse the plan is reported before the advance, and skip is alw
   assert.deepEqual(await counts(f), before);
 });
 
-test('carried-over work that died and a project full of experiments each refuse the plan', async (t) => {
+test('failed carried-over work remains evidence, while a project full of experiments refuses the plan', async (t) => {
   const f = await fixture(t);
   const dead = await f.app.ctx.tasks.create(f.owner, {
     title: 'Work that will die',
@@ -1562,14 +1562,14 @@ test('carried-over work that died and a project full of experiments each refuse 
       })
     ).blockers[0]?.code;
   assert.equal(await code(), undefined);
-  // The next cycle would wait on it and be ended by it the moment it opened.
+  // A failed carried-over task is an outcome for the next reflection.
   await f.app.ctx.tasks.markFailed(f.owner, {
     taskId: dead.id,
     expectedRevision: (await f.app.ctx.tasks.get(f.owner, dead.id)).workflow.revision,
     reason: 'The approach it depended on was withdrawn.',
     requestId: f.id(),
   });
-  assert.equal(await code(), 'next_wave_inapplicable');
+  assert.equal(await code(), undefined);
   for (let index = 0; index < 7; index++)
     await f.app.ctx.experiments.create(f.owner, {
       name: `filler-${index}`,

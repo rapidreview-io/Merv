@@ -1,13 +1,13 @@
 # Research coordinator
 
-Research coordinates existing work without owning agent execution:
+Research coordinates existing work without owning agent execution. [Automatic mode](CONTINUOUS_RESEARCH.md) stitches the same workflows into a continuous run:
 
 ```text
 defining → researching → reflecting → complete
                                   ↘ consolidating → complete  (code changes)
 ```
 
-New cycles use `research@3`: pin the project definition, wait for selected prerequisite workflows, and create a five-lens reflection. With `consolidationWorkspace: 'none'` (the default), the cycle completes after its reflection is independently approved; it creates no Consolidation child. With `'git'`, it continues through Git consolidation and its independent review before completing. Experiment and reflection submissions include their paper changes, accepted by their existing scientific reviews; Research creates no Methods/Results child workflows.
+New cycles use `research@5`: pin the project definition, wait for the selected work to finish (including failure or abandonment), and create a five-lens reflection. Task and experiment execution prerequisites still require success. Versions 2–4 retain their original gates. With `consolidationWorkspace: 'none'` (the default), the cycle completes after its reflection is independently approved; it creates no Consolidation child. With `'git'`, it continues through Git consolidation and its independent review before completing. Experiment and reflection submissions include their paper changes, accepted by their existing scientific reviews; Research creates no Methods/Results child workflows.
 
 Research owns the existing `reflection.create` tool and uses the same service method when advancing a research cycle into reflection. It registers an optional Workflows read-reference resolver for live reflection evidence, supplied by Knowledge. Removing Research removes these extra read permissions, without unloading Reflections or interrupting its assignment, lease or submission lifecycle. Reload restores reads for the same agent. Fixed tool grants, project scope, lens independence and write restrictions remain authoritative.
 
@@ -39,13 +39,13 @@ The [Fable design consultation](reviews/research-optional-design-fable-20260916.
 
 ## Next wave
 
-Deliberately not taken from the [next-wave memo](../dev_docs/next-wave-memo-gpt6-2026-09-19.md): automatic advance and delegated owner authority, a `research@5` definition, provenance-based exclusion of the plan's authors from its work, a continuation budget, and a mandatory feasibility task per experiment.
+Automatic handoffs and a bounded number of successor cycles are implemented; see [Continuous research](CONTINUOUS_RESEARCH.md). Provenance-based exclusion of plan authors from future production and a shared cross-cycle cost budget are separate work. Experiment feasibility is checked by the experiment design workflow.
 
 Synthesis may submit its change specification as a structured plan (see [Reflections](REFLECTIONS.md#structured-change-specification)). Once that reflection is independently approved, the advance that reaches `complete` — `reflecting → complete` without consolidation, `consolidating → complete` with it — can create the plan as records. The handoff from reflection into consolidation is not a completion: it asks nothing and creates nothing.
 
-**The owner's choice is explicit.** When the approved plan's decision is `continue`, that advance requires `nextWave`. `workflow.status_and_next` reports the action as `needs_input` naming `nextWave`, and a `research.advance` without it is refused with `next_wave_choice_required` (400). A client written before plans existed therefore never creates agent-planned work unknowingly.
+**Manual advances require an explicit choice.** When the approved plan's decision is `continue`, that advance requires `nextWave`. For a cycle created with `automatic: true`, Research supplies this choice under the captured owner authorization: create within the cycle limit, skip at the limit. `workflow.status_and_next` reports the action as `needs_input` naming `nextWave`, and a `research.advance` without it is refused with `next_wave_choice_required` (400). A client written before plans existed therefore never creates agent-planned work unknowingly.
 
-- `nextWave: "create"` creates every task and experiment of the plan in dependency order, then opens one successor research cycle, named by the plan, that waits on the created work and the plan's carried-over work. The successor starts in `defining` on the current research version, with the predecessor's `consolidationWorkspace` and no extra consolidation prerequisites; the owner advances it as usual. Created tasks are dispatched like hand-created ones as soon as the advance commits.
+- `nextWave: "create"` creates every task and experiment of the plan in dependency order, then opens one successor research cycle, named by the plan, that waits on the created work and the plan's carried-over work. The successor starts in `defining` on the current research version, with the predecessor's `consolidationWorkspace` and no extra consolidation prerequisites; the owner advances it as usual in manual mode; automatic successors inherit the original authority and remaining cycle allowance and advance on durable events. Created tasks are dispatched like hand-created ones as soon as the advance commits.
 - `nextWave: "skip"` completes the cycle and creates nothing. It reads no plan, so it also completes a cycle whose plan can no longer be created or whose Reflections is unloaded.
 - With a `stop` plan, a text change specification or no reflection, there is nothing to choose: `nextWave` is accepted and ignored, and the advance behaves as it always did. Follow-on work after a text change specification is the owner's to create.
 
@@ -57,13 +57,13 @@ Because the text of a created task or experiment was written by an agent and is 
 
 **Blockers.** Everything about the project that could refuse the plan is judged before the cycle moves, in the `workflow.status_and_next` preflight (pass `nextWave: "create"` as input) and again inside the committing transition, which receives the same `nextWave` as its input:
 
-| Code                                                                      | Meaning                                                                                                                    |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `tasks_unavailable`, `experiments_unavailable`, `reflections_unavailable` | A provider the creation needs is not loaded                                                                                |
-| `reflection_open`                                                         | Another reflection wave pauses task and experiment starts                                                                  |
-| `experiment_name_conflict`                                                | A planned experiment name is already used in the project (compared without case)                                           |
-| `experiment_limit`                                                        | Active experiments plus the plan's would exceed seven                                                                      |
-| `next_wave_inapplicable`                                                  | Carried-over work is not a task or experiment, or has failed or been abandoned, which would end the successor as it opened |
+| Code                                                                      | Meaning                                                                                                        |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `tasks_unavailable`, `experiments_unavailable`, `reflections_unavailable` | A provider the creation needs is not loaded                                                                    |
+| `reflection_open`                                                         | Another reflection wave pauses task and experiment starts                                                      |
+| `experiment_name_conflict`                                                | A planned experiment name is already used in the project (compared without case)                               |
+| `experiment_limit`                                                        | Active experiments plus the plan's would exceed seven                                                          |
+| `next_wave_inapplicable`                                                  | Carried-over work is not a task or experiment; legacy cycles also reject failed or abandoned carried-over work |
 
 Only the existence of tested claims is left to creation, because Research holds no Claims. Every message but the general `reflections_unavailable` names `nextWave: "skip"` as the way on.
 

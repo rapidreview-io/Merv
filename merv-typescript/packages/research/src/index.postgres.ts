@@ -50,4 +50,14 @@ $merv$;
 CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles
 FOR EACH ROW EXECUTE FUNCTION research_digest_guard();
 `,
+  4: `
+CREATE TABLE research_automation (
+ research_id TEXT PRIMARY KEY REFERENCES research_cycles(id),project_id TEXT NOT NULL,
+ source_json TEXT NOT NULL,root_id TEXT NOT NULL REFERENCES research_cycles(id),
+ cycle_index INTEGER NOT NULL,max_cycles INTEGER NOT NULL,blocker_json TEXT);
+CREATE TRIGGER research_automation_identity BEFORE UPDATE OF research_id,project_id,source_json,root_id,cycle_index,max_cycles ON research_automation
+FOR EACH ROW EXECUTE FUNCTION research_identity_guard();
+CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
+FOR EACH ROW EXECUTE FUNCTION research_retained_guard();
+`,
 };

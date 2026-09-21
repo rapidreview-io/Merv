@@ -36,7 +36,7 @@ export const researchToolsPlugin = {
       {
         name: 'research.create',
         description:
-          "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows.",
+          "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection. With consolidationWorkspace none (default), finish after reflection approval; choose git to add code implementation and review. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
         inputSchema: createSchema,
         handler: async (caller: Caller, input: ResearchCreate) =>
           await research.create(caller, input),
@@ -69,7 +69,7 @@ export const researchToolsPlugin = {
       {
         name: 'research.replan',
         description:
-          'Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it when a selected experiment was abandoned or failed and the cycle should carry on without it.',
+          'Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it to change the wave scope. New cycles retain failed and abandoned work for reflection.',
         inputSchema: replanSchema,
         handler: async (caller: Caller, input: ResearchReplan) =>
           await research.replan(caller, input),
@@ -84,7 +84,7 @@ export const researchToolsPlugin = {
       {
         name: 'research.advance',
         description:
-          'Explicitly advance the current outer gate when its prerequisites are complete. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.',
+          'Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Never publishes central Git. Reuse the same requestId and exact expectedRevision for an uncertain response.',
         inputSchema: advanceSchema,
         handler: async (caller: Caller, input: ResearchAdvance) =>
           await research.advance(caller, input),
