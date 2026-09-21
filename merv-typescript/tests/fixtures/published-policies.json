@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-19. A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint.",
+  "note": "Production truth as of 2026-09-21 (release 20260921T053849Z, commit 7ec4d69d). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint.",
   "definitions": [
     {
       "name": "consolidation",
@@ -79,25 +79,25 @@
       "name": "task",
       "version": 3,
       "fingerprint": "60efdec2a9c36741059b4745b172b9259f04e1ce9bdf815e27576a91c3ee3f11",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 4,
       "fingerprint": "5019e16922a875da264d8138383c2a9928daf9592cc0ade70ec7540592da7444",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 3,
       "fingerprint": "785e5dd01afc81371c6ac71d34dfbdffc1add648d3f29d09ad0269bdf9689dc8",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 4,
       "fingerprint": "009e7b43302feb706520076d9605f795c3cb86872eecbe594f90b37e57a29eb4",
-      "published": false
+      "published": true
     },
     {
       "name": "consolidation",
@@ -121,19 +121,19 @@
       "name": "experiment",
       "version": 5,
       "fingerprint": "c6e5058e02489aa9d309e39198fbce6bbc1c58ce9935fcaa3e29b9562a0ec1e7",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 6,
       "fingerprint": "d8feae5424eb44f3a2c580f733bc539ba3f4f750537a4ec76d88924243604d6b",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 7,
       "fingerprint": "4483c02ee81e0cba56d625971cabfda401b87cd61996f609e21f8961b91b24db",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
@@ -400,84 +400,84 @@
       "version": 3,
       "state": "in_progress",
       "fingerprint": "7e456899b88024c866aa14585ac532aa2c8a0b70bf6ba9f7bc78c9d77b5691b3",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 3,
       "state": "in_review",
       "fingerprint": "4941934dd76ac21323999df84e90e7ac4bfa9b6f42589d20ec51b02225800f63",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 4,
       "state": "in_progress",
       "fingerprint": "ffba0d266dcc81508c7e9af90196952c947227a12f377321a53ba8b38d797107",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 4,
       "state": "in_review",
       "fingerprint": "4941934dd76ac21323999df84e90e7ac4bfa9b6f42589d20ec51b02225800f63",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 3,
       "state": "design_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 3,
       "state": "experiment_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 3,
       "state": "planned",
       "fingerprint": "e88702eb78f6ddcd2a051b26d30b5d38b41ba2900ab4c2154d4aa85beae39bf6",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 3,
       "state": "running",
       "fingerprint": "6d8e16fc603fc05c4a1a36a3c77e9c2a4c636973eeb4f209ce28376eaca5d30f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 4,
       "state": "design_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 4,
       "state": "experiment_review",
       "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 4,
       "state": "planned",
       "fingerprint": "e88702eb78f6ddcd2a051b26d30b5d38b41ba2900ab4c2154d4aa85beae39bf6",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 4,
       "state": "running",
       "fingerprint": "6e698abc07bae5520280e25a3797f8bb1717f264e7222b42c1e50862c08d01d4",
-      "published": false
+      "published": true
     },
     {
       "workflow": "consolidation",
@@ -540,84 +540,84 @@
       "version": 5,
       "state": "design_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 5,
       "state": "experiment_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 5,
       "state": "planned",
       "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 5,
       "state": "running",
       "fingerprint": "6d8e16fc603fc05c4a1a36a3c77e9c2a4c636973eeb4f209ce28376eaca5d30f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 6,
       "state": "design_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 6,
       "state": "experiment_review",
       "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 6,
       "state": "planned",
       "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 6,
       "state": "running",
       "fingerprint": "6e698abc07bae5520280e25a3797f8bb1717f264e7222b42c1e50862c08d01d4",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 7,
       "state": "design_review",
       "fingerprint": "7683d682477b031e6bd56ce53888c5d2673f7e543d21d94bf3a371aee900a13f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 7,
       "state": "experiment_review",
       "fingerprint": "bfc5a7e0cde3fbc0f8e892e85a0c48da0e4ef7dfcd46335c0723c36a58ef224e",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 7,
       "state": "planned",
       "fingerprint": "2677be6a083f11714b90488a00390fb3623648b5deb4b1deac8897420379495a",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 7,
       "state": "running",
       "fingerprint": "2c3c0918fa14c2c3b55fa55738a74bac744197196834479696e683686cb98d17",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
@@ -844,7 +844,7 @@
       "type": "reflection.lens",
       "version": 5,
       "hash": "ba4bc788123c8445a02b162c408579605033138dceeca9eb87747796ea0e00b3",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.review",
@@ -868,7 +868,7 @@
       "type": "reflection.review",
       "version": 5,
       "hash": "49d5ca223242cebc7164808246540b9d832d38b735915fb8f6a25f8e5b84b740",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.synthesis",
@@ -892,7 +892,7 @@
       "type": "reflection.synthesis",
       "version": 5,
       "hash": "62a8990e1ae41d6c2474d7236cca5f8c2364663fe9f684cdcfd6a4ba6d60ddd5",
-      "published": false
+      "published": true
     },
     {
       "type": "task.review",
@@ -976,103 +976,103 @@
       "type": "experiment.plan",
       "version": 2,
       "hash": "bbfc2f17f64a43de9298c7045da6b533e005030b5dc0fed7a9813281df4aff85",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design",
       "version": 7,
       "hash": "7a7cfe5900f07891fc0ad5a83b0681477513aff4775276c31945eb921f7182f5",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design_review",
       "version": 7,
       "hash": "3d34bb921943768e3e358ee6c6a61fed68a34fdad8c8f7fd46bec94117448fb7",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.execute",
       "version": 7,
       "hash": "c104305a5659bedca31b0ef56878a85356c17161859112fc637c9a62fe37d5dd",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 7,
       "hash": "f590faa313aabcaa4048e284d063d86674d58b8de9d22f78016040d42d3955d4",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.synthesis",
       "version": 6,
       "hash": "013fafe7039ceb6934ce446f7a6d656b9eae32de1efcc667dfa72acd29ca49a9",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design_review",
       "version": 8,
       "hash": "8926c20adddf3979c03e10f9200667fd3927eef8b6ef743bddb8ca81e353d5d1",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.review",
       "version": 6,
       "hash": "1651728e9dceb754abb2d1a9d9d1f864e7b8e630da1008c4baee7c85d0c7f555",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.execute",
       "version": 8,
       "hash": "cb86353369875aa0beb1d67b2cfab5583e212c99196ce9a453ba3b87d2153e1d",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 8,
       "hash": "c6e886dfca74d9956a6797bd96818cc45c08121f51b411babddd9e2c6c65991e",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.lens",
       "version": 7,
       "hash": "0ab78b0005a6c87175adbe0c60e90af19de2e45f68b6a68e94420c286e9875d6",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design",
       "version": 9,
       "hash": "bf9935f993024344db2a477e007ba510d50732d29831208105546a604bfd34ec",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.synthesis",
       "version": 7,
       "hash": "7c9f0228d9bbe1cccc38db846d9212f671cd21fd8a5493c4ec09c379883e40cc",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design_review",
       "version": 9,
       "hash": "bc4210b554ee79768a292e1d2f493983c7f7455ff18901cba239924b1074645e",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.review",
       "version": 7,
       "hash": "16de412e41c4dbba1dc2b2c415a272e987357c24a0fe0328108f8836f408c92a",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.execute",
       "version": 9,
       "hash": "ddab60214e6b92b8313e272d3634afc6fa530424a992f2e88626a155d3df4ffb",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 9,
       "hash": "c03ab038efed6ec5e2254d7c8be446f79ffb34fc95e8868d2f08415212e3c97f",
-      "published": false
+      "published": true
     }
   ]
 }
