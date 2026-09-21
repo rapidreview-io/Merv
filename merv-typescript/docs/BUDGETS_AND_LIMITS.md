@@ -154,17 +154,29 @@ pause is visible (`budgets[]`, the runner's last decision) and an admin reverses
 ## Launch retry cap
 
 Failed launches on one instance revision used to be retried for ever, thirty seconds
-apart. Sessions config `maxLaunchFailures` (1 to 100, default 5) ends that: once that many
-sessions on one instance and revision have closed as `host_failed`, `crash_loop`,
-`workspace_failed` or `launch_failed`, automatic dispatch stops offering it. An expiry
-does not count, because that is also how long honest work ends. The thirty-second backoff
-is unchanged and outranks it: a runner is told `retries_exhausted` only when no candidate
-that could still be tried remains. The status read reports `retriesExhausted`, the number
-of queued items withheld this way.
+apart. Sessions config `maxLaunchFailures` (1 to 100, default 5) ends that. Each failed
+attempt bumps one counter row per instance and revision in `session_dispatch_holds`
+(session_dispatch 4), across every runner and platform of the project. An attempt is a
+session that closed as `host_failed`, `crash_loop`, `workspace_failed`, `launch_failed` or
+`stalled`; an offer that lapsed before any process activated it (`offer_expired`); or an
+offer that could not be built at all, which leaves no session and is counted in its own
+transaction after the lease rolled back. An expiry after activation does not count,
+because that is also how long honest work ends, and neither does a refusal of who asked
+(401, 403, or a lost race with another lease or a control change).
 
-The reset is a human act that already existed: switch automatic dispatch off and on. Only
-failures since the switch last changed count, so this restarts the count for **every
-instance in the project**. A new revision of the instance also starts a fresh count.
+At the cap the row is held, `session.dispatch_held` is recorded once, and automatic
+dispatch stops offering that target. The thirty-second backoff is unchanged and outranks
+the hold: a runner is told `retries_exhausted` only when no candidate that could still be
+tried remains. The status read reports `retriesExhausted`, the number of queued items
+withheld this way. A hold gates automatic dispatch only: a person may still offer the
+target by hand, and a failure of that session counts like any other.
+
+A held target waits for a human. A project admin who is not a leased worker calls
+`releaseHold` with the instance, its revision, a reason and a `requestId`; the count
+restarts, `session.hold_released` is recorded, and the same request replays the same
+answer. Switching automatic dispatch off and on is the same go-ahead for **every
+instance in the project**. A new revision of the instance starts a fresh count, because a
+hold names one revision; ending or revising the record is how to decide not to run it.
 
 ## What Merv cannot know
 

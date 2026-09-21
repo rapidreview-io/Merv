@@ -28,7 +28,9 @@ export type SessionOutcome =
   | 'host_failed'
   | 'launch_failed'
   | 'workspace_failed'
-  | 'crash_loop';
+  | 'crash_loop'
+  /** Alive but not progressing: closed by the idle policy, never by the worker. */
+  | 'stalled';
 
 export interface DispatchState {
   enabled: boolean;
@@ -92,6 +94,62 @@ export interface RunnerPresence extends RunnerHeartbeat {
   /** What the runner's last lease request decided; one row per runner, never a log. */
   lastDecision: DispatchDecision | null;
   lastDecisionAt: string | null;
+  /** When the current run of the same decision began, so a refusal says how long it has held. */
+  decisionSince: string | null;
+}
+/**
+ * Why automatic dispatch is spacing out or withholding one instance revision: one counter
+ * per target, never a log. `lastSessionId` is null when the offer itself could not be built.
+ */
+export interface DispatchHold {
+  instanceId: string;
+  revision: number;
+  attempts: number;
+  lastCode: string;
+  lastMessage: string;
+  lastSessionId: string | null;
+  firstAt: string;
+  lastAt: string;
+  /** Set once the attempts reach the cap; only a human's go-ahead clears it. */
+  heldAt: string | null;
+}
+export type StuckKind =
+  | 'session_idle'
+  | 'dispatch_held'
+  | 'dispatch_failing'
+  | 'ready_quiet'
+  | 'dispatch_disabled'
+  | 'no_live_runner'
+  | 'runner_refusing';
+/** One thing that stopped moving. `why` and `next` are advice; every guard is a transaction's. */
+export interface StuckItem {
+  kind: StuckKind;
+  instanceId?: string;
+  expectedRevision?: number;
+  sessionId?: string;
+  runnerRef?: string;
+  label?: string;
+  since: string;
+  forSeconds: number;
+  code: string;
+  attempts?: number;
+  why: string;
+  next: string;
+}
+export interface StuckReport {
+  observedAt: string;
+  thresholds: {
+    idleStalledSeconds: number;
+    idleCloseSeconds: number;
+    maxLaunchFailures: number;
+    quietReadySeconds: number;
+    refusalSeconds: number;
+  };
+  total: number;
+  counts: Record<StuckKind, number>;
+  /** At most 200, in StuckKind order, then by `since` and instance. */
+  items: StuckItem[];
+  truncated: boolean;
 }
 export interface SessionSummary {
   agentId?: string;

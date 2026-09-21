@@ -617,6 +617,7 @@ export class WorkflowsService implements Workflows {
             policyHash: executionFingerprint(rule.execution),
             registrationId: registration.registrationId,
             workspace: effectiveWorkspace(rule.execution),
+            updatedAt: snapshot.updatedAt,
           });
         } catch (error) {
           // Domain admission refusals make a node ineligible. Malformed programs fail visibly.

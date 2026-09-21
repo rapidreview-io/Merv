@@ -1,0 +1,540 @@
+import { createService, MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import { test, type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
+import { PostgresState, SqliteState } from '@merv/state';
+import { ProjectScope } from '@merv/scope';
+import { WorkflowsService } from '@merv/workflows';
+import { DurableEvents } from '@merv/domain-events';
+import { LeasedSessions } from '@merv/sessions';
+
+const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
+const request = () => randomBytes(10).toString('hex');
+const presence = (runnerId = 'machine') => ({
+  runnerId,
+  machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+  platforms: [
+    {
+      name: 'codex',
+      harness: 'codex' as const,
+      model: 'fixture-model',
+      enabled: true,
+      parallelism: 4,
+    },
+  ],
+  capacity: 1,
+});
+const auto = (runnerId = 'machine') => ({
+  runnerId,
+  requestId: request(),
+  secret: secret(),
+  platform: { name: 'codex', harness: 'codex' as const, model: 'fixture-model' },
+});
+const backends = [
+  { name: 'sqlite', postgres: false, skip: false as boolean | string },
+  {
+    name: 'postgres',
+    postgres: true,
+    skip: process.env.MERV_TEST_POSTGRES_URL ? false : 'MERV_TEST_POSTGRES_URL is not set',
+  },
+];
+interface HoldRow {
+  instance_id: string;
+  revision: number;
+  attempts: number;
+  last_code: string;
+  last_message: string;
+  last_session_id: string | null;
+  held_at: string | null;
+}
+
+async function fixture(
+  t: TestContext,
+  options: { postgres?: boolean; maxLaunchFailures?: number; dispatchSchema?: number } = {},
+) {
+  let clock = Date.parse('2026-01-01T00:00:00.000Z');
+  const schema = `merv_liveness_${randomUUID().replaceAll('-', '')}`;
+  const state = options.postgres
+    ? await PostgresState.open({ connectionString: process.env.MERV_TEST_POSTGRES_URL!, schema })
+    : new SqliteState(':memory:');
+  const migrate = state.migrate.bind(state);
+  const scope = await createService(new ProjectScope(state, () => clock));
+  const workflows = await createService(new WorkflowsService(state, scope));
+  const events = await createService(new DurableEvents(state));
+  let buildHook: (() => void) | undefined;
+  const working = (name: string): NonNullable<WorkflowPolicy['assignments']>[number] => ({
+    state: name,
+    check: async ({ caller, tx }) => {
+      await scope.require(caller, 'write', tx);
+    },
+    build: () => {
+      buildHook?.();
+      return {
+        role: 'producer',
+        label: 'Work',
+        brief: 'Frozen brief',
+        references: [],
+        handoff: { instruction: 'Finish', tools: ['finish'] },
+        execution: { readOnly: false, tools: [] },
+        context: null,
+      };
+    },
+    execution: {
+      readOnly: false,
+      tools: [
+        {
+          name: 'finish',
+          alternatives: [
+            {
+              instanceId: { kind: 'target', field: 'instanceId' },
+              expectedRevision: { kind: 'target', field: 'revision' },
+            },
+          ],
+        },
+      ],
+    },
+    lease: {
+      role: () => 'producer' as const,
+      acquire: ({ leaseId }) => ({ leaseId }),
+      check: () => {},
+      release: () => {},
+    },
+  });
+  const policy: WorkflowPolicy = {
+    successStates: ['done'],
+    actions: [
+      {
+        name: 'finish',
+        states: ['working', 'revised'],
+        transitions: ['finish', 'revise'],
+        tool: 'finish',
+        instruction: 'Finish.',
+        check: async ({ caller, tx }) => {
+          await scope.require(caller, 'write', tx);
+        },
+      },
+    ],
+    assignments: [working('working'), working('revised')],
+  };
+  const definition = {
+    name: 'liveness-fixture',
+    version: 1,
+    initial: 'working',
+    states: ['working', 'revised', 'done'],
+    terminal: ['done'],
+    edges: [
+      { from: 'working', action: 'revise', to: 'revised' },
+      { from: 'working', action: 'finish', to: 'done' },
+      { from: 'revised', action: 'finish', to: 'done' },
+    ],
+  };
+  const handle = await workflows.register(definition, policy);
+  const boot = await scope.bootstrap({ projectName: 'Liveness', actorName: 'Owner' });
+  const owner: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const source: Caller = {
+    actorId: issued.actor.id,
+    projectId: boot.project.id,
+    credentialId: issued.credential.id,
+  };
+  const open = async (dispatchSchema?: number) => {
+    state.migrate =
+      dispatchSchema === undefined
+        ? migrate
+        : async (component, migrations) =>
+            await migrate(
+              component,
+              component === 'session_dispatch'
+                ? migrations.filter((m) => m.version <= dispatchSchema)
+                : migrations,
+            );
+    try {
+      return await createService(
+        new LeasedSessions(state, scope, workflows, events, {
+          clock: () => clock,
+          sweepIntervalMs: 60_000,
+          ...(options.maxLaunchFailures === undefined
+            ? {}
+            : { maxLaunchFailures: options.maxLaunchFailures }),
+        }),
+      );
+    } finally {
+      state.migrate = migrate;
+    }
+  };
+  let sessions = await open(options.dispatchSchema);
+  t.after(async () => {
+    await sessions.close();
+    await events.close();
+    await workflows.close();
+    await state.close();
+    if (options.postgres) {
+      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
+      try {
+        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
+      } finally {
+        await pool.end();
+      }
+    }
+  });
+  const runner = async (runnerId = 'machine') =>
+    (await sessions.projectStatus(owner)).runners.find((item) => item.runnerId === runnerId)!;
+  return {
+    state,
+    scope,
+    handle,
+    owner,
+    source,
+    runner,
+    get sessions() {
+      return sessions;
+    },
+    instance: async () =>
+      await handle.start(source, { workflow: definition.name, requestId: request() }),
+    advance: (ms: number) => (clock += ms),
+    time: () => new Date(clock).toISOString(),
+    onBuild(hook?: () => void) {
+      buildHook = hook;
+    },
+    /** One automatic lease on the runner that the launching machine reports as failed. */
+    async fail(runnerId = 'machine', outcome: 'launch_failed' | 'host_failed' = 'launch_failed') {
+      const leased = await sessions.lease(source, auto(runnerId));
+      assert.ok(leased.session, leased.reason);
+      await sessions.release(source, { sessionId: leased.session.id, runnerId, outcome });
+      return leased.session;
+    },
+    /** Past the thirty-second backoff, with every runner still fresh. */
+    async pastBackoff(...runnerIds: string[]) {
+      clock += 30_001;
+      for (const id of runnerIds.length ? runnerIds : ['machine'])
+        await sessions.heartbeatRunner(source, presence(id));
+    },
+    async upgrade() {
+      await sessions.close();
+      sessions = await open();
+    },
+    holds: async () =>
+      await state.read(
+        async (sql) =>
+          await sql.all<HoldRow>('SELECT * FROM session_dispatch_holds ORDER BY instance_id'),
+      ),
+    events: async (type: string) =>
+      (await state.events(owner.projectId)).filter((event) => event.type === type),
+  };
+}
+
+for (const backend of backends)
+  test(
+    `a repeated dispatch decision keeps the moment it began and a new decision restarts it (${backend.name})`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, { postgres: backend.postgres });
+      await f.sessions.heartbeatRunner(f.source, presence());
+      assert.equal((await f.runner()).decisionSince, null, 'a runner that never asked');
+
+      await f.sessions.lease(f.source, auto());
+      const began = f.time();
+      f.advance(5000);
+      await f.sessions.lease(f.source, auto());
+      let runner = await f.runner();
+      assert.deepEqual(
+        [runner.lastDecision, runner.decisionSince, runner.lastDecisionAt],
+        ['dispatch_disabled', began, f.time()],
+      );
+
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      f.advance(5000);
+      await f.sessions.lease(f.source, auto());
+      runner = await f.runner();
+      assert.deepEqual(
+        [runner.lastDecision, runner.decisionSince],
+        ['no_candidates', f.time()],
+        'a different answer starts its own run',
+      );
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `a target that keeps failing across runners is held, stops blocking the queue, and one admin go-ahead offers it again (${backend.name})`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, { postgres: backend.postgres, maxLaunchFailures: 3 });
+      await f.sessions.heartbeatRunner(f.source, presence());
+      await f.sessions.heartbeatRunner(f.source, presence('second'));
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      const target = await f.instance();
+      f.advance(1);
+
+      // The count is the project's: two machines failing the same target share it.
+      await f.fail('machine');
+      const last = await f.fail('second', 'host_failed');
+      assert.deepEqual(
+        (await f.holds()).map((row) => [row.attempts, row.last_code, row.held_at]),
+        [[2, 'host_failed', null]],
+      );
+      assert.equal((await f.events('session.dispatch_held')).length, 0);
+      await f.pastBackoff('machine', 'second');
+      const third = await f.fail('machine');
+      const [hold] = await f.holds();
+      assert.deepEqual(
+        [hold.instance_id, hold.revision, hold.attempts, hold.last_session_id, hold.held_at],
+        [target.id, 0, 3, third.id, f.time()],
+      );
+      assert.notEqual(last.id, third.id);
+
+      await f.pastBackoff('machine', 'second');
+      assert.deepEqual(await f.sessions.lease(f.source, auto('second')), {
+        session: null,
+        reason: 'retries_exhausted',
+      });
+      assert.equal((await f.runner('second')).lastDecision, 'retries_exhausted');
+      const held = await f.events('session.dispatch_held');
+      assert.equal(held.length, 1);
+      assert.equal(held[0].actorId, 'system:sessions');
+      assert.deepEqual(held[0].data, {
+        instanceId: target.id,
+        revision: 0,
+        attempts: 3,
+        lastCode: 'launch_failed',
+        lastMessage: 'released',
+      });
+      assert.equal((await f.sessions.projectStatus(f.owner)).retriesExhausted, 1);
+
+      // A held target does not stand in front of healthy work queued behind it.
+      const healthy = await f.instance();
+      const leased = (await f.sessions.lease(f.source, auto())).session!;
+      assert.equal(leased.instanceId, healthy.id);
+      await f.handle.transition(f.source, {
+        instanceId: healthy.id,
+        expectedRevision: 0,
+        action: 'finish',
+        requestId: request(),
+      });
+      await f.sessions.sweep();
+
+      const input = {
+        instanceId: target.id,
+        expectedRevision: 0,
+        reason: 'The workspace disk was full; it is cleared',
+        requestId: 'go-ahead',
+      };
+      const released = await f.sessions.releaseHold(f.owner, input);
+      assert.deepEqual(
+        [released.instanceId, released.revision, released.attempts, released.heldAt],
+        [target.id, 0, 0, null],
+      );
+      assert.equal(released.lastCode, 'launch_failed');
+      assert.deepEqual(
+        (await f.holds()).map((row) => [row.attempts, row.held_at]),
+        [[0, null]],
+      );
+      const events = await f.events('session.hold_released');
+      assert.equal(events.length, 1);
+      assert.deepEqual(events[0].data, {
+        instanceId: target.id,
+        revision: 0,
+        attempts: 3,
+        lastCode: 'launch_failed',
+        reason: input.reason,
+      });
+
+      // The same request answers the same, and records nothing twice.
+      assert.deepEqual(await f.sessions.releaseHold(f.owner, input), released);
+      assert.equal((await f.events('session.hold_released')).length, 1);
+      await assert.rejects(
+        async () => await f.sessions.releaseHold(f.owner, { ...input, reason: 'Another reason' }),
+        { code: 'request_conflict', status: 409 },
+      );
+
+      const again = (await f.sessions.lease(f.source, auto())).session!;
+      assert.equal(again.instanceId, target.id);
+    },
+  );
+
+test('only a project admin who is not a leased worker releases a hold, and only one that is held', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 2 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  const input = (requestId: string) => ({
+    instanceId: target.id,
+    expectedRevision: 0,
+    reason: 'Fixed',
+    requestId,
+  });
+  await assert.rejects(async () => await f.sessions.releaseHold(f.owner, input('none')), {
+    code: 'hold_not_found',
+    status: 404,
+  });
+  await f.fail();
+  await assert.rejects(async () => await f.sessions.releaseHold(f.owner, input('early')), {
+    code: 'hold_not_held',
+    status: 409,
+  });
+  await f.pastBackoff();
+  await f.fail();
+  assert.ok((await f.holds())[0].held_at);
+
+  await assert.rejects(async () => await f.sessions.releaseHold(f.source, input('producer')), {
+    status: 403,
+  });
+  const other = await f.instance();
+  const token = secret();
+  await f.sessions.offer(f.source, {
+    instanceId: other.id,
+    expectedRevision: 0,
+    runnerId: 'machine',
+    requestId: request(),
+    secret: token,
+  });
+  const worker = await f.sessions.authenticate(token);
+  await assert.rejects(async () => await f.sessions.releaseHold(worker, input('worker')), {
+    code: 'forbidden',
+    status: 403,
+  });
+  for (const bad of [
+    { ...input('bad'), reason: ' ' },
+    { ...input('bad'), expectedRevision: -1 },
+    { ...input('bad'), extra: true },
+  ])
+    await assert.rejects(async () => await f.sessions.releaseHold(f.owner, bad as never), {
+      code: 'invalid_release_hold',
+    });
+  assert.ok((await f.holds())[0].held_at, 'every refusal left the hold in place');
+});
+
+for (const backend of backends)
+  test(
+    `an offer that cannot be built is counted although its lease rolled back, backs off, and is held (${backend.name})`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, { postgres: backend.postgres, maxLaunchFailures: 2 });
+      await f.sessions.heartbeatRunner(f.source, presence());
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      const target = await f.instance();
+      f.onBuild(() => {
+        throw new MervError('context_too_large', 'Context exceeds the budget', 400);
+      });
+      await assert.rejects(async () => await f.sessions.lease(f.source, auto()), {
+        code: 'context_too_large',
+      });
+      assert.deepEqual(
+        (await f.holds()).map((row) => [
+          row.instance_id,
+          row.attempts,
+          row.last_code,
+          row.last_message,
+          row.last_session_id,
+          row.held_at,
+        ]),
+        [[target.id, 1, 'context_too_large', 'Context exceeds the budget', null, null]],
+      );
+      // No session closed, so the backoff is the hold's own.
+      assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retry_backoff');
+      assert.equal((await f.holds())[0].attempts, 1, 'a backed-off target is not rebuilt');
+
+      await f.pastBackoff();
+      await assert.rejects(async () => await f.sessions.lease(f.source, auto()), {
+        code: 'context_too_large',
+      });
+      const held = await f.events('session.dispatch_held');
+      assert.equal(held.length, 1);
+      assert.equal(held[0].actorId, f.source.actorId);
+      await f.pastBackoff();
+      assert.deepEqual(
+        await f.sessions.lease(f.source, auto()),
+        { session: null, reason: 'retries_exhausted' },
+        'a held target is withheld before its offer is built, so nothing is thrown',
+      );
+    },
+  );
+
+test('a refusal of who asked is not counted against the target', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 1 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  f.onBuild(() => {
+    throw new MervError('forbidden', 'The source may not read this', 403);
+  });
+  await assert.rejects(async () => await f.sessions.lease(f.source, auto()), { code: 'forbidden' });
+  assert.deepEqual(await f.holds(), []);
+  f.onBuild();
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+});
+
+test('an offer no process ever activated counts as a lost launch; an expiry after activation does not', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 2 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  const lost = async () => {
+    const leased = (await f.sessions.lease(f.source, auto())).session!;
+    f.advance(300_001);
+    await f.sessions.sweep();
+    await f.sessions.heartbeatRunner(f.source, presence());
+    return leased;
+  };
+  const first = await lost();
+  assert.deepEqual(
+    (await f.holds()).map((row) => [row.attempts, row.last_code, row.last_session_id]),
+    [[1, 'offer_expired', first.id]],
+  );
+  await lost();
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retries_exhausted');
+  assert.equal((await f.events('session.dispatch_held')).length, 1);
+
+  const token = secret();
+  const honest = await f.instance();
+  await f.sessions.offer(f.source, {
+    instanceId: honest.id,
+    expectedRevision: 0,
+    runnerId: 'machine',
+    requestId: request(),
+    secret: token,
+  });
+  await f.sessions.authenticate(token);
+  f.advance(14_400_001);
+  await f.sessions.sweep();
+  assert.deepEqual(
+    (await f.holds()).map((row) => row.instance_id),
+    [target.id],
+    'long honest work also ends in an expiry',
+  );
+});
+
+test('a hold names one revision: the record that moves is offered again', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 1 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  await f.fail();
+  await f.pastBackoff();
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retries_exhausted');
+  await f.handle.transition(f.source, {
+    instanceId: target.id,
+    expectedRevision: 0,
+    action: 'revise',
+    requestId: request(),
+  });
+  const leased = (await f.sessions.lease(f.source, auto())).session!;
+  assert.deepEqual([leased.instanceId, leased.expectedRevision], [target.id, 1]);
+  assert.equal((await f.sessions.projectStatus(f.owner)).retriesExhausted, 0);
+});
+
+test('the hold tables arrive on a database whose runners already decided, and leave their rows alone', async (t) => {
+  const f = await fixture(t, { dispatchSchema: 3 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.upgrade();
+  const runner = await f.runner();
+  assert.deepEqual([runner.lastDecision, runner.decisionSince], [null, null]);
+  assert.deepEqual(await f.holds(), []);
+  await f.sessions.lease(f.source, auto());
+  assert.equal((await f.runner()).decisionSince, f.time());
+});

@@ -24,7 +24,7 @@ import {
   type WorkflowExecution,
   type Workflows,
 } from '@merv/contracts';
-import { SessionDispatch } from './dispatch.js';
+import { SessionDispatch, failureReasons } from './dispatch.js';
 import { AgentDirectory, sourceCaller } from './agents.js';
 import { AgentObservations, summarizeAgent } from './observations.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
@@ -37,6 +37,7 @@ import type {
   Sessions,
   SessionsConfig,
   AutomaticLease,
+  DispatchHold,
   DispatchState,
   RunnerHeartbeat,
   RunnerPresence,
@@ -552,6 +553,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     session.outcome = outcome ?? (status === 'expired' ? 'expired' : 'released');
     await this.save(tx, session);
     await recordUsage(tx, session);
+    // An offer that lapsed before any process activated it is a launch that was lost, and
+    // would otherwise be re-offered every five minutes for ever with nothing counting it.
+    const failure = failureReasons.has(session.outcome)
+      ? session.outcome
+      : reason === 'session_expired' && session.activatedAt === null
+        ? 'offer_expired'
+        : undefined;
+    if (failure) await this.dispatcher.failed(session, failure, tx);
     if (session.agentId) {
       const agent = await this.directory.get(session.agentId, tx);
       if (!agent.persistent) await this.directory.retire(agent, reason, tx);
@@ -1013,6 +1022,13 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);
+  }
+  async releaseHold(
+    caller: Caller,
+    input: Parameters<Sessions['releaseHold']>[1],
+  ): Promise<DispatchHold> {
+    this.ensureOpen();
+    return await this.dispatcher.releaseHold(caller, input);
   }
   async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
     this.ensureOpen();

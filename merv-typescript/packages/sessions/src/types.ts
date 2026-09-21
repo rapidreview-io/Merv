@@ -4,6 +4,7 @@ import type {
   Caller,
   Data,
   DelegationSource,
+  DispatchHold,
   DispatchState,
   RunnerHeartbeat,
   RunnerPresence,
@@ -29,6 +30,7 @@ export type {
   AgentToolCall,
   BudgetStatus,
   DispatchDecision,
+  DispatchHold,
   DispatchState,
   RunnerHeartbeat,
   RunnerPlatform,
@@ -103,6 +105,8 @@ export interface Session {
   closedAt: string | null;
   closeReason: string | null;
   outcome?: SessionOutcome | null;
+  /** Set by the sweep while the session is alive without progressing; cleared when it moves. */
+  stalledAt?: string | null;
   assignment: WorkflowAssignment;
   execution: WorkflowExecution;
   lease: WorkflowLease;
@@ -216,6 +220,11 @@ export interface Sessions {
   ): Promise<Session>;
   /** Open to leased workers too: a reflection lens reads what the cycle it reflects on cost. */
   usage(caller: Caller, input?: UsageQuery): Promise<UsageRollup>;
+  /** Only a project admin who is not a leased worker lets a held target be offered again. */
+  releaseHold(
+    caller: Caller,
+    input: { instanceId: string; expectedRevision: number; reason: string; requestId: string },
+  ): Promise<DispatchHold>;
   /** Only a project admin who is not a leased worker sets what pauses automatic dispatch. */
   setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus>;
   /** First MCP authentication activates the offered lease using metadata only. */

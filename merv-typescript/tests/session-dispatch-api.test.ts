@@ -527,6 +527,11 @@ test('a runner reports the answer its last lease request received', async (t) =>
   assert.equal(pending.body.reason, 'settings_pending');
   runner = await runnerRow();
   assert.equal(runner.lastDecision, 'settings_pending');
+  // Asked again, the refusal keeps the moment it began: that is how long it has held.
+  await f.http('/sessions/lease', f.key.token, f.leaseInput(), f.project.id);
+  const repeated = await runnerRow();
+  assert.equal(repeated.decisionSince, runner.decisionSince);
+  assert.ok(repeated.decisionSince <= repeated.lastDecisionAt);
   assert.equal(runner.desiredVersion > (runner.appliedVersion ?? 0), true);
 
   // Acknowledged, with the one seat this runner has already taken: capacity.

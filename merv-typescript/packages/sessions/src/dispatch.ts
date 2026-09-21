@@ -2,6 +2,9 @@ import { postgresMigrations } from './dispatch.postgres.js';
 import { z } from 'zod';
 import {
   recorded,
+  replayed,
+  clip,
+  visible,
   canonical,
   mapAsync,
   MervError,
@@ -19,6 +22,7 @@ import type {
   AgentSummary,
   AutomaticLease,
   DispatchDecision,
+  DispatchHold,
   DispatchState,
   RunnerHeartbeat,
   RunnerPlatform,
@@ -112,7 +116,33 @@ const scaled = (value: number | null, unit: number): number | null =>
   value === null ? null : Math.max(1, Math.round(value * unit));
 const freshForMs = 45_000;
 const backoffMs = 30_000;
-const failureReasons = new Set(['host_failed', 'crash_loop', 'workspace_failed', 'launch_failed']);
+/** The closes that count against a target: the process failed, or lived without progressing. */
+export const failureReasons = new Set([
+  'host_failed',
+  'crash_loop',
+  'workspace_failed',
+  'launch_failed',
+  'stalled',
+]);
+/**
+ * Refusals that say who asked or what raced, never that the offer cannot be built. Counting
+ * them would let a revoked key or a lost race hold a healthy target until an admin came.
+ */
+const transientOfferCodes = new Set([
+  'dispatch_disabled',
+  'runner_control_changed',
+  'request_conflict',
+  'revision_conflict',
+  'session_conflict',
+]);
+const releaseHoldSchema = z
+  .object({
+    instanceId: z.string().min(1).max(200),
+    expectedRevision: z.number().int().nonnegative().safe(),
+    reason: z.string().min(1).max(500).refine(visible),
+    requestId: z.string(),
+  })
+  .strict();
 interface RunnerRow {
   id: string;
   project_id: string;
@@ -125,7 +155,35 @@ interface RunnerRow {
   last_seen_at: string;
   last_decision: DispatchDecision | null;
   last_decision_at: string | null;
+  decision_since: string | null;
 }
+interface HoldRow {
+  instance_id: string;
+  revision: number;
+  attempts: number;
+  last_code: string;
+  last_message: string;
+  last_session_id: string | null;
+  first_at: string;
+  last_at: string;
+  held_at: string | null;
+}
+interface Target {
+  instanceId: string;
+  expectedRevision: number;
+}
+const targetKey = (item: Target) => `${item.instanceId}:${item.expectedRevision}`;
+const publicHold = (row: HoldRow): DispatchHold => ({
+  instanceId: row.instance_id,
+  revision: row.revision,
+  attempts: row.attempts,
+  lastCode: row.last_code,
+  lastMessage: row.last_message,
+  lastSessionId: row.last_session_id,
+  firstAt: row.first_at,
+  lastAt: row.last_at,
+  heldAt: row.held_at,
+});
 interface ReceiptRow {
   fingerprint: string;
   session_id: string;
@@ -154,7 +212,7 @@ interface Hooks {
 /** An offer for one candidate that cannot be built; the queue moves past it. */
 class PoisonedOffer extends Error {
   constructor(
-    readonly candidate: string,
+    readonly candidate: Target,
     readonly cause: unknown,
   ) {
     super('Offer could not be built');
@@ -229,6 +287,30 @@ export class SessionDispatch {
       );
     `,
         },
+        {
+          // What keeps a candidate from running, kept where dispatch decides: one counter row
+          // per target, so storage is bounded by failed targets, never by attempts. The row is
+          // a mutable counter, not a record; its history is the session.dispatch_held and
+          // session.hold_released events.
+          version: 4,
+          postgres: postgresMigrations[4],
+          sql: `
+      ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
+      CREATE TABLE session_dispatch_holds (
+        project_id TEXT NOT NULL REFERENCES projects(id), instance_id TEXT NOT NULL, revision INTEGER NOT NULL,
+        attempts INTEGER NOT NULL CHECK(attempts>=0), last_code TEXT NOT NULL, last_message TEXT NOT NULL,
+        last_session_id TEXT REFERENCES worker_sessions(id), first_at TEXT NOT NULL, last_at TEXT NOT NULL,
+        held_at TEXT,
+        PRIMARY KEY(project_id,instance_id,revision)
+      );
+      CREATE INDEX session_dispatch_holds_held ON session_dispatch_holds(project_id) WHERE held_at IS NOT NULL;
+      CREATE TABLE session_hold_requests (
+        project_id TEXT NOT NULL, actor_id TEXT NOT NULL, request_id TEXT NOT NULL,
+        input_hash TEXT NOT NULL, result TEXT NOT NULL,
+        PRIMARY KEY(project_id,actor_id,request_id)
+      );
+    `,
+        },
       ]);
     };
   }
@@ -267,6 +349,12 @@ export class SessionDispatch {
       enabled ? 1 : 0,
       time,
       caller.actorId,
+    );
+    // Switching dispatch off and on is the human go-ahead for the whole project: every
+    // count starts afresh, where session.release_hold restarts one target.
+    await tx.run(
+      'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=?',
+      caller.projectId,
     );
     await recorded(this.state, tx, caller, 'session.dispatch_changed', caller.projectId, {
       enabled,
@@ -423,22 +511,192 @@ export class SessionDispatch {
       desiredSettings: JSON.parse(row.settings_json),
       lastDecision: row.last_decision ?? null,
       lastDecisionAt: row.last_decision_at ?? null,
+      decisionSince: row.decision_since ?? null,
     };
   }
-  /** The answer this runner's last lease request received, kept where the runner is. */
+  /**
+   * The answer this runner's last lease request received, kept where the runner is. A
+   * repeated answer keeps the moment it was first given, so a refusal says how long it has
+   * held. One statement: every right-hand side reads the row as it was.
+   */
   private async decided(
     ownerHash: string,
     runnerId: string,
     decision: DispatchDecision,
     tx: Transaction,
   ): Promise<void> {
+    const time = this.time();
     await tx.run(
-      'UPDATE session_runners SET last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
+      'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN decision_since ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
       decision,
-      this.time(),
+      time,
+      decision,
+      time,
       ownerHash,
       runnerId,
     );
+  }
+  /**
+   * One more failed attempt on a target. Answers the hold only when this attempt is the one
+   * that reached the cap, so its event is recorded once.
+   */
+  private async attempt(
+    projectId: string,
+    target: Target,
+    failure: { code: string; message: string; sessionId: string | null },
+    tx: Transaction,
+  ): Promise<DispatchHold | undefined> {
+    const where = 'project_id=? AND instance_id=? AND revision=?';
+    const old = await tx.get<HoldRow>(
+      `SELECT * FROM session_dispatch_holds WHERE ${where}`,
+      projectId,
+      target.instanceId,
+      target.expectedRevision,
+    );
+    const time = this.time();
+    await tx.run(
+      'INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,last_session_id,first_at,last_at,held_at) VALUES(?,?,?,1,?,?,?,?,?,?) ON CONFLICT(project_id,instance_id,revision) DO UPDATE SET attempts=session_dispatch_holds.attempts+1,last_code=excluded.last_code,last_message=excluded.last_message,last_session_id=excluded.last_session_id,last_at=excluded.last_at,held_at=COALESCE(session_dispatch_holds.held_at,excluded.held_at)',
+      projectId,
+      target.instanceId,
+      target.expectedRevision,
+      failure.code,
+      clip(failure.message, 500),
+      failure.sessionId,
+      time,
+      time,
+      (old?.attempts ?? 0) + 1 >= this.maxLaunchFailures ? time : null,
+    );
+    const row = (await tx.get<HoldRow>(
+      `SELECT * FROM session_dispatch_holds WHERE ${where}`,
+      projectId,
+      target.instanceId,
+      target.expectedRevision,
+    ))!;
+    return row.held_at && !old?.held_at ? publicHold(row) : undefined;
+  }
+  private heldData(hold: DispatchHold) {
+    return {
+      instanceId: hold.instanceId,
+      revision: hold.revision,
+      attempts: hold.attempts,
+      lastCode: hold.lastCode,
+      lastMessage: hold.lastMessage,
+    };
+  }
+  /**
+   * A session closed as a failure, counted in the transaction that closed it. It runs from
+   * the sweep as well as from a caller, so the event is the system's, as session.closed is.
+   * A session a human offered by hand counts too, although a hold only gates automatic offers.
+   */
+  async failed(session: Session, code: string, tx: Transaction): Promise<void> {
+    const held = await this.attempt(
+      session.projectId,
+      session,
+      { code, message: session.closeReason ?? code, sessionId: session.id },
+      tx,
+    );
+    if (held)
+      await this.state.appendEvent(tx, {
+        projectId: session.projectId,
+        actorId: 'system:sessions',
+        type: 'session.dispatch_held',
+        subjectId: session.instanceId,
+        data: this.heldData(held),
+      });
+  }
+  /**
+   * An offer that could not be built rolled its own transaction back, so it is counted here
+   * in a second one; a crash between the two loses one count, which only ever errs towards
+   * trying again. A failure to record must not stop the queue, so a refusal is swallowed.
+   */
+  private async poisoned(caller: Caller, target: Target, cause: unknown): Promise<void> {
+    const status = (cause as { status?: number })?.status;
+    const failure =
+      cause instanceof MervError
+        ? { code: cause.code, message: cause.message }
+        : { code: 'offer_failed', message: cause instanceof Error ? cause.message : String(cause) };
+    if (status === 401 || status === 403 || transientOfferCodes.has(failure.code)) return;
+    try {
+      await this.state.transaction(async (tx) => {
+        const owner = await this.owner(caller, tx);
+        await this.scope.requireDelegation(owner.source, 'read', tx);
+        const held = await this.attempt(
+          caller.projectId,
+          target,
+          { code: failure.code, message: failure.message, sessionId: null },
+          tx,
+        );
+        if (held)
+          await recorded(
+            this.state,
+            tx,
+            caller,
+            'session.dispatch_held',
+            target.instanceId,
+            this.heldData(held),
+          );
+      });
+    } catch (error) {
+      if (!(error instanceof MervError) || error.status >= 500) throw error;
+    }
+  }
+  /**
+   * The human go-ahead for one held target, after its cause is fixed. The other decision,
+   * not to run the work, is the record's own: ending or revising it moves the revision, and
+   * a hold names one revision.
+   */
+  async releaseHold(
+    caller: Caller,
+    input: { instanceId: string; expectedRevision: number; reason: string; requestId: string },
+  ): Promise<DispatchHold> {
+    caller = structuredClone(caller);
+    const parsed = releaseHoldSchema.safeParse(input);
+    check(
+      parsed.success,
+      'invalid_release_hold',
+      'Releasing a hold names instanceId, expectedRevision, a visible reason of at most 500 characters and a requestId',
+    );
+    input = parsed.data;
+    return await this.state.transaction(async (tx) => {
+      await this.ordinary(caller, 'admin', tx);
+      return await replayed(
+        tx,
+        'session_hold_requests',
+        caller,
+        'session.release_hold',
+        input,
+        async () => {
+          const row = await tx.get<HoldRow>(
+            'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND revision=?',
+            caller.projectId,
+            input.instanceId,
+            input.expectedRevision,
+          );
+          check(row, 'hold_not_found', 'No failed dispatch is counted against this target', 404);
+          check(
+            row.held_at,
+            'hold_not_held',
+            'This target is still being retried; it is not held',
+            409,
+          );
+          await tx.run(
+            'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=? AND instance_id=? AND revision=?',
+            caller.projectId,
+            input.instanceId,
+            input.expectedRevision,
+          );
+          await recorded(this.state, tx, caller, 'session.hold_released', input.instanceId, {
+            instanceId: row.instance_id,
+            revision: row.revision,
+            attempts: row.attempts,
+            lastCode: row.last_code,
+            reason: input.reason,
+          });
+          // Built from the row as it was, so the replayed answer never depends on a later read.
+          return { ...publicHold(row), attempts: 0, heldAt: null };
+        },
+      );
+    });
   }
   async heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence> {
     caller = structuredClone(caller);
@@ -562,33 +820,33 @@ export class SessionDispatch {
       (item) =>
         item.role !== 'operator' && !live.has(`${item.instanceId}:${item.expectedRevision}`),
     );
-    // A launch that keeps failing on one revision is not retried for ever: the backoff only
-    // spaces the attempts, so this is what ends them. Only launch failures count, because an
-    // expiry is also how long honest work ends. Switching dispatch off and on is the human
-    // go-ahead that starts every count in the project afresh, and so is a new revision.
-    const exhausted = new Set(
-      (
-        await tx.all<{ instance_id: string; revision: number }>(
-          `SELECT instance_id,revision FROM session_usage WHERE project_id=? AND outcome IN (${[...failureReasons].map(() => '?').join(',')}) AND closed_at>? GROUP BY instance_id,revision HAVING COUNT(*)>=?`,
-          caller.projectId,
-          ...failureReasons,
-          (await this.dispatch(caller.projectId, tx)).updatedAt ?? '',
-          this.maxLaunchFailures,
-        )
-      ).map((row) => `${row.instance_id}:${row.revision}`),
+    // A target that keeps failing on one revision is not retried for ever: the backoff only
+    // spaces the attempts, so the hold is what ends them. An expiry after activation never
+    // counts, because that is also how long honest work ends. A hold names one revision, so a
+    // record that moves simply stops matching it.
+    const holds = await tx.all<HoldRow>(
+      'SELECT * FROM session_dispatch_holds WHERE project_id=? AND (held_at IS NOT NULL OR last_at>?)',
+      caller.projectId,
+      new Date(this.clock() - backoffMs).toISOString(),
+    );
+    const held = (row: HoldRow) => `${row.instance_id}:${row.revision}`;
+    const exhausted = new Set(holds.filter((row) => row.held_at).map(held));
+    // A failed session backs off per runner and platform, from its own closed row. An offer
+    // that could not be built left no session, so its backoff is read from the hold.
+    const backoff = new Set(
+      holds.filter((row) => !row.held_at && row.last_session_id === null).map(held),
     );
     const budgets = await this.budgets(caller, tx);
     const spent = new Set(
       budgets.flatMap((budget) => (budget.exceeded.length ? (budget.instanceIds ?? []) : [])),
     );
-    const key = (item: { instanceId: string; expectedRevision: number }) =>
-      `${item.instanceId}:${item.expectedRevision}`;
-    const retry = queue.filter((item) => exhausted.has(key(item)));
+    const retry = queue.filter((item) => exhausted.has(targetKey(item)));
     const overBudget = queue.filter(
-      (item) => !exhausted.has(key(item)) && spent.has(item.instanceId),
+      (item) => !exhausted.has(targetKey(item)) && spent.has(item.instanceId),
     );
     return {
-      queue: queue.filter((item) => !exhausted.has(key(item)) && !spent.has(item.instanceId)),
+      queue: queue.filter((item) => !exhausted.has(targetKey(item)) && !spent.has(item.instanceId)),
+      backoff,
       retriesExhausted: retry.length,
       overBudget: overBudget.length,
       budgets,
@@ -770,8 +1028,9 @@ export class SessionDispatch {
         return result;
       } catch (error) {
         if (!(error instanceof PoisonedOffer)) throw error;
-        skipped.add(error.candidate);
+        skipped.add(targetKey(error.candidate));
         poison = error.cause;
+        await this.poisoned(caller, error.candidate, error.cause);
       }
     }
   }
@@ -848,11 +1107,10 @@ export class SessionDispatch {
         admissible.budgets.some((budget) => budget.kind === 'project' && budget.exceeded.length > 0)
       )
         return { session: null, reason: await decided('budget_exceeded') };
-      const candidates = admissible.queue.filter(
-        (item) => !skipped.has(`${item.instanceId}:${item.expectedRevision}`),
-      );
+      const candidates = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
       const candidate = candidates.find(
         (item) =>
+          !admissible.backoff.has(targetKey(item)) &&
           !failures.some(
             (session) =>
               session.instanceId === item.instanceId &&
@@ -909,7 +1167,10 @@ export class SessionDispatch {
         .catch((error: unknown) => {
           const status = (error as { status?: number })?.status ?? 500;
           if (status >= 500) throw error;
-          throw new PoisonedOffer(`${candidate.instanceId}:${candidate.expectedRevision}`, error);
+          throw new PoisonedOffer(
+            { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
+            error,
+          );
         });
       check(
         (await this.dispatch(caller.projectId, tx)).enabled,

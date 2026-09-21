@@ -877,6 +877,19 @@ test('automatic dispatch moves past a candidate whose offer cannot be built', as
   const leased = await f.sessions.lease(f.source, autoInput());
   assert.equal(leased.reason, 'offered');
   assert.equal(builds, 2);
+  // The failed build rolled back with its lease, yet it is counted against its target.
+  assert.deepEqual(
+    (
+      await f.state.read(
+        async (sql) =>
+          await sql.all<{ attempts: number; last_code: string; last_session_id: string | null }>(
+            'SELECT attempts,last_code,last_session_id FROM session_dispatch_holds WHERE instance_id<>?',
+            leased.session!.instanceId,
+          ),
+      )
+    ).map((row) => [row.attempts, row.last_code, row.last_session_id]),
+    [[1, 'context_too_large', null]],
+  );
   // With nothing else leasable, the runner sees why the remaining candidate cannot be offered.
   await f.sessions.release(f.source, { sessionId: leased.session!.id, runnerId: 'machine' });
   f.onBuild(() => {
