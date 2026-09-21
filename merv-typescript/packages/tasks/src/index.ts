@@ -134,7 +134,9 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
  * creator named delivered. Version 5 names nothing: Code derives the base from what the task's
  * dependencies were accepted with and pins it when the first lease is acquired, because
  * references() runs on every assignment read and may never write. It shares version 4's
- * policies, whose `reference:base` does not say where the reference comes from.
+ * policies, whose `reference:base` does not say where the reference comes from. Version 6 is
+ * version 5 in a project whose history Code keeps: its checkouts name Code's workspace driver,
+ * and every lease of its producer is the next writer generation of the unit.
  * Live tasks keep their version: nothing is ever upgraded into Git.
  */
 const workspaces: Record<number, TaskWorkspace> = {
@@ -143,20 +145,35 @@ const workspaces: Record<number, TaskWorkspace> = {
   3: 'central',
   4: 'reference',
   5: 'reference',
+  6: 'code',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
-const taskVersion = (workspace: TaskCreate['workspace'], baseTaskId?: string): number =>
-  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId === undefined ? 5 : 4;
+const taskVersion = (
+  workspace: TaskCreate['workspace'],
+  baseTaskId: string | undefined,
+  hosted: boolean,
+): number =>
+  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId !== undefined ? 4 : hosted ? 6 : 5;
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
-const derivedBase = (version: number) => version === 5;
+const derivedBase = (version: number) => version === 5 || version === 6;
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
 export const TASK_WORKFLOW_GIT_DERIVED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 5 };
+export const TASK_WORKFLOW_GIT_HOSTED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 6 };
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
-  'capture' | 'acceptUnit' | 'declareUnit' | 'baseStatus' | 'pinBase' | 'basePin' | 'unit'
+  | 'capture'
+  | 'acceptUnit'
+  | 'declareUnit'
+  | 'baseStatus'
+  | 'pinBase'
+  | 'basePin'
+  | 'unit'
+  | 'hosted'
+  | 'reserveWriter'
+  | 'writerStatus'
 >;
 interface TaskRow {
   id: string;
@@ -328,6 +345,7 @@ DROP TABLE task_leases_backup;`,
           TASK_WORKFLOW_GIT,
           TASK_WORKFLOW_GIT_BASED,
           TASK_WORKFLOW_GIT_DERIVED,
+          TASK_WORKFLOW_GIT_HOSTED,
         ]) {
           this.registrations.set(
             definition.version,
@@ -480,6 +498,10 @@ DROP TABLE task_leases_backup;`,
     const base = await this.requireCode().baseStatus(caller, snapshot.id, tx);
     if (base.status === 'blocked')
       throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
+    if (taskWorkspace(snapshot.version) !== 'code') return;
+    // The last writer's machine still owes its final capture, or an operator must fence it.
+    const writer = await this.requireCode().writerStatus(caller, snapshot.id, tx);
+    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
   }
 
   private async currentLease(
@@ -517,8 +539,11 @@ DROP TABLE task_leases_backup;`,
     const purpose = role === 'reviewer' ? 'review' : 'work';
     // The base is fixed with the lease it serves: Workflows reads references() right after
     // this hook in the same transaction, and a refused offer takes the pin back with it.
-    if (purpose === 'work' && derivedBase(snapshot.version))
+    if (purpose === 'work' && derivedBase(snapshot.version)) {
       await this.requireCode().pinBase(source, { unitId: snapshot.id, leaseId }, tx);
+      if (taskWorkspace(snapshot.version) === 'code')
+        await this.requireCode().reserveWriter(source, { unitId: snapshot.id, leaseId }, tx);
+    }
     const review =
       purpose === 'review' ? await this.reviews.start(caller, row.review_id!, tx) : undefined;
     const checkpoints = await this.checkpointRows(
@@ -1238,7 +1263,12 @@ DROP TABLE task_leases_backup;`,
           'invalid_brief',
           'The pinned brief must contain the task goal and every Done-when check',
         );
-        const version = taskVersion(input.workspace, input.baseTaskId);
+        // Once Code keeps the project's history, new Git work lives there and nowhere else.
+        const hosted =
+          input.workspace === 'git' &&
+          input.baseTaskId === undefined &&
+          (await this.requireCode().hosted(caller, tx));
+        const version = taskVersion(input.workspace, input.baseTaskId, hosted);
         const workflow = await (
           await this.registration(version)
         ).start(

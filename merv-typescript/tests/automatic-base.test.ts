@@ -41,7 +41,7 @@ const definition: WorkflowDefinition = {
   ],
 };
 /** `coded` declares a workspace on its one working state, which is all Code is told of it. */
-const policy = (workspace: boolean): WorkflowPolicy => ({
+const policy = (workspace: boolean, driver?: string): WorkflowPolicy => ({
   successStates: ['built'],
   actions: ['finish', 'abandon'].map((name) => ({
     name,
@@ -68,6 +68,7 @@ const policy = (workspace: boolean): WorkflowPolicy => ({
                 namespace: 'probe',
                 base: 'central' as const,
                 retain: false,
+                ...(driver ? { driver } : {}),
               },
             }
           : {}),
@@ -125,6 +126,8 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
   const admin = await scope.caller(principal, project.id);
   const plain = await workflows.register(definition, policy(false));
   const coded = await workflows.register({ ...definition, name: 'coded' }, policy(true));
+  // `kept` names the driver that prepares its checkouts from Code's own repository.
+  await workflows.register({ ...definition, name: 'kept' }, policy(true, 'code.v2'));
   let sequence = 0;
   const request = () => `request-${++sequence}`;
   const start = async (dependsOn: WorkflowSnapshot[] = [], workflow = 'build') =>
@@ -204,8 +207,8 @@ async function fixture(t: TestContext, backend: (typeof backends)[number]) {
     await move(work);
     return { work, acceptance: await accept(work, commit) };
   };
-  const declare = async (dependsOn: WorkflowSnapshot[]) => {
-    const work = await start(dependsOn, 'coded');
+  const declare = async (dependsOn: WorkflowSnapshot[], workflow = 'coded') => {
+    const work = await start(dependsOn, workflow);
     await state.transaction(async (tx) => await code.declareUnit(admin, work.id, tx));
     return work;
   };
@@ -446,6 +449,77 @@ for (const backend of backends) {
       );
       await f.code.reconcileAll();
       assert.deepEqual(await sorted(), expected);
+    },
+  );
+
+  test(
+    `${backend}: a unit whose checkouts Code prepares starts only from what Code’s repository holds`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.bind(oid('a'));
+      const harness = await f.succeeded(oid('c'));
+      const work = await f.declare([harness.work], 'kept');
+      const beside = await f.declare([harness.work]);
+      const run = async (sql: string, ...values: string[]) =>
+        await f.state.transaction(async (tx) => {
+          await tx.run(sql, ...values);
+        });
+      const status = async (unit: WorkflowSnapshot) =>
+        (await f.code.unit(f.admin, unit.id)).baseStatus?.status;
+      const hosted = async () =>
+        await f.state.transaction(async (tx) => await f.code.hosted(f.admin, tx));
+
+      // Not imported: nothing can be prepared, while a runner's own repository still serves
+      // the unit beside it, which names no driver.
+      assert.equal(await hosted(), false);
+      assert.deepEqual(await f.published(work), [['code', 'code_base_pending', 'main']]);
+      assert.equal(await status(beside), 'ready');
+
+      // Imported, which is a fact of the database alone and never turns false again.
+      await run(
+        'UPDATE code_projects SET store_json=? WHERE project_id=?',
+        JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: oid('a') }),
+        f.project.id,
+      );
+      assert.equal(await hosted(), true);
+      await f.code.reconcileAll();
+      // The dependency was accepted from a runner's repository: its commit must be imported.
+      assert.deepEqual(await f.published(work), [
+        ['code', 'code_base_pending', `acceptance:${harness.work.id}`],
+      ]);
+      const [blocker] = await f.workflows.blockers(f.admin, work.id);
+      assert.match(blocker!.next, /code-import/);
+      await assert.rejects(f.pin(work), { code: 'code_base_pending', status: 409 });
+      assert.equal(await status(beside), 'ready');
+
+      await run(
+        "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_import',?,'actor:fixture','import','import','hash','{}','completed',?,'now','now','refs_applied')",
+        f.project.id,
+        JSON.stringify({ head: oid('c') }),
+      );
+      await f.code.reconcileAll();
+      assert.deepEqual(await f.published(work), []);
+      assert.equal((await f.pin(work)).reference, oid('c'));
+
+      // The same holds for main: named, but not held until an import or a bind says so.
+      const fresh = await f.declare([], 'kept');
+      assert.deepEqual(await f.published(fresh), [['code', 'code_base_pending', 'main']]);
+      const main = await f.state.read(
+        async (sql) =>
+          await sql.get<{ main_json: string }>(
+            'SELECT main_json FROM code_projects WHERE project_id=?',
+            f.project.id,
+          ),
+      );
+      await run(
+        'UPDATE code_projects SET main_json=? WHERE project_id=?',
+        JSON.stringify({ ...(JSON.parse(main!.main_json) as object), stored: true }),
+        f.project.id,
+      );
+      await f.code.reconcileAll();
+      assert.deepEqual(await f.published(fresh), []);
+      assert.equal((await f.pin(fresh)).kind, 'main');
     },
   );
 }

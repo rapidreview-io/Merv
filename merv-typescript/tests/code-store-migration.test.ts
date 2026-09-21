@@ -10,6 +10,7 @@ import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { CodeUnitService } from '@merv/code/units';
+import { CodeWriterService } from '@merv/code/writers';
 import { backends, optional, type Backend } from './fixtures/code-store.js';
 
 const postgresUrl = process.env.MERV_TEST_POSTGRES_URL;
@@ -45,9 +46,13 @@ async function fixture(t: TestContext, backend: Backend) {
         migrations.filter((migration) => migration.version <= version),
       );
     try {
-      await new CodeUnitService(state, scope, workflows, {
-        capture: async () => assert.fail('a migration reads no capture'),
-      }).initialize();
+      await new CodeUnitService(
+        state,
+        scope,
+        workflows,
+        { capture: async () => assert.fail('a migration reads no capture') },
+        new CodeWriterService(state, scope, workflows, 900),
+      ).initialize();
     } finally {
       state.migrate = migrate;
     }

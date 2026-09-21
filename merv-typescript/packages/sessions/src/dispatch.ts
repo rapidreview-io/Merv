@@ -89,6 +89,11 @@ const heartbeatSchema = z
     platforms: platformsSchema,
     capacity: z.number().int().min(0).max(256),
     appliedVersion: z.number().int().nonnegative().safe().optional(),
+    capabilities: z
+      .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
+      .max(16)
+      .refine((items) => new Set(items).size === items.length)
+      .optional(),
   })
   .strict();
 const leaseSchema = z
@@ -155,6 +160,12 @@ const uncountedOfferCodes = new Set([
   'code_base_pending',
   'code_merge_required',
   'code_dependencies_changed',
+  // The unit's last writer ended between candidacy and the offer and its machine has not
+  // handed over what it left, or that handover needs an operator. Both are published where
+  // blocked work is shown; neither says anything against the target.
+  'code_writer_busy',
+  'code_recovery_required',
+  'code_capture_quarantined',
 ]);
 const releaseHoldSchema = z
   .object({
@@ -364,6 +375,25 @@ export class SessionDispatch {
   private async owner(caller: Caller, tx: Transaction) {
     const source = await this.scope.delegationSource(caller, tx);
     return { source, hash: digest(source) };
+  }
+  /** Whether the caller's own runner last said it has a capability. No presence means no. */
+  async capable(
+    caller: Caller,
+    runnerId: string,
+    capability: string,
+    tx: Transaction,
+  ): Promise<boolean> {
+    const runner = await tx.get<RunnerRow>(
+      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
+      (await this.owner(caller, tx)).hash,
+      runnerId,
+    );
+    return (
+      !!runner &&
+      ((JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? []).includes(
+        capability,
+      )
+    );
   }
   private async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
     const row = await tx.get<DispatchRow>(
@@ -1381,7 +1411,18 @@ export class SessionDispatch {
           session: null,
           reason: await decided(project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable'),
         };
-      const candidates = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+      // A checkout some driver must prepare goes only to a machine that says it has that
+      // driver; everything else in the queue is still this runner's to take.
+      const capabilities = new Set(
+        (JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? [],
+      );
+      const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+      const candidates = open.filter(
+        (item) =>
+          item.workspace.mode === 'none' ||
+          item.workspace.driver === undefined ||
+          capabilities.has(item.workspace.driver),
+      );
       const candidate = candidates.find(
         (item) =>
           !admissible.backoff.has(targetKey(item)) &&
@@ -1402,13 +1443,15 @@ export class SessionDispatch {
           reason: await decided(
             candidates.length
               ? 'retry_backoff'
-              : admissible.overBudget
-                ? admissible.unaccountedOnly
-                  ? 'usage_unavailable'
-                  : 'budget_exceeded'
-                : admissible.retriesExhausted
-                  ? 'retries_exhausted'
-                  : 'no_candidates',
+              : open.length
+                ? 'runner_incompatible'
+                : admissible.overBudget
+                  ? admissible.unaccountedOnly
+                    ? 'usage_unavailable'
+                    : 'budget_exceeded'
+                  : admissible.retriesExhausted
+                    ? 'retries_exhausted'
+                    : 'no_candidates',
           ),
         };
       // Admission callbacks cannot disable dispatch or change source permission and

@@ -46,6 +46,11 @@ const workspaceBase = z.union([
     .regex(/^reference:[A-Za-z_][A-Za-z0-9_]{0,127}$/)
     .refine((value) => field.safeParse(value.slice('reference:'.length)).success),
 ]);
+/** Which workspace driver prepares the checkout; opaque here. Absent means the runner's own. */
+const workspaceDriver = z
+  .string()
+  .regex(/^[a-z][a-z0-9.]{0,39}$/)
+  .optional();
 const workspaceSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('none') }).strict(),
   z
@@ -54,6 +59,7 @@ const workspaceSchema = z.discriminatedUnion('mode', [
       namespace: workspaceNamespace,
       base: workspaceBase,
       retain: z.boolean(),
+      driver: workspaceDriver,
     })
     .strict(),
   z
@@ -64,6 +70,7 @@ const workspaceSchema = z.discriminatedUnion('mode', [
       perBase: z.boolean(),
       retain: z.boolean(),
       advancesCentral: z.boolean(),
+      driver: workspaceDriver,
     })
     .strict(),
 ]);

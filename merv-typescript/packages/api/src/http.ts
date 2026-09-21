@@ -285,6 +285,10 @@ const runnerHeartbeatInput = z
       .max(32),
     capacity: z.number().int().min(0).max(256),
     appliedVersion: z.number().int().nonnegative().optional(),
+    capabilities: z
+      .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
+      .max(16)
+      .optional(),
   })
   .strict();
 const runnerSettingsInput = z

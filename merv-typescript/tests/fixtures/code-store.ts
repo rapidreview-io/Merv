@@ -13,6 +13,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import type { Sessions } from '@merv/sessions/types';
 import { CodeService, type CodeStoreOptions } from '@merv/code/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeStoreConfig, FaultPoint } from '@merv/code/store/operations';
@@ -115,6 +116,8 @@ export async function codeStoreFixture(
   config: Partial<CodeStoreConfig> = {},
   /** The commit the project names as its main; by default one no repository holds. */
   mainOid = 'a'.repeat(40),
+  /** Methods that stand in for Sessions', where a test plays the sessions itself. */
+  played: Partial<Sessions> = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-cs-'));
   const root = join(directory, 'code');
@@ -132,13 +135,14 @@ export async function codeStoreFixture(
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
+  const seen = Object.assign(Object.create(sessions) as Sessions, played);
   let code: CodeService | undefined;
   /** Code as a new process would start it, on the same database and the same directory. */
   const open = async (
     options: Omit<CodeStoreOptions, 'config'> & { config?: Partial<CodeStoreConfig> } = {},
   ) => {
     await code?.close();
-    code = new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
+    code = new CodeService(state, scope, seen, artifacts, workflows, undefined, undefined, {
       ...options,
       config: { root, settleMs: 60_000, reservedFreeBytes: 1, ...config, ...options.config },
     });
@@ -177,7 +181,18 @@ export async function codeStoreFixture(
     root,
     state,
     scope,
+    workflows,
     admin,
+    /** A signed-in administrator of the same project, for what only a human may do. */
+    async human(): Promise<Caller> {
+      const principal = await scope.acceptVerifiedIdentity({
+        issuer: 'https://issuer.example.test',
+        subject: 'operator',
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      await scope.adoptProject(principal, admin.projectId);
+      return await scope.caller(principal, admin.projectId);
+    },
     paths,
     open,
     get code() {

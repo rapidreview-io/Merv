@@ -175,12 +175,12 @@ export async function readBlockers(
  * persisted at registration, never from a loaded plugin: a provider classifying a finished
  * dependency must reach the same answer while that dependency's owner is unloaded.
  */
-async function declaresWorkspace(
+async function declaredWorkspaces(
   sql: Sql,
-  known: Map<string, boolean>,
+  known: Map<string, { declares: boolean; drivers: string[] }>,
   workflow: string,
   version: number,
-): Promise<boolean> {
+): Promise<{ declares: boolean; drivers: string[] }> {
   const key = `${workflow}@${version}`;
   if (!known.has(key)) {
     const rows = await sql.all<{ manifest_json: string }>(
@@ -188,13 +188,24 @@ async function declaresWorkspace(
       workflow,
       version,
     );
-    known.set(
-      key,
-      rows.some((row) => {
-        const manifest = JSON.parse(row.manifest_json) as { workspace?: { mode?: string } } | null;
-        return (manifest?.workspace?.mode ?? 'none') !== 'none';
-      }),
-    );
+    const workspaces = rows
+      .map(
+        (row) =>
+          (
+            JSON.parse(row.manifest_json) as {
+              workspace?: { mode?: string; driver?: string };
+            } | null
+          )?.workspace,
+      )
+      .filter((workspace) => (workspace?.mode ?? 'none') !== 'none');
+    known.set(key, {
+      declares: workspaces.length > 0,
+      drivers: [
+        ...new Set(
+          workspaces.flatMap((workspace) => (workspace?.driver ? [workspace.driver] : [])),
+        ),
+      ].sort(),
+    });
   }
   return known.get(key)!;
 }
@@ -217,7 +228,7 @@ export async function providerRelations(
     projectId,
   );
   if (!row) return null;
-  const known = new Map<string, boolean>();
+  const known = new Map<string, { declares: boolean; drivers: string[] }>();
   const facts = new Map<string, { revision: number; terminal: boolean }>();
   const extend = async (item: WorkflowDependency): Promise<WorkflowProviderDependency> => {
     if (!facts.has(item.id)) {
@@ -239,10 +250,12 @@ export async function providerRelations(
           (JSON.parse(graph.definition_json) as WorkflowDefinition).terminal.includes(item.state),
       });
     }
+    const declared = await declaredWorkspaces(sql, known, item.workflow, item.version);
     return {
       ...item,
       ...facts.get(item.id)!,
-      declaresWorkspace: await declaresWorkspace(sql, known, item.workflow, item.version),
+      declaresWorkspace: declared.declares,
+      workspaceDrivers: declared.drivers,
     };
   };
   const success = await sql.get<{ success_json: string }>(

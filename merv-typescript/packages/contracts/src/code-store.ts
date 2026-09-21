@@ -168,6 +168,10 @@ export const codeDownloadBeginSchema = z
 export type CodeDownloadBegin = z.infer<typeof codeDownloadBeginSchema>;
 export const codeDownloadReadSchema = z
   .object({
+    /** An export is read only by the machine that runs the session it was made for. */
+    sessionId: id,
+    runnerId: id,
+    hostRef: id.optional(),
     offset: z.number().int().nonnegative().safe(),
     length: z.number().int().positive().max(CODE_PART_MAX_BYTES),
   })

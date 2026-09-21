@@ -17,6 +17,8 @@ const configuration = z
         reservedFreeBytes: bytes.optional(),
         sweepSeconds: z.number().int().min(1).max(86_400).optional(),
         drainSeconds: z.number().int().min(1).max(3600).optional(),
+        /** How long a closed session's machine has to hand over its final capture. */
+        finalizeGraceSeconds: z.number().int().min(1).max(86_400).optional(),
       })
       .strict()
       .optional(),
@@ -39,7 +41,10 @@ export const codePlugin = {
           ctx.workflows,
           githubConfig(),
           undefined,
-          config.repositories && { config: config.repositories },
+          config.repositories &&
+            (({ finalizeGraceSeconds, ...store }) => ({ config: store, finalizeGraceSeconds }))(
+              config.repositories,
+            ),
         ),
       );
       yield () => service.close();
@@ -50,6 +55,14 @@ export const codePlugin = {
         types: ['workflow.transition'],
         from: 'now',
         handle: async (event, tx) => await service.transitioned(event, tx),
+      });
+      // A session's attach and end open and end its writer generation. The cursor is durable,
+      // so what happened while Code was unloaded is caught up on in order.
+      yield await ctx.domainEvents.subscribe({
+        id: 'code.writers.v1',
+        types: ['session.workspace_attached', 'session.closed'],
+        from: 'now',
+        handle: async (event, tx) => await service.sessionChanged(event, tx),
       });
       await service.reconcileAll();
       yield ctx.provide('code', service);

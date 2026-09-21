@@ -78,6 +78,16 @@ export type {
   UiDetail,
 } from './ui-manifest.js';
 export type * from './sessions-models.js';
+export { WorkspaceDeferred } from './workspace-driver.js';
+export type {
+  WorkspaceDriver,
+  WorkspaceDriverFactory,
+  WorkspaceDriverHost,
+  WorkspaceHandle,
+  WorkspaceLaunch,
+  WorkspaceSession,
+  WorkspaceTransport,
+} from './workspace-driver.js';
 export {
   codeCommitInputSchema,
   codeCommandControlSchema,
@@ -94,6 +104,8 @@ export type {
   CodeBasePin,
   CodeBaseStatus,
   CodeUnit,
+  CodeWriterState,
+  CodeWriterStatus,
 } from './code-units.js';
 export type {
   CodeLocalBindInput,

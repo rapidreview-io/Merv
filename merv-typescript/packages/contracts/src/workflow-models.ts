@@ -36,6 +36,11 @@ export type WorkflowWorkspacePolicy =
       namespace: string;
       base: WorkflowWorkspaceBase;
       retain: boolean;
+      /**
+       * The workspace driver that prepares this checkout, opaque to everything but the runner
+       * and the plugin that owns the driver. Absent means the runner's own local repository.
+       */
+      driver?: string;
     }
   | {
       mode: 'persistent';
@@ -44,6 +49,7 @@ export type WorkflowWorkspacePolicy =
       perBase: boolean;
       retain: boolean;
       advancesCentral: boolean;
+      driver?: string;
     };
 export interface WorkflowExecutionTarget {
   instanceId: string;

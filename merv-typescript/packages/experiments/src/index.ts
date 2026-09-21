@@ -117,7 +117,16 @@ const configuration = z
 /** What Experiments asks of Code; a test may bind exactly this much. */
 type ExperimentCode = Pick<
   Code,
-  'capture' | 'acceptUnit' | 'declareUnit' | 'baseStatus' | 'pinBase' | 'basePin' | 'unit'
+  | 'capture'
+  | 'acceptUnit'
+  | 'declareUnit'
+  | 'baseStatus'
+  | 'pinBase'
+  | 'basePin'
+  | 'unit'
+  | 'hosted'
+  | 'reserveWriter'
+  | 'writerStatus'
 >;
 
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
@@ -368,7 +377,16 @@ export class ExperimentService implements Experiments {
           503,
         );
         const workflow = await (
-          await this.program.handleFor(programVersion(input.workspace, input.baseTaskId))
+          await this.program.handleFor(
+            programVersion(
+              input.workspace,
+              input.baseTaskId,
+              // Once Code keeps the project's history, new Git work lives there and nowhere else.
+              input.workspace === 'git' &&
+                input.baseTaskId === undefined &&
+                (await this.code!.hosted(caller, tx)),
+            ),
+          )
         ).start(
           caller,
           {

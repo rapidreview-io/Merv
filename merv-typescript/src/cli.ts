@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Context } from 'cordis';
-import { runnerPlugin, validateRunnerConfig } from '@merv/runner';
+import { runnerWith, validateRunnerConfig } from '@merv/runner';
+import { codeWorkspaceDriver } from '@merv/code/driver/index';
 import { createApp } from './app.js';
 import { uploadArtifact } from './artifact-upload.js';
 import { importRepository } from './code-import.js';
@@ -93,7 +94,7 @@ async function runMachine(configPath: string) {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
-    const fiber = ctx.plugin(runnerPlugin, config);
+    const fiber = ctx.plugin(runnerWith([codeWorkspaceDriver]), config);
     await fiber.await();
     if (stopping) return;
     const runner = ctx.get('runner');

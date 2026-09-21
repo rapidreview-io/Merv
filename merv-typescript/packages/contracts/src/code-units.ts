@@ -34,7 +34,21 @@ export interface CodeUnitAcceptance {
    * Where the accepted code is kept. `legacy-local` is the runner's own retained capture:
    * the server holds the identity and makes no durability claim for the objects.
    */
-  storage: 'none' | 'legacy-local';
+  storage: 'none' | 'legacy-local' | 'code';
+  /** The Code operation that made the accepted commit durable; only `code` storage has one. */
+  receipt?: string;
+}
+/**
+ * Who may advance a unit's branch in Code's repository. A generation belongs to one leased
+ * session; the next begins only once this one closed or an operator fenced it.
+ */
+export type CodeWriterState =
+  'idle' | 'reserved' | 'active' | 'closing' | 'closed' | 'recovery_required';
+export interface CodeWriterStatus {
+  generation: number;
+  state: CodeWriterState;
+  /** Why no new writer may be leased now, in the words of a refusal; null when one may. */
+  blocked: { code: string; message: string } | null;
 }
 export interface CodeBasePin {
   unitId: string;
@@ -64,4 +78,11 @@ export interface CodeUnit {
   /** Null once the unit has ended or been accepted without ever taking a base. */
   baseStatus: CodeBaseStatus | null;
   acceptance: CodeUnitAcceptance | null;
+  /** Zero until a session first writes to Code's repository for this unit. */
+  generation: number;
+  writerState: CodeWriterState;
+  /** The newest commit Code admitted for this unit, which is what a successor resumes from. */
+  canonicalHead: string | null;
+  /** A final capture admission refused; the unit waits for an operator until it is fenced. */
+  quarantine: { operationId: string } | null;
 }

@@ -53,6 +53,8 @@ export interface WorkflowProviderDependency extends WorkflowDependency {
   revision: number;
   terminal: boolean;
   declaresWorkspace: boolean;
+  /** The workspace drivers that version's states name, from the same manifests; opaque here. */
+  workspaceDrivers: string[];
 }
 export interface WorkflowProviderRelations {
   instance: WorkflowProviderDependency;

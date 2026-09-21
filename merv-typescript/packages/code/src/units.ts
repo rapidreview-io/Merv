@@ -31,6 +31,8 @@ import {
 import { postgresMigrations } from './units.postgres.js';
 import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
+import type { CodeWriterService } from './writers.js';
+import { acceptedRef } from './store/refs.js';
 
 interface ProjectRow {
   project_id: string;
@@ -71,6 +73,8 @@ interface AcceptanceBody {
     reviewAttached: boolean;
   } | null;
   storage: CodeUnitAcceptance['storage'];
+  /** Only with `code` storage: the operation that made the commit durable in Code's repository. */
+  receipt?: string;
 }
 /** The hashed body of a base pin. Lease and time stay outside it, so racing derivations agree. */
 interface BaseBody {
@@ -94,6 +98,9 @@ const EXPLICIT_BASE =
 const unitColumns =
   'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at';
 const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** The workspace driver whose units live in Code's own repository. */
+export const CODE_DRIVER = 'code.v2';
+const IMPORT = 'An administrator imports it with `merv code-import`';
 
 /**
  * Units of work as Code knows them: one immutable base pin and at most one immutable
@@ -107,6 +114,7 @@ export class CodeUnitService implements CodeUnits {
     private readonly scope: Scope,
     private readonly workflows: Workflows,
     private readonly captures: CodeCaptures,
+    private readonly writers: CodeWriterService,
   ) {}
 
   /** Complete storage migrations before publishing this service. */
@@ -399,6 +407,29 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
       'Only a unit that has just succeeded at the revision named can be accepted',
       409,
     );
+    const code =
+      input.codeRef === null
+        ? null
+        : await this.reviewedCode(caller, input.unitId, input.codeRef, input.reviewSessionId, tx);
+    // A unit that ever had a writer generation lives in Code's repository, and only there.
+    const writer = code ? await this.writers.row(tx, caller.projectId, input.unitId) : undefined;
+    const kept = !!writer && Number(writer.generation) >= 1;
+    let receipt: string | null = null;
+    if (code && kept) {
+      check(
+        writer.quarantine_operation_id === null,
+        'code_capture_quarantined',
+        'A capture of this unit is quarantined; it cannot be accepted before an operator fences it',
+        409,
+      );
+      receipt = await this.writers.receipt(tx, caller.projectId, input.unitId, code.commit);
+      check(
+        receipt,
+        'code_acceptance_unverifiable',
+        'Code never admitted the commit that was reviewed',
+        409,
+      );
+    }
     const body: AcceptanceBody = {
       formatVersion: 1,
       unitId: input.unitId,
@@ -408,11 +439,9 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
       submissionRef: input.submissionRef,
       reviewRef: input.reviewRef,
       acceptedBy: caller.actorId,
-      code:
-        input.codeRef === null
-          ? null
-          : await this.reviewedCode(caller, input.unitId, input.codeRef, input.reviewSessionId, tx),
-      storage: input.codeRef === null ? 'none' : 'legacy-local',
+      code,
+      storage: code === null ? 'none' : receipt ? 'code' : 'legacy-local',
+      ...(receipt ? { receipt } : {}),
     };
     const encoded = canonical(body),
       hash = digest(body);
@@ -448,6 +477,37 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
         hash,
         at,
       );
+    if (receipt && code) {
+      // The ref the acceptance is kept under is made after this transaction, by the journal.
+      const payload = {
+        format: 1,
+        source: 'accept-ref',
+        actorId: caller.actorId,
+        unitId: input.unitId,
+        tip: code.commit,
+      };
+      await tx.run(
+        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        newId('cop'),
+        caller.projectId,
+        'system:code',
+        `accept-ref:${input.unitId}`,
+        'accept-ref',
+        digest(payload),
+        canonical(payload),
+        'prepared',
+        at,
+        input.unitId,
+        'objects_durable',
+        canonical({
+          received: 0,
+          expectedOld: null,
+          target: code.commit,
+          receiptRef: acceptedRef(input.unitId),
+        }),
+        at,
+      );
+    }
     return this.acceptance((await this.row(tx, caller.projectId, input.unitId))!)!;
   }
 
@@ -610,6 +670,14 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     });
   }
 
+  async hosted(caller: Caller, tx: Transaction): Promise<boolean> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    caller = structuredClone(caller);
+    await this.scope.require(caller, 'read', tx);
+    return (await this.project(tx, caller.projectId))?.durability === 'code';
+  }
+
   async unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit> {
     this.assertOpen();
     caller = structuredClone(caller);
@@ -697,6 +765,19 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
           ),
         ],
       };
+    // A unit whose checkouts Code's driver prepares can only start from what Code holds.
+    const kept = relations.instance.workspaceDrivers.includes(CODE_DRIVER);
+    if (kept && bound.store_json === null)
+      return {
+        status: 'blocked',
+        blockers: [
+          pending(
+            'main',
+            'This project’s repository has not been imported into Code, so no base can be prepared',
+            `${IMPORT}, naming the commit that is main.`,
+          ),
+        ],
+      };
     const blockers: WorkflowProvidedBlockerInput[] = [];
     const commits = new Map<
       string,
@@ -742,6 +823,25 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
         );
         continue;
       }
+      if (
+        kept &&
+        accepted.storage !== 'code' &&
+        !(await tx.get(
+          "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND result_json LIKE ? LIMIT 1",
+          projectId,
+          `%"head":"${accepted.code.commit}"%`,
+        ))
+      ) {
+        blockers.push(
+          pending(
+            `acceptance:${node.id}`,
+            `“${node.name}” was accepted from a runner’s own repository, and Code’s repository does not hold that commit yet`,
+            `${IMPORT}, naming the accepted commit of “${node.name}”.`,
+            [node],
+          ),
+        );
+        continue;
+      }
       const entry = commits.get(accepted.code.commit) ?? { sources: [], units: [] };
       entry.sources.push({
         unitId: node.id,
@@ -772,8 +872,23 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
           },
         ],
       };
-    const main = JSON.parse(bound.main_json) as { oid: string; operationId: string };
+    const main = JSON.parse(bound.main_json) as {
+      oid: string;
+      operationId: string;
+      stored?: boolean;
+    };
     const [accepted] = [...commits];
+    if (kept && !accepted && main.stored !== true)
+      return {
+        status: 'blocked',
+        blockers: [
+          pending(
+            'main',
+            'Code’s repository does not hold the commit that is main',
+            `${IMPORT}, or names an imported commit as main with code.local.bind.`,
+          ),
+        ],
+      };
     return {
       status: 'ready',
       body: {
@@ -919,6 +1034,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
       reference: body.code?.commit ?? null,
       reviewAttached: body.code?.reviewAttached ?? null,
       storage: body.storage,
+      ...(body.receipt ? { receipt: body.receipt } : {}),
     };
   }
 
@@ -954,6 +1070,7 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
           ? this.baseState(await this.derive(tx, row.project_id, open))
           : null,
       acceptance: this.acceptance(row),
+      ...(await this.writers.facts(tx, row.project_id, row.unit_id)),
     };
   }
 

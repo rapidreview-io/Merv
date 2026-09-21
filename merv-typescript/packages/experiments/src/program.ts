@@ -49,7 +49,9 @@ const producing = (state: string) => state === 'planned' || state === 'running';
  * with and pins it when the first producing lease is acquired — normally the planner's — so
  * execution inherits the base the plan was written against. It is pinned there and only read
  * in references(), which runs on every assignment read and may never write. Version 6 stays
- * registered for the experiments already on it.
+ * registered for the experiments already on it. Version 9 is version 8 in a project whose
+ * history Code keeps: its checkouts name Code's workspace driver, and every lease of its
+ * execution is the next writer generation of the unit.
  */
 const workspaces: Record<number, 'none' | 'git'> = {
   1: 'none',
@@ -60,15 +62,19 @@ const workspaces: Record<number, 'none' | 'git'> = {
   6: 'git',
   7: 'git',
   8: 'git',
+  9: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 const frozenHistory = (version: number) => version <= 2;
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-const referencedBase = (version: number) => version === 7 || version === 8;
+const referencedBase = (version: number) => version >= 7 && version <= 9;
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
-export const derivedBase = (version: number) => version === 8;
-export const programVersion = (workspace?: string, baseTaskId?: string): number =>
-  workspace !== 'git' ? 5 : baseTaskId === undefined ? 8 : 7;
+export const derivedBase = (version: number) => version === 8 || version === 9;
+/** Whether checkouts are prepared from Code's own repository, by the driver named here. */
+const hostedWorkspace = (version: number) => version === 9;
+const CODE_DRIVER = 'code.v2';
+export const programVersion = (workspace?: string, baseTaskId?: string, hosted = false): number =>
+  workspace !== 'git' ? 5 : baseTaskId !== undefined ? 7 : hosted ? 9 : 8;
 /**
  * From version 5 a design is submitted with a feasibility statement and its review cannot waive
  * the feasibility criterion. Versions 3 and 4 stay registered for the experiments already on
@@ -252,7 +258,10 @@ export interface ExperimentProgramHost {
   state: State;
   scope: Scope;
   paper: Paper;
-  code?: Pick<Code, 'capture' | 'baseStatus' | 'pinBase' | 'basePin'>;
+  code?: Pick<
+    Code,
+    'capture' | 'baseStatus' | 'pinBase' | 'basePin' | 'reserveWriter' | 'writerStatus'
+  >;
   artifacts: Artifacts;
   workflows: Workflows;
   reviews: Reviews;
@@ -635,6 +644,10 @@ DROP TABLE experiment_leases_backup;`,
     const base = await this.host.code.baseStatus(caller, snapshot.id, tx);
     if (base.status === 'blocked')
       throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
+    if (!hostedWorkspace(snapshot.version) || snapshot.state !== 'running') return;
+    // The last writer's machine still owes its final capture, or an operator must fence it.
+    const writer = await this.host.code.writerStatus(caller, snapshot.id, tx);
+    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
@@ -998,6 +1011,7 @@ DROP TABLE experiment_leases_backup;`,
               perBase: false,
               retain: true,
               advancesCentral: false,
+              ...(hostedWorkspace(version) ? { driver: CODE_DRIVER } : {}),
             }
           : git && state === 'experiment_review'
             ? {
@@ -1005,6 +1019,7 @@ DROP TABLE experiment_leases_backup;`,
                 namespace: 'experiment-reviews',
                 base: 'reference:code',
                 retain: false,
+                ...(hostedWorkspace(version) ? { driver: CODE_DRIVER } : {}),
               }
             : { mode: 'none' },
       tools: [
@@ -1107,6 +1122,13 @@ DROP TABLE experiment_leases_backup;`,
             { unitId: experiment.id, leaseId: context.leaseId },
             context.tx,
           );
+          // Only execution has a checkout, so only its lease is a writer generation.
+          if (hostedWorkspace(context.snapshot.version) && context.snapshot.state === 'running')
+            await this.host.code.reserveWriter(
+              context.source,
+              { unitId: experiment.id, leaseId: context.leaseId },
+              context.tx,
+            );
         }
         const review = reviewing(context.snapshot.state)
           ? await this.host.reviews.start(

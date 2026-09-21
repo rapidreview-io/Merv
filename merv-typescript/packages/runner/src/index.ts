@@ -4,7 +4,14 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, effectiveWorkspace, sessionUsageReportSchema } from '@merv/contracts';
+import {
+  check,
+  effectiveWorkspace,
+  sessionUsageReportSchema,
+  type CodeCommitCommand,
+  type WorkspaceDriver,
+  type WorkspaceDriverFactory,
+} from '@merv/contracts';
 import type { RunnerPlatform, Session, SessionUsageReport } from '@merv/sessions/types';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
@@ -114,6 +121,12 @@ export class MachineRunner implements Runner {
   private readonly ledger: LocalLedger;
   private readonly host: ProcessHost;
   private readonly workspaces: GitWorkspaceManager;
+  /**
+   * Whatever prepares checkouts, by the name a workspace policy gives it. The scheduler below
+   * only ever speaks the driver interface; the runner's own repository serves every policy
+   * that names no driver, exactly as it always has.
+   */
+  private readonly drivers = new Map<string, WorkspaceDriver>();
   private lastDeclined?: string;
   private profiles: RunnerProfile[];
   private appliedVersion = 0;
@@ -133,7 +146,13 @@ export class MachineRunner implements Runner {
 
   constructor(
     config: RunnerConfig,
-    options: { fetch?: typeof fetch; clock?: () => number; autoPoll?: boolean } = {},
+    options: {
+      fetch?: typeof fetch;
+      clock?: () => number;
+      autoPoll?: boolean;
+      /** Workspace drivers other plugins own; whoever composes the machine supplies them. */
+      drivers?: WorkspaceDriverFactory[];
+    } = {},
   ) {
     const parsed = validateRunnerConfig(config);
     this.profiles = parsed.profiles;
@@ -176,6 +195,22 @@ export class MachineRunner implements Runner {
     this.host = new ProcessHost(this.ledger);
     try {
       this.workspaces = new GitWorkspaceManager(this.ledger, this.config.workspace);
+      for (const factory of options.drivers ?? [])
+        try {
+          this.drivers.set(
+            factory.name,
+            factory.create(
+              {
+                directory: this.ledger.directory,
+                path: this.ledger.path,
+                terminal: (id) => terminalLaunch(this.ledger.get(id)!),
+              },
+              this.client.workspaceTransport(),
+            ),
+          );
+        } catch {
+          // A driver this machine cannot run is simply not advertised.
+        }
     } catch (error) {
       this.ledger.close();
       throw error;
@@ -220,8 +255,20 @@ export class MachineRunner implements Runner {
       )
     );
   }
+  /** The driver a launch was reserved for; fixed with the lease, like its policy. */
+  private driverFor(record: LaunchRecord): WorkspaceDriver {
+    const name = record.metadata.workspaceDriver;
+    if (typeof name !== 'string') return this.workspaces;
+    const driver = this.drivers.get(name);
+    check(driver, 'workspace_driver_missing', 'This runner does not carry that workspace driver');
+    return driver;
+  }
+  /** Whether the launch uses the runner's own repository, which alone may involve GitHub. */
+  private local(record: LaunchRecord): boolean {
+    return typeof record.metadata.workspaceDriver !== 'string';
+  }
   private occupied(record: LaunchRecord): boolean {
-    const workspace = this.workspaces.get(record.id);
+    const workspace = this.driverFor(record).get(record.id);
     return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
   }
   private save(id: string, patch: Record<string, unknown>): LaunchRecord {
@@ -241,6 +288,7 @@ export class MachineRunner implements Runner {
         platforms: this.profiles.map(platformOf),
         capacity: this.capacity(),
         appliedVersion: this.appliedVersion,
+        ...(this.drivers.size ? { capabilities: [...this.drivers.keys()].sort() } : {}),
       });
     const presence = await heartbeat();
     if (presence.desiredVersion !== this.appliedVersion) {
@@ -366,6 +414,8 @@ export class MachineRunner implements Runner {
         'The pending lease profile is no longer configured',
       );
       const profile = validateProfile({ ...configured, ...pending.platform });
+      const workspace = effectiveWorkspace(session.execution.policy);
+      const driver = workspace.mode === 'none' ? undefined : workspace.driver;
       record = this.ledger.reserve({
         id,
         sessionId: session.id,
@@ -377,6 +427,7 @@ export class MachineRunner implements Runner {
           requestId: pending.requestId,
           releasePending: false,
           attached: false,
+          ...(driver === undefined ? {} : { workspaceDriver: driver }),
         }) as unknown as LaunchMetadata,
       });
       if (session.status === 'active') this.ledger.markUncertain(id);
@@ -439,6 +490,7 @@ export class MachineRunner implements Runner {
       let workspace;
       try {
         if (
+          this.local(record) &&
           this.config.workspace &&
           'github' in this.config.workspace &&
           effectiveWorkspace(session.execution.policy).mode !== 'none'
@@ -458,7 +510,7 @@ export class MachineRunner implements Runner {
             await this.client.revokeGrant(grant);
           }
         }
-        workspace = await this.workspaces.prepare(record, session);
+        workspace = await this.driverFor(record).prepare(record, session);
       } catch (error) {
         record = await this.host.stop(record.id);
         this.save(record.id, { releaseOutcome: 'workspace_failed' });
@@ -518,21 +570,23 @@ export class MachineRunner implements Runner {
     }
   }
   private async reconcileCodeCommands(record: LaunchRecord, session?: Session): Promise<void> {
-    const perform = async (command: Parameters<GitWorkspaceManager['checkpointCommit']>[1]) => {
+    const workspaces = this.driverFor(record);
+    const local = this.local(record);
+    const perform = async (command: CodeCommitCommand) => {
       // A restart may owe only a receipt, even after the worker or workspace has closed.
       // The manager distinguishes proven outcomes from an interrupted Git operation.
-      if (!this.workspaces.commitOutcome(command.id)) {
+      if (!workspaces.commitOutcome(command.id)) {
         record = await this.host.inspect(record.id);
         if (terminalLaunch(record)) await this.captureWorkspace(record);
       }
       try {
-        await this.workspaces.checkpointCommit(record, command);
+        await workspaces.checkpointCommit(record, command);
       } catch (error) {
-        if (!this.workspaces.commitOutcome(command.id)) throw error;
+        if (!workspaces.commitOutcome(command.id)) throw error;
       }
-      const outcome = this.workspaces.commitOutcome(command.id);
+      const outcome = workspaces.commitOutcome(command.id);
       check(outcome, 'code_operation_uncertain', 'Git operation has no proven outcome', 503);
-      if ('receipt' in outcome && outcome.receipt.repositoryId.startsWith('github:')) {
+      if (local && 'receipt' in outcome && outcome.receipt.repositoryId.startsWith('github:')) {
         await this.publishGit({
           sessionId: command.sessionId,
           runnerId: command.runnerId,
@@ -542,9 +596,9 @@ export class MachineRunner implements Runner {
         });
       }
       await this.client.completeCodeCommand(command, outcome);
-      this.workspaces.acknowledgeCommit(command.id);
+      workspaces.acknowledgeCommit(command.id);
     };
-    for (const command of this.workspaces.pendingCommits(record.id)) await perform(command);
+    for (const command of workspaces.pendingCommits(record.id)) await perform(command);
     if (
       !session ||
       (record.status !== 'running' && !terminalLaunch(record)) ||
@@ -653,14 +707,14 @@ export class MachineRunner implements Runner {
     };
   }
   private async captureWorkspace(record: LaunchRecord): Promise<void> {
-    const workspace = this.workspaces.get(record.id);
+    const workspace = this.driverFor(record).get(record.id);
     if (!workspace || workspace.status === 'closed') return;
-    await this.workspaces.capture(record);
+    await this.driverFor(record).capture(record);
   }
   private async finishWorkspace(record: LaunchRecord): Promise<void> {
-    const workspace = this.workspaces.get(record.id);
+    const workspace = this.driverFor(record).get(record.id);
     if (!workspace || workspace.status === 'closed') return;
-    const result = await this.workspaces.capture(record);
+    const result = await this.driverFor(record).capture(record);
     await this.reconcileCodeCommands(
       record,
       record.metadata.session as unknown as Session | undefined,
@@ -683,7 +737,7 @@ export class MachineRunner implements Runner {
     }
     // A capture from an unstarted/unattached checkout has no remote attachment to finalize.
     if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
-      if (result.repositoryId.startsWith('github:') && !workspace.readOnly) {
+      if (this.local(record) && result.repositoryId.startsWith('github:') && !workspace.readOnly) {
         await this.publishGit({
           sessionId: record.sessionId,
           runnerId: this.ledger.runnerId,
@@ -700,7 +754,7 @@ export class MachineRunner implements Runner {
       );
       this.save(record.id, { session, workspaceReported: true });
     }
-    await this.workspaces.close(record);
+    await this.driverFor(record).close(record);
   }
   private async publishGit(input: import('@merv/contracts').CodeTransportInput) {
     const grant = await this.client.transportGrant(input);
@@ -711,10 +765,19 @@ export class MachineRunner implements Runner {
       await this.client.revokeGrant(grant);
     }
   }
+  private disposeDrivers(): void {
+    this.workspaces.dispose();
+    for (const driver of this.drivers.values()) driver.dispose();
+  }
   private finalLaunches: RunnerSnapshot['launches'] = [];
   private summaries(): RunnerSnapshot['launches'] {
     return this.ledger.list().map((r) => {
       const session = r.metadata.session as unknown as Session | undefined;
+      const workspace = (
+        typeof r.metadata.workspaceDriver === 'string'
+          ? this.drivers.get(r.metadata.workspaceDriver)
+          : this.workspaces
+      )?.get(r.id);
       return {
         id: r.id,
         sessionId: r.sessionId,
@@ -729,12 +792,12 @@ export class MachineRunner implements Runner {
         deadline: r.deadline,
         exitCode: r.exitCode,
         releasePending: r.metadata.releasePending === true,
-        ...(this.workspaces.get(r.id)
+        ...(workspace
           ? {
               workspace: {
-                status: this.workspaces.get(r.id)!.status,
-                headOid: this.workspaces.get(r.id)!.snapshot?.headOid,
-                capturePending: !['captured', 'closed'].includes(this.workspaces.get(r.id)!.status),
+                status: workspace.status,
+                headOid: workspace.snapshot?.headOid,
+                capturePending: !['captured', 'closed'].includes(workspace.status),
               },
             }
           : {}),
@@ -751,7 +814,7 @@ export class MachineRunner implements Runner {
       if (!this.started) {
         this.finalLaunches = this.summaries();
         this.finalPendingRequests = this.ledger.pendingRequests().length;
-        this.workspaces.dispose();
+        this.disposeDrivers();
         this.ledger.close();
         this.stopped = true;
         this.state = 'stopped';
@@ -770,7 +833,7 @@ export class MachineRunner implements Runner {
         }
       this.finalLaunches = this.summaries();
       this.finalPendingRequests = this.ledger.pendingRequests().length;
-      this.workspaces.dispose();
+      this.disposeDrivers();
       this.unlock?.();
       this.ledger.close();
       this.stopped = true;
@@ -779,16 +842,18 @@ export class MachineRunner implements Runner {
   }
 }
 
-export const runnerPlugin = {
+/** The runner with the workspace drivers of other plugins, which only a composition may name. */
+export const runnerWith = (drivers: WorkspaceDriverFactory[]) => ({
   name: 'merv-runner',
   inject: [],
   async apply(ctx: Context, config: RunnerConfig) {
     await ctx.effect(async function* () {
-      const runner = new MachineRunner(config);
+      const runner = new MachineRunner(config, { drivers });
       yield () => runner.stop();
       await runner.start();
       yield ctx.provide('runner', runner);
     });
   },
-};
+});
+export const runnerPlugin = runnerWith([]);
 export default runnerPlugin;

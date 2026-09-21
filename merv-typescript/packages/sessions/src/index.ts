@@ -1264,6 +1264,14 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         'Attachment must match the frozen workspace mode',
         409,
       );
+      // A hand offer names its runner itself, so the driver it needs is asked for here too.
+      if (policy.mode !== 'none' && policy.driver !== undefined)
+        check(
+          await this.dispatcher.capable(caller, session.runnerId, policy.driver, tx),
+          'runner_incompatible',
+          'This runner does not advertise the workspace driver the assignment needs',
+          409,
+        );
       if (workspace && policy.mode !== 'none') {
         if (policy.base.startsWith('reference:')) {
           const name = policy.base.slice('reference:'.length);

@@ -10,6 +10,7 @@ import {
   codeTransportGrantSchema,
   type CodeTransportInput,
   type CodeTransportGrant,
+  type WorkspaceTransport,
 } from '@merv/contracts';
 import type {
   AutomaticLease,
@@ -123,18 +124,36 @@ export class RunnerClient {
       throw new RunnerControlError('invalid_runner_url', 400);
     this.baseUrl = url.origin;
   }
-  private async request(path: string, body?: unknown): Promise<any> {
+  /**
+   * `bytes` sends one part instead of JSON; `octets` expects bytes back. Both belong to the
+   * bundle routes, whose bodies are larger and slower than any control call.
+   */
+  private async request(
+    path: string,
+    body?: unknown,
+    transfer?: { bytes?: Uint8Array; octets?: boolean },
+  ): Promise<any> {
     let response: Response;
-    const signal = AbortSignal.timeout(this.timeoutMs);
+    const signal = AbortSignal.timeout(
+      transfer ? Math.max(this.timeoutMs, 30_000) : this.timeoutMs,
+    );
     try {
       response = await this.fetcher(`${this.baseUrl}${path}`, {
-        method: body === undefined ? 'GET' : 'POST',
+        method: transfer?.bytes ? 'PUT' : body === undefined ? 'GET' : 'POST',
         headers: {
           authorization: `Bearer ${this.bearer}`,
           'x-merv-project-id': this.projectId,
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(transfer?.bytes
+            ? { 'content-type': 'application/octet-stream' }
+            : body === undefined
+              ? {}
+              : { 'content-type': 'application/json' }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(transfer?.bytes
+          ? { body: new Blob([transfer.bytes as Uint8Array<ArrayBuffer>]) }
+          : body === undefined
+            ? {}
+            : { body: JSON.stringify(body) }),
         redirect: 'error',
         credentials: 'omit',
         signal,
@@ -149,7 +168,11 @@ export class RunnerClient {
       const chunks: Uint8Array[] = [];
       // Sessions admits four frozen packets of up to 512 KiB each. The complete
       // reply also carries session metadata and workspace receipts.
-      const limit = response.ok ? 4 * 1024 * 1024 : 1024 * 1024;
+      const limit = response.ok
+        ? transfer?.octets
+          ? 4 * 1024 * 1024 + 65_536
+          : 4 * 1024 * 1024
+        : 1024 * 1024;
       let size = 0;
       try {
         while (true) {
@@ -162,6 +185,7 @@ export class RunnerClient {
           }
           chunks.push(next.value);
         }
+        if (response.ok && transfer?.octets) return Buffer.concat(chunks);
         raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
           Buffer.concat(chunks),
         );
@@ -194,6 +218,26 @@ export class RunnerClient {
       throw new RunnerControlError(code, response.status);
     }
     return value;
+  }
+  /**
+   * The bundle routes as a workspace driver uses them. The bodies are the driver's and the
+   * server plugin's own business: this client authenticates, bounds and forwards them.
+   */
+  workspaceTransport(): WorkspaceTransport {
+    const route = (value: string) => value.split('/').map(encodeURIComponent).join('/');
+    return {
+      call: async (path, body) => await this.request(`/code/v2/${route(path)}`, body, {}),
+      putPart: async (operationId, offset, bytes) =>
+        await this.request(
+          `/code/v2/uploads/${encodeURIComponent(operationId)}/parts/${offset}`,
+          undefined,
+          { bytes },
+        ),
+      readPart: async (exportId, input) =>
+        (await this.request(`/code/v2/downloads/${encodeURIComponent(exportId)}/read`, input, {
+          octets: true,
+        })) as Uint8Array,
+    };
   }
   private session(
     value: unknown,

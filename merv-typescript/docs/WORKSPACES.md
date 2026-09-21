@@ -99,6 +99,17 @@ The source is cloned once into a private bare repository without local hardlinks
 
 Persistent branches start with `codex/merv/`. Shared persistent, per-base persistent and ephemeral checkouts occupy separate directory roots, so valid policy changes cannot nest one checkout inside another. Git-unsafe namespace components are encoded without collisions; full base OIDs distinguish per-base lineages.
 
+## The `code.v2` driver
+
+A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). `task@6` and `experiment@9` name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Everything else on this page describes the runner's own driver, which serves every policy that names none.
+
+The driver belongs to Code and lives beside the runner's ledger under `code-v2/`, with its own tables (`code_v2_repositories`, `code_v2_workspaces`, `code_v2_transfers`); it never touches the runner's repository or tables, needs no local source and holds no GitHub credential.
+
+- **Prepare.** The driver asks Code for the session's manifest, which only reads: exactly the newest commit Code admitted for a writer (a resumed unit continues on any machine, including the trailing work the last session left), exactly the referenced commit for a reviewer. It downloads a bundle in parts, telling Code which commits its cache already holds; should that claim be wrong the import fails and the one retry claims nothing. The cache is a bare repository without a remote. A writer's checkout stands on the local branch `merv/work/<unit>`, put on exactly the named head; a reviewer's is detached and removed afterwards.
+- **Commit.** `code.commit` builds the same deterministic commit as the runner's own driver, but keeps it aside under `refs/merv/pending/*`, uploads it under the writer fence and moves HEAD only when Code has admitted it. A commit Code quarantines leaves the checkout exactly as it was and fails the command with `code_capture_quarantined`; the agent removes what was found and commits again under a new request. An interrupted upload continues from the byte Code says it holds.
+- **Final capture.** After the process has stopped, what is uncommitted becomes one `merv: capture <session>` commit. It is journalled before Code hears of it, so a restart hands over that same commit and never builds another. The session's result names the head Code acknowledged: when the final capture is quarantined or its generation was fenced, that is the last admitted head, and the refused work stays in the machine's checkout and in Code's `held/` directory.
+- **Deferral.** When Code, its store or the network cannot serve, the driver raises a deferral with a cause (`code_unavailable`, `transport_unavailable`, `store_busy`, `base_pending`) instead of a failure of the launch.
+
 ## Ownership, capture and cleanup
 
 The local launch ledger and workspace tables use the same private SQLite database. Repository identity, checkout reservation and prepare intent are durable before Git creates a checkout. A persistent slot belongs to one exact launch until capture and cleanup finish. A successor cannot reuse an active, uncertain or unacknowledged checkout.

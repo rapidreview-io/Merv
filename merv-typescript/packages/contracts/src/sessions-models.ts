@@ -69,6 +69,11 @@ export interface RunnerHeartbeat {
   platforms: RunnerPlatform[];
   capacity: number;
   appliedVersion?: number;
+  /**
+   * What this machine can do beyond running a platform, as opaque names: a workspace policy
+   * that names a driver is offered only to a runner that lists it. An older runner sends none.
+   */
+  capabilities?: string[];
 }
 /** Every answer an automatic lease request can receive, and the whole stored vocabulary. */
 export type DispatchDecision =
@@ -83,6 +88,8 @@ export type DispatchDecision =
   | 'budget_exceeded'
   | 'usage_unavailable'
   | 'retries_exhausted'
+  /** Everything left in the queue needs a workspace driver this runner does not advertise. */
+  | 'runner_incompatible'
   | 'no_candidates';
 export interface RunnerPresence extends RunnerHeartbeat {
   id: string;

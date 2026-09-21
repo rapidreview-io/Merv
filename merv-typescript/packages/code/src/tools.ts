@@ -6,11 +6,13 @@ import {
   codeCommitInputSchema,
   codeLocalBindInputSchema,
   codeRepositoryConfigureInputSchema,
+  codeUnitFenceInputSchema,
   codeRepositoryImportInputSchema,
   type Caller,
   type CodeCommitInput,
   type CodeLocalBindInput,
   type CodeRepositoryConfigureInput,
+  type CodeUnitFenceInput,
   type CodeRepositoryImportInput,
 } from '@merv/contracts';
 
@@ -56,7 +58,7 @@ export const codeToolsPlugin = {
       ctx.tools.register({
         name: 'code.unit.get',
         description:
-          'Read what Code holds about one unit of work, named by its task or experiment id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository.',
+          'Read what Code holds about one unit of work, named by its task or experiment id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; and quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves.',
         inputSchema: z
           .object({ unitId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/) })
           .strict(),
@@ -93,6 +95,16 @@ export const codeToolsPlugin = {
         inputSchema: codeRepositoryConfigureInputSchema,
         handler: async (caller: Caller, input: CodeRepositoryConfigureInput) =>
           await ctx.code.configureRepository(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.unit.fence',
+        description:
+          'End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
+        inputSchema: codeUnitFenceInputSchema,
+        handler: async (caller: Caller, input: CodeUnitFenceInput) =>
+          await ctx.code.fenceUnit(caller, input),
       }),
     );
   },

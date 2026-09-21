@@ -128,7 +128,30 @@ export interface CodeUnits {
   basePin(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBasePin | null>;
   bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
+  /**
+   * Whether Code keeps this project's history in its own repository. It never turns false
+   * again, and it is read from the database alone, so an owner may ask inside a create.
+   */
+  hosted(caller: Caller, tx: Transaction): Promise<boolean>;
   status(caller: Caller): Promise<CodeProjectStatus>;
+}
+/** The writer fence of a unit; like CodeUnits, reached only inside an owner's transaction. */
+export interface CodeWriters {
+  /**
+   * Only an owner's lease acquisition calls this, right after pinBase and for a writable
+   * checkout that Code's driver prepares: the lease becomes the unit's next writer generation.
+   */
+  reserveWriter(
+    caller: Caller,
+    input: { unitId: string; leaseId: string },
+    tx: Transaction,
+  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  /** Whether a new writer could be leased now; a pure read, like baseStatus. */
+  writerStatus(
+    caller: Caller,
+    unitId: string,
+    tx: Transaction,
+  ): Promise<import('@merv/contracts').CodeWriterStatus>;
 }
 /** The project's repository on the server's disk; refused where the server keeps none. */
 export interface CodeRepositoryControls {
@@ -140,6 +163,10 @@ export interface CodeRepositoryControls {
     caller: Caller,
     input: import('@merv/contracts').CodeRepositoryConfigureInput,
   ): Promise<import('@merv/contracts').CodeStoreLimits>;
+  fenceUnit(
+    caller: Caller,
+    input: import('@merv/contracts').CodeUnitFenceInput,
+  ): Promise<import('@merv/contracts').CodeWriterStatus>;
 }
 export interface Code
   extends
@@ -147,6 +174,7 @@ export interface Code
     CodeProposals,
     CodeCaptures,
     CodeUnits,
+    CodeWriters,
     CodeRepositoryControls,
     CodePublicationApi {
   readonly github: import('@merv/contracts').CodeGitHub;

@@ -1585,3 +1585,56 @@ test('assigned plan and results reviewers update the paper through their scoped 
       await f.release(offered.session.id);
     });
 });
+
+test('A Git experiment created once Code keeps the project’s history names Code’s driver where it has a checkout, and its planner is no writer', async (t) => {
+  const f = await fixture(t);
+  await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
+  const input = {
+    intent: 'Run the harness against the matched evidence.',
+    workspace: 'git' as const,
+  };
+  const before = await f.experiments.create(f.source, {
+    ...input,
+    name: 'runner-kept',
+    requestId: f.request(),
+  });
+  assert.equal(before.workflow.version, 8);
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
+      JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: 'a'.repeat(40) }),
+      JSON.stringify({ oid: 'a'.repeat(40), operationId: 'cop_fixture', stored: true }),
+      f.source.projectId,
+    );
+  });
+  const experiment = await f.experiments.create(f.source, {
+    ...input,
+    name: 'code-kept',
+    requestId: f.request(),
+  });
+  assert.equal(experiment.workflow.version, 9);
+  const policies = await f.state.read(
+    async (sql) =>
+      await sql.all<{ state: string; manifest_json: string }>(
+        "SELECT state,manifest_json FROM wf_execution_policies WHERE workflow='experiment' AND version=9 ORDER BY state",
+      ),
+  );
+  assert.deepEqual(
+    policies.map((row) => [
+      row.state,
+      (JSON.parse(row.manifest_json) as { workspace?: { driver?: string } }).workspace?.driver,
+    ]),
+    [
+      ['design_review', undefined],
+      ['experiment_review', 'code.v2'],
+      ['planned', undefined],
+      ['running', 'code.v2'],
+    ],
+  );
+  // Planning pins the base the plan is written against, but it has no checkout to write.
+  const planning = await f.offer(experiment);
+  const unit = (await f.experiments.codeUnit(f.source, experiment.id))!;
+  assert.equal(unit.base?.reference, 'a'.repeat(40));
+  assert.deepEqual([unit.generation, unit.writerState], [0, 'idle']);
+  await f.release(planning.session.id);
+});

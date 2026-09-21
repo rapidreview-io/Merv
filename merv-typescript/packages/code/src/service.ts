@@ -10,6 +10,8 @@ import type { GitHubConfig } from './github-client.js';
 import { CodeTransportService } from './transport.js';
 import { CodePublicationService } from './publications.js';
 import { CodeUnitService } from './units.js';
+import { CodeWriterService } from './writers.js';
+import { CodeWorkspaceProtocol } from './protocol.js';
 import {
   CodeStore,
   type CodeImportRemote,
@@ -30,6 +32,8 @@ export interface CodeStoreOptions {
   /** Replaces the linked GitHub repository as the place an import reads from. */
   remote?: CodeImportRemote;
   fault?: (point: FaultPoint) => void;
+  /** How long a closed session's machine has to hand over its final capture. */
+  finalizeGraceSeconds?: number;
 }
 
 /** One Code capability; immutable proposals and machine commands retain separate records. */
@@ -37,7 +41,9 @@ export class CodeService extends CodeCommandService implements Code {
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
+  private writerStore!: CodeWriterService;
   private store?: CodeStore;
+  private protocol?: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
   readonly transport: CodeTransportService;
   private publicationStore: CodePublicationService;
@@ -79,19 +85,34 @@ export class CodeService extends CodeCommandService implements Code {
         this.proposalStore = await createService(
           new CodeProposalService(this, state, scope, sessions, artifacts),
         );
-        this.unitStore = await createService(new CodeUnitService(state, scope, workflows, this));
+        this.writerStore = new CodeWriterService(
+          state,
+          scope,
+          workflows,
+          repositories?.finalizeGraceSeconds ?? 900,
+        );
+        this.unitStore = await createService(
+          new CodeUnitService(state, scope, workflows, this, this.writerStore),
+        );
         if (repositories) {
           // Published only once it holds the writer lock and has finished what a crash left.
           const store = new CodeStore(
             state,
             scope,
             repositories.config,
-            { imported: (tx, projectId) => this.unitStore.imported(tx, projectId) },
+            {
+              imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
+              fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
+              advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
+              quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
+              maintained: () => this.writerStore.expire(),
+            },
             repositories.remote ?? this.linkedRepository(),
             repositories.fault,
           );
           await store.initialize();
           this.store = store;
+          this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
         }
         await this.github.initialize();
         await this.transport.initialize();
@@ -116,6 +137,17 @@ export class CodeService extends CodeCommandService implements Code {
     const input = parseCodeInput(codeCommandCompletionSchema, value);
     const complete = async (tx: Transaction) => {
       await this.transport.requireCheckpoint(input, tx);
+      const command = await tx.get<{ command_json: string }>(
+        'SELECT command_json FROM code_commands WHERE id=? AND project_id=?',
+        input.commandId,
+        caller.projectId,
+      );
+      if (command)
+        await this.writerStore.requireAdmitted(
+          input,
+          JSON.parse(command.command_json) as { projectId: string; instanceId: string },
+          tx,
+        );
       return super.completeCommand(caller, input);
     };
     return this.storage.read((sql) =>
@@ -169,6 +201,33 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
     await this.unitStore.transitioned(...args);
+    // An acceptance journals the ref it is kept under; the journal takes it up after this.
+    this.store?.wake();
+  }
+  /** One maintenance pass now, as the timer would make it. */
+  async maintainStore() {
+    await this.store?.maintain();
+  }
+  async sessionChanged(...args: Parameters<CodeWriterService['sessionChanged']>) {
+    await this.writerStore.sessionChanged(...args);
+  }
+  async reserveWriter(...args: Parameters<CodeWriterService['reserveWriter']>) {
+    return await this.writerStore.reserveWriter(...args);
+  }
+  async writerStatus(...args: Parameters<CodeWriterService['writerStatus']>) {
+    return await this.writerStore.writerStatus(...args);
+  }
+  /** Every admitted upload of the unit is first given the chance to finish; then the fence. */
+  async fenceUnit(caller: Caller, input: unknown) {
+    const store = this.requireStore();
+    caller = structuredClone(caller);
+    await store.maintain(false);
+    const status = await this.storage.transaction(
+      async (tx) => await this.writerStore.fence(caller, input, tx),
+    );
+    // What the fenced generation had only begun to send is kept where no route serves it.
+    await store.maintain();
+    return status;
   }
   async bindLocal(caller: Caller, input: Parameters<CodeUnitService['bindLocal']>[1]) {
     // Whether Code's repository holds the named commit is asked of Git before the transaction.
@@ -179,6 +238,9 @@ export class CodeService extends CodeCommandService implements Code {
       /^[0-9a-f]{40,64}$/.test(named) &&
       (await this.store.contains(caller.projectId, named));
     return await this.unitStore.bindLocal(caller, input, stored);
+  }
+  async hosted(...args: Parameters<CodeUnitService['hosted']>) {
+    return await this.unitStore.hosted(...args);
   }
   async unit(...args: Parameters<CodeUnitService['unit']>) {
     return await this.unitStore.unit(...args);
@@ -203,20 +265,14 @@ export class CodeService extends CodeCommandService implements Code {
    * Absent when this server keeps no repositories, which the API answers as unavailable.
    */
   get v2() {
-    const store = this.store;
-    if (!store) return undefined;
+    const protocol = this.protocol;
+    if (!protocol || this.publicationClosed) return undefined;
     return {
-      call: async (caller: Caller, route: string, _body: unknown) => {
-        const operation = /^uploads\/([A-Za-z0-9_]{1,80})(\/complete)?$/.exec(route);
-        if (!operation) throw new MervError('not_found', 'Unknown Code route', 404);
-        return {
-          operation: operation[2]
-            ? await store.complete(caller, operation[1])
-            : await store.operation(caller, operation[1]),
-        };
-      },
+      call: (caller: Caller, route: string, body: unknown) => protocol.call(caller, route, body),
       putPart: (caller: Caller, operationId: string, offset: number, bytes: Buffer) =>
-        store.putPart(caller, operationId, offset, bytes),
+        protocol.putPart(caller, operationId, offset, bytes),
+      readPart: (caller: Caller, exportId: string, input: unknown) =>
+        protocol.readPart(caller, exportId, input),
     };
   }
   /** An import reads GitHub as the administrator who asked, with a token that ends with the call. */
@@ -256,6 +312,7 @@ export class CodeService extends CodeCommandService implements Code {
     this.captureReader?.close();
     this.proposalStore?.close();
     this.unitStore?.close();
+    this.writerStore?.close();
     super.close();
     // Every read is refused from here on. Running admissions still reach the database, which
     // outlives Code, and are waited for before the writer lock is given up.

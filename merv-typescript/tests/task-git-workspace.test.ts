@@ -979,3 +979,57 @@ test('A Git task started on the central-base version still runs to an acceptance
   const next = await f.create({ workspace: 'git', dependsOn: [task.id] });
   assert.equal((await f.lease(next, oid('b'))).session.execution.references.base, oid('b'));
 });
+
+test('A project imported into Code while a Git task is under way lets that task finish as it began, and only new work names Code’s driver', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create({ workspace: 'git' });
+  assert.equal(task.workflow.version, 5);
+  const held = await f.lease(task);
+  // The import: a fact of the database alone, which never turns false again.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'UPDATE code_projects SET store_json=? WHERE project_id=?',
+      JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: oid('a') }),
+      f.source.projectId,
+    );
+  });
+
+  // The runner that keeps this task's history still completes its commit and its acceptance.
+  const commandId = await f.commit(held);
+  await f.receipt(held, commandId, oid('d'));
+  const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+  await f.release(held.session.id);
+  const review = await f.leaseReview(delivered);
+  await f.sessions.attach(f.reviewer, { ...review.control, workspace: review.checkout(oid('d')) });
+  assert.equal((await f.verdict(review.worker, delivered, 'pass')).workflow.state, 'done');
+  const unit = await f.code.unit(f.source, task.id);
+  assert.deepEqual(
+    [unit.acceptance!.storage, unit.acceptance!.receipt, unit.generation, unit.writerState],
+    ['legacy-local', undefined, 0, 'idle'],
+  );
+
+  // New Git work lives in Code; work that names a base task is still the explicit legacy form.
+  const hosted = await f.create({ workspace: 'git' });
+  assert.equal(hosted.workflow.version, 6);
+  const based = await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] });
+  assert.equal(based.workflow.version, 4);
+  assert.equal((await f.create()).workflow.version, 2);
+  // Main is named but Code does not hold it, so the hosted task is blocked, never launched.
+  await assert.rejects(async () => await f.lease(hosted), { code: 'code_base_pending' });
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'UPDATE code_projects SET main_json=? WHERE project_id=?',
+      JSON.stringify({ oid: oid('a'), operationId: 'cop_fixture', stored: true }),
+      f.source.projectId,
+    );
+  });
+  const execution = await f.workflows.execution(f.source, {
+    instanceId: hosted.id,
+    expectedRevision: hosted.workflow.revision,
+  });
+  assert.deepEqual(
+    execution.policy.workspace?.mode === 'persistent' && execution.policy.workspace.driver,
+    'code.v2',
+  );
+  assert.ok(execution.policy.tools.some((tool) => tool.name === 'code.commit'));
+});
