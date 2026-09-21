@@ -506,7 +506,6 @@ export function MapView({ shell }: { shell: ShellData }) {
   const { pool, edges } = graphOf(
     rows,
     {
-      claims: data?.claims ?? [],
       experiments: data?.experiments ?? [],
       tasks: data?.tasks ?? [],
       reviews: data?.reviews ?? [],
@@ -523,7 +522,7 @@ export function MapView({ shell }: { shell: ShellData }) {
   // slot rather than reordering the column, so the keyboard keeps stepping in the order
   // on screen. What a column holds beyond its four is one way to the page that lists it.
   const beyond: [string, string | undefined][] = [
-    ['claims', rowOf('claims')?.path],
+    ['paper', rowOf('paper')?.path],
     ['work', WORK.path],
     ['reviews', undefined],
     ['reflections', rowOf('reflections')?.path],
@@ -602,13 +601,6 @@ export function MapView({ shell }: { shell: ShellData }) {
           title="Results"
           index={1}
           tiles={tiles(
-            ...tally(data?.claims ?? [], (claim) => claim.status).map(([status, count]) =>
-              tile(
-                `${plural(count, 'Claim', 'Claims')} ${words(status)}`,
-                count,
-                rowOf('claims')!.path,
-              ),
-            ),
             ...tally(data?.reviews ?? [], (review) => review.verdict).map(([verdict, count]) =>
               tile(
                 `${plural(count, 'Review', 'Reviews')} ${verdictWord(verdict)}`,

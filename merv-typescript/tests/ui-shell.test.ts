@@ -11,6 +11,12 @@ import { click, mount, serve, settle, text, unmount } from './ui-render.js';
 
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
 sessionStorage.setItem('merv:token', 'fixture-token');
+Object.assign(globalThis, {
+  IntersectionObserver: class {
+    observe() {}
+    disconnect() {}
+  },
+});
 
 const { createElement } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
@@ -33,7 +39,7 @@ const row = (id: string, kind: string, group: string, order: number, label: stri
   readable: false,
 });
 const rows = [
-  row('claims', 'claims', 'work', 15, 'Claims'),
+  row('paper', 'paper', 'work', 15, 'Paper'),
   row('artifacts', 'artifacts', 'work', 21, 'Files'),
   row('settings', 'settings', 'settings', 100, 'Settings'),
 ];
@@ -45,7 +51,7 @@ function boot(name: string, shell: Record<string, unknown> = {}) {
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', { body: { kind: 'actor', actor, projects: [project] } });
   serve('/tools/ui.shell', {
-    body: { result: { actor, project, rows, plugins: [plugin('claims-ui')], ...shell } },
+    body: { result: { actor, project, rows, plugins: [plugin('paper-ui')], ...shell } },
   });
   serve('/tools/project.get', { body: { result: project } });
 }
@@ -58,7 +64,7 @@ const rail = () => document.querySelector('.sidebar')!;
 test('the rail says a word once: no heading over its own row, no role under its own name', async (t) => {
   t.after(async () => await unmount());
   boot('Operator', { rows: [...rows, row('feed', 'feed', 'activity', 30, 'Feed')] });
-  await open('/claims');
+  await open('/paper');
   const heads = [...rail().querySelectorAll('.rail-group-head')].map((node) => node.textContent);
   assert.deepEqual(heads, ['Research'], 'Feed over Feed is the row alone');
   const feed = rail().querySelector('.rail-group[aria-label="Feed"]')!;
@@ -81,14 +87,14 @@ test('the rail says a word once: no heading over its own row, no role under its 
   // The place you are in is said as well as shown, and no other row claims it.
   assert.deepEqual(
     [...rail().querySelectorAll('[aria-current="page"]')].map((node) => node.textContent),
-    ['Claims'],
+    ['Paper'],
   );
 });
 
 test('the account menu is operated as the menu it says it is', async (t) => {
   t.after(async () => await unmount());
   boot('Operator');
-  await open('/claims');
+  await open('/paper');
   const account = rail().querySelector<HTMLButtonElement>('.account-row')!;
   const key = async (name: string) => {
     await act(async () => {
@@ -124,7 +130,7 @@ test('the account menu is operated as the menu it says it is', async (t) => {
 test('a name that is not the role keeps the role beneath it', async (t) => {
   t.after(async () => await unmount());
   boot('Ada Lovelace');
-  await open('/claims');
+  await open('/paper');
   const account = rail().querySelector('.account-row')!;
   assert.equal(account.querySelector('.account-name')!.textContent, 'Ada Lovelace');
   assert.equal(account.querySelector('.account-role')!.textContent, 'Operator');
@@ -146,7 +152,7 @@ test('a mistyped address is a page not found, with the way home and no word abou
 
 test('an address whose plugin is switched off says which, and how it stands', async (t) => {
   t.after(async () => await unmount());
-  boot('Operator', { plugins: [plugin('claims-ui'), plugin('feed-ui', 'disabled')] });
+  boot('Operator', { plugins: [plugin('paper-ui'), plugin('feed-ui', 'disabled')] });
   await open('/feed');
   const page = document.querySelector('.main .empty-state')!;
   assert.ok(page.textContent!.includes('Feed is switched off'));
@@ -157,7 +163,7 @@ test('an address whose plugin is switched off says which, and how it stands', as
 
 test('Settings keeps its title in every room, and folds its diagnostics under one line each', async (t) => {
   t.after(async () => await unmount());
-  boot('Operator', { plugins: [plugin('claims-ui'), plugin('state'), plugin('scope')] });
+  boot('Operator', { plugins: [plugin('paper-ui'), plugin('state'), plugin('scope')] });
   await open('/settings/plugins');
   assert.equal(document.querySelector('h1')!.textContent, 'Settings');
   assert.equal(
@@ -178,7 +184,7 @@ test('Settings keeps its title in every room, and folds its diagnostics under on
 test('a plugin that is not active opens its table and is read first', async (t) => {
   t.after(async () => await unmount());
   boot('Operator', {
-    plugins: [plugin('claims-ui'), plugin('feed-ui', 'disabled'), plugin('state')],
+    plugins: [plugin('paper-ui'), plugin('feed-ui', 'disabled'), plugin('state')],
   });
   await open('/settings/plugins');
   const [plugins, sidebar] = [...document.querySelectorAll<HTMLDetailsElement>('details.fold')];
@@ -287,45 +293,4 @@ test('the archive narrows by the app’s own tabs, turns pages only where there 
   assert.ok(close.getAttribute('title'));
   await act(async () => close.click());
   assert.equal(document.querySelector('#history-detail'), null);
-});
-
-test('the claim book says New claim once, and a claim’s one action is a named glyph', async (t) => {
-  t.after(async () => await unmount());
-  boot('Operator');
-  serve('/tools/claim.list', {
-    body: {
-      result: [
-        {
-          id: 'claim_1',
-          projectId: project.id,
-          statement: 'Weight decay shortens the delay',
-          scope: 'Modular addition',
-          status: 'active',
-          confidence: 'medium',
-          revision: 1,
-          createdBy: 'actor_1',
-          updatedBy: 'actor_1',
-          createdAt: '2026-09-19T10:00:00Z',
-          updatedAt: '2026-09-19T10:00:00Z',
-        },
-      ],
-    },
-  });
-  await open('/claims');
-  const entry = document.querySelector('.claim')!;
-  assert.equal(entry.querySelector('.kind'), null, 'a book of claims does not label each one');
-  const edit = entry.querySelector<HTMLButtonElement>('button.claim-edit')!;
-  assert.equal(edit.getAttribute('aria-label'), 'Edit standing');
-  assert.equal(edit.getAttribute('title'), 'Edit standing');
-  assert.equal(edit.textContent, '');
-
-  await click('New claim');
-  const form = document.querySelector('.creation form')!;
-  assert.equal(form.querySelector('h2')!.textContent, 'New claim');
-  assert.equal(form.querySelector('button[type="submit"]')!.textContent, 'Create');
-  assert.equal(
-    (document.querySelector('.main')!.textContent!.match(/New claim/g) ?? []).length,
-    1,
-    'the opener reads Cancel, so the words stand once',
-  );
 });

@@ -35,7 +35,8 @@ export interface ChangeSpecExperiment {
   name: string;
   question: string;
   details: string;
-  testedClaimIds: string[];
+  /** Only present in retained plans from before claims were retired. */
+  testedClaimIds?: string[];
   /** Keys of task items in the same plan: an experiment waits only on tasks. */
   dependsOn: string[];
   rationale: string;
@@ -128,7 +129,6 @@ export interface ReflectionLensSubmit {
   requestId: string;
 }
 export interface ReflectionSubmit {
-  paperChangesArtifactId?: string;
   reflectionId: string;
   reportArtifactId: string;
   changeSpecArtifactId: string;

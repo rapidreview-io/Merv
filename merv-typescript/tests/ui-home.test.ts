@@ -29,7 +29,7 @@ const row = (kind: string) => ({
   status: {},
   readable: true,
 });
-const rows = ['tasks', 'experiments', 'research', 'reviews', 'claims'].map(row);
+const rows = ['tasks', 'experiments', 'research', 'reviews', 'paper'].map(row);
 const me = { id: 'actor_me', role: 'operator' };
 const names: Record<string, string> = {
   actor_me: 'Me',
@@ -87,7 +87,6 @@ const dependency = (name: string, over: Record<string, unknown> = {}) => ({
 const home = (over: Record<string, unknown>) => ({
   project: null,
   actors: null,
-  claims: null,
   experiments: null,
   tasks: null,
   reviews: null,
@@ -490,23 +489,12 @@ const graph = () =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rows as any,
     {
-      claims: [
-        {
-          id: 'claim_1',
-          statement: 'Weight decay controls when grokking happens',
-          scope: '',
-          status: 'active',
-          confidence: 'low',
-          updatedAt: '2026-09-20T09:00:00.000Z',
-        },
-      ],
       experiments: [
         {
           id: 'wf_exp',
           name: 'decay-sweep',
           intent: '',
           ownerId: 'actor_ada',
-          testedClaimIds: ['claim_1'],
           workflow: flow('planned', '2026-09-20T09:30:00.000Z'),
         },
       ],
@@ -532,6 +520,18 @@ const graph = () =>
         },
       ],
       reflections: [],
+      paper: {
+        documents: {
+          results: {
+            current: {
+              revision: 1,
+              sections: [{ content: 'Retrieval findings' }],
+              updatedAt: '2026-09-20T10:00:00.000Z',
+            },
+            published: { publication: { source: { id: 'wf_exp' } } },
+          },
+        },
+      },
     },
     named,
   );
@@ -568,8 +568,8 @@ test('the graph is anchored to the page, and a verb is never written on a record
 
   // A record stands level with what it is related to, so that line is straight.
   const y = (id: string) => layout.at.get(id)!.y;
-  assert.equal(y('wf_exp'), y('claim_1'));
-  assert.deepEqual(layout.lines.map((item) => item.edge.verb).sort(), ['depends on', 'tests']);
+  assert.equal(y('wf_exp'), y('paper:results'));
+  assert.deepEqual(layout.lines.map((item) => item.edge.verb).sort(), ['cites', 'depends on']);
 
   // Every verb is written in the room between two columns, clear of every card.
   for (const { x, y: at, anchor, edge } of layout.lines) {
@@ -642,11 +642,8 @@ test('with no room to draw a line, a record says what it points at in words', as
     ),
   );
   assert.equal(document.querySelector('svg.map-edges'), null);
-  const card = document.querySelector('[data-object="wf_exp"]')!;
-  assert.equal(
-    card.querySelector('.map-rel')!.textContent,
-    'tests Claim Weight decay controls when grokking happens',
-  );
+  const card = document.querySelector('[data-object="paper:results"]')!;
+  assert.equal(card.querySelector('.map-rel')!.textContent, 'cites Experiment decay-sweep');
   assert.equal(card.getAttribute('aria-pressed'), 'false');
   const more = document.querySelector<HTMLAnchorElement>('.map-more a')!;
   assert.equal(more.textContent, '+3 more work');

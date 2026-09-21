@@ -792,6 +792,78 @@
       "version": 7,
       "hash": "f590faa313aabcaa4048e284d063d86674d58b8de9d22f78016040d42d3955d4",
       "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 6,
+      "hash": "013fafe7039ceb6934ce446f7a6d656b9eae32de1efcc667dfa72acd29ca49a9",
+      "published": false
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 8,
+      "hash": "8926c20adddf3979c03e10f9200667fd3927eef8b6ef743bddb8ca81e353d5d1",
+      "published": false
+    },
+    {
+      "type": "reflection.review",
+      "version": 6,
+      "hash": "1651728e9dceb754abb2d1a9d9d1f864e7b8e630da1008c4baee7c85d0c7f555",
+      "published": false
+    },
+    {
+      "type": "experiment.execute",
+      "version": 8,
+      "hash": "cb86353369875aa0beb1d67b2cfab5583e212c99196ce9a453ba3b87d2153e1d",
+      "published": false
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 8,
+      "hash": "c6e886dfca74d9956a6797bd96818cc45c08121f51b411babddd9e2c6c65991e",
+      "published": false
+    },
+    {
+      "type": "reflection.lens",
+      "version": 7,
+      "hash": "0ab78b0005a6c87175adbe0c60e90af19de2e45f68b6a68e94420c286e9875d6",
+      "published": false
+    },
+    {
+      "type": "experiment.design",
+      "version": 9,
+      "hash": "bf9935f993024344db2a477e007ba510d50732d29831208105546a604bfd34ec",
+      "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 7,
+      "hash": "7c9f0228d9bbe1cccc38db846d9212f671cd21fd8a5493c4ec09c379883e40cc",
+      "published": false
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 9,
+      "hash": "bc4210b554ee79768a292e1d2f493983c7f7455ff18901cba239924b1074645e",
+      "published": false
+    },
+    {
+      "type": "reflection.review",
+      "version": 7,
+      "hash": "16de412e41c4dbba1dc2b2c415a272e987357c24a0fe0328108f8836f408c92a",
+      "published": false
+    },
+    {
+      "type": "experiment.execute",
+      "version": 9,
+      "hash": "ddab60214e6b92b8313e272d3634afc6fa530424a992f2e88626a155d3df4ffb",
+      "published": false
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 9,
+      "hash": "c03ab038efed6ec5e2254d7c8be446f79ffb34fc95e8868d2f08415212e3c97f",
+      "published": false
     }
   ]
 }

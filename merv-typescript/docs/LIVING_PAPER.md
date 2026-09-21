@@ -1,39 +1,68 @@
 # Living paper
 
-Paper stores the project definition, literature and citations, Methods/Results sections, immutable revisions, proposed edits and accepted publication records. It creates no workflow, context recipe, agent identity or lease. Its required providers are State, Scope and Artifacts.
+Paper stores four living documents: Problem, Literature, Methods and Results, plus citations and immutable revision history. It creates no workflow, assignment or lease. Its required providers remain State, Scope and Artifacts.
 
-`paper.read` returns documents, citations and retained proposals; `kind` selects a document and `history: true` its revisions. `paper.patch` edits problem/literature sections with expectedRevision and a stable requestId. `paper.cite` maintains the bibliographic ledger and links existing literature sections or project-scoped `artifact:<id>` evidence. Historical claim/experiment citation references remain readable and can be preserved when editing; new scientific source relationships are recorded by workflow-owned proposals rather than resolved through Knowledge.
+## Two editing paths
 
-## Paper edits are scientific deliverables
+The user's main agent or an authorized human can call `paper.patch` to edit any document at any time. Problem retains its four fixed sections: problem, scope, goals and constraints. Literature, Methods and Results have ordered editable sections. Direct edits require project write permission, the current document revision and a stable request ID. Assigned worker sessions cannot call this direct editing path.
 
-The existing experiment execution agent prepares Methods/Results changes with its results. The reflection synthesis agent prepares changes across experiments with its synthesis. Both receive relevant paper sections through their existing context recipes and keep their current assignment and identity.
-
-Create an immutable `application/json` artifact containing:
+Experiment design reviewers, experiment results reviewers and reflection reviewers own Methods/Results maintenance as part of their existing review. Read the current paper and the scientific evidence, then supply reviewer-authored `paperChanges` to `review.submit`:
 
 ```json
 {
-  "documents": [
-    {
-      "kind": "results",
-      "expectedRevision": 0,
-      "changes": [
-        {"id": "comparison", "title": "Comparison", "content": "The supported finding and limitations."}
-      ]
-    }
-  ]
+  "paperChanges": {
+    "documents": [
+      {
+        "kind": "methods",
+        "expectedRevision": 3,
+        "changes": [
+          {
+            "id": "comparison",
+            "title": "Controlled comparison",
+            "content": "We are testing hypothesis XYZ in experiment ABC; results are pending."
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-`kind` is `methods` or `results`. A proposal can update both, once each. Section changes support title/content, ordering (`afterId`) and removal, as with `paper.patch`. New sections need a title and content.
+The example is the paper portion of the usual verdict payload, alongside reviewId, claimId, verdict, expectedRevision, notes, synopsis, findings and requestId. Each document appears at most once. A change can insert, revise, reorder or remove a section using the same shape as `paper.patch`. Only Methods and Results are accepted here. Task and consolidation reviews reject paperChanges.
 
-Pass the artifact ID as `paperChangesArtifactId` on `experiment.transition` with `submit_results`, or on `reflection.submit`. If no document change is warranted, omit it and explain why in the scientific report. There is no separate paper submission tool or writing assignment.
+## Events and responsibility
 
-The owning program validates its producer/assignment and scientific evidence, then calls Paper.propose in the submission transaction. Paper validates the author's exact execution, project-scoped evidence, JSON edits, document revisions and size limits. It pins the original text, proposed edits, artifact hashes and the exact experiment/reflection submission identity. The scientific review includes that artifact and an explicit paper criterion; its context includes the proposal and original text.
+- **Direct edit saved:** the chosen document changes immediately. This is the main agent's editing path and requires no scientific review.
+- **Research cycle starts:** the cycle retains the current complete Problem definition. Later edits do not rewrite that captured definition.
+- **Plan review submitted:** the reviewer briefly describes the hypothesis, proposed approach and purpose, usually in one or two sentences, clearly distinguishing planned or rejected work from completed findings.
+- **Results review submitted:** the reviewer records what was done and learned, replaces outdated planned text, and retains negative findings, uncertainty and limitations. Comprehensive methods, results and interpretation are welcome when they help explain the project’s trajectory and inform what comes next.
+- **Reflection review submitted:** the reviewer integrates evidence across experiments, reconciles contradictions and revises the overall narrative rather than appending the synthesis report. Comprehensive detail is welcome when it explains the project’s trajectory, how understanding has changed and what comes next.
 
-On pass, the existing review handler calls Paper.accept in the same transaction as the verdict and workflow transition. Methods/Results become the accepted revisions. A rejection preserves the proposed edits without applying them. Concurrent accepted edits cause `paper_revision_conflict`; the reviewer returns the scientific submission for revision, and the producer submits a fresh proposal against current document revisions. No edits are silently overwritten, and a conflict in either document rolls back both edits and the verdict.
+Reviewer edits apply with any valid verdict, including needs_changes and fail. An edit accompanying rejection must describe that rejection accurately, not portray rejected evidence as an accepted result. If no change is warranted, reviewer instructions require an explanation in the review notes; the API does not force a cosmetic edit or separately validate that explanation.
 
-Paper.propose/accept are trusted in-process owner APIs, not public tools. Paper does not independently infer scientific approval or query other domains. Publication records carry the source submission, exact independent review ID, author, and evidence hashes. Freshness/coverage reasoning belongs to the originating scientific workflows; `paper.read` does not claim global corpus freshness.
+The producer supplies the plan, results and report; synthesis supplies its report and change specification. Producer submissions no longer accept paperChangesArtifactId. They do not prepare a paper proposal for another agent to approve. Existing reviewer grants suffice: paper changes travel with the already authorized review.submit, without giving reviewers a general-purpose write tool.
 
-## Retained history
+## Atomicity, attribution and history
 
-The migration keeps existing document, citation and publication history. Previous standalone writing inputs/leases remain in their legacy tables for audit; their removed tools and workflow registration cannot create or execute new writing assignments. Existing document text is preserved. The UI identifies historical publications that predate independent scientific review. New edits use the experiment/reflection submission path.
+The owning scientific workflow validates the live independent reviewer, claim, submission, verdict and state transition. Paper revisions, review publication records and the verdict save in one transaction. Invalid edits, stale paper revisions or any failed review check roll everything back. The reviewer reads the current paper, revises the edits and retries; unrelated later edits also require refreshing the document revision. Retrying the same successful verdict returns its receipt without another paper revision.
+
+New revisions name the reviewer as author and retain the review ID, source experiment/reflection revision and verdict. Publication records retain the source evidence hashes and changed section IDs. Later main-agent edits retain the previous review revision and are attributed as direct edits, without inheriting its review attribution.
+
+Old producer proposals, accepted publications and standalone-writing history remain readable. Unaccepted historical proposals do not overlay the current paper or apply automatically when a review completes. The UI displays current text and retains links to earlier proposal sources and review history.
+
+`paper.read` returns current documents, citations and retained historical proposals; kind selects a document and history returns its revisions. `paper.cite` maintains the bibliographic ledger independently; citation changes do not rewrite Literature prose. Neither paper reads nor publication records claim that all project evidence has been incorporated.
+
+## Experiment references
+
+The paper is the authoritative narrative for hypotheses and conclusions; there is
+no separately maintained research-claim status or confidence. Cite experiments as
+`[Experiment name](/experiments/EXPERIMENT_ID)`, with their actual names as visible
+labels and stable identifiers only in link destinations. Reviewers add these links
+where the experiment supports, qualifies or contradicts the prose. The UI resolves
+known experiment references to names, including older references written as IDs.
+These are ordinary document links, not a new relationship registry.
+
+Existing claims are read-only historical records, visible in the paper’s Details
+view and in `project.records.archivedClaims`. Older experiment associations and
+snapshots are retained; new experiments and reflection plans do not accept
+`testedClaimIds`. The reviewer `claimId` still identifies a review assignment lock.

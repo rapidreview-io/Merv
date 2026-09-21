@@ -16,10 +16,10 @@
     },
     {
       "id": "mounts",
-      "label": "External Mounts",
-      "caption": "Optional remote tools",
-      "members": ["mounts"],
-      "description": "External Mounts connects independent MCP servers to the local tool registry and selects their upstream credentials. An available mount is not proof that an upstream service is healthy."
+      "label": "Integrations",
+      "caption": "Remote tools & compute",
+      "members": ["mounts", "sandboxes"],
+      "description": "External Mounts connects independent MCP servers to the local tool registry. Sandboxes connects directly to the remote compute service over HTTP, publishing its views and lease controls. Each integration owns its upstream credentials; availability is not proof of remote health."
     },
     {
       "id": "research",
@@ -54,9 +54,9 @@
     {
       "id": "external",
       "label": "External services",
-      "caption": "Connected over MCP",
+      "caption": "Connected over MCP / HTTP",
       "members": [],
-      "description": "Nisa and Sandboxes are independent remote systems, not local Cordis plugins. Their tools are mounted only when configured and permitted."
+      "description": "Nisa and the Sandboxes compute service run independently. Optional MCP mounts expose remote tools; the local Sandboxes plugin also connects to the compute service over HTTP."
     },
     {
       "id": "foundation",
@@ -94,9 +94,13 @@
       "label": "External Mounts",
       "purpose": "Connects remote MCP tools to Tools with names such as _nisa.search. Owns upstream credential bindings and secret resolution; Scope supplies caller tool policy."
     },
+    "sandboxes": {
+      "label": "Sandboxes",
+      "purpose": "Connects to the remote compute service over HTTP, reads its published views and scoped records, and extends or releases sandbox leases. Its tool adapter enforces project write permission; its UI adapter publishes the service's views. The provider owns upstream credentials and has no injected Cordis dependencies."
+    },
     "claims": {
-      "label": "Claims",
-      "purpose": "Stores research statements, their scope, status and confidence with revision checks and replayable edits."
+      "label": "Archived claims",
+      "purpose": "Preserves retired research claims as read-only history. New research uses the living paper and named experiment links; no claim editing tools or active Claims page remain."
     },
     "tasks": {
       "label": "Tasks",
@@ -160,7 +164,7 @@
     },
     "paper": {
       "label": "Paper",
-      "purpose": "Stores project documents, citations and immutable edit proposals. Experiment and reflection reviews accept paper edits; Paper creates no assignments or context recipes."
+      "purpose": "Stores the living research narrative, citations and revision history. Main agents edit all sections; experiment and reflection reviewers author Methods/Results updates with their verdicts. Experiment references display names and link to the underlying records; earlier proposals remain historical."
     },
     "reflections": {
       "label": "Reflections",

@@ -67,7 +67,7 @@ if (gitMode) {
 }
 
 const protocol =
-  `This is a bounded local validation of a real research lifecycle using deliberately synthetic data. Do not use network, external research, GPU resources, additional tasks or additional agents. Do not change linked claim records. A passing run establishes only the calculation and workflow behavior on this specified data, not general scientific superiority.
+  `This is a bounded local validation of a real research lifecycle using deliberately synthetic data. Do not use network, external research, GPU resources, additional tasks or additional agents. A passing run establishes only the calculation and workflow behavior on this specified data, not general scientific superiority.
 
 Research question: does a linear least-squares model fitted ONLY on training data have lower mean absolute error (MAE) on the fixed held-out examples than a constant training-mean baseline?
 Training pairs: x=[-3,-2,-1], y=[-5,-3,-1]. Held-out pairs: x=[0,1,2,3,4], y=[1,3,5,7,9]. The data are explicit synthetic observations. Freeze these splits and all five held-out examples. The baseline predicts mean(training y); candidate fits slope and intercept by ordinary least squares on the three training pairs only. No fitting, tuning or selection may use held-out labels. Compute per-example predictions and absolute errors for both methods, with MAE=sum(abs errors)/5 on the exact same held-out examples. Predeclare criterion candidate_MAE < baseline_MAE. State limitations: tiny deterministic noiseless synthetic data, no uncertainty estimate or generalization claim. No need for packages beyond Python3's standard library.
@@ -113,24 +113,11 @@ try {
     actorId: other.actor.id,
     credentialId: other.credential.id,
   };
-  const isolatedClaim = await app.ctx.claims.create(otherCaller, {
-    statement: 'Separate project evidence remains unchanged.',
-    requestId: 'isolated',
-  });
-  const claim = await app.ctx.claims.create(source, {
-    statement:
-      'On the specified synthetic held-out examples, training-only linear least squares has lower MAE than the training-mean constant baseline.',
-    scope:
-      'Fixed training x[-3,-2,-1], y[-5,-3,-1] and held-out x[0,1,2,3,4], y[1,3,5,7,9]; local deterministic verification only.',
-    confidence: 'low',
-    requestId: 'hypothesis',
-  });
   const created = await app.ctx.experiments.create(source, {
     name: 'native-linear-check',
     intent:
       'Test the predefined training-only OLS versus training-mean baseline hypothesis on matched, fixed held-out synthetic data.',
     details: protocol,
-    testedClaimIds: [claim.id],
     ...(gitMode ? { workspace: 'git' as const } : {}),
     requestId: 'experiment',
   });
@@ -274,8 +261,6 @@ try {
       .filter((entry) => ['planned', 'design_review'].includes(entry.state))
       .every((entry) => entry.startedAt === null),
   );
-  assert.deepEqual(await app.ctx.claims.get(source, claim.id), claim);
-  assert.deepEqual(await app.ctx.claims.list(otherCaller), [isolatedClaim]);
   assert.deepEqual(await app.ctx.experiments.list(otherCaller), []);
   assert.deepEqual(await app.ctx.artifacts.list(otherCaller), []);
   const artifacts = await mapAsync(await app.ctx.artifacts.list(source), async (artifact) => {
@@ -394,13 +379,10 @@ try {
   const records = await app.ctx.knowledge.records(source);
   assert.equal(records.publication.status, 'none');
   assert.equal(records.project.summary, introduction);
-  assert.deepEqual(records.claims, [claim]);
   assert.equal(records.experiments.length, 1);
   assert.deepEqual(records.experiments[0], final);
   if (gitProof) {
-    const observed = await app.ctx.knowledge.resolve(source, [
-      `session-final:${sessions[2].id}`,
-    ]);
+    const observed = await app.ctx.knowledge.resolve(source, [`session-final:${sessions[2].id}`]);
     assert.equal(observed[0]?.status, 'resolved');
   }
   const walk = (path: string): string[] =>
@@ -631,7 +613,6 @@ try {
     records: {
       readBy: 'fixture-owner-after-native-terminal',
       experiments: records.experiments.length,
-      claims: records.claims.length,
       publication: records.publication.status,
     },
     freshAgents: 4,
@@ -640,8 +621,6 @@ try {
     shellCalls: phases.reduce((sum, phase) => sum + phase.commands.length, 0),
     projectId: source.projectId,
     sourceActorId: source.actorId,
-    initialClaim: claim,
-    claimUnchanged: true,
     otherProjectUnchanged: true,
     observations,
     workStarts,
@@ -656,7 +635,7 @@ try {
     runner: runner.snapshot(),
     sourceSha256: sha(launchedSource),
     limits: [
-      'Production Experiments/Workflows/Reviews/ContextBuilder/Sessions and MachineRunner; fixture setup creates only the owner, linked claim and empty experiment.',
+      'Production Experiments/Workflows/Reviews/ContextBuilder/Sessions and MachineRunner; fixture setup creates only the owner and empty experiment.',
       'Four fresh native agents complete one planned/design_review/running/experiment_review attempt; negative return/recovery paths are separately tested, not exercised by this positive run.',
       'The fixed tiny noiseless synthetic data validate this calculation and lifecycle, not a general scientific performance claim.',
       gitMode

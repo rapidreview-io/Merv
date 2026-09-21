@@ -42,12 +42,14 @@ flowchart BT
     merv_review_ui["merv-review-ui"]
     reviews["reviews"]
     sandboxes["sandboxes"]
+    merv_sandboxes_tools["merv-sandboxes-tools"]
     merv_sandboxes_ui["merv-sandboxes-ui"]
     scope["scope"]
     merv_scope_tools["merv-scope-tools"]
     merv_scope_ui["merv-scope-ui"]
     sessions["sessions"]
     merv_sessions_api["merv-sessions-api"]
+    merv_sessions_tools["merv-sessions-tools"]
     merv_sessions_ui["merv-sessions-ui"]
     state["state"]
     merv_task_tools["merv-task-tools"]
@@ -108,7 +110,6 @@ flowchart BT
   experiments --> workflows
   experiments --> reviews
   experiments --> contextBuilder
-  experiments --> claims
   experiments --> paper
   experiments -. optional .-> code
   merv_experiments_tools --> experiments
@@ -129,6 +130,7 @@ flowchart BT
   knowledge --> experiments
   knowledge --> artifacts
   knowledge --> reviews
+  knowledge --> workflows
   knowledge -. optional .-> code
   merv_knowledge_tools --> knowledge
   merv_knowledge_tools --> tools
@@ -163,6 +165,9 @@ flowchart BT
   research -. optional .-> reflections
   research -. optional .-> knowledge
   research -. optional .-> consolidation
+  research -. optional .-> tasks
+  research -. optional .-> experiments
+  research -. optional .-> artifacts
   merv_research_tools --> research
   merv_research_tools --> tools
   merv_research_ui --> research
@@ -175,6 +180,9 @@ flowchart BT
   reviews --> scope
   reviews --> artifacts
   reviews --> domainEvents
+  merv_sandboxes_tools --> sandboxes
+  merv_sandboxes_tools --> tools
+  merv_sandboxes_tools --> scope
   merv_sandboxes_ui --> sandboxes
   merv_sandboxes_ui --> ui
   scope --> state
@@ -188,6 +196,8 @@ flowchart BT
   sessions --> domainEvents
   merv_sessions_api --> sessions
   merv_sessions_api --> api
+  merv_sessions_tools --> sessions
+  merv_sessions_tools --> tools
   merv_sessions_ui --> sessions
   merv_sessions_ui --> ui
   merv_task_tools --> tools

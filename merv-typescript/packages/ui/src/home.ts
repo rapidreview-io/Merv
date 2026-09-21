@@ -6,7 +6,6 @@ import type { UiRow } from './types.js';
 const PARTS: [string, string][] = [
   ['project', 'project.get'],
   ['actors', 'actor.list'],
-  ['claims', 'claim.list'],
   ['experiments', 'experiment.list'],
   ['tasks', 'task.list'],
   ['reviews', 'review.list'],
@@ -86,8 +85,7 @@ export async function homeRead(
  */
 const KEEP: Record<string, string[]> = {
   actors: ['id', 'name', 'role', 'kind', 'active', 'sessionId'],
-  claims: ['id', 'statement', 'scope', 'status', 'confidence', 'updatedAt'],
-  experiments: ['id', 'name', 'intent', 'ownerId', 'testedClaimIds', 'workflow'],
+  experiments: ['id', 'name', 'intent', 'ownerId', 'workflow'],
   tasks: [
     'id',
     'title',

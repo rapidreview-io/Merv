@@ -38,14 +38,14 @@ test('input normalization is idempotent across tool and core parsing', () => {
   const created = parseExperimentInput(experimentCreateSchema, {
     name: '  accuracy-trial  ',
     intent: ' Test a claim. ',
-    testedClaimIds: ['clm_a', 'clm_a'],
+
     requestId: 'create_1',
   });
   assert.deepEqual(created, {
     name: 'accuracy-trial',
     intent: 'Test a claim.',
     details: '',
-    testedClaimIds: ['clm_a'],
+
     dependsOn: [],
     requestId: 'create_1',
   });

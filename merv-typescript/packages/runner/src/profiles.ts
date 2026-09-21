@@ -183,7 +183,6 @@ export function collectRepositorySkillPaths(cwd: string): string[] {
 const PROJECT_READS = [
   'project.get',
   'project.records',
-  'claim.list',
   'task.list',
   'task.get',
   'experiment.list',
@@ -516,7 +515,7 @@ export function buildLaunch(
     'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
     // Workers read the assignment's tool list as the boundary of what they may look at and
     // then invent what the project already holds. The list binds writes; reads are open.
-    'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it — the project summary and records, the other tasks and their deliveries, the experiments and their plans and results, the claims, the reviews, the feed and the living paper.',
+    'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it — the project summary and records, the other tasks and their deliveries, the experiments and their plans and results, the reviews, the feed and the living paper.',
     'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
     sealed(session)
       ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'

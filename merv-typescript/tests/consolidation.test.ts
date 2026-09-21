@@ -434,6 +434,10 @@ test('independent review returns only consolidation and seals the reviewed resul
   let submitted = await f.consolidation.submit(f.producer, await f.input(record));
   const rejected = await f.verdict(submitted, 'needs_changes');
   await assert.rejects(
+    f.reviews.apply(f.reviewer, { ...rejected, paperChanges: { documents: [] } }),
+    { code: 'paper_edits_unavailable' },
+  );
+  await assert.rejects(
     async () => await f.reviews.apply(f.reviewer, { ...rejected, returnTo: 'reflection' }),
     {
       code: 'invalid_review_return',

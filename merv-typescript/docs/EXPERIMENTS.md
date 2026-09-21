@@ -9,7 +9,7 @@ Completion does not automatically change a claim's status or confidence.
 ## Ownership and dependencies
 
 The provider injects **State, Scope, Artifacts, Workflows, Reviews, Context Builder,
-Claims, Code and Paper**. It owns experiment/attempt/evidence/submission records, the
+Code and Paper**. It owns experiment/attempt/evidence/submission records, the
 managed `experiment` programs, four context recipes and its Reviews submission
 route. New experiments start on version 5 (scratch) or 6 (explicit Git), the
 versions whose design carries a feasibility statement. Versions 1-4 stay
@@ -17,7 +17,7 @@ registered, unchanged, for the experiments already on them, which finish under
 the rules they started with.
 Workflows continues to own transitions, guidance and execution authority;
 Reviews owns independent claims and verdicts; Artifacts owns immutable file
-metadata and bytes. Claims supplies the referenced research statements.
+metadata and bytes.
 
 The tools adapter injects Experiments and Tools; the optional UI adapter injects
 Experiments and UI. Sessions leases the program through Workflows' generic
@@ -37,7 +37,7 @@ there is no separate legacy experiment REST contract.
 
 | Tool                    | Inputs                                                                                                                             | Result                                                                                                     |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `experiment.create`     | `name`, `intent`, `requestId`; optional `details`, `testedClaimIds`, `dependsOn`                                                   | New experiment, initially `planned`, revision 0, attempt 1                                                 |
+| `experiment.create`     | `name`, `intent`, `requestId`; optional `details`, `dependsOn`                                                                     | New experiment, initially `planned`, revision 0, attempt 1                                                 |
 | `experiment.list`       | Empty object                                                                                                                       | All current-project experiments, including terminal records, ordered by creation time and ID               |
 | `experiment.get_state`  | `experimentId`                                                                                                                     | Workflow, current attempt, attempt history, evidence/submission metadata and conclusion; no artifact bytes |
 | `experiment.attach`     | `experimentId`, `artifactId`, `role`, `path`, `attemptIndex`, `expectedRevision`, `requestId`; optional `resultFormat` for results | Immutable evidence association replacing the current role/path slot                                        |
@@ -47,14 +47,13 @@ there is no separate legacy experiment REST contract.
 Names are trimmed, 3–48 characters, begin with an ASCII letter/digit and then
 use letters, digits, `.`, `_` or `-`. They are unique within a project without
 case distinctions. Intent must be nonempty; intent/details are trimmed and
-bounded to 16,000 characters. Details defaults to an empty string. Claim and
+bounded to 16,000 characters. Details defaults to an empty string.
 dependency arrays default to empty, accept at most 100 IDs and deduplicate IDs
-without changing their order. Referenced claims must exist in this project;
-prerequisites must be project tasks or experiments.
+without changing their order. Prerequisites must be project tasks.
 
 At most seven experiments may be nonterminal in a project. Creation is available
 to producers/operators, with the authenticated authority actor recorded as the
-logical owner. The name, intent, details, tested claim IDs, owner and creator
+logical owner. The name, intent, details, owner and creator
 are retained identity fields. There is no public rename, intent rewrite or
 delete operation.
 
@@ -249,7 +248,7 @@ metadata-only; building a context packet reads its pinned inputs deliberately.
 The program owns four recipes: `experiment.design`,
 `experiment.design_review`, `experiment.execute`, and
 `experiment.attempt_review`. These are independent of Tasks' existing
-`experiment.plan@2` recipe. Packets include experiment metadata, linked claims,
+`experiment.plan@2` recipe. Packets include experiment metadata, the current paper,
 the exact approved plan where applicable, numbered review criteria, selected
 evidence, interruption feedback and retained rejected assessments.
 
@@ -388,4 +387,4 @@ path. Final native results will be recorded separately after inspection.
 
 ## Paper changes in the results review
 
-The running agent receives current paper documents in its existing context. Submit optional `paperChangesArtifactId` (the JSON format in [Living paper](LIVING_PAPER.md)) with `experiment.transition` / `submit_results`. The producer must author it in this execution. It is pinned with the result evidence and adds an explicit criterion to the same independent review. The reviewer receives the proposed edits and original document text. Pass applies the edits and completes the experiment in one transaction; a rejection preserves the proposal without changing the document. No separate paper assignment is created.
+The plan and results reviewers own Methods/Results updates. Read the current paper, then include reviewer-authored `paperChanges` with `review.submit` (see [Living paper](LIVING_PAPER.md)). Plan reviews describe hypotheses and proposed methods as planned work; results reviews explain the execution, findings and limits in project context. Edits save atomically with any verdict, including rejections, and retain reviewer attribution and source evidence. When no edit is warranted, explain why in review notes. Producers submit scientific evidence and reports without paper changes; no separate paper assignment is created.

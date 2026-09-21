@@ -10,7 +10,6 @@ export interface ExperimentCreate {
   name: string;
   intent: string;
   details?: string;
-  testedClaimIds?: string[];
   dependsOn?: string[];
   /** Omission preserves the original scratch program and command hashes. */
   workspace?: 'none' | 'git';
@@ -30,7 +29,6 @@ export interface ExperimentTransition {
   experimentId: string;
   transition: ExperimentTransitionName;
   /** JSON document changes reviewed with this result submission. */
-  paperChangesArtifactId?: string;
   expectedRevision: number;
   evidence?: { reason?: string; detail?: string };
   requestId: string;
@@ -96,7 +94,8 @@ export interface Experiment {
   ownerId: string;
   createdBy: string;
   createdAt: string;
-  testedClaimIds: string[];
+  /** Historical links only; new experiments express hypotheses in their plans. */
+  testedClaimIds?: string[];
   /** Present only when explicitly created with the Git program. */
   workspace?: 'git';
   workflow: WorkflowSnapshot;

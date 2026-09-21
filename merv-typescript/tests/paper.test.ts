@@ -57,38 +57,6 @@ async function fixture(t: TestContext) {
     },
   };
 }
-async function proposal(
-  f: Awaited<ReturnType<typeof fixture>>,
-  documents = [
-    {
-      kind: 'methods' as const,
-      expectedRevision: 0,
-      changes: [{ id: 'method', title: 'Method', content: 'A controlled comparison.' }],
-    },
-  ],
-) {
-  const changes = await f.artifacts.create(f.producer, {
-    title: 'Paper edits',
-    mediaType: 'application/json',
-    content: JSON.stringify({ documents }),
-  });
-  const evidence = await f.artifacts.create(f.producer, {
-    title: 'Evidence',
-    content: 'Retained scientific evidence',
-  });
-  return await f.state.transaction(
-    async (tx) =>
-      await f.paper.propose(
-        f.producer,
-        {
-          artifactId: changes.id,
-          source: { kind: 'experiment', id: 'experiment-1', revision: 3 },
-          evidenceIds: [evidence.id],
-        },
-        tx,
-      ),
-  );
-}
 test('paper keeps ordered section history, structured scope and scoped citation ledger with replay/CAS', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(
@@ -185,16 +153,22 @@ test('paper keeps ordered section history, structured scope and scoped citation 
       }),
     hasCode('forbidden'),
   );
-  await assert.rejects(
-    async () =>
-      await f.paper.patch(f.producer, {
-        kind: 'results',
-        expectedRevision: 0,
-        requestId: f.request(),
-        changes: [{ id: 'finding', title: 'Finding', content: 'Invented' }],
-      }),
-    hasCode('paper_review_required'),
-  );
+  for (const kind of ['methods', 'results'] as const) {
+    const edit = {
+      kind,
+      expectedRevision: 0,
+      requestId: f.request(),
+      changes: [{ id: 'finding', title: 'Finding', content: 'Main agent narrative.' }],
+    };
+    const saved = await f.paper.patch(f.producer, edit);
+    assert.equal(saved.revision, 1);
+    assert.deepEqual(await f.paper.patch(f.producer, edit), saved);
+    assert.equal(saved.updatedBy, f.producer.actorId);
+    await assert.rejects(
+      f.paper.patch(f.reviewer, { ...edit, requestId: f.request() }),
+      hasCode('forbidden'),
+    );
+  }
   const updated = await f.paper.patch(f.producer, {
     kind: 'literature',
     expectedRevision: 1,
@@ -282,208 +256,128 @@ test('paper inputs reject accessors and proxies without executing them', async (
   assert.equal(calls, 0);
 });
 
-test('paper retains proposals without assignments and applies exact reviewed edits atomically with replay', async (t) => {
-  const f = await fixture(t),
-    p = await proposal(f);
-  assert.equal((await f.paper.read(f.reader)).documents.methods.current.revision, 0);
-  assert.equal((await f.paper.read(f.reader)).proposals[0].artifact.hash, p.artifact.hash);
-  const input = { proposalId: p.id, source: p.source, reviewId: 'review-1' };
+test('reviewer edits retain provenance, roll back together, and enforce revision and scope boundaries', async (t) => {
+  const f = await fixture(t);
+  const evidence = await f.artifacts.create(f.producer, {
+    title: 'Evidence',
+    content: 'Measured result',
+  });
+  const input = {
+    documents: (['methods', 'results'] as const).map((kind) => ({
+      kind,
+      expectedRevision: 0,
+      changes: [{ id: 'comparison', title: 'Comparison', content: 'Reviewer-authored narrative.' }],
+    })),
+    source: { kind: 'experiment' as const, id: 'experiment-1', revision: 3 },
+    reviewId: 'review-1',
+    verdict: 'needs_changes' as const,
+    evidenceIds: [evidence.id],
+  };
+  const apply = (caller: Caller = f.reviewer, value = input) =>
+    f.state.transaction((tx) => f.paper.applyReview(caller, value, tx));
+  await assert.rejects(apply(f.producer), hasCode('forbidden'));
+  await assert.rejects(apply(f.reader), hasCode('forbidden'));
   await assert.rejects(
-    async () =>
-      await f.state.transaction(async (tx) => {
-        await f.paper.accept(f.reviewer, input, tx);
-        throw Error('abort verdict');
-      }),
+    f.state.transaction(async (tx) => {
+      await f.paper.applyReview(f.reviewer, input, tx);
+      throw Error('abort verdict');
+    }),
     /abort verdict/,
   );
   assert.equal((await f.paper.read(f.reader)).documents.methods.current.revision, 0);
-  const caller = { ...f.reviewer },
-    pendingInput = structuredClone(input);
-  const preflight = f.paper.checkAccept.bind(f.paper);
-  f.paper.checkAccept = async (...args) => {
-    const result = await preflight(...args);
-    Object.assign(caller, f.producer);
-    pendingInput.reviewId = 'replacement-review';
-    return result;
-  };
-  const accepted = await f.state.transaction(
-    async (tx) => await f.paper.accept(caller, pendingInput, tx),
-  );
-  f.paper.checkAccept = preflight;
-  assert.equal(accepted[0].reviewId, input.reviewId);
-  assert.equal(
-    (await f.paper.read(f.reader)).proposals[0].acceptance?.reviewerId,
-    f.reviewer.actorId,
-  );
-  assert.deepEqual(
-    await f.state.transaction(async (tx) => await f.paper.accept(f.reviewer, input, tx)),
-    accepted,
-  );
-  assert.equal(accepted[0].source.id, 'experiment-1');
-  assert.equal(
-    (await f.paper.read(f.reader)).documents.methods.current.updatedBy,
-    f.producer.actorId,
-  );
-  await f.reload();
-  assert.equal(
-    (await f.paper.read(f.reader)).documents.methods.published!.publication.reviewId,
-    'review-1',
-  );
+  const conflicting = structuredClone(input);
+  conflicting.documents[1].expectedRevision = 1;
+  await assert.rejects(apply(f.reviewer, conflicting), hasCode('paper_revision_conflict'));
+  assert.equal((await f.paper.read(f.reader)).documents.methods.current.revision, 0);
+  const invalid = structuredClone(input);
+  Object.assign(invalid.documents[0], { kind: 'problem' });
+  await assert.rejects(apply(f.reviewer, invalid), hasCode('invalid_paper_input'));
+  const duplicate = structuredClone(input);
+  duplicate.documents[1].kind = 'methods';
+  await assert.rejects(apply(f.reviewer, duplicate), hasCode('invalid_paper_input'));
+  const foreign = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
   await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) => await tx.run('UPDATE paper_proposals SET record=?', '{}'),
-      ),
-    /immutable/,
-  );
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) => await tx.run('UPDATE paper_proposals SET acceptance=?', '{}'),
-      ),
-    /immutable/,
-  );
-});
-test('paper prevents cross-project inputs, foreign authors, mismatched approval and self review', async (t) => {
-  const f = await fixture(t),
-    p = await proposal(f);
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(async (tx) => {
-        const input = {
-          proposalId: p.id,
-          source: { ...p.source, id: 'other' },
-          reviewId: 'review',
-        };
-        const checking = f.paper.checkAccept(f.operator, input, tx);
-        input.source.id = p.source.id;
-        return await checking;
-      }),
-    hasCode('paper_source_mismatch'),
-  );
-  for (const method of ['validate', 'propose'] as const)
-    await assert.rejects(
-      async () =>
-        await f.state.transaction(async (tx) => {
-          const caller = { ...f.operator };
-          const checking =
-            method === 'validate'
-              ? f.paper.validate(caller, p.artifact.id, tx)
-              : f.paper.propose(
-                  caller,
-                  {
-                    artifactId: p.artifact.id,
-                    source: p.source,
-                    evidenceIds: p.evidence.map((a) => a.id),
-                  },
-                  tx,
-                );
-          Object.assign(caller, f.producer);
-          return await checking;
-        }),
-      hasCode('invalid_evidence_author'),
-    );
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' }),
-    caller = { projectId: other.project.id, actorId: other.actor.id };
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) =>
-          await f.paper.accept(
-            caller,
-            { proposalId: p.id, source: p.source, reviewId: 'review' },
-            tx,
-          ),
-      ),
-    hasCode('paper_proposal_not_found'),
-  );
-  const artifact = await f.artifacts.create(caller, {
-    title: 'Foreign',
-    content: '{}',
-    mediaType: 'application/json',
-  });
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) =>
-          await f.paper.propose(
-            f.producer,
-            { artifactId: artifact.id, source: p.source, evidenceIds: p.evidence.map((a) => a.id) },
-            tx,
-          ),
-      ),
+    apply({ actorId: foreign.actor.id, projectId: foreign.project.id }),
     hasCode('not_found'),
   );
-});
-test('a conflicting second document rolls back all accepted edits and preserves reviewable proposal history', async (t) => {
-  const f = await fixture(t);
-  const both = await proposal(f, [
-    {
-      kind: 'methods',
-      expectedRevision: 0,
-      changes: [{ id: 'method', title: 'Method', content: 'New method' }],
-    },
-    {
-      kind: 'results' as 'methods',
-      expectedRevision: 0,
-      changes: [{ id: 'result', title: 'Result', content: 'New result' }],
-    },
-  ]);
-  const other = await proposal(f, [
-    {
-      kind: 'results' as 'methods',
-      expectedRevision: 0,
-      changes: [{ id: 'result', title: 'Result', content: 'Concurrent accepted result' }],
-    },
-  ]);
-  const disjoint = await proposal(f, [
-    {
-      kind: 'results' as 'methods',
-      expectedRevision: 0,
-      changes: [{ id: 'another', title: 'Another', content: 'Independent result' }],
-    },
-  ]);
-  await f.state.transaction(
-    async (tx) =>
-      await f.paper.accept(
-        f.reviewer,
-        { proposalId: other.id, source: other.source, reviewId: 'other-review' },
-        tx,
-      ),
+  const caller = { ...f.reviewer };
+  const pending = structuredClone(input);
+  const publications = await f.state.transaction(async (tx) => {
+    const applying = f.paper.applyReview(caller, pending, tx);
+    Object.assign(caller, f.producer);
+    pending.documents[0].changes[0].content = 'Changed after admission';
+    return await applying;
+  });
+  assert.equal(publications.length, 2);
+  for (const kind of ['methods', 'results'] as const) {
+    const document = (await f.paper.read(f.reader)).documents[kind];
+    assert.equal(document.current.updatedBy, f.reviewer.actorId);
+    assert.equal(document.current.sections[0].content, 'Reviewer-authored narrative.');
+    assert.equal(document.current.review?.id, input.reviewId);
+    assert.equal(document.published?.publication.verdict, 'needs_changes');
+    assert.equal(document.published?.publication.evidence[0].hash, evidence.hash);
+  }
+  await assert.rejects(apply(), hasCode('paper_revision_conflict'));
+  const main = await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 1,
+    requestId: f.request(),
+    changes: [{ id: 'comparison', content: 'Main agent revision' }],
+  });
+  assert.equal(main.review, undefined);
+  await f.reload();
+  assert.equal((await f.paper.history(f.reader, 'methods')).length, 2);
+  assert.equal(
+    (await f.paper.read(f.reader)).documents.methods.published?.publication.reviewId,
+    input.reviewId,
   );
   await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) =>
-          await f.paper.accept(
-            f.reviewer,
-            { proposalId: both.id, source: both.source, reviewId: 'review' },
-            tx,
-          ),
-      ),
-    hasCode('paper_revision_conflict'),
+    f.state.transaction((tx) => tx.run('UPDATE paper_revisions SET record=?', '{}')),
+    /immutable/,
   );
-  assert.equal((await f.paper.read(f.reader)).documents.methods.current.revision, 0);
-  assert.equal(
-    (await f.paper.read(f.reader)).documents.results.current.sections[0].content,
-    'Concurrent accepted result',
+});
+
+test('historical producer proposals remain readable without changing the current paper', async (t) => {
+  const f = await fixture(t);
+  const legacy = {
+    id: 'paperproposal_old',
+    projectId: f.operator.projectId,
+    source: { kind: 'experiment', id: 'experiment-old', revision: 3 },
+    artifact: { id: 'artifact-old', hash: 'retained-hash' },
+    documents: [
+      {
+        edit: {
+          kind: 'results',
+          expectedRevision: 0,
+          changes: [{ id: 'old', title: 'Old proposal', content: 'Never accepted' }],
+        },
+        before: (await f.paper.read(f.reader)).documents.results.current,
+      },
+    ],
+    evidence: [],
+    createdBy: f.producer.actorId,
+    createdAt: '2026-09-20T00:00:00Z',
+    acceptance: null,
+  };
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO paper_proposals VALUES(?,?,?,?)',
+      legacy.id,
+      f.operator.projectId,
+      JSON.stringify(legacy),
+      null,
+    ),
   );
-  assert.equal(
-    (await f.paper.read(f.reader)).proposals.find((p) => p.id === both.id)!.acceptance,
-    null,
-  );
-  // A stale proposal whose sections nobody touched since still lands, on the current revision.
-  const [published] = await f.state.transaction(
-    async (tx) =>
-      await f.paper.accept(
-        f.reviewer,
-        { proposalId: disjoint.id, source: disjoint.source, reviewId: 'disjoint-review' },
-        tx,
-      ),
-  );
-  assert.equal(published!.revision, 2);
-  assert.deepEqual(
-    (await f.paper.read(f.reader)).documents.results.current.sections.map((s) => s.id),
-    ['result', 'another'],
-  );
+  await f.reload();
+  assert.deepEqual((await f.paper.read(f.reader)).proposals, [legacy]);
+  await f.paper.patch(f.producer, {
+    kind: 'results',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'current', title: 'Current finding', content: 'Main agent text' }],
+  });
+  const read = await f.paper.read(f.reader);
+  assert.deepEqual(read.proposals, [legacy]);
+  assert.equal(read.documents.results.current.sections.length, 1);
+  assert.equal(read.documents.results.current.sections[0].id, 'current');
 });

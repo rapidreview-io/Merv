@@ -325,26 +325,6 @@ async function main() {
     reason: 'Synthetic negative result: the old configuration is incomplete.',
     requestId: 'preview-failed',
   });
-  const statements = [
-    'Stronger weight decay shifts delayed generalization earlier.',
-    'The apparent improvement may depend on the random seed.',
-    'A smaller hidden dimension can retain the same generalization pattern.',
-  ];
-  for (const [index, statement] of statements.entries()) {
-    const claim = await app.ctx.claims.create(owner, {
-      statement,
-      confidence: index === 1 ? 'low' : 'medium',
-      requestId: `preview-claim-${index}`,
-    });
-    if (index === 0)
-      await app.ctx.claims.update(owner, {
-        claimId: claim.id,
-        expectedRevision: claim.revision,
-        status: 'supported',
-        confidence: 'high',
-        requestId: 'preview-claim-supported',
-      });
-  }
   for (const [index, name] of [
     'weight-decay-sweep',
     'seed-sensitivity',
@@ -396,10 +376,6 @@ async function main() {
       goal: 'Define a bounded comparison.',
       checks: ['Write a clear hypothesis.'],
       requestId: 'preview-secondary-task',
-    });
-    await app.ctx.claims.create(caller, {
-      statement: 'A focused comparison will distinguish the leading explanations.',
-      requestId: 'preview-secondary-claim',
     });
     await app.ctx.feed.post(caller, {
       body: 'Synthetic preview: the project is ready for its first planning pass.',

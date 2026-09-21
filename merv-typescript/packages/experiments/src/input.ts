@@ -41,7 +41,6 @@ export const experimentCreateSchema = z
       .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
     intent: prose(1),
     details: prose().default(''),
-    testedClaimIds: ids.default([]),
     dependsOn: ids.default([]),
     workspace: z.enum(['none', 'git']).optional(),
     requestId,
@@ -86,7 +85,6 @@ export const experimentTransitionSchema = z
       'abandon',
       'mark_failed',
     ]),
-    paperChangesArtifactId: experimentIdSchema.optional(),
     expectedRevision: revision,
     requestId,
     evidence: z
@@ -96,12 +94,6 @@ export const experimentTransitionSchema = z
   })
   .strict()
   .superRefine((input, ctx) => {
-    if (input.paperChangesArtifactId && input.transition !== 'submit_results')
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['paperChangesArtifactId'],
-        message: 'Paper edits belong to the experiment results submission',
-      });
     if (
       ['abandon', 'mark_failed', 'retry_running'].includes(input.transition) &&
       !input.evidence?.reason

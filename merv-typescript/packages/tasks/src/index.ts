@@ -1939,6 +1939,11 @@ DROP TABLE task_leases_backup;`,
     caller = structuredClone(caller);
     rejectReviewReturn(input);
     input = plain<TaskReview>(input);
+    check(
+      input.paperChanges === undefined,
+      'paper_edits_unavailable',
+      'Only experiment and reflection reviewers update the paper with a verdict',
+    );
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
       return await this.command(tx, caller, input.requestId, 'submit_review', input, async () => {

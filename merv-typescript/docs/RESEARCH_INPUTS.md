@@ -37,10 +37,10 @@ Implementation: [Scope](../packages/scope/src/project-context.ts),
 
 Knowledge exposes two read-only tools:
 
-| Tool                 | Result                                                                                                             |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `project.records`    | Current project metadata, all claims, all task records and all experiments, plus explicit publication availability |
-| `project.references` | Up to 200 references resolved in input order to project-scoped metadata                                            |
+| Tool                 | Result                                                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `project.records`    | Current project metadata, archived claims, all task records and all experiments, plus explicit publication availability |
+| `project.references` | Up to 200 references resolved in input order to project-scoped metadata                                                 |
 
 Inventory includes active and terminal work. It does not render prompts, read
 artifact bodies, reconcile sessions, evaluate exit gates or advance workflows.
@@ -60,6 +60,8 @@ The optional Knowledge UI is the **Research records** page. Its data comes from
 these live reads. Introduction editing remains a Scope operation, separate from
 research publication.
 
+Historical claim records remain available through `project.records.archivedClaims` and the paper’s Details view. New corpus selections do not include claims; existing snapshots are unchanged.
+
 ## What a corpus captures
 
 `Knowledge.capture(caller, {requestId}, tx?)` is a service integration method for
@@ -70,7 +72,6 @@ saved snapshot by exact ID under current project read authority.
 | Selection   | Current implementation                                                                                            |
 | ----------- | ----------------------------------------------------------------------------------------------------------------- |
 | Project     | Exact name, Introduction and context revision at capture time                                                     |
-| Claims      | All statuses and their current complete records                                                                   |
 | Tasks       | All `done` or `failed` task records                                                                               |
 | Experiments | All `complete`, `abandoned` or `failed` records, including attempts, evidence associations and sealed submissions |
 | Assessments | Reviews referenced by selected records, including Experiment approval/feedback/submission reviews                 |

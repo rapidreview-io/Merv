@@ -147,6 +147,13 @@ export function writeArchitectureExplorer(root: string, inventory: Inventory): v
     },
     network: [
       {
+        from: 'sandboxes',
+        to: 'remote-sandboxes',
+        protocol: 'HTTP',
+        description:
+          'Optional direct compute-service connection for published views, scoped reads and lease controls.',
+      },
+      {
         from: 'runner',
         to: 'api',
         protocol: 'HTTP',

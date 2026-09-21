@@ -204,14 +204,9 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
     descriptions.find((tool) => tool.name === 'experiment.get_state')?.annotations?.readOnlyHint,
     true,
   );
-  const claim = await f.call(producer, 'claim.create', {
-    statement: 'A improves held-out accuracy over B.',
-    requestId: 'claim',
-  });
   const create = {
     name: 'held-out-comparison',
-    intent: claim.statement,
-    testedClaimIds: [claim.id],
+    intent: 'A improves held-out accuracy over B.',
     requestId: 'experiment',
   };
   let e = await f.call(producer, 'experiment.create', create);
@@ -335,11 +330,6 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
   assert.equal(e.workflow.state, 'complete');
   assert.equal(e.attempts.length, 1);
   assert.equal(e.submissions.length, 2);
-  const savedClaim = (await f.call(producer, 'claim.list')).find(
-    (item: any) => item.id === claim.id,
-  );
-  assert.equal(savedClaim.status, 'active');
-  assert.equal(savedClaim.revision, 0);
   const shell = (await f.http('ui.shell', {}, f.reader.token)).body.result;
   assert.equal(
     shell.rows.find((row: any) => row.id === 'experiments').status.count,

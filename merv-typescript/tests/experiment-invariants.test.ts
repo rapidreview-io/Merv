@@ -13,7 +13,6 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { ClaimService } from '@merv/claims';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
@@ -54,7 +53,6 @@ async function fixture(t: TestContext) {
       workflows,
       reviews,
       builder,
-      await createService(new ClaimService(state, scope)),
       undefined,
       await createService(new PaperService(state, scope, artifacts)),
     ),

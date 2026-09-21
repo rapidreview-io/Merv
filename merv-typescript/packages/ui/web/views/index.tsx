@@ -8,7 +8,6 @@ import { ArtifactsView } from './artifacts';
 import { FeedView } from './feed';
 import { SessionsView } from './sessions';
 import { CodeView } from './code';
-import { ClaimsView } from './claims';
 import { ExperimentsView } from './experiments';
 import { SettingsView } from './settings';
 import { PaperView } from './paper';
@@ -36,10 +35,9 @@ const views: Record<string, ComponentType<ViewProps>> = {
   settings: SettingsView,
   sessions: SessionsView,
   code: CodeView,
-  claims: ClaimsView,
+  claims: moved('/paper'),
   experiments: ExperimentsView,
-  // The reference lookup is a control on Claims now; the inventory is the record itself.
-  knowledge: moved('/claims'),
+  knowledge: moved('/paper'),
   paper: PaperView,
   research: ResearchView,
   reflections: ReflectionsView,

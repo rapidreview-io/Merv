@@ -19,7 +19,6 @@ export type MapExperiment = {
   name: string;
   intent: string;
   ownerId: string;
-  testedClaimIds: string[];
   workflow: Flow;
 };
 export type MapTask = {
@@ -41,14 +40,6 @@ export type MapReview = {
   claimable?: boolean;
   verdict: string | null;
   createdAt: string;
-};
-export type MapClaim = {
-  id: string;
-  statement: string;
-  scope: string;
-  status: string;
-  confidence: string;
-  updatedAt: string;
 };
 export type MapReflection = {
   id: string;
@@ -77,7 +68,6 @@ export type MapPost = { id: string; authorId: string; body: string; createdAt: s
 export interface HomeData {
   project: Project | null;
   actors: Actor[] | null;
-  claims: MapClaim[] | null;
   experiments: MapExperiment[] | null;
   tasks: MapTask[] | null;
   reviews: MapReview[] | null;
@@ -156,13 +146,12 @@ export const tally = <T>(items: T[], of: (item: T) => string | null): [string, n
 /**
  * Build the object graph. Columns read left to right — what is believed, what is
  * being done, what it became — and every edge names the field it
- * came from: experiment.testedClaimIds, task.dependencies,
+ * came from: task.dependencies,
  * reflection.experimentIds and the paper publication's own source.
  */
 export function graphOf(
   rows: Row[],
   d: {
-    claims: MapClaim[];
     experiments: MapExperiment[];
     tasks: MapTask[];
     reviews: MapReview[];
@@ -200,14 +189,6 @@ export function graphOf(
       live: MOVING[kind] === state,
       props,
     });
-  const claims = pathOf('claims');
-  if (claims)
-    for (const item of d.claims)
-      object(0, 'claims', item.id, item.statement, item.updatedAt, claims, item.status, [
-        ['Confidence', item.confidence],
-        ['Scope', item.scope || EM],
-        ['Updated', when(item.updatedAt)],
-      ]);
   const experiments = pathOf('experiments');
   if (experiments)
     for (const item of d.experiments) {
@@ -227,8 +208,6 @@ export function graphOf(
         ],
         workflow,
       );
-      for (const claimId of item.testedClaimIds)
-        edges.push({ from: id, to: claimId, verb: 'tests' });
     }
   const tasks = pathOf('tasks');
   if (tasks)

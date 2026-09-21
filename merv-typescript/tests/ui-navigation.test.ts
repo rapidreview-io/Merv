@@ -30,7 +30,7 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     row('jobs', 'tasks', 'work', 12, '/task-browser'),
     row('trials', 'experiments', 'work', 13),
     row('verdicts', 'reviews', 'work', 14),
-    row('claims', 'claims', 'work', 15),
+    row('artifacts', 'artifacts', 'work', 21),
     row('paper', 'paper', 'work', 16),
     row('reflections', 'reflections', 'work', 35),
     row('feed', 'feed', 'activity', 30),
@@ -143,7 +143,6 @@ test('a heading is drawn only where it names more than its one row already says'
     label,
   });
   const sections = buildNavigation([
-    labelled('claims', 'claims', 'work', 15, 'Claims'),
     labelled('artifacts', 'artifacts', 'work', 21, 'Files'),
     labelled('sessions', 'sessions', 'work', 25, 'Sessions'),
     labelled('feed', 'feed', 'activity', 30, 'Feed'),
@@ -196,7 +195,7 @@ test('a missing page speaks of a plugin only where the shell can show one that i
     name,
     state,
   });
-  const rows = [row('claims', 'claims', 'work', 15)];
+  const rows = [row('artifacts', 'artifacts', 'work', 21)];
   const plugins = [plugin('claims-ui', 'active'), plugin('feed-ui', 'disabled')];
   assert.equal(dormantOwner('/feed', kinds, rows, plugins)?.id, 'feed-ui');
   assert.equal(dormantOwner('/feed/post_1', kinds, rows, plugins)?.id, 'feed-ui');

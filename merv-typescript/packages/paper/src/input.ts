@@ -1,28 +1,20 @@
+import {
+  paperPatchSchema as patchSchema,
+  paperChangesSchema as changesSchema,
+} from '@merv/contracts';
+export { patchSchema, changesSchema };
 import { z } from 'zod';
 import { visible, parsed } from '@merv/contracts';
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const requestId = z.string().trim().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const kind = z.enum(['problem', 'literature', 'methods', 'results']);
-export const patchSchema = z
-  .object({
-    kind,
-    expectedRevision: revision,
-    requestId,
-    changes: z
-      .array(
-        z
-          .object({
-            id,
-            title: z.string().trim().min(1).max(300).refine(visible).optional(),
-            content: z.string().max(100_000).optional(),
-            afterId: id.nullable().optional(),
-            remove: z.boolean().optional(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(100),
+export const reviewSchema = changesSchema
+  .extend({
+    source: z.object({ kind: z.enum(['experiment', 'reflection']), id, revision }).strict(),
+    reviewId: id,
+    verdict: z.enum(['pass', 'needs_changes', 'fail']),
+    evidenceIds: z.array(id).min(1).max(2000),
   })
   .strict();
 export const citeSchema = z
@@ -44,21 +36,6 @@ export const citeSchema = z
     notes: z.string().max(16000).default(''),
     sectionIds: z.array(id).max(100).default([]),
     refs: z.array(id).max(200).default([]),
-  })
-  .strict();
-export const changesSchema = z
-  .object({
-    documents: z
-      .array(patchSchema.omit({ requestId: true }).extend({ kind: z.enum(['methods', 'results']) }))
-      .min(1)
-      .max(2),
-  })
-  .strict();
-export const proposeSchema = z
-  .object({
-    artifactId: id,
-    source: z.object({ kind: z.enum(['experiment', 'reflection']), id, revision }).strict(),
-    evidenceIds: z.array(id).min(1).max(2000),
   })
   .strict();
 export const parse = <T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown) =>

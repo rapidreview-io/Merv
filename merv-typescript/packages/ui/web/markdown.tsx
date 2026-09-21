@@ -78,20 +78,16 @@ interface NamedFile {
 }
 interface NamedHome {
   actors?: { id: string; name: string }[] | null;
-  claims?: { id: string; statement: string }[] | null;
   experiments?: { id: string; name: string }[] | null;
   tasks?: { id: string; title: string }[] | null;
   cycles?: { id: string; name: string }[] | null;
   reflections?: { id: string; title: string }[] | null;
   reviews?: { id: string; subjectId: string }[] | null;
 }
-const clip = (text: string, limit = 72) =>
-  text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
 
 /**
  * Names for the ids a text mentions, from lists the app already reads. A review is
- * named by what it judges, so reviews are read after the records they point at; a
- * claim has no page of its own, so its statement leads to the claim book; a person
+ * named by what it judges, so reviews are read after the records they point at; a person
  * is a name and no link. An id no list names is simply absent from the map.
  */
 export function recordNames(files?: NamedFile[] | null, home?: NamedHome | null): RecordNames {
@@ -106,8 +102,6 @@ export function recordNames(files?: NamedFile[] | null, home?: NamedHome | null)
     names.set(cycle.id, { name: cycle.name, to: `/research/${cycle.id}` });
   for (const reflection of home?.reflections ?? [])
     names.set(reflection.id, { name: reflection.title, to: `/reflections/${reflection.id}` });
-  for (const claim of home?.claims ?? [])
-    names.set(claim.id, { name: clip(claim.statement), to: '/claims' });
   for (const actor of home?.actors ?? [])
     // A directory name that is itself an identifier names nobody.
     if (!/[0-9a-f]{16,}/.test(actor.name)) names.set(actor.id, { name: actor.name });
@@ -817,7 +811,9 @@ function inlines(nodes: Inline[], names: RecordNames | undefined, linked = false
         return <br key={key} />;
       case 'id':
         return <RecordLink key={key} id={node.id} names={names} plain={linked} />;
-      case 'link':
+      case 'link': {
+        const experimentId = /^\/experiments\/([^/?#]+)(?:[?#].*)?$/.exec(node.href)?.[1];
+        const label = experimentId ? names?.get(experimentId)?.name : undefined;
         return node.external || !node.href.startsWith('/') ? (
           <a
             key={key}
@@ -829,9 +825,10 @@ function inlines(nodes: Inline[], names: RecordNames | undefined, linked = false
           </a>
         ) : (
           <Within key={key} href={node.href} title={node.title}>
-            {inlines(node.children, names, true)}
+            {label ?? inlines(node.children, names, true)}
           </Within>
         );
+      }
     }
   });
 }

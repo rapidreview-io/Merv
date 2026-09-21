@@ -240,7 +240,6 @@ test('names come from the lists the app already reads, a review named by what it
       { id: review, subjectId: TASK },
       { id: 'review_unnamed', subjectId: 'wf_unknown' },
     ],
-    claims: [{ id: 'claim_1', statement: 'x'.repeat(200) }],
     actors: [
       { id: 'actor_1', name: 'Codex producer' },
       { id: 'actor_2', name: 'a3f0c2d19b7e4f6a8c5d' },
@@ -257,8 +256,6 @@ test('names come from the lists the app already reads, a review named by what it
     to: `/reviews/${review}`,
   });
   assert.equal(names.has('review_unnamed'), false);
-  assert.equal(names.get('claim_1')?.to, '/claims');
-  assert.ok((names.get('claim_1')?.name.length ?? 0) <= 72);
   assert.deepEqual(names.get('actor_1'), { name: 'Codex producer' });
   // A directory name that is itself an identifier names nobody.
   assert.equal(names.has('actor_2'), false);
@@ -612,4 +609,23 @@ test('JSON is indented where it parses and left alone where it does not', async 
   );
   // Only a document has a source to turn back to.
   assert.equal(document.querySelector('button[aria-label="View source"]'), null);
+});
+
+test('experiment references display names for bare IDs and explicit paper links', async (t) => {
+  t.after(unmount);
+  const id = 'wf_1234567890abcdef1234567890abcdef';
+  serve('/tools/ui.home', { body: { result: { experiments: [{ id, name: 'retrieval-check' }] } } });
+  await mount(
+    page(
+      `The experiment ${id} is ongoing. See [${id}](/experiments/${id}) and [old label](/experiments/${id}).`,
+    ),
+  );
+  await settle();
+  const links = all(`a[href="/experiments/${id}"]`);
+  assert.equal(links.length, 3);
+  assert.deepEqual(
+    links.map((link) => link.textContent),
+    ['retrieval-check', 'retrieval-check', 'retrieval-check'],
+  );
+  assert.ok(!text().includes(id));
 });

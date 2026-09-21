@@ -81,15 +81,6 @@
       "name": "@merv/experiments"
     },
     {
-      "id": "claims-tools",
-      "name": "@merv/claims/tools"
-    },
-    {
-      "id": "claims-ui",
-      "name": "@merv/claims/ui",
-      "required": false
-    },
-    {
       "id": "claims",
       "name": "@merv/claims"
     },

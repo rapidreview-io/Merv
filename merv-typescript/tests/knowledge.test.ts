@@ -1,3 +1,4 @@
+import { seedArchivedClaim } from './fixtures/archived-claim.js';
 import { canonical, createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
@@ -77,7 +78,6 @@ async function fixture(t: TestContext) {
         workflows,
         reviews,
         builder,
-        claims,
         code,
         await createService(new PaperService(state, scope, artifacts)),
       ),
@@ -359,7 +359,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   const f = await fixture(t);
   const task = await f.completeTask(),
     experiment = await f.createExperiment();
-  const claim = await f.claims.create(f.producer, {
+  const claim = await seedArchivedClaim(f.state, f.producer, {
     statement: 'A referenced claim.',
     requestId: f.id(),
   });

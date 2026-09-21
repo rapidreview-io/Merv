@@ -10,11 +10,11 @@ change publishes a new version instead of editing an old one. Creating an
 experiment starts planning; it does not launch a process or decide whether a
 scientific claim is true.
 
-| Entrypoint                | Requires                                                                   | Provides                                                        |
-| ------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `@merv/experiments`       | State, Scope, Artifacts, Workflows, Reviews, Context Builder, Claims, Code | `experiments` service and owned workflow/context/review routing |
-| `@merv/experiments/tools` | Experiments, Tools                                                         | Six experiment tools                                            |
-| `@merv/experiments/ui`    | Experiments, UI                                                            | Experiment inventory and detail page                            |
+| Entrypoint                | Requires                                                                  | Provides                                                        |
+| ------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `@merv/experiments`       | State, Scope, Artifacts, Workflows, Reviews, Context Builder, Paper, Code | `experiments` service and owned workflow/context/review routing |
+| `@merv/experiments/tools` | Experiments, Tools                                                        | Six experiment tools                                            |
+| `@merv/experiments/ui`    | Experiments, UI                                                           | Experiment inventory and detail page                            |
 
 The tools are `experiment.create`, `experiment.list`, `experiment.get_state`,
 `experiment.attach`, `experiment.transition` and `experiment.exhibit`.
@@ -86,7 +86,7 @@ packages/experiments/
 Knowledge now owns metadata inventory, exact reference resolution and immutable
 terminal corpus capture. Reflection waves, reviewed claim publication and code
 consolidation remain separate implementation work.
-This program does not automatically update claims or publish code.
+This program does not publish code.
 
 Omitting create `workspace`, or choosing `"none"`, retains the original scratch
 `experiment@1` program and legacy command hashes. Explicit `workspace: "git"`

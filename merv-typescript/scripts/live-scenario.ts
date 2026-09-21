@@ -672,7 +672,6 @@ async function main(options: Options) {
   const observed = new Map<string, Observed>();
   const feedPosts: { role: string; postId: string; after?: string }[] = [];
   let cycleId: string | null = null;
-  const claimIds = new Map<string, string>();
 
   try {
     if (options.local) {
@@ -756,8 +755,6 @@ async function main(options: Options) {
               }
             );
           },
-          'claim.create': async () =>
-            (await call('claim.list', {})).find((c: any) => c.statement === input.statement),
           // The cycle depends on every record, so a record added since changes its input.
           'research.create': async () => {
             const found = (await call('research.list', {})).find((r: any) => r.name === input.name);
@@ -773,7 +770,7 @@ async function main(options: Options) {
     const control = async (path: string, body: unknown, method = 'POST') =>
       await request(path, body, method);
 
-    // ---- Setup: introduction, claims, records, cycle. All over /tools/*. ----
+    // ---- Setup: introduction, records, cycle. All over /tools/*. ----
     const project = await call('project.get', {});
     if (project.summary !== brief.project.introduction)
       await call('project.context.update', {
@@ -782,16 +779,6 @@ async function main(options: Options) {
         // An edited introduction is a new request, never a replay of the last one.
         requestId: `scenario:${brief.project.name}:introduction:${createHash('sha256').update(brief.project.introduction).digest('hex').slice(0, 12)}`,
       });
-    for (const claim of brief.claims) {
-      const created = await call('claim.create', {
-        statement: claim.statement,
-        ...(claim.scope ? { scope: claim.scope } : {}),
-        ...(claim.confidence ? { confidence: claim.confidence } : {}),
-        requestId: `scenario:claim:${claim.key}`,
-      });
-      claimIds.set(claim.key, created.id);
-      log({ claim: claim.key, id: created.id });
-    }
     for (const record of creationOrder(selected)) {
       const dependsOn = (record.dependsOn ?? []).map((name) => observed.get(name)!.id);
       const created =
@@ -806,10 +793,17 @@ async function main(options: Options) {
           : await call('experiment.create', {
               name: record.name,
               intent: record.intent,
-              details: record.details ?? '',
-              testedClaimIds: (record.testedClaims ?? [])
-                .map((key) => claimIds.get(key))
-                .filter((id): id is string => !!id),
+              details: [
+                record.details ?? '',
+                ...brief.claims
+                  .filter((claim) => record.testedClaims?.includes(claim.key))
+                  .map(
+                    (claim) =>
+                      `Hypothesis: ${claim.statement}${claim.scope ? ` (${claim.scope})` : ''}`,
+                  ),
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
               ...(dependsOn.length ? { dependsOn } : {}),
               ...(record.workspace ? { workspace: record.workspace } : {}),
               requestId: `scenario:experiment:${record.name}`,
@@ -1424,7 +1418,6 @@ async function main(options: Options) {
       startedAt: new Date(started).toISOString(),
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
-      claims: [...claimIds].map(([key, id]) => ({ key, id })),
       records: [...observed.values()].map((entry) => ({
         kind: entry.brief.kind,
         name: entry.brief.name,
@@ -1501,13 +1494,6 @@ function markdownReport(report: any): string {
       `**${report.divergence.kind}** on \`${report.divergence.record}\`: expected \`${report.divergence.expected}\`, observed \`${report.divergence.observed}\`.`,
       '',
       report.divergence.detail,
-      '',
-    );
-  if (report.claims.length)
-    lines.push(
-      '## Claims',
-      '',
-      ...report.claims.map((claim: any) => `- ${claim.key} → \`${claim.id}\``),
       '',
     );
   for (const record of report.records) {

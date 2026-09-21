@@ -25,7 +25,7 @@ const experiment = (key: string, dependsOn: string[] = []): ChangeSpecExperiment
   name: `exp-${key}`,
   question: 'Does the effect survive the control?',
   details: '',
-  testedClaimIds: [],
+
   dependsOn,
   rationale: 'The evidence lens found the control missing.',
 });

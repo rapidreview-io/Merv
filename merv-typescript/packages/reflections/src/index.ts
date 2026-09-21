@@ -989,7 +989,7 @@ export class ReflectionService implements Reflections {
                 transitions: ['approve', 'revise_synthesis', 'restart_lenses'],
                 tool: 'review.submit',
                 instruction:
-                  'Verify the pinned synthesis; pass or return to synthesizing/reflection.',
+                  'Verify the pinned synthesis and maintain Methods/Results with your own paperChanges in the verdict. If no paper edit is warranted, explain why in notes; pass or return to synthesizing/reflection.',
                 requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
                 arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
                   const wave = await this.row(caller, snapshot.id, tx);
@@ -1005,12 +1005,29 @@ export class ReflectionService implements Reflections {
                   // A verdict needs the claim; before it, start_review is the step. A proposed
                   // verdict is checked as the verdict, so ready means the call will take it.
                   const wave = await this.row(c.caller, c.snapshot.id, c.tx);
-                  await this.reviews.checkSubmit(
+                  const review = await this.reviews.checkSubmit(
                     c.caller,
                     wave.review_id!,
                     c.input as Parameters<Reviews['checkSubmit']>[2],
                     c.tx,
                   );
+                  const input = c.input as unknown as ReviewApplication | undefined;
+                  if (input && input.paperChanges !== undefined)
+                    await this.paper.checkReview(
+                      c.caller,
+                      {
+                        ...input.paperChanges,
+                        source: {
+                          kind: 'reflection',
+                          id: wave.id,
+                          revision: review.subjectRevision,
+                        },
+                        reviewId: review.id,
+                        verdict: input.verdict,
+                        evidenceIds: review.artifactIds,
+                      },
+                      c.tx,
+                    );
                 },
               },
               {
@@ -1153,6 +1170,11 @@ export class ReflectionService implements Reflections {
     transaction?: Transaction,
   ): Promise<Reflection> {
     ({ caller, input } = structuredClone({ caller, input }));
+    check(
+      !('paperChangesArtifactId' in input),
+      'invalid_reflection_input',
+      'Paper edits belong to the reviewer; include paperChanges with review.submit',
+    );
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'submit', input, tx, async () => {
@@ -1202,20 +1224,6 @@ export class ReflectionService implements Reflections {
           },
           tx,
         );
-        if (input.paperChangesArtifactId)
-          submission.paperProposal = await this.paper.propose(
-            caller,
-            {
-              artifactId: input.paperChangesArtifactId,
-              source: { kind: 'reflection', id: wave.id, revision: next.revision },
-              evidenceIds: [
-                submission.report.id,
-                submission.changeSpec.id,
-                ...lenses.map((lens) => (JSON.parse(lens.artifact!) as Artifact).id),
-              ],
-            },
-            tx,
-          );
         const pinnedInputIds = lenses.map((lens) => (JSON.parse(lens.artifact!) as Artifact).id);
         const review = await this.reviews.request(
           caller,
@@ -1252,15 +1260,7 @@ export class ReflectionService implements Reflections {
                   : []),
               ]),
             ],
-            criteria: [
-              ...REFLECTION_CRITERIA,
-              ...(submission.plan ? [CHANGE_SPEC_CRITERION] : []),
-              ...(submission.paperProposal
-                ? [
-                    'The proposed paper edits faithfully synthesize the cited research evidence and preserve its limitations.',
-                  ]
-                : []),
-            ],
+            criteria: [...REFLECTION_CRITERIA, ...(submission.plan ? [CHANGE_SPEC_CRITERION] : [])],
             formatVersion: 2,
             requestId: requestKey(caller, 'review-request', input.requestId),
           },
@@ -1334,30 +1334,20 @@ export class ReflectionService implements Reflections {
         tx,
       );
       await this.reviews.submit(caller, input, tx);
+      if (input.paperChanges !== undefined)
+        await this.paper.applyReview(
+          caller,
+          {
+            ...input.paperChanges,
+            source: { kind: 'reflection', id: wave.id, revision: review.subjectRevision },
+            reviewId: review.id,
+            verdict: input.verdict,
+            evidenceIds: review.artifactIds,
+          },
+          tx,
+        );
       if (route === 'approved') {
         const submission = JSON.parse(wave.submission!) as Submission;
-        if (submission.paperProposal) {
-          const publications = await this.paper.accept(
-            caller,
-            {
-              proposalId: submission.paperProposal.id,
-              source: submission.paperProposal.source,
-              reviewId: review.id,
-            },
-            tx,
-          );
-          // The wave's copy of its proposal carries the acceptance the paper now records.
-          submission.paperProposal.acceptance = {
-            reviewId: review.id,
-            reviewerId: caller.actorId,
-            publications,
-          };
-          await tx.run(
-            'UPDATE reflections SET submission=? WHERE id=?',
-            JSON.stringify(submission),
-            wave.id,
-          );
-        }
         const approved: ApprovedReflection = {
           id: wave.id,
           projectId: wave.project_id,

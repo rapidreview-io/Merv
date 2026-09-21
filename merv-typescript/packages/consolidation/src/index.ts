@@ -781,6 +781,11 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     caller = this.capture(caller);
     await this.scope.require(caller, 'review', tx);
     return await this.command(caller, 'review', input, tx, async () => {
+      check(
+        input.paperChanges === undefined,
+        'paper_edits_unavailable',
+        'Only experiment and reflection reviewers update the paper with a verdict',
+      );
       const review = await this.reviews.get(caller, input.reviewId, tx);
       const record = await this.get(caller, review.subjectId, tx);
       await this.checkReview(caller, record, input, tx);

@@ -52,7 +52,6 @@ const experiment = z
       .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
     question: text(4000),
     details: z.string().max(4000),
-    testedClaimIds: z.array(workflowId).max(20),
     dependsOn,
     rationale: reason,
   })
@@ -91,7 +90,7 @@ const refuse: (condition: unknown, message: string) => asserts condition = (cond
 
 /**
  * A JSON change specification as the plan it states. Only what the document alone can show is
- * judged here; whether its claims and names still fit the project is judged when the work is created.
+ * judged here; whether its names still fit the project is judged when the work is created.
  */
 export function parseChangeSpec(content: string): ChangeSpec {
   refuse(

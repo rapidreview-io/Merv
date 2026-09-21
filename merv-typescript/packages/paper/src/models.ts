@@ -1,3 +1,5 @@
+import type { Verdict, PaperPatch, PaperChanges } from '@merv/contracts/types';
+export type { PaperPatch, PaperChanges };
 export type PaperKind = 'problem' | 'literature' | 'methods' | 'results';
 export interface PaperSection {
   id: string;
@@ -14,6 +16,7 @@ export interface PaperRevision {
   /** Retained only for historical standalone writing revisions. */
   updateId: string | null;
   proposalId?: string;
+  review?: { id: string; source: PaperSource; verdict: Verdict };
 }
 export interface PaperCitation {
   id: string;
@@ -46,7 +49,9 @@ export interface PaperPublication {
   projectId: string;
   kind: 'methods' | 'results';
   revision: number;
-  proposalId: string;
+  proposalId?: string;
+  sectionIds?: string[];
+  verdict?: Verdict;
   source: PaperSource;
   reviewId: string;
   evidence: { id: string; hash: string }[];
@@ -73,18 +78,6 @@ export interface PaperWorkspace {
   citations: PaperCitation[];
   proposals: PaperProposal[];
 }
-export interface PaperPatch {
-  kind: PaperKind;
-  expectedRevision: number;
-  requestId: string;
-  changes: {
-    id: string;
-    title?: string;
-    content?: string;
-    afterId?: string | null;
-    remove?: boolean;
-  }[];
-}
 export interface PaperCite {
   id?: string;
   expectedRevision: number;
@@ -99,13 +92,10 @@ export interface PaperCite {
   /** Project-scoped artifact:<id> evidence references. */
   refs?: string[];
 }
-export interface PaperPropose {
-  artifactId: string;
-  source: PaperSource;
-  evidenceIds: string[];
-}
-export interface PaperAccept {
-  proposalId: string;
+/** Trusted owner input: the owner verifies the live, independent review in the same transaction. */
+export interface PaperReview extends PaperChanges {
   source: PaperSource;
   reviewId: string;
+  verdict: Verdict;
+  evidenceIds: string[];
 }

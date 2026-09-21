@@ -150,8 +150,6 @@ function ExperimentRecord({
   nameOf(id: string | null | undefined): string | undefined;
 }) {
   // One list names every claim this experiment says it tests.
-  const statements = useTool<{ id: string; statement: string }[]>('claim.list');
-  const claims = new Map((statements.data ?? []).map((claim) => [claim.id, claim.statement]));
   const mine = (reviews ?? []).filter((review) => review.subjectId === e.id);
   const newest = newestReview(mine, e.id);
   const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
@@ -213,19 +211,6 @@ function ExperimentRecord({
               </>
             )}
             <Rounds experiment={e} reviews={mine} />
-          </>
-        ) : undefined
-      }
-      related={
-        e.testedClaimIds.length ? (
-          <>
-            <h3 className="ev-role">Claims tested</h3>
-            {/* A claim is named by its statement; one the book cannot name is left out. */}
-            {e.testedClaimIds.map((id) => (
-              <p className="claim-line" key={id}>
-                <Link to="/claims">{claims.get(id)}</Link>
-              </p>
-            ))}
           </>
         ) : undefined
       }

@@ -20,10 +20,10 @@
     },
     {
       id: 'remote-sandboxes',
-      label: 'Sandboxes MCP',
+      label: 'Sandboxes service',
       group: 'external',
       purpose:
-        'Independent sandbox tools, connected through an optional MCP mount. Remote jobs have their own lifecycle.',
+        'Independent compute service, connected through the local Sandboxes plugin over HTTP or an optional MCP mount. Remote jobs have their own lifecycle.',
     },
   ];
   const remote = new Map(externals.map((node) => [node.id, node]));
@@ -208,14 +208,10 @@
     );
     if (remote.has(target)) {
       heading('Network connection');
-      links(['mounts']);
-      inspector.append(
-        el(
-          'p',
-          '',
-          'Connected over MCP only when configured. It is not an injected Cordis dependency and it is not bundled into this server.',
-        ),
-      );
+      for (const edge of data.network.filter((edge) => edge.to === target)) {
+        links([edge.from]);
+        inspector.append(el('p', '', `${edge.protocol} · ${edge.description}`));
+      }
       return;
     }
     inspector.append(

@@ -1,28 +1,19 @@
-import { recorded, createService, replayed } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
-  inTransaction,
-  newId,
-  now,
   type Caller,
   type Scope,
   type Sql,
   type State,
   type Transaction,
 } from '@merv/contracts';
-import { claimCreateSchema, claimIdSchema, claimUpdateSchema, parseClaimInput } from './input.js';
-import type { Claim, ClaimCreate, Claims, ClaimUpdate } from './types.js';
+import { z } from 'zod';
+import type { Claim, Claims } from './types.js';
 
-export type {
-  Claim,
-  ClaimConfidence,
-  ClaimCreate,
-  Claims,
-  ClaimStatus,
-  ClaimUpdate,
-} from './types.js';
+export type { Claim, ClaimConfidence, Claims, ClaimStatus } from './types.js';
+const claimIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 interface ClaimRow {
   id: string;
   project_id: string;
@@ -50,7 +41,7 @@ const hydrate = (row: ClaimRow): Claim => ({
   updatedAt: row.updated_at,
 });
 
-/** Research assertions are project facts; their status is not a work-item lifecycle. */
+/** Read-only archive for research claims created before paper-based authorship. */
 export class ClaimService implements Claims {
   private closed = false;
   /** Complete storage migrations before publishing this service. */
@@ -92,96 +83,6 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
     };
   }
 
-  async create(caller: Caller, value: ClaimCreate, transaction?: Transaction): Promise<Claim> {
-    caller = this.capture(caller);
-    const input = parseClaimInput(claimCreateSchema, value);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      return await this.command(caller, 'create', input, tx, async () => {
-        const createdAt = now();
-        const claim: Claim = {
-          id: newId('claim'),
-          projectId: caller.projectId,
-          statement: input.statement,
-          scope: input.scope,
-          status: 'active',
-          confidence: input.confidence,
-          revision: 0,
-          createdBy: caller.actorId,
-          updatedBy: caller.actorId,
-          createdAt,
-          updatedAt: createdAt,
-        };
-        await tx.run(
-          'INSERT INTO claims(id,project_id,statement,scope,status,confidence,revision,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-          claim.id,
-          claim.projectId,
-          claim.statement,
-          claim.scope,
-          claim.status,
-          claim.confidence,
-          claim.revision,
-          claim.createdBy,
-          claim.updatedBy,
-          claim.createdAt,
-          claim.updatedAt,
-        );
-        await this.record(caller, null, claim, tx);
-        return claim;
-      });
-    });
-  }
-
-  async update(caller: Caller, value: ClaimUpdate, transaction?: Transaction): Promise<Claim> {
-    caller = this.capture(caller);
-    const input = parseClaimInput(claimUpdateSchema, value);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      return await this.command(caller, 'update', input, tx, async () => {
-        const before = await this.get(caller, input.claimId, tx);
-        check(
-          before.revision === input.expectedRevision,
-          'claim_revision_conflict',
-          'The claim changed; read its current revision before updating',
-          409,
-        );
-        check(
-          before.revision < Number.MAX_SAFE_INTEGER,
-          'claim_revision_conflict',
-          'Claim revision is exhausted',
-          409,
-        );
-        const after: Claim = {
-          ...before,
-          status: input.status ?? before.status,
-          confidence: input.confidence ?? before.confidence,
-          revision: before.revision + 1,
-          updatedBy: caller.actorId,
-          updatedAt: now(),
-        };
-        const result = await tx.run(
-          'UPDATE claims SET status=?,confidence=?,revision=?,updated_by=?,updated_at=? WHERE id=? AND project_id=? AND revision=?',
-          after.status,
-          after.confidence,
-          after.revision,
-          after.updatedBy,
-          after.updatedAt,
-          after.id,
-          after.projectId,
-          before.revision,
-        );
-        check(
-          result.changes === 1,
-          'claim_revision_conflict',
-          'The claim changed while updating',
-          409,
-        );
-        await this.record(caller, before, after, tx);
-        return after;
-      });
-    });
-  }
-
   async get(caller: Caller, claimId: string, transaction?: Transaction): Promise<Claim> {
     caller = this.capture(caller);
     if (transaction) this.state.assertTransaction(transaction);
@@ -217,36 +118,6 @@ BEGIN SELECT RAISE(ABORT,'Claim command receipts are retained'); END;
     return transaction ? await read(transaction) : await this.state.read(read);
   }
 
-  private async command(
-    caller: Caller,
-    operation: string,
-    input: { requestId: string },
-    tx: Transaction,
-    execute: () => Claim | Promise<Claim>,
-  ): Promise<Claim> {
-    return await replayed(tx, 'claim_commands', caller, operation, input, execute, {
-      result: 'result_json',
-      after: async () => await this.scope.require(caller, 'write', tx),
-    });
-  }
-
-  private async record(
-    caller: Caller,
-    before: Claim | null,
-    after: Claim,
-    tx: Transaction,
-  ): Promise<void> {
-    await recorded(this.state, tx, caller, before ? 'claim.updated' : 'claim.created', after.id, {
-      before: before
-        ? { status: before.status, confidence: before.confidence, revision: before.revision }
-        : null,
-      statement: after.statement,
-      scope: after.scope,
-      status: after.status,
-      confidence: after.confidence,
-      revision: after.revision,
-    });
-  }
   close(): void {
     this.closed = true;
   }

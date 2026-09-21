@@ -54,13 +54,12 @@ export const reflectionToolsPlugin = {
       {
         name: 'reflection.submit',
         description:
-          'Submit your immutable synthesis report, change specification, and optional JSON paperChangesArtifactId for the same independent review. A change specification with mediaType application/json is validated as a structured next-wave plan, reviewed item by item, and created as tasks and experiments only when the research owner chooses that in research.advance; a text change specification is accepted as before and creates no work. Accepted paper edits apply with approval. Review rejections return to synthesis or require five new lenses.',
+          'Submit your immutable synthesis report and change specification for independent review. The reviewer owns Methods/Results edits through review.submit.paperChanges. A change specification with mediaType application/json is validated as a structured next-wave plan, reviewed item by item, and created as tasks and experiments only when the research owner chooses that in research.advance; a text change specification is accepted as before and creates no work. Review rejections return to synthesis or require five new lenses.',
         inputSchema: z
           .object({
             reflectionId: id,
             reportArtifactId: id,
             changeSpecArtifactId: id,
-            paperChangesArtifactId: id.optional(),
             expectedRevision,
             requestId,
           })

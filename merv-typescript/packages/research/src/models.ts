@@ -119,7 +119,8 @@ export interface ResearchDigest {
     state: string;
     attempts: number;
     submissions: number;
-    testedClaimIds: string[];
+    /** Historical only. */
+    testedClaimIds?: string[];
     conclusion: string | null;
     /** The approved consolidation's decision for this experiment, when there was one. */
     decision: 'retain' | 'adapt' | 'drop' | 'no_code' | null;
@@ -127,7 +128,7 @@ export interface ResearchDigest {
   }[];
   tasks: { id: string; title: string; state: string }[];
   /** The claims the cycle's experiments tested. */
-  claims: {
+  claims?: {
     id: string;
     statement: string;
     status: string;
@@ -139,7 +140,7 @@ export interface ResearchDigest {
   /** Selected work still unfinished, and experiments consolidation chose to adapt. */
   carriedOver: string[];
   /** Tested claims still draft or active: derived, not authored. */
-  openQuestions: { claimId: string; statement: string }[];
+  openQuestions?: { claimId: string; statement: string }[];
   /** Alternatives the approved structured plan weighed and turned down, so they are not proposed again unknowingly. */
   rejected: { title: string; reason: string }[];
   /** Entries left out to keep the digest within its bound. */

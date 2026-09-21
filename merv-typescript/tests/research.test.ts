@@ -499,14 +499,9 @@ test('completing a cycle digests what it decided, once, without naming anyone', 
 
 test('a consolidated cycle digests each consolidation decision', async (t) => {
   const f = await fixture(t);
-  const claim = await f.app.ctx.claims.create(f.owner, {
-    statement: 'The approach is feasible on the frozen corpus.',
-    requestId: f.id(),
-  });
   const experiment = await f.app.ctx.experiments.create(f.owner, {
     name: 'ruled-out',
     intent: 'Evaluate whether the approach is feasible',
-    testedClaimIds: [claim.id],
     requestId: f.id(),
   });
   await f.definition();
@@ -546,16 +541,8 @@ test('a consolidated cycle digests each consolidation decision', async (t) => {
     [{ id: experiment.id, state: 'abandoned', decision: 'drop', rationale }],
   );
   assert.deepEqual(digest.dropped, [experiment.id]);
-  assert.deepEqual(digest.claims, [
-    {
-      id: claim.id,
-      statement: claim.statement,
-      status: claim.status,
-      confidence: claim.confidence,
-      testedBy: [experiment.id],
-    },
-  ]);
-  assert.deepEqual(digest.openQuestions, [{ claimId: claim.id, statement: claim.statement }]);
+  assert.equal(digest.claims, undefined);
+  assert.equal(digest.openQuestions, undefined);
 });
 
 test('an ended cycle digests its reason and the selected work it leaves unfinished', async (t) => {
@@ -1216,7 +1203,7 @@ const planned = (overrides: Partial<ChangeSpec> = {}): ChangeSpec => ({
       name: 'ordering-effect',
       question: 'Does input ordering change the ranking?',
       details: '',
-      testedClaimIds: [],
+
       dependsOn: ['corpus', 'harness'],
       rationale: 'The method lens named ordering as the untested confound.',
     },
@@ -1388,14 +1375,19 @@ test('a plan that cannot be created rolls the whole advance back, and skip compl
   plan.items[2] = {
     ...plan.items[2],
     kind: 'experiment',
-    testedClaimIds: ['claim_missing'],
+    name: 'already-exists',
   } as never;
   const { record, command } = await reflected(f, plan);
+  await f.app.ctx.experiments.create(f.owner, {
+    name: 'already-exists',
+    intent: 'Earlier work',
+    requestId: f.id(),
+  });
   const before = await counts(f);
   await assert.rejects(
     f.research.advance(f.owner, command('create')),
     (error: { status: number }) => {
-      assert.equal(error.status, 404);
+      assert.equal(error.status, 409);
       return true;
     },
   );

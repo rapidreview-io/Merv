@@ -21,7 +21,8 @@ export interface KnowledgeRecords {
   formatVersion: 1;
   /** Current Scope facts, including introduction when configured; independent of publication. */
   project: Project;
-  claims: Claim[];
+  /** Read-only records retained from the retired claims feature. */
+  archivedClaims: Claim[];
   tasks: TaskRecord[];
   experiments: Experiment[];
   publication: KnowledgePublication;
@@ -59,7 +60,8 @@ export type KnowledgeCapture =
 export interface KnowledgeSelection {
   projectFacts: 'pinned-at-capture';
   project: Project;
-  claims: Claim[];
+  /** Present only in historical snapshots. */
+  claims?: Claim[];
   tasks: TaskRecord[];
   experiments: Experiment[];
   assessments: KnowledgeAssessment[];

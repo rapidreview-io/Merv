@@ -12,7 +12,7 @@ A saved corpus is not a published Reflection.
 | `@merv/knowledge/ui`    | Knowledge, UI                                                      | Research records page                   |
 
 `project.records` returns the current Scope project record, including its
-Introduction, all claims and all task/experiment metadata. It performs no
+Introduction, archived claims and all task/experiment metadata. It performs no
 artifact-body reads, prompt rendering, session reconciliation, exit evaluation
 or workflow mutation. Gate and next-action guidance stays in Workflows.
 
@@ -32,7 +32,7 @@ knowledge.records(caller, tx?);
 knowledge.resolve(caller, refs, tx?);
 ```
 
-Capture requires current project write authority and selects all claims, all
+Capture requires current project write authority and selects all
 terminal tasks (`done`/`failed`) and terminal experiments
 (`complete`/`abandoned`/`failed`) in one transaction. It retains exact project
 facts, domain metadata, associated artifact metadata and referenced assessments.

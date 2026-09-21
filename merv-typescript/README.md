@@ -22,17 +22,18 @@ support fixed project or explicit account grants, current membership roles,
 rotation and recursive revocation. Owners manage them through the UI and account
 HTTP routes. [Assignment-scoped sessions](docs/SESSION_LEASES.md) now enforce workflow tool policies and worker ownership. The [runner control plane](docs/RUNNER_CONTROL_PLANE.md) adds automatic assignment, project pause/halt and a Sessions page; the optional [machine Runner](docs/MACHINE_RUNNER.md) executes scratch and Git assignments through scoped native agents. [Git workspaces](docs/WORKSPACES.md) preserve captured commits across handoffs and controller restarts. The independent [Code service](docs/CODE_OPERATIONS.md) queues `code.commit` requests from live workers and retains the Runner's immutable commit receipts; `code.operation` reads their progress. Its service API also seals immutable proposal artifacts inside an admitting domain command's transaction; this adds no agent tool or standalone workflow.
 
-Claims records research statements with a prose scope, status and confidence. Producers and operators create/update them; readers and reviewers can inspect them. Updates use revisions and retry receipts, and ordinary edits preserve statement/scope. [Claims](packages/claims/README.md) depends only on State and Scope. Experiments uses these statements; applying reviewed Reflection changes to claims remains follow-up work.
+The living paper holds the project’s hypotheses and conclusions, citing experiments by name with links to their plans, evidence and reviews. The separate claims feature is retired; [historical claims](packages/claims/README.md) remain read-only and accessible from the paper’s Details view.
 
 [Experiments](docs/EXPERIMENTS.md) owns real experiment records and attempts: plan, independent design review, execution, and independent results review. It pins the approved plan and exact evidence for each submission, creates deterministic metrics exhibits, and routes rejected work back to planning or execution. Workflow guidance checks the same evidence gates as submission. The Experiments page displays current guidance, attempts and sealed submissions. Completing an experiment does not automatically change its linked claims.
 
 ## Durable recovery and context recipes
 
 [Living paper](docs/LIVING_PAPER.md) stores structured problem/scope/goals/constraints,
-literature, citations, versioned Methods/Results and reviewed edit proposals. Existing
-experiment and [reflection](docs/REFLECTIONS.md) agents submit paper changes with their
-scientific deliverables; their existing reviews accept those edits atomically. Paper
-creates no assignments or context recipes. [Consolidation](docs/CONSOLIDATION.md)
+literature, citations and versioned Methods/Results. The main agent can edit every
+document directly. Experiment plan/results and [reflection](docs/REFLECTIONS.md)
+reviewers author Methods/Results changes with their verdicts, saved atomically with
+review decisions. Producers supply evidence and reports. Paper creates no assignments
+or context recipes. [Consolidation](docs/CONSOLIDATION.md)
 consumes retained artifacts and explicit work prerequisites without depending on
 Reflections. A [Research cycle](docs/RESEARCH.md) coordinates research, reflection and
 consolidation; it creates no separate paper-writing workflows.
@@ -195,7 +196,6 @@ The installed feature adapters contribute **44 domain tools**, or **46 tools** w
 | Owner        | Tools                                                                                                                                                             |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scope        | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.credentials`, `actor.issue_token`, `actor.rotate_token`, `actor.revoke_token`, `actor.revoke` |
-| Claims       | `claim.create`, `claim.list`, `claim.update`                                                                                                                      |
 | Artifacts    | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list`                                                                                               |
 | Experiments  | `experiment.create`, `experiment.list`, `experiment.get_state`, `experiment.attach`, `experiment.transition`, `experiment.exhibit`                                |
 | Reviews      | `review.list`, `review.get`, `review.start`, `review.submit`                                                                                                      |
@@ -299,7 +299,6 @@ flowchart TB
   Claims --> Scope
   Experiments["@merv/experiments"] --> State
   Experiments --> Scope
-  Experiments --> Claims
   Experiments --> Artifacts
   Experiments --> Workflows
   Experiments --> Reviews
@@ -336,7 +335,6 @@ flowchart TB
   Adapters -.-> Scope
   Adapters -.-> Feed
   Adapters -.-> Code
-  Adapters -.-> Claims
   Adapters -.-> Experiments
 ```
 
@@ -344,8 +342,8 @@ flowchart TB
 | ----------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `@merv/domain-events`   | Durable local event delivery, progress and retries                                        | State                                                               |
 | `@merv/context-builder` | Versioned recipes and immutable agent context packages                                    | State, scope, artifacts                                             |
-| `@merv/state`           | Async SQLite or PostgreSQL transactions, per-component migrations, durable events          | None                                                                |
-| `@merv/blobs`           | Async immutable bytes on disk or S3/R2, project namespaces, content hashes                 | None                                                                |
+| `@merv/state`           | Async SQLite or PostgreSQL transactions, per-component migrations, durable events         | None                                                                |
+| `@merv/blobs`           | Async immutable bytes on disk or S3/R2, project namespaces, content hashes                | None                                                                |
 | `@merv/scope`           | Projects, actor identities, bearer credentials, roles and access checks                   | State                                                               |
 | `@merv/identity`        | Shared signed-user identity verification                                                  | None                                                                |
 | `@merv/claims`          | Research statements, status/confidence, revision checks and mutation receipts             | State, scope                                                        |

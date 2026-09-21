@@ -1,3 +1,4 @@
+import { seedArchivedClaim } from './fixtures/archived-claim.js';
 import { mapAsync } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -149,7 +150,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     expectedSummary: '',
     requestId: 'intro',
   });
-  const claim = await f.app.ctx.claims.create(f.caller, {
+  const claim = await seedArchivedClaim(f.app.ctx.state, f.caller, {
     statement: 'The fixed estimator is more accurate.',
     requestId: 'claim',
   });
@@ -179,7 +180,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     actorName: 'Other owner',
   });
   const foreignCaller = { actorId: foreign.actor.id, projectId: foreign.project.id };
-  const foreignClaim = await f.app.ctx.claims.create(foreignCaller, {
+  const foreignClaim = await seedArchivedClaim(f.app.ctx.state, foreignCaller, {
     statement: 'Private claim.',
     requestId: 'foreign',
   });
@@ -202,7 +203,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   assert.notEqual(records.result.isError, true);
   assert.deepEqual(records.value.project, intro);
   assert.deepEqual(
-    records.value.claims.map((record: any) => record.id),
+    records.value.archivedClaims.map((record: any) => record.id),
     [claim.id],
   );
   assert.equal(records.value.tasks[0].workflow.state, 'failed');

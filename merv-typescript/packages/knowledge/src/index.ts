@@ -101,7 +101,7 @@ export class KnowledgeService implements Knowledge {
       const result: KnowledgeRecords = {
         formatVersion: 1,
         project: await this.scope.project(caller, tx),
-        claims: await this.claims.list(caller, tx),
+        archivedClaims: await this.claims.list(caller, tx),
         tasks: await this.tasks.records(caller, tx),
         experiments: await this.experiments.list(caller, tx),
         publication: publication(),
@@ -246,7 +246,6 @@ export class KnowledgeService implements Knowledge {
     return {
       projectFacts: 'pinned-at-capture',
       project: inventory.project,
-      claims: inventory.claims,
       tasks,
       experiments,
       assessments,

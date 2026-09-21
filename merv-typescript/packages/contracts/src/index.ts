@@ -1,3 +1,7 @@
+export {
+  patchSchema as paperPatchSchema,
+  changesSchema as paperChangesSchema,
+} from './paper-edit.js';
 export { mapAsync, filterAsync, someAsync, everyAsync, findAsync, forEachAsync } from './async.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
@@ -1158,7 +1162,8 @@ export interface Workflows {
    */
   dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
 }
-export type Verdict = 'pass' | 'needs_changes' | 'fail';
+import type { Verdict } from './types.js';
+export type { Verdict } from './types.js';
 export type ReviewFinding = {
   criterionNumber: number;
   status: 'met' | 'not_met' | 'not_verified' | 'waived';
@@ -1237,6 +1242,8 @@ export interface ReviewSubmit {
   requestId: string;
 }
 export interface ReviewApplication extends ReviewSubmit {
+  /** Reviewer-authored Methods/Results edits, applied with an experiment or reflection verdict. */
+  paperChanges?: import('./paper-models.js').PaperChanges;
   expectedRevision: number;
 }
 /** Trusted synchronous domain callbacks; ownership checks read metadata only. */

@@ -73,16 +73,7 @@ const capabilities: Record<string, readonly string[]> = {
   scope: ['state'],
   artifacts: ['state', 'scope', 'blobs'],
   claims: ['state', 'scope'],
-  experiments: [
-    'state',
-    'scope',
-    'claims',
-    'artifacts',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'paper',
-  ],
+  experiments: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   knowledge: [
     'state',
     'scope',

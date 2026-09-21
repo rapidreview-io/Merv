@@ -801,7 +801,6 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
                   name: item.name,
                   intent: item.question,
                   details: `${item.details}${provenance}`.trimStart(),
-                  testedClaimIds: item.testedClaimIds,
                   dependsOn,
                   requestId: itemRequestId,
                 },
@@ -934,12 +933,6 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
     const taskIds = new Set(
       selected.filter((item) => item.workflow === 'task').map((item) => item.id),
     );
-    const claims = records.claims.flatMap((claim) => {
-      const testedBy = experiments
-        .filter((entry) => entry.testedClaimIds.includes(claim.id))
-        .map((entry) => entry.id);
-      return testedBy.length ? [{ claim, testedBy }] : [];
-    });
     const decided = (decision: string) =>
       [...decisions.values()]
         .filter((entry) => entry.decision === decision)
@@ -951,7 +944,6 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
         state: entry.workflow.state,
         attempts: entry.attempts.length,
         submissions: entry.submissions.length,
-        testedClaimIds: entry.testedClaimIds,
         conclusion: entry.conclusion === null ? null : text(entry.conclusion),
         decision: decisions.get(entry.id)?.decision ?? null,
         rationale: decisions.has(entry.id) ? text(decisions.get(entry.id)!.rationale) : null,
@@ -959,13 +951,6 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
       tasks: records.tasks
         .filter((task) => taskIds.has(task.id))
         .map((task) => ({ id: task.id, title: text(task.title), state: task.workflow.state })),
-      claims: claims.map(({ claim, testedBy }) => ({
-        id: claim.id,
-        statement: text(claim.statement),
-        status: claim.status,
-        confidence: claim.confidence,
-        testedBy,
-      })),
       dropped: [
         ...new Set([
           ...selected.filter((item) => item.failed).map((item) => item.id),
@@ -978,9 +963,6 @@ CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN O
           ...decided('adapt'),
         ]),
       ],
-      openQuestions: claims
-        .filter(({ claim }) => claim.status === 'draft' || claim.status === 'active')
-        .map(({ claim }) => ({ claimId: claim.id, statement: text(claim.statement) })),
       rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
         title: text(entry.title),
         reason: text(entry.reason),

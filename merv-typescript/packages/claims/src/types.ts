@@ -17,22 +17,7 @@ export interface Claim {
   createdAt: string;
   updatedAt: string;
 }
-export interface ClaimCreate {
-  statement: string;
-  scope?: string;
-  confidence?: ClaimConfidence;
-  requestId: string;
-}
-export interface ClaimUpdate {
-  claimId: string;
-  status?: ClaimStatus;
-  confidence?: ClaimConfidence;
-  expectedRevision: number;
-  requestId: string;
-}
 export interface Claims {
-  create(caller: Caller, input: ClaimCreate, tx?: Transaction): Promise<Claim>;
-  update(caller: Caller, input: ClaimUpdate, tx?: Transaction): Promise<Claim>;
   get(caller: Caller, claimId: string, tx?: Transaction): Promise<Claim>;
   /** All statuses in creation-time/ID order, within the current project. */
   list(caller: Caller, tx?: Transaction): Promise<Claim[]>;

@@ -11,7 +11,6 @@ import type {
   PaperCitation,
   PaperKind,
   PaperPatch,
-  PaperProposal,
   PaperRevision,
   PaperSection,
   PaperSource,
@@ -37,6 +36,7 @@ import {
 } from '../components';
 import { EditIcon, PlusIcon } from '../icons';
 import { Markdown, RecordText } from '../markdown';
+import { ArchivedClaims, ReferenceLookup } from './paper-references';
 import { RecordPicker, filePick } from '../record-picker';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
@@ -53,7 +53,6 @@ const labels: Record<PaperKind, string> = {
   results: 'Results',
 };
 const KINDS = Object.keys(labels) as PaperKind[];
-type Change = PaperPatch['changes'][number];
 type Files = ReturnType<typeof useArtifacts>;
 interface Listed {
   id: string;
@@ -90,90 +89,11 @@ const FILE = 'artifact:';
 const files = (n: number) => (n ? `${n} retained file${n > 1 ? 's' : ''}` : 'No retained file');
 /** The first limit a form has broken, in the tool's own words; null while it holds. */
 const complaint = (tests: [boolean, string][]) => tests.find(([broken]) => broken)?.[1] ?? null;
-/** How many sections one proposal changes, counted the same way wherever it is said. */
-const edits = (proposal: PaperProposal) =>
-  proposal.documents.reduce((count, item) => count + item.edit.changes.length, 0);
-
-interface Run {
-  text: string;
-  mark?: 'add' | 'del' | 'both';
-}
-/**
- * What one proposal actually changes, word by word: the common head and tail of
- * the two texts, then a longest-common-subsequence alignment of what moved
- * between them, with a scrap of shared text between two changes folded into the
- * change — a diff that alternates single words is not a reading of anything.
- * Above the cap the middle reads as one replacement rather than costing the page
- * a quadratic pass over a hundred thousand characters.
- */
-function wordDiff(before: string, after: string): Run[] {
-  const a = before.split(/(\s+)/);
-  const b = after.split(/(\s+)/);
-  let head = 0;
-  let tail = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
-  while (tail < a.length - head && tail < b.length - head && a.at(-1 - tail) === b.at(-1 - tail))
-    tail += 1;
-  const x = a.slice(head, a.length - tail);
-  const y = b.slice(head, b.length - tail);
-  const runs: Run[] = head ? [{ text: a.slice(0, head).join('') }] : [];
-  const keep = (text: string, mark?: Run['mark']) => {
-    const last = runs[runs.length - 1];
-    if (last && last.mark === mark) last.text += text;
-    else runs.push({ text, mark });
-  };
-  if (x.length * y.length > 160_000) {
-    if (x.length) keep(x.join(''), 'del');
-    if (y.length) keep(y.join(''), 'add');
-  } else {
-    const wide = y.length + 1;
-    const grid = new Int32Array((x.length + 1) * wide);
-    for (let i = x.length - 1; i >= 0; i -= 1)
-      for (let j = y.length - 1; j >= 0; j -= 1)
-        grid[i * wide + j] =
-          x[i] === y[j]
-            ? grid[(i + 1) * wide + j + 1] + 1
-            : Math.max(grid[(i + 1) * wide + j], grid[i * wide + j + 1]);
-    for (let i = 0, j = 0; i < x.length || j < y.length;)
-      if (i >= x.length) keep(y[j++], 'add');
-      else if (j >= y.length) keep(x[i++], 'del');
-      else if (x[i] === y[j]) {
-        keep(x[i]);
-        i += 1;
-        j += 1;
-      } else if (grid[(i + 1) * wide + j] >= grid[i * wide + j + 1]) keep(x[i++], 'del');
-      else keep(y[j++], 'add');
-  }
-  if (tail) keep(a.slice(a.length - tail).join(''));
-  /** Inside a change, a short scrap of shared text is part of it and not a third run. */
-  const glued = (at: number) =>
-    !!runs[at].mark ||
-    (at < runs.length - 1 && runs[at].text.trim().length < 12 && !!runs[at + 1].mark);
-  const said: Run[] = [];
-  for (let at = 0; at < runs.length;)
-    if (!runs[at].mark) said.push(runs[at++]);
-    else {
-      let cut = '';
-      let add = '';
-      while (at < runs.length && glued(at)) {
-        const run = runs[at++];
-        if (run.mark !== 'add') cut += run.text;
-        if (run.mark !== 'del') add += run.text;
-      }
-      if (cut.trim()) said.push({ text: cut, mark: 'del' });
-      if (add.trim()) said.push({ text: add, mark: 'add' });
-    }
-  return said;
-}
-
 interface SectionRow {
   section: PaperSection;
   /** The derived address, `2.1`, computed from order and never stored. */
   n: string;
   anchor: string;
-  change?: Change;
-  before?: PaperSection;
-  proposal?: PaperProposal;
   /** True where the publication on screen is the one that moved this section. */
   published?: boolean;
 }
@@ -188,12 +108,10 @@ interface DocView {
 
 /**
  * The paper as it is read: four documents in fixed order, their sections
- * numbered by position, each open proposal's changes carried against the
- * revision that proposal pinned, and the files a publication retained placed
+ * numbered by position, and the files a publication retained placed
  * once — under the last document that pinned them, where a paper's figures sit.
  */
 function compose(workspace: PaperWorkspace): DocView[] {
-  const open = workspace.proposals.filter((proposal) => !proposal.acceptance);
   const pinned = new Map<string, PaperKind>();
   for (const kind of KINDS)
     for (const file of workspace.documents[kind].published?.publication.evidence ?? [])
@@ -205,37 +123,15 @@ function compose(workspace: PaperWorkspace): DocView[] {
     const rows: Omit<SectionRow, 'n' | 'anchor'>[] = held.current.sections.map((section) => ({
       section,
     }));
-    for (const proposal of open)
-      for (const edit of proposal.documents.filter((item) => item.edit.kind === kind))
-        for (const change of edit.edit.changes) {
-          const found = rows.findIndex((row) => row.section.id === change.id);
-          const row = {
-            section: {
-              id: change.id,
-              title: change.title ?? rows[found]?.section.title ?? '',
-              content: change.content ?? rows[found]?.section.content ?? '',
-            },
-            change,
-            before: edit.before.sections.find((item) => item.id === change.id),
-            proposal,
-          };
-          if (found >= 0) rows[found] = row;
-          else {
-            const after =
-              change.afterId === null
-                ? -1
-                : rows.findIndex((item) => item.section.id === change.afterId);
-            rows.splice(after < 0 && change.afterId !== null ? rows.length : after + 1, 0, row);
-          }
-        }
     // The proposal a publication carried names the exact sections that review moved.
     const source = workspace.proposals.find(
       (proposal) => proposal.id === held.published?.publication.proposalId,
     );
     const moved = new Set(
-      source?.documents.flatMap((item) =>
-        item.edit.kind === kind ? item.edit.changes.map((change) => change.id) : [],
-      ),
+      held.published?.publication.sectionIds ??
+        source?.documents.flatMap((item) =>
+          item.edit.kind === kind ? item.edit.changes.map((change) => change.id) : [],
+        ),
     );
     return {
       kind,
@@ -249,7 +145,12 @@ function compose(workspace: PaperWorkspace): DocView[] {
         ...row,
         n: `${at + 1}.${index + 1}`,
         anchor: `${kind}-${slug(row.section.title)}-${row.section.id.slice(-6)}`,
-        published: moved.has(row.section.id),
+        published:
+          moved.has(row.section.id) &&
+          JSON.stringify(row.section) ===
+            JSON.stringify(
+              held.published?.document.sections.find((section) => section.id === row.section.id),
+            ),
       })),
     };
   });
@@ -676,13 +577,7 @@ function Entry({
   );
 }
 
-/**
- * One section of the paper: its derived number, where it came from or what is
- * waiting on it, and the text itself — read as the markdown it is written in, or
- * carrying the marks of an open proposal unless the reader asks for the version
- * that passed review. A section nobody has written yet says so in one quiet line
- * and keeps its control in view, rather than standing as a bare heading.
- */
+/** Current document text; earlier producer proposals remain in retained history. */
 function Block({
   row,
   from,
@@ -694,62 +589,18 @@ function Block({
   markers: ReactNode;
   edit?: ReactNode;
 }) {
-  const [plain, setPlain] = useState(false);
-  const { section, change, before } = row;
-  const shown = (plain ? (before?.content ?? section.content) : section.content).trim();
-  const runs =
-    change && !plain
-      ? change.remove
-        ? [{ text: section.content, mark: 'del' as const }]
-        : // A section that is wholly new has nothing to be read against: every word would
-          // be an insertion, a page of underline. Its `Proposed` flag says it, and the
-          // text is read as the document it is.
-          change.content === undefined || !before
-          ? null
-          : wordDiff(before.content, change.content)
-      : null;
+  const { section } = row;
+  const shown = section.content.trim();
   return (
-    <div className={cx('sec', !runs && !shown && 'sec--unwritten')} id={row.anchor}>
+    <div className={cx('sec', !shown && 'sec--unwritten')} id={row.anchor}>
       <h4 className="sec-h">
         <span className="n">{row.n}</span>
         {section.title}
-        {change && (
-          <span className="flag">
-            {change.remove ? 'Proposed removal' : before ? '' : 'Proposed'}
-          </span>
-        )}
         {edit}
       </h4>
       {from}
-      {runs ? (
-        <p className="diff">
-          {runs.map((run, at) =>
-            run.mark === 'add' ? (
-              <ins className="add" key={at}>
-                {run.text}
-              </ins>
-            ) : run.mark === 'del' ? (
-              <del className="cut" key={at}>
-                {run.text}
-              </del>
-            ) : (
-              <Fragment key={at}>{run.text}</Fragment>
-            ),
-          )}
-        </p>
-      ) : (
-        // A section nobody has written is its heading and the pencil beside it, which
-        // is always drawn there: the way to begin says that nothing has begun.
-        shown && <Markdown source={shown} under={4} />
-      )}
+      {shown && <Markdown source={shown} under={4} />}
       {markers}
-      {change && before && (
-        <p className="sec-tools">
-          <button type="button" className="btn-text" onClick={() => setPlain((value) => !value)}>
-            {plain ? 'Show proposed changes' : 'Show published version'}
-          </button>
-        </p>
-      )}
     </div>
   );
 }
@@ -774,7 +625,6 @@ function Outline({ docs, ledger, here }: { docs: DocView[]; ledger: number; here
                 <a className={cx('out-sec', row.anchor === here && 'here')} href={`#${row.anchor}`}>
                   <span className="out-n">{row.n}</span>
                   {row.section.title}
-                  {row.proposal && <span className="out-flag" />}
                 </a>
               </li>
             ))}
@@ -861,12 +711,9 @@ function PaperPage({ row, shell }: ViewProps) {
       </div>
     );
   const { citations, proposals } = workspace.data;
-  const open = proposals.filter((proposal) => !proposal.acceptance);
   const writable = actor.role === 'operator' || actor.role === 'producer';
-  // paper.patch edits problem and literature by hand; methods and results change only
-  // through an experiment's or a reflection's review, and problem's four sections are fixed.
-  const editable = (kind: string) => writable && (kind === 'problem' || kind === 'literature');
-  const extendable = (kind: string) => writable && kind === 'literature';
+  const editable = (_kind: string) => writable;
+  const extendable = (kind: string) => writable && kind !== 'problem';
   const literature = workspace.data.documents.literature.current;
 
   /** A source this page cannot name is left out, never printed as its identifier. */
@@ -898,6 +745,11 @@ function PaperPage({ row, shell }: ViewProps) {
   };
   /** A revision belongs to its document; a change belongs to its section. */
   const said = (revision: PaperRevision): ReactNode => {
+    if (revision.review)
+      return dotted([
+        <>Written by {verdict(revision.review.id)}</>,
+        revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
+      ]);
     const from = proposals.find((proposal) => proposal.id === revision.proposalId);
     if (from?.acceptance)
       return dotted([
@@ -922,16 +774,6 @@ function PaperPage({ row, shell }: ViewProps) {
   const attribution = (doc: DocView, item: SectionRow): ReactNode => {
     const clauses: ReactNode[] = [];
     if (item.published && doc.publication) clauses.push(said(doc.publication.document));
-    if (item.proposal)
-      clauses.push(
-        sourceOf(item.proposal.source) ? (
-          <>
-            Proposed by <Source source={item.proposal.source} /> · waiting on its review
-          </>
-        ) : (
-          'Waiting on its review'
-        ),
-      );
     return clauses.length ? <p className="from">{dotted(clauses)}</p> : null;
   };
 
@@ -943,7 +785,6 @@ function PaperPage({ row, shell }: ViewProps) {
     .filter(Boolean)
     .sort()
     .at(-1);
-  const changes = open.reduce((sum, proposal) => sum + edits(proposal), 0);
   const retained = [
     ...new Set(proposals.flatMap((proposal) => proposal.evidence.map((file) => file.id))),
   ];
@@ -974,7 +815,6 @@ function PaperPage({ row, shell }: ViewProps) {
       }
   const stands = dotted([
     published.map((kind) => labels[kind]).join(', '),
-    changes ? `${changes} change${changes > 1 ? 's' : ''} waiting on review` : null,
     moved ? (
       <>
         updated&nbsp;
@@ -1141,7 +981,7 @@ function PaperPage({ row, shell }: ViewProps) {
         proposed || published.length > 0 || retained.length > 0 ? (
           <>
             {proposed && (
-              <Group label="Proposed this paper">
+              <Group label="Earlier paper proposals">
                 {proposals.map((proposal) => {
                   const found = sourceOf(proposal.source);
                   return found ? (
@@ -1159,7 +999,7 @@ function PaperPage({ row, shell }: ViewProps) {
               </Group>
             )}
             {published.length > 0 && (
-              <Group label="Accepted it">
+              <Group label="Paper reviews">
                 {/* One review publishes every document it accepted, so it is one row. */}
                 {[...new Set(published.map((kind) => accepted(kind).publication.reviewId))].map(
                   (reviewId) => {
@@ -1202,22 +1042,29 @@ function PaperPage({ row, shell }: ViewProps) {
         ) : undefined
       }
       details={
-        <KV
-          rows={[
-            ['Sections', `${written.length}`],
-            ['Citations', `${citations.length}`],
-            // How near the paper is to the tool's own limits, said of the document
-            // nearest them; with nothing written there is nothing to say.
-            !!fullest.kind && [
-              'Longest document',
-              dotted([
-                labels[fullest.kind],
-                `${fullest.characters.toLocaleString()} of 160,000 characters`,
-                `${fullest.sections} of 100 sections`,
-              ]),
-            ],
-          ]}
-        />
+        <>
+          <KV
+            rows={[
+              ['Sections', `${written.length}`],
+              ['Citations', `${citations.length}`],
+              // How near the paper is to the tool's own limits, said of the document
+              // nearest them; with nothing written there is nothing to say.
+              !!fullest.kind && [
+                'Longest document',
+                dotted([
+                  labels[fullest.kind],
+                  `${fullest.characters.toLocaleString()} of 160,000 characters`,
+                  `${fullest.sections} of 100 sections`,
+                ]),
+              ],
+            ]}
+          />
+          <ArchivedClaims />
+          <details>
+            <Summary>Check references</Summary>
+            <ReferenceLookup />
+          </details>
+        </>
       }
     />
   );

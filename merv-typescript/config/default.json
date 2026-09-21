@@ -1,17 +1,59 @@
 {
   "plugins": [
-    { "id": "research-tools", "name": "@merv/research/tools" },
-    { "id": "research-ui", "name": "@merv/research/ui", "required": false },
-    { "id": "research", "name": "@merv/research" },
-    { "id": "paper-tools", "name": "@merv/paper/tools" },
-    { "id": "paper-ui", "name": "@merv/paper/ui", "required": false },
-    { "id": "paper", "name": "@merv/paper" },
-    { "id": "reflections-tools", "name": "@merv/reflections/tools" },
-    { "id": "reflections-ui", "name": "@merv/reflections/ui", "required": false },
-    { "id": "reflections", "name": "@merv/reflections" },
-    { "id": "consolidation-tools", "name": "@merv/consolidation/tools", "required": false },
-    { "id": "consolidation-ui", "name": "@merv/consolidation/ui", "required": false },
-    { "id": "consolidation", "name": "@merv/consolidation", "required": false },
+    {
+      "id": "research-tools",
+      "name": "@merv/research/tools"
+    },
+    {
+      "id": "research-ui",
+      "name": "@merv/research/ui",
+      "required": false
+    },
+    {
+      "id": "research",
+      "name": "@merv/research"
+    },
+    {
+      "id": "paper-tools",
+      "name": "@merv/paper/tools"
+    },
+    {
+      "id": "paper-ui",
+      "name": "@merv/paper/ui",
+      "required": false
+    },
+    {
+      "id": "paper",
+      "name": "@merv/paper"
+    },
+    {
+      "id": "reflections-tools",
+      "name": "@merv/reflections/tools"
+    },
+    {
+      "id": "reflections-ui",
+      "name": "@merv/reflections/ui",
+      "required": false
+    },
+    {
+      "id": "reflections",
+      "name": "@merv/reflections"
+    },
+    {
+      "id": "consolidation-tools",
+      "name": "@merv/consolidation/tools",
+      "required": false
+    },
+    {
+      "id": "consolidation-ui",
+      "name": "@merv/consolidation/ui",
+      "required": false
+    },
+    {
+      "id": "consolidation",
+      "name": "@merv/consolidation",
+      "required": false
+    },
     {
       "id": "knowledge-tools",
       "name": "@merv/knowledge/tools"
@@ -37,15 +79,6 @@
     {
       "id": "experiments",
       "name": "@merv/experiments"
-    },
-    {
-      "id": "claims-tools",
-      "name": "@merv/claims/tools"
-    },
-    {
-      "id": "claims-ui",
-      "name": "@merv/claims/ui",
-      "required": false
     },
     {
       "id": "claims",

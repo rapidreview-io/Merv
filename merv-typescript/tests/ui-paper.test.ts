@@ -91,7 +91,7 @@ test('a section’s control is a named glyph, its text is read as markdown, and 
   // Every control beside a heading is one glyph with a name and a hover title, never a phrase.
   assert.deepEqual(
     tools().map((tool) => tool.getAttribute('aria-label')),
-    ['Edit Problem', 'Edit Scope', 'New section', 'New citation'],
+    ['Edit Problem', 'Edit Scope', 'New section', 'New citation', 'New section', 'New section'],
   );
   for (const tool of tools()) {
     assert.equal(tool.textContent, '', 'the face is the glyph alone');
@@ -243,4 +243,56 @@ test('a citation’s retained files are chosen by name, and the tool is sent art
   await settle(10);
   // What the entry already carried keeps its place; what was picked follows it.
   assert.deepEqual(sent?.refs, [`artifact:${CURVE}`, 'legacy:figure-2', `artifact:${TABLE}`]);
+});
+
+test('the main agent UI can save Methods and Results directly', async (t) => {
+  t.after(async () => await unmount());
+  const held = workspace([]);
+  for (const kind of ['methods', 'results'] as const)
+    held.documents[kind].current = revision(kind, [section(kind, kind, `Current ${kind}.`)]);
+  boot(held);
+  const sent: string[] = [];
+  serve('/tools/paper.patch', (_call, body) => {
+    const kind = body.kind as 'methods' | 'results';
+    assert.equal(body.expectedRevision, 1);
+    sent.push(kind);
+    held.documents[kind].current = { ...held.documents[kind].current, revision: 2 };
+    return { body: { result: held.documents[kind].current } };
+  });
+  await open();
+  for (const kind of ['methods', 'results']) {
+    const button = tools().find((tool) => tool.getAttribute('aria-label') === `Edit ${kind}`)!;
+    assert.ok(button);
+    await act(async () => button.click());
+    const form = document.querySelector<HTMLFormElement>(`form[aria-label="Edit ${kind}"]`)!;
+    await act(async () => form.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+    await settle(10);
+  }
+  assert.deepEqual(sent, ['methods', 'results']);
+});
+
+test('the paper retains historical claims as read-only archived context', async (t) => {
+  t.after(unmount);
+  boot(workspace([]));
+  serve('/tools/project.records', {
+    body: {
+      result: {
+        archivedClaims: [
+          {
+            id: 'claim_old',
+            statement: 'Earlier retrieval hypothesis',
+            scope: 'Small held-out corpus',
+            status: 'weakened',
+            confidence: 'low',
+          },
+        ],
+      },
+    },
+  });
+  await open();
+  assert.ok(text().includes('Archived research claims'));
+  assert.ok(text().includes('Earlier retrieval hypothesis'));
+  assert.ok(text().includes('Small held-out corpus'));
+  assert.ok(!text().includes('New claim'));
+  assert.ok(!document.querySelector('.claim-edit'));
 });

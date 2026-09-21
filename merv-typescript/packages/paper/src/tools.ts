@@ -28,7 +28,7 @@ export const paperToolsPlugin = {
       ctx.tools.register({
         name: 'paper.patch',
         description:
-          'Patch only changed sections of a living-paper document with expectedRevision. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Methods/Results edits are submitted as JSON change artifacts with experiment or reflection submissions and applied by their existing review.',
+          'The main agent can directly edit any living-paper document with expectedRevision. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual experiment name as the visible label and a stable ID in the link destination. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Assigned experiment and reflection reviewers submit Methods/Results edits in review.submit.paperChanges; producer assignments cannot edit the paper.',
         inputSchema: patchSchema,
         readOnly: false,
         handler: async (caller, input) => await paper.patch(caller, input),

@@ -29,7 +29,6 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Paper, PaperRevision, PaperWorkspace } from '@merv/paper/types';
-import type { Claims } from '@merv/claims/types';
 import type { Code, CodeCapture } from '@merv/code/types';
 import type { Experiment, ExperimentEvidence } from './types.js';
 import type { FeasibilityStatement } from './evidence.js';
@@ -97,24 +96,28 @@ const recipeNames: Record<ActiveState, string> = {
 };
 const instructions: Record<ActiveState, string> = {
   planned:
-    'Design an experiment that can test its stated intent and linked claims. Distinguish the hypothesis from established evidence. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
+    'Design an experiment that can test its stated question. Distinguish the hypothesis from established evidence. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
   design_review:
     'Independently test whether the exact pinned design can answer its research question. Examine controls, baselines, leakage, evaluation and feasibility. A structurally complete plan can still be scientifically unsound. Grade only the pinned submission.',
   running:
     'Execute the exact approved plan below. Recover completed work and retained outputs before rerunning after interruption. Preserve errors and failed runs. Compare observations with the planned criteria without treating a negative finding as failed execution. Do not replace the approved plan with a newer upload.',
   experiment_review:
-    'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. Review the pinned paper proposal and its original document text alongside the results; accepted edits apply in this verdict transaction. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
+    'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
 };
 const handoffs: Record<ActiveState, string> = {
   planned:
     'Create your own complete UTF-8 plan artifact with Summary, Objective & hypothesis, and Evaluation sections. Verify inherited planning work before retaining your own plan; its bytes may be unchanged after verification, but a predecessor’s plan cannot be submitted as your new output. Attach it as role plan with the current numeric attemptIndex and expectedRevision. Then call experiment.transition with transition submit_design and a stable requestId. Stop while independent design review is pending.',
   design_review:
-    'Submit through review.submit with the current reviewId, claimId and expectedRevision. Supply verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo. Either needs_changes or fail returns to planned; returnTo may be omitted or planned. A design rejection creates a new attempt. Stop after the verdict.',
+    'You own the paper update: keep it brief, usually one or two sentences stating the hypothesis, proposed method and this experiment’s purpose as planned work, never as completed results. Submit through review.submit with the current reviewId, claimId and expectedRevision. Supply verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo. Either needs_changes or fail returns to planned; returnTo may be omitted or planned. A design rejection creates a new attempt. Stop after the verdict.',
   running:
-    'Retain result and report artifacts and attach them to this attempt. The report is a UTF-8 markdown document with Summary, Results, Deviations from plan and Conclusion sections, and it names the pinned metrics exhibit by its filename. Verify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. Include any Methods/Results changes as an application/json artifact with documents: [{kind, expectedRevision, changes: [{id, title, content}]}], using the supplied current paper revisions. Pass its ID as paperChangesArtifactId in this same submit_results call; the existing reviewer will assess and accept those edits with the results. If no paper change is warranted, explain why in the report. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
+    'Retain result and report artifacts and attach them to this attempt. The report is a UTF-8 markdown document with Summary, Results, Deviations from plan and Conclusion sections, and it names the pinned metrics exhibit by its filename. Verify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. The reviewer owns the paper update; submit the scientific evidence and report, not paper edits. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
   experiment_review:
-    'Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
+    'You own the paper update: explain what was actually done and learned, replacing planned text with verified outcomes and preserving uncertainty. Add comprehensive methods, results and interpretation when that detail helps explain the project’s trajectory and informs what comes next; there is no brevity requirement for results-review paper updates. Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
 };
+for (const state of ['design_review', 'experiment_review'] as const)
+  handoffs[state] +=
+    ' You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.';
+
 /**
  * What a feasibility-gated design adds to the planner's and the design reviewer's handoff. The
  * published handoffs above still serve versions 1-4, so the gate's text is added beside them
@@ -187,13 +190,13 @@ function paperContext(documents: PaperWorkspace['documents'], room = 40_000) {
  * worker whose recipe named these tools used them.
  */
 const reading =
-  ' Everything this project holds is readable from this assignment, whether or not it is named below: project.records, task.get, experiment.get_state, paper.read, review.get and artifact.read answer for anything in this project — the other experiments and their plans and results, the tasks and their deliveries, the claims, the reviews and the feed. Read the project before you settle anything it may already have settled, and say what you reused and what you chose yourself.';
+  ' Everything this project holds is readable from this assignment, whether or not it is named below: project.records, task.get, experiment.get_state, paper.read, review.get and artifact.read answer for anything in this project — the other experiments and their plans and results, the tasks and their deliveries, the reviews and the feed. Read the project before you settle anything it may already have settled, and say what you reused and what you chose yourself.';
 const verifying =
   ' Open what you are judging rather than judging the summary of it: artifact.read returns the retained bytes of everything pinned to this submission, and a criterion you mark met on text you were handed rather than evidence you opened yourself says so in its notes.';
 
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 7,
+  version: 9,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
     instructions: instructions[state] + reading + (reviewing(state) ? verifying : ''),
@@ -206,7 +209,6 @@ export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state)
     maxChars: 160_000,
     sections: [
       { key: 'experiment', title: 'Experiment and exact assignment', required: true },
-      { key: 'claims', title: 'Linked claims at assignment time', required: true },
       {
         key: 'approvedPlan',
         title: 'Exact approved plan',
@@ -235,7 +237,6 @@ export interface ExperimentProgramHost {
   limits: typeof EXPERIMENT_LIMITS;
   state: State;
   scope: Scope;
-  claims: Claims;
   paper: Paper;
   code?: Pick<Code, 'capture'>;
   artifacts: Artifacts;
@@ -250,7 +251,6 @@ export interface ExperimentProgramHost {
 
 interface FrozenInputs {
   experiment: Data;
-  claims: Data[];
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   review: ReviewRequest | null;
@@ -688,8 +688,6 @@ DROP TABLE experiment_leases_backup;`,
           ? { workspace: 'git', codeCapture: await this.reviewCapture(caller, experiment, tx) }
           : {}),
         paper: paperContext((await this.host.paper.read(caller, tx)).documents),
-        paperProposal:
-          experiment.submissions.find((s) => s.reviewId === review?.id)?.paperProposal ?? null,
         paperChangesFormat: {
           documents: [
             {
@@ -710,9 +708,6 @@ DROP TABLE experiment_leases_backup;`,
           selected.includes(evidence.artifactId),
         ),
       }),
-      claims: await mapAsync(experiment.testedClaimIds, async (id) =>
-        own(await this.host.claims.get(caller, id, tx)),
-      ),
       approvedArtifacts,
       evidenceArtifacts: [
         ...new Set([...selected, ...feedbackReviews.flatMap((prior) => prior.artifactIds)]),
@@ -831,11 +826,6 @@ DROP TABLE experiment_leases_backup;`,
     } else inputs = await this.inputs(context.caller, experiment, context.tx);
     const sources: Record<string, ContextInput> = {
       experiment: { text: JSON.stringify(inputs.experiment) },
-      claims: {
-        text: inputs.claims.length
-          ? JSON.stringify(inputs.claims)
-          : 'No linked claims were specified.',
-      },
       feedback: { text: JSON.stringify(inputs.feedback) },
       ...(inputs.approvedArtifacts.length
         ? { approvedPlan: { artifactIds: inputs.approvedArtifacts, mode: 'auto' as const } }

@@ -279,6 +279,10 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
       expectedRevision: pending.workflow.revision,
       requestId: 'revise',
     };
+    await assert.rejects(
+      f.tasks.submitReview(f.reviewer, { ...revise, paperChanges: { documents: [] } }),
+      code('paper_edits_unavailable'),
+    );
     const decision = structuredClone(revise);
     Object.assign(caller, f.reviewer);
     const revising = f.tasks.submitReview(caller, decision);

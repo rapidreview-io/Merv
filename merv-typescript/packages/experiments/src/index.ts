@@ -24,7 +24,6 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
-import type { Claims } from '@merv/claims/types';
 import type { Code, CodeCaptureRef } from '@merv/code/types';
 import type {
   Experiment,
@@ -127,7 +126,6 @@ export class ExperimentService implements Experiments {
     private readonly workflows: Workflows,
     private readonly reviews: Reviews,
     contextBuilder: ContextBuilder,
-    private readonly claims: Claims,
     private code: Pick<Code, 'capture'> | undefined,
     private readonly paper: Paper,
     limits = EXPERIMENT_LIMITS,
@@ -144,7 +142,6 @@ export class ExperimentService implements Experiments {
           workflows,
           reviews,
           contextBuilder,
-          claims,
           get code() {
             return service.code;
           },
@@ -256,7 +253,9 @@ export class ExperimentService implements Experiments {
         ownerId: row.owner_id,
         createdBy: row.created_by,
         createdAt: row.created_at,
-        testedClaimIds: JSON.parse(row.tested_claim_ids),
+        ...(row.tested_claim_ids !== '[]'
+          ? { testedClaimIds: JSON.parse(row.tested_claim_ids) }
+          : {}),
         ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
         workflow,
         attempt,
@@ -312,7 +311,6 @@ export class ExperimentService implements Experiments {
           'At most seven experiments may be active in this project',
           409,
         );
-        for (const id of input.testedClaimIds) await this.claims.get(caller, id, tx);
         for (const id of input.dependsOn) {
           const dependency = await this.workflows.get(caller, id, tx);
           // An ordering between two experiments is a task in between (founder, 2026-09-18).
@@ -353,7 +351,7 @@ export class ExperimentService implements Experiments {
           owner.id,
           caller.actorId,
           createdAt,
-          JSON.stringify(input.testedClaimIds),
+          '[]',
           input.workspace ?? 'none',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
@@ -361,7 +359,7 @@ export class ExperimentService implements Experiments {
           caller,
           'created',
           workflow.id,
-          { name: input.name, testedClaimIds: input.testedClaimIds, dependsOn: input.dependsOn },
+          { name: input.name, dependsOn: input.dependsOn },
           tx,
         );
         return await this.get(caller, workflow.id, tx);
@@ -855,20 +853,6 @@ export class ExperimentService implements Experiments {
       },
       tx,
     );
-    const paperProposal = input.paperChangesArtifactId
-      ? await this.paper.propose(
-          caller,
-          {
-            artifactId: input.paperChangesArtifactId,
-            source: { kind: 'experiment', id: experiment.id, revision: moved.revision },
-            evidenceIds: artifactIds,
-          },
-          tx,
-        )
-      : null;
-    // The change artifact may already be attached as evidence; a review pins each once.
-    if (paperProposal && !artifactIds.includes(paperProposal.artifact.id))
-      artifactIds.push(paperProposal.artifact.id);
     const review = await this.reviews.request(
       caller,
       {
@@ -892,11 +876,6 @@ export class ExperimentService implements Experiments {
             : feasibilityGated(experiment.workflow.version)
               ? gatedDesignCriteria
               : designCriteria),
-          ...(paperProposal
-            ? [
-                'The proposed paper edits accurately describe this experiment and are supported by its retained evidence.',
-              ]
-            : []),
         ],
         ...(stage === 'design' && feasibilityGated(experiment.workflow.version)
           ? { requiredCriteria: [feasibilityCriterion] }
@@ -921,7 +900,6 @@ export class ExperimentService implements Experiments {
       attemptIndex: experiment.attempt.index,
       stage,
       ...(codeCaptureRef ? { codeCaptureRef } : {}),
-      ...(paperProposal ? { paperProposal } : {}),
       round,
       subjectRevision: moved.revision,
       producerId: caller.actorId,
@@ -930,7 +908,6 @@ export class ExperimentService implements Experiments {
       figureIds,
       manifestHash: digest({
         formatVersion: 1,
-        ...(paperProposal ? { paperProposal } : {}),
         evidence,
         figures: await mapAsync(figureIds, async (id) => await this.artifacts.get(caller, id, tx)),
         ...(codeCaptureRef ? { codeCaptureRef } : {}),
@@ -1056,14 +1033,15 @@ export class ExperimentService implements Experiments {
           { ...verdict, requestId: `experiment:review:${caller.actorId}:${input.requestId}` },
           tx,
         );
-        // The submission is a snapshot: the paper itself records the acceptance.
-        if (input.verdict === 'pass' && submission.paperProposal)
-          await this.paper.accept(
+        if (input.paperChanges !== undefined)
+          await this.paper.applyReview(
             caller,
             {
-              proposalId: submission.paperProposal.id,
-              source: submission.paperProposal.source,
+              ...input.paperChanges,
+              source: { kind: 'experiment', id: experiment.id, revision: review.subjectRevision },
               reviewId: review.id,
+              verdict: input.verdict,
+              evidenceIds: review.artifactIds,
             },
             tx,
           );
@@ -1193,14 +1171,15 @@ export class ExperimentService implements Experiments {
         'feasibility_not_cited',
         `A passing design review cites the feasibility statement ${statement.artifactId} in the finding for criterion ${feasibilityCriterion}`,
       );
-    // A pass applies the paper proposal; what that would hit is part of the verdict's check.
-    if (input.verdict === 'pass' && submission.paperProposal)
-      await this.paper.checkAccept(
+    if (input.paperChanges !== undefined)
+      await this.paper.checkReview(
         caller,
         {
-          proposalId: submission.paperProposal.id,
-          source: submission.paperProposal.source,
+          ...input.paperChanges,
+          source: { kind: 'experiment', id: experiment.id, revision: review.subjectRevision },
           reviewId: review.id,
+          verdict: input.verdict,
+          evidenceIds: review.artifactIds,
         },
         tx,
       );
@@ -1286,8 +1265,6 @@ export class ExperimentService implements Experiments {
         );
         this.approved(experiment);
         await this.workflows.checkDependencies(caller, experiment.id, tx);
-        if (typeof context.input?.paperChangesArtifactId === 'string')
-          await this.paper.validate(caller, context.input.paperChangesArtifactId, tx);
         if (caller.session) await this.finalCaptureRef(caller, experiment, 'results', tx);
       }
       await this.prepareSubmission(
@@ -1454,16 +1431,7 @@ export class ExperimentService implements Experiments {
 }
 export const experimentsPlugin = {
   name: 'merv-experiments',
-  inject: [
-    'state',
-    'scope',
-    'artifacts',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'claims',
-    'paper',
-  ],
+  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const experiments = await createService(
@@ -1474,7 +1442,6 @@ export const experimentsPlugin = {
         ctx.workflows,
         ctx.reviews,
         ctx.contextBuilder,
-        ctx.claims,
         undefined,
         ctx.paper,
         config.limits,

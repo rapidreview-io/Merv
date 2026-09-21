@@ -12,7 +12,6 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { ClaimService } from '@merv/claims';
 import { ExperimentService } from '@merv/experiments';
 import { check, type Caller, type ReviewApplication, type Transaction } from '@merv/contracts';
 import type {
@@ -46,8 +45,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     artifacts = await createService(new ArtifactStore(state, scope, blobs)),
     workflows = await createService(new WorkflowsService(state, scope)),
     reviews = await createService(new ReviewService(state, scope, artifacts)),
-    contextBuilder = await createService(new RecipeContextBuilder(state, scope, artifacts)),
-    claims = await createService(new ClaimService(state, scope));
+    contextBuilder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   let experiments = await createService(
       new ExperimentService(
         state,
@@ -56,7 +54,6 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
         workflows,
         reviews,
         contextBuilder,
-        claims,
         undefined,
         await createService(new PaperService(state, scope, artifacts)),
         limits,
@@ -167,7 +164,6 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     otherProducer,
     artifacts,
     blobs,
-    claims,
     workflows,
     reviews,
     create,
@@ -192,7 +188,6 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
           workflows,
           reviews,
           contextBuilder,
-          claims,
           undefined,
           await createService(new PaperService(state, scope, artifacts)),
         ),
@@ -221,14 +216,10 @@ test('Experiment reads retain their caller while pending', async (t) => {
   }
 });
 
-test('Experiments run both independent gates, pin exact evidence/exhibit, and leave Claims unchanged', async (t) => {
-  const f = await fixture(t),
-    claim = await f.claims.create(f.producer, {
-      statement: 'The change improves accuracy.',
-      requestId: 'claim',
-    });
-  let e = await f.create('Paired-test', { testedClaimIds: [claim.id, claim.id] });
-  assert.deepEqual(e.testedClaimIds, [claim.id]);
+test('Experiments run both independent gates, pin exact evidence/exhibit without research claims', async (t) => {
+  const f = await fixture(t);
+  let e = await f.create('Paired-test');
+  assert.equal(e.testedClaimIds, undefined);
   assert.equal(e.attempt.index, 1);
   assert.equal(e.workflow.revision, 0);
   const p = await f.attach(e, 'plan', plan);
@@ -273,8 +264,6 @@ test('Experiments run both independent gates, pin exact evidence/exhibit, and le
   e = await f.submitReview(e);
   assert.equal(e.workflow.state, 'complete');
   assert.equal(e.conclusion, 'No improvement was observed.');
-  assert.equal((await f.claims.get(f.producer, claim.id)).status, 'active');
-  assert.equal((await f.claims.get(f.producer, claim.id)).revision, 0);
 });
 test('Attempt fail and needs_changes require explicit routes and distinguish new attempts from new rounds', async (t) => {
   const f = await fixture(t);
@@ -526,7 +515,7 @@ test('Command receipts replay exact results across reload and rollback all compo
     /retained/,
   );
 });
-test('Active cap, name uniqueness and same-project dependencies/claims fail atomically', async (t) => {
+test('Active cap, name uniqueness and same-project dependencies fail atomically', async (t) => {
   const f = await fixture(t);
   const initial = await f.create('Case-name');
   await assert.rejects(async () => await f.create('case-NAME'), code('experiment_name_conflict'));
@@ -537,10 +526,9 @@ test('Active cap, name uniqueness and same-project dependencies/claims fail atom
   );
   const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' }),
     caller = { actorId: other.actor.id, projectId: other.project.id };
-  const foreign = await f.claims.create(caller, { statement: 'Foreign', requestId: 'foreign' });
   await assert.rejects(
-    async () => await f.create('Foreign-claim', { testedClaimIds: [foreign.id] }),
-    code('claim_not_found'),
+    async () => await f.create('Foreign-claim', { testedClaimIds: ['claim_retired'] }),
+    code('invalid_experiment_input'),
   );
   for (let i = 0; i < 6; i++) await f.create(`Active-${i}`);
   await assert.rejects(async () => await f.create('Eighth'), code('experiment_limit'));
@@ -673,7 +661,6 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
     workflows = await createService(new WorkflowsService(state, scope)),
     reviews = await createService(new ReviewService(state, scope, artifacts)),
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts)),
-    claims = await createService(new ClaimService(state, scope)),
     experiments = await createService(
       new ExperimentService(
         state,
@@ -682,7 +669,6 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
         workflows,
         reviews,
         builder,
-        claims,
         undefined,
         await createService(new PaperService(state, scope, artifacts)),
       ),
@@ -704,104 +690,87 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
   }
 });
 
-test('experiment results include reviewed paper edits without an extra assignment, and rejection leaves documents unchanged', async (t) => {
-  const f = await fixture(t),
-    paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
-  let e = await f.running();
-  const submit = async () => {
-    await f.attach(e, 'result', '{"accuracy":0.5}');
-    await f.attach(e, 'report', report);
-    const changes = await f.artifacts.create(f.producer, {
-      title: 'Methods and results edits',
-      mediaType: 'application/json',
-      content: JSON.stringify({
-        documents: [
-          {
-            kind: 'methods',
+test('plan and results reviewers write the paper with every verdict, atomically and replayably', async (t) => {
+  for (const stage of ['design', 'results'] as const)
+    for (const decision of ['pass', 'needs_changes', 'fail'] as const) {
+      await t.test(`${stage}: ${decision}`, async (t) => {
+        const f = await fixture(t),
+          paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
+        let e = await f.create();
+        await f.attach(e, 'plan', plan);
+        e = await f.transition(e, 'submit_design');
+        if (stage === 'results') {
+          e = await f.submitReview(e);
+          await f.attach(e, 'result', '{"accuracy":0.5}');
+          await f.attach(e, 'report', report);
+          await assert.rejects(
+            f.transition(e, 'submit_results', {
+              paperChangesArtifactId: 'producer-paper',
+            } as Partial<ExperimentTransition>),
+            code('invalid_experiment_input'),
+          );
+          e = await f.transition(e, 'submit_results');
+        }
+        const verdict = await f.reviewInput(
+          e,
+          decision,
+          stage === 'results' && decision !== 'pass' ? 'running' : undefined,
+        );
+        verdict.paperChanges = {
+          documents: (['methods', 'results'] as const).map((kind) => ({
+            kind,
             expectedRevision: 0,
             changes: [
               {
                 id: e.id,
-                title: 'Controlled experiment',
-                content: 'Matched controls and a fixed evaluation split.',
+                title: stage === 'design' ? 'Planned comparison' : 'Completed comparison',
+                content:
+                  stage === 'design'
+                    ? 'We plan to test the hypothesis; there are no results yet.'
+                    : 'Accuracy was 0.5; no improvement observed.',
               },
             ],
-          },
-          {
-            kind: 'results',
-            expectedRevision: 0,
-            changes: [
-              { id: e.id, title: 'Result', content: 'Accuracy was 0.5; no improvement observed.' },
-            ],
-          },
-        ],
-      }),
-    });
-    // A preflight sees the change artifact's refusals before the submission is made.
-    const preflight = await f.workflows.evaluate(f.producer, e.id, {
-      action: 'submit_results',
-      input: {
-        experimentId: e.id,
-        transition: 'submit_results',
-        expectedRevision: e.workflow.revision,
-        paperChangesArtifactId: 'art_nope',
-      },
-    });
-    const preflighted = preflight.actions.find((item) => item.action === 'submit_results')!;
-    assert.equal(preflighted.status, 'blocked');
-    assert.equal(preflighted.blockers[0]?.code, 'not_found');
-    e = await f.experiments.transition(f.producer, {
-      experimentId: e.id,
-      transition: 'submit_results',
-      expectedRevision: e.workflow.revision,
-      paperChangesArtifactId: changes.id,
-      requestId: f.id(),
-    });
-    assert.ok((await f.reviews.get(f.reviewer, e.reviewId!)).artifactIds.includes(changes.id));
-    assert.equal((await paper.read(f.reader)).documents.methods.current.revision, 0);
-  };
-  await submit();
-  const rejected = e.submissions.at(-1)!.paperProposal!;
-  e = await f.submitReview(e, 'needs_changes', 'running');
-  assert.equal((await paper.read(f.reader)).documents.results.current.revision, 0);
-  await submit();
-  const approvedProposal = e.submissions.at(-1)!.paperProposal!;
-  const verdict = await f.reviewInput(e);
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(async (tx) => {
-        await f.experiments.submitReview(f.reviewer, verdict, tx);
-        throw Error('abort combined verdict');
-      }),
-    /abort combined verdict/,
-  );
-  assert.equal((await paper.read(f.reader)).documents.methods.current.revision, 0);
-  assert.equal((await f.experiments.get(f.reader, e.id)).workflow.state, 'experiment_review');
-  e = await f.experiments.submitReview(f.reviewer, verdict);
-  assert.equal(e.workflow.state, 'complete');
-  assert.deepEqual(await f.experiments.submitReview(f.reviewer, verdict), e);
-  for (const kind of ['methods', 'results'] as const) {
-    const doc = (await paper.read(f.reader)).documents[kind];
-    assert.equal(doc.current.revision, 1);
-    assert.equal(doc.published!.publication.reviewId, verdict.reviewId);
-    assert.equal(doc.published!.publication.source.id, e.id);
-  }
-  assert.equal(
-    (await paper.read(f.reader)).proposals.find((p) => p.id === rejected.id)!.acceptance,
-    null,
-  );
-  assert.equal(
-    (await paper.read(f.reader)).proposals.find((p) => p.id === approvedProposal.id)!.acceptance!
-      .reviewId,
-    verdict.reviewId,
-  );
-  assert.equal(
-    await f.state.read(
-      async (sql) =>
-        (await sql.get<{ count: number }>(
-          "SELECT COUNT(*) count FROM wf_instances WHERE workflow='living-paper'",
-        ))!.count,
-    ),
-    0,
-  );
+          })),
+        };
+        await assert.rejects(
+          f.experiments.submitReview(f.otherProducer, verdict),
+          code('forbidden'),
+        );
+        const conflict = structuredClone(verdict);
+        conflict.paperChanges!.documents[1].expectedRevision = 99;
+        await assert.rejects(
+          f.experiments.submitReview(f.reviewer, conflict),
+          code('paper_revision_conflict'),
+        );
+        const preflight = await f.workflows.evaluate(f.reviewer, e.id, {
+          action: stage === 'design' ? 'submit_design_review' : 'submit_experiment_review',
+          input: conflict as never,
+        });
+        assert.ok(
+          preflight.actions.some((a) =>
+            a.blockers.some((b) => b.code === 'paper_revision_conflict'),
+          ),
+        );
+        await assert.rejects(
+          f.state.transaction(async (tx) => {
+            await f.experiments.submitReview(f.reviewer, verdict, tx);
+            throw Error('abort combined verdict');
+          }),
+          /abort combined verdict/,
+        );
+        assert.equal((await paper.read(f.reader)).documents.methods.current.revision, 0);
+        assert.equal((await f.reviews.get(f.reviewer, verdict.reviewId)).status, 'started');
+        e = await f.experiments.submitReview(f.reviewer, verdict);
+        assert.deepEqual(await f.experiments.submitReview(f.reviewer, verdict), e);
+        for (const kind of ['methods', 'results'] as const) {
+          const doc = (await paper.read(f.reader)).documents[kind];
+          assert.equal(doc.current.revision, 1);
+          assert.equal(doc.current.updatedBy, f.reviewer.actorId);
+          assert.equal(doc.published!.publication.reviewId, verdict.reviewId);
+          assert.equal(doc.published!.publication.source.id, e.id);
+          assert.equal(doc.published!.publication.verdict, decision);
+        }
+        assert.equal((await paper.read(f.reader)).proposals.length, 0);
+      });
+    }
 });

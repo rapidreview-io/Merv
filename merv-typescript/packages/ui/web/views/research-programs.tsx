@@ -58,7 +58,7 @@ interface FrozenSource {
       project: { name: string };
       experiments: { id: string; name: string; workflow: Workflow }[];
       tasks: { id: string; title: string; workflow: Workflow }[];
-      claims: { id: string; statement: string; status: string }[];
+      claims?: { id: string; statement: string; status: string }[];
       artifacts: (
         { id: string; status: 'retained'; artifact: Artifact } | { id: string; status: 'missing' }
       )[];
@@ -171,7 +171,7 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
       <h3 className="ev-role">Frozen sources</h3>
       <p>
         {corpus.selection.experiments.length} experiments · {corpus.selection.tasks.length} tasks ·{' '}
-        {corpus.selection.claims.length} claims · <Stamp at={corpus.createdAt} />
+        <Stamp at={corpus.createdAt} />
       </p>
       <details className="stack">
         <Summary>Research snapshot</Summary>
@@ -199,8 +199,8 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
           ))}
         />
         <Band
-          title="Claims at capture"
-          items={corpus.selection.claims.map((claim) => (
+          title="Archived claims at capture"
+          items={(corpus.selection.claims ?? []).map((claim) => (
             <li key={claim.id}>
               {claim.statement} · {claim.status}
             </li>

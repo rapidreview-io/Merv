@@ -902,7 +902,6 @@ summary.claim-line {
 }
 .card + .card,
 .ov-list > li + li,
-.claim-book > .claim + .claim,
 .feed > * + *,
 .record-page > section + section,
 .stack > .record + .record {
@@ -2395,85 +2394,6 @@ select.input,
 .history-layout table th:last-child,
 .history-layout table td:last-child {
   white-space: nowrap;
-}
-
-/* Claim book. One entry per claim: the statement is the entry, the standing a
-   person set and the machine evidence are read beneath it. */
-.claim-book {
-  display: flex;
-  flex-direction: column;
-}
-/* A claim is a row of the book, not a box in it: it starts at the page's left edge,
-   where the search field over it and the hairline between two claims both start. */
-.claim {
-  padding-inline: 0;
-}
-.claim > * + * {
-  margin-top: var(--space-2);
-}
-/* A claim reads as its statement; what tests it and where it applies open with it.
-   The caret says so, and the standing closes the line at the right edge of every
-   entry, so the pills read down the book as one column however long a statement is. */
-.claim > details > summary {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-.claim > details > summary > .caret {
-  align-self: flex-start;
-  margin: 5px 0 0;
-}
-.claim > details > summary > .claim-statement {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.claim-tests {
-  flex: none;
-  font-size: var(--text-sm);
-  white-space: nowrap;
-}
-/* What opens with a claim stands under its statement, clear of the caret. */
-.claim > details > :not(summary) {
-  padding-left: calc(12px + var(--space-2));
-}
-.claim > details > * + * {
-  margin-top: var(--space-2);
-}
-.claim-statement {
-  font-size: var(--text-lg);
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-/* The standing a person set, and one sentence per testing experiment: the same
-   quiet line, and in the sentence the name it is about is what you can click. */
-.claim-standing,
-.claim-line {
-  font-size: var(--text-base);
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-.claim-line a {
-  color: var(--text);
-}
-.claim-standing + .claim-line {
-  margin-top: var(--space-3);
-}
-.claim-line + .claim-line {
-  margin-top: var(--space-1);
-}
-/* Recorded standing changes stay quieter than the standing they led to. */
-.claim-line--quiet {
-  font-size: var(--text-sm);
-  color: var(--faint);
-}
-.claim-line:not(.claim-line--quiet) + .claim-line--quiet {
-  margin-top: var(--space-2);
-}
-.claim-edit {
-  margin-left: var(--space-2);
 }
 
 /* Verdict page. --------------------------------------------------------- */

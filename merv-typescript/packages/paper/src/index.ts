@@ -3,7 +3,6 @@ import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
-  digest,
   inTransaction,
   newId,
   now,
@@ -23,11 +22,10 @@ import type {
   PaperRevision,
   PaperWorkspace,
   PaperProposal,
-  PaperPropose,
-  PaperAccept,
+  PaperReview,
   PaperEdit,
 } from './types.js';
-import { citeSchema, kind, parse, patchSchema, changesSchema, proposeSchema } from './input.js';
+import { citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
 import { migratePaper } from './storage.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
@@ -187,35 +185,6 @@ export class PaperService implements Paper {
       updateId: after.updateId,
     });
   }
-  /**
-   * A proposal written against an older revision still applies when the sections it touches,
-   * and the anchors it inserts after, are unchanged since; otherwise its author must rewrite it.
-   */
-  private async rebased(
-    caller: Caller,
-    edit: PaperEdit,
-    before: PaperRevision,
-    tx: Transaction,
-  ): Promise<PaperEdit> {
-    if (edit.expectedRevision === before.revision) return edit;
-    const row = await tx.get<{ record: string }>(
-      'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
-      caller.projectId,
-      edit.kind,
-      edit.expectedRevision,
-    );
-    const then = row ? (JSON.parse(row.record) as PaperRevision).sections : [];
-    const same = (id: string) =>
-      digest(then.find((s) => s.id === id) ?? null) ===
-      digest(before.sections.find((s) => s.id === id) ?? null);
-    check(
-      edit.changes.every((c) => same(c.id) && (c.afterId == null || same(c.afterId))),
-      'paper_revision_conflict',
-      `The proposed ${edit.kind} edits overlap changes accepted since revision ${edit.expectedRevision}; return the work for a proposal against revision ${before.revision}`,
-      409,
-    );
-    return { ...edit, expectedRevision: before.revision };
-  }
   private async edited(
     caller: Caller,
     input: PaperEdit | PaperPatch,
@@ -303,8 +272,9 @@ export class PaperService implements Paper {
       'paper_too_large',
       'Paper document exceeds 100 sections or 160,000 characters',
     );
+    const { proposalId: _proposal, review: _review, ...document } = before;
     return {
-      ...before,
+      ...document,
       revision: before.revision + 1,
       sections,
       updatedBy: caller.actorId,
@@ -324,14 +294,8 @@ export class PaperService implements Paper {
       check(
         !caller.session,
         'forbidden',
-        'Assigned agents submit paper edits through their experiment or reflection',
+        'Assigned reviewers submit paperChanges with their review verdict',
         403,
-      );
-      check(
-        input.kind === 'problem' || input.kind === 'literature',
-        'paper_review_required',
-        'Methods and Results changes belong to an experiment or reflection review',
-        409,
       );
       return await this.command(caller, 'patch', input, tx, async () => {
         const before = await this.current(caller, input.kind, tx);
@@ -419,152 +383,48 @@ export class PaperService implements Paper {
       });
     });
   }
-  /** The parsed, currently applicable edits in a change artifact the caller authored. */
-  async validate(caller: Caller, artifactId: string, tx: Transaction) {
+  async checkReview(caller: Caller, input: PaperReview, tx: Transaction) {
     caller = this.capture(caller);
     this.state.assertTransaction(tx);
-    const artifact = await this.artifacts.get(caller, artifactId, tx);
-    const authored = caller.session
-      ? (await this.artifacts.authored(caller, tx)).some((a) => a.id === artifact.id)
-      : artifact.createdBy === caller.actorId;
-    check(
-      authored,
-      'invalid_evidence_author',
-      'Paper edits must be authored by the current producer',
-      403,
-    );
-    const retained = await this.artifacts.read(caller, artifact.id);
-    check(
-      Buffer.byteLength(retained.content) <= 400000,
-      'paper_too_large',
-      'Paper change artifact is too large',
-    );
-    check(retained.encoding === 'utf8', 'invalid_paper_input', 'Paper changes must be UTF-8 JSON');
-    let json: unknown;
-    try {
-      json = JSON.parse(retained.content);
-    } catch {
-      check(false, 'invalid_paper_input', 'Paper changes must be a UTF-8 JSON artifact');
-    }
-    // Text reaching the paper through an artifact obeys the rule every direct write does.
-    const changes = parse(changesSchema, json);
+    const changes = parse(reviewSchema, input);
+    await this.scope.require(caller, 'review', tx);
     check(
       new Set(changes.documents.map((d) => d.kind)).size === changes.documents.length,
       'invalid_paper_input',
-      'Each document occurs once per proposal',
+      'Each document occurs once per review',
     );
-    const documents = await mapAsync(changes.documents, async (edit) => ({
-      edit,
-      before: await this.current(caller, edit.kind, tx),
-    }));
-    for (const { edit, before } of documents) await this.edited(caller, edit, before, tx);
-    return { artifact, documents };
-  }
-  async propose(caller: Caller, value: PaperPropose, tx: Transaction): Promise<PaperProposal> {
-    caller = this.capture(caller);
-    const input = parse(proposeSchema, value);
-    await this.scope.require(caller, 'write', tx);
-    const { artifact, documents } = await this.validate(caller, input.artifactId, tx);
-    const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
-      const a = await this.artifacts.get(caller, id, tx);
-      return { id: a.id, hash: a.hash };
-    });
-    const proposal: PaperProposal = {
-      id: newId('paperproposal'),
-      projectId: caller.projectId,
-      source: input.source,
-      artifact: { id: artifact.id, hash: artifact.hash },
-      documents,
-      evidence,
-      createdBy: caller.actorId,
-      createdAt: now(),
-      acceptance: null,
-    };
-    await tx.run(
-      'INSERT INTO paper_proposals(id,project_id,record) VALUES(?,?,?)',
-      proposal.id,
-      caller.projectId,
-      JSON.stringify(proposal),
-    );
-    await recorded(this.state, tx, caller, 'paper.proposed', proposal.id, {
-      source: { ...proposal.source },
-      artifactId: artifact.id,
-    });
-    return proposal;
-  }
-  /** Everything accept() checks before it writes: the proposal, its source, the reviewer, the pins and whether every edit still applies. */
-  async checkAccept(
-    caller: Caller,
-    input: PaperAccept,
-    tx: Transaction,
-  ): Promise<{ proposal: PaperProposal; accepted: PaperPublication[] | null }> {
-    caller = this.capture(caller);
-    input = structuredClone(input);
-    this.state.assertTransaction(tx);
-    await this.scope.require(caller, 'review', tx);
-    const row = await tx.get<{ record: string; acceptance: string | null }>(
-      'SELECT record,acceptance FROM paper_proposals WHERE id=? AND project_id=?',
-      input.proposalId,
-      caller.projectId,
-    );
-    check(row, 'paper_proposal_not_found', 'Paper proposal not found in this project', 404);
-    const proposal = JSON.parse(row.record) as PaperProposal;
-    check(
-      digest(proposal.source) === digest(input.source),
-      'paper_source_mismatch',
-      'Approval must name the exact scientific submission',
-      409,
-    );
-    check(
-      proposal.createdBy !== caller.actorId,
-      'review_independence',
-      'Paper changes require the independent scientific reviewer',
-      403,
-    );
-    if (row.acceptance) {
-      const accepted = JSON.parse(row.acceptance) as NonNullable<PaperProposal['acceptance']>;
-      check(
-        accepted.reviewId === input.reviewId,
-        'paper_already_accepted',
-        'Proposal was accepted by another review',
-        409,
-      );
-      return { proposal, accepted: accepted.publications };
-    }
-    for (const pin of [proposal.artifact, ...proposal.evidence])
-      check(
-        (await this.artifacts.get(caller, pin.id, tx)).hash === pin.hash,
-        'paper_evidence_changed',
-        'Retained source evidence changed',
-        409,
-      );
-    for (const { edit } of proposal.documents)
-      await this.rebased(caller, edit, await this.current(caller, edit.kind, tx), tx);
-    return { proposal, accepted: null };
-  }
-  async accept(caller: Caller, input: PaperAccept, tx: Transaction): Promise<PaperPublication[]> {
-    caller = this.capture(caller);
-    input = structuredClone(input);
-    const { proposal, accepted } = await this.checkAccept(caller, input, tx);
-    if (accepted) return accepted;
-    const publications = await mapAsync(proposal.documents, async ({ edit }) => {
+    return await mapAsync(changes.documents, async (edit) => {
       const before = await this.current(caller, edit.kind, tx);
-      const after = {
-        ...(await this.edited(caller, await this.rebased(caller, edit, before, tx), before, tx)),
-        proposalId: proposal.id,
-        updatedBy: proposal.createdBy,
-      };
+      return { before, after: await this.edited(caller, edit, before, tx), edit };
+    });
+  }
+
+  async applyReview(
+    caller: Caller,
+    input: PaperReview,
+    tx: Transaction,
+  ): Promise<PaperPublication[]> {
+    caller = this.capture(caller);
+    input = parse(reviewSchema, input);
+    const documents = await this.checkReview(caller, input, tx);
+    const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
+      const artifact = await this.artifacts.get(caller, id, tx);
+      return { id, hash: artifact.hash };
+    });
+    const publications = await mapAsync(documents, async ({ before, after, edit }) => {
+      after.review = { id: input.reviewId, source: input.source, verdict: input.verdict };
       await this.revision(caller, before, after, tx);
       const publication: PaperPublication = {
         id: newId('paperpub'),
         projectId: caller.projectId,
         kind: edit.kind,
         revision: after.revision,
-        proposalId: proposal.id,
-        source: proposal.source,
+        source: input.source,
         reviewId: input.reviewId,
-        evidence: proposal.evidence,
-        createdBy: proposal.createdBy,
+        sectionIds: edit.changes.map((change) => change.id),
+        verdict: input.verdict,
+        evidence,
+        createdBy: caller.actorId,
         createdAt: now(),
       };
       await tx.run(
@@ -573,19 +433,14 @@ export class PaperService implements Paper {
         caller.projectId,
         edit.kind,
         after.revision,
-        `${proposal.id}:${edit.kind}`,
+        `review:${input.reviewId}:${edit.kind}`,
         JSON.stringify(publication),
       );
       return publication;
     });
-    const acceptance = { reviewId: input.reviewId, reviewerId: caller.actorId, publications };
-    await tx.run(
-      'UPDATE paper_proposals SET acceptance=? WHERE id=?',
-      JSON.stringify(acceptance),
-      proposal.id,
-    );
-    await recorded(this.state, tx, caller, 'paper.accepted', proposal.id, {
-      reviewId: input.reviewId,
+    await recorded(this.state, tx, caller, 'paper.reviewed', input.reviewId, {
+      source: { ...input.source },
+      verdict: input.verdict,
     });
     return publications;
   }

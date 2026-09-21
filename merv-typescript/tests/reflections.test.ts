@@ -357,7 +357,7 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
         name: 'controlled-rerun',
         question: 'Does the effect survive the control?',
         details: '',
-        testedClaimIds: [],
+
         dependsOn: ['measure'],
         rationale: 'The evidence lens found the control missing.',
       },
@@ -481,7 +481,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.attempt, 2);
   const lens = wave.lenses[0]!;
   const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 5);
+  assert.equal(lensContext.typeVersion, 7);
   const history = JSON.parse(
     lensContext.prompt.slice(lensContext.prompt.indexOf('{"rounds":')).split('\n')[0]!,
   ) as ReviewHistory;
@@ -902,31 +902,11 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
         content: `# Summary\n${title}: grounded in the exact corpus and all five lens reports.`,
       })) as Artifact,
     );
-  const paperChanges = (await f.app.ctx.tools.call('artifact.create', caller, {
-    title: 'Paper proposal',
-    mediaType: 'application/json',
-    content: JSON.stringify({
-      documents: [
-        {
-          kind: 'results',
-          expectedRevision: 0,
-          changes: [
-            {
-              id: 'synthesis',
-              title: 'Synthesis',
-              content: 'No empirical conclusion is supported.',
-            },
-          ],
-        },
-      ],
-    }),
-  })) as Artifact;
   const submission = {
     reflectionId: wave.id,
     expectedRevision: wave.workflow.revision,
     reportArtifactId: outputs[0]!.id,
     changeSpecArtifactId: outputs[1]!.id,
-    paperChangesArtifactId: paperChanges.id,
     requestId: 'submit-synthesis',
   };
   await assert.rejects(
@@ -937,6 +917,22 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
       }),
     { code: 'invalid_input' },
     'the retired project graph is refused as an unexpected field',
+  );
+  await assert.rejects(
+    f.app.ctx.tools.call('reflection.submit', caller, {
+      ...submission,
+      paperChangesArtifactId: outputs[0]!.id,
+    }),
+    { code: 'invalid_input' },
+  );
+  await assert.rejects(
+    f.app.ctx.tools.call('paper.patch', caller, {
+      kind: 'results',
+      expectedRevision: 0,
+      requestId: 'producer-edit',
+      changes: [{ id: 'synthesis', title: 'Synthesis', content: 'Unreviewed producer text' }],
+    }),
+    { code: 'execution_tool_forbidden' },
   );
   wave = (await f.app.ctx.tools.call('reflection.submit', caller, submission)) as Reflection;
   await f.app.ctx.sessions.releaseAgentAssignment(synthesisToken, execution.id);
@@ -971,9 +967,24 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
       evidenceIds: [outputs[0]!.id],
       notes: 'The documented coverage gap must be repaired.',
     })),
+    paperChanges: {
+      documents: [
+        {
+          kind: 'results',
+          expectedRevision: 0,
+          changes: [
+            {
+              id: 'synthesis',
+              title: 'Synthesis',
+              content: 'The coverage gap prevents an empirical conclusion.',
+            },
+          ],
+        },
+      ],
+    },
     requestId: 'return-lenses',
   })) as Reflection;
-  assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 0);
+  assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 1);
   assert.equal(repaired.attempt, 2);
   assert.equal(repaired.lenses.length, 5);
   assert.ok(repaired.lenses.every((lens) => lens.workflow.revision === 0));
@@ -1081,15 +1092,32 @@ test('synthesis admission matches review ownership for direct producers and sour
   await f.app.ctx.domainEvents.drain();
 });
 
-test('reflection synthesis and its existing review own paper changes atomically', async (t) => {
+test('reflection reviewer authors paper edits with the verdict and main-agent edits can cause a safe retry', async (t) => {
   const f = await fixture(t);
   let wave = await f.lenses(
     await f.app.ctx.research.startReflection(f.owner, { requestId: 'paper-reflection' }),
   );
-  const changes = await f.app.ctx.artifacts.create(f.owner, {
-    title: 'Cross-experiment paper edits',
-    mediaType: 'application/json',
-    content: JSON.stringify({
+  wave = await f.synthesize(wave);
+  assert.equal(wave.paperProposal, null);
+  const reviewer = await f.actor('Scientific reviewer', 'reviewer');
+  const assignment = await f.app.ctx.workflows.assignment(reviewer, wave.id);
+  assert.ok(JSON.stringify(assignment).includes('paperChanges'));
+  const review = await f.app.ctx.reviews.start(reviewer, wave.review!.id);
+  const input: ReviewApplication = {
+    reviewId: review.id,
+    claimId: review.claimId!,
+    expectedRevision: wave.workflow.revision,
+    verdict: 'pass',
+    notes: 'Checked the lenses and updated the project narrative.',
+    synopsis:
+      'The synthesis accurately preserves the lack of empirical evidence and its limitations.',
+    findings: review.criteria.map((_, i) => ({
+      criterionNumber: i + 1,
+      status: 'met',
+      evidenceIds: [review.artifactIds[0]],
+      notes: 'Verified the evidence.',
+    })),
+    paperChanges: {
       documents: [
         {
           kind: 'results',
@@ -1103,49 +1131,46 @@ test('reflection synthesis and its existing review own paper changes atomically'
           ],
         },
       ],
-    }),
-  });
-  const input = {
-    reflectionId: wave.id,
-    reportArtifactId: (await f.create(f.owner, 'Report')).id,
-    changeSpecArtifactId: (await f.create(f.owner, 'Change specification')).id,
-    paperChangesArtifactId: changes.id,
-    expectedRevision: wave.workflow.revision,
-    requestId: 'paper-synthesis',
+    },
+    requestId: 'paper-review',
   };
-  const replacement = await f.actor('Replacement synthesizer');
-  const caller = { ...f.owner };
-  const original = { ...input };
-  const submitting = f.app.ctx.reflections.submit(caller, input);
-  Object.assign(caller, replacement);
-  Object.assign(input, { reportArtifactId: changes.id, requestId: 'replacement' });
-  wave = await submitting;
-  assert.equal(wave.report!.id, original.reportArtifactId);
-  assert.equal(wave.review!.producerId, f.owner.actorId);
-  assert.deepEqual(await f.app.ctx.reflections.submit(f.owner, original), wave);
-  assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 0);
-  assert.ok(wave.review!.artifactIds.includes(changes.id));
-  const reviewer = await f.actor('Scientific reviewer', 'reviewer');
-  const assignment = await f.app.ctx.workflows.assignment(reviewer, wave.id);
-  assert.ok(JSON.stringify(assignment).includes('reflection.get'));
-  assert.ok((await f.app.ctx.reflections.get(f.owner, wave.id)).paperProposal);
-  wave = await f.verdict(wave, reviewer, true);
-  const published = (await f.app.ctx.paper.read(f.owner)).documents.results.published!;
-  assert.equal(published.publication.source.id, wave.id);
-  assert.equal(published.publication.reviewId, wave.review!.id);
-  assert.equal(
-    (await f.app.ctx.reflections.approved(f.owner, wave.id)).paperProposal!.artifact.id,
-    changes.id,
+  await f.app.ctx.paper.patch(f.owner, {
+    kind: 'results',
+    expectedRevision: 0,
+    requestId: 'main-edit',
+    changes: [{ id: 'limits', title: 'Limits', content: 'Evidence is still being collected.' }],
+  });
+  await assert.rejects(f.app.ctx.tools.call('review.submit', reviewer, input), {
+    code: 'paper_revision_conflict',
+  });
+  const guidance = await f.app.ctx.workflows.evaluate(reviewer, wave.id, {
+    action: 'review',
+    input: input as never,
+  });
+  assert.ok(
+    guidance.actions
+      .find((a) => a.action === 'review')
+      ?.blockers.some((b) => b.code === 'paper_revision_conflict'),
   );
-  assert.equal(
-    await f.app.ctx.state.read(
-      async (sql) =>
-        (await sql.get<{ count: number }>(
-          "SELECT COUNT(*) count FROM wf_instances WHERE workflow='living-paper'",
-        ))!.count,
-    ),
-    0,
+  assert.equal((await f.app.ctx.reviews.get(reviewer, review.id)).status, 'started');
+  input.paperChanges!.documents[0].expectedRevision = 1;
+  await assert.rejects(
+    f.app.ctx.state.transaction(async (tx) => {
+      await f.app.ctx.reviews.apply(reviewer, input, tx);
+      throw Error('abort verdict');
+    }),
+    /abort verdict/,
   );
+  assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 1);
+  wave = (await f.app.ctx.tools.call('review.submit', reviewer, input)) as Reflection;
+  assert.equal(wave.workflow.state, 'approved');
+  assert.deepEqual(await f.app.ctx.tools.call('review.submit', reviewer, input), wave);
+  const document = (await f.app.ctx.paper.read(f.owner)).documents.results;
+  assert.equal(document.current.updatedBy, reviewer.actorId);
+  assert.equal(document.current.revision, 2);
+  assert.equal(document.published!.publication.reviewId, review.id);
+  assert.equal(document.published!.publication.source.id, wave.id);
+  assert.equal(document.current.sections.length, 2);
 });
 
 test('a leased lens reads research added after assignment through existing tools without seeing peer reports', async (t) => {
@@ -1236,17 +1261,6 @@ test('a leased lens reads research added after assignment through existing tools
   });
   assert.equal(taskNow.workflow.state, 'failed');
   assert.match(JSON.stringify(await call('task.get', { taskId: task.id })), /failed/);
-  const claim = await f.app.ctx.claims.create(f.owner, {
-    statement: 'A live observation',
-    requestId: 'new-observation',
-  });
-  await f.app.ctx.claims.update(f.owner, {
-    claimId: claim.id,
-    expectedRevision: 0,
-    status: 'weakened',
-    requestId: 'update-observation',
-  });
-  assert.match(JSON.stringify(await call('project.records', {})), /weakened/);
   assert.ok(await call('paper.read', {}));
   const peer = await f.actor('Other lens');
   const peerReport = await f.create(peer, 'Private independent lens report');
@@ -1259,15 +1273,6 @@ test('a leased lens reads research added after assignment through existing tools
   // A peer's report is readable too (no read constraints); lens independence is asked of
   // the agent, not enforced here.
   assert.ok(await call('artifact.read', { artifactId: peerReport.id }));
-  await assert.rejects(
-    call('claim.update', {
-      claimId: claim.id,
-      expectedRevision: 1,
-      status: 'supported',
-      requestId: 'not-allowed',
-    }),
-    { code: 'execution_tool_forbidden' },
-  );
   const boot = await f.app.ctx.scope.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',
@@ -1382,8 +1387,10 @@ test('a leased lens reads research added after assignment through existing tools
 test('large research stays outside the assignment and live source permissions do not inflate its packet', async (t) => {
   const f = await fixture(t);
   for (let i = 0; i < 12; i++)
-    await f.app.ctx.claims.create(f.owner, {
-      statement: `Claim ${i}: ${'long research context '.repeat(500)}`,
+    await f.app.ctx.tasks.create(f.owner, {
+      title: `Research question ${i}`,
+      goal: 'long research context '.repeat(500),
+      checks: ['Verify the hypothesis.'],
       requestId: `large-${i}`,
     });
   assert.ok(JSON.stringify(await f.app.ctx.knowledge.records(f.owner)).length > 100_000);

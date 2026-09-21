@@ -349,7 +349,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     [
       'people',
       'research',
-      'claims',
+
       'tasks',
       'experiments',
       'paper',
@@ -375,7 +375,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       section.rows.map((entry) => entry.label),
     ]),
     [
-      ['Research', ['Claims', 'Files']],
+      ['Research', ['Files']],
       ['Work', ['Work', 'Reflections']],
       ['Agents', ['Sessions', 'Code']],
       ['Feed', ['Feed']],
@@ -383,7 +383,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   );
   // Every count in the chrome means open work; rows that are inventories report none.
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
-  for (const id of ['people', 'claims', 'knowledge'])
+  for (const id of ['people', 'knowledge'])
     assert.deepEqual(shell.rows.find((entry) => entry.id === id)?.status, {});
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'code')?.view, { kind: 'code' });
@@ -412,7 +412,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(readerShell.find((entry) => entry.id === 'people')?.status, {});
   assert.ok(readerShell.every((entry) => entry.status.state !== 'unavailable'));
   assert.equal(
-    (await tool('ui.read', operator, { rowId: 'claims' })).body.error.code,
+    (await tool('ui.read', operator, { rowId: 'knowledge' })).body.error.code,
     'row_unreadable',
   );
   assert.equal((await tool('ui.read', operator, { rowId: 'absent' })).status, 404);
@@ -422,7 +422,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(Object.keys(home).sort(), [
     'actors',
     'archive',
-    'claims',
+
     'connections',
     'cycles',
     'experiments',
@@ -444,7 +444,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(await rowIds(), [
     'people',
     'research',
-    'claims',
+
     'tasks',
     'experiments',
     'paper',
@@ -464,7 +464,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(await rowIds(), [
     'people',
     'research',
-    'claims',
+
     'tasks',
     'experiments',
     'paper',
@@ -487,7 +487,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await tool('task.list', operator)).status, 200);
   for (const id of [
     'scope-ui',
-    'claims-ui',
+
     'research-ui',
     'paper-ui',
     'reflections-ui',
@@ -507,7 +507,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(await rowIds(), [
     'people',
     'research',
-    'claims',
+
     'tasks',
     'experiments',
     'paper',
