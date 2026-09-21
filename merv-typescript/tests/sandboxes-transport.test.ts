@@ -7,20 +7,34 @@ import { SandboxClient } from '../packages/sandboxes/src/client.js';
 const tokenEnv = 'MERV_SANDBOXES_TRANSPORT_TEST_TOKEN';
 const connection = { projectId: 'project_streams', namespace: 'streams', tokenEnv };
 
-function client(t: TestContext, response: () => Response) {
+function client(t: TestContext, response: (init?: RequestInit) => Response) {
   const previous = process.env[tokenEnv];
   process.env[tokenEnv] = 'sbxt_transport_fixture';
   t.after(() => {
     if (previous === undefined) delete process.env[tokenEnv];
     else process.env[tokenEnv] = previous;
   });
-  t.mock.method(globalThis, 'fetch', async (url: URL) =>
+  t.mock.method(globalThis, 'fetch', async (url: URL, init?: RequestInit) =>
     url.pathname === '/v1/auth/me'
       ? Response.json({ role: 'consumer', namespace: connection.namespace })
-      : response(),
+      : response(init),
   );
   return new SandboxClient('https://sandbox.invalid');
 }
+
+test('sandbox writes retain their nested body while credential proof is pending', async (t) => {
+  const transport = client(t, (init) => Response.json(JSON.parse(String(init?.body))));
+  const body = { lease_seconds: 600, expected_revision: 1, metadata: { request: 'original' } };
+  const pending = transport.write(connection, 'POST', '/v1/sandboxes/sbx_test/renew', body);
+  body.lease_seconds = 999;
+  body.expected_revision = 2;
+  body.metadata.request = 'changed';
+  assert.deepEqual(await pending, {
+    lease_seconds: 600,
+    expected_revision: 1,
+    metadata: { request: 'original' },
+  });
+});
 
 function streamed(
   chunkBytes: number,
@@ -133,6 +147,17 @@ test('sandbox transport preserves a valid small JSON response and a bounded writ
   let next = () => Response.json({ value: '研究' });
   const transport = client(t, () => next());
   assert.deepEqual(await transport.read(connection, '/v1/sandboxes'), { value: '研究' });
+  for (const bytes of [[0x80], [0xc0, 0xaf], [0xed, 0xa0, 0x80], [0xe2, 0x82]]) {
+    next = () =>
+      new Response(
+        Buffer.concat([Buffer.from('{"value":"'), Buffer.from(bytes), Buffer.from('"}')]),
+        { headers: { 'content-type': 'application/json' } },
+      );
+    await assert.rejects(transport.read(connection, '/v1/sandboxes'), {
+      code: 'sandbox_unavailable',
+      message: 'merv-sandboxes answered invalid JSON',
+    });
+  }
   next = () =>
     Response.json(
       { error: { code: 'operation_state', message: 'sandbox is stopped' } },

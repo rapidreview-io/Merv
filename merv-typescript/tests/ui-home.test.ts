@@ -538,7 +538,15 @@ const graph = () =>
 
 test('the graph is anchored to the page, and a verb is never written on a record', () => {
   const { pool, edges } = graph();
-  assert.equal(pool.find((node) => node.id === 'review_1')!.name, 'Task wf_done');
+  // A review is never an object of the chart: it is a fact on the card of the work it judged.
+  assert.equal(
+    pool.find((node) => node.kind === 'reviews'),
+    undefined,
+  );
+  assert.ok(
+    pool.find((node) => node.id === 'wf_done')!.props.some(([label]) => label === 'Review'),
+  );
+  assert.ok(!edges.some((edge) => edge.verb === 'reviewed by'));
   const nodes = [0, 1, 2, 3].flatMap((col) =>
     inFlightFirst(pool.filter((node) => node.col === col)),
   );
@@ -556,17 +564,12 @@ test('the graph is anchored to the page, and a verb is never written on a record
   const xs = layout.columns.map((column) => column.x);
   assert.equal(xs[0], 0, 'the first column stands on the page’s left edge');
   assert.equal(xs.at(-1)! + layout.card, 1072, 'and the last on its right: no dead field');
-  assert.equal(layout.columns.length, 3, 'a column with no record is not laid out');
+  assert.equal(layout.columns.length, 2, 'a column with no record is not laid out');
 
   // A record stands level with what it is related to, so that line is straight.
   const y = (id: string) => layout.at.get(id)!.y;
   assert.equal(y('wf_exp'), y('claim_1'));
-  assert.equal(y('review_1'), y('wf_done'));
-  assert.deepEqual(layout.lines.map((item) => item.edge.verb).sort(), [
-    'depends on',
-    'reviewed by',
-    'tests',
-  ]);
+  assert.deepEqual(layout.lines.map((item) => item.edge.verb).sort(), ['depends on', 'tests']);
 
   // Every verb is written in the room between two columns, clear of every card.
   for (const { x, y: at, anchor, edge } of layout.lines) {

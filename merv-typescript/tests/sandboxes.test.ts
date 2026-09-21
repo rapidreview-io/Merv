@@ -192,16 +192,17 @@ type Handler = (actor: Caller, input: Json) => Promise<Json>;
 
 /** The shipped fake control plane on its own port, answering as the real service does. */
 async function plane(t: TestContext) {
-  const port = 3210 + Math.floor(Math.random() * 500) + 1;
   const child = spawn('node', ['--import', 'tsx', 'scripts/fake-sandboxes.ts'], {
     cwd: root,
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, PORT: '0' },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   t.after(() => void child.kill());
   const [ready] = (await once(child.stdout, 'data')) as [Buffer];
-  assert.equal(JSON.parse(ready.toString()).url, `http://127.0.0.1:${port}`);
-  process.env[urlEnv] = `http://127.0.0.1:${port}`;
+  const url = new URL(JSON.parse(ready.toString()).url);
+  assert.equal(url.hostname, '127.0.0.1');
+  assert.ok(Number(url.port) > 0);
+  process.env[urlEnv] = url.origin;
   process.env[tokenEnv] = 'sbxt_demo_consumer';
   t.after(() => {
     delete process.env[urlEnv];
@@ -465,6 +466,38 @@ test('the two tools send the service exactly one change, under a write grant', a
   ];
   for (const [name, actor, input, code] of refused)
     await assert.rejects(call(name, actor, input), failure(code), JSON.stringify(input));
+});
+
+test('sandbox operations retain their original project and target while queued', async (t) => {
+  const remote = await fixture(t);
+  const service = new SandboxService(configuration);
+  t.after(() => service.close());
+  await service.refresh();
+  for (const operation of ['read', 'extend', 'release'] as const) {
+    await t.test(operation, async () => {
+      const source = { ...caller };
+      const input = { id: 'sbx_one', seconds: 600, params: { id: 'sbx_one' } };
+      const pending =
+        operation === 'read'
+          ? service.read(source, 'sandboxes-sandboxes', { params: input.params })
+          : service[operation](source, input);
+      source.projectId = stranger.projectId;
+      input.id = input.params.id = 'sbx_missing';
+      input.seconds = 999;
+      const result = (await pending) as { id: string; lease_seconds?: number };
+      assert.equal(result.id, 'sbx_one');
+      if (operation === 'extend') assert.equal(result.lease_seconds, 600);
+      const denied = { ...stranger },
+        before = remote.seen.length;
+      const refused =
+        operation === 'read'
+          ? service.read(denied, 'sandboxes-sandboxes')
+          : service[operation](denied, { id: 'sbx_one', seconds: 600 });
+      denied.projectId = caller.projectId;
+      await assert.rejects(refused, { code: 'sandbox_not_connected' });
+      assert.equal(remote.seen.length, before);
+    });
+  }
 });
 
 test('the service refuses what it may not do, and a released machine releases once', async (t) => {

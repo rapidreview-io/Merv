@@ -150,9 +150,10 @@ export class SandboxService implements Sandboxes {
     return this.#closing;
   }
 
-  async #run<T>(operation: () => Promise<T>): Promise<T> {
+  async #run<Input, T>(input: Input, operation: (input: Input) => Promise<T>): Promise<T> {
     check(!this.#closed, 'sandboxes_closed', 'The sandboxes service is closed', 503);
-    const pending = Promise.resolve().then(operation);
+    const snapshot = structuredClone(input);
+    const pending = Promise.resolve().then(() => operation(snapshot));
     this.#running.add(pending);
     try {
       return await pending;
@@ -180,8 +181,10 @@ export class SandboxService implements Sandboxes {
 
   /** The cadence and an on-demand caller share one attempt rather than stampeding. */
   refresh(): Promise<void> {
-    if (this.#closed) return this.#run(async () => {});
-    this.#reading ??= this.#run(() => this.#read()).finally(() => (this.#reading = undefined));
+    if (this.#closed) return this.#run(undefined, async () => {});
+    this.#reading ??= this.#run(undefined, () => this.#read()).finally(
+      () => (this.#reading = undefined),
+    );
     return this.#reading;
   }
 
@@ -226,7 +229,7 @@ export class SandboxService implements Sandboxes {
   }
 
   async extend(caller: Caller, input: SandboxExtend): Promise<Json> {
-    return this.#run(() => this.#extend(caller, input));
+    return this.#run({ caller, input }, ({ caller, input }) => this.#extend(caller, input));
   }
 
   async #extend(caller: Caller, input: SandboxExtend): Promise<Json> {
@@ -258,7 +261,7 @@ export class SandboxService implements Sandboxes {
   }
 
   async release(caller: Caller, input: SandboxTarget): Promise<Json> {
-    return this.#run(() => this.#release(caller, input));
+    return this.#run({ caller, input }, ({ caller, input }) => this.#release(caller, input));
   }
 
   async #release(caller: Caller, input: SandboxTarget): Promise<Json> {
@@ -272,7 +275,9 @@ export class SandboxService implements Sandboxes {
   }
 
   async read(caller: Caller, rowId: string, params: Record<string, unknown> = {}): Promise<Json> {
-    return this.#run(() => this.#readRow(caller, rowId, params));
+    return this.#run({ caller, params }, ({ caller, params }) =>
+      this.#readRow(caller, rowId, params),
+    );
   }
 
   async #readRow(caller: Caller, rowId: string, params: Record<string, unknown>): Promise<Json> {

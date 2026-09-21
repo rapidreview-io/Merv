@@ -1,4 +1,5 @@
 import { createElement, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import type { SessionsProjectStatus } from '@merv/contracts/types';
 import type { WorkflowDecision, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import { useTool, type Actor, type Project } from '../api';
@@ -154,8 +155,8 @@ export const tally = <T>(items: T[], of: (item: T) => string | null): [string, n
 
 /**
  * Build the object graph. Columns read left to right — what is believed, what is
- * being done, what judged it, what it became — and every edge names the field it
- * came from: experiment.testedClaimIds, review.subjectId, task.dependencies,
+ * being done, what it became — and every edge names the field it
+ * came from: experiment.testedClaimIds, task.dependencies,
  * reflection.experimentIds and the paper publication's own source.
  */
 export function graphOf(
@@ -251,19 +252,18 @@ export function graphOf(
       );
       for (const on of item.dependencies) edges.push({ from: id, to: on.id, verb: 'depends on' });
     }
+  // A review is not drawn as an object of its own: it is how a piece of work was judged, so
+  // it is a fact on that work's card — the newest one, and the way to its page.
   const reviews = pathOf('reviews');
   if (reviews)
-    for (const item of d.reviews) {
-      // The kind label already says it is a review; its name is the work it reads.
-      const name = pool.find((node) => node.id === item.subjectId)?.name ?? 'Review';
-      // Once it is in, the verdict is how a review stands, here as on its own page and
-      // on the row of the work it read; until then its own state is.
+    for (const item of newest(d.reviews, (review) => review.createdAt)) {
+      const subject = pool.find((node) => node.id === item.subjectId);
+      if (!subject || subject.props.some(([label]) => label === 'Review')) continue;
       const state = item.status === 'submitted' && item.verdict ? item.verdict : item.status;
-      object(2, 'reviews', item.id, name, item.createdAt, `${reviews}/${item.id}`, state, [
-        ['Reviewer', item.reviewerId ? who(item.reviewerId) : EM],
-        ['Requested', when(item.createdAt)],
+      subject.props.push([
+        'Review',
+        createElement(Link, { to: `${reviews}/${item.id}` }, words(state)),
       ]);
-      edges.push({ from: item.subjectId, to: item.id, verb: 'reviewed by' });
     }
   const reflections = pathOf('reflections');
   if (reflections)

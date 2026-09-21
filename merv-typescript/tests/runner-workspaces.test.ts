@@ -152,7 +152,13 @@ function setup(t: TestContext, options: { largeTrackedFile?: boolean } = {}) {
 test('private clone, idempotent prepare, bounded WIP capture and persistent resume preserve per-launch history', async (t) => {
   const f = setup(t),
     first = f.reserve('first');
-  const handle = await f.manager.prepare(first, f.session('first'));
+  const preparingRecord = structuredClone(first),
+    preparingSession = f.session('first');
+  const preparing = f.manager.prepare(preparingRecord, preparingSession);
+  preparingRecord.id = preparingSession.id = 'changed';
+  preparingSession.execution.policy.readOnly = true;
+  const handle = await preparing;
+  assert.equal(handle.readOnly, false);
   assert.equal(handle.snapshot?.baseOid, f.second);
   assert.equal(handle.snapshot?.treeOid, f.git(handle.path, 'rev-parse', 'HEAD^{tree}'));
   assert.match(handle.snapshot!.branch!, /^codex\/merv\//);
@@ -162,7 +168,10 @@ test('private clone, idempotent prepare, bounded WIP capture and persistent resu
   writeFileSync(join(handle.path, 'seed.txt'), 'updated\nmore\n');
   await assert.rejects(f.manager.capture(first), /workspace_process_stop_unconfirmed/);
   f.stop(first.id);
-  const result = await f.manager.capture(first);
+  const capturingRecord = structuredClone(first);
+  const capturing = f.manager.capture(capturingRecord);
+  capturingRecord.id = 'changed';
+  const result = await capturing;
   assert.notEqual(result?.headOid, handle.snapshot!.headOid);
   assert.equal(result?.treeOid, f.git(handle.path, 'rev-parse', 'HEAD^{tree}'));
   assert.notEqual(result?.treeOid, handle.snapshot!.treeOid);
@@ -178,7 +187,10 @@ test('private clone, idempotent prepare, bounded WIP capture and persistent resu
     f.manager.prepare(second, f.session('second')),
     /workspace_owned_by_another_launch/,
   );
-  await f.manager.close(first);
+  const closingRecord = structuredClone(first);
+  const closing = f.manager.close(closingRecord);
+  closingRecord.id = 'changed';
+  await closing;
   const resumed = await f.reopen().prepare(second, f.session('second'));
   assert.equal(resumed.path, handle.path);
   assert.equal(resumed.snapshot!.headOid, result!.headOid);

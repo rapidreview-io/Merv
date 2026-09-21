@@ -214,7 +214,7 @@ export class GitWorkspaceManager {
     };
   }
   prepare(record: LaunchRecord, session: Session): Promise<WorkspaceHandle> {
-    return this.run(async () => {
+    return this.run({ record, session }, async ({ record, session }) => {
       this.requireLaunch(record);
       if (record.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
       const policy = effectiveWorkspace(session.execution.policy);
@@ -327,7 +327,7 @@ export class GitWorkspaceManager {
     const parsed = codeCommitCommandSchema.safeParse(input);
     if (!parsed.success) return Promise.reject(new WorkspaceError('workspace_invalid_command'));
     const command = parsed.data;
-    return this.run(async () => {
+    return this.run({ record, command }, async ({ record, command }) => {
       try {
         return await this.applyCheckpointCommit(record, command);
       } catch (error) {
@@ -489,7 +489,7 @@ export class GitWorkspaceManager {
   }
 
   capture(record: LaunchRecord): Promise<SessionWorkspace | undefined> {
-    return this.run(async () => {
+    return this.run(record, async (record) => {
       this.requireLaunch(record);
       if (!terminalLaunch(this.ledger.get(record.id)!))
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
@@ -608,7 +608,7 @@ export class GitWorkspaceManager {
     });
   }
   close(record: LaunchRecord): Promise<void> {
-    return this.run(async () => {
+    return this.run(record, async (record) => {
       this.requireLaunch(record);
       if (!terminalLaunch(this.ledger.get(record.id)!))
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
@@ -657,10 +657,11 @@ export class GitWorkspaceManager {
     this.db.close();
   }
 
-  private run<T>(action: () => Promise<T>): Promise<T> {
+  private async run<Input, T>(input: Input, action: (input: Input) => Promise<T>): Promise<T> {
+    const snapshot = structuredClone(input);
     const operation = this.serial.then(() => {
       if (this.disposed) throw new WorkspaceError('workspace_manager_closed');
-      return action();
+      return action(snapshot);
     });
     this.serial = operation.catch(() => {});
     return operation;
@@ -1043,7 +1044,7 @@ export class GitWorkspaceManager {
   }
   /** Import pinned objects into this machine's private repository, without storing a remote or credential. */
   syncGitHub(value: CodeTransportGrant, references: string[] = []): Promise<void> {
-    return this.run(async () => {
+    return this.run({ value, references }, async ({ value, references }) => {
       const grant = codeTransportGrantSchema.parse(value);
       if (!this.config || !('github' in this.config) || grant.target)
         throw new WorkspaceError('workspace_github_config_required');
@@ -1122,7 +1123,7 @@ export class GitWorkspaceManager {
   }
   /** Create an immutable checkpoint ref. The absent-ref lease prevents even a concurrent fast-forward replacement. */
   pushGitHub(value: CodeTransportGrant): Promise<void> {
-    return this.run(async () => {
+    return this.run(value, async (value) => {
       const grant = codeTransportGrantSchema.parse(value),
         target = grant.target;
       if (!target) throw new WorkspaceError('workspace_push_target_required');

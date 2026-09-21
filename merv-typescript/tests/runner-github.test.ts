@@ -105,7 +105,10 @@ test('separate runners exchange exact objects, recover a lost push reply, and ne
     rmSync(directory, { recursive: true, force: true });
   });
   const producer = machine('producer');
-  await producer.manager.syncGitHub(grant);
+  const importing = structuredClone(grant);
+  const importingWork = producer.manager.syncGitHub(importing);
+  importing.token = 'changed-token';
+  await importingWork;
   const originalFetch = (producer.manager as any).remoteGit;
   (producer.manager as any).remoteGit = () => {
     throw new Error('already imported objects must work offline');
@@ -148,11 +151,21 @@ test('separate runners exchange exact objects, recover a lost push reply, and ne
       treeOid: captured.treeOid!,
     },
   };
-  await producer.manager.pushGitHub(push);
+  const publishing = structuredClone(push);
+  const publishingWork = producer.manager.pushGitHub(publishing);
+  publishing.target.branch = 'merv/checkpoints/changed';
+  await publishingWork;
   assert.equal(git(remote, 'rev-parse', `refs/heads/${push.target.branch}`), captured.headOid);
+  assert.equal(
+    git(remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/merv/checkpoints/changed'),
+    '',
+  );
   await producer.manager.pushGitHub(push);
   const reviewer = machine('reviewer');
-  await reviewer.manager.syncGitHub(grant, [captured.headOid]);
+  const references = [captured.headOid];
+  const reviewing = reviewer.manager.syncGitHub(grant, references);
+  references[0] = 'f'.repeat(40);
+  await reviewing;
   const reviewLaunch = reviewer.ledger.reserve({
     id: 'launch_reviewer',
     sessionId: 'session_reviewer',

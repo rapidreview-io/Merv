@@ -509,12 +509,22 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   }
   private async withToken<T>(
     caller: Caller,
-    fn: (token: string, row: Connection) => Promise<T>,
+    fn: (token: string, row: Connection, authorize: () => Promise<void>) => Promise<T>,
     access: Access = 'owner',
+    authorizeRequest?: (tx: Transaction) => Promise<unknown>,
   ) {
     const { token, row } = await this.token(caller, access);
+    const authorize = () =>
+      this.state.transaction(async (tx) => {
+        await this.unchanged(caller, tx, row, access);
+        await authorizeRequest?.(tx);
+      });
     try {
-      return await fn(token, row);
+      return await this.client().authorized(authorize, async () => {
+        const result = await fn(token, row, authorize);
+        await authorize();
+        return result;
+      });
     } catch (error) {
       if (error instanceof MervError && error.code === 'github_reconnect')
         await this.state.transaction(async (tx) => {
@@ -545,11 +555,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   }
   repositories(caller: Caller) {
     return this.run(caller, (caller) =>
-      this.withToken(caller, async (token, row) => {
-        const repositories = await this.client().repositories(token);
-        await this.state.transaction((tx) => this.unchanged(caller, tx, row));
-        return repositories;
-      }),
+      this.withToken(caller, (token) => this.client().repositories(token)),
     );
   }
   private repository(row: Connection): GitHubRepository {
@@ -587,7 +593,6 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
           const repository = this.repository(row);
           await this.client().repositoryPermission(token, repository, input.mode === 'write');
           await this.client().branch(token, repository.fullName, input.baseBranch!);
-          await this.state.transaction((tx) => this.unchanged(caller, tx, row));
         });
       }
       return this.state.transaction(async (tx) => {
@@ -621,11 +626,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     fn: (client: GitHubClient, token: string, repo: GitHubRepository) => Promise<T>,
   ) {
     return this.run(caller, (caller) =>
-      this.withToken(caller, async (token, row) => {
-        const result = await fn(this.client(), token, this.repository(row));
-        await this.state.transaction((tx) => this.unchanged(caller, tx, row));
-        return result;
-      }),
+      this.withToken(caller, (token, row) => fn(this.client(), token, this.repository(row))),
     );
   }
   branches(caller: Caller) {
@@ -653,7 +654,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     return this.run(caller, (caller) =>
       this.withToken(
         caller,
-        async (token, row) => {
+        async (token, row, authorize) => {
           if (binding) this.revision(row, binding.revision);
           const repository = this.repository(row);
           check(row.base_branch, 'github_automation_disabled', 'Choose a GitHub base branch', 409);
@@ -669,20 +670,12 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
               409,
             );
           const client = this.client();
-          const authorize = () =>
-            this.state.transaction(async (tx) => {
-              await this.unchanged(caller, tx, row, access);
-              await authorizeRequest?.(tx);
-            });
-          return client.authorized(authorize, async () => {
-            await client.repositoryPermission(token, repository, access === 'write');
-            await authorize();
-            const result = await fn(client, token, current);
-            await authorize();
-            return result;
-          });
+          await client.repositoryPermission(token, repository, access === 'write');
+          await authorize();
+          return fn(client, token, current);
         },
         access,
+        authorizeRequest,
       ),
     );
   }
