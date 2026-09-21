@@ -582,34 +582,3 @@ test('a Markdown file is read as a document, and one control shows its source', 
   assert.equal(document.querySelector('.md'), null);
   assert.match(document.querySelector('pre.doc')?.textContent ?? '', /^# Result\n\| a \| b \|/);
 });
-
-test('JSON is indented where it parses and left alone where it does not', async (t) => {
-  t.after(async () => await unmount());
-  const artifact = {
-    id: 'art_json',
-    projectId: 'project_1',
-    createdBy: 'actor_1',
-    title: 'metrics.json',
-    mediaType: 'application/json',
-    hash: 'abc',
-    size: 20,
-    createdAt: new Date().toISOString(),
-  };
-  serve('/tools/artifact.read', {
-    body: { result: { artifact, encoding: 'utf8', content: '{"seed":7,"val":[0.97]}' } },
-  });
-  await mount(
-    createElement(
-      MemoryRouter,
-      null,
-      createElement(ArtifactBody, { artifactId: 'art_json', metadata: artifact }),
-    ),
-  );
-  await settle(10);
-  assert.equal(
-    document.querySelector('pre.doc')?.textContent,
-    '{\n  "seed": 7,\n  "val": [\n    0.97\n  ]\n}',
-  );
-  // Only a document has a source to turn back to.
-  assert.equal(document.querySelector('button[aria-label="View source"]'), null);
-});

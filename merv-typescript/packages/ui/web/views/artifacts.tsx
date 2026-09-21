@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { call, useScopeVersion, useTool } from '../api';
 import { Ago, KV, LoadState, RecordPage, Short, timeRows } from '../components';
 import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { MAX_READ, Markdown } from '../markdown';
+import { JsonView, readJson } from '../json-view';
+import { MAX_READ, Markdown, useRecordNames } from '../markdown';
 import { useSession } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
@@ -170,7 +171,7 @@ export interface FileType {
   /** The short human word for it: Markdown, JSON, PNG image. */
   label: string;
   icon: IconName;
-  /** How the body is read where it is shown: as a document, as indented JSON, or as it is. */
+  /** How the body is read where it is shown: as a document, as a tree of JSON, or as it is. */
   reads: 'markdown' | 'json' | 'text';
 }
 /**
@@ -208,37 +209,44 @@ const TypeGlyph = ({ type, size }: { type: FileType; size?: number }) => (
   </span>
 );
 
-/** JSON as a person reads it; what does not parse stays exactly as it was written. */
-function indented(content: string): string {
-  try {
-    return JSON.stringify(JSON.parse(content), null, 2);
-  } catch {
-    return content;
-  }
-}
-
 function InlineArtifact({
   artifactId,
   reads,
+  source,
+  onUnread,
 }: {
   artifactId: string;
-  reads: FileType['reads'] | 'source';
+  reads: FileType['reads'];
+  /** Shown as the text its author typed rather than as what it reads as. */
+  source: boolean;
+  /** Told once a JSON file turns out not to parse: what is shown is already its source. */
+  onUnread: () => void;
 }) {
   const read = useTool<ArtifactContent>('artifact.read', { artifactId });
   const content = read.data?.encoding === 'utf8' ? read.data.content : undefined;
-  const shown = useMemo(
-    () => (content !== undefined && reads === 'json' ? indented(content) : content),
+  // Parsed whichever way it is being shown, so turning to the source and back reads it once.
+  const json = useMemo(
+    () => (reads === 'json' && content !== undefined ? readJson(content) : undefined),
     [content, reads],
   );
+  const tree = source ? undefined : json;
+  const names = useRecordNames(tree && content ? content : '');
+  const unread = reads === 'json' && content !== undefined && !json;
+  useEffect(() => {
+    if (unread) onUnread();
+  }, [unread, onUnread]);
   if (!read.data) return <LoadState loading={read.loading} error={read.error} />;
-  if (shown === undefined)
+  if (content === undefined)
     return <div className="empty">Binary file · {bytes(read.data.artifact.size)}</div>;
-  return reads === 'markdown' ? (
+  return reads === 'markdown' && !source ? (
     <div className="doc-read">
-      <Markdown source={shown} />
+      <Markdown source={content} />
     </div>
+  ) : tree ? (
+    <JsonView value={tree.value} names={names} />
   ) : (
-    <pre className="doc">{shown}</pre>
+    // JSON that does not parse stays exactly as it was written.
+    <pre className="doc">{content}</pre>
   );
 }
 
@@ -256,8 +264,8 @@ function Take({ artifact }: { artifact: Artifact }) {
  * the far end. Where something above it has already said the name, the head says the
  * word for the type instead: the file's own page, whose heading is the title, and a
  * cited file, whose disclosure is — that one keeps the way to the file's page as a
- * glyph. A Markdown file is read as a document, and the one control on the head
- * turns it back into the text its author typed.
+ * glyph. A Markdown file is read as a document and a JSON file as a tree, and the one
+ * control on the head turns either back into the text its author typed.
  */
 export function ArtifactBody({
   artifactId,
@@ -271,11 +279,15 @@ export function ArtifactBody({
 }) {
   const scope = useScopeVersion();
   const [source, setSource] = useState(false);
+  const [unread, setUnread] = useState(false);
   const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
+  const markUnread = useCallback(() => setUnread(true), []);
   const artifact = metadata ?? meta.data;
   if (!artifact) return <LoadState loading={meta.loading} error={meta.error} />;
   const type = fileType(artifact);
   const inline = artifact.size <= 2_000_000;
+  const sourced =
+    type.reads === 'markdown' ? artifact.size <= MAX_READ : type.reads === 'json' && !unread;
   return (
     <div className="doc-frame">
       <div className="doc-head">
@@ -291,8 +303,9 @@ export function ArtifactBody({
         </span>
         <span className="doc-tools">
           <span className="faint tabular">{bytes(artifact.size)}</span>
-          {/* Past the length a document is read at, its source is already what is shown. */}
-          {inline && type.reads === 'markdown' && artifact.size <= MAX_READ && (
+          {/* Past the length a document is read at, and where JSON does not parse, the
+              source is already what is shown. */}
+          {inline && sourced && (
             <button
               type="button"
               className="btn-icon"
@@ -320,7 +333,9 @@ export function ArtifactBody({
         <InlineArtifact
           key={`${scope}:${artifactId}`}
           artifactId={artifactId}
-          reads={source ? 'source' : type.reads}
+          reads={type.reads}
+          source={source}
+          onUnread={markUnread}
         />
       )}
       <Take artifact={artifact} />
