@@ -196,6 +196,11 @@ const PROJECT_READS = [
   'artifact.get',
   'artifact.read',
   'usage.read',
+  // A brief names research.lineage and usage.read by research cycle, and no brief carries the
+  // cycle's id: a worker finds it with research.list.
+  'research.list',
+  'research.get',
+  'research.lineage',
 ] as const;
 
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';

@@ -9,6 +9,7 @@ import { createApp } from '../src/app.js';
 import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import type { ResearchLineage } from '../packages/research/src/types.js';
+import { buildLaunch } from '../packages/runner/src/profiles.js';
 import {
   CHANGE_SPEC_CRITERION,
   REFLECTION_CRITERIA,
@@ -575,6 +576,11 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   assert.ok(context.sources.some((source) => source.id === ended.digest!.id));
   assert.ok(Buffer.byteLength(context.prompt) < 16 * 1024);
 
+  // Read before the lease: a leased lens's assignment is its worker's alone.
+  const briefs = await mapAsync(
+    wave.lenses,
+    async (entry) => (await f.app.ctx.workflows.assignment(f.owner, entry.id)).context!.prompt,
+  );
   const secret = token();
   await f.app.ctx.sessions.registerAgent(f.owner, {
     name: 'Lens agent',
@@ -600,6 +606,39 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
     ],
   );
   assert.ok(await f.app.ctx.tools.call('artifact.read', caller, { artifactId: ended.digest!.id }));
+
+  // The server admits any read, but Codex is launched with an explicit allowlist: every read a
+  // lens brief names must be on it, or a Codex lens cannot see the tool it was told to use.
+  const launch = buildLaunch(
+    {
+      name: 'local-codex',
+      harness: 'codex',
+      executable: '/opt/bin/codex',
+      enabled: true,
+      parallelism: 1,
+    },
+    { session: execution, secret, mcpUrl: 'http://127.0.0.1:8080/mcp', cwd: '/tmp/merv-lens' },
+    {},
+  );
+  const enabled = JSON.parse(
+    /enabled_tools=(\[[^\]]*\])/.exec(
+      launch.args.find((arg) => arg.startsWith('mcp_servers'))!,
+    )![1]!,
+  ) as string[];
+  const reads = new Set(
+    (await f.app.ctx.tools.describe(caller))
+      .filter((tool) => tool.annotations?.readOnlyHint === true)
+      .map((tool) => tool.name),
+  );
+  const named = [
+    ...new Set(briefs.flatMap((brief) => brief.match(/\b[a-z_]+\.[a-z_]+\b/g) ?? [])),
+  ].filter((name) => reads.has(name));
+  for (const read of ['research.lineage', 'usage.read', 'project.records'])
+    assert.ok(named.includes(read), read);
+  assert.deepEqual(
+    named.filter((name) => !enabled.includes(name)),
+    [],
+  );
 });
 
 test('a standalone wave names no lineage, and a digest that does not fit is omitted yet stays readable', async (t) => {
