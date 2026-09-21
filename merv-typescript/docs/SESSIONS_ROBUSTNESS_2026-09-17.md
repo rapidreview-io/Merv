@@ -169,6 +169,13 @@ So between the halt and a successful drain, the lease reads closed and the work 
 
 The nastiest of these is `settings_pending` (`dispatch.ts:528-529`): once `desiredVersion > appliedVersion`, that runner is refused every lease until it acknowledges. The page's Runners table shows this as the single word **"Pending acknowledgement"** in a column called Settings (`sessions.tsx:390-394`) — with no statement that dispatch to that machine is _stopped_, and **no control anywhere in the UI to change or re-push runner settings** (grep for `runners/` across `packages/ui/web` returns nothing; the route `PUT /sessions/runners/:id/settings` at `http.ts:823-833` has no browser caller). A project can reach a state where dispatch is on, a runner is live, work is queued, and nothing ever runs — and the only evidence is one ambiguous word.
 
+> **Since closed on the server.** `session.stuck` derives these causes in one read
+> (`dispatch_disabled`, `no_live_runner`, `runner_refusing`, `dispatch_held`,
+> `dispatch_failing`, `ready_quiet`), a runner's `decisionSince` says how long a refusal has
+> held, and a failing launch is bounded by a hold instead of retried for ever. See
+> [stuck work and dispatch holds](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
+> The page does not draw them yet; the counts ride in `GET /sessions/status` as `stuck`.
+
 ### 1.14 An actor with no name reads as an em dash while the server knows the actor
 
 `sessions.tsx:424`: `agentName.get(session.agentId ?? '') ?? term(null)` → `—`. A manually offered lease (`POST /sessions/offer`) has no `agentId`; so does a lease whose worker is a plain session actor. But `SessionSummary.actorId` is populated (`dispatch.ts:447`) and typed (`types.ts:263`) and **never read by the UI**. Per the project's own rule 4 (`docs/UI_LEGACY_PATTERNS.md:10`) the em dash means "a fact this record could have and does not" — here the fact exists and the page declines to resolve it. (Resolving it needs a name lookup the payload does not yet carry; see PLAN P3.)
@@ -505,6 +512,11 @@ This is deliberately _not_ free text: `observations.ts:47` forbids retaining err
 **Acceptance:** `tests/session-dispatch-api.test.ts` — with dispatch enabled, a live runner, `desiredVersion > appliedVersion` and eligible work, `POST /sessions/lease` returns `{session: null, reason: 'settings_pending'}` **and** the next `GET /sessions/status` reports that runner's `lastDecision === 'settings_pending'` with a timestamp. Repeat for `capacity_full` and `retry_backoff`.
 
 ---
+
+> **Extended.** P7's `lastDecision` now has `decisionSince` beside it, and `session.stuck`
+> reports a live runner that has answered `settings_pending` or `platform_disabled` for
+> `refusalSeconds` while work is queued. §1.12 and the runner-settings control below stay
+> deferred.
 
 ### P8 — The page's subject is not behind a fold · **U** · net **−20 to −40** (removing a parallel panel outweighs what is added)
 

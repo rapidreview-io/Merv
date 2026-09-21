@@ -13,6 +13,7 @@ import type {
   SessionStatus,
   SessionUsageReport,
   SessionsProjectStatus,
+  StuckReport,
   UsageRollup,
   WorkflowAssignment,
   WorkflowExecution,
@@ -45,6 +46,9 @@ export type {
   SessionWorkspace,
   SessionWorkspaceRecord,
   SessionsProjectStatus,
+  StuckItem,
+  StuckKind,
+  StuckReport,
   UsageRollup,
   UsageTotals,
 } from '@merv/contracts';
@@ -220,6 +224,8 @@ export interface Sessions {
   ): Promise<Session>;
   /** Open to leased workers too: a reflection lens reads what the cycle it reflects on cost. */
   usage(caller: Caller, input?: UsageQuery): Promise<UsageRollup>;
+  /** Everything that stopped moving and why, for anyone who may read the project but no leased worker. */
+  stuck(caller: Caller): Promise<StuckReport>;
   /** Only a project admin who is not a leased worker lets a held target be offered again. */
   releaseHold(
     caller: Caller,
@@ -257,6 +263,14 @@ export interface SessionsConfig {
   sweepIntervalMs?: number;
   /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
   maxLaunchFailures?: number;
+  /** Seconds without a tool call before an active session is marked stalled. */
+  idleStalledSeconds?: number;
+  /** Seconds without a tool call before an active session is closed as stalled; 0, the default, only marks. */
+  idleCloseSeconds?: number;
+  /** Seconds a dispatchable target may wait on one revision before it is reported as quiet. */
+  quietReadySeconds?: number;
+  /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
+  refusalSeconds?: number;
 }
 declare module 'cordis' {
   interface Context {

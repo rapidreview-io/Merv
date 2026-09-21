@@ -145,7 +145,9 @@ export interface StuckReport {
     quietReadySeconds: number;
     refusalSeconds: number;
   };
+  /** What needs someone: every item except `dispatch_failing`, which is still being retried. */
   total: number;
+  /** Every item by kind, before the 200 cap. */
   counts: Record<StuckKind, number>;
   /** At most 200, in StuckKind order, then by `since` and instance. */
   items: StuckItem[];
@@ -170,6 +172,10 @@ export interface SessionSummary {
   closedAt: string | null;
   closeReason: string | null;
   outcome?: SessionOutcome | null;
+  /** An active session's activation or latest tool call, whichever is later; null otherwise. */
+  lastActivityAt: string | null;
+  /** When the sweep found the session alive without progressing; null while it moves. */
+  stalledAt: string | null;
   /** Frozen execution intent remains known before preparation or after a preparation failure. */
   workspaceMode: 'none' | 'ephemeral' | 'persistent';
   workspace?: SessionWorkspaceRecord;
@@ -303,4 +309,6 @@ export interface SessionsProjectStatus {
   budgets: BudgetStatus[];
   /** Queued work withheld from automatic dispatch because its launches kept failing. */
   retriesExhausted: number;
+  /** What `session.stuck` lists, as counts; a target still being retried is not in `total`. */
+  stuck: Pick<StuckReport, 'total' | 'counts'>;
 }

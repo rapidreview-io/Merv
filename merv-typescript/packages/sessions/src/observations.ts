@@ -1,5 +1,5 @@
 import { postgresMigrations } from './observations.postgres.js';
-import { check, type Caller, type Scope, type State } from '@merv/contracts';
+import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -42,6 +42,20 @@ export function summarizeAgent(
     createdAt: agent.createdAt,
     runnerId: agent.runnerId,
   };
+}
+
+/**
+ * The moment an active session last moved: its activation, or its latest tool call. ISO
+ * instants order as text, so no date is parsed to compare them.
+ */
+export function lastActivity(
+  session: Pick<Session, 'activatedAt'>,
+  lastCallAt: string | undefined,
+): string | null {
+  if (session.activatedAt === null) return null;
+  return lastCallAt !== undefined && lastCallAt > session.activatedAt
+    ? lastCallAt
+    : session.activatedAt;
 }
 
 /** Metadata only: never retain arguments, results, error messages or credentials. */
@@ -119,6 +133,23 @@ export class AgentObservations {
       async (tx) =>
         await tx.run("UPDATE session_tool_calls SET status='interrupted' WHERE status='running'"),
     );
+  }
+
+  /**
+   * The latest tool call of every active session, the progress clock a heartbeat cannot be:
+   * a runner renews a lease for as long as its process lives, whatever the process does. A
+   * call still running counts from its start, so one that hangs does not hide a stall. One
+   * statement for every project, because the sweep is; a read names its own project.
+   */
+  async activity(tx: Transaction, projectId?: string): Promise<Map<string, string>> {
+    const rows = await tx.all<{ id: string; at: string }>(
+      `SELECT execution_id AS id,MAX(COALESCE(finished_at,started_at)) AS at FROM session_tool_calls
+        WHERE execution_id IN (SELECT id FROM worker_sessions WHERE status='active' AND (CAST(? AS TEXT) IS NULL OR project_id=?))
+        GROUP BY execution_id`,
+      projectId ?? null,
+      projectId ?? null,
+    );
+    return new Map(rows.map((row) => [row.id, row.at]));
   }
 
   async read(caller: Caller, agentId: string): Promise<AgentObservation> {

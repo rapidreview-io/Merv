@@ -15,6 +15,13 @@ The following support, task-program, claim-record and experiment gaps from the o
   update or delete), `session_usage` (sessions 4, written once, no delete) and
   `session_budgets` (session_dispatch 3, mutable configuration). Every `SUM` over them is
   normalised to a number, because PostgreSQL returns `numeric` as text.
+- [Stuck work and dispatch holds](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds):
+  session_dispatch 4 adds `session_runners.decision_since`, the mutable counter table
+  `session_dispatch_holds` and the replay table `session_hold_requests`, with a native
+  PostgreSQL twin using `BIGINT` and no row id, because nothing orders by insertion. The
+  hold upsert, the single-statement `decided()` update and the progress aggregate over
+  `session_tool_calls` are one SQL text on both backends; `tests/session-liveness.test.ts`
+  runs them on PostgreSQL when `MERV_TEST_POSTGRES_URL` is set.
 - [Task closure](TASK_CLOSURE.md): producer/operator withdrawal, safe review closure
   and explicit compatibility for older workflow versions.
 - [Work-item prerequisites](WORK_ITEM_DEPENDENCIES.md): persistent dependency DAG,

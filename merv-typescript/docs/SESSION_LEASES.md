@@ -76,6 +76,38 @@ the exact ownership handle. Cleanup can wait while that plugin is unavailable.
 A successor execution receives a new ownership handle; an explicitly continuing agent retains its worker identity, while logical task ownership,
 evidence, verdicts, checkpoints and start history remain available.
 
+## Alive is not progressing
+
+A runner heartbeats a session for as long as its child process lives, whatever the process
+does, so a renewed lease proves a process and nothing more. Progress is read from what the
+server already records: every leased tool call leaves a row in `session_tool_calls`. An
+active session's **idle clock** starts at the later of its activation and its latest tool
+call. A call that is still running counts from its start, so one that hangs does not hide a
+stall. Heartbeat is unchanged: it renews `expiresAt` and says nothing about progress.
+
+| Sessions config      | Default | Bounds                               | Meaning                                                                   |
+| -------------------- | ------- | ------------------------------------ | ------------------------------------------------------------------------- |
+| `idleStalledSeconds` | 1800    | 60 to 604800                         | Idle time after which the sweep marks the session stalled.                |
+| `idleCloseSeconds`   | 0       | 0, or `idleStalledSeconds` to 604800 | Idle time after which the sweep closes it. 0 only marks and never closes. |
+
+Only the writing sweep marks, clears or closes, at most once a minute of clock time and
+only for sessions active longer than `idleStalledSeconds`. A poll can run on a read
+snapshot, so no read path computes a mark. The mark is `stalledAt` on the session, set once
+per episode with one `session.stalled` event (`lastActivityAt`, `idleSeconds`); the next
+tool call clears it on the following pass without an event. `GET /sessions/status` carries
+`lastActivityAt` and `stalledAt` on every session, and `session.stuck` reports an idle
+session from the same clock at the moment of the read, whether or not the sweep has run.
+
+Closing is opt-in because a tool call is the only progress the server can see, and honest
+work can be hours of local computing with none. A deployment that sets `idleCloseSeconds`
+closes the session with status `expired`, outcome `stalled` and close reason
+`idle_timeout`. The ownership handle is released as for any close, the target is
+dispatchable again at the same revision, the close counts as one failed attempt towards the
+[launch retry cap](BUDGETS_AND_LIMITS.md), and the runner stops the child on its next poll
+as it does for any remotely closed session. Under such a deployment a worker doing long
+quiet local work must make any Merv tool call, for example `workflow.status_and_next`,
+within `idleCloseSeconds`.
+
 ## Enforced execution
 
 The session bearer is MCP-only. It cannot authenticate ordinary HTTP tool routes,
@@ -118,8 +150,9 @@ error, including for a session its own handoff already closed. Two more lease de
 exist: `budget_exceeded`, when a project or instance budget is reached, and
 `retries_exhausted`, when the only queued work left has failed to launch
 `maxLaunchFailures` times on its current revision. Both only pause automatic offers.
-`GET /sessions/status` adds `budgets` and `retriesExhausted`. See
-[loop limits, usage and budgets](BUDGETS_AND_LIMITS.md).
+`GET /sessions/status` adds `budgets`, `retriesExhausted` and `stuck`, the counts of what
+`session.stuck` lists. See [loop limits, usage and budgets](BUDGETS_AND_LIMITS.md) and the
+[runner control plane](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
 
 ## Remaining work
 
@@ -133,8 +166,8 @@ and [backend audit](BACKEND_PARITY_AUDIT.md).
 ## HTTP control and configuration
 
 The `sessions` provider depends on State, Scope, Workflows and Domain Events. The small `sessions-api` adapter depends only on Sessions and API.
-Neither exposes an agent tool; the optional `sessions-tools` adapter registers `usage.read`
-and `usage.set_budget`. A normal source credential controls these routes;
+Neither exposes an agent tool; the optional `sessions-tools` adapter registers `usage.read`,
+`usage.set_budget`, `session.stuck` and `session.release_hold`. A normal source credential controls these routes;
 use `X-Merv-Project-Id` when project selection is required.
 
 | Route                          | Input / result                                                                                                            |
@@ -152,7 +185,10 @@ MCP bearer. The server never returns or stores its plaintext. Each frozen
 assignment, policy and reference packet is bounded at 64 KiB. This is an admission
 limit, not a transport upload limit.
 
-Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000).
+Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000),
+`maxLaunchFailures` (1–100; default 5), the idle thresholds `idleStalledSeconds` and
+`idleCloseSeconds` described under [alive is not progressing](#alive-is-not-progressing),
+and the two report thresholds of `session.stuck`, `quietReadySeconds` (60–2592000; default 21600) and `refusalSeconds` (30–86400; default 300). Any other key is refused at startup.
 Offer commits expired-predecessor closure and drains durable cleanup before
 starting a fresh acquisition transaction. A failing cleanup handler cannot roll
 back worker retirement or partially commit domain cleanup.

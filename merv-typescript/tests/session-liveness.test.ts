@@ -7,7 +7,13 @@ import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
-import { LeasedSessions } from '@merv/sessions';
+import { LeasedSessions, type Session, type SessionsConfig } from '@merv/sessions';
+import type { StuckReport } from '@merv/contracts';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from '../src/app.js';
+import type { ApplicationConfig } from '../src/config.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const request = () => randomBytes(10).toString('hex');
@@ -51,7 +57,12 @@ interface HoldRow {
 
 async function fixture(
   t: TestContext,
-  options: { postgres?: boolean; maxLaunchFailures?: number; dispatchSchema?: number } = {},
+  options: {
+    postgres?: boolean;
+    maxLaunchFailures?: number;
+    dispatchSchema?: number;
+    config?: SessionsConfig;
+  } = {},
 ) {
   let clock = Date.parse('2026-01-01T00:00:00.000Z');
   const schema = `merv_liveness_${randomUUID().replaceAll('-', '')}`;
@@ -63,6 +74,7 @@ async function fixture(
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   let buildHook: (() => void) | undefined;
+  let leaseRole: 'producer' | 'operator' = 'producer';
   const working = (name: string): NonNullable<WorkflowPolicy['assignments']>[number] => ({
     state: name,
     check: async ({ caller, tx }) => {
@@ -95,7 +107,7 @@ async function fixture(
       ],
     },
     lease: {
-      role: () => 'producer' as const,
+      role: () => leaseRole,
       acquire: ({ leaseId }) => ({ leaseId }),
       check: () => {},
       release: () => {},
@@ -158,6 +170,7 @@ async function fixture(
         new LeasedSessions(state, scope, workflows, events, {
           clock: () => clock,
           sweepIntervalMs: 60_000,
+          ...options.config,
           ...(options.maxLaunchFailures === undefined
             ? {}
             : { maxLaunchFailures: options.maxLaunchFailures }),
@@ -198,9 +211,35 @@ async function fixture(
       await handle.start(source, { workflow: definition.name, requestId: request() }),
     advance: (ms: number) => (clock += ms),
     time: () => new Date(clock).toISOString(),
+    /** Workflows stamps a revision with the machine's clock, so waiting is measured from it. */
+    wallClock: () => (clock = Date.now()),
     onBuild(hook?: () => void) {
       buildHook = hook;
     },
+    leaseRole(role: 'producer' | 'operator') {
+      leaseRole = role;
+    },
+    /** One automatic lease, activated by its worker's first authentication. */
+    async active(runnerId = 'machine') {
+      const input = auto(runnerId);
+      const leased = await sessions.lease(source, input);
+      assert.ok(leased.session, leased.reason);
+      return { id: leased.session.id, worker: await sessions.authenticate(input.secret) };
+    },
+    /** One recorded tool call that leaves the record where it is. */
+    async call(worker: Caller, handler: () => void | Promise<void> = () => {}) {
+      await sessions.run(await sessions.prepare(worker, 'finish', {}), handler);
+    },
+    stored: async (id: string): Promise<Session> =>
+      JSON.parse(
+        (await state.read(
+          async (sql) =>
+            await sql.get<{ session_json: string }>(
+              'SELECT session_json FROM worker_sessions WHERE id=?',
+              id,
+            ),
+        ))!.session_json,
+      ),
     /** One automatic lease on the runner that the launching machine reports as failed. */
     async fail(runnerId = 'machine', outcome: 'launch_failed' | 'host_failed' = 'launch_failed') {
       const leased = await sessions.lease(source, auto(runnerId));
@@ -537,4 +576,377 @@ test('the hold tables arrive on a database whose runners already decided, and le
   assert.deepEqual(await f.holds(), []);
   await f.sessions.lease(f.source, auto());
   assert.equal((await f.runner()).decisionSince, f.time());
+});
+
+const minute = 60_000;
+
+for (const backend of backends)
+  test(
+    `a session that lives without a tool call is marked stalled once by the sweep, and a call clears the mark (${backend.name})`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, { postgres: backend.postgres });
+      await f.sessions.heartbeatRunner(f.source, presence());
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      await f.instance();
+      const { id, worker } = await f.active();
+      const activatedAt = f.time();
+
+      f.advance(29 * minute);
+      await f.sessions.sweep();
+      assert.equal((await f.stored(id)).stalledAt ?? null, null, 'not yet idle');
+
+      // The runner renews the lease for as long as its process lives; that is not progress.
+      await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
+      f.advance(minute);
+      await f.sessions.sweep();
+      const stalledAt = f.time();
+      assert.equal((await f.stored(id)).stalledAt, stalledAt);
+      f.advance(5 * minute);
+      await f.sessions.sweep();
+      assert.equal((await f.stored(id)).stalledAt, stalledAt, 'one mark for one episode');
+      const stalled = await f.events('session.stalled');
+      assert.equal(stalled.length, 1);
+      assert.equal(stalled[0].actorId, 'system:sessions');
+      assert.deepEqual(stalled[0].data, {
+        sessionId: id,
+        instanceId: (await f.stored(id)).instanceId,
+        revision: 0,
+        lastActivityAt: activatedAt,
+        idleSeconds: 1800,
+      });
+      let [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+      assert.deepEqual([summary.lastActivityAt, summary.stalledAt], [activatedAt, stalledAt]);
+
+      await f.call(worker);
+      const calledAt = f.time();
+      f.advance(minute);
+      await f.sessions.sweep();
+      assert.equal((await f.stored(id)).stalledAt, null, 'a tool call is progress');
+      [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+      assert.deepEqual([summary.lastActivityAt, summary.stalledAt], [calledAt, null]);
+
+      // Mark only by default: hours of quiet local work are never closed for idleness.
+      for (let hour = 0; hour < 5; hour++) {
+        f.advance(60 * minute);
+        await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
+        await f.sessions.sweep();
+      }
+      assert.equal((await f.stored(id)).status, 'active');
+      assert.equal((await f.events('session.stalled')).length, 2, 'a second episode says so again');
+    },
+  );
+
+test('a tool call that hangs counts from its start, so it does not hide a stall', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  const { id, worker } = await f.active();
+  let finish!: () => void;
+  const hung = f.call(worker, () => new Promise<void>((resolve) => (finish = resolve)));
+  while (!finish) await new Promise((resolve) => setImmediate(resolve));
+
+  f.advance(10 * minute);
+  await f.sessions.sweep();
+  assert.equal((await f.stored(id)).stalledAt ?? null, null, 'a call that began recently');
+  f.advance(20 * minute);
+  await f.sessions.sweep();
+  assert.equal((await f.stored(id)).stalledAt, f.time());
+  finish();
+  await hung;
+});
+
+for (const backend of backends)
+  test(
+    `a deployment that opts in closes an idle session as stalled, which frees and counts its target (${backend.name})`,
+    { skip: backend.skip },
+    async (t) => {
+      const f = await fixture(t, {
+        postgres: backend.postgres,
+        config: { idleStalledSeconds: 600, idleCloseSeconds: 3600 },
+      });
+      await f.sessions.heartbeatRunner(f.source, presence());
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      const target = await f.instance();
+      const { id } = await f.active();
+      for (let step = 0; step < 6; step++) {
+        f.advance(10 * minute);
+        await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
+        await f.sessions.sweep();
+      }
+      const closed = await f.stored(id);
+      assert.deepEqual(
+        [closed.status, closed.outcome, closed.closeReason, closed.closedAt],
+        ['expired', 'stalled', 'idle_timeout', f.time()],
+      );
+      assert.equal((await f.events('session.stalled')).length, 1);
+      assert.deepEqual(
+        (await f.holds()).map((row) => [row.attempts, row.last_code, row.last_session_id]),
+        [[1, 'stalled', id]],
+      );
+      const status = await f.sessions.projectStatus(f.owner);
+      assert.deepEqual(
+        status.queue.map((item) => [item.instanceId, item.expectedRevision]),
+        [[target.id, 0]],
+        'the same revision is dispatchable again',
+      );
+      await f.pastBackoff();
+      assert.equal((await f.sessions.lease(f.source, auto())).session?.instanceId, target.id);
+    },
+  );
+
+test('no read marks or closes an idle session, yet the stuck report already names it', async (t) => {
+  const f = await fixture(t, { config: { idleStalledSeconds: 600, idleCloseSeconds: 1200 } });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  const { id, worker } = await f.active();
+  const activatedAt = f.time();
+  f.advance(30 * minute);
+
+  await f.sessions.describe(worker);
+  await f.sessions.projectStatus(f.owner);
+  const report = await f.sessions.stuck(f.owner);
+  const stored = await f.stored(id);
+  assert.deepEqual([stored.status, stored.stalledAt ?? null], ['active', null]);
+  assert.equal((await f.events('session.stalled')).length, 0);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.sessionId, item.since, item.forSeconds, item.code]),
+    [['session_idle', id, activatedAt, 1800, 'idle']],
+  );
+  assert.match(report.items[0].next, /POST \/sessions\/halt/);
+  await assert.rejects(async () => await f.sessions.stuck(worker), {
+    code: 'forbidden',
+    status: 403,
+  });
+});
+
+test('idle thresholds are bounded, and closing is never sooner than the mark', async (t) => {
+  for (const config of [
+    { idleStalledSeconds: 59 },
+    { idleStalledSeconds: 600, idleCloseSeconds: 599 },
+    { idleCloseSeconds: -1 },
+    { quietReadySeconds: 59 },
+    { refusalSeconds: 29 },
+    { refusalSeconds: 1.5 },
+  ])
+    await assert.rejects(async () => await fixture(t, { config }), {
+      code: 'invalid_sessions_config',
+    });
+});
+
+test('the stuck report names a switched-off dispatch, a missing runner and a runner that keeps refusing', async (t) => {
+  const f = await fixture(t);
+  const registered = await f.sessions.heartbeatRunner(f.source, presence());
+  const kinds = async () => (await f.sessions.stuck(f.owner)).items.map((item) => item.kind);
+  assert.deepEqual(await kinds(), [], 'nothing queued, nothing stuck');
+
+  const target = await f.instance();
+  const switchedOff = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    switchedOff.items.map((item) => [item.kind, item.code, item.since]),
+    [['dispatch_disabled', 'dispatch_disabled', switchedOff.observedAt]],
+  );
+  assert.deepEqual(switchedOff.thresholds, {
+    idleStalledSeconds: 1800,
+    idleCloseSeconds: 0,
+    maxLaunchFailures: 5,
+    quietReadySeconds: 21_600,
+    refusalSeconds: 300,
+  });
+
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  assert.deepEqual(await kinds(), []);
+  f.advance(46_000);
+  const unattended = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    unattended.items.map((item) => [item.kind, item.since, item.forSeconds]),
+    [['no_live_runner', registered.lastSeenAt, 46]],
+  );
+
+  // Published settings the runner never acknowledges: every lease answers settings_pending.
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setRunnerSettings(f.owner, {
+    runnerId: registered.id,
+    settings: { platforms: [{ name: 'codex', enabled: true, parallelism: 1 }] },
+  });
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'settings_pending');
+  const since = f.time();
+  f.advance(299_000);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.lease(f.source, auto());
+  assert.deepEqual(await kinds(), [], 'a refusal younger than refusalSeconds');
+  f.advance(1000);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  const refusing = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    refusing.items.map((item) => [item.kind, item.code, item.runnerRef, item.since]),
+    [['runner_refusing', 'settings_pending', registered.id, since]],
+  );
+  assert.match(refusing.items[0].why, /version 0 .* version 1/);
+
+  // A refusing runner with nothing to run is not stuck work.
+  const { id } = await (async () => {
+    const token = secret();
+    return await f.sessions.offer(f.source, {
+      instanceId: target.id,
+      expectedRevision: 0,
+      runnerId: 'machine',
+      requestId: request(),
+      secret: token,
+    });
+  })();
+  assert.ok(id);
+  assert.deepEqual(await kinds(), []);
+});
+
+test('a ready step nobody takes is quiet, an operator step included, and a failing target is reported once', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 2, config: { quietReadySeconds: 600 } });
+  f.wallClock();
+  await f.sessions.heartbeatRunner(f.source, presence());
+  const target = await f.instance();
+  const waitingSince = target.updatedAt;
+  f.advance(11 * minute);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  assert.deepEqual(
+    (await f.sessions.stuck(f.owner)).items.map((item) => item.kind),
+    ['dispatch_disabled'],
+    'with dispatch off, one item says why everything waits',
+  );
+
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  let report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.instanceId, item.code, item.since]),
+    [['ready_quiet', target.id, 'queued', waitingSince]],
+  );
+
+  f.leaseRole('operator');
+  report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.code]),
+    [['ready_quiet', 'awaiting_operator']],
+  );
+  f.leaseRole('producer');
+
+  await f.fail();
+  report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.code, item.attempts]),
+    [['dispatch_failing', 'launch_failed', 1]],
+    'the failing item replaces the quiet one',
+  );
+  assert.equal(report.total, 0, 'a target still being retried needs nobody yet');
+  await f.pastBackoff();
+  await f.fail();
+  report = await f.sessions.stuck(f.owner);
+  assert.deepEqual(
+    report.items.map((item) => [item.kind, item.instanceId, item.expectedRevision, item.attempts]),
+    [['dispatch_held', target.id, 0, 2]],
+  );
+  assert.match(report.items[0].next, /session\.release_hold/);
+  const status = await f.sessions.projectStatus(f.owner);
+  assert.deepEqual(status.stuck, { total: report.total, counts: report.counts });
+  assert.deepEqual([status.stuck.total, status.stuck.counts.dispatch_held], [1, 1]);
+
+  // A hold names one revision: the record moves and nothing is stuck any more.
+  await f.handle.transition(f.source, {
+    instanceId: target.id,
+    expectedRevision: 0,
+    action: 'revise',
+    requestId: request(),
+  });
+  assert.deepEqual(
+    (await f.sessions.stuck(f.owner)).items.map((item) => [item.kind, item.expectedRevision]),
+    [['ready_quiet', 1]],
+    'the new revision only waits, as old as the machine clock that stamped it',
+  );
+});
+
+test('the assembled application offers the stuck report as a read tool and the go-ahead as an admin tool, neither to a leased worker', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-stuck-tools-'));
+  const env = `MERV_STUCK_TEST_${randomUUID().replaceAll('-', '')}`;
+  process.env[env] = 'synthetic-stuck-tools-signing-secret-at-least-32-bytes';
+  const config = JSON.parse(
+    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
+  ) as ApplicationConfig;
+  // The shipped composition, which is what registers these tools; the page shell serves no assets here.
+  config.plugins = config.plugins.filter((entry) => entry.id !== 'ui-web');
+  config.plugins.find((entry) => entry.id === 'identity')!.config = {
+    supabaseUrl: 'https://stuck.example.test',
+    mode: 'hs256',
+    secretEnv: env,
+  };
+  const app = await createApp({ directory, config, port: 0 });
+  t.after(async () => {
+    await app.stop();
+    delete process.env[env];
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const boot = await app.ctx.scope.bootstrap({ projectName: 'Stuck', actorName: 'Owner' });
+  const owner: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  const listed = (await app.ctx.tools.list()).filter((tool) => tool.name.startsWith('session.'));
+  assert.deepEqual(
+    listed.map((tool) => [tool.name, 'readOnly' in tool && tool.readOnly === true]),
+    [
+      ['session.release_hold', false],
+      ['session.stuck', true],
+    ],
+  );
+  const task = await app.ctx.tasks.create(owner, {
+    title: 'Waiting',
+    goal: 'Wait for a runner.',
+    checks: ['It waited.'],
+    requestId: 'waiting',
+  });
+  // A read tool runs on a read snapshot, so a report that wrote anything would fail here.
+  const report = (await app.ctx.tools.call('session.stuck', owner, {})) as StuckReport;
+  assert.deepEqual(
+    report.items.map((item) => item.kind),
+    ['dispatch_disabled'],
+  );
+  assert.equal(report.total, 1);
+  // The home read trims the sessions row to its facts; the stuck counts are one of them.
+  const home = (await app.ctx.tools.call('ui.home', owner, {})) as {
+    sessions: { stuck: Pick<StuckReport, 'total' | 'counts'>; sessions?: unknown };
+  };
+  assert.deepEqual(home.sessions.stuck, { total: 1, counts: report.counts });
+  assert.equal(home.sessions.sessions, undefined);
+  const release = {
+    instanceId: task.id,
+    expectedRevision: task.workflow.revision,
+    reason: 'Nothing to release',
+    requestId: 'release',
+  };
+  await assert.rejects(
+    async () => await app.ctx.tools.call('session.release_hold', owner, release),
+    { code: 'hold_not_found', status: 404 },
+  );
+  await assert.rejects(
+    async () => await app.ctx.tools.call('session.release_hold', owner, { ...release, extra: 1 }),
+    (error: MervError) => error.status === 400,
+  );
+
+  const token = secret();
+  await app.ctx.sessions.offer(owner, {
+    instanceId: task.id,
+    expectedRevision: task.workflow.revision,
+    runnerId: 'machine',
+    requestId: 'offer',
+    secret: token,
+  });
+  const worker = await app.ctx.sessions.authenticate(token);
+  for (const [tool, input] of [
+    ['session.stuck', {}],
+    ['session.release_hold', release],
+  ] as const)
+    await assert.rejects(
+      async () => await app.ctx.tools.call(tool, worker, input),
+      (error: MervError) => error.status === 403,
+    );
 });

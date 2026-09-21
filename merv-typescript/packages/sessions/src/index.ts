@@ -26,7 +26,7 @@ import {
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { AgentDirectory, sourceCaller } from './agents.js';
-import { AgentObservations, summarizeAgent } from './observations.js';
+import { AgentObservations, lastActivity, summarizeAgent } from './observations.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
@@ -43,6 +43,7 @@ import type {
   RunnerPresence,
   RunnerSettings,
   SessionsProjectStatus,
+  StuckReport,
   SessionOutcome,
   SessionWorkspace,
   SessionWorkspaceObservation,
@@ -55,6 +56,21 @@ import type {
 export type * from './types.js';
 
 const tokenPattern = /^ms_[A-Za-z0-9_-]{43}$/;
+/**
+ * Closing for idleness is off unless a deployment asks for it: a tool call is the only
+ * progress the server sees, and honest work can be hours of local computing with none.
+ */
+const secondsDefaults = {
+  idleStalledSeconds: 1800,
+  idleCloseSeconds: 0,
+  quietReadySeconds: 21_600,
+  refusalSeconds: 300,
+};
+const configKeys = new Set([
+  'sweepIntervalMs',
+  'maxLaunchFailures',
+  ...Object.keys(secondsDefaults),
+]);
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 /**
@@ -155,6 +171,32 @@ export class LeasedSessions implements Sessions {
         'invalid_sessions_config',
         'Session maxLaunchFailures must be 1–100',
       );
+      const seconds = (key: keyof typeof secondsDefaults, least: number, most: number) => {
+        const value = options[key] ?? secondsDefaults[key];
+        check(
+          Number.isInteger(value) && value >= least && value <= most,
+          'invalid_sessions_config',
+          `Session ${key} must be ${least}–${most} seconds`,
+        );
+        return value;
+      };
+      const idleStalledSeconds = seconds('idleStalledSeconds', 60, 604_800);
+      const idleCloseSeconds = options.idleCloseSeconds ?? secondsDefaults.idleCloseSeconds;
+      check(
+        idleCloseSeconds === 0 ||
+          (Number.isInteger(idleCloseSeconds) &&
+            idleCloseSeconds >= idleStalledSeconds &&
+            idleCloseSeconds <= 604_800),
+        'invalid_sessions_config',
+        'Session idleCloseSeconds must be 0, or from idleStalledSeconds to 604800 seconds',
+      );
+      this.thresholds = {
+        idleStalledSeconds,
+        idleCloseSeconds,
+        maxLaunchFailures,
+        quietReadySeconds: seconds('quietReadySeconds', 60, 2_592_000),
+        refusalSeconds: seconds('refusalSeconds', 30, 86_400),
+      };
       await state.migrate('sessions', [
         {
           version: 1,
@@ -297,9 +339,10 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
               return true;
             },
             agents: async (caller, tx) => await this.agentSummaries(caller, tx),
+            activity: async (projectId, tx) => await this.observations.activity(tx, projectId),
           },
           this.clock,
-          maxLaunchFailures,
+          this.thresholds,
         ),
       );
       try {
@@ -351,6 +394,8 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     };
   }
   private clock!: () => number;
+  private thresholds!: StuckReport['thresholds'];
+  private idleCheckedAt = Number.NEGATIVE_INFINITY;
   private time(): string {
     return new Date(this.clock()).toISOString();
   }
@@ -1022,6 +1067,10 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
   async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);
+  }
+  async stuck(caller: Caller): Promise<StuckReport> {
+    this.ensureOpen();
+    return await this.dispatcher.stuck(caller);
   }
   async releaseHold(
     caller: Caller,
@@ -1757,13 +1806,79 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     if (running && !this.closed)
       await this.observations.finish(invocation.caller.session!.invocationId!, 'failed');
   }
+  /**
+   * Alive is not progressing: a runner renews a lease for as long as its process lives, so a
+   * lease alone never says the work moves. The mark, its clearing and the close live only
+   * here, on the session the writing sweep just decoded. A poll may run on a read snapshot,
+   * where reconcile already has to swallow read_only_scope to report a closure it cannot
+   * record; an idle mark has no such need, so no read path computes one.
+   */
+  private async progress(
+    session: Session,
+    lastCallAt: string | undefined,
+    tx: Transaction,
+  ): Promise<void> {
+    const lastActivityAt = lastActivity(session, lastCallAt)!;
+    const idleSeconds = Math.floor((this.clock() - Date.parse(lastActivityAt)) / 1000);
+    const { idleStalledSeconds, idleCloseSeconds } = this.thresholds;
+    if (idleCloseSeconds > 0 && idleSeconds >= idleCloseSeconds) {
+      await this.closeSession(session, 'idle_timeout', tx, 'expired', 'stalled');
+      return;
+    }
+    if (idleSeconds < idleStalledSeconds) {
+      if (!session.stalledAt) return;
+      session.stalledAt = null;
+      await this.save(tx, session);
+      return;
+    }
+    // Once per episode: the mark is what keeps a later sweep from saying it again.
+    if (session.stalledAt) return;
+    session.stalledAt = this.time();
+    await this.save(tx, session);
+    await this.state.appendEvent(tx, {
+      projectId: session.projectId,
+      actorId: 'system:sessions',
+      type: 'session.stalled',
+      subjectId: session.id,
+      data: {
+        sessionId: session.id,
+        instanceId: session.instanceId,
+        revision: session.expectedRevision,
+        lastActivityAt,
+        idleSeconds,
+      },
+    });
+  }
+  /**
+   * Idleness moves on a scale of minutes, so the sweep looks at it at most once a minute of
+   * clock time, only at sessions active long enough to be idle, and reads every session's
+   * latest call in one statement the first time one of them needs it.
+   */
+  private idlePass(tx: Transaction) {
+    const now = this.clock();
+    const due = now - this.idleCheckedAt >= 60_000;
+    if (due) this.idleCheckedAt = now;
+    let calls: Promise<Map<string, string>> | undefined;
+    return {
+      due: (session: Session) =>
+        due &&
+        session.status === 'active' &&
+        session.activatedAt !== null &&
+        Date.parse(session.activatedAt) + this.thresholds.idleStalledSeconds * 1000 <= now,
+      activity: () => (calls ??= this.observations.activity(tx)),
+    };
+  }
   private async sweepTransaction(tx: Transaction): Promise<void> {
+    const idle = this.idlePass(tx);
     for (const row of await tx.all<Row>(
       tx.dialect === 'postgres'
         ? "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid"
         : "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY rowid",
-    ))
-      await this.reconcile(await this.decode(row, tx), tx);
+    )) {
+      const session = await this.decode(row, tx);
+      if (!(await this.reconcile(session, tx)) && idle.due(session))
+        await this.progress(session, (await idle.activity()).get(session.id), tx);
+    }
     for (const row of await tx.all<{ id: string }>("SELECT id FROM agents WHERE status='active'")) {
       const agent = await this.directory.get(row.id, tx);
       try {
@@ -1815,11 +1930,9 @@ export const sessionsPlugin = {
     check(
       config &&
         typeof config === 'object' &&
-        Object.keys(config).every(
-          (key) => key === 'sweepIntervalMs' || key === 'maxLaunchFailures',
-        ),
+        Object.keys(config).every((key) => configKeys.has(key)),
       'invalid_sessions_config',
-      'Sessions only supports sweepIntervalMs and maxLaunchFailures configuration',
+      `Sessions only supports ${[...configKeys].join(', ')} configuration`,
     );
     await ctx.effect(async function* () {
       const sessions = await createService(

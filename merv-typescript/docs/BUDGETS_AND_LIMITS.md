@@ -171,8 +171,10 @@ tried remains. The status read reports `retriesExhausted`, the number of queued 
 withheld this way. A hold gates automatic dispatch only: a person may still offer the
 target by hand, and a failure of that session counts like any other.
 
-A held target waits for a human. A project admin who is not a leased worker calls
-`releaseHold` with the instance, its revision, a reason and a `requestId`; the count
+A held target waits for a human, and `session.stuck` lists it as `dispatch_held` with its
+last failure ([stuck work and dispatch holds](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds)).
+A project admin who is not a leased worker calls
+`session.release_hold` with the instance, its revision, a reason and a `requestId`; the count
 restarts, `session.hold_released` is recorded, and the same request replays the same
 answer. Switching automatic dispatch off and on is the same go-ahead for **every
 instance in the project**. A new revision of the instance starts a fresh count, because a
