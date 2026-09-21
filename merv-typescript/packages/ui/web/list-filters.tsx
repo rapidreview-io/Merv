@@ -577,7 +577,7 @@ export function ListPage<T extends { id: string }>({
 
 /** Above this the record opens beside its list; narrower than this it is the page. */
 const WIDE = window.matchMedia('(min-width: 1080px)');
-const useWide = () =>
+export const useWide = () =>
   useSyncExternalStore(
     (listener) => {
       WIDE.addEventListener('change', listener);

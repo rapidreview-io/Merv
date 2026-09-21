@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, type CSSProperties } from 'react';
+import { Link, Navigate } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
-import { Chips, ListPage, Tabs, useListFilter } from '../list-filters';
+import { Chips, ListPage, Tabs, useListFilter, useWide } from '../list-filters';
 import { RecordPicker, useWorkPicks } from '../record-picker';
 import { useSession } from '../session';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
@@ -46,6 +46,88 @@ interface Item {
   named: boolean;
   labels: (string | undefined)[];
   owner: string;
+  /** How far down its chain the item stands: 0 waits on nothing this list holds. */
+  depth: number;
+  /** The prerequisites it still waits on, by name. */
+  waits: string[];
+}
+
+/**
+ * The list as the chains it is made of. Every dependency has a task at one end — a task
+ * waits on tasks and experiments, an experiment only on tasks — so the task list's own
+ * `dependencies` and `dependents` are every edge there is, with no second read. A chain
+ * leads with whatever waits on nothing; what follows stands under the last thing it waits
+ * on, one step in, and chains are ordered by their most recent movement.
+ */
+export function chained<T extends { id: string; at: string }>(
+  items: T[],
+  tasks: (Pick<Task, 'id' | 'dependencies' | 'dependents'> & {
+    title?: string;
+    workflow?: { state: string };
+  })[],
+): (T & { depth: number; waits: string[] })[] {
+  const known = new Map(items.map((item) => [item.id, item]));
+  const after = new Map<string, Set<string>>();
+  const before = new Map<string, Set<string>>();
+  const waits = new Map<string, string[]>();
+  const edge = (first: string, then: string) => {
+    if (!known.has(first) || !known.has(then) || first === then) return;
+    (after.get(first) ?? after.set(first, new Set()).get(first)!).add(then);
+    (before.get(then) ?? before.set(then, new Set()).get(then)!).add(first);
+  };
+  for (const task of tasks) {
+    for (const on of task.dependencies ?? []) {
+      edge(on.id, task.id);
+      if (!on.settled) waits.set(task.id, [...(waits.get(task.id) ?? []), on.name]);
+    }
+    // What follows a task waits on it until the task is done; the task list says that of
+    // the task itself, which is how an experiment's wait is known without reading it.
+    for (const next of task.dependents ?? []) {
+      edge(task.id, next.id);
+      if (task.title && task.workflow && task.workflow.state !== 'done')
+        waits.set(next.id, [...(waits.get(next.id) ?? []), task.title]);
+    }
+  }
+  // A chain is as recent as the newest thing in it, so a finished first step does not
+  // sink the work still moving behind it.
+  const recent = new Map<string, string>();
+  const reach = (id: string, seen = new Set<string>()): string => {
+    if (recent.has(id)) return recent.get(id)!;
+    if (seen.has(id)) return known.get(id)!.at;
+    seen.add(id);
+    let at = known.get(id)!.at;
+    for (const next of after.get(id) ?? []) {
+      const theirs = reach(next, seen);
+      if (theirs > at) at = theirs;
+    }
+    recent.set(id, at);
+    return at;
+  };
+  const byRecent = (ids: Iterable<string>) =>
+    [...ids].sort((a, b) => reach(b).localeCompare(reach(a)));
+  const depth = new Map<string, number>();
+  const out: (T & { depth: number; waits: string[] })[] = [];
+  const place = (id: string, at: number) => {
+    if (depth.has(id)) return;
+    // What waits on several things stands under the last of them to be placed.
+    if ([...(before.get(id) ?? [])].some((first) => !depth.has(first))) return;
+    depth.set(id, at);
+    out.push({ ...known.get(id)!, depth: at, waits: waits.get(id) ?? [] });
+    for (const next of byRecent(after.get(id) ?? []))
+      place(
+        next,
+        Math.max(...[...(before.get(next) ?? [])].map((first) => depth.get(first) ?? 0)) + 1,
+      );
+  };
+  for (const id of byRecent(items.filter((item) => !before.get(item.id)?.size).map((i) => i.id)))
+    place(id, 0);
+  // A cycle among dependencies cannot be stored, but a list must never lose a row to one.
+  for (const item of items)
+    if (!depth.has(item.id)) {
+      depth.set(item.id, 0);
+      out.push({ ...item, depth: 0, waits: waits.get(item.id) ?? [] });
+    }
+  return out;
 }
 
 /** The cycle the project is on: the newest one still running, else the newest. */
@@ -131,7 +213,8 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
  * Work page, and the left pane of every record it opens, so a record's siblings
  * stay on screen beside it.
  */
-export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string }) {
+export function WorkList({ shell }: { shell: ShellData }) {
+  const [chosen, setChosen] = useState<string>();
   const { actor } = useSession();
   const nameOf = useActorNames();
   const [kind, setKind] = useState<string>(ALL);
@@ -156,7 +239,7 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
     ...(cycle?.researchDependencies ?? []),
     ...(cycle?.consolidationDependencies ?? []),
   ]);
-  const items: Item[] = newest(
+  const items: Item[] = chained(
     [
       ...(tasks.data ?? []).map((task): Item => ({
         id: task.id,
@@ -171,6 +254,8 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
         named: inCycle.has(task.id),
         labels: [task.title, task.goal, nameOf(task.producerId)],
         owner: task.producerId,
+        depth: 0,
+        waits: [],
       })),
       ...(experiments.data ?? []).map((item): Item => ({
         id: item.id,
@@ -185,9 +270,11 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
         named: inCycle.has(item.id),
         labels: [item.name, item.intent, nameOf(item.ownerId)],
         owner: item.ownerId,
+        depth: 0,
+        waits: [],
       })),
     ],
-    (item) => item.at,
+    tasks.data ?? [],
   );
   const under = (of: string) => (item: Item) =>
     of === ALL || (of === 'cycle' ? item.named : item.kind === of);
@@ -219,86 +306,109 @@ export function WorkList({ shell, chosen }: { shell: ShellData; chosen?: string 
     data: items.length ? items : undefined,
     loadedAt: tasks.loadedAt ?? experiments.loadedAt,
   };
+  // One step in for each thing the row waits behind, on the name and on the line under it.
+  const step = (item: Item) => ({ '--depth': item.depth }) as CSSProperties;
   return (
-    <ListPage
-      load={load}
-      noun="work"
-      kind="work"
-      placeholder="Name, question or person"
-      filter={{
-        ...filter,
-        filtering: filter.filtering || kind !== ALL,
-        clear() {
-          filter.clear();
-          setKind(ALL);
-        },
-      }}
-      narrow={
-        narrowings.length > 1 && (
-          <Tabs
-            label="Kind of work"
-            options={[[ALL, 'All'] as const, ...narrowings].map(([value, label]) => ({
-              value,
-              label,
-              count: filter.tabbed.filter(under(value)).length,
-            }))}
-            value={kind}
-            onChange={setKind}
-          />
-        )
-      }
-      emptyTitle="No work yet"
-      create={
-        cyclesRow && {
-          label: 'New cycle',
-          shown: actor.role === 'operator' || actor.role === 'producer',
-          form: (close) => (
-            <CreateResearch
-              onSaved={() => {
-                close();
-                cycles.reload();
-              }}
+    <>
+      {/* The cycle stands where every other page's title line stands, and above the list
+          beside an open record, so its one move is never a page away. */}
+      <div className="page-lede">
+        <CycleHead shell={shell} chosen={chosen} onChoose={setChosen} />
+      </div>
+      <ListPage
+        load={load}
+        noun="work"
+        kind="work"
+        placeholder="Name, question or person"
+        filter={{
+          ...filter,
+          filtering: filter.filtering || kind !== ALL,
+          clear() {
+            filter.clear();
+            setKind(ALL);
+          },
+        }}
+        narrow={
+          narrowings.length > 1 && (
+            <Tabs
+              label="Kind of work"
+              options={[[ALL, 'All'] as const, ...narrowings].map(([value, label]) => ({
+                value,
+                label,
+                count: filter.tabbed.filter(under(value)).length,
+              }))}
+              value={kind}
+              onChange={setKind}
             />
-          ),
+          )
         }
-      }
-      line={(item) => {
-        const review = newestReview(reviews.data, item.id);
-        const said = reviewClause(review, nameOf(review?.reviewerId));
-        const who = nameOf(item.owner);
-        return {
-          kind: item.kind,
-          name: (
-            <Link className={cx('row-link', item.id === filter.openId && 'row-open')} to={item.to}>
-              <strong>{item.name}</strong>
-            </Link>
-          ),
-          standing: (
-            <ThreeStates
-              execution={item.state}
-              diagram={
-                <RowDiagram shapes={shell.workflows} workflow={item.flow} kind={item.kind} />
-              }
-              // A review is a record of its own, so the clause is the way to its verdict.
-              review={
-                said && review && reviewsPath
-                  ? { ...said, to: `${reviewsPath}/${review.id}` }
-                  : (said ?? undefined)
-              }
-              outcome={
-                firstSentence(item.outcome) ? { detail: firstSentence(item.outcome) } : undefined
-              }
-              meta={
-                <>
-                  {who && `${who} · `}
-                  <Ago at={item.at} />
-                </>
-              }
-            />
-          ),
-        };
-      }}
-    />
+        emptyTitle="No work yet"
+        create={
+          cyclesRow && {
+            label: 'New cycle',
+            shown: actor.role === 'operator' || actor.role === 'producer',
+            form: (close) => (
+              <CreateResearch
+                onSaved={() => {
+                  close();
+                  cycles.reload();
+                }}
+              />
+            ),
+          }
+        }
+        line={(item) => {
+          const review = newestReview(reviews.data, item.id);
+          const said = reviewClause(review, nameOf(review?.reviewerId));
+          const who = nameOf(item.owner);
+          return {
+            kind: item.kind,
+            name: (
+              <span className="chain" style={step(item)}>
+                {item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
+                <Link
+                  className={cx('row-link', item.id === filter.openId && 'row-open')}
+                  to={item.to}
+                >
+                  <strong>{item.name}</strong>
+                </Link>
+              </span>
+            ),
+            standing: (
+              <div className="chain chain--under" style={step(item)}>
+                <ThreeStates
+                  execution={item.state}
+                  diagram={
+                    <RowDiagram shapes={shell.workflows} workflow={item.flow} kind={item.kind} />
+                  }
+                  // A review is a record of its own, so the clause is the way to its verdict.
+                  review={
+                    said && review && reviewsPath
+                      ? { ...said, to: `${reviewsPath}/${review.id}` }
+                      : (said ?? undefined)
+                  }
+                  outcome={
+                    firstSentence(item.outcome)
+                      ? { detail: firstSentence(item.outcome) }
+                      : undefined
+                  }
+                  meta={
+                    <>
+                      {who && `${who} · `}
+                      <Ago at={item.at} />
+                    </>
+                  }
+                />
+                {/* A line of its own: in the narrow pane it would crowd the owner and the time. */}
+                {item.waits.length > 0 && (
+                  <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
+                )}
+              </div>
+            ),
+          };
+        }}
+      />
+    </>
   );
 }
 
@@ -409,14 +519,15 @@ function CycleHead({
 }
 
 export function WorkView({ shell }: { shell: ShellData }) {
-  const [chosen, setChosen] = useState<string>();
-  return (
-    <>
-      {/* The cycle stands where every other page's title line stands. */}
-      <div className="page-lede">
-        <CycleHead shell={shell} chosen={chosen} onChoose={setChosen} />
-      </div>
-      <WorkList shell={shell} chosen={chosen} />
-    </>
-  );
+  const wide = useWide();
+  const experimentsRow = shell.rows.find((row) => row.view.kind === 'experiments');
+  const experiments = useTool<Experiment[]>(experimentsRow ? 'experiment.list' : null);
+  // Where a record stands beside its list, Work opens on the latest experiment: the list,
+  // the cycle and its move are all still on screen, and the page is never an empty pane.
+  const latest = newest(experiments.data ?? [], (item) => item.workflow.updatedAt)[0];
+  if (wide && experimentsRow && latest)
+    return <Navigate to={`${experimentsRow.path}/${latest.id}`} replace />;
+  // Until the list has answered there is nothing to choose between the two.
+  if (wide && experimentsRow && experiments.loading && !experiments.data) return null;
+  return <WorkList shell={shell} />;
 }

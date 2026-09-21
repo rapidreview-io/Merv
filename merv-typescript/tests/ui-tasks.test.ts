@@ -19,7 +19,7 @@ const { RecordPicker, narrowed, stepped } = await import('../packages/ui/web/rec
 const { TaskChecks, useDelivery } = await import('../packages/ui/web/views/tasks.js');
 const { fileInput } = await import('../packages/ui/web/views/artifacts.js');
 const { Gate } = await import('../packages/ui/web/process.js');
-const { CreateResearch } = await import('../packages/ui/web/views/work.js');
+const { CreateResearch, chained } = await import('../packages/ui/web/views/work.js');
 const { CreateConsolidation, outputsOf } =
   await import('../packages/ui/web/views/research-programs.js');
 
@@ -799,4 +799,54 @@ test('a new consolidation opens on what its wave hands over, by name, and sends 
   assert.deepEqual(sent?.experimentIds, ['wf_exp']);
   assert.deepEqual(sent?.dependsOn, ['wf_wave']);
   assert.equal(sent?.workspace, 'none');
+});
+
+test('work is listed as its chains: what waits stands under what it waits on, newest chain first', () => {
+  const item = (id: string, at: string) => ({ id, at });
+  const dep = (id: string, settled: boolean) => ({ id, name: `Name ${id}`, settled });
+  const items = [
+    item('prep', '2026-09-01T00:00:00Z'),
+    item('exp', '2026-09-02T00:00:00Z'),
+    item('analysis', '2026-09-05T00:00:00Z'),
+    item('lone', '2026-09-03T00:00:00Z'),
+    item('both', '2026-09-04T00:00:00Z'),
+  ];
+  // Every edge has a task at one end: the experiment waits on prep, analysis on the experiment.
+  const tasks = [
+    {
+      id: 'prep',
+      title: 'Prepare',
+      workflow: { state: 'in_progress' },
+      dependencies: [],
+      dependents: [dep('exp', false)],
+    },
+    { id: 'analysis', dependencies: [dep('exp', false)], dependents: [] },
+    { id: 'both', dependencies: [dep('prep', true), dep('lone', false)], dependents: [] },
+    { id: 'prep2', dependencies: [], dependents: [] },
+    { id: 'lone', dependencies: [], dependents: [dep('both', false)] },
+  ];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = chained(items, tasks as any);
+  assert.deepEqual(
+    rows.map((row: { id: string; depth: number }) => [row.id, row.depth]),
+    [
+      ['prep', 0],
+      ['exp', 1],
+      ['analysis', 2],
+      ['lone', 0],
+      ['both', 1],
+    ],
+    'an old first step leads the chain still moving behind it; what waits on two follows the last',
+  );
+  const waits = Object.fromEntries(
+    rows.map((row: { id: string; waits: string[] }) => [row.id, row.waits]),
+  );
+  assert.deepEqual(waits.analysis, ['Name exp']);
+  assert.deepEqual(
+    waits.exp,
+    ['Prepare'],
+    'an experiment waits on the task before it until that task is done',
+  );
+  assert.deepEqual(waits.both, ['Name lone'], 'a settled prerequisite is not waited on');
+  assert.equal(rows.length, items.length, 'no row is ever lost');
 });

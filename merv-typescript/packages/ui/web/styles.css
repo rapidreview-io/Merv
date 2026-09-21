@@ -1383,6 +1383,33 @@ select.input,
 .table tr:last-child td {
   border-bottom: 0;
 }
+
+/* Work as the chains it is made of: a row steps in once for each thing it waits behind,
+   and an elbow in the hairline colour ties it to the row it follows. */
+.chain {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  padding-left: calc(var(--depth, 0) * var(--space-4));
+}
+.chain--under {
+  display: block;
+}
+.chain-waits {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.chain-elbow {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 6px 0 calc(var(--space-4) * -1 + 4px);
+  border-left: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+  border-bottom-left-radius: var(--radius-sm);
+  transform: translateY(-3px);
+}
 .row-link {
   display: block;
 }
@@ -3341,6 +3368,10 @@ a.tile:hover small {
   border-left: 1px solid var(--line);
 }
 .split .page-stage {
+  padding-inline: var(--space-5);
+}
+/* The cycle's title line keeps the list's own edge in the narrow pane. */
+.split .page-lede {
   padding-inline: var(--space-5);
 }
 
