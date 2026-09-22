@@ -108,6 +108,50 @@ export type CodeBaseState =
   | 'resolved'
   | 'suspended'
   | 'cancelled';
+/**
+ * Where the project check of one base stands. `unavailable` is deliberately not a verdict: it
+ * pairs with an operator's blocker, writes no receipt, and so never burns the one slot a real
+ * verdict needs later.
+ */
+export type CodeBaseCheckState =
+  'none' | 'queued' | 'running' | 'unavailable' | 'passed' | 'failed' | 'skipped';
+/** The write-once receipt of the one logical check of a base: what ran, where, and what it could not isolate. */
+export interface CodeBaseCheck {
+  state: 'passed' | 'failed' | 'skipped';
+  /** The command and machine as configured when the check started; null for a skip. */
+  spec: {
+    command: string;
+    timeoutSeconds: number;
+    image: { provider: string; offerId: string; snapshotId: string | null };
+  } | null;
+  receipt: {
+    sandboxId: string;
+    jobId: string;
+    /** Which source was shipped, so a reader can tell one base's tarball from another's. */
+    objectId: string;
+    exitCode: number | null;
+    timedOut: boolean;
+    startedAt: string | null;
+    finishedAt: string | null;
+    output: { head: string; tail: string; bytes: number };
+    environment: { provider: string; offerId: string; snapshotId: string | null } | null;
+    usage: { amount: string; currency: string } | null;
+    /**
+     * What the adapter could and could not guarantee, in its own words. Copied onto the
+     * record verbatim and never inferred by Code, because only the plugin that speaks to the
+     * service knows what that service does.
+     */
+    isolation: {
+      network: 'on';
+      sourceReadOnly: false;
+      imagePinned: 'offer';
+      facts: string[];
+    };
+  } | null;
+  /** Why a check was skipped, or what the machine could not do; null for an ordinary verdict. */
+  reason: string | null;
+  at: string;
+}
 export interface CodeBaseRecord {
   key: string;
   members: string[];
@@ -124,7 +168,10 @@ export interface CodeBaseRecord {
   quarantined: boolean;
   /** How the result was made: by this server's merge, or by the one task that resolved it. */
   result: { method: 'auto' | 'task'; commit: string; tree: string | null; engine: string } | null;
+  /** A failing project check is a conflict with no paths; its evidence is the one message. */
   conflict: { paths: string[]; messages: string } | null;
+  checkState: CodeBaseCheckState;
+  check: CodeBaseCheck | null;
   resolutionTaskId: string | null;
   resolutionError: string | null;
   attempts: number;

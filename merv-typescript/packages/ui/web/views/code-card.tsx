@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { CodeBaseControlInput, CodeBaseRecord, CodeUnit } from '@merv/contracts/code-units';
+import type {
+  CodeBaseCheck,
+  CodeBaseControlInput,
+  CodeBaseRecord,
+  CodeUnit,
+} from '@merv/contracts/code-units';
 import type { CodeProjectStatus } from '@merv/contracts/code';
 import type { CodePublication } from '@merv/contracts/types';
 import {
@@ -208,6 +213,34 @@ const Member = ({
   </span>
 );
 
+/** What one line can say about a verdict: how it ended, where, how long and what it cost. */
+function checkSaid(base: CodeBaseRecord): string {
+  const receipt = base.check?.receipt;
+  if (!receipt)
+    return base.checkState === 'unavailable'
+      ? `not run: ${base.blocker ?? 'no sandbox adapter'}`
+      : (base.check?.reason ?? 'waiting for a machine');
+  const ran =
+    receipt.startedAt && receipt.finishedAt
+      ? `${Math.max(0, Math.round((Date.parse(receipt.finishedAt) - Date.parse(receipt.startedAt)) / 1000))}s`
+      : 'unmeasured';
+  const machine = receipt.environment
+    ? `${receipt.environment.provider} ${receipt.environment.offerId}${receipt.environment.snapshotId ? ` · ${receipt.environment.snapshotId}` : ''}`
+    : 'an unrecorded machine';
+  const cost = receipt.usage ? ` · ${receipt.usage.amount} ${receipt.usage.currency}` : '';
+  return `${receipt.timedOut ? 'timed out' : `exit ${receipt.exitCode}`} · ${ran} · ${machine}${cost}`;
+}
+
+/** The head and tail the receipt kept, with the gap between them named rather than hidden. */
+function printed(receipt: NonNullable<CodeBaseCheck['receipt']>): string {
+  const kept = receipt.output.head.length + receipt.output.tail.length;
+  const gap =
+    receipt.output.bytes > kept ? `\n… ${receipt.output.bytes - kept} bytes omitted …\n` : '\n';
+  return (
+    `${receipt.output.head}${gap}${receipt.output.tail}`.trim() || 'The command printed nothing.'
+  );
+}
+
 function BaseBody({
   base,
   model,
@@ -256,6 +289,27 @@ function BaseBody({
         <span className="muted">
           {base.result.method === 'auto' ? 'merged automatically' : 'merged by a task'}
         </span>
+      </span>,
+    ],
+    // A check the base never reached says nothing; every other state is on the card, so a
+    // verdict and what the machine could not isolate are read in the same place.
+    base.checkState !== 'none' && [
+      'Project check',
+      <span className="cluster">
+        <StatusPill value={words(base.checkState)} />
+        {!!base.check?.spec && <code className="mono">{base.check.spec.command}</code>}
+        <span className="muted">{checkSaid(base)}</span>
+      </span>,
+    ],
+    !!base.check?.receipt && [
+      'Check output',
+      <span className="stack stack--tight">
+        <pre className="mono code-check-output">{printed(base.check.receipt)}</pre>
+        {base.check.receipt.isolation.facts.map((fact) => (
+          <span className="muted" key={fact}>
+            {fact}
+          </span>
+        ))}
       </span>,
     ],
     !!base.conflict?.paths.length && [

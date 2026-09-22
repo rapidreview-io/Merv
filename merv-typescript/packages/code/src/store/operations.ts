@@ -741,6 +741,8 @@ export class CodeStore {
         operationId: id,
         denyGlobs: limits.denyGlobs.length,
         secretExemptGlobs: limits.secretExemptGlobs.length,
+        // Presence only: an operator's command text is configuration, not an event payload.
+        check: limits.check ? 'configured' : 'none',
       });
       return limits;
     });
@@ -1090,6 +1092,7 @@ export class CodeStore {
       format: 1,
       denyGlobs: stored.denyGlobs ?? [],
       secretExemptGlobs: stored.secretExemptGlobs ?? [],
+      check: stored.check ?? null,
     };
   }
 

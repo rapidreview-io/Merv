@@ -6,7 +6,7 @@ It implements the owner's ten decisions recorded below and supersedes the first 
 
 ## Implementation status
 
-This release deploys the automatic-base, shared-repository and merge work together (S1–S3). None has been deployed before it. S4-1 adds executable workspace declarations. S4-2 and S4-2b implement frozen consolidation candidates, ancestry decisions, exact review binding, a retained-frontier Code workspace and consolidation acceptance. S4-3 implements reviewed PR publication and stale-base rounds on unreleased consolidation@5. Live GitHub enforcement remains a mandatory release check; S5 remains unimplemented. Operator procedures are in [CODE_OPERATIONS.md](CODE_OPERATIONS.md), and checkout and capability rules in [WORKSPACES.md](WORKSPACES.md) and [MACHINE_RUNNER.md](MACHINE_RUNNER.md).
+This release deploys the automatic-base, shared-repository and merge work together (S1–S3). None has been deployed before it. S4-1 adds executable workspace declarations. S4-2 and S4-2b implement frozen consolidation candidates, ancestry decisions, exact review binding, a retained-frontier Code workspace and consolidation acceptance. S4-3 implements reviewed PR publication and stale-base rounds on unreleased consolidation@5. Live GitHub enforcement remains a mandatory release check. S5 implements project checks on the merv-sandboxes adapter (`code.check.vm.v1`); the rest of S5 — repository rebinding, storage migration and separate publication identities — remains unimplemented. Operator procedures are in [CODE_OPERATIONS.md](CODE_OPERATIONS.md), and checkout and capability rules in [WORKSPACES.md](WORKSPACES.md) and [MACHINE_RUNNER.md](MACHINE_RUNNER.md).
 
 - **Versions and rollout.** New Git work without `baseTaskId` stays on production's `task@3` / `experiment@6` until Code hosts the project. Hosted work uses `task@5` / `experiment@8`, whose policies name `code.v2`; service-owned resolution uses `task@6`. Explicit `baseTaskId` keeps `task@4` / `experiment@7`. Published definitions, policies and recipes remain unchanged. No runner-local automatic-base version ships.
 - **Acceptance.** Every Task and Experiment workflow version records its immutable acceptance inside the successful review transaction whenever Code is loaded. Code-less successes record no commit. Legacy Git acceptances retain `storage: legacy-local`; importing a project does not change an in-flight unit's capture contract. A unit with a writer generation requires an admitted receipt and records `storage: code`. Legacy experiment reviews may have `reviewAttached: false`, preserving their published review rule.
@@ -45,8 +45,8 @@ No automated test uses a real GitHub. Before release, verify read-only import to
    key, with resolution rounds on that one task.
 5. Overlapping sets are reused on the fly: every merge has two parents, and every intermediate union is its own record.
 6. A clean auto-merge is not proof the code works: an optional project check command, a failing check treated as a
-   conflict, and every base record saying how it was made. (The check command ships with the sandbox in S5; it never
-   runs on the server host.)
+   conflict, and every base record saying how it was made. (S5 ships the command on a rented machine through
+   merv-sandboxes; it never runs on the server host.)
 7. A unit's work is on the shared remote after every session end, so another machine can resume or review. The shared
    remote is Code's own repository; GitHub is its asynchronous mirror and the place `main` lives.
 8. Large files never enter Git.
@@ -305,11 +305,13 @@ Repository code is not intentionally executed, but Git still parses hostile inpu
 
 **Project checks**
 
-Checks remain disabled until S5 supplies the OCI sandbox adapter. A configured command without that adapter returns `code_check_unavailable`; never execute it on the Code host.
+Checks ship in S5 on the merv-sandboxes adapter, which advertises `code.check.vm.v1`. `code.repository.configure` takes `check` on every call: null turns verification off, and a specification names the command, its timeout and the machine (`provider`, `offerId` and an optional `snapshotId`). A check never runs on the Code host. A merged base is shipped as `git archive` of the merge commit — the tree only, no `.git` — to the service's object store, a machine is rented from the named offer, one job runs the command inside a wrapper Merv generates, and the machine and the source are both deleted when the verdict is in.
 
-The later adapter advertises `code.check.oci.v1`, uses a pinned image, unprivileged execution, no network/secrets/host sockets, read-only source, bounded scratch, process-tree termination, and measured usage.
+Under the owner ruling of 2026-09-22 this adapter is a VM adapter, not an OCI one, and the receipt says so rather than implying otherwise. It supplies an enforced timeout with process-tree termination, bounded recorded output, measured cost, and no Merv credential or environment on the machine. It does not supply four of the properties an OCI adapter would: the check has outbound network access (there is no egress control, and the machine needs the network to fetch its source), the source is a writable copy rather than a read-only mount, the command runs as the machine's login user with no unprivileged-execution control, and `pinned` here means the recorded `(provider, offerId, snapshotId)` rather than an image digest. Scratch is the offer's whole disk. Every receipt carries `isolation` — `{network: "on", sourceReadOnly: false, imagePinned: "offer"}` and the sentences behind them — and the base card shows them beside the verdict.
 
-There is one logical automatic check per base record. Recorded failure requires resolution; it does not trigger another automatic merge/check loop. Resolution rounds supply reviewed verification evidence. A crash before durable check output may require physical re-execution.
+The one off-origin request, the upload of a check's source, is gated by a `storageOrigins` allowlist in the sandboxes plugin's configuration. Without it a configured command records `code_check_unavailable` and the base waits for an operator at `blocked_infra`; it is never sealed as verified, and no resolution task is created, because there is nothing for a worker to resolve.
+
+There is one logical automatic check per base record. Recorded failure requires resolution; it does not trigger another automatic merge/check loop. A failing check is recorded as a conflict with no paths, and the same one reviewed task that resolves a Git conflict resolves it; the auto-merge ref is dropped first, so the base is byte-for-byte the shape a Git-conflicted base is. Resolution rounds supply reviewed verification evidence: no automatic check runs on the acceptance path, and the verdict of the automatic check is kept forever beside `result.method`. A crash before durable check output may require physical re-execution; within one execution epoch the step repeats under the same idempotency key and finds the same object, machine and job, including an object the store has already taken the bytes of, whose replayed answer offers no parts and is read as the resume it is.
 
 **6. Base DAG, resolution, and recovery**
 
@@ -661,11 +663,11 @@ S1–S3 ship together as described in Implementation status: hosted automatic ba
 
 **S5 — hardening**
 
-- **Versions:** no workflow changes merely for storage/security implementation; `code.check.oci.v1` and new recipes only where exposed behavior changes.
-- **Tables:** additive binding/storage/check metadata; avoid speculative tables until that implementation is selected.
-- **Tools:** check configuration, audit verification, repository rebind, storage migration, legacy retirement.
+- **Versions:** no workflow changes merely for storage/security implementation; project checks add no workflow version, execution policy or recipe. New recipes only where exposed behavior changes.
+- **Tables:** additive check columns on `code_bases` (migration 2, both dialects: `check_state`, `check_job_json`, `check_json`, with the verdict/receipt pairing, the seal rule and write-once enforced in the database); the specification itself lives in the existing `code_projects.limits_json`. Binding and storage metadata remain to be added.
+- **Tools:** no tool is added for checks — `code.repository.configure` takes the specification and `code.base.retry` is the recheck. Audit verification, repository rebind, storage migration and legacy retirement remain.
 - **UI:** sandbox availability, audit completeness, backup/storage health, migration/rebind progress.
-- **Tests:** sandbox escape boundaries and termination; verified object transfer; same URL/different repository; interrupted rebind; storage migration/restore; old session drain.
+- **Tests:** the check state machine, its sealing and its reservation against a scripted adapter, and the route sequence against a recorded transport. Sandbox escape boundaries and termination are not testable against anything reachable without a cloud account and are not attempted here. Verified object transfer; same URL/different repository; interrupted rebind; storage migration/restore; old session drain remain.
 - **Real GitHub:** separate Transport/Publisher identities, full auditing identity, ruleset bypass tests, rebinding verification.
 
 Repository rebinding remains unavailable before S5; changing repository identity returns `code_rebind_required`. S5 transfers and verifies authoritative objects/refs before activating a new binding. Never adopt a replaced repository merely because its URL matches.
@@ -700,6 +702,6 @@ Repository rebinding remains unavailable before S5; changing repository identity
 - **Backup recovery point:** recommend daily off-host consistent backups plus continuous asynchronous GitHub mirroring; choose a tighter schedule if losing recent acknowledged work after server-disk loss is unacceptable.
 - **Initial limits:** recommend the transfer limits above, three automated resolution rounds, and five transient retries before visible infrastructure suspension.
 - **Incomplete GitHub auditing:** recommend accepting the visible warning initially, while requiring the live PR enforcement tests and refusing a known bypass failure.
-- **Project checks:** recommend leaving them disabled until the verified OCI adapter ships. No host-shell fallback.
+- **Project checks:** ruled 2026-09-22 — network-on VM checks now, on `code.check.vm.v1`, with every receipt stating what the machine could not isolate. No host-shell fallback. No per-project check spend cap: project capacity and sponsoring-root budgets bound it, and each check is charged as its own line.
 
 **Residual risks:** The lean version concentrates object durability and Git parsing in one server deployment. A disk failure can lose work newer than the available backup/mirror, Git parser vulnerabilities share a larger failure boundary with Code, and one App/server compromise can reach publication authority. Incomplete ruleset visibility leaves reliance on owner administration and tested effective behavior; the small secret scanner misses credentials outside its patterns. These are explicit reductions in redundancy and isolation, not weakened writer fences, review independence, immutable acceptance, or base-result uniqueness.

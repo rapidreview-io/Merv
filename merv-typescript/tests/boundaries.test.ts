@@ -103,7 +103,9 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
-  code: ['reviews'],
+  // Optional: a deployment may run no sandboxes at all, and a project may have no
+  // connection. The edge runs Code -> sandboxes only, for the project check of a base.
+  code: ['reviews', 'sandboxes'],
   consolidation: ['code'],
   experiments: ['code'],
   research: [

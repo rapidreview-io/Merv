@@ -170,6 +170,7 @@ for (const backend of backends) {
         f.code.configureRepository(producer, {
           denyGlobs: [],
           secretExemptGlobs: [],
+          check: null,
           requestId: 'c',
         }),
         { status: 403 },
@@ -500,9 +501,20 @@ for (const backend of backends) {
         await f.code.configureRepository(f.admin, {
           denyGlobs: ['secrets/**'],
           secretExemptGlobs: [],
+          check: null,
           requestId: 'limits',
         }),
-        { format: 1, denyGlobs: ['secrets/**'], secretExemptGlobs: [] },
+        { format: 1, denyGlobs: ['secrets/**'], secretExemptGlobs: [], check: null },
+      );
+      // A call that leaves the check out is refused rather than quietly unconfiguring it:
+      // the lists here replace what was set, and verification must never go off by omission.
+      await assert.rejects(
+        f.code.configureRepository(f.admin, {
+          denyGlobs: ['secrets/**'],
+          secretExemptGlobs: [],
+          requestId: 'limits-unstated',
+        } as never),
+        { code: 'invalid_code_input' },
       );
       const refused = await f.deliver(source.bundle(leaked));
       assert.deepEqual([refused.status, refused.error], ['failed', 'code_import_rejected']);
@@ -533,20 +545,35 @@ for (const backend of backends) {
         f.code.configureRepository(f.admin, {
           denyGlobs: [],
           secretExemptGlobs: [],
+          check: null,
           requestId: 'limits',
         }),
         { code: 'request_conflict' },
       );
+      const checked = {
+        command: 'make test',
+        timeoutSeconds: 600,
+        image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
+      };
       await f.code.configureRepository(f.admin, {
         denyGlobs: [],
         secretExemptGlobs: ['fixtures/**'],
+        check: checked,
         requestId: 'limits-2',
       });
       assert.deepEqual((await f.code.status(f.admin)).store!.limits, {
         format: 1,
         denyGlobs: [],
         secretExemptGlobs: ['fixtures/**'],
+        check: checked,
       });
+      await f.code.configureRepository(f.admin, {
+        denyGlobs: [],
+        secretExemptGlobs: ['fixtures/**'],
+        check: null,
+        requestId: 'limits-3',
+      });
+      assert.equal((await f.code.status(f.admin)).store!.limits.check, null);
       assert.equal((await f.deliver(source.bundle(leaked), 1024, 'import-1')).status, 'failed');
       assert.equal((await f.deliver(source.bundle(leaked), 1024, 'exempted')).status, 'completed');
 

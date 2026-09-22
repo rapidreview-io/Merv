@@ -184,7 +184,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
       tips: [],
       diskBytes: 0,
       quotaBytes: 10 * 1024 * 1024 * 1024,
-      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
     },
     operations: [],
     mirror: {

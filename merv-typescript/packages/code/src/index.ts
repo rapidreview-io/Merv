@@ -58,6 +58,11 @@ export const codePlugin = {
       ctx.inject(['reviews'], (ctx) => {
         ctx.effect(() => service.bindReviews(ctx.reviews));
       });
+      // Where a deployment runs sandboxes, a project check reaches them through this one
+      // capability; no tool does, so no leased worker can ever start or stop a machine.
+      ctx.inject(['sandboxes'], (ctx) => {
+        ctx.effect(() => service.bindChecks(ctx.sandboxes));
+      });
       // The cursor starts now because the start-up pass below covers everything before it;
       // afterwards the consumer catches up on whatever ended while Code was unloaded.
       yield await ctx.domainEvents.subscribe({

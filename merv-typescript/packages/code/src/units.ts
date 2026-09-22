@@ -38,6 +38,7 @@ import type { CodeBaseRecord } from '@merv/contracts';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
 import { baseKey } from './base-plan.js';
+import { checkBriefSections, checkResolutionCheck } from './base-check.js';
 import { acceptedRef, workBranch } from './store/refs.js';
 
 interface ProjectRow {
@@ -1260,7 +1261,9 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
               : waiting
                 ? `The ${commits.size} commits this unit’s dependencies were accepted with are being merged into one base`
                 : conflicted
-                  ? `The commits this unit’s dependencies were accepted with do not merge cleanly: ${(base?.conflict?.paths ?? []).slice(0, 5).join(', ')}`
+                  ? base?.conflict?.paths.length
+                    ? `The commits this unit’s dependencies were accepted with do not merge cleanly: ${base.conflict.paths.slice(0, 5).join(', ')}`
+                    : 'The commits this unit’s dependencies were accepted with merged cleanly, and the project check of that merge failed'
                   : `The base of this unit could not be made (${base?.state})`,
             status: 409,
             next: waiting
@@ -1438,8 +1441,16 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
             baseReference: left,
             checks: [
               `The first completed merge on the task branch must have exactly two parents: the current checkpoint descending from ${left}, and frozen right input ${right}, in that order. Later rounds add ordinary corrective commits.`,
-              'Resolve every conflicting path and leave no conflict markers.',
-              'Run the project build and tests as far as this workspace permits; retain commands, results, and any checks that could not run as review evidence.',
+              // A base whose check failed has no conflicting path to resolve, so asking for
+              // that would contradict the brief's own Project check section three lines down.
+              checkBriefSections(base)
+                ? 'Leave no conflict markers.'
+                : 'Resolve every conflicting path and leave no conflict markers.',
+              // A base whose check failed merged cleanly, so what this round owes is the
+              // failing command passing, not paths resolved. That sentence is where
+              // "resolution rounds supply reviewed verification evidence" reaches a worker.
+              checkResolutionCheck(base) ??
+                'Run the project build and tests as far as this workspace permits; retain commands, results, and any checks that could not run as review evidence.',
             ],
           },
           tx,
@@ -1520,9 +1531,22 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       const label = first.length > 80 ? `${first.slice(0, 79)}…` : first;
       return `‘${label}’${items.length > 1 ? ` and ${items.length - 1} more` : ''}`;
     };
+    // A failing project check is a conflict with no paths: every heading and the opening
+    // sentence a worker reads first would lie, so the brief says what has to pass instead.
+    const checked = checkBriefSections(base);
+    const sections = checked ?? [
+      `Conflicting paths:\n${bounded((base.conflict?.paths ?? []).join('\n'), 4000)}`,
+      `Git messages:\n${bounded(base.conflict?.messages ?? '', 4000)}`,
+    ];
     return {
-      title: `Merge ${titleSide(base.left)} with ${titleSide(base.right)}`,
-      goal: `Resolve conflicts between ${titleSide(base.left)} and ${titleSide(base.right)}.\n\nLeft input ${left} (the workspace starts here):\n${bounded(side(base.left), 8000)}\n\nRight input ${right} (frozen):\n${bounded(side(base.right), 8000)}\n\nConflicting paths:\n${bounded((base.conflict?.paths ?? []).join('\n'), 4000)}\n\nUse code.merge operation start on the clean initial checkout; wait for code.operation. The right input is frozen and never follows a branch. Resolve the files, retain conflict decisions and test evidence, then use code.merge operation complete. code.commit and final captures save single-parent WIP before completion. After interruption on any machine, continue from the downloaded checkpoint and its pendingMerge metadata; do not restart over saved WIP. After the first completed merge, later rounds use code.commit for corrections on this same branch. Retain the operation receipt, parent evidence, and commands and results for independent review.\n\nGit messages:\n${bounded(base.conflict?.messages ?? '', 4000)}`,
+      title: checked
+        ? `Make the project check pass on ${titleSide(base.left)} with ${titleSide(base.right)}`
+        : `Merge ${titleSide(base.left)} with ${titleSide(base.right)}`,
+      goal: `${
+        checked
+          ? `The merge of ${titleSide(base.left)} and ${titleSide(base.right)} is clean; its project check failed.`
+          : `Resolve conflicts between ${titleSide(base.left)} and ${titleSide(base.right)}.`
+      }\n\nLeft input ${left} (the workspace starts here):\n${bounded(side(base.left), 8000)}\n\nRight input ${right} (frozen):\n${bounded(side(base.right), 8000)}\n\n${sections[0]}\n\nUse code.merge operation start on the clean initial checkout; wait for code.operation. The right input is frozen and never follows a branch. ${checked ? 'Make the command pass on the merged tree, retain its commands and results as evidence' : 'Resolve the files, retain conflict decisions and test evidence'}, then use code.merge operation complete. code.commit and final captures save single-parent WIP before completion. After interruption on any machine, continue from the downloaded checkpoint and its pendingMerge metadata; do not restart over saved WIP. After the first completed merge, later rounds use code.commit for corrections on this same branch. Retain the operation receipt, parent evidence, and commands and results for independent review.\n\n${sections[1]}`,
     };
   }
 

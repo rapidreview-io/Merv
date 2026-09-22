@@ -311,6 +311,18 @@ export class CodeService extends CodeCommandService implements Code {
       if (this.unitStore.reviews === reviews) this.unitStore.reviews = undefined;
     };
   }
+  /**
+   * The adapter that runs a project check. A deployment with no repository root keeps no
+   * bases, so there is nothing to check and nothing to unbind.
+   */
+  bindChecks(sandboxes: import('@merv/sandboxes/types').Sandboxes): () => void {
+    const bases = this.baseStore;
+    if (!bases) return () => {};
+    bases.checks = sandboxes.checks;
+    return () => {
+      if (bases.checks === sandboxes.checks) bases.checks = undefined;
+    };
+  }
   bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void {
     this.unitStore.resolutionTasks = provider;
     void this.unitStore.reconcileAll().catch(() => undefined);

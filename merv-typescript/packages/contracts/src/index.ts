@@ -37,7 +37,10 @@ export type { CodeTransportInput, CodeTransportGrant } from './code-transport.js
 export {
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,
+  CODE_CHECK_SOURCE_MAX_BYTES,
+  CODE_CHECK_SLACK_SECONDS,
   codeFindingSchema,
+  codeCheckSpecSchema,
   codeStoreLimitsSchema,
   codeRepositoryConfigureInputSchema,
   codeRepositoryImportInputSchema,
@@ -53,6 +56,7 @@ export {
 } from './code-store.js';
 export type {
   CodeFinding,
+  CodeCheckSpec,
   CodeStoreLimits,
   CodeRepositoryConfigureInput,
   CodeRepositoryImportInput,
@@ -110,6 +114,8 @@ export type {
   CodeUnitAcceptance,
   CodeBasePin,
   CodeBaseRecord,
+  CodeBaseCheck,
+  CodeBaseCheckState,
   CodeBaseControlInput,
   CodeBaseState,
   CodeBaseStatus,

@@ -4270,6 +4270,15 @@ del.cut {
 .stack--tight {
   gap: 2px;
 }
+/* What a project check printed is evidence: it keeps its own line breaks, and a long run
+   of output scrolls inside the row rather than widening the card. */
+.code-check-output {
+  margin: 0;
+  max-height: 16em;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: var(--text-sm);
+}
 /* What Git holds for a record it cannot be reused from wears the refusal, so the
    section says it with its colour rather than with a second sentence. */
 .code-refused {
