@@ -70,6 +70,10 @@ export class PublicationHost {
       if (this.owner === owner) this.owner = undefined;
     };
   }
+  /** No owner loaded means no consolidation can be holding anything, which is the honest answer. */
+  async frozen(projectId: string, tx: Transaction): Promise<string[]> {
+    return (await this.owner?.frozen(projectId, tx)) ?? [];
+  }
   private requireOwner() {
     check(
       this.owner,

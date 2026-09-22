@@ -157,6 +157,23 @@ function publicationBlockers(publication: CodeUnitPublication): WorkflowProvided
   }[publication.state];
   return [{ key: 'publication', status: 409, related, ...said }];
 }
+/**
+ * Whether an acceptance made under `repositoryId` belongs to this project: the repository it is
+ * bound to now, or any it was bound to before a verified rebind. A pre-rebind acceptance that
+ * passes here goes on to the storage gate below, which a project-keyed import receipt satisfies
+ * — safe only because a rebind proves Code's own repository holds every commit the project
+ * retained as authoritative before it writes the new binding. Derivation and consolidation's
+ * candidate freeze ask the same question, so they ask it here: an acceptance a base may build
+ * on is one a consolidation may carry to main.
+ */
+export function bindsRepository(
+  bound: { repository_id: string; binding_json: string },
+  repositoryId: string,
+): boolean {
+  if (bound.repository_id === repositoryId) return true;
+  const binding = JSON.parse(bound.binding_json) as { previous?: { repositoryId: string }[] };
+  return !!binding.previous?.some((entry) => entry.repositoryId === repositoryId);
+}
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
 type Derived =
   | { status: 'waiting' }
@@ -371,6 +388,36 @@ ALTER TABLE code_units ADD COLUMN publication_id TEXT;
 CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units
 WHEN (OLD.publishes_at IS NOT NULL AND NEW.publishes_at IS NOT OLD.publishes_at) OR (OLD.publication_id IS NOT NULL AND NEW.publication_id IS NOT OLD.publication_id)
 BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publication is immutable'); END;
+`,
+      },
+      {
+        // The binding is still not something a writer may edit; it is now something exactly one
+        // operation may. Naming a prepared rebind would not be enough on its own: it would let
+        // any writer put any value in repository_id, and would leave binding_json rewritable in
+        // that window — including rewriting `previous`, the list that keeps every pre-rebind
+        // acceptance valid at derive(), and a forged entry there is how an acceptance stamped
+        // with a foreign repository would pass that gate. So the value written must be the one
+        // the operation was journalled with (payload_json is immutable under
+        // code_operations_identity), and the new lineage must be the old one exactly, with one
+        // entry appended that names the repository being left. A subquery in a WHEN clause is
+        // already how code_units_generation_open reads code_operations, in version 1.
+        version: 4,
+        postgres: postgresMigrations[4],
+        sql: `
+DROP TRIGGER code_projects_binding;
+CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
+  WHEN NEW.project_id IS NOT OLD.project_id OR NEW.mode IS NOT OLD.mode
+    OR ((NEW.repository_id IS NOT OLD.repository_id OR NEW.binding_json IS NOT OLD.binding_json) AND NOT EXISTS (
+      SELECT 1 FROM code_operations
+      WHERE id=json_extract(NEW.binding_json,'$.operationId') AND project_id=OLD.project_id
+        AND kind='rebind' AND status='prepared'
+        AND json_extract(payload_json,'$.repositoryId')=NEW.repository_id
+    ))
+    OR (NEW.repository_id IS NOT OLD.repository_id AND (
+      json_extract(NEW.binding_json,'$.previous[#-1].repositoryId') IS NOT OLD.repository_id
+      OR json_remove(json_extract(NEW.binding_json,'$.previous'),'$[#-1]') IS NOT COALESCE(json_extract(OLD.binding_json,'$.previous'),json_array())
+    ))
+  BEGIN SELECT RAISE(ABORT,'Code repository binding is immutable outside its own rebind operation'); END;
 `,
       },
     ]);
@@ -1091,7 +1138,11 @@ BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publicatio
           'This request id was used with different input',
           409,
         );
-        return JSON.parse(previous.result_json) as CodeProjectBinding;
+        // Every bind journalled before the lineage existed stored a result without `previous`,
+        // and the contract now says the field is always there: the journal stays byte-identical
+        // and the answer is normalised on the way out.
+        const replayed = JSON.parse(previous.result_json) as CodeProjectBinding;
+        return { ...replayed, previous: replayed.previous ?? [] };
       }
       const operationId = newId('cop'),
         at = now();
@@ -1125,7 +1176,7 @@ BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publicatio
         check(
           bound.repositoryId === input.repositoryId,
           'code_rebind_required',
-          'This project is bound to another repository, and rebinding is unavailable',
+          'This project is bound to another repository; code.repository.rebind changes the binding after verifying that Code holds the project’s history',
           409,
         );
         check(
@@ -1303,8 +1354,8 @@ BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publicatio
       related: related.map((item) => ({ kind: 'workflow', id: item.id, label: item.name })),
     });
     // Only hosted workflow versions declare units; the binding and imported store are retained.
-    const bound = (await tx.get<Pick<ProjectRow, 'repository_id' | 'main_json'>>(
-      'SELECT repository_id,main_json FROM code_projects WHERE project_id=?',
+    const bound = (await tx.get<Pick<ProjectRow, 'repository_id' | 'binding_json' | 'main_json'>>(
+      'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
       projectId,
     ))!;
     const main = JSON.parse(bound.main_json) as {
@@ -1365,7 +1416,7 @@ BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publicatio
             );
         continue;
       }
-      if (!intact || !accepted?.code || accepted.code.repositoryId !== bound.repository_id) {
+      if (!intact || !accepted?.code || !bindsRepository(bound, accepted.code.repositoryId)) {
         blockers.push(
           pending(
             `acceptance:${node.id}`,
@@ -2042,13 +2093,18 @@ BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publicatio
       projectId,
     );
     if (!row) return null;
-    const binding = JSON.parse(row.binding_json) as { boundBy: string; boundAt: string };
+    const binding = JSON.parse(row.binding_json) as {
+      boundBy: string;
+      boundAt: string;
+      previous?: CodeProjectBinding['previous'];
+    };
     const main = JSON.parse(row.main_json) as CodeProjectBinding['main'];
     return {
       mode: 'local',
       repositoryId: row.repository_id,
       boundBy: binding.boundBy,
       boundAt: binding.boundAt,
+      previous: binding.previous ?? [],
       main: {
         oid: main.oid,
         admittedBy: main.admittedBy,

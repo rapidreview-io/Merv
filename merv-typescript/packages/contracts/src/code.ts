@@ -156,9 +156,26 @@ export interface CodeProjectBinding {
   /** `stored` says Code's own repository holds that commit, so work can be prepared from it. */
   main: { oid: string; admittedBy: string; admittedAt: string; stored: boolean };
   /**
+   * The repositories this project was bound to before, oldest first; empty for a project that
+   * was never rebound. The acceptances and pins made under a previous repository name it by
+   * value and are immutable, so they can never be restated: the binding has to retain every
+   * repository it has been bound to for them to stay readable as this project's own.
+   */
+  previous: {
+    repositoryId: string;
+    boundBy: string;
+    boundAt: string;
+    reboundBy: string;
+    reboundAt: string;
+    reason: string;
+    operationId: string;
+  }[];
+  /**
    * `legacy-local`: accepted code stays in the runner's repository and the server claims no
    * durability for it. `code`: the project was imported, and Code's repository is where new
-   * work is kept. A project never goes back.
+   * work is kept. Durability never goes back. The repository identity may change, once per
+   * verified rebind; it is a Code-side opaque name and is not the linked GitHub repository,
+   * which `code_github` holds and which a rebind never touches.
    */
   durability: 'legacy-local' | 'code';
 }

@@ -194,6 +194,9 @@ export async function codeStoreFixture(
       return await scope.caller(principal, admin.projectId);
     },
     paths,
+    /** The same paths for any other project this server keeps a repository for. */
+    pathsOf: (id: string) =>
+      new CodeRepositories({ root, quotaBytes: 0, reservedFreeBytes: 0 }).paths(id),
     open,
     get code() {
       return code!;

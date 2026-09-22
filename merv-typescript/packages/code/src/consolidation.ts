@@ -19,6 +19,7 @@ import type {
 } from './types.js';
 import type { CodeRepositories } from './store/repository.js';
 import { unitContributors } from './provenance.js';
+import { bindsRepository } from './units.js';
 import type { CodeBaseService } from './bases.js';
 
 interface Accepted {
@@ -61,10 +62,11 @@ export class CodeConsolidation {
     await this.scope.require(caller, 'write', tx);
     const project = await tx.get<{
       repository_id: string;
+      binding_json: string;
       main_json: string;
       store_json: string | null;
     }>(
-      'SELECT repository_id,main_json,store_json FROM code_projects WHERE project_id=?',
+      'SELECT repository_id,binding_json,main_json,store_json FROM code_projects WHERE project_id=?',
       caller.projectId,
     );
     const main = project && JSON.parse(project.main_json);
@@ -110,10 +112,12 @@ export class CodeConsolidation {
         'Candidate acceptance does not match its successful workflow',
         409,
       );
+      // A rebind retains every repository the project has been bound to and proves Code holds
+      // the commits accepted under each, so work accepted before one still reaches main.
       check(
-        !accepted.code || accepted.code.repositoryId === project.repository_id,
+        !accepted.code || bindsRepository(project, accepted.code.repositoryId),
         'code_candidate_invalid',
-        'Candidate belongs to a different repository',
+        'Candidate belongs to a repository this project has never been bound to',
         409,
       );
       candidates.push({
@@ -146,6 +150,12 @@ export class CodeConsolidation {
       'The exact frozen candidate set is required',
       409,
     );
+    // The set is hash-exact and each acceptance is re-read by its own hash, so the repository
+    // an acceptance names is asked of the binding — the same lineage the freeze admitted it by.
+    const bound = (await tx.get<{ repository_id: string; binding_json: string }>(
+      'SELECT repository_id,binding_json FROM code_projects WHERE project_id=?',
+      projectId,
+    ))!;
     for (const candidate of frozen.candidates) {
       const row = await tx.get<Accepted>(
         `SELECT ${columns} FROM code_units WHERE project_id=? AND unit_id=? AND acceptance_json IS NOT NULL`,
@@ -161,7 +171,7 @@ export class CodeConsolidation {
       const accepted = this.acceptance(row);
       check(
         (accepted.code?.commit ?? null) === candidate.reference &&
-          (!accepted.code || accepted.code.repositoryId === frozen.repositoryId),
+          (!accepted.code || bindsRepository(bound, accepted.code.repositoryId)),
         'code_candidate_invalid',
         'Frozen candidate reference does not match its acceptance',
         409,

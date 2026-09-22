@@ -62,6 +62,12 @@ export interface CodeDecisionManifest {
 }
 export interface PublicationOwner {
   check(caller: Caller, instanceId: string, reference: string, tx: Transaction): Promise<void>;
+  /**
+   * The consolidations of this project that still hold a frozen candidate set. The set names
+   * the repository it froze under and is re-validated against that same frozen value, so only
+   * its owner can say whether one is outstanding.
+   */
+  frozen(projectId: string, tx: Transaction): Promise<string[]>;
   apply(
     caller: Caller,
     instanceId: string,
@@ -261,6 +267,11 @@ export interface CodeRepositoryControls {
   importRepository(
     caller: Caller,
     input: import('@merv/contracts').CodeRepositoryImportInput,
+  ): Promise<import('@merv/contracts').CodeStoreOperation>;
+  /** Change the repository identity of a hosted project, after proving Code holds its history. */
+  rebindRepository(
+    caller: Caller,
+    input: import('@merv/contracts').CodeRepositoryRebindInput,
   ): Promise<import('@merv/contracts').CodeStoreOperation>;
   configureRepository(
     caller: Caller,

@@ -290,14 +290,54 @@ export class CodeRepositories {
     return format;
   }
 
-  /** Refuse a directory Code did not make, or one whose configuration was changed beneath it. */
-  async validate(projectId: string, repositoryId: string): Promise<void> {
-    if (this.validated.has(projectId)) return;
+  /**
+   * Record that this directory now also serves `repositoryId`, and answer with every identity
+   * it serves, oldest first. It runs before the activation transaction: a crash between the two
+   * leaves the new identity accepted here while the row still names the old one, which breaks
+   * nothing and replays, whereas appending afterwards would leave every Git operation of the
+   * project failing validate() with code_repository_foreign.
+   *
+   * `lineage` is what the binding row itself holds, oldest first and ending in the repository
+   * the project is bound to now. The written list is built from it rather than from the file,
+   * so an identity left behind by a rebind that never reached its transaction is pruned by the
+   * next one that does; and the directory is refused unless it already serves the identity the
+   * row names, which is the one thing the format-1 marker proved.
+   */
+  async rebind(projectId: string, lineage: string[], repositoryId: string): Promise<string[]> {
     const paths = this.paths(projectId);
-    const unsafe = (message: string) => new MervError('code_repository_unsafe', message, 500);
-    let marker: unknown;
+    const held = await this.marker(projectId);
+    check(
+      held.projectId === projectId && held.repositoryIds.includes(lineage.at(-1)!),
+      'code_repository_foreign',
+      'The repository directory belongs to another project or does not serve this binding',
+      500,
+    );
+    const repositoryIds = lineage.includes(repositoryId) ? lineage : [...lineage, repositoryId];
+    const next = `${paths.marker}.next`;
+    const handle = await open(next, 'w', 0o600);
     try {
-      marker = JSON.parse(await readFile(paths.marker, 'utf8'));
+      await handle.writeFile(JSON.stringify({ format: 2, projectId, repositoryIds }));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(next, paths.marker);
+    await syncDirectory(paths.directory);
+    // validate() answers from this memo for the life of the process, so the next Git operation
+    // of this project would otherwise never read the identity just written.
+    this.validated.delete(projectId);
+    return repositoryIds;
+  }
+
+  /**
+   * The identities the marker file says this directory serves, in the order it gained them.
+   * Format 1 is the marker every project that was never rebound still carries, and it is read
+   * back byte-for-byte as `ensure` wrote it; format 2 is the append-only list a rebind writes.
+   */
+  private async marker(projectId: string): Promise<{ projectId: string; repositoryIds: string[] }> {
+    let held: unknown;
+    try {
+      held = JSON.parse(await readFile(this.paths(projectId).marker, 'utf8'));
     } catch {
       throw new MervError(
         'code_repository_foreign',
@@ -305,8 +345,47 @@ export class CodeRepositories {
         500,
       );
     }
+    const body = held as { format?: unknown; projectId?: unknown; repositoryId?: unknown };
+    const foreign = 'The repository directory carries a Code identity this server cannot read';
+    if (body.format === 1) {
+      check(
+        JSON.stringify(held) ===
+          JSON.stringify({
+            format: 1,
+            projectId: body.projectId,
+            repositoryId: body.repositoryId,
+          }) && typeof body.repositoryId === 'string',
+        'code_repository_foreign',
+        foreign,
+        500,
+      );
+      return { projectId: String(body.projectId), repositoryIds: [body.repositoryId as string] };
+    }
+    const listed = held as { format?: unknown; projectId?: unknown; repositoryIds?: unknown };
     check(
-      JSON.stringify(marker) === JSON.stringify({ format: 1, projectId, repositoryId }),
+      listed.format === 2 &&
+        typeof listed.projectId === 'string' &&
+        Array.isArray(listed.repositoryIds) &&
+        listed.repositoryIds.every((entry) => typeof entry === 'string') &&
+        Object.keys(listed).length === 3,
+      'code_repository_foreign',
+      foreign,
+      500,
+    );
+    return {
+      projectId: listed.projectId as string,
+      repositoryIds: listed.repositoryIds as string[],
+    };
+  }
+
+  /** Refuse a directory Code did not make, or one whose configuration was changed beneath it. */
+  async validate(projectId: string, repositoryId: string): Promise<void> {
+    if (this.validated.has(projectId)) return;
+    const paths = this.paths(projectId);
+    const unsafe = (message: string) => new MervError('code_repository_unsafe', message, 500);
+    const held = await this.marker(projectId);
+    check(
+      held.projectId === projectId && held.repositoryIds.includes(repositoryId),
       'code_repository_foreign',
       'The repository directory belongs to another project or repository',
       500,

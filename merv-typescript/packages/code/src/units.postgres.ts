@@ -233,4 +233,27 @@ IF OLD.publishes_at IS NOT NULL AND NEW.publishes_at IS DISTINCT FROM OLD.publis
 IF OLD.publication_id IS NOT NULL AND NEW.publication_id IS DISTINCT FROM OLD.publication_id THEN RAISE EXCEPTION 'The publication of a unit is immutable'; END IF;
 RETURN NEW; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units FOR EACH ROW EXECUTE FUNCTION code_units_publish_guard();`,
+  4: `CREATE OR REPLACE FUNCTION code_projects_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.mode IS DISTINCT FROM OLD.mode THEN
+    RAISE EXCEPTION USING MESSAGE = 'Code repository binding is immutable outside its own rebind operation', ERRCODE = '23514';
+  END IF;
+  IF (NEW.repository_id IS DISTINCT FROM OLD.repository_id OR NEW.binding_json IS DISTINCT FROM OLD.binding_json) AND NOT EXISTS (
+    SELECT 1 FROM code_operations
+    WHERE id = NEW.binding_json::jsonb->>'operationId' AND project_id = OLD.project_id
+      AND kind = 'rebind' AND status = 'prepared'
+      AND payload_json::jsonb->>'repositoryId' = NEW.repository_id
+  ) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Code repository binding is immutable outside its own rebind operation', ERRCODE = '23514';
+  END IF;
+  IF NEW.repository_id IS DISTINCT FROM OLD.repository_id AND (
+    NEW.binding_json::jsonb->'previous'->-1->>'repositoryId' IS DISTINCT FROM OLD.repository_id
+    OR NEW.binding_json::jsonb->'previous' IS DISTINCT FROM
+       COALESCE(OLD.binding_json::jsonb->'previous','[]'::jsonb) || jsonb_build_array(NEW.binding_json::jsonb->'previous'->-1)
+  ) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Code repository binding is immutable outside its own rebind operation', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;`,
 };

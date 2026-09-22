@@ -126,6 +126,23 @@ export const codeRepositoryImportInputSchema = z
   );
 export type CodeRepositoryImportInput = z.infer<typeof codeRepositoryImportInputSchema>;
 
+/**
+ * Bind a hosted project to another repository identity. `repositoryId` is the same opaque
+ * Code-side name `code.local.bind` takes, `mainOid` is the commit main becomes, and
+ * `acknowledgePreviousMain` names the main being left behind when the new one is not ahead of
+ * it — the operator states what they are letting go of, as `code.mirror.retry` makes them.
+ */
+export const codeRepositoryRebindInputSchema = z
+  .object({
+    repositoryId: id,
+    mainOid: oid,
+    reason: z.string().trim().min(1).max(4000),
+    acknowledgePreviousMain: oid.optional(),
+    requestId: id,
+  })
+  .strict();
+export type CodeRepositoryRebindInput = z.infer<typeof codeRepositoryRebindInputSchema>;
+
 /** One journalled transfer or ref operation, as everyone allowed to read the project sees it. */
 export interface CodeStoreOperation {
   id: string;

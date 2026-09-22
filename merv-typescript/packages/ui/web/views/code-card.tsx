@@ -498,6 +498,27 @@ export function CodeCard({
                 ? 'in the repository this server keeps'
                 : 'on the runner that made it',
             ],
+            // Rebinding has no UI of its own, like binding; what the card shows is the whole
+            // lineage, newest first, because work accepted under any repository the project
+            // was bound to is still its own and this is the only screen that says so. One row
+            // rather than one per entry: a KV row is keyed by its label. A server that predates
+            // the lineage sends no `previous` at all, so it is read as a value that may be
+            // missing rather than one the page can rely on.
+            !!main.previous?.length && [
+              'Rebound',
+              <>
+                {[...main.previous].reverse().map((entry) => (
+                  <div key={entry.operationId}>
+                    from <Short value={entry.repositoryId} /> <Ago at={entry.reboundAt} /> —{' '}
+                    {/* The reason is the operator's own, up to 4000 characters: the line keeps
+                        its length and the hover keeps the whole of it. */}
+                    <span title={entry.reason}>
+                      {entry.reason.length > 120 ? `${entry.reason.slice(0, 120)}…` : entry.reason}
+                    </span>
+                  </div>
+                ))}
+              </>,
+            ],
           ]}
         />
       )}

@@ -270,6 +270,26 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
     this.withdrawPublication?.();
     this.code = code;
     const release = code.registerPublicationOwner({
+      // A consolidation that has not been completed still holds the candidates it froze, and
+      // they name the repository they were frozen under by value. The record is decoded rather
+      // than pattern-matched: it carries the operator's own free text, so a name containing the
+      // word would otherwise wedge every rebind of the project. A round whose workflow has
+      // reached a terminal state — abandoned or marked failed as much as reviewed — holds
+      // nothing any more, or one round nobody will ever finish would block rebinding for good.
+      frozen: async (projectId, tx) => {
+        const holding: string[] = [];
+        for (const row of await tx.all<{ id: string; record: string }>(
+          'SELECT id,record FROM consolidations WHERE project_id=? AND completion IS NULL ORDER BY id',
+          projectId,
+        )) {
+          if ((JSON.parse(row.record) as { candidates?: unknown }).candidates === undefined)
+            continue;
+          const instance = (await this.workflows.dependencyRelations(projectId, row.id, tx))
+            ?.instance;
+          if (!instance?.settled && !instance?.failed) holding.push(row.id);
+        }
+        return holding;
+      },
       check: async (caller, id, reference, tx) => {
         const record = await this.get(caller, id, tx);
         check(

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { CodeCommitCommand, Transaction, WorkspaceSession } from '@merv/contracts';
+import type {
+  CodeCommitCommand,
+  CodeWorkspaceManifest,
+  Transaction,
+  WorkspaceSession,
+} from '@merv/contracts';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { MERGE_SETTINGS } from '../packages/code/src/merge-settings.js';
@@ -279,3 +284,104 @@ for (const backend of backends) {
     },
   );
 }
+
+/**
+ * The cache is keyed by the project, and the identity it records is the one the server named
+ * last. It is the one path on a machine that deletes a shared directory, and its three cases
+ * differ: the same identity reuses what is there, a changed identity is a rebind and re-keys
+ * and rebuilds, and a changed object format is the machine genuinely unable to serve the
+ * project. Nothing on the server is needed to ask it, so it is asked directly.
+ */
+test('the machine cache is re-keyed by a rebind and bricked only by a changed object format', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-cache-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const driver = new CodeWorkspaceDriver(
+    { directory, path: join(directory, 'ledger.sqlite'), terminal: () => false },
+    {
+      call: () => assert.fail('the cache never calls the server'),
+      putPart: () => assert.fail('the cache never calls the server'),
+      readPart: () => assert.fail('the cache never calls the server'),
+    } as unknown as ConstructorParameters<typeof CodeWorkspaceDriver>[1],
+  );
+  t.after(() => driver.dispose());
+  const oid = 'a'.repeat(40);
+  const manifest = (repositoryId: string, objectFormat: 'sha1' | 'sha256' = 'sha1') =>
+    ({
+      projectRef: 'prj_cache',
+      repositoryId,
+      objectFormat,
+      unitId: 'unit',
+      generation: 1,
+      mode: 'write',
+      head: oid,
+      base: oid,
+      branch: null,
+      prerequisites: [],
+    }) as CodeWorkspaceManifest;
+  const inner = driver as unknown as {
+    cache(manifest: CodeWorkspaceManifest): Promise<string>;
+    db: { prepare(sql: string): { get(ref: string): unknown } };
+  };
+  const row = () =>
+    inner.db
+      .prepare(
+        'SELECT repository_id,object_format,path,status FROM code_v2_repositories WHERE project_ref=?',
+      )
+      .get('prj_cache') as { repository_id: string; object_format: string; status: string };
+
+  const path = await inner.cache(manifest('repository-one'));
+  writeFileSync(join(path, 'witness'), 'made by the first identity\n');
+  assert.deepEqual(
+    { ...row() },
+    {
+      repository_id: 'repository-one',
+      object_format: 'sha1',
+      path,
+      status: 'ready',
+    },
+  );
+
+  // The same identity is served from what is already there, witness and all.
+  assert.equal(await inner.cache(manifest('repository-one')), path);
+  assert.equal(readFileSync(join(path, 'witness'), 'utf8'), 'made by the first identity\n');
+
+  // A changed object format leaves the directory alone: those objects cannot be reused.
+  await assert.rejects(inner.cache(manifest('repository-one', 'sha256')), {
+    code: 'workspace_repository_changed',
+  });
+  assert.equal(readFileSync(join(path, 'witness'), 'utf8'), 'made by the first identity\n');
+  assert.deepEqual(
+    { ...row() },
+    {
+      repository_id: 'repository-one',
+      object_format: 'sha1',
+      path,
+      status: 'ready',
+    },
+  );
+
+  // A changed identity re-keys the row and rebuilds the repository at the same path. The
+  // status is written before the removal, so a concurrent call cannot be handed a half-built
+  // path: what the row says while `git init` is running is what proves it.
+  const git0 = (inner as unknown as { git: { ok(args: string[]): Promise<string> } }).git;
+  const during: string[] = [];
+  const ok = git0.ok.bind(git0);
+  t.mock.method(git0, 'ok', (args: string[]) => {
+    during.push(row().status);
+    return ok(args);
+  });
+  const rekeyed = await inner.cache(manifest('repository-two'));
+  assert.equal(rekeyed, path, 'the cache is keyed by the project, so it stays where it is');
+  assert.ok(!existsSync(join(path, 'witness')), 'the repository was rebuilt, not reused');
+  assert.equal(git(path, ['rev-parse', '--is-bare-repository']), 'true');
+  assert.deepEqual(
+    { ...row() },
+    {
+      repository_id: 'repository-two',
+      object_format: 'sha1',
+      path,
+      status: 'ready',
+    },
+  );
+  assert.deepEqual(during, ['preparing'], 'the row said preparing while the repository was built');
+});

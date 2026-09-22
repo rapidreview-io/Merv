@@ -523,12 +523,21 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       .get(manifest.projectRef) as
       { repository_id: string; object_format: string; path: string; status: string } | undefined;
     if (known) {
-      if (
-        known.repository_id !== manifest.repositoryId ||
-        known.object_format !== manifest.objectFormat
-      )
+      // Objects made in another format cannot be reused, so that machine genuinely cannot
+      // serve this project any more. A changed identity is a rebind, which moves no object:
+      // the cache is re-keyed and rebuilt rather than bricking the machine for good. The
+      // status goes first so a concurrent call cannot be handed the half-built path, and the
+      // removal below is safe only because a rebind refuses while any session — read-only
+      // included — holds a workspace on this project.
+      if (known.object_format !== manifest.objectFormat)
         throw new WorkspaceError('workspace_repository_changed');
-      if (known.status === 'ready') return known.path;
+      if (known.repository_id !== manifest.repositoryId)
+        this.db
+          .prepare(
+            "UPDATE code_v2_repositories SET repository_id=?,status='preparing' WHERE project_ref=?",
+          )
+          .run(manifest.repositoryId, manifest.projectRef);
+      else if (known.status === 'ready') return known.path;
     }
     const directory = privateDirectory(join(this.root, hash(manifest.projectRef).slice(0, 32)));
     const path = join(directory, 'cache.git');

@@ -16,7 +16,7 @@ import type { GitHubConfig } from './github-client.js';
 import { CodeTransportService } from './transport.js';
 import { CodePublicationService } from './publications.js';
 import { PublicationHost } from './publication-host.js';
-import { CodeUnitService } from './units.js';
+import { CODE_DRIVER, CodeUnitService } from './units.js';
 import { CodeConsolidation } from './consolidation.js';
 import { CodeBaseService } from './bases.js';
 import { CodeWriterService } from './writers.js';
@@ -174,6 +174,10 @@ export class CodeService extends CodeCommandService implements Code {
             repositories.config,
             {
               imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
+              // Sessions and consolidations keep their own records; Code asks each owner what
+              // it holds rather than reading a table that is not its own.
+              workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
+              frozen: (projectId, tx) => this.publicationHost.frozen(projectId, tx),
               fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
               advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
               quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
@@ -509,6 +513,9 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async importRepository(caller: Caller, input: unknown) {
     return await this.requireStore().importRepository(caller, input);
+  }
+  async rebindRepository(caller: Caller, input: unknown) {
+    return await this.requireStore().rebindRepository(caller, input);
   }
   async configureRepository(caller: Caller, input: unknown) {
     return await this.requireStore().configure(caller, input);

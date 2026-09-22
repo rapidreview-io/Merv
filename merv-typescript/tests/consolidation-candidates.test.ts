@@ -1941,4 +1941,40 @@ for (const backend of backends) {
       assert.equal((await f.consolidation.get(f.admin, record.id)).workflow.state, 'consolidating');
     },
   );
+
+  test(
+    `${backend}: only a consolidation still holding a frozen candidate set stands in a rebind's way`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const host = (f.code as unknown as { publicationHost: PublicationHost }).publicationHost;
+      const holding = () =>
+        f.state.transaction((tx) => host.frozen(f.admin.projectId, tx)) as Promise<string[]>;
+      assert.deepEqual(await holding(), []);
+
+      // The name is the operator's own text, and this one contains the word the record's own
+      // key is spelled with: the hook decodes the record rather than matching its characters.
+      const candidate = await f.unit('task', f.leaf);
+      const wording = await f.create([], [], {
+        version: undefined,
+        workspace: 'none',
+        name: 'Rework the "candidates" scoring',
+      });
+      assert.notEqual(wording.workflow.version, 5);
+      assert.deepEqual(await holding(), [], 'a workspace-free round freezes nothing');
+
+      const frozen = await f.create([], [candidate.id], { name: 'Rework "candidates" again' });
+      assert.deepEqual(await holding(), [frozen.id]);
+
+      // A round nobody will ever finish is not a wall for good: ending it lets it go.
+      await f.consolidation.end(f.producer, {
+        consolidationId: frozen.id,
+        expectedRevision: (await f.consolidation.get(f.admin, frozen.id)).workflow.revision,
+        outcome: 'abandoned',
+        reason: 'The wave was reorganised and this round is not being finished.',
+        requestId: 'end-frozen',
+      });
+      assert.deepEqual(await holding(), []);
+    },
+  );
 }

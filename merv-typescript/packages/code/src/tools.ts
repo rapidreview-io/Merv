@@ -17,6 +17,7 @@ import {
   codeMirrorRetryInputSchema,
   codeUnitFenceInputSchema,
   codeRepositoryImportInputSchema,
+  codeRepositoryRebindInputSchema,
   type Caller,
   type CodeCommitInput,
   type CodeLocalBindInput,
@@ -24,6 +25,7 @@ import {
   type CodeMirrorRetryInput,
   type CodeUnitFenceInput,
   type CodeRepositoryImportInput,
+  type CodeRepositoryRebindInput,
 } from '@merv/contracts';
 
 export const codeToolsPlugin = {
@@ -138,7 +140,7 @@ export const codeToolsPlugin = {
       ctx.tools.register({
         name: 'code.local.bind',
         description:
-          'Bind this project to a repository identity and name the commit of its main before importing history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. Use the existing runner repositoryId when importing legacy acceptances. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required. Supply a stable requestId: the same request replays its result, and a changed one is refused.',
+          'Bind this project to a repository identity and name the commit of its main before importing history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. Use the existing runner repositoryId when importing legacy acceptances. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.',
         inputSchema: codeLocalBindInputSchema,
         handler: async (caller: Caller, input: CodeLocalBindInput) =>
           await ctx.code.bindLocal(caller, input),
@@ -161,7 +163,7 @@ export const codeToolsPlugin = {
       ctx.tools.register({
         name: 'code.status',
         description:
-          'Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.',
+          'Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, the repositories it was bound to before with when, by whom and why each was left, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller: Caller) => await ctx.code.status(caller),
@@ -185,6 +187,16 @@ export const codeToolsPlugin = {
         inputSchema: codeRepositoryConfigureInputSchema,
         handler: async (caller: Caller, input: CodeRepositoryConfigureInput) =>
           await ctx.code.configureRepository(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.repository.rebind',
+        description:
+          'Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including every reviewed consolidation round’s, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished, any publication is unsettled or any consolidation holds a frozen candidate set, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid, and work accepted under it can still be frozen into a later consolidation and published to main, because the binding retains every repository it has been bound to; a frozen candidate set never spans a rebind, because one that is still outstanding refuses it. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.',
+        inputSchema: codeRepositoryRebindInputSchema,
+        handler: async (caller: Caller, input: CodeRepositoryRebindInput) =>
+          await ctx.code.rebindRepository(caller, input),
       }),
     );
     ctx.effect(() =>

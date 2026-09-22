@@ -229,6 +229,13 @@ export interface Sessions {
   projectStatus(caller: Caller): Promise<SessionsProjectStatus>;
   /** The rail's one number, read on its own rather than by computing a whole status. */
   liveSessionCount(caller: Caller): Promise<number>;
+  /**
+   * The live sessions of a project whose execution policy holds a workspace on `driver`,
+   * whoever offered them. It is scoped by the project rather than by a caller's delegation
+   * source, because what a rebind has to refuse for is what the project holds, not what the
+   * administrator asking for it happens to own.
+   */
+  holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
   agentObservation(caller: Caller, agentId: string): Promise<AgentObservation>;
   setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState>;
   halt(

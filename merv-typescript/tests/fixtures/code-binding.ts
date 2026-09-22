@@ -11,6 +11,8 @@ export async function boundProject(
   projectId: string,
   mainOid: string,
   repositoryId = 'runner-private-repository',
+  /** The repositories this project was bound to before, as a rebind would have left them. */
+  previous: { repositoryId: string }[] = [],
 ): Promise<void> {
   const at = new Date().toISOString();
   await state.transaction(
@@ -20,7 +22,24 @@ export async function boundProject(
         projectId,
         'local',
         repositoryId,
-        JSON.stringify({ boundAt: at, boundBy: 'fixture', operationId: 'cop_fixture' }),
+        JSON.stringify({
+          boundAt: at,
+          boundBy: 'fixture',
+          operationId: 'cop_fixture',
+          ...(previous.length
+            ? {
+                previous: previous.map((entry) => ({
+                  ...entry,
+                  boundBy: 'fixture',
+                  boundAt: at,
+                  operationId: 'cop_fixture',
+                  reboundBy: 'fixture',
+                  reboundAt: at,
+                  reason: 'fixture',
+                })),
+              }
+            : {}),
+        }),
         JSON.stringify({
           admittedAt: at,
           admittedBy: 'fixture',

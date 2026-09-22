@@ -1111,6 +1111,29 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       ))!.n;
     });
   }
+  /**
+   * Every live session of the project that holds a workspace on `driver`, whoever offered it.
+   * The caller's delegation source is deliberately not consulted: a session leased through an
+   * actor credential or by another administrator holds the same workspace as one of the
+   * administrator asking, and the answer is read on the caller's own transaction so it cannot
+   * drift between a refusal and the write that refusal guards.
+   */
+  async holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]> {
+    this.ensureOpen();
+    return (
+      await tx.all<{ id: string; session_json: string }>(
+        "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('offered','active') ORDER BY id",
+        projectId,
+      )
+    )
+      .filter((row) => {
+        const workspace = effectiveWorkspace(
+          (JSON.parse(row.session_json) as Session).execution.policy,
+        );
+        return workspace.mode !== 'none' && workspace.driver === driver;
+      })
+      .map((row) => row.id);
+  }
   async agentObservation(caller: Caller, agentId: string) {
     this.ensureOpen();
     check(

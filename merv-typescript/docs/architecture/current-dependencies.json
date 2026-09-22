@@ -10,14 +10,14 @@
   "apiEntries": 38,
   "serverPlugins": 59,
   "machinePlugins": 1,
-  "directDependencyCount": 160,
-  "optionalDependencyCount": 14,
+  "directDependencyCount": 161,
+  "optionalDependencyCount": 15,
   "directConsumers": {
     "api": 3,
     "artifacts": 13,
     "blobs": 1,
     "claims": 3,
-    "code": 7,
+    "code": 8,
     "consolidation": 3,
     "contextBuilder": 4,
     "domainEvents": 4,
@@ -576,7 +576,8 @@
         "consolidation",
         "tasks",
         "experiments",
-        "artifacts"
+        "artifacts",
+        "code"
       ],
       "kind": "service",
       "runtime": "server",
