@@ -1453,14 +1453,19 @@ export class SessionDispatch {
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
+      // Only a close inside the backoff window can hold a target back, and session history is
+      // retained forever, so the window is asked of the database. Reading the whole of a
+      // runner's history on every poll would make an old runner's next lease cost more than
+      // the lease itself, inside the write transaction that grants it.
       const failures = (
         await tx.all<SessionRow>(
           tx.dialect === 'postgres'
-            ? "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired')"
-            : "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND json_extract(d.platform_json,'$.name')=? AND s.status IN ('released','expired')",
+            ? "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?"
+            : "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND json_extract(d.platform_json,'$.name')=? AND s.status IN ('released','expired') AND json_extract(s.session_json,'$.closedAt')>?",
           owner.hash,
           input.runnerId,
           platform.name,
+          new Date(this.clock() - backoffMs).toISOString(),
         )
       ).map((row) => JSON.parse(row.session_json) as Session);
       const admissible = await this.candidates(caller, tx);

@@ -328,6 +328,16 @@ test('code-import brings a local branch into a served project, in steps, as its 
   assert.ok(first.bytes! > PART);
   let status = (await app.ctx.code.status(owner)) as CodeProjectStatus;
   assert.deepEqual([status.project!.durability, status.project!.main.stored], ['code', false]);
+  // An acceptance kept only in a runner's repository names a commit the next import may
+  // deliver as history rather than as its tip; what the import turns out to hold is recorded
+  // with it, because no bundle can be cut at an ancestor of a tip already imported.
+  await app.ctx.state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at,acceptance_json,acceptance_hash,accepted_at) VALUES (?,'legacy','task',1,'now',?,'hash','now')",
+      owner.projectId,
+      JSON.stringify({ storage: 'legacy-local', code: { commit: one } }),
+    ),
+  );
   const second = await importRepository({
     url,
     repository: source.repository,
@@ -335,6 +345,17 @@ test('code-import brings a local branch into a served project, in steps, as its 
     token: boot.token,
   });
   assert.deepEqual([second.status, second.head], ['completed', two]);
+  const recorded = await app.ctx.state.read((sql) =>
+    sql.get<{ result_json: string }>(
+      "SELECT result_json FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' ORDER BY completed_at DESC,id LIMIT 1",
+      owner.projectId,
+    ),
+  );
+  assert.deepEqual(
+    (JSON.parse(recorded!.result_json) as { contained?: string[] }).contained,
+    [one],
+    'the import records the accepted commit its history contains',
+  );
   assert.ok(second.bytes! < 5_000, 'the branch is sent as a continuation of the tag');
   status = (await app.ctx.code.status(owner)) as CodeProjectStatus;
   assert.deepEqual(

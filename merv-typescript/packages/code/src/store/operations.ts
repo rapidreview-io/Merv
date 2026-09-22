@@ -836,6 +836,41 @@ export class CodeStore {
     return this.view((await this.state.read((sql) => this.row(sql, row.id)))!);
   }
 
+  /** The accepted commits kept only in a runner's repository that this one now holds. */
+  private async legacy(projectId: string): Promise<string[]> {
+    if (!(await this.repositories.exists(projectId))) return [];
+    const accepted = await this.state.read((sql) =>
+      sql.all<{ acceptance_json: string }>(
+        'SELECT acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id',
+        projectId,
+      ),
+    );
+    const commits = [
+      ...new Set(
+        accepted.flatMap((row) => {
+          const acceptance = JSON.parse(row.acceptance_json) as {
+            storage?: string;
+            code?: { commit: string } | null;
+          };
+          return acceptance.storage !== 'code' && acceptance.code ? [acceptance.code.commit] : [];
+        }),
+      ),
+    ].sort();
+    if (!commits.length) return [];
+    const found = await this.repositories.git.run(
+      ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+      { env: this.repositories.environment(projectId), input: commits.join('\n') + '\n' },
+    );
+    const held = new Set(
+      found.stdout
+        .toString('utf8')
+        .split('\n')
+        .filter((line) => line.endsWith(' commit'))
+        .map((line) => line.split(' ')[0]),
+    );
+    return commits.filter((commit) => held.has(commit));
+  }
+
   /** Whether the project's repository holds this commit. */
   async contains(projectId: string, oid: string): Promise<boolean> {
     if (!(await this.repositories.exists(projectId))) return false;
@@ -1335,6 +1370,12 @@ export class CodeStore {
     if (row.phase === 'refs_applied') {
       const main = (JSON.parse(project.main_json) as { oid: string }).oid;
       const mainStored = await this.contains(row.project_id, main);
+      // An import delivers history, and an ancestor of its tip is delivered as surely as the
+      // tip. Which accepted commits that were kept only in a runner's repository this one now
+      // holds is asked of Git here, before the transaction, and recorded with the operation:
+      // an ancestor never becomes a tip of its own, and a bundle cut at one is empty.
+      const contained =
+        upload || payload.source === 'accept-ref' ? [] : await this.legacy(row.project_id);
       await this.state.transaction(async (tx) => {
         const current = await this.row(tx, id);
         if (current?.status !== 'prepared') return;
@@ -1351,6 +1392,7 @@ export class CodeStore {
                   objects: progress.objects,
                   bytes: progress.bytes,
                   ...(progress.merge ? { merge: progress.merge } : {}),
+                  ...(contained.length ? { contained } : {}),
                 },
           ),
           at,

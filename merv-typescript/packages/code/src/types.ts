@@ -236,7 +236,10 @@ export interface CodeWriters {
 export interface CodeRepositoryControls {
   controlBase(
     caller: Caller,
-    input: import('@merv/contracts').CodeBaseControlInput,
+    input: Omit<import('@merv/contracts').CodeBaseControlInput, 'action'> & {
+      /** Contracts publishes the first five; release and repair are Code's own routes back. */
+      action: import('@merv/contracts').CodeBaseControlInput['action'] | 'release' | 'repair';
+    },
   ): Promise<import('@merv/contracts').CodeBaseRecord>;
   importRepository(
     caller: Caller,

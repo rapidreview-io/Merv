@@ -1,6 +1,7 @@
 import {
   check,
   digest,
+  MervError,
   type Caller,
   type ReviewProvenance,
   type Scope,
@@ -181,12 +182,28 @@ export class CodeConsolidation {
         'Ancestry inspection exceeds its time or output budget',
         409,
       );
-      const result = await repositories.git.run(args, {
-        env: repositories.environment(projectId),
-        input,
-        timeoutMs: Math.max(1, deadline - Date.now()),
-        maxBuffer: remainingBytes,
-      });
+      // A single walk can now spend the whole budget, so Git reaches the limit before the check
+      // above does. Exhausting this path's own time or output budget is a scope refusal that
+      // names the remedy, not an infrastructure failure.
+      const result = await repositories.git
+        .run(args, {
+          env: repositories.environment(projectId),
+          input,
+          timeoutMs: Math.max(1, deadline - Date.now()),
+          maxBuffer: remainingBytes,
+        })
+        .catch((error: unknown) => {
+          if (
+            error instanceof MervError &&
+            ['code_git_timeout', 'code_git_failed'].includes(error.code)
+          )
+            throw new MervError(
+              'code_candidate_scope',
+              'Ancestry inspection exceeds its time or output budget',
+              409,
+            );
+          throw error;
+        });
       remainingBytes -= result.stdout.length + Buffer.byteLength(result.stderr);
       check(
         result.code === 0 || result.code === 1,
@@ -216,27 +233,6 @@ export class CodeConsolidation {
         .filter((line) => line.endsWith(' commit'))
         .map((line) => line.split(' ')[0]),
     );
-    const relationships = new Map<string, boolean>();
-    const related = async (ancestor: string, descendant: string) => {
-      if (ancestor === descendant) return true;
-      const key = `${ancestor}:${descendant}`;
-      if (!relationships.has(key)) {
-        const result = await run(['merge-base', '--is-ancestor', ancestor, descendant]);
-        relationships.set(key, result.code === 0);
-      }
-      return relationships.get(key)!;
-    };
-    // Older candidates may already be on main or branch from an earlier main. Both are
-    // valid. An unrelated history is not an input to this repository's consolidation.
-    for (const root of new Set(roots)) {
-      const common = await run(['merge-base', base, root]);
-      check(
-        common.code === 0,
-        'code_candidate_invalid',
-        'A candidate has no common history with the frozen integration base',
-        409,
-      );
-    }
     const result = await run(
       ['rev-list', '--parents', '--stdin'],
       [...new Set(roots), `^${base}`].join('\n') + '\n',
@@ -263,6 +259,11 @@ export class CodeConsolidation {
     for (const root of new Set(roots)) {
       const seen = new Set<string>(),
         queue = [root];
+      // A candidate the frozen base already holds left nothing above it to walk, so it met
+      // main before the walk began. Older candidates may branch from an earlier main; they
+      // meet it at a parent this walk left out. An unrelated history meets it nowhere, and
+      // is not an input to this repository's consolidation.
+      let met = !parents.has(root);
       for (let commit = queue.pop(); commit; commit = queue.pop()) {
         if (seen.has(commit)) continue;
         check(
@@ -273,23 +274,60 @@ export class CodeConsolidation {
         );
         seen.add(commit);
         // Parents omitted by ^base are boundaries. Never traverse behind main.
-        queue.push(...(parents.get(commit) ?? []));
+        for (const parent of parents.get(commit) ?? [])
+          if (parents.has(parent)) queue.push(parent);
+          else met = true;
       }
-      ancestors.set(root, seen);
-    }
-    return async (ancestor: string, descendant: string) => {
       check(
-        Date.now() < deadline,
-        'code_candidate_scope',
-        'Ancestry inspection exceeds its time budget',
+        met,
+        'code_candidate_invalid',
+        'A candidate has no common history with the frozen integration base',
         409,
       );
-      if (!available.has(ancestor)) return false;
-      if (ancestors.get(descendant)?.has(ancestor)) return true;
-      if (parents.has(ancestor)) return false;
-      // Identity queries preserve decisions and contributors predating main without
-      // materializing main's history, including branches from an older base.
-      return await related(ancestor, descendant);
+      ancestors.set(root, seen);
+    }
+    return {
+      held: (commit: string) => available.has(commit),
+      /** A frozen candidate absent from the walk above main is one main already holds. */
+      onMain: (commit: string) => available.has(commit) && !parents.has(commit),
+      /** Both sides are frozen candidates, so the walk above main already has the answer. */
+      above: (ancestor: string, descendant: string) =>
+        available.has(ancestor) && (ancestors.get(descendant)?.has(ancestor) ?? false),
+      /**
+       * The retained commits no other retained commit reaches. Git answers the whole set at
+       * once, so a consolidation costs the same one query however many candidates it keeps.
+       */
+      independent: async (commits: string[]) => {
+        if (commits.length < 2) return new Set(commits);
+        const found = await run(['merge-base', '--independent', ...commits]);
+        check(
+          found.code === 0,
+          'code_candidate_unavailable',
+          'The frozen candidate history is unavailable',
+          409,
+        );
+        return new Set(found.stdout.toString('utf8').trim().split('\n').filter(Boolean));
+      },
+      /**
+       * Which of these commits the frontier already carries. Excluding the frontier leaves
+       * the ones it does not reach, so one query answers every accepted unit the project has
+       * ever produced instead of one Git call per unit.
+       */
+      carried: async (commits: string[], leaves: string[]) => {
+        if (!commits.length || !leaves.length) return new Set<string>();
+        const found = await run(
+          ['rev-list', '--stdin'],
+          [...commits, ...leaves.map((leaf) => `^${leaf}`)].join('\n') + '\n',
+        );
+        check(
+          found.code === 0,
+          'code_candidate_unavailable',
+          'The accepted history is unavailable',
+          409,
+        );
+        const outside = new Set(found.stdout.toString('utf8').trim().split('\n').filter(Boolean));
+        return new Set(commits.filter((commit) => !outside.has(commit)));
+      },
     };
   }
 
@@ -347,40 +385,38 @@ export class CodeConsolidation {
     const { selected, candidates } = this.decisions(frozen, decisions);
     // Acceptances, the frozen set and commits are immutable, so a walk performed before
     // the owner's committing transaction remains valid when that transaction checks its proof.
-    const contains = await this.ancestry(
+    const commits = [
+      ...new Set(
+        accepted.flatMap((row) => {
+          const acceptance = JSON.parse(row.acceptance_json) as Acceptance;
+          return acceptance.code ? [acceptance.code.commit] : [];
+        }),
+      ),
+    ].sort();
+    const ancestry = await this.ancestry(
       caller.projectId,
       frozen.integrationBase,
       frozen.candidates.flatMap((candidate) => (candidate.reference ? [candidate.reference] : [])),
-      accepted.flatMap((row) => {
-        const acceptance = JSON.parse(row.acceptance_json) as Acceptance;
-        return acceptance.code ? [acceptance.code.commit] : [];
-      }),
+      commits,
     );
     const retained = selected
       .filter((decision) => decision.decision === 'retain')
       .map((decision) => candidates.get(decision.unitId)!);
-    const frontier: string[] = [];
+    const independent = await ancestry.independent([
+      ...new Set(retained.map((candidate) => candidate.reference!)),
+    ]);
     // Equal commits contribute once, with a stable representative; their authors still contribute.
-    for (const candidate of retained) {
-      let contained = false;
-      for (const other of retained) {
-        if (
-          candidate.unitId !== other.unitId &&
-          (candidate.reference !== other.reference || other.unitId < candidate.unitId) &&
-          (await contains(candidate.reference!, other.reference!))
-        ) {
-          contained = true;
-          break;
-        }
-      }
-      if (!contained) frontier.push(candidate.unitId);
-    }
+    const leaves = new Map<string, string>();
+    for (const candidate of retained)
+      if (independent.has(candidate.reference!) && !leaves.has(candidate.reference!))
+        leaves.set(candidate.reference!, candidate.unitId);
+    const frontier = [...leaves.values()].sort();
     const conflicts: CodeDecisionManifest['conflicts'] = [];
     for (const decision of selected.filter(
       (d) => d.decision === 'drop' || d.decision === 'adapt',
     )) {
       const reference = candidates.get(decision.unitId)!.reference!;
-      if (await contains(reference, frozen.integrationBase)) {
+      if (ancestry.onMain(reference)) {
         conflicts.push({
           kind: 'on_main',
           unitId: decision.unitId,
@@ -388,7 +424,7 @@ export class CodeConsolidation {
         });
       } else
         for (const retainedUnitId of frontier) {
-          if (await contains(reference, candidates.get(retainedUnitId)!.reference!))
+          if (ancestry.above(reference, candidates.get(retainedUnitId)!.reference!))
             conflicts.push({
               kind: 'carried',
               unitId: decision.unitId,
@@ -398,17 +434,13 @@ export class CodeConsolidation {
             });
         }
     }
-    const references = new Set<string>();
+    const references = await ancestry.carried(
+      commits.filter((commit) => ancestry.held(commit)),
+      frontier.map((id) => candidates.get(id)!.reference!),
+    );
     for (const row of accepted) {
       const acceptance = JSON.parse(row.acceptance_json) as Acceptance;
-      if (!acceptance.code) continue;
-      for (const id of frontier) {
-        if (await contains(acceptance.code.commit, candidates.get(id)!.reference!)) {
-          this.acceptance(row);
-          references.add(acceptance.code.commit);
-          break;
-        }
-      }
+      if (acceptance.code && references.has(acceptance.code.commit)) this.acceptance(row);
     }
     const contributors = await this.state.transaction((tx) =>
       this.contributors(caller.projectId, [...references].sort(), tx),

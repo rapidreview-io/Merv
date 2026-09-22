@@ -29,6 +29,7 @@ interface BaseRow {
   members_json: string;
   left_key: string;
   right_key: string;
+  engine: string;
   state: CodeBaseState;
   health: 'healthy' | 'quarantined';
   result_json: string | null;
@@ -47,7 +48,7 @@ interface BaseRow {
   updated_at: string;
 }
 const columns =
-  'project_id,base_key,members_json,left_key,right_key,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,updated_at';
+  'project_id,base_key,members_json,left_key,right_key,engine,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,updated_at';
 const RETRIES = 5;
 const now = () => new Date().toISOString();
 
@@ -167,11 +168,14 @@ interface CodeBaseHooks {
 export const baseControlSchema = z
   .object({
     key: z.string().regex(/^[0-9a-f]{64}$/),
-    action: z.enum(['retry', 'suspend', 'resume', 'cancel', 'quarantine']),
+    action: z.enum(['retry', 'suspend', 'resume', 'cancel', 'quarantine', 'release', 'repair']),
     reason: z.string().trim().min(1).max(2000),
     requestId: z.string().min(1).max(200),
   })
   .strict();
+export type CodeBaseControl = z.infer<typeof baseControlSchema>;
+/** Written by propagation, never by an operator, so a released quarantine knows what to retract. */
+export const INHERITED_QUARANTINE = 'Input inherits quarantine from ';
 
 interface Execution {
   base: CodeBaseRecord;
@@ -560,6 +564,22 @@ export class CodeBaseService {
             );
             return false;
           }
+          // The engine is frozen with the plan so that a repeat is the same commit. Merging a
+          // base again under another one would compute a different commit and collide with
+          // the ref an earlier attempt already wrote, which nothing could then settle. Say so
+          // instead, because the operator's repair is to restore the engine or replan.
+          if (row.engine !== MERGE_ENGINE) {
+            await tx.run(
+              "UPDATE code_bases SET state='blocked_infra',next_at=NULL,blocker=?,updated_at=? WHERE project_id=? AND base_key=? AND state=?",
+              `This base was planned with ${row.engine} and this server merges with ${MERGE_ENGINE}.`,
+              at,
+              projectId,
+              base.key,
+              row.state,
+            );
+            await this.hooks.changed(tx, projectId);
+            return false;
+          }
           const input: ServiceWorkInput = {
             provider: 'code',
             projectId,
@@ -787,10 +807,66 @@ export class CodeBaseService {
     }
   }
 
+  /**
+   * The commit a base ref holds, removed under exactly that value. An execution that lost its
+   * epoch to a deadline or an operator can leave a ref behind with no result sealed, and the
+   * next attempt then computes another commit and can never settle. Nothing is pinned to an
+   * unsealed base, so dropping that ref is safe; a sealed one is what everything pinned names,
+   * and is refused. Git runs here, before the transaction that records what it did.
+   */
+  private async discard(
+    scope: Scope,
+    caller: Caller,
+    input: CodeBaseControl,
+  ): Promise<string | null> {
+    const principal = `actor:${caller.actorId}`;
+    const replay = await this.state.transaction(async (tx) => {
+      await scope.require(caller, 'admin', tx);
+      check(
+        !caller.session,
+        'session_forbidden',
+        'A leased worker cannot control server work',
+        403,
+      );
+      return await tx.get<{ id: string }>(
+        'SELECT id FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+        caller.projectId,
+        principal,
+        input.requestId,
+      );
+    });
+    if (replay) return null;
+    const row = await this.state.read((sql) =>
+      sql.get<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
+        caller.projectId,
+        input.key,
+      ),
+    );
+    check(row, 'code_base_not_found', 'No such base in this project', 404);
+    // The ref is dropped before the transaction that records the repair, so this has to refuse
+    // everything that transaction refuses; otherwise a refused repair still destroys the ref and
+    // leaves no receipt behind for the operator to retry against.
+    check(
+      !row.result_json && row.health === 'healthy' && !['running', 'cancelled'].includes(row.state),
+      'code_base_changed',
+      'Only an unresolved base that is not running can have its ref dropped',
+      409,
+    );
+    const env = this.repositories.environment(caller.projectId);
+    const ref = `refs/merv/bases/${input.key}`;
+    const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], { env });
+    check(held.code === 0, 'code_base_changed', 'This base holds no ref to drop', 409);
+    const commit = held.stdout.toString('utf8').trim();
+    await this.repositories.git.ok(['update-ref', '-d', ref, commit], { env });
+    return commit;
+  }
+
   /** An operator changes disposition, never the plan or a sealed result. Receipts retain every reason. */
   async control(scope: Scope, caller: Caller, value: unknown): Promise<CodeBaseRecord> {
     caller = structuredClone(caller);
     const input = parseCodeInput(baseControlSchema, value);
+    const discarded = input.action === 'repair' ? await this.discard(scope, caller, input) : null;
     let interrupted = false;
     const result = await this.state.transaction(async (tx) => {
       await scope.require(caller, 'admin', tx);
@@ -828,9 +904,25 @@ export class CodeBaseService {
       interrupted = base.state === 'running';
       check(
         action === 'quarantine' ||
+          action === 'release' ||
           (!base.quarantined && !['resolved', 'cancelled'].includes(base.state)),
         'code_base_changed',
         'This base cannot make that transition',
+        409,
+      );
+      check(
+        action !== 'release' || base.quarantined,
+        'code_base_changed',
+        'This base is not quarantined',
+        409,
+      );
+      // Release tells an inherited quarantine from an operator's own by this prefix, so an
+      // operator may not write a reason that would make their own quarantine look inherited
+      // and have it retracted by the release of some unrelated base.
+      check(
+        action !== 'quarantine' || !input.reason.startsWith(INHERITED_QUARANTINE),
+        'code_base_changed',
+        'That reason is reserved for an inherited quarantine; say why this base is quarantined',
         409,
       );
       check(
@@ -852,27 +944,41 @@ export class CodeBaseService {
         409,
       );
       const resume = ['running', 'retry_wait'].includes(base.state) ? 'queued' : base.state;
+      // Repair and release put back in the queue a base that had stopped, and leave one that
+      // waits on its resolution task exactly where it is.
+      const restored = base.state === 'blocked_infra' ? 'queued' : resume;
       const state =
         action === 'quarantine'
           ? base.state
           : action === 'retry'
             ? 'queued'
-            : action === 'resume'
-              ? (row.resume_state ?? resume)
-              : action === 'suspend'
-                ? 'suspended'
-                : 'cancelled';
+            : action === 'repair' || action === 'release'
+              ? restored
+              : action === 'resume'
+                ? (row.resume_state ?? resume)
+                : action === 'suspend'
+                  ? 'suspended'
+                  : 'cancelled';
       await tx.run(
         'UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,updated_at=? WHERE project_id=? AND base_key=?',
         state,
-        action === 'quarantine' ? 'quarantined' : row.health,
+        action === 'quarantine' ? 'quarantined' : action === 'release' ? 'healthy' : row.health,
         action === 'suspend' ? resume : row.resume_state,
         input.reason,
-        action === 'retry' ? 0 : base.attempts,
+        ['retry', 'repair'].includes(action) ? 0 : base.attempts,
         now(),
         caller.projectId,
         input.key,
       );
+      // Quarantine spreads down the plan on its own, so releasing the base an operator named
+      // retracts the spread with it; a base an operator quarantined in its own right stays.
+      if (action === 'release')
+        await tx.run(
+          "UPDATE code_bases SET health='healthy',updated_at=? WHERE project_id=? AND health='quarantined' AND operator_reason LIKE ?",
+          now(),
+          caller.projectId,
+          `${INHERITED_QUARANTINE}%`,
+        );
       await this.promote(tx, caller.projectId);
       await this.hooks.changed(tx, caller.projectId);
       const result = (await this.records(tx, caller.projectId)).find((b) => b.key === input.key)!;
@@ -885,7 +991,9 @@ export class CodeBaseService {
         requestId,
         'base-control',
         digest(body),
-        canonical(body),
+        // The fingerprint is of the request, so replaying it is judged on what was asked; the
+        // payload also retains the commit the repair dropped, which is what it actually did.
+        canonical(discarded ? { ...body, discarded } : body),
         'completed',
         canonical(result),
         at,
