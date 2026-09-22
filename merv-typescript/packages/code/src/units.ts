@@ -424,6 +424,38 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     return this.baseState(await this.derive(tx, caller.projectId, unitId));
   }
 
+  /** A stale publication keeps the original pin and adds one frozen merge round on its branch. */
+  async pinPublication(caller: Caller, unitId: string, tx: Transaction) {
+    const row = await this.row(tx, caller.projectId, unitId);
+    if (row?.workflow !== 'consolidation' || row.version !== 5) return;
+    const stale = await tx.get<{ id: string; revision: number }>(
+      'SELECT s.id,s.revision FROM code_proposals s JOIN code_publications p ON p.proposal_id=s.id WHERE s.project_id=? AND s.instance_id=? AND p.stale=1 ORDER BY s.revision DESC LIMIT 1',
+      caller.projectId,
+      unitId,
+    );
+    if (!stale) return;
+    const plan = digest({ publication: stale.id });
+    const existing = await pendingMerge(tx, caller.projectId, unitId);
+    if (existing?.plan === plan) return;
+    const writer = await this.writers.row(tx, caller.projectId, unitId);
+    const project = await this.project(tx, caller.projectId);
+    check(
+      writer && project && row.base_json,
+      'code_base_pending',
+      'The publication round needs a retained base and writer',
+      409,
+    );
+    await pinMerge(
+      tx,
+      caller.projectId,
+      unitId,
+      plan,
+      writer.head_oid ?? JSON.parse(row.base_json).reference,
+      project.main.oid,
+      stale.revision,
+    );
+  }
+
   /** The pin alone, for an owner's references(): that hook runs on every read and must not derive. */
   async basePin(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBasePin | null> {
     this.assertOpen();
@@ -542,9 +574,14 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     caller = structuredClone(caller);
     const relations = await this.workflows.dependencyRelations(caller.projectId, input.unitId, tx);
     check(
-      relations?.instance.settled && relations.instance.revision === input.terminalRevision,
+      relations &&
+        (relations.instance.settled ||
+          (relations.instance.workflow === 'consolidation' &&
+            relations.instance.version === 5 &&
+            relations.instance.state === 'awaiting_publication')) &&
+        relations.instance.revision === input.terminalRevision,
       'code_acceptance_unverifiable',
-      'Only a unit that has just succeeded at the revision named can be accepted',
+      'Only a unit approved by its owner at the named revision can be accepted',
       409,
     );
     const disposition = await this.resolutionBlocker(tx, caller.projectId, input.unitId);
@@ -582,7 +619,8 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     const pending = await pendingMerge(tx, caller.projectId, input.unitId);
     if (pending) {
       check(
-        await this.resolutionReview(caller, tx, input),
+        (relations.instance.workflow === 'consolidation' && relations.instance.version === 5) ||
+          (await this.resolutionReview(caller, tx, input)),
         'code_provenance_unverifiable',
         'Resolution acceptance requires a passing review with the current retained contributor provenance.',
         409,
@@ -621,6 +659,43 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     };
     const encoded = canonical(body),
       hash = digest(body);
+    if (body.workflow === 'consolidation' && body.version === 5) {
+      const existing = await tx.get<{ acceptance_json: string; accepted_at: string }>(
+        'SELECT acceptance_json,accepted_at FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
+        caller.projectId,
+        input.unitId,
+        input.reviewRef,
+      );
+      check(
+        !existing || existing.acceptance_json === encoded,
+        'code_acceptance_conflict',
+        'This review already accepted different code',
+        409,
+      );
+      const at = existing?.accepted_at ?? now();
+      if (!existing)
+        await tx.run(
+          'INSERT INTO code_review_acceptances(project_id,unit_id,review_id,acceptance_json,accepted_at) VALUES(?,?,?,?,?)',
+          caller.projectId,
+          input.unitId,
+          input.reviewRef,
+          encoded,
+          at,
+        );
+      return {
+        unitId: input.unitId,
+        hash,
+        acceptedAt: at,
+        terminalRevision: input.terminalRevision,
+        submissionRef: input.submissionRef,
+        reviewRef: input.reviewRef,
+        acceptedBy: caller.actorId,
+        reference: code?.commit ?? null,
+        reviewAttached: code?.reviewAttached ?? null,
+        storage: body.storage,
+        ...(receipt ? { receipt } : {}),
+      };
+    }
     const existing = await this.row(tx, caller.projectId, input.unitId);
     if (existing?.acceptance_hash) {
       check(
@@ -654,37 +729,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         hash,
         at,
       );
-    if (receipt && code) {
-      // The ref the acceptance is kept under is made after this transaction, by the journal.
-      const payload = {
-        format: 1,
-        source: 'accept-ref',
-        actorId: caller.actorId,
-        unitId: input.unitId,
-        tip: code.commit,
-      };
-      await tx.run(
-        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        newId('cop'),
-        caller.projectId,
-        'system:code',
-        `accept-ref:${input.unitId}`,
-        'accept-ref',
-        digest(payload),
-        canonical(payload),
-        'prepared',
-        at,
-        input.unitId,
-        'objects_durable',
-        canonical({
-          received: 0,
-          expectedOld: null,
-          target: code.commit,
-          receiptRef: acceptedRef(input.unitId),
-        }),
-        at,
-      );
-    }
+    await this.retainAcceptance(caller, input.unitId, body, at, tx);
     this.bases?.soon(caller.projectId);
     return this.acceptance((await this.row(tx, caller.projectId, input.unitId))!)!;
   }
@@ -1628,6 +1673,88 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       projectId,
       unitId,
     );
+  }
+
+  private async retainAcceptance(
+    caller: Caller,
+    unitId: string,
+    body: AcceptanceBody,
+    at: string,
+    tx: Transaction,
+  ) {
+    const { code, receipt } = body;
+    if (receipt && code) {
+      // The ref the acceptance is kept under is made after this transaction, by the journal.
+      const payload = {
+        format: 1,
+        source: 'accept-ref',
+        actorId: caller.actorId,
+        unitId,
+        tip: code.commit,
+      };
+      await tx.run(
+        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        newId('cop'),
+        caller.projectId,
+        'system:code',
+        `accept-ref:${unitId}`,
+        'accept-ref',
+        digest(payload),
+        canonical(payload),
+        'prepared',
+        at,
+        unitId,
+        'objects_durable',
+        canonical({
+          received: 0,
+          expectedOld: null,
+          target: code.commit,
+          receiptRef: acceptedRef(unitId),
+        }),
+        at,
+      );
+    }
+  }
+
+  async published(
+    caller: Caller,
+    unitId: string,
+    reviewId: string,
+    revision: number,
+    tx: Transaction,
+  ) {
+    const round = await tx.get<{ acceptance_json: string; accepted_at: string }>(
+      'SELECT acceptance_json,accepted_at FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
+      caller.projectId,
+      unitId,
+      reviewId,
+    );
+    check(
+      round,
+      'code_acceptance_unverifiable',
+      'The approved publication acceptance is missing',
+      409,
+    );
+    const relations = await this.workflows.dependencyRelations(caller.projectId, unitId, tx);
+    check(
+      relations?.instance.settled && relations.instance.revision === revision,
+      'code_acceptance_unverifiable',
+      'Publication must complete its owner at this exact revision',
+      409,
+    );
+    const body: AcceptanceBody = {
+      ...JSON.parse(round.acceptance_json),
+      terminalRevision: revision,
+    };
+    await tx.run(
+      'UPDATE code_units SET acceptance_json=?,acceptance_hash=?,accepted_at=? WHERE project_id=? AND unit_id=? AND acceptance_json IS NULL',
+      canonical(body),
+      digest(body),
+      round.accepted_at,
+      caller.projectId,
+      unitId,
+    );
+    await this.retainAcceptance(caller, unitId, body, round.accepted_at, tx);
   }
 
   private acceptance(row: UnitRow): CodeUnitAcceptance | null {

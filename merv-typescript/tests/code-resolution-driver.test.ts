@@ -181,6 +181,59 @@ for (const backend of backends) {
       assert.ok(f.refs().some((ref) => ref.includes('-second ')));
       await f.repositories.sweep(async () => false, Date.now() + 3_600_000);
       assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/exports/')));
+      // A later publication round keeps the same branch, but freezes another pair of inputs.
+      const newerMain = f.source.commit({ 'new-main.txt': 'Another publication advanced main.\n' });
+      await f.deliver(f.source.bundle(newerMain, [f.right]));
+      const nextPlan = baseKey([corrected.receipt.headOid, newerMain]);
+      await f.state.transaction((tx) =>
+        pinMerge(
+          tx,
+          f.admin.projectId,
+          f.unitId,
+          nextPlan,
+          corrected.receipt.headOid,
+          newerMain,
+          1,
+        ),
+      );
+      await f.lease('third');
+      const third = f.machine();
+      const thirdWork = await third.prepare('third');
+      await f.event('session.workspace_attached', 'third');
+      assert.equal(thirdWork.snapshot!.branch, resumed.snapshot!.branch);
+      assert.equal(thirdWork.snapshot!.pendingMerge!.plan, nextPlan);
+      await third.command('third', corrected.receipt.headOid, 'start');
+      const next = await third.command('third', corrected.receipt.headOid, 'complete');
+      assert.equal(
+        git(thirdWork.path, ['show', '-s', '--format=%P', next.receipt.headOid]),
+        `${corrected.receipt.headOid} ${newerMain}`,
+      );
+      const rounds = await f.state.read((sql) =>
+        sql.all<{ first_merge: string; right_oid: string }>(
+          'SELECT first_merge,right_oid FROM code_pending_merges WHERE unit_id=? ORDER BY round',
+          f.unitId,
+        ),
+      );
+      assert.equal(rounds.length, 2);
+      assert.deepEqual(
+        { ...rounds[0] },
+        { first_merge: completed.receipt.headOid, right_oid: f.right },
+      );
+      assert.deepEqual(
+        { ...rounds[1] },
+        { first_merge: next.receipt.headOid, right_oid: newerMain },
+      );
+      await assert.rejects(
+        f.state.transaction((tx) =>
+          tx.run(
+            'UPDATE code_pending_merges SET head_oid=? WHERE project_id=? AND unit_id=? AND round=0',
+            newerMain,
+            f.admin.projectId,
+            f.unitId,
+          ),
+        ),
+        backend === 'sqlite' ? /frozen/ : { code: /^state_/ },
+      );
     },
   );
 

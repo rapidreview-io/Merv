@@ -73,6 +73,13 @@ export class CodeTransportService {
       'This assignment does not use Git',
       409,
     );
+    const workspacePolicy = effectiveWorkspace(session.execution.policy);
+    check(
+      workspacePolicy.mode === 'none' || workspacePolicy.driver !== 'code.v2',
+      'code_transport_forbidden',
+      'Hosted work uses Code bundle transport; GitHub credentials stay on the server',
+      403,
+    );
     if (input.operation === 'fetch')
       check(
         ['offered', 'active'].includes(session.status),

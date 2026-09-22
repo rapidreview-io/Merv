@@ -1435,12 +1435,13 @@ export class CodeStore {
         409,
       );
       const advanced = await tx.run(
-        'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE project_id=? AND unit_id=? AND head_oid=?',
+        'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE project_id=? AND unit_id=? AND head_oid=? AND plan_key=?',
         payload.tip,
         merge?.firstMerge ?? pending.firstMerge,
         projectId,
         payload.unitId,
         payload.expectedHead,
+        pending.plan,
       );
       check(
         advanced.changes === 1,

@@ -139,3 +139,19 @@ test('read-only sessions cannot mint a write token; read-only automation cannot 
     0,
   );
 });
+
+test('the legacy transport route never lends a GitHub token to code.v2 work', async (t) => {
+  const f = await setup(t);
+  const policy = f.session.execution.policy.workspace!;
+  assert.notEqual(policy.mode, 'none');
+  Object.assign(policy, { driver: 'code.v2' });
+  const before = f.calls.length;
+  await assert.rejects(f.service.grant(f.caller, f.fetchInput), {
+    code: 'code_transport_forbidden',
+  });
+  f.attach();
+  await assert.rejects(f.service.grant(f.caller, f.pushInput), {
+    code: 'code_transport_forbidden',
+  });
+  assert.equal(f.calls.length, before);
+});

@@ -27,13 +27,25 @@ import { boundProject } from './fixtures/code-binding.js';
 import { CodeBaseService } from '../packages/code/src/bases.js';
 import type { CodeUnitService } from '../packages/code/src/units.js';
 import { enqueueMirror } from '@merv/code/store/mirror';
+import { githubFixture, config as githubConfig } from './github-fixture.js';
+import type { PublicationHost } from '../packages/code/src/publication-host.js';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 
-async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
-  const f = await resolutionFixture(t, backend);
+async function fixture(t: TestContext, backend: Backend, historyLength = 0, connected = false) {
+  const f = await resolutionFixture(t, backend, { human: connected });
+  const remote = connected ? await githubFixture(t, f.state, f.admin) : undefined;
+  if (remote) await remote.enable();
   await f.sessions.setDispatch(f.admin, { enabled: true });
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
+    new CodeService(
+      f.state,
+      f.scope,
+      f.sessions,
+      f.artifacts,
+      f.workflows,
+      connected ? githubConfig : undefined,
+      remote?.fetcher,
+    ),
   );
   const root = join(f.directory, 'code');
   mkdirSync(join(root, 'tmp'), { recursive: true });
@@ -50,6 +62,32 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
       () => repositories,
       () => bases,
     );
+  if (remote) {
+    const host = (code as unknown as { publicationHost: PublicationHost }).publicationHost;
+    Object.assign(host, {
+      repositories: () => repositories,
+      mirror: () => ({
+        lsRemote: async (_project: string, ref: string) =>
+          remote.branches.get(ref.replace('refs/heads/', '')) ?? null,
+        push: async (
+          _project: string,
+          update: { ref: string; oid: string; expectedRemote: string | null },
+        ) => {
+          const ref = update.ref.replace('refs/heads/', '');
+          assert.equal(remote.branches.get(ref) ?? null, update.expectedRemote);
+          remote.branches.set(ref, update.oid);
+          return 'ok';
+        },
+      }),
+      // Remote objects are preloaded through real Git; publication still independently verifies them.
+      imported: async (caller: Caller, _ref: string, oid: string) => {
+        assert.equal(
+          git(repositories.paths(caller.projectId).repository, ['cat-file', '-t', oid]),
+          'commit',
+        );
+      },
+    });
+  }
   const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
   const bases = new CodeBaseService(f.state, repositories, {
     changed: (tx, projectId) => units.imported(tx, projectId),
@@ -122,6 +160,7 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
   for (const [name, commit] of Object.entries({ main, ancestor, leaf, replacement }))
     source.git('push', bare, `${commit}:refs/heads/${name}`);
   await boundProject(f.state, f.admin.projectId, main, 'repository');
+  remote?.branches.set('main', main);
   await f.state.transaction((tx) =>
     tx.run(
       'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
@@ -347,6 +386,7 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
     });
     const caller = await f.sessions.authenticate(secret);
     const base = (await code.unit(producer, record.id)).base!.reference;
+    const pending = await f.state.read((sql) => pendingMerge(sql, producer.projectId, record.id));
     assert.ok((await code.unit(producer, record.id)).generation >= 1);
     const policy = session.execution.policy.workspace;
     assert.ok(policy && policy.mode === 'persistent');
@@ -362,7 +402,8 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
         repositoryId: 'repository',
         workspaceId: record.id,
         mode: 'persistent',
-        branch: 'codex/consolidation',
+        branch: `merv/work/${record.id}`,
+        ...(pending ? { pendingMerge: pending } : {}),
         baseOid: base,
         headOid: base,
         stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
@@ -377,6 +418,27 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
     );
     const command = await code.nextCommand(director, control);
     assert.equal(command!.id, operation.command.id);
+    const proof = pending
+      ? await verifyResolution(
+          repositories.git,
+          repositories.environment(producer.projectId),
+          pending.firstParent,
+          pending.secondParent,
+          head,
+        )
+      : null;
+    assert.ok(!proof?.error);
+    if (pending)
+      await f.state.transaction((tx) =>
+        tx.run(
+          'UPDATE code_pending_merges SET first_merge=?,head_oid=? WHERE project_id=? AND unit_id=? AND plan_key=?',
+          proof!.firstMerge,
+          head,
+          producer.projectId,
+          record.id,
+          pending.plan,
+        ),
+      );
     // The fixture supplies the durable upload fact; the actual objects are in the real repository.
     await f.state.transaction((tx) =>
       tx.run(
@@ -385,7 +447,19 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
         producer.projectId,
         `session:${session.id}`,
         command!.id,
-        JSON.stringify({ head }),
+        JSON.stringify({
+          head,
+          ...(pending
+            ? {
+                merge: {
+                  plan: pending.plan,
+                  left: pending.firstParent,
+                  right: pending.secondParent,
+                  firstMerge: proof!.firstMerge,
+                },
+              }
+            : {}),
+        }),
         record.id,
       ),
     );
@@ -490,13 +564,49 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
         ),
     };
   };
+  const approve = async (
+    record: ConsolidationRecord,
+    head: string,
+    decisions: CodeCandidateDecision[],
+  ) => {
+    const producerWorker = await worker(record, head);
+    const submitted = await producerWorker.submit(decisions);
+    const reviewing = await reviewWorker(submitted);
+    const review = reviewing.review;
+    const result = (await reviewing.apply({
+      reviewId: review.id,
+      claimId: review.claimId!,
+      expectedRevision: submitted.workflow.revision,
+      verdict: 'pass',
+      notes: 'Checked the reviewed tree.',
+      synopsis: 'The frozen work and exact tree pass all checks.',
+      findings: review.criteria.map((_, i) => ({
+        criterionNumber: i + 1,
+        status: 'met' as const,
+        evidenceIds: [producerWorker.report.id],
+        notes: 'Checked.',
+      })),
+      requestId: `approve-${review.id}`,
+    })) as ConsolidationRecord;
+    await f.state.transaction((tx) =>
+      tx.run(
+        "UPDATE code_units SET writer_state='closed',head_oid=? WHERE unit_id=?",
+        head,
+        record.id,
+      ),
+    );
+    return { result, worker: producerWorker };
+  };
+
   return {
     ...f,
     code,
+    remote,
     bases,
     decide,
     run,
     reviewWorker,
+    approve,
     captures,
     consolidation,
     source,
@@ -1099,12 +1209,32 @@ for (const backend of backends) {
         { code: 'criterion_not_waivable' },
       );
       const complete = (await reviewing.apply(application)) as ConsolidationRecord;
-      assert.equal(complete.workflow.state, 'complete');
-      assert.equal(complete.completion?.centralGit, 'not-published');
-      const accepted = (await f.code.unit(f.producer, record.id)).acceptance!;
-      assert.equal(accepted.reference, f.leaf);
-      assert.equal(accepted.storage, 'code');
-      assert.equal(accepted.reviewAttached, true);
+      assert.equal(complete.workflow.state, 'awaiting_publication');
+      assert.equal(complete.completion, null);
+      assert.equal((await f.code.unit(f.producer, record.id)).acceptance, null);
+      const [publication] = await f.code.publications(f.producer);
+      assert.equal(publication.headOid, f.leaf);
+      assert.equal(publication.treeOid, pinned.receipt.treeOid);
+      assert.equal(publication.approval?.candidateSetHash, record.candidates!.hash);
+      assert.equal(publication.approval?.decisionManifestHash, submission.manifest!.hash);
+      assert.equal(publication.approval?.integrationBase, f.main);
+      assert.equal(publication.approval?.certificateHash, review.provenance!.hash);
+      assert.equal(publication.review?.verdict, 'pass');
+      const policy = await f.state.read((sql) =>
+        sql.get<{ manifest_json: string }>(
+          'SELECT manifest_json FROM wf_execution_policies WHERE workflow=? AND version=5 AND state=?',
+          'consolidation',
+          'awaiting_publication',
+        ),
+      );
+      assert.deepEqual(JSON.parse(policy!.manifest_json).tools, []);
+      await f.code.syncPublications(f.admin);
+      assert.equal(
+        (await f.consolidation.get(f.producer, record.id)).workflow.state,
+        'awaiting_publication',
+      );
+      const unrelated = await f.create([], []);
+      assert.equal(unrelated.workflow.state, 'deciding');
 
       assert.equal(f.gitCalls(), calls, 'Claim and verdict reuse the pinned ancestry');
     },
@@ -1297,6 +1427,303 @@ for (const backend of backends) {
         );
         assert.equal(stored?.fingerprint, row.fingerprint);
       }
+    },
+  );
+}
+
+for (const backend of backends) {
+  test(
+    `${backend}: hosted publication retries the same consolidation after stale main and verifies its merge`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend, 0, true);
+      const candidate = await f.unit('task', f.leaf);
+      const record = await f.create([], [candidate.id]);
+      const decisions: CodeCandidateDecision[] = [
+        { unitId: candidate.id, decision: 'retain', rationale: 'Keep the accepted work.' },
+      ];
+      const decided = await f.decide(record, decisions);
+      const sync = async () => {
+        await f.state.transaction((tx) => tx.run("UPDATE code_publications SET synced_at=''"));
+        return f.code.syncPublications(f.admin);
+      };
+      const first = await f.approve(decided, f.leaf, decisions);
+      assert.equal(first.result.workflow.state, 'awaiting_publication');
+      await assert.rejects(
+        f.code.controlPublication(first.worker.caller, {
+          action: 'record_canary',
+          staleMerged: false,
+          reason: 'I am the producer',
+          requestId: 'forbidden',
+        }),
+      );
+      await f.code.controlPublication(f.admin, {
+        action: 'record_canary',
+        staleMerged: false,
+        reason: 'Release matrix passed with the configured App and rules.',
+        requestId: 'canary',
+      });
+      const [old] = await sync();
+      assert.equal(old.lastError, null);
+      assert.equal(old.pull?.draft, false);
+      assert.equal(f.remote!.statuses.size, 1);
+      assert.ok(f.remote!.statuses.has(f.leaf));
+      assert.equal(
+        f.remote!.calls.find((call) => call.path.includes('/statuses/'))?.authorization,
+        'Bearer synthetic-installation-secret',
+      );
+      assert.equal(
+        git(f.repositories.paths(f.admin.projectId).repository, [
+          'rev-parse',
+          `refs/merv/proposals/${old.proposalId}`,
+        ]),
+        f.leaf,
+      );
+      await sync();
+      assert.equal(
+        f.remote!.calls.filter((call) => call.path.includes('/statuses/') && call.method === 'POST')
+          .length,
+        1,
+        'Reconciliation does not duplicate an exact-head approval status',
+      );
+      f.remote!.pulls[0].head.sha = 'e'.repeat(40);
+      assert.equal((await sync())[0].lastError, 'github_head_changed');
+      assert.equal(
+        f.remote!.statuses.size,
+        1,
+        'Changing the PR head does not carry approval status',
+      );
+      f.remote!.pulls[0].head.sha = old.headOid;
+      f.remote!.control.rulesIncomplete = true;
+      f.remote!.control.strict = false;
+      await assert.rejects(
+        f.code.mergePublication(f.admin, {
+          proposalId: old.proposalId,
+          expectedHead: old.headOid,
+          expectedBase: f.main,
+          requestId: 'no-strict-rule',
+        }),
+        { code: 'code_publication_rules_required' },
+      );
+      await f.code.controlPublication(f.admin, {
+        action: 'acknowledge_rules',
+        reason: 'Inherited bypass lists require a separate owner audit.',
+        requestId: 'ack',
+      });
+      f.remote!.control.strict = true;
+      await assert.rejects(
+        f.code.mergePublication(f.admin, {
+          proposalId: old.proposalId,
+          expectedHead: old.headOid,
+          expectedBase: f.replacement,
+          requestId: 'inspect-only',
+        }),
+        { code: 'github_base_changed' },
+      );
+      const host = (f.code as unknown as { publicationHost: PublicationHost }).publicationHost;
+      const controls = await host.status(f.admin);
+      assert.ok(controls.blockers.includes('code_rules_visibility_incomplete'));
+      assert.equal(controls.acknowledgement?.actorId, f.admin.actorId);
+      f.remote!.branches.set('main', f.replacement);
+      const stale = await f.code.mergePublication(f.admin, {
+        proposalId: old.proposalId,
+        expectedHead: old.headOid,
+        expectedBase: f.main,
+        requestId: 'stale',
+      });
+      assert.equal(stale.stale, true);
+      assert.equal((await f.consolidation.get(f.admin, record.id)).workflow.state, 'stale_base');
+      await sync();
+      const resumed = await f.consolidation.get(f.admin, record.id);
+      assert.equal(resumed.workflow.state, 'consolidating');
+      assert.equal(resumed.id, record.id);
+      f.source.git('checkout', '--detach', f.leaf);
+      f.source.git('merge', '--no-ff', '-m', 'Integrate newer main', f.replacement);
+      const head = f.source.git('rev-parse', 'HEAD');
+      const bare = f.repositories.paths(f.admin.projectId).repository;
+      f.source.git('push', bare, `${head}:refs/heads/reviewed-again`);
+      const second = await f.approve(resumed, head, decisions);
+      assert.equal(second.worker.session.execution.references.integrationBase, f.replacement);
+      const pending = await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, record.id));
+      assert.equal(pending?.secondParent, f.replacement);
+      assert.equal(pending?.firstParent, f.leaf);
+      assert.ok(
+        second.worker.session.execution.policy.tools.some((tool) => tool.name === 'code.merge'),
+      );
+      assert.equal(
+        (await f.sessions.get(f.producer, second.worker.session.id)).workspace?.attachment.branch,
+        `merv/work/${record.id}`,
+      );
+      assert.equal(
+        (await f.sessions.get(f.producer, first.worker.session.id)).workspace?.attachment.branch,
+        `merv/work/${record.id}`,
+      );
+      assert.equal(second.result.submissions.length, 2);
+      for (let i = 0; i < 3; i++) await sync();
+      const publications = await f.code.publications(f.admin);
+      assert.equal(publications.length, 2);
+      const successor = publications.find((p) => p.proposalId !== old.proposalId)!;
+      assert.equal(successor.lastError, null);
+      assert.equal(successor.approval?.integrationBase, f.replacement);
+      assert.equal(f.remote!.pulls[0].state, 'closed');
+      assert.ok(f.remote!.comments[0].body.includes(successor.proposalId));
+      assert.equal(f.remote!.statuses.size, 2);
+      const tree = f.source.git('rev-parse', `${head}^{tree}`);
+      const merge = f.source.git(
+        'commit-tree',
+        tree,
+        '-p',
+        f.replacement,
+        '-p',
+        head,
+        '-m',
+        'Publish reviewed result',
+      );
+      f.source.git('push', bare, `${merge}:refs/heads/published`);
+      f.remote!.control.mergeSha = merge;
+      const input = {
+        proposalId: successor.proposalId,
+        expectedHead: head,
+        expectedBase: f.replacement,
+        requestId: 'publish',
+      };
+      f.remote!.control.loseMergeReply = true;
+      await assert.rejects(f.code.mergePublication(f.admin, input), { code: 'github_unavailable' });
+      const result = await f.code.mergePublication(f.admin, input);
+      assert.equal(result.verified, true);
+      assert.equal(result.merge?.commitSha, merge);
+      await assert.rejects(
+        f.state.transaction((tx) =>
+          tx.run(
+            'UPDATE code_publications SET merge_json=? WHERE proposal_id=?',
+            '{}',
+            successor.proposalId,
+          ),
+        ),
+      );
+      await assert.rejects(
+        f.state.transaction((tx) =>
+          tx.run(
+            'UPDATE code_publications SET project_id=? WHERE proposal_id=?',
+            'another-project',
+            successor.proposalId,
+          ),
+        ),
+      );
+
+      assert.equal(f.remote!.calls.filter((c) => c.path.endsWith('/merge')).length, 1);
+      assert.equal(
+        (await f.consolidation.get(f.admin, record.id)).completion?.centralGit,
+        'published',
+      );
+      assert.equal((await f.code.unit(f.admin, record.id)).acceptance?.reference, head);
+      await assert.rejects(f.code.mergePublication(f.admin, { ...input, expectedBase: f.main }), {
+        code: 'publication_conflict',
+      });
+    },
+  );
+
+  test(
+    `${backend}: a published tree mismatch is a retained incident and a failed canary disables only publication`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend, 0, true);
+      const host = (f.code as unknown as { publicationHost: PublicationHost }).publicationHost;
+      const candidate = await f.unit('task', f.leaf);
+      const record = await f.create([], [candidate.id]);
+      const decisions: CodeCandidateDecision[] = [
+        { unitId: candidate.id, decision: 'retain', rationale: 'Keep the accepted work.' },
+      ];
+      const decided = await f.decide(record, decisions);
+      await f.approve(decided, f.leaf, decisions);
+      await f.code.controlPublication(f.admin, {
+        action: 'record_canary',
+        staleMerged: false,
+        reason: 'Release check passed.',
+        requestId: 'canary',
+      });
+      const [publication] = await f.code.syncPublications(f.admin);
+      const tree = f.source.git('rev-parse', `${f.replacement}^{tree}`);
+      const merge = f.source.git(
+        'commit-tree',
+        tree,
+        '-p',
+        f.main,
+        '-p',
+        f.leaf,
+        '-m',
+        'Wrong tree',
+      );
+      f.source.git(
+        'push',
+        f.repositories.paths(f.admin.projectId).repository,
+        `${merge}:refs/heads/wrong-merge`,
+      );
+      f.remote!.control.mergeSha = merge;
+      const mergeInput = {
+        proposalId: publication.proposalId,
+        expectedHead: f.leaf,
+        expectedBase: f.main,
+        requestId: 'wrong-merge',
+      };
+      await assert.rejects(f.code.mergePublication(f.admin, mergeInput), {
+        code: 'code_publication_incident',
+      });
+      const [incident] = await f.code.publications(f.admin);
+      assert.equal(incident.incident?.tree, tree);
+      assert.equal(incident.incident?.commitSha, merge);
+      assert.equal(incident.verified, false);
+      assert.equal(incident.lastError, 'code_publication_incident');
+      assert.equal(
+        (await f.consolidation.get(f.admin, record.id)).workflow.state,
+        'awaiting_publication',
+      );
+      await assert.rejects(f.code.mergePublication(f.admin, mergeInput), {
+        code: 'code_publication_incident',
+      });
+      await assert.rejects(
+        f.state.transaction((tx) =>
+          tx.run(
+            'UPDATE code_publications SET incident_json=NULL WHERE proposal_id=?',
+            publication.proposalId,
+          ),
+        ),
+        backend === 'sqlite' ? /immutable/ : { code: /^state_/ },
+      );
+      const input = {
+        action: 'record_canary',
+        staleMerged: true,
+        reason: 'The disposable stale PR merged under a bypass.',
+        requestId: 'canary-failed',
+      };
+      const first = await f.code.controlPublication(f.admin, input);
+      assert.deepEqual(await f.code.controlPublication(f.admin, input), first);
+      await assert.rejects(f.code.controlPublication(f.admin, { ...input, staleMerged: false }), {
+        code: 'request_conflict',
+      });
+      assert.ok((await host.status(f.admin)).blockers.includes('code_publication_disabled'));
+      const other = await f.create([], []);
+      assert.equal(other.workflow.state, 'deciding');
+      await assert.rejects(
+        f.code.controlPublication(f.admin, {
+          action: 'clear',
+          reason: 'Try again',
+          requestId: 'premature-clear',
+        }),
+        { code: 'code_publication_disabled' },
+      );
+      await f.code.controlPublication(f.admin, {
+        action: 'record_canary',
+        staleMerged: false,
+        reason: 'All release cases passed after removing bypass.',
+        requestId: 'repaired',
+      });
+      await f.code.controlPublication(f.admin, {
+        action: 'clear',
+        reason: 'Verified the repaired rules.',
+        requestId: 'clear',
+      });
+      assert.ok(!(await host.status(f.admin)).blockers.includes('code_publication_disabled'));
     },
   );
 }

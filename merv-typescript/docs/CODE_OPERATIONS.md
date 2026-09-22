@@ -2,7 +2,7 @@
 
 The Code plugin lets a running worker request a Git checkpoint without giving the worker write access to private Git metadata. Code stores the request and its immutable result. The existing machine Runner performs the fixed Git operation in that worker's assigned checkout.
 
-Live checkpoints are the first slice of Code. The service also supports [immutable proposal sealing](CODE_PROPOSALS.md) inside an admitting domain transaction. Production research review and central publication remain unfinished. A successful checkpoint is evidence of a commit; it is not an approval or a published project head.
+Live checkpoints are the first slice of Code. The service also supports [immutable proposal sealing](CODE_PROPOSALS.md) inside an admitting domain transaction. Hosted consolidation@5 publishes independently reviewed snapshots through a human-requested PR merge, subject to the release checks below. Published older workflow versions keep their existing behavior. A successful checkpoint is evidence of a commit; it is not an approval or a published project head.
 
 ## Plugin boundaries
 
@@ -187,7 +187,7 @@ The final capture is the one thing a machine may still send after its session cl
 ## Mirroring
 
 Code's own repository is where work lives; the linked GitHub repository is where it is
-published. Publication is the server's own asynchronous work and is never on anybody's path: a
+published. Mirroring is the server's own asynchronous work and never gates a lease or acceptance: a
 handoff is complete the moment Code holds the commit, and a repository that is away, refusing
 or moved by another hand leaves the publication queued, retrying or blocked while every
 session, review and acceptance goes on exactly as before.
@@ -240,3 +240,30 @@ The runner's repository and its private central ref remain machine-local. Legacy
 Code now freezes proposals against exact receipts and authored evidence. The next production integration must implement the research domain records that determine the proposal's corpus, acceptance criteria and current review. Publication follows those domain gates and needs an expected-head compare-and-swap and its own immutable receipt. A stale, cancelled or superseded publication attempt must never be revived by a delayed result. See [the publication plan](CODE_PUBLICATION_PLAN.md).
 
 See [Git workspaces](WORKSPACES.md) for workspace ownership and source isolation. Automated checks live in `tests/code-*.test.ts` and `tests/runner-code-*.test.ts`; `scripts/live-code.ts` exercises a bounded real producer and independent reviewer on a synthetic program. Latest execution results belong in [VERIFICATION.md](../VERIFICATION.md), rather than being inferred from the existence of these scripts.
+
+## Reviewed consolidation publication
+
+Unreleased `consolidation@5` waits after independent approval. Code owns the immutable proposal snapshot, PR journal, exact-head `merv/consolidation-approved` status and verification. `code.publication.sync` reconciles the journal; runner polling may trigger that server work but receives no App credential. `code.publication.merge` (or the existing HTTP/UI merge route) requires a signed-in human administrator, the exact proposal, reviewed head, inspected base and stable requestId. It uses only synchronous `merge_method=merge` with the reviewed SHA. No merge queue, auto-merge, branch update, squash, rebase, direct push to main or local publication is supported.
+
+The App installation token is restricted to one repository, contents/write, pull_requests/write, statuses/write and checks/read for publication, and revoked after the operation. Import and mirroring retain their narrower per-operation tokens. The legacy transport token route still serves live `task@3/4`, `experiment@6/7`, `consolidation@2/4` and older Git assignments; it explicitly refuses `code.v2`. Configure PR and strict up-to-date rules with `merv/consolidation-approved` required from this App. Keep the App out of bypass lists for those rules. A separate update restriction may permit this App through its own bypass list.
+
+No GitHub link or disabled write automation leaves the consolidation in `awaiting_publication`, with owner recovery guidance and the journal error in `code.status.publication.records`. Local production, handoff, reviews and unrelated work continue. Incomplete rules inspection is recorded as `code_rules_visibility_incomplete` in `code.status.publication.controls`; the owner may use `code.publication.control` with `action: acknowledge_rules`, reason and requestId. Acknowledging incomplete visibility does not waive known missing PR/strict checks or a failed canary.
+
+When current main is outside reviewed ancestry, the merge request records `stale_base`. The next sync returns the same record to producing. Its original base pin, decisions and work branch remain; the next lease pins a new pending-merge round from the current canonical head and newer main. Use `code.merge` start, edit any conflicts, and `code.merge` complete; further corrective checkpoints use `code.commit`. Admission verifies both parents and the retained lineage before another independent review. The successor approval seals another proposal. The server names it in a comment on the predecessor PR and closes that PR; both create-only proposal refs remain. Do not update an approved snapshot branch.
+
+A successful API response is insufficient for completion. Code imports through its existing admission journal and verifies two parents, reviewed head as second parent, first parent contained in the reviewed head, and tree equality. A lost reply retries the same intent and reads the already-merged PR. A mismatch is `code_publication_incident`, retaining the observed commit/tree/parents in the publication record, with no completion or automatic repair. A merge outside reviewed ancestry also records a failed canary and disables this publication path; local work and mirroring remain available.
+
+### Mandatory real-GitHub release matrix
+
+Run this checklist in a disposable repository/project with the actual App identity, permissions and proposed production rules. Keep request/response evidence, rule exports, App ID, PR URLs and fetched commit IDs. No automated repository test contacts GitHub. The tests fake the App; they do not establish GitHub's race enforcement.
+
+- [ ] An up-to-date independently approved head merges successfully through the exact synchronous endpoint and App installation identity.
+- [ ] Pause after Code's inspection; advance main outside approved ancestry, then release the merge request. GitHub must reject it. Record both the inspected and actual main SHA and the HTTP response.
+- [ ] Race two approved PR merges. The first succeeds; the other, now stale, must fail. Verify both results independently from fetched history.
+- [ ] Remove all required checks while retaining strict mode. Demonstrate that strict alone does not protect the stale case in this disposable repository; restore the required App-sourced approval status afterward.
+- [ ] Deliberately add an App bypass to the strict/PR rule and repeat the stale canary. It must expose the unsafe merge. Record `code.publication.control` with `action: record_canary`, `staleMerged: true`, a reason naming the PR/rules/evidence, and a requestId. Confirm `code_publication_disabled` in `code.status` and refusal to publish another approved proposal. Remove the bypass before continuing.
+- [ ] Fetch every successful merge through Code admission. Verify exactly two parents, the actual main parent, reviewed second parent and reviewed tree. Exercise a lost API reply; retry must reconcile without another merge request.
+- [ ] With the intended rules restored, rerun the full matrix and stale canary. Record `action: record_canary`, `staleMerged: false`, reason containing the evidence and a new requestId. If previously disabled, use `action: clear` with a reason and another requestId. A passing result alone never clears an earlier disablement.
+- [ ] Check App-visible repository and inherited rules, record inaccessible bypass lists, and have the owner acknowledge incomplete visibility. Repeat the matrix whenever App identity, binding or enforcement changes. A new connection revision invalidates the previous canary attestation.
+
+The canary is deliberately a release-time manual experiment: create two sibling heads from main in the disposable repository, approve/status one, advance main to the other after inspection, and attempt the exact App-authenticated synchronous merge. The operator records its observed result using the control above. Runtime verification independently detects a successful merge outside approved ancestry and disables publication, but that observation happens after GitHub changed main; it cannot prevent a misconfigured GitHub merge. Do not enable this mode on production until the manual matrix passes.

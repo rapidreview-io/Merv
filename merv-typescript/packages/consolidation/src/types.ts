@@ -91,7 +91,8 @@ export interface ConsolidationRecord {
     submissionId: string;
     reviewId: string;
     completedAt: string;
-    centralGit: 'not-published' | 'not-applicable';
+    centralGit: 'not-published' | 'not-applicable' | 'published';
+    publicationRef?: string;
   } | null;
 }
 export interface Consolidation {

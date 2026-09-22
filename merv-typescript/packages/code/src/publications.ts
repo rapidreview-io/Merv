@@ -1,6 +1,7 @@
 import {
   clip,
   canonical,
+  digest,
   check,
   codePublicationIdSchema,
   codePublicationMergeSchema,
@@ -20,6 +21,8 @@ import type { CodeProposal } from './types.js';
 import { CodeGitHubService } from './github.js';
 import type { CodeTransportService } from './transport.js';
 import { parseCodeInput } from './input.js';
+import { publicationMigration } from './publications-schema.js';
+import { PublicationIncident, type PublicationHost } from './publication-host.js';
 
 const schema = `CREATE TABLE code_publications (
   proposal_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record_json TEXT NOT NULL,binding_json TEXT NOT NULL,
@@ -39,6 +42,10 @@ interface Row {
   lock_until: string | null;
   synced_at: string;
   settled: number;
+  stale: number;
+  successor: string | null;
+  verified: number;
+  incident_json: string | null;
 }
 
 /** A durable external publication of immutable code facts. The domain alone supplies the review verdict. */
@@ -48,13 +55,29 @@ export class CodePublicationService implements CodePublicationApi {
     private scope: Scope,
     private github: CodeGitHubService,
     private transport: CodeTransportService,
+    private host?: PublicationHost,
   ) {}
   async initialize() {
-    await this.state.migrate('code_publications', [{ version: 1, sql: schema, postgres: schema }]);
+    await this.state.migrate('code_publications', [
+      { version: 1, sql: schema, postgres: schema },
+      publicationMigration,
+    ]);
   }
   private decode(row: Row): CodePublication {
     return {
       ...JSON.parse(row.record_json),
+      ...(row.binding_json !== 'null'
+        ? ((b) => ({
+            repository: b.repository.fullName,
+            repositoryId: b.repository.id,
+            connectionRevision: b.revision,
+            baseBranch: b.baseBranch,
+          }))(JSON.parse(row.binding_json))
+        : {}),
+      stale: !!row.stale,
+      successor: row.successor,
+      verified: !!row.verified,
+      incident: row.incident_json ? JSON.parse(row.incident_json) : null,
       review: row.review_json ? JSON.parse(row.review_json) : null,
       pull: row.pull_json ? JSON.parse(row.pull_json) : null,
       merge: row.merge_json ? JSON.parse(row.merge_json) : null,
@@ -71,13 +94,16 @@ export class CodePublicationService implements CodePublicationApi {
     check(row, 'publication_not_found', 'GitHub publication not found in this project', 404);
     return row;
   }
-  async enqueue(caller: Caller, proposal: CodeProposal, tx: Transaction) {
+  async enqueue(caller: Caller, proposal: CodeProposal, tx: Transaction, reviewId?: string) {
     ({ caller, proposal } = structuredClone({ caller, proposal }));
     this.state.assertTransaction(tx);
-    if (!proposal.receipt.repositoryId.startsWith('github:')) return;
-    const binding = await this.transport.bindingForProposal(proposal.producer.sessionId, tx);
+    const hosted = proposal.workflow?.name === 'consolidation' && proposal.workflow.version === 5;
+    if (!hosted && !proposal.receipt.repositoryId.startsWith('github:')) return;
+    const binding = hosted
+      ? null
+      : await this.transport.bindingForProposal(proposal.producer.sessionId, tx);
     check(
-      binding && proposal.receipt.repositoryId === `github:${binding.repository.id}`,
+      hosted || (binding && proposal.receipt.repositoryId === `github:${binding.repository.id}`),
       'github_conflict',
       'Proposal repository binding is unavailable',
       409,
@@ -88,11 +114,11 @@ export class CodePublicationService implements CodePublicationApi {
       proposalId: proposal.id,
       instanceId: proposal.instanceId,
       manifestHash: proposal.manifestHash,
-      repository: binding.repository.fullName,
-      repositoryId: binding.repository.id,
-      connectionRevision: binding.revision,
+      repository: binding?.repository.fullName ?? '',
+      repositoryId: binding?.repository.id ?? 0,
+      connectionRevision: binding?.revision ?? 0,
       branch: `merv/proposals/${proposal.id}`,
-      baseBranch: binding.baseBranch,
+      baseBranch: binding?.baseBranch ?? 'main',
       baseOid: proposal.receipt.baseOid,
       headOid: proposal.receipt.headOid,
       treeOid: proposal.receipt.treeOid,
@@ -102,6 +128,7 @@ export class CodePublicationService implements CodePublicationApi {
       pull: null,
       merge: null,
       lastError: null,
+      ...(hosted ? { approval: await this.approval(caller, proposal, reviewId!, tx) } : {}),
     };
     await tx.run(
       'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json) VALUES(?,?,?,?) ON CONFLICT(proposal_id) DO NOTHING',
@@ -121,7 +148,16 @@ export class CodePublicationService implements CodePublicationApi {
   ) {
     ({ caller, proposal } = structuredClone({ caller, proposal }));
     this.state.assertTransaction(tx);
-    if (!proposal.receipt.repositoryId.startsWith('github:')) return;
+    if (proposal.workflow?.name === 'consolidation' && proposal.workflow.version === 5) {
+      if (verdict !== 'pass') return;
+      await this.enqueue(caller, proposal, tx, reviewId);
+      await tx.run(
+        "UPDATE code_publications SET successor=?,settled=0,synced_at='' WHERE project_id=? AND stale=1 AND successor IS NULL AND proposal_id IN (SELECT id FROM code_proposals WHERE instance_id=?)",
+        proposal.id,
+        caller.projectId,
+        proposal.instanceId,
+      );
+    } else if (!proposal.receipt.repositoryId.startsWith('github:')) return;
     await this.scope.require(caller, 'review', tx);
     check(
       caller.actorId !== proposal.producer.actorId,
@@ -153,6 +189,52 @@ export class CodePublicationService implements CodePublicationApi {
       canonical({ id: reviewId, actorId: caller.actorId, verdict, recordedAt: now() }),
       proposal.id,
     );
+  }
+  private async approval(
+    caller: Caller,
+    proposal: CodeProposal,
+    reviewId: string,
+    tx: Transaction,
+  ) {
+    const round = await tx.get<{ acceptance_json: string; review_id: string }>(
+      'SELECT acceptance_json,review_id FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
+      caller.projectId,
+      proposal.instanceId,
+      reviewId,
+    );
+    check(
+      round,
+      'publication_review_required',
+      'A passing review acceptance must seal publication',
+      409,
+    );
+    const accepted = JSON.parse(round.acceptance_json);
+    const review = await tx.get<{ provenance_json: string; verdict: string }>(
+      'SELECT provenance_json,verdict FROM reviews WHERE id=? AND project_id=?',
+      round.review_id,
+      caller.projectId,
+    );
+    const certificate = review?.provenance_json && JSON.parse(review.provenance_json);
+    check(
+      review?.verdict === 'pass' &&
+        certificate?.reference === proposal.id &&
+        accepted.code?.commit === proposal.receipt.headOid,
+      'publication_review_required',
+      'The acceptance and independent certificate must name this exact proposal',
+      409,
+    );
+    const { candidates, manifest } = proposal.provenance as unknown as {
+      candidates: { hash: string; integrationBase: string };
+      manifest: { hash: string };
+    };
+    return {
+      candidateSetHash: candidates.hash,
+      decisionManifestHash: manifest.hash,
+      integrationBase:
+        (proposal.provenance.integrationBase as string | undefined) ?? candidates.integrationBase,
+      certificateHash: certificate.hash,
+      acceptanceHash: digest(accepted),
+    };
   }
   async publications(caller: Caller) {
     caller = structuredClone(caller);
@@ -235,6 +317,43 @@ export class CodePublicationService implements CodePublicationApi {
     return row;
   }
   private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
+    const original = this.decode(row);
+    let mainParent: string | undefined;
+    if (original.approval && pull.merged && !original.verified) {
+      try {
+        check(
+          !original.incident,
+          'code_publication_incident',
+          'This publication has a retained incident; investigate it without rewriting its approved facts',
+          409,
+        );
+        check(
+          pull.mergeCommitSha && original.merge,
+          'code_publication_incident',
+          'A merge occurred without a retained human intent',
+          409,
+        );
+        mainParent = await this.host!.verify(caller, original, pull.mergeCommitSha);
+      } catch (error) {
+        if (error instanceof MervError && error.code === 'code_publication_incident')
+          await this.state.transaction(async (tx) => {
+            await this.owned(caller, row.proposal_id, lock, tx);
+            await tx.run(
+              "UPDATE code_publications SET incident_json=COALESCE(incident_json,?),pull_json=?,error='code_publication_incident',settled=1 WHERE proposal_id=?",
+              canonical({
+                commitSha: pull.mergeCommitSha,
+                expectedHead: original.headOid,
+                expectedTree: original.treeOid,
+                ...(error instanceof PublicationIncident ? error.observation : {}),
+                at: now(),
+              }),
+              canonical(pull),
+              row.proposal_id,
+            );
+          });
+        throw error;
+      }
+    }
     return this.state.transaction(async (tx) => {
       const current = await this.owned(caller, row.proposal_id, lock, tx);
       await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
@@ -246,13 +365,27 @@ export class CodePublicationService implements CodePublicationApi {
         Number(pull.merged || pull.state === 'closed'),
         row.proposal_id,
       );
+      if (pull.merged && record.approval && !record.verified) {
+        await this.host!.check(caller, record, tx);
+        await this.host!.apply(caller, record, 'published', tx);
+        await this.host!.main(caller, pull.mergeCommitSha!, tx);
+      }
       if (pull.merged && record.merge && pull.mergeCommitSha) {
         await tx.run(
           'UPDATE code_publications SET merge_json=? WHERE proposal_id=?',
-          canonical({ ...record.merge, commitSha: pull.mergeCommitSha }),
+          canonical({
+            ...record.merge,
+            commitSha: pull.mergeCommitSha,
+            ...(mainParent ? { mainParent } : {}),
+          }),
           row.proposal_id,
         );
       }
+      if (pull.merged && record.approval && !record.verified)
+        await tx.run(
+          'UPDATE code_publications SET verified=1 WHERE proposal_id=?',
+          record.proposalId,
+        );
       return this.decode(await this.row(caller, row.proposal_id, tx));
     });
   }
@@ -269,7 +402,7 @@ export class CodePublicationService implements CodePublicationApi {
       await this.scope.require(caller, 'write', tx);
       return (
         await tx.all<Row>(
-          'SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? ORDER BY synced_at,proposal_id LIMIT 100',
+          'SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? ORDER BY CASE WHEN successor IS NOT NULL THEN 0 ELSE 1 END,synced_at,proposal_id LIMIT 100',
           caller.projectId,
           new Date(Date.now() - 30_000).toISOString(),
         )
@@ -279,13 +412,48 @@ export class CodePublicationService implements CodePublicationApi {
     for (const record of records.slice(0, 1)) {
       try {
         await this.locked(caller, record.proposalId, async (row, lock) => {
-          await this.github.automation(
+          if (row.binding_json === 'null') {
+            row = await this.state.transaction(async (tx) => {
+              await this.owned(caller, row.proposal_id, lock, tx);
+              const binding = await this.github.publicationBinding(caller, tx);
+              await tx.run(
+                'UPDATE code_publications SET binding_json=? WHERE proposal_id=?',
+                canonical(binding),
+                row.proposal_id,
+              );
+              return this.owned(caller, row.proposal_id, lock, tx);
+            });
+          }
+          const hosted = !!this.decode(row).approval;
+          if (hosted && row.stale && !row.successor) {
+            await this.state.transaction(async (tx) => {
+              const current = await this.owned(caller, row.proposal_id, lock, tx);
+              if (!current.settled) {
+                await this.host!.apply(caller, this.decode(current), 'resume', tx);
+                await tx.run(
+                  'UPDATE code_publications SET settled=1 WHERE proposal_id=?',
+                  row.proposal_id,
+                );
+              }
+            });
+            return;
+          }
+          await (
+            hosted
+              ? this.github.publicationAutomation.bind(this.github)
+              : this.github.automation.bind(this.github)
+          )(
             caller,
             'write',
             JSON.parse(row.binding_json),
             async (client, token) => {
               const current = this.decode(row);
               let pull: GitHubPullRequest;
+              if (hosted && !current.stale) {
+                await this.host!.rules(caller, client, token, current, false);
+                await this.state.transaction((tx) => this.host!.check(caller, current, tx));
+                await this.host!.snapshot(caller, current);
+              }
               if (current.pull)
                 pull = await client.pull(token, current.repository, current.pull.number);
               else {
@@ -349,7 +517,20 @@ export class CodePublicationService implements CodePublicationApi {
                 this.row(caller, current.proposalId, tx),
               );
               const review = this.decode(latest).review;
+              if (hosted && current.successor && pull.state === 'open') {
+                await client.successorComment(
+                  token,
+                  current.repository,
+                  pull.number,
+                  current.successor,
+                );
+                pull = await client.updatePull(token, current.repository, pull.number, {
+                  state: 'closed',
+                });
+              }
               if (pull.state === 'open' && review) {
+                if (hosted && review.verdict === 'pass')
+                  await client.approvalStatus(token, current.repository, current.headOid, true);
                 if (review.verdict !== 'pass')
                   pull = await client.updatePull(token, current.repository, pull.number, {
                     state: 'closed',
@@ -404,6 +585,42 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return this.locked(caller, input.proposalId, async (row, lock) => {
       const record = this.decode(row);
+      await this.state.transaction(async (tx) => {
+        await this.scope.require(caller, 'admin', tx);
+        const old = await tx.get<{ input_hash: string }>(
+          'SELECT input_hash FROM code_publication_requests WHERE project_id=? AND actor_id=? AND request_id=?',
+          caller.projectId,
+          caller.actorId,
+          input.requestId,
+        );
+        check(
+          !old || old.input_hash === digest(input),
+          'publication_conflict',
+          'Merge request identifier has different input',
+          409,
+        );
+        if (!old)
+          await tx.run(
+            'INSERT INTO code_publication_requests VALUES(?,?,?,?,?)',
+            caller.projectId,
+            caller.actorId,
+            input.requestId,
+            digest(input),
+            canonical({ proposalId: input.proposalId }),
+          );
+      });
+      check(
+        !record.incident,
+        'code_publication_incident',
+        'This publication has a retained incident requiring operator investigation',
+        409,
+      );
+      check(
+        !record.stale,
+        'code_publication_stale',
+        'This proposal is stale; integrate main on the same work branch and obtain another review',
+        409,
+      );
       check(
         record.review?.verdict === 'pass' && record.pull,
         'publication_review_required',
@@ -416,7 +633,11 @@ export class CodePublicationService implements CodePublicationApi {
         'The selected commit differs from the reviewed proposal',
         409,
       );
-      return this.github.automation(
+      return (
+        record.approval
+          ? this.github.publicationAutomation.bind(this.github)
+          : this.github.automation.bind(this.github)
+      )(
         caller,
         'write',
         JSON.parse(row.binding_json),
@@ -425,6 +646,35 @@ export class CodePublicationService implements CodePublicationApi {
           let pull = await client.pull(token, record.repository, record.pull!.number);
           this.pinned(record, pull);
           if (pull.merged) return this.save(caller, row, lock, pull);
+          let requiredChecks: string[] = [];
+          if (record.approval) {
+            const main = await client.branch(token, record.repository, record.baseBranch);
+            await this.host!.import(caller, record, main.sha);
+            if (!(await this.host!.ancestor(caller.projectId, main.sha, record.headOid))) {
+              await this.state.transaction(async (tx) => {
+                await this.scope.require(caller, 'admin', tx);
+                await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
+                await this.owned(caller, record.proposalId, lock, tx);
+                await this.host!.check(caller, record, tx);
+                await this.host!.main(caller, main.sha, tx);
+                await this.host!.apply(caller, record, 'stale', tx);
+                await tx.run(
+                  "UPDATE code_publications SET stale=1,synced_at='' WHERE proposal_id=?",
+                  record.proposalId,
+                );
+              });
+              return this.decode(
+                await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),
+              );
+            }
+            requiredChecks = await this.host!.rules(caller, client, token, record);
+            check(
+              await client.approvalStatus(token, record.repository, record.headOid),
+              'publication_review_required',
+              'The exact approved head must carry merv/consolidation-approved',
+              409,
+            );
+          }
           check(
             pull.state === 'open' && !pull.draft && pull.base.sha === input.expectedBase,
             'github_base_changed',
@@ -440,7 +690,15 @@ export class CodePublicationService implements CodePublicationApi {
             409,
           );
           check(
-            (inspection.statusCount === 0 || inspection.commitStatus === 'success') &&
+            (!record.approval ||
+              (await client.requiredChecks(
+                token,
+                record.repository,
+                record.headOid,
+                requiredChecks,
+                inspection.checks,
+              ))) &&
+              (inspection.statusCount === 0 || inspection.commitStatus === 'success') &&
               inspection.checks.every(
                 (c) =>
                   c.status === 'completed' &&
@@ -453,7 +711,23 @@ export class CodePublicationService implements CodePublicationApi {
           await this.state.transaction(async (tx) => {
             await this.scope.require(caller, 'admin', tx);
             await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-            const latest = this.decode(await this.row(caller, record.proposalId, tx));
+            check(
+              caller.human && !caller.session && !caller.key,
+              'github_human_required',
+              'A signed-in human must merge',
+              403,
+            );
+            const latest = this.decode(await this.owned(caller, record.proposalId, lock, tx));
+            check(
+              latest.review?.verdict === 'pass' &&
+                canonical(latest.review) === canonical(record.review) &&
+                latest.headOid === input.expectedHead &&
+                !latest.stale,
+              'publication_review_required',
+              'The exact approved publication must still be current',
+              409,
+            );
+            if (latest.approval) await this.host!.check(caller, latest, tx);
             if (latest.merge?.requestId === input.requestId)
               check(
                 latest.merge.expectedBase === input.expectedBase &&
@@ -468,7 +742,8 @@ export class CodePublicationService implements CodePublicationApi {
                 requestId: input.requestId,
                 actorId: caller.actorId,
                 expectedBase: input.expectedBase,
-                requestedAt: now(),
+                requestedAt:
+                  latest.merge?.requestId === input.requestId ? latest.merge.requestedAt : now(),
                 commitSha: null,
               }),
               record.proposalId,
@@ -487,7 +762,6 @@ export class CodePublicationService implements CodePublicationApi {
             record.repository,
             pull.number,
             input.expectedHead,
-            'merge',
           );
           check(
             result.merged,
@@ -502,9 +776,39 @@ export class CodePublicationService implements CodePublicationApi {
             'Refresh to reconcile the GitHub merge result',
             409,
           );
-          return this.save(caller, row, lock, pull);
+          return this.save(
+            caller,
+            await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),
+            lock,
+            pull,
+          );
         },
-        (tx) => this.owned(caller, row.proposal_id, lock, tx),
+        async (tx) => {
+          const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
+          await this.scope.require(caller, 'admin', tx);
+          check(
+            caller.human && !caller.session && !caller.key,
+            'github_human_required',
+            'A signed-in human must merge',
+            403,
+          );
+          if (
+            current.approval &&
+            current.merge &&
+            !current.verified &&
+            !current.stale &&
+            !current.incident
+          ) {
+            check(
+              current.merge.requestId === input.requestId &&
+                current.merge.actorId === caller.actorId,
+              'publication_conflict',
+              'The human merge intent changed',
+              409,
+            );
+            await this.host!.check(caller, current, tx);
+          }
+        },
       );
     });
   }

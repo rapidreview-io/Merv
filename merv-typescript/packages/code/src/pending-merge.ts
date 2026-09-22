@@ -1,14 +1,20 @@
-import type { CodePendingMerge, Sql, State, Transaction } from '@merv/contracts';
+import {
+  check,
+  type CodePendingMerge,
+  type Sql,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
 import type { ServerGit } from './git.js';
 
 const table = `CREATE TABLE code_pending_merges (
  project_id TEXT NOT NULL, unit_id TEXT NOT NULL, plan_key TEXT NOT NULL,
  left_oid TEXT NOT NULL, right_oid TEXT NOT NULL, head_oid TEXT NOT NULL,
- first_merge TEXT,
- PRIMARY KEY(project_id,unit_id)
+ first_merge TEXT, round INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(project_id,unit_id,plan_key), UNIQUE(project_id,unit_id,round)
 );`;
-const changed = `NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.unit_id IS DISTINCT FROM OLD.unit_id OR
- NEW.plan_key IS DISTINCT FROM OLD.plan_key OR NEW.left_oid IS DISTINCT FROM OLD.left_oid OR NEW.right_oid IS DISTINCT FROM OLD.right_oid OR
+const changed = `(NEW.head_oid IS DISTINCT FROM OLD.head_oid AND EXISTS(SELECT 1 FROM code_pending_merges later WHERE later.project_id=OLD.project_id AND later.unit_id=OLD.unit_id AND later.round>OLD.round)) OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.unit_id IS DISTINCT FROM OLD.unit_id OR
+ NEW.round IS DISTINCT FROM OLD.round OR NEW.plan_key IS DISTINCT FROM OLD.plan_key OR NEW.left_oid IS DISTINCT FROM OLD.left_oid OR NEW.right_oid IS DISTINCT FROM OLD.right_oid OR
  (OLD.first_merge IS NOT NULL AND NEW.first_merge IS DISTINCT FROM OLD.first_merge)`;
 export async function migratePendingMerges(state: State): Promise<void> {
   await state.migrate('code_pending_merges', [
@@ -39,7 +45,7 @@ export async function pendingMerge(
     head_oid: string;
     first_merge: string | null;
   }>(
-    'SELECT plan_key,left_oid,right_oid,head_oid,first_merge FROM code_pending_merges WHERE project_id=? AND unit_id=?',
+    'SELECT plan_key,left_oid,right_oid,head_oid,first_merge FROM code_pending_merges WHERE project_id=? AND unit_id=? ORDER BY round DESC LIMIT 1',
     projectId,
     unitId,
   );
@@ -60,15 +66,24 @@ export async function pinMerge(
   plan: string,
   left: string,
   right: string,
+  round = 0,
 ): Promise<void> {
   await tx.run(
-    'INSERT INTO code_pending_merges(project_id,unit_id,plan_key,left_oid,right_oid,head_oid) VALUES (?,?,?,?,?,?) ON CONFLICT(project_id,unit_id) DO NOTHING',
+    'INSERT INTO code_pending_merges(project_id,unit_id,plan_key,left_oid,right_oid,head_oid,round) VALUES (?,?,?,?,?,?,?) ON CONFLICT(project_id,unit_id,plan_key) DO NOTHING',
     projectId,
     unitId,
     plan,
     left,
     right,
     left,
+    round,
+  );
+  const pinned = await pendingMerge(tx, projectId, unitId);
+  check(
+    pinned?.plan === plan && pinned.firstParent === left && pinned.secondParent === right,
+    'code_merge_conflict',
+    'The merge round already pins different inputs',
+    409,
   );
 }
 

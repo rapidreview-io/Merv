@@ -7,6 +7,7 @@ import type {
   CodeStoreStatus,
   CodeStoreWarning,
 } from './code-store.js';
+import type { CodePublication, CodePublicationControls } from './code-publication-models.js';
 import type { CodeUnit, CodeBaseRecord } from './code-units.js';
 import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
 
@@ -162,6 +163,11 @@ export interface CodeProjectBinding {
   durability: 'legacy-local' | 'code';
 }
 export interface CodeProjectStatus {
+  /** Publication affects only the approved consolidation waiting for its verified receipt. */
+  publication?: {
+    records: CodePublication[];
+    controls: CodePublicationControls & { blockers: string[] };
+  };
   /** Shared base records and their retained admission and recovery state, when hosted. */
   bases?: CodeBaseRecord[];
   project: CodeProjectBinding | null;

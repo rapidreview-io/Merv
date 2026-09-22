@@ -63,7 +63,7 @@ test('GitHub PR writes use fixed routes, no force updates, and an exact-head mer
     draft: true,
   });
   await api.updatePull('private-test-token', 'example/research', 3, { state: 'closed' });
-  assert.deepEqual(await api.mergePull('private-test-token', 'example/research', 3, sha, 'merge'), {
+  assert.deepEqual(await api.mergePull('private-test-token', 'example/research', 3, sha), {
     merged: true,
     sha: merged,
   });
@@ -174,7 +174,7 @@ test('write conflicts preserve safe diagnostics without returning upstream bodie
   );
   t.after(() => api.close());
   await assert.rejects(
-    api.mergePull('private-test-token', 'example/research', 3, sha, 'merge'),
+    api.mergePull('private-test-token', 'example/research', 3, sha),
     (error: any) =>
       error.code === 'github_conflict' && !error.message.includes('private-test-token'),
   );

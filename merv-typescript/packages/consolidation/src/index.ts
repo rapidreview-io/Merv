@@ -22,6 +22,7 @@ import {
   type State,
   type Transaction,
   type WorkflowAssignmentRule,
+  type WorkflowSnapshot,
   type WorkflowCheckContext,
   type WorkflowDefinition,
   type WorkflowExecutionPolicy,
@@ -103,21 +104,25 @@ const instructions = {
 const candidateDefinition: WorkflowDefinition = {
   ...endable,
   initial: 'deciding',
-  states: ['deciding', ...endable.states],
+  states: ['deciding', ...endable.states, 'awaiting_publication', 'stale_base'],
   edges: [
     { from: 'deciding', action: 'decide', to: 'consolidating' },
     { from: 'deciding', action: 'abandon', to: 'abandoned' },
     { from: 'deciding', action: 'mark_failed', to: 'failed' },
-    ...endable.edges,
+    ...endable.edges.filter((edge) => edge.action !== 'approve'),
+    { from: 'consolidation_review', action: 'approve', to: 'awaiting_publication' },
+    { from: 'awaiting_publication', action: 'publish', to: 'complete' },
+    { from: 'awaiting_publication', action: 'stale', to: 'stale_base' },
+    { from: 'stale_base', action: 'resume', to: 'consolidating' },
   ],
 };
 const candidateInstructions = {
   deciding:
     'Decide on the frozen accepted candidates before a checkout is prepared. Supply one retain, drop, adapt or no_code decision per unitId to consolidation.decide. Adaptations name a retained accepted replacement; reconcile carried dropped ancestors explicitly. These decisions fix the branch inputs and cannot change. Stop after deciding.',
   consolidating:
-    'Consolidate the pinned sources in the prepared checkout of the retained frontier. Decisions and reconciliations are fixed in the manifest; repeat them exactly when submitting. Dropping work already on main leaves its effects; removal requires a corrective change. Retain a report and evidence, create a successful code.commit and submit. Stop after submission.',
+    'Consolidate the pinned sources in the prepared checkout of the retained frontier. After a stale publication, use code.merge start for the frozen main input, resolve any conflicts, and code.merge complete on this same branch before submission. Further corrections use code.commit; the merge plan remains frozen across review revisions. Decisions and reconciliations are fixed in the manifest; repeat them exactly when submitting. Dropping work already on main leaves its effects; removal requires a corrective change. Retain a report and evidence, create a successful code.commit and submit. Stop after submission.',
   consolidation_review:
-    'Independently verify the exact sealed result, frozen candidate-set and decision-manifest hashes, integration base, head, tree and evidence. Review every ancestry conflict and its explicit reconciliation; a drop already on main does not remove effects. Submit review.submit: pass completes consolidation with publication outstanding; other verdicts return to consolidating. Stop after the verdict.',
+    'Independently verify the exact sealed result, frozen candidate-set and decision-manifest hashes, integration base, head, tree and evidence. Review every ancestry conflict and its explicit reconciliation; a drop already on main does not remove effects. Submit review.submit: pass awaits server publication and an explicit human merge; other verdicts return to consolidating. Stop after the verdict.',
 };
 const candidateCriteria = [
   'Every frozen accepted candidate has one justified decision; every adaptation names an independently accepted retained replacement in the frozen set.',
@@ -153,6 +158,8 @@ export class ConsolidationService implements Consolidation {
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<string, ContextRegistration>();
   private withdrawReview?: () => void;
+  private withdrawPublication?: () => void;
+  private publicationTransactions = new Set<Transaction>();
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -192,6 +199,7 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
         },
       ]);
       try {
+        if (this.code) this.bindCode(this.code);
         for (const recipeVersion of [2, 3])
           for (const state of Object.keys(
             recipeVersion === 3 ? candidateInstructions : instructions,
@@ -259,8 +267,67 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
     };
   }
   bindCode(code: Code): () => void {
+    this.withdrawPublication?.();
     this.code = code;
+    const release = code.registerPublicationOwner({
+      check: async (caller, id, reference, tx) => {
+        const record = await this.get(caller, id, tx);
+        check(
+          record.workflow.version === 5 &&
+            record.workflow.state === 'awaiting_publication' &&
+            record.submissions.at(-1)?.proposal?.id === reference,
+          'publication_conflict',
+          'Publication no longer names the current approved submission',
+          409,
+        );
+      },
+      apply: async (caller, id, reference, outcome, tx) => {
+        const record = await this.get(caller, id, tx);
+        const submission = record.submissions.at(-1)!;
+        check(
+          record.workflow.version === 5 &&
+            submission.proposal?.id === reference &&
+            record.workflow.state ===
+              (outcome === 'resume' ? 'stale_base' : 'awaiting_publication'),
+          'publication_conflict',
+          'Publication no longer names the current approved submission',
+          409,
+        );
+        this.publicationTransactions.add(tx);
+        let moved: WorkflowSnapshot;
+        try {
+          moved = await this.handles.get(5)!.transition(
+            caller,
+            {
+              instanceId: id,
+              expectedRevision: record.workflow.revision,
+              action: outcome === 'published' ? 'publish' : outcome,
+              input: {},
+              requestId: `publication:${reference}:${outcome}`,
+            },
+            tx,
+          );
+        } finally {
+          this.publicationTransactions.delete(tx);
+        }
+        if (outcome === 'published')
+          await tx.run(
+            'UPDATE consolidations SET completion=? WHERE id=?',
+            JSON.stringify({
+              submissionId: submission.id,
+              reviewId: submission.reviewId,
+              completedAt: now(),
+              centralGit: 'published',
+              publicationRef: reference,
+            }),
+            id,
+          );
+        return moved.revision;
+      },
+    });
+    this.withdrawPublication = release;
     return () => {
+      release();
       if (this.code === code) this.code = undefined;
     };
   }
@@ -1065,14 +1132,6 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
       const { expectedRevision: _revision, ...verdict } = input;
       await this.reviews.submit(caller, verdict, tx);
       const submission = record.submissions.find((s) => s.reviewId === review.id)!;
-      if (submission.proposal)
-        await this.requireCode().recordPublicationReview(
-          caller,
-          submission.proposal,
-          review.id,
-          input.verdict,
-          tx,
-        );
       if (action === 'approve' && record.workflow.version === 5)
         await this.requireCode().acceptUnit(
           caller,
@@ -1086,7 +1145,15 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
           },
           tx,
         );
-      if (action === 'approve')
+      if (submission.proposal)
+        await this.requireCode().recordPublicationReview(
+          caller,
+          submission.proposal,
+          review.id,
+          input.verdict,
+          tx,
+        );
+      if (action === 'approve' && record.workflow.version !== 5)
         await tx.run(
           'UPDATE consolidations SET completion=? WHERE id=?',
           JSON.stringify({
@@ -1178,7 +1245,13 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
                   reportArtifactId: oneOf('artifacts'),
                   evidenceArtifactIds: { kind: 'subset' as const, name: 'artifacts' },
                 }),
-                ...(git ? [grant('code.commit'), grant('code.operation')] : []),
+                ...(git
+                  ? [
+                      grant('code.commit'),
+                      grant('code.operation'),
+                      ...(version === 5 ? [grant('code.merge')] : []),
+                    ]
+                  : []),
               ]),
         ...(ENDABLE.has(version)
           ? [
@@ -1311,97 +1384,157 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
           gate: context.snapshot.state,
           references: record.sources.map((a) => ({ kind: 'artifact', id: a.id, label: a.title })),
           waiting:
-            context.snapshot.state === 'complete'
-              ? 'Reviewed consolidation complete. Central Git publication is separate.'
-              : this.guidance(version)[context.snapshot.state as ActiveState],
+            version === 5 && context.snapshot.state === 'awaiting_publication'
+              ? 'Awaiting publication. The owner must link GitHub and enable write automation; the server opens the approved proposal and a human administrator merges it.'
+              : version === 5 && context.snapshot.state === 'stale_base'
+                ? 'Publication found a newer base. The server returns this record to its producer for integration and independent review.'
+                : context.snapshot.state === 'complete'
+                  ? version === 5
+                    ? 'Reviewed publication verified and complete.'
+                    : 'Reviewed consolidation complete. Central Git publication is separate.'
+                  : this.guidance(version)[context.snapshot.state as ActiveState],
         };
       },
-      assignments: (
-        Object.keys(version === 5 ? candidateInstructions : instructions) as ActiveState[]
-      ).map((state) => ({
-        state,
-        requiresDependencies: true,
-        check: async (context) => {
-          await this.admit(context);
-        },
-        execution: this.execution(state, version),
-        lease: this.leaseHooks(),
-        references: async (context) => {
-          const record = await this.admit(context);
-          const review =
-            state === 'consolidation_review'
-              ? await this.review(context.caller, record, context.tx)
-              : null;
-          const submission = record.submissions.at(-1);
-          const base: WorkflowExecutionReferences = {};
-          if (version === 5 && state === 'consolidating') {
-            const pin = await this.requireCode().basePin(context.caller, record.id, context.tx);
-            if (pin) base.base = pin.reference;
-          }
-          return {
-            ...base,
-            artifacts: await this.allowed(context.caller, record, context.tx),
-            reviews: [...new Set([...record.submissions.map((s) => s.reviewId)])],
-            ...(review ? { reviewId: review.id } : {}),
-            ...(review?.claimId ? { claimId: review.claimId } : {}),
-            ...(GIT.has(version) && state === 'consolidation_review'
-              ? { code: submission!.proposal!.receipt.headOid }
-              : {}),
-          };
-        },
-        build: async (context) => {
-          const record = await this.admit(context);
-          const inputs = context.caller.session
-            ? (JSON.parse((await this.lease(context.caller, record, context.tx)).inputs) as Awaited<
-                ReturnType<ConsolidationService['inputs']>
-              >)
-            : await this.inputs(context.caller, record, context.tx);
-          const preview = await this.contexts.get(`${version === 5 ? 3 : 2}:${state}`)!.preview(
-            context.caller,
-            {
-              subject: { id: record.id, revision: record.workflow.revision },
-              inputs: {
-                assignment: { text: JSON.stringify(inputs.assignment) },
-                evidence: { artifactIds: inputs.artifactIds, mode: 'auto' },
-                feedback: { text: JSON.stringify(inputs.feedback) },
+      assignments: [
+        ...(version === 5
+          ? ['awaiting_publication', 'stale_base'].map((state) => ({
+              state,
+              execution: { readOnly: true, workspace: { mode: 'none' as const }, tools: [] },
+              check: async () => {
+                throw new MervError(
+                  'code_publication_wait',
+                  'The owner must link GitHub and enable write automation; publication belongs to the server and a signed-in human operator',
+                  409,
+                );
               },
+              build: async () => {
+                throw new MervError(
+                  'publication_server_owned',
+                  'No agent assignment exists while awaiting publication',
+                  409,
+                );
+              },
+            }))
+          : []),
+        ...(Object.keys(version === 5 ? candidateInstructions : instructions) as ActiveState[]).map(
+          (state): WorkflowAssignmentRule => ({
+            state,
+            requiresDependencies: true,
+            check: async (context) => {
+              await this.admit(context);
             },
-            context.tx,
-          );
-          const tool =
-            state === 'deciding'
-              ? 'consolidation.decide'
-              : state === 'consolidating'
-                ? 'consolidation.submit'
-                : 'review.submit';
-          const review =
-            state === 'consolidation_review'
-              ? await this.review(context.caller, record, context.tx)
-              : null;
-          const instruction =
-            review?.status === 'requested'
-              ? 'Call review.start for the exact current review, then refresh workflow.assignment.'
-              : this.guidance(version)[state];
-          return {
-            role: state === 'consolidation_review' ? 'reviewer' : 'producer',
-            label: `${record.name}: ${state}`,
-            brief: instruction,
-            references: preview.sources.map((a) => ({
-              kind: 'artifact',
-              id: a.id,
-              label: a.title,
-            })),
-            handoff: {
-              instruction,
-              tools:
-                review?.status === 'requested' ? ['review.start', 'workflow.assignment'] : [tool],
+            execution: this.execution(state, version),
+            lease: this.leaseHooks(),
+            references: async (context) => {
+              const record = await this.admit(context);
+              const review =
+                state === 'consolidation_review'
+                  ? await this.review(context.caller, record, context.tx)
+                  : null;
+              const submission = record.submissions.at(-1);
+              const base: WorkflowExecutionReferences = {};
+              if (version === 5 && state === 'consolidating') {
+                Object.assign(
+                  base,
+                  await this.requireCode().publicationReferences(
+                    context.caller,
+                    record.id,
+                    context.tx,
+                  ),
+                );
+                const pin = await this.requireCode().basePin(context.caller, record.id, context.tx);
+                if (pin) base.base = pin.reference;
+              }
+              return {
+                ...base,
+                artifacts: await this.allowed(context.caller, record, context.tx),
+                reviews: [...new Set([...record.submissions.map((s) => s.reviewId)])],
+                ...(review ? { reviewId: review.id } : {}),
+                ...(review?.claimId ? { claimId: review.claimId } : {}),
+                ...(GIT.has(version) && state === 'consolidation_review'
+                  ? { code: submission!.proposal!.receipt.headOid }
+                  : {}),
+              };
             },
-            execution: { readOnly: state === 'consolidation_review', tools: [] },
-            context: preview,
-          };
-        },
-      })),
+            build: async (context) => {
+              const record = await this.admit(context);
+              const inputs = context.caller.session
+                ? (JSON.parse(
+                    (await this.lease(context.caller, record, context.tx)).inputs,
+                  ) as Awaited<ReturnType<ConsolidationService['inputs']>>)
+                : await this.inputs(context.caller, record, context.tx);
+              const preview = await this.contexts.get(`${version === 5 ? 3 : 2}:${state}`)!.preview(
+                context.caller,
+                {
+                  subject: { id: record.id, revision: record.workflow.revision },
+                  inputs: {
+                    assignment: { text: JSON.stringify(inputs.assignment) },
+                    evidence: { artifactIds: inputs.artifactIds, mode: 'auto' },
+                    feedback: { text: JSON.stringify(inputs.feedback) },
+                  },
+                },
+                context.tx,
+              );
+              const tool =
+                state === 'deciding'
+                  ? 'consolidation.decide'
+                  : state === 'consolidating'
+                    ? 'consolidation.submit'
+                    : 'review.submit';
+              const review =
+                state === 'consolidation_review'
+                  ? await this.review(context.caller, record, context.tx)
+                  : null;
+              const instruction =
+                review?.status === 'requested'
+                  ? 'Call review.start for the exact current review, then refresh workflow.assignment.'
+                  : this.guidance(version)[state];
+              return {
+                role: state === 'consolidation_review' ? 'reviewer' : 'producer',
+                label: `${record.name}: ${state}`,
+                brief: instruction,
+                references: preview.sources.map((a) => ({
+                  kind: 'artifact',
+                  id: a.id,
+                  label: a.title,
+                })),
+                handoff: {
+                  instruction,
+                  tools:
+                    review?.status === 'requested'
+                      ? ['review.start', 'workflow.assignment']
+                      : [tool],
+                },
+                execution: { readOnly: state === 'consolidation_review', tools: [] },
+                context: preview,
+              };
+            },
+          }),
+        ),
+      ],
       actions: [
+        ...(version === 5
+          ? [
+              {
+                name: 'publication',
+                tool: 'code.publication.merge',
+                states: ['awaiting_publication', 'stale_base'],
+                transitions: ['publish', 'stale', 'resume'],
+                suggested: false,
+                instruction:
+                  'The publication owner advances this state after verifying its receipt.',
+                check: async (context: WorkflowCheckContext) => {
+                  check(
+                    this.publicationTransactions.has(context.tx) && !context.caller.session,
+                    'publication_server_owned',
+                    'Only the publication owner may advance this state',
+                    403,
+                  );
+                  await this.scope.require(context.caller, 'write', context.tx);
+                },
+              },
+            ]
+          : []),
         ...(version === 5
           ? [
               {
@@ -1565,6 +1698,7 @@ CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidati
     if (this.closed) return;
     this.closed = true;
     this.withdrawReviewOwner();
+    this.withdrawPublication?.();
     for (const handle of this.handles.values()) handle.dispose();
     for (const context of this.contexts.values()) context.dispose();
   }

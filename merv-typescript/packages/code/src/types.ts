@@ -59,7 +59,25 @@ export interface CodeDecisionManifest {
   )[];
   hash: string;
 }
+export interface PublicationOwner {
+  check(caller: Caller, instanceId: string, reference: string, tx: Transaction): Promise<void>;
+  apply(
+    caller: Caller,
+    instanceId: string,
+    reference: string,
+    outcome: 'stale' | 'resume' | 'published',
+    tx: Transaction,
+  ): Promise<number>;
+}
 export interface CodeConsolidations {
+  publicationReferences(
+    caller: Caller,
+    unitId: string,
+    tx: Transaction,
+  ): Promise<import('@merv/contracts').WorkflowExecutionReferences>;
+  registerPublicationOwner(owner: PublicationOwner): () => void;
+  controlPublication(caller: Caller, input: unknown): Promise<unknown>;
+
   freezeCandidates(caller: Caller, roots: string[], tx: Transaction): Promise<CodeCandidateSet>;
   inspectCandidates(
     caller: Caller,

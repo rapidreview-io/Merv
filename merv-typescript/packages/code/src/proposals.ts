@@ -239,7 +239,12 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
       summary: input.summary,
       artifacts,
       pinnedInputIds: input.pinnedInputIds,
-      provenance: input.provenance,
+      provenance: {
+        ...input.provenance,
+        ...(session.execution.workflow === 'consolidation' && session.execution.version === 5
+          ? { integrationBase: session.execution.references.integrationBase }
+          : {}),
+      },
       admission,
     };
     const content = canonical(manifest);

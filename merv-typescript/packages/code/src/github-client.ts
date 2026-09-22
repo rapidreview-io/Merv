@@ -177,13 +177,27 @@ export class GitHubClient {
     );
   }
   /** Never return an unrestricted installation token. No OAuth token is lent to a runner. */
-  async installationToken(repository: GitHubRepository, write: boolean) {
+  async installationToken(
+    repository: GitHubRepository,
+    permission:
+      | boolean
+      | {
+          contents: 'read' | 'write';
+          pull_requests?: 'read' | 'write';
+          statuses?: 'read' | 'write';
+          checks?: 'read';
+        },
+  ) {
     check(
       this.#appKey,
       'github_automation_unconfigured',
       'GitHub repository automation is not configured',
       503,
     );
+    const permissions =
+      typeof permission === 'boolean'
+        ? { contents: permission ? 'write' : 'read' }
+        : { ...permission };
     const now = Math.floor(Date.now() / 1000);
     const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
     const body = Buffer.from(
@@ -201,15 +215,15 @@ export class GitHubClient {
       await this.request(
         `https://api.github.com/app/installations/${repository.installationId}/access_tokens`,
         jwt,
-        { repository_ids: [repository.id], permissions: { contents: write ? 'write' : 'read' } },
+        { repository_ids: [repository.id], permissions },
       ),
     );
     const valid =
       result.repositories.length === 1 &&
       result.repositories[0].id === repository.id &&
-      result.permissions.contents === (write ? 'write' : 'read') &&
+      Object.entries(permissions).every(([name, level]) => result.permissions[name] === level) &&
       Object.entries(result.permissions).every(
-        ([name, level]) => name === 'contents' || (name === 'metadata' && level === 'read'),
+        ([name, level]) => name in permissions || (name === 'metadata' && level === 'read'),
       ) &&
       Date.parse(result.expires_at) > Date.now();
     if (!valid) await this.revokeInstallationToken(result.token).catch(() => {});
@@ -555,13 +569,7 @@ export class GitHubClient {
       ),
     );
   }
-  async mergePull(
-    token: string,
-    repository: string,
-    number: number,
-    expectedHead: string,
-    method: 'merge' | 'squash' | 'rebase',
-  ) {
+  async mergePull(token: string, repository: string, number: number, expectedHead: string) {
     githubResponse(id, number);
     githubResponse(githubOid, expectedHead);
     return githubResponse(
@@ -569,10 +577,147 @@ export class GitHubClient {
       await this.request(
         `https://api.github.com${repositoryPath(repository)}/pulls/${number}/merge`,
         token,
-        { sha: expectedHead, merge_method: method },
+        { sha: expectedHead, merge_method: 'merge' },
         'PUT',
       ),
     );
+  }
+  async approvalStatus(
+    token: string,
+    repository: string,
+    sha: string,
+    emit = false,
+  ): Promise<boolean> {
+    githubResponse(githubOid, sha);
+    const path = `https://api.github.com${repositoryPath(repository)}`;
+    const statuses = await this.collection(
+      token,
+      `${repositoryPath(repository)}/commits/${sha}/statuses`,
+    );
+    const found = statuses.find(
+      (entry) => (entry as { context?: string }).context === 'merv/consolidation-approved',
+    );
+    const approved =
+      !!found &&
+      githubResponse(
+        z.object({ sha: githubOid, state: z.string(), creator: z.object({ login: z.string() }) }),
+        found,
+      ).sha === sha &&
+      (found as { state: string }).state === 'success' &&
+      (found as { creator: { login: string } }).creator.login === `${this.#config.appSlug}[bot]`;
+    if (approved || !emit) return approved;
+    await this.request(`${path}/statuses/${sha}`, token, {
+      state: 'success',
+      context: 'merv/consolidation-approved',
+      description: 'Independent Merv review of this exact commit passed',
+    });
+    return this.approvalStatus(token, repository, sha);
+  }
+  async rules(token: string, repository: string, branch: string) {
+    // Effective branch rules omit bypass lists; visibility is incomplete until every ruleset
+    // can be inspected. A missing field is never evidence that nobody bypasses the rule.
+    const rules = await this.collection(
+      token,
+      `${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
+    );
+    const sets = await this.collection(
+      token,
+      `${repositoryPath(repository)}/rulesets?includes_parents=true`,
+    );
+    const details: unknown[] = [];
+    let incomplete = false;
+    for (const value of sets) {
+      const set = githubResponse(z.object({ id, source_type: z.string() }), value);
+      if (set.source_type !== 'Repository') {
+        incomplete = true;
+        continue;
+      }
+      try {
+        const detail = await this.request(
+          `https://api.github.com${repositoryPath(repository)}/rulesets/${set.id}`,
+          token,
+        );
+        details.push(detail);
+        if (!Array.isArray((detail as { bypass_actors?: unknown }).bypass_actors))
+          incomplete = true;
+      } catch (error) {
+        if (
+          !(error instanceof MervError) ||
+          !['github_forbidden', 'github_not_found'].includes(error.code)
+        )
+          throw error;
+        incomplete = true;
+      }
+    }
+    const app = githubResponse(
+      z.object({ id }),
+      await this.request(
+        `https://api.github.com/apps/${encodeURIComponent(this.#config.appSlug)}`,
+        token,
+      ),
+    );
+    const required = rules.filter(
+      (r) => (r as { type?: string }).type === 'required_status_checks',
+    ) as {
+      parameters?: {
+        strict_required_status_checks_policy?: boolean;
+        required_status_checks?: { context: string; integration_id?: number }[];
+      };
+    }[];
+    return {
+      rules,
+      details,
+      incomplete,
+      available: true,
+      required: [
+        ...new Set(
+          required.flatMap(
+            (r) => r.parameters?.required_status_checks?.map((s) => s.context) ?? [],
+          ),
+        ),
+      ],
+      strict: required.some(
+        (r) =>
+          r.parameters?.strict_required_status_checks_policy &&
+          r.parameters.required_status_checks?.some(
+            (s) => s.context === 'merv/consolidation-approved' && s.integration_id === app.id,
+          ),
+      ),
+      pullRequest: rules.some((r) => (r as { type?: string }).type === 'pull_request'),
+    };
+  }
+  async requiredChecks(
+    token: string,
+    repository: string,
+    sha: string,
+    required: string[],
+    checks: GitHubPullDetails['checks'],
+  ) {
+    const statuses = await this.collection(
+      token,
+      `${repositoryPath(repository)}/commits/${sha}/statuses`,
+    );
+    return required.every((name) => {
+      const latest = statuses.find(
+        (status) => (status as { context?: string }).context === name,
+      ) as { sha?: string; state?: string } | undefined;
+      return (
+        (latest?.sha === sha && latest.state === 'success') ||
+        checks.some(
+          (c) =>
+            c.name === name &&
+            c.status === 'completed' &&
+            ['success', 'neutral', 'skipped'].includes(c.conclusion ?? ''),
+        )
+      );
+    });
+  }
+  async successorComment(token: string, repository: string, number: number, successor: string) {
+    const body = `Superseded by Merv proposal ${successor}. Main moved; a new independent review is required.`;
+    const path = `${repositoryPath(repository)}/issues/${number}/comments`;
+    const comments = await this.collection(token, path);
+    if (!comments.some((comment) => (comment as { body?: string }).body === body))
+      await this.request(`https://api.github.com${path}`, token, { body });
   }
   async pullDetails(token: string, repository: string, number: number): Promise<GitHubPullDetails> {
     const pull = await this.pull(token, repository, number);

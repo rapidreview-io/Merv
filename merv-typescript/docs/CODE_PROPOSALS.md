@@ -126,10 +126,4 @@ and files. The fixture uses one machine and explicitly verifies repository/runne
 identity before verdict. Its small verdict handler does not implement command
 replay after the transition; production Tasks replay is verified separately.
 
-This is infrastructure for research programs. Complete experiment attempts and
-review return paths come next, followed by reflection's frozen corpus, approved
-research and consolidation decisions. Those records must exist before a production
-consolidation command can create a valid proposal review. See the
-[research order](RESEARCH_PROGRAM_PARITY_PLAN.md) and
-[publication plan](CODE_PUBLICATION_PLAN.md). Execution evidence is recorded in
-[VERIFICATION.md](../VERIFICATION.md); the script alone is not a passing run.
+Hosted consolidation@5 now binds frozen candidates, decisions, reviewed evidence and the exact Code commit to its proposal. Passing review seals publication authorization; completion follows only after Code imports and verifies a human-requested PR merge. A stale main returns the same consolidation for another reviewed merge round without changing its approved snapshot. Published older workflow versions retain their original proposal behavior. See [GIT_MODEL.md](GIT_MODEL.md) and the mandatory real-GitHub release matrix in [CODE_OPERATIONS.md](CODE_OPERATIONS.md). Historical execution evidence is recorded in [VERIFICATION.md](../VERIFICATION.md); the live script alone is not a passing run.

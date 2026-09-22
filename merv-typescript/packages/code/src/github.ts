@@ -712,6 +712,47 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       ),
     );
   }
+  async publicationBinding(caller: Caller, tx: Transaction) {
+    const row = await this.connection(caller, tx, 'write');
+    check(
+      row.base_branch,
+      'github_automation_disabled',
+      'Choose main and enable write automation',
+      409,
+    );
+    return {
+      revision: row.revision,
+      repository: this.repository(row),
+      baseBranch: row.base_branch,
+    };
+  }
+  publicationAutomation<T>(
+    caller: Caller,
+    access: 'read' | 'write',
+    binding: GitHubBinding,
+    fn: (client: GitHubClient, token: string, binding: GitHubBinding) => Promise<T>,
+    authorize?: (tx: Transaction) => Promise<unknown>,
+  ) {
+    return this.automation(
+      caller,
+      access,
+      binding,
+      async (client, _token, current) => {
+        const grant = await client.installationToken(current.repository, {
+          contents: access,
+          pull_requests: access,
+          statuses: access,
+          checks: 'read',
+        });
+        try {
+          return await fn(client, grant.token, current);
+        } finally {
+          await client.revokeInstallationToken(grant.token).catch(() => {});
+        }
+      },
+      authorize,
+    );
+  }
   link(caller: Caller, value: GitHubRepositoryInput) {
     return this.run(caller, async (caller) => {
       const input = parseCodeInput(githubRepositoryInputSchema, value);

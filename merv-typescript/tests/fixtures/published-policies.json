@@ -168,7 +168,7 @@
     {
       "name": "consolidation",
       "version": 5,
-      "fingerprint": "136ac52d4fdfdfd017db956dff15c69574e25785f0930f9de3b17118164fca52",
+      "fingerprint": "5d38181dfaf34fc21c045410cce40779ebf57be2ea9fb43141c245b617868e9d",
       "published": false
     }
   ],
@@ -741,7 +741,7 @@
       "workflow": "consolidation",
       "version": 5,
       "state": "consolidating",
-      "fingerprint": "fbfc5567b9c33b55bd228453cd5c47386001a768759efce8f489709a176575b6",
+      "fingerprint": "63d876c4c527410da90e7919363c9511fe03aebde1cc45ce7c3c2a42d69dd25c",
       "published": false
     },
     {
@@ -756,6 +756,20 @@
       "version": 5,
       "state": "deciding",
       "fingerprint": "72260806c45e7f09e90cf111fec44ad33eb79ae7bf2edb018c534b219458a77e",
+      "published": false
+    },
+    {
+      "workflow": "consolidation",
+      "version": 5,
+      "state": "awaiting_publication",
+      "fingerprint": "da58b12310dc71799047a07bce39f4dbb7a06eedec59e9c175ca4cee6fbb1d48",
+      "published": false
+    },
+    {
+      "workflow": "consolidation",
+      "version": 5,
+      "state": "stale_base",
+      "fingerprint": "da58b12310dc71799047a07bce39f4dbb7a06eedec59e9c175ca4cee6fbb1d48",
       "published": false
     }
   ],
@@ -1123,13 +1137,13 @@
     {
       "type": "consolidation.consolidating",
       "version": 3,
-      "hash": "65a73d3e573c9bed3a3bb79695c63110d61e6922c42bed8e8f8627039f38e185",
+      "hash": "ce2a5c00df1d1ae4268c2ad62dc02cbede286082f5b0a25a51c1961c4822f974",
       "published": false
     },
     {
       "type": "consolidation.consolidation_review",
       "version": 3,
-      "hash": "6621eadec1a84a3a12bbf3f8f766f825752c22cc821a66b2b0d0b98943beeeed",
+      "hash": "ceb9c854e8618f3146c452c239842cea21adf122ab8f5f9c29276400e4755e7b",
       "published": false
     },
     {

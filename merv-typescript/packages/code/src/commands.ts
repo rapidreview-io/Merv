@@ -307,7 +307,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
             session.execution.policy.tools.some((tool) => tool.name === 'code.merge') &&
             session.workspace?.attachment.pendingMerge?.plan === pending.plan,
           'code_merge_forbidden',
-          'Only a merge-capable service assignment may operate its frozen merge',
+          'Only a merge-capable assignment may operate its frozen merge',
           403,
         );
       const hash = digest(input);

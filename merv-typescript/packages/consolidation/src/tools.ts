@@ -40,7 +40,7 @@ export const consolidationToolsPlugin = {
       {
         name: 'consolidation.get',
         description:
-          'Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.',
+          'Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Versions 1–4 complete at review; version 5 completes only after Code verifies publication. Without GitHub linking and write automation version 5 waits in awaiting_publication.',
         readOnly: true,
         inputSchema: getSchema,
         handler: async (caller: Caller, input: { consolidationId: string }) =>

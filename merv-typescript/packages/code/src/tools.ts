@@ -1,11 +1,14 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
+import { publicationControlSchema } from './publication-host.js';
 import { baseControlSchema } from './bases.js';
 import type { CodeBaseControlInput } from '@merv/contracts';
 import { z } from 'zod';
 import {
   codeCommitInputSchema,
+  codePublicationMergeSchema,
+  type CodePublicationMerge,
   codeMergeInputSchema,
   type CodeMergeInput,
   codeLocalBindInputSchema,
@@ -26,6 +29,34 @@ export const codeToolsPlugin = {
   name: 'merv-code-tools',
   inject: ['code', 'tools'],
   apply(ctx: Context) {
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.publication.merge',
+        description:
+          'Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree. A stale base returns the same consolidation for another round.',
+        inputSchema: codePublicationMergeSchema,
+        handler: (caller: Caller, input: CodePublicationMerge) =>
+          ctx.code.mergePublication(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.publication.sync',
+        description:
+          'Reconcile the server publication journal: open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Requires project write authority and refuses leased workers.',
+        inputSchema: z.object({}).strict(),
+        handler: (caller: Caller) => ctx.code.syncPublications(caller),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.publication.control',
+        description:
+          'Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
+        inputSchema: publicationControlSchema,
+        handler: (caller: Caller, input: unknown) => ctx.code.controlPublication(caller, input),
+      }),
+    );
     ctx.effect(() =>
       ctx.tools.register({
         name: 'code.commit',

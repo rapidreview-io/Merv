@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import type { TestContext } from 'node:test';
-import { createService, type State } from '@merv/contracts';
+import { createService, type Caller, type State } from '@merv/contracts';
 import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { CodeGitHubService } from '../packages/code/src/github.js';
@@ -30,7 +30,7 @@ export const config: GitHubConfig = {
   encryptionKey: 'bc'.repeat(32),
   privateKey: Buffer.from(key).toString('base64'),
 };
-export async function githubFixture(t: TestContext, storage?: State) {
+export async function githubFixture(t: TestContext, storage?: State, existingCaller?: Caller) {
   const state = storage ?? new SqliteState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const identity = {
@@ -45,7 +45,7 @@ export async function githubFixture(t: TestContext, storage?: State) {
   });
   const other = await scope.acceptVerifiedIdentity({ ...identity, subject: 'reviewer' });
   await scope.addMember(principal, project.id, { subject: 'reviewer', role: 'operator' });
-  const caller = await scope.caller(principal, project.id),
+  const caller = existingCaller ?? (await scope.caller(principal, project.id)),
     reviewer = await scope.caller(other, project.id);
   const branches = new Map([['main', baseOid]]);
   const pulls: any[] = [];
@@ -58,8 +58,13 @@ export async function githubFixture(t: TestContext, storage?: State) {
     badTokenScope: false,
     checks: [] as any[],
     expiresIn: 3600,
+    mergeSha: mergeOid,
+    rulesIncomplete: false,
+    strict: true,
     before: undefined as ((path: string) => Promise<void>) | undefined,
   };
+  const statuses = new Map<string, unknown[]>();
+  const comments: { body: string }[] = [];
   const repo = () => ({
     id: repository.id,
     full_name: repository.fullName,
@@ -106,7 +111,32 @@ export async function githubFixture(t: TestContext, storage?: State) {
         permissions: body.permissions,
         repositories: [{ id: control.badTokenScope ? 999 : 101 }],
       };
-    else if (path === '/repos/fixture/private') result = repo();
+    else if (path === '/apps/fixture') result = { id: 777 };
+    else if (path.endsWith('/rules/branches/main'))
+      result = [
+        { type: 'pull_request' },
+        {
+          type: 'required_status_checks',
+          parameters: {
+            strict_required_status_checks_policy: control.strict,
+            required_status_checks: [
+              { context: 'merv/consolidation-approved', integration_id: 777 },
+            ],
+          },
+        },
+      ];
+    else if (path.endsWith('/rulesets'))
+      result = [{ id: 1, source_type: control.rulesIncomplete ? 'Organization' : 'Repository' }];
+    else if (path.endsWith('/rulesets/1')) result = { bypass_actors: [] };
+    else if (path.includes('/issues/') && path.endsWith('/comments')) {
+      if (method === 'POST') comments.push(body);
+      result = comments;
+    } else if (path.includes('/statuses/')) {
+      const sha = path.split('/').at(-1)!;
+      const status = { ...body, sha, creator: { login: 'fixture[bot]' } };
+      statuses.set(sha, [status]);
+      result = status;
+    } else if (path === '/repos/fixture/private') result = repo();
     else if (path.startsWith('/repos/fixture/private/branches/')) {
       const name = path.slice('/repos/fixture/private/branches/'.length),
         sha = branches.get(name);
@@ -161,19 +191,26 @@ export async function githubFixture(t: TestContext, storage?: State) {
         assert.equal(body.merge_method, 'merge');
         pull.merged = true;
         pull.state = 'closed';
-        pull.merge_commit_sha = mergeOid;
-        result = { merged: true, sha: mergeOid };
+        pull.merge_commit_sha = control.mergeSha;
+        branches.set(pull.base.ref, control.mergeSha);
+        result = { merged: true, sha: control.mergeSha };
         if (control.loseMergeReply) {
           control.loseMergeReply = false;
           throw new Error('synthetic lost reply');
         }
       } else {
         if (method === 'PATCH') Object.assign(pull, body);
+        if (!pull.merged) pull.base.sha = branches.get(pull.base.ref);
         result = pull;
       }
     } else if (path.includes('/commits/')) {
-      if (path.endsWith('/check-runs')) result = { check_runs: control.checks };
-      else if (path.endsWith('/status')) result = { state: 'pending', total_count: 0 };
+      if (path.endsWith('/statuses')) result = statuses.get(path.split('/').at(-2)!) ?? [];
+      else if (path.endsWith('/check-runs')) result = { check_runs: control.checks };
+      else if (path.endsWith('/status'))
+        result = {
+          state: statuses.has(path.split('/').at(-2)!) ? 'success' : 'pending',
+          total_count: statuses.has(path.split('/').at(-2)!) ? 1 : 0,
+        };
       else result = commit(path.split('/').at(-1)!);
     } else if (path === '/graphql') {
       const pull = pulls.find((p) => p.node_id === body.variables.id)!;
@@ -218,6 +255,8 @@ export async function githubFixture(t: TestContext, storage?: State) {
     fetcher,
     control,
     pulls,
+    statuses,
+    comments,
     branches,
     calls,
     enable,
