@@ -221,6 +221,8 @@ const next: Record<string, string> = {
   code_recovery_required:
     'An operator inspects the named ref in the project’s repository: it holds neither the value this operation expected nor the one it writes, and Code will not choose for them.',
   code_drain_pending: 'Nothing: the operation is journalled and the next start of Code replays it.',
+  code_git_failed:
+    'Read what Git said on this operation: the project’s repository on the Code volume could not take the step it names, and the operation replays once it can.',
   code_import_interrupted:
     'Call code.repository.import again with the same requestId; reading GitHub needs the administrator who asked for it.',
 };
@@ -656,6 +658,27 @@ export class CodeStore {
       check(length > 0, 'code_upload_offset', 'The export has no bytes at that offset', 409);
       const bytes = Buffer.alloc(length);
       const { bytesRead } = await handle.read(bytes, 0, length, input.offset);
+      // A download somebody is still reading is not an abandoned one. Each part puts both the
+      // deadline and the age the sweep reads back to a full term, so a transfer that needs
+      // longer than one term finishes, instead of being refused in the middle and beginning
+      // again at its first byte against a bundle that was just cut anew.
+      const at = new Date();
+      // Stamping the file is bookkeeping for the sweep and no part of the answer. A volume
+      // that will not stamp a handle must not fail a part whose bytes are already read, and
+      // the stamp goes first so the age the sweep measures is never behind the deadline.
+      await handle.utimes(at, at).catch(() => {});
+      // Only the entry these bytes were read against may be given the longer term. export()
+      // runs in the transfer lane and this read in none, so it may have cut a new bundle over
+      // the same path meanwhile; its view describes the file that is there now, and putting
+      // the old one back would clamp every later part by the wrong length.
+      if (this.exports.get(exportId) === known)
+        this.exports.set(exportId, {
+          ...known,
+          view: {
+            ...known.view,
+            expiresAt: new Date(at.getTime() + EXPORT_TTL_MS).toISOString(),
+          },
+        });
       return bytes.subarray(0, bytesRead);
     } finally {
       await handle.close();
@@ -1302,22 +1325,36 @@ export class CodeStore {
       let applied = await receipt();
       if (applied === null) {
         const zero = '0'.repeat(progress.target!.length);
-        await this.repositories.git.run(['update-ref', '--stdin'], {
-          env,
-          input: [
-            'start',
-            ...(upload
-              ? [
-                  `update ${workRef(upload.unitId)} ${progress.target} ${progress.expectedOld ?? zero}`,
-                ]
-              : []),
-            `create ${progress.receiptRef} ${progress.target}`,
-            'prepare',
-            'commit',
-            '',
-          ].join('\n'),
-        });
+        const refs = [...(upload ? [workRef(upload.unitId)] : []), progress.receiptRef!];
+        const input = [
+          'start',
+          ...(upload
+            ? [
+                `update ${workRef(upload.unitId)} ${progress.target} ${progress.expectedOld ?? zero}`,
+              ]
+            : []),
+          `create ${progress.receiptRef} ${progress.target}`,
+          'prepare',
+          'commit',
+          '',
+        ].join('\n');
+        let result = await this.repositories.git.run(['update-ref', '--stdin'], { env, input });
+        // A Git child ended between `prepare` and `commit` leaves the lock files of exactly
+        // these refs on disk, and Git refuses every replay of the transaction while they are
+        // there. This operation holds its project's turn and nothing else writes these two
+        // refs, so a lock still lying on them once Git has given up is that leftover.
+        if (result.code !== 0 && (await this.clearRefLocks(paths.repository, refs)))
+          result = await this.repositories.git.run(['update-ref', '--stdin'], { env, input });
         applied = await receipt();
+        // Git's own words about a transaction that did not happen. Without them the failure
+        // was read as a ref holding something unexpected, which is a different trouble with a
+        // different recovery, and the message named a value the repository did not hold.
+        check(
+          result.code === 0 || applied === progress.target,
+          'code_git_failed',
+          `git update-ref failed: ${result.stderr.split('\n')[0] ?? ''}`.trim(),
+          500,
+        );
       }
       // The receipt is the proof. One that names another commit was not written by this
       // operation, and recovery never invents a target.
@@ -1404,6 +1441,18 @@ export class CodeStore {
       this.fault('before_ack');
       await rm(directory, { recursive: true, force: true });
     }
+  }
+
+  /** Take away the leftover locks of the refs one transaction writes; says whether any was there. */
+  private async clearRefLocks(repository: string, refs: string[]): Promise<boolean> {
+    let cleared = false;
+    for (const ref of refs) {
+      const lock = join(repository, `${ref}.lock`);
+      if (!(await lstat(lock).catch(() => null))) continue;
+      await rm(lock, { force: true });
+      cleared = true;
+    }
+    return cleared;
   }
 
   private async mergeReceipt(

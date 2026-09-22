@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { Caller, CodeStoreOperation } from '@merv/contracts';
 import type { CodeImportRemote, FaultPoint } from '@merv/code/store/operations';
 import {
@@ -335,6 +343,47 @@ for (const backend of backends) {
       git(f.paths.repository, ['update-ref', '-d', `refs/merv/imports/${open.id}`]);
       assert.equal((await complete(f, open.id)).status, 'completed');
       assert.equal(git(f.paths.repository, ['rev-parse', `refs/merv/imports/${open.id}`]), tip);
+    },
+  );
+
+  test(
+    `${backend}: the lock of a ref its killed child left behind is taken away when the transaction is replayed`,
+    optional(backend),
+    async (t) => {
+      const source = gitSource(t);
+      const tip = source.commit({ 'a.txt': 'a\n' });
+      const f = await codeStoreFixture(t, backend);
+      await f.open({ fault: faultAt('after_objects_durable') });
+      await assert.rejects(f.deliver(source.bundle(tip), 1024, 'stuck'), /process ended/);
+      const [open] = (await f.code.status(f.admin)).operations;
+      const imports = join(f.paths.repository, 'refs', 'merv', 'imports');
+
+      // Git cannot write the ref at all. What it said is what the operator reads, instead of
+      // a claim about a value the ref holds, which is another trouble with another recovery.
+      mkdirSync(dirname(imports), { recursive: true });
+      writeFileSync(imports, 'where the refs would go\n');
+      await f.open();
+      const [blocked] = (await f.code.status(f.admin)).operations;
+      assert.deepEqual(
+        [blocked.id, blocked.status, blocked.waiting!.code],
+        [open.id, 'prepared', 'code_git_failed'],
+      );
+      assert.match(blocked.waiting!.message, /update-ref/);
+
+      // The child was ended between `prepare` and `commit`, which leaves the ref's lock on
+      // disk; every replay of the transaction is refused for as long as it lies there.
+      rmSync(imports);
+      mkdirSync(imports, { recursive: true });
+      writeFileSync(join(imports, `${open.id}.lock`), `${tip}\n`);
+      await f.open();
+      assert.deepEqual(await f.operationRow(open.id), {
+        status: 'completed',
+        phase: 'refs_applied',
+        error: null,
+      });
+      assert.equal(existsSync(join(imports, `${open.id}.lock`)), false);
+      assert.equal(git(f.paths.repository, ['rev-parse', `refs/merv/imports/${open.id}`]), tip);
+      assert.deepEqual((await f.code.status(f.admin)).operations, []);
     },
   );
 

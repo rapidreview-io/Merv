@@ -124,12 +124,26 @@ const terminal = [
   'code_command_not_found',
   'code_unit_not_found',
 ];
+/**
+ * Refusals of this checkout's own content. They are read from the files that are lying there,
+ * so every later attempt on the same checkout finds exactly the same answer.
+ */
+const uncapturable = ['workspace_file_too_large', 'workspace_foreign_path'];
 /** Why the place history lives could not serve now, in the closed vocabulary of a deferral. */
 function deferral(error: unknown): WorkspaceDeferred | null {
   if (error instanceof WorkspaceDeferred) return error;
   const { code, status } = (error ?? {}) as TransportFailure;
   if (typeof code !== 'string' || typeof status !== 'number') return null;
-  if (['code_store_full', 'code_store_unavailable', 'code_operation_unresolved'].includes(code))
+  // A download whose export Code no longer holds is asked for again from the beginning; that
+  // it went is the server's business and never a fault of this launch or this machine.
+  if (
+    [
+      'code_store_full',
+      'code_store_unavailable',
+      'code_operation_unresolved',
+      'code_export_not_found',
+    ].includes(code)
+  )
     return new WorkspaceDeferred('store_busy', code);
   if (code === 'code_writer_busy' || code === 'code_base_pending')
     return new WorkspaceDeferred('base_pending', code);
@@ -1077,31 +1091,46 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     if (!journal) {
       await this.settle(row);
       row = this.row(row.launch_id)!;
-      await this.checkFiles(row);
-      await this.git.ok(['add', '-A', '--', '.'], { cwd: row.path });
-      const staged = await this.git.ok(
-        ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only'],
-        { cwd: row.path },
-      );
-      if (staged.trim())
-        await this.git.ok(
-          ['commit', '--quiet', '--no-verify', '-m', `merv: capture ${row.session_id}`],
-          {
-            cwd: row.path,
-            env: identity,
-          },
+      let target: string,
+        tree: string,
+        refused: string | null = null;
+      try {
+        await this.checkFiles(row);
+        await this.git.ok(['add', '-A', '--', '.'], { cwd: row.path });
+        const staged = await this.git.ok(
+          ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only'],
+          { cwd: row.path },
         );
-      const target = oid(
-        await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
-      );
-      const tree = oid(
-        await this.git.ok(['rev-parse', '--verify', 'HEAD^{tree}'], { cwd: row.path }),
-      );
+        if (staged.trim())
+          await this.git.ok(
+            ['commit', '--quiet', '--no-verify', '-m', `merv: capture ${row.session_id}`],
+            {
+              cwd: row.path,
+              env: identity,
+            },
+          );
+        target = oid(
+          await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
+        );
+        tree = oid(await this.git.ok(['rev-parse', '--verify', 'HEAD^{tree}'], { cwd: row.path }));
+      } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        if (!(typeof code === 'string' && uncapturable.includes(code))) throw error;
+        // The checkout holds something no capture may carry, and no later attempt finds it
+        // different, exactly as such a refusal ends a checkpoint command. The generation is
+        // handed over at the commit Code already has instead of being asked for a capture
+        // that can never be built; what the session left stays in the checkout.
+        refused = code;
+        target = row.head_oid;
+        tree = oid(
+          await this.git.ok(['rev-parse', '--verify', `${row.head_oid}^{tree}`], { cwd: row.path }),
+        );
+      }
       this.db
         .prepare(
-          "INSERT INTO code_v2_transfers (request_id,launch_id,kind,expected_head,tree_oid,target_oid) VALUES (?,?,'final',?,?,?)",
+          "INSERT INTO code_v2_transfers (request_id,launch_id,kind,expected_head,tree_oid,target_oid,error) VALUES (?,?,'final',?,?,?,?)",
         )
-        .run(requestId, row.launch_id, row.head_oid, tree, target);
+        .run(requestId, row.launch_id, row.head_oid, tree, target, refused);
       journal = this.transfer(requestId)!;
     }
     if (journal.receipt_json) return (JSON.parse(journal.receipt_json) as { head: string }).head;

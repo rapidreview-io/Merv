@@ -6,9 +6,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -182,6 +185,128 @@ test('a quarantined capture is never part of what a successor is given, and an e
     f.code.v2!.readPart!(f.admin, found.exportId, { ...control('ses_2'), offset: 0, length: 10 }),
     refused('code_export_not_found'),
   );
+});
+
+test('an export a machine is still reading keeps its place, however long the transfer takes', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  const found = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in found));
+  const file = join(f.paths.exports, `${found.exportId}.bundle`);
+  const size = Math.ceil(found.bytes / 3);
+  const part = async (offset: number) =>
+    await f.code.v2!.readPart!(f.admin, found.exportId, {
+      ...control('ses_1'),
+      offset,
+      length: size,
+    });
+  const first = await part(0);
+
+  // A slow machine is a machine that is still there. Whatever the sweep and the deadline
+  // measure must be the time since the last part was read, not the time since the bundle was
+  // cut: otherwise a transfer slower than one term is refused in the middle, and the retry
+  // begins at byte zero against a bundle just cut anew and never gets further either.
+  const old = new Date(Date.now() - 3600_000);
+  utimesSync(file, old, old);
+  const second = await part(first.length);
+  await f.code.maintainStore();
+  assert.ok(existsSync(file), 'the bundle of a transfer that is moving is not swept away');
+  const parts = [first, second];
+  for (let offset = first.length + second.length; offset < found.bytes; offset += size)
+    parts.push(await part(offset));
+  const content = Buffer.concat(parts);
+  assert.equal(content.length, found.bytes);
+  assert.equal(createHash('sha256').update(content).digest('hex'), found.sha256);
+
+  // The deadline the machine is told moved with it, so it asks for the parts it still needs
+  // rather than for another export.
+  const again = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in again));
+  assert.equal(again.exportId, found.exportId);
+  assert.ok(Date.parse(again.expiresAt) > Date.parse(found.expiresAt));
+});
+
+test('a part is served although the exports volume will not stamp the file it came from', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  const found = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in found));
+  const file = join(f.paths.exports, `${found.exportId}.bundle`);
+  const handle = await open(file, 'r');
+  const handles = Object.getPrototypeOf(handle) as { utimes: (typeof handle)['utimes'] };
+  const stamp = handles.utimes;
+  t.after(() => {
+    handles.utimes = stamp;
+  });
+  await handle.close();
+
+  // Not every filesystem an exports directory may live on takes a stamp on an open handle.
+  // Keeping a bundle alive for the sweep is bookkeeping: whether it works or not, the bytes
+  // this part was asked for have already been read and are the machine's answer.
+  handles.utimes = () => Promise.reject(new Error('this volume does not stamp files'));
+  // A term is written in whole milliseconds, so the clock must have moved for the one this
+  // read grants to be readably later than the one the cut wrote.
+  await new Promise((tick) => setTimeout(tick, 2));
+  const part = await f.code.v2!.readPart!(f.admin, found.exportId, {
+    ...control('ses_1'),
+    offset: 0,
+    length: 700,
+  });
+  handles.utimes = stamp;
+  assert.deepEqual(Buffer.from(part), readFileSync(file).subarray(0, 700));
+
+  // The half of the term the refused stamp did not move was still moved here.
+  const again = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in again));
+  assert.ok(Date.parse(again.expiresAt) > Date.parse(found.expiresAt));
+});
+
+test('a part that comes back after its export was cut anew leaves the new bundle described as it is', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'a'.repeat(40_000) }, 'first');
+  await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
+  const second = f.source.commit({ 'b.txt': 'b\n' }, 'second');
+  await f.upload('checkpoint', 'ses_1', 1, first, f.source.bundle(second, [first]));
+  const thin = await download(f, 'ses_1', [first]);
+  assert.ok(!('upToDate' in thin));
+
+  // The part the machine gave up waiting for is still being read here while its launch is
+  // deferred, the session re-leased, and a new prepare asks with other haves. Only a part's
+  // own read is held: reading a header, as cutting a bundle does, asks for a whole header.
+  const bundle = await open(join(f.paths.exports, `${thin.exportId}.bundle`), 'r');
+  const handles = Object.getPrototypeOf(bundle) as {
+    read: (...args: unknown[]) => Promise<unknown>;
+  };
+  await bundle.close();
+  const real = handles.read;
+  t.after(() => {
+    handles.read = real;
+  });
+  let release = () => {};
+  const held = new Promise<void>((done) => (release = done));
+  handles.read = async function (this: unknown, ...args: unknown[]) {
+    const result = await real.apply(this, args);
+    if ((args[2] as number) < 1024) await held;
+    return result;
+  };
+  const stalled = f.code.v2!.readPart!(f.admin, thin.exportId, {
+    ...control('ses_1'),
+    offset: 0,
+    length: 700,
+  });
+  const whole = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in whole));
+  assert.ok(whole.bytes > thin.bytes);
+  release();
+  await stalled;
+  handles.read = real;
+
+  // The machine that asked for the new export reads all of it. A view of the bundle that is
+  // gone would clamp its parts by a length the file on disk no longer has.
+  await read(f, 'ses_1', whole);
+  assert.equal(((await download(f, 'ses_1', [])) as typeof whole).sha256, whole.sha256);
 });
 
 test('a download is weighed against the project quota before it takes a byte of the disk', async (t) => {
