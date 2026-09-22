@@ -405,6 +405,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
         diskBytes: 0,
         quotaBytes: 10 * 1024 * 1024 * 1024,
         limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
+        // The default composition configures no off-host copy, so there is none to report.
+        backup: null,
       },
       operations: [],
       // Nothing is published while no GitHub repository is linked, and that is quiet.

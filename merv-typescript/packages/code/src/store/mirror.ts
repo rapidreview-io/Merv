@@ -622,22 +622,36 @@ export class CodeMirrorService {
     warning: { code: string; message: string; at: string } | null,
     ref: string,
   ): Promise<void> {
-    const row = await tx.get<{ warnings_json: string }>(
-      'SELECT warnings_json FROM code_projects WHERE project_id=?',
-      projectId,
-    );
-    if (!row) return;
-    const kept = (JSON.parse(row.warnings_json) as CodeStoreWarning[]).filter(
-      (item) => item.ref !== published(ref),
-    );
-    const next = warning ? [...kept, { ...warning, ref: published(ref) }] : kept;
-    await tx.run(
-      'UPDATE code_projects SET warnings_json=?,updated_at=? WHERE project_id=?',
-      canonical(next.slice(-WARNINGS)),
-      now(),
-      projectId,
-    );
+    await warnRef(tx, projectId, warning, published(ref));
   }
+}
+
+/**
+ * One warning per ref on the project, newest last; a ref that came right loses its own.
+ * `warnings_json` is the one mutable column of the binding row, and it is already what a
+ * reader looks at, so trouble that stops nothing needs no storage of its own.
+ */
+export async function warnRef(
+  tx: Transaction,
+  projectId: string,
+  warning: { code: string; message: string; at: string } | null,
+  ref: string,
+): Promise<void> {
+  const row = await tx.get<{ warnings_json: string }>(
+    'SELECT warnings_json FROM code_projects WHERE project_id=?',
+    projectId,
+  );
+  if (!row) return;
+  const kept = (JSON.parse(row.warnings_json) as CodeStoreWarning[]).filter(
+    (item) => item.ref !== ref,
+  );
+  const next = warning ? [...kept, { ...warning, ref }] : kept;
+  await tx.run(
+    'UPDATE code_projects SET warnings_json=?,updated_at=? WHERE project_id=?',
+    canonical(next.slice(-WARNINGS)),
+    now(),
+    projectId,
+  );
 }
 
 /** What a project's work is published to, and the App credential for it, both server-side. */

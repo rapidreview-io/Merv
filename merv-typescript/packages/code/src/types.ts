@@ -281,6 +281,11 @@ export interface CodeRepositoryControls {
     caller: Caller,
     input: import('@merv/contracts').CodeUnitFenceInput,
   ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  /**
+   * Take one verified copy of this project's repository and of the database to object
+   * storage now, instead of waiting for the timer. A human or an operator key only.
+   */
+  runBackup(caller: Caller, input: unknown): Promise<import('@merv/contracts').CodeBackupStatus>;
   /** Put a ref publication that waits for an operator back in the queue; it never forces. */
   retryMirror(
     caller: Caller,

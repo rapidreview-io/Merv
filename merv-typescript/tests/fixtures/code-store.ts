@@ -179,6 +179,8 @@ export async function codeStoreFixture(
   return {
     directory,
     root,
+    /** The PostgreSQL schema this fixture owns; empty on SQLite, which has none. */
+    schema: backend === 'postgres' ? schema : '',
     state,
     scope,
     workflows,
