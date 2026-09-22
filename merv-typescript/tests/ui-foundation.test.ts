@@ -84,6 +84,16 @@ const page = (items: Item[], creates = true, checks = false) =>
     createElement(Page, { items, creates, checks }),
   );
 const kinds = () => [...document.querySelectorAll('.rows .kind')].map((node) => node.textContent);
+/**
+ * What the page holds, and what the cursor is on, asked as questions rather than
+ * compared as nodes. `assert` prints a failed comparison by inspecting both sides
+ * to a depth of a thousand, and every node React rendered carries its own fiber:
+ * inspecting one walks the whole tree back through the document, so a comparison
+ * of two of them fills the heap instead of saying which one it wanted.
+ */
+const shows = (selector: string) => !!document.querySelector(selector);
+const cursorOn = (selector: string) =>
+  !!document.activeElement && document.activeElement === document.querySelector(selector);
 
 test('a list prints the kind of a row only while its rows are of more than one kind', async (t) => {
   t.after(async () => await unmount());
@@ -135,7 +145,7 @@ test('the filters are pressed buttons in named groups, and a search that says on
   const search = document.querySelector<HTMLInputElement>('.search input')!;
   assert.equal(search.placeholder, 'Search');
   assert.equal(search.getAttribute('aria-label'), 'Search work');
-  assert.ok(document.querySelector('.search svg[aria-hidden="true"]'), 'the glyph says what it is');
+  assert.ok(shows('.search svg[aria-hidden="true"]'), 'the glyph says what it is');
 });
 
 test('a chip counts the rows pressing it would show, and no chip leaves when its count is zero', () => {
@@ -217,7 +227,7 @@ test('an empty list offers its first record itself, and the form has one Cancel 
   await mount(page([]));
   const offered = document.querySelector<HTMLButtonElement>('.empty-state [data-opens="create"]')!;
   assert.equal(offered.textContent, 'New cycle');
-  assert.ok(document.querySelector('.empty-state .empty-icon svg'), 'the kind’s glyph is drawn');
+  assert.ok(shows('.empty-state .empty-icon svg'), 'the kind’s glyph is drawn');
   assert.equal(
     document.querySelectorAll('[data-opens="create"]').length,
     1,
@@ -225,7 +235,7 @@ test('an empty list offers its first record itself, and the form has one Cancel 
   );
 
   await click('New cycle');
-  assert.equal(document.querySelector('.empty-state'), null, 'the form replaces the empty state');
+  assert.ok(!shows('.empty-state'), 'the form replaces the empty state');
   const opener = document.querySelector<HTMLButtonElement>('.action-row [data-opens="create"]')!;
   assert.equal(opener.textContent, 'Cancel');
   assert.equal(opener.getAttribute('aria-expanded'), 'true');
@@ -242,12 +252,12 @@ test('an empty list offers its first record itself, and the form has one Cancel 
     );
   });
   await settle(0);
-  assert.equal(document.querySelector('.creation'), null, 'Escape closes the form');
+  assert.ok(!shows('.creation'), 'Escape closes the form');
   assert.equal(document.activeElement?.textContent, 'New cycle', 'and hands the cursor back');
 
   await click('New cycle');
   await click('Create');
-  assert.equal(document.querySelector('.creation'), null, 'the form closes itself on success');
+  assert.ok(!shows('.creation'), 'the form closes itself on success');
 });
 
 test('what a page can open ends its control row together, the quiet control before the primary', async (t) => {
@@ -264,24 +274,24 @@ test('what a page can open ends its control row together, the quiet control befo
       ['New cycle', true],
     ],
   );
-  assert.equal(document.querySelector('.action-filters [data-opens]'), null);
+  assert.ok(!shows('.action-filters [data-opens]'));
   // One thing is open at a time, and what is not a new record closes with Close.
   await click('Check references');
-  assert.ok(document.querySelector('form[aria-label="Check references"]'));
+  assert.ok(shows('form[aria-label="Check references"]'));
   assert.deepEqual(
     [...end.querySelectorAll('button')].map((button) => button.textContent),
     ['Close', 'New cycle'],
   );
   await click('New cycle');
-  assert.equal(document.querySelector('form[aria-label="Check references"]'), null);
-  assert.ok(document.querySelector('form[aria-label="New cycle"]'));
+  assert.ok(!shows('form[aria-label="Check references"]'));
+  assert.ok(shows('form[aria-label="New cycle"]'));
 });
 
 test('an empty list nobody may add to says so and offers nothing', async (t) => {
   t.after(async () => await unmount());
   await mount(page([], false));
   assert.ok(text().includes('No work yet'));
-  assert.equal(document.querySelector('.empty-state button'), null);
+  assert.ok(!shows('.empty-state button'));
 });
 
 test('a time is stated to the minute, and Updated only where it differs from Created', async (t) => {
@@ -323,7 +333,7 @@ test('a file is known by its media type, then by its name, and is otherwise a pl
 });
 
 /** A form as the views write them: its fields in a fieldset that its command locks. */
-function Locking({ items, land }: { items: Item[]; land?: () => void }) {
+function Locking({ items }: { items: Item[] }) {
   const filter = useListFilter(items, {});
   return createElement(ListPage<Item>, {
     load: { loading: false, data: items },
@@ -334,11 +344,11 @@ function Locking({ items, land }: { items: Item[]; land?: () => void }) {
     emptyTitle: 'No claims yet',
     create: {
       label: 'New claim',
-      form: (close: () => void) => createElement(LockingForm, { close, land }),
+      form: (close: () => void) => createElement(LockingForm, { close }),
     },
   });
 }
-function LockingForm({ close, land }: { close(): void; land?: () => void }) {
+function LockingForm({ close }: { close(): void }) {
   const [locked, setLocked] = useState(false);
   return createElement(
     'form',
@@ -349,17 +359,7 @@ function LockingForm({ close, land }: { close(): void; land?: () => void }) {
       createElement('input', { 'aria-label': 'Statement' }),
     ),
     createElement('button', { type: 'button', onClick: () => setLocked(true) }, 'Send'),
-    createElement(
-      'button',
-      {
-        type: 'button',
-        onClick: () => {
-          close();
-          land?.();
-        },
-      },
-      'Land',
-    ),
+    createElement('button', { type: 'button', onClick: close }, 'Land'),
   );
 }
 const escape = async () => {
@@ -387,31 +387,33 @@ test('while a form’s request is in flight neither Escape nor Cancel can take i
   assert.equal(opener.textContent, 'Cancel');
   assert.ok(opener.disabled, 'Cancel holds still while the fields are locked');
   await escape();
-  assert.ok(document.querySelector('.creation'), 'and so does Escape');
+  assert.ok(shows('.creation'), 'and so does Escape');
 });
 
 test('the cursor follows the opener from the empty state to the row once the first record lands', async (t) => {
   t.after(async () => await unmount());
+  // The record lands a moment after the form that made it closed, as a command's
+  // answer does. The test lands it itself rather than on a short timer: a timer
+  // raced the runner's own scheduling, and on a loaded machine the record arrived
+  // before the line below had looked at the empty state it was supposed to leave.
+  let land = () => {};
   function Book() {
     const [items, setItems] = useState<Item[]>([]);
-    return createElement(Locking, {
-      items,
-      land: () => setTimeout(() => setItems([task('t1')]), 5),
-    });
+    land = () => setItems([task('t1')]);
+    return createElement(Locking, { items });
   }
   await mount(createElement(MemoryRouter, { initialEntries: ['/claims'] }, createElement(Book)));
   await click('New claim');
   await click('Land');
-  assert.equal(
-    document.activeElement,
-    document.querySelector('.empty-state [data-opens="create"]'),
+  assert.ok(
+    cursorOn('.empty-state [data-opens="create"]'),
     'closed, the cursor is back on the control that opened the form',
   );
-  await settle(30);
-  assert.equal(document.querySelector('.empty-state'), null);
-  assert.equal(
-    document.activeElement,
-    document.querySelector('.action-row [data-opens="create"]'),
+  await act(async () => land());
+  await settle(0);
+  assert.ok(!shows('.empty-state'), 'the first record takes the empty state away');
+  assert.ok(
+    cursorOn('.action-row [data-opens="create"]'),
     'and it is still on that control where the first record moved it',
   );
 });
@@ -482,21 +484,18 @@ test('a record keeps what is being written on it when the window crosses the spl
     set.call(field(), 'Reached 100% at step 1,640.');
     field().dispatchEvent(new window.Event('input', { bubbles: true }));
   });
-  assert.ok(
-    document.querySelector('.split > .split-list .the-list'),
-    'wide: the list stands beside',
-  );
+  assert.ok(shows('.split > .split-list .the-list'), 'wide: the list stands beside');
   const kept = field();
 
   await resize(false);
-  assert.equal(document.querySelector('.the-list'), null, 'narrow: the record is the page');
-  assert.equal(document.querySelector('.split'), null);
-  assert.equal(field(), kept, 'the record was not mounted again');
+  assert.ok(!shows('.the-list'), 'narrow: the record is the page');
+  assert.ok(!shows('.split'));
+  assert.ok(field() === kept, 'the record was not mounted again');
   assert.equal(field().value, 'Reached 100% at step 1,640.');
 
   await resize(true);
-  assert.ok(document.querySelector('.split > .split-list .the-list'));
-  assert.equal(field(), kept);
+  assert.ok(shows('.split > .split-list .the-list'));
+  assert.ok(field() === kept);
   assert.equal(field().value, 'Reached 100% at step 1,640.');
 });
 
@@ -531,11 +530,11 @@ test('Escape leaves a record for its list, but not while a desk on it holds some
   await act(async () => pick().click());
   await escape();
   assert.ok(pick(), 'the record is still the page');
-  assert.ok(document.querySelector('[data-draft]'), 'and the pick is still made');
+  assert.ok(shows('[data-draft]'), 'and the pick is still made');
 
   // With nothing held, Escape is the way back to the list it always was.
   await act(async () => pick().click());
   await escape();
-  assert.equal(document.querySelector('button'), null, 'the record was left');
-  assert.ok(document.querySelector('.the-list'));
+  assert.ok(!shows('button'), 'the record was left');
+  assert.ok(shows('.the-list'));
 });
