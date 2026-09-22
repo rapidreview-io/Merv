@@ -18,9 +18,11 @@ import { githubFixture, config as githubConfig } from '../tests/github-fixture.j
  * tests/github-fixture.ts fakes it, and the Git remote the project publishes to, which is a
  * bare repository on this machine. Everything on the near side of both is the real server.
  *
- * What it does NOT make: a publication. No consolidation reaches a pull request here, so the
- * ring on the trunk, `published from` and `merged into` are drawn by no record in this bed and
- * a screenshot of it proves nothing about them.
+ * One task here publishes to main, so its acceptance seals a publication and the sync opens the
+ * pull request nobody has merged: the ring on the trunk and `published from` are drawn by a real
+ * record, and `code_publication_pending` is on screen as the wait it is. What it does NOT make is
+ * a merged publication — nothing here presses the operator's own merge — so `merged into` is
+ * still drawn by no record in this bed and a screenshot of it proves nothing about that edge.
  */
 
 /** What the bed exists to show, checked rather than hoped: a wrong state screenshots green. */
@@ -196,6 +198,15 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
   githubFetch = remote.fetcher;
   remote.branches.set('main', main);
   await remote.enable();
+  // Publication stays disabled until an operator records a passing canary for this App, its
+  // rules and this base branch; without one a sealed publication reads `disabled` instead of
+  // waiting on the person who merges it.
+  await code.controlPublication(human, {
+    action: 'record_canary',
+    staleMerged: false,
+    reason: 'The demo release matrix passed with this App and its rules.',
+    requestId: id('canary'),
+  });
   const paths = new CodeRepositories({
     root: join(app.directory, 'code'),
     quotaBytes: 0,
@@ -208,7 +219,7 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
   git(root, ['init', '--quiet', '--bare', '--object-format=sha1', published]);
   const remoteRef = (ref: string) =>
     git(published, ['for-each-ref', '--format=%(objectname)', ref]) || null;
-  (code as any).mirrorStore.transport = {
+  const transport = {
     target: async () => ({ repository: 'fixture/private' }),
     lsRemote: async (_projectId: string, ref: string) => remoteRef(ref),
     push: async (
@@ -227,6 +238,10 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
       return 'ok';
     },
   };
+  (code as any).mirrorStore.transport = transport;
+  // A publication pushes its own immutable proposal branch, and reaches the repository through
+  // its own transport rather than the mirror's queue, so the same local seam stands in for both.
+  (code as any).publicationHost.mirror = () => transport;
   git(source, ['push', '--quiet', published, `${main}:refs/heads/main`]);
 
   await ctx.sessions.setDispatch(operator, { enabled: true });
@@ -464,6 +479,8 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
     dependsOn: string[],
     files: Record<string, string>[],
     message: string,
+    /** Declared before any lease: its acceptance seals a publication that carries it to main. */
+    publishes = false,
   ) => {
     const created = await ctx.tasks.create(operator, {
       title,
@@ -473,6 +490,12 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
       ...(dependsOn.length ? { dependsOn } : {}),
       requestId: id('task'),
     });
+    // Nothing a worker does may put its own branch on the road to main, so the declaration
+    // is the signed-in human's and is made before the base is pinned.
+    if (publishes)
+      await ctx.state.transaction((tx: any) =>
+        code.publishOnAcceptance(human, { unitId: created.id }, tx),
+      );
     await based(created.id, title);
     const held = await lease(created);
     let last = '';
@@ -679,6 +702,32 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
     'Pin the tokenizer',
   );
 
+  // One task that publishes to main: its acceptance seals a publication, and the sync opens
+  // the pull request nobody has merged. That wait is the one opinion Code keeps about work
+  // that has ended, and it is what `code_publication_pending` reads as on the record's page
+  // and on Now. It is declared from main and depends on nothing, so no base has to be made
+  // for it and the lane leaves the trunk directly.
+  const publishing = await task(
+    'Publish the tokenizer report',
+    'Write the tokenizer note that goes to main with this wave.',
+    [],
+    [{ 'docs/tokenizer.md': '# Tokenizer\n\nThe vocabulary is pinned at 97 symbols.\n' }],
+    'Publish the tokenizer report',
+    true,
+  );
+  // A publication reconciles with GitHub once every thirty seconds and this one was sealed a
+  // moment ago; the demo ages it rather than waiting, exactly as its test does.
+  await ctx.state.transaction((tx: any) =>
+    tx.run("UPDATE code_publications SET synced_at='' WHERE project_id=?", operator.projectId),
+  );
+  await code.syncPublications(human);
+  const sealed = await code.unit(human, publishing.id);
+  must(
+    sealed.publication?.state === 'pending',
+    `a publication waiting on a person (it is ${sealed.publication?.state ?? 'absent'})`,
+  );
+  must(!!sealed.publication?.pull, 'the open pull request that wait is about');
+
   // One accepted source and no base record: the single-dependency lane.
   const baseline = await experiment(
     'baseline-p97-reproduction',
@@ -840,6 +889,7 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
     published,
     units: {
       tokenizer: tokenizer.id,
+      publishing: publishing.id,
       baseline: baseline.id,
       decay: decay.id,
       depth: depth.id,

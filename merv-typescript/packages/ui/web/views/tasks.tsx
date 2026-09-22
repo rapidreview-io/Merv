@@ -21,6 +21,8 @@ import {
   useArtifacts,
 } from '../components';
 import { Gate, Relations } from '../process';
+import { useSession } from '../session';
+import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
 import { useActorNames } from './people';
 import { DELIVER } from './overview';
@@ -431,6 +433,9 @@ function TaskDetail({ row }: ViewProps) {
     { every: 8000 },
   );
   const nameOf = useActorNames();
+  // The publication verbs answer a signed-in operator and nobody else, so the Code
+  // section is told who is reading before it offers the move.
+  const { actor, account } = useSession();
   const t = record.data?.task;
   // Every round of review this task has been through: the list the wave beside this
   // record already reads, so the newest verdict and the earlier ones cost one answer.
@@ -471,7 +476,15 @@ function TaskDetail({ row }: ViewProps) {
           </>
         ) : undefined
       }
-      code={record.data?.codeUnit && <UnitCode unit={record.data.codeUnit} named={nameOf} />}
+      code={
+        record.data?.codeUnit && (
+          <UnitCode
+            unit={record.data.codeUnit}
+            named={nameOf}
+            signedIn={signedInAdmin(actor, account)}
+          />
+        )
+      }
       related={
         t.dependencies?.length || t.dependents?.length ? (
           <>
