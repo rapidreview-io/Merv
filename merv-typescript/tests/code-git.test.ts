@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ServerGit } from '@merv/code/git';
 
 function home(t: test.TestContext) {
@@ -116,4 +117,103 @@ test('a failing command is a result, a missing or slow one is a refusal, and old
   closing.close();
   await assert.rejects(running, { code: 'code_unavailable' });
   await assert.rejects(closing.run(['--version']), { code: 'code_unavailable' });
+});
+
+test('timeout, abort, and close promptly end Git command descendants', async (t) => {
+  const directory = home(t);
+  const script = (name: string) => {
+    const path = join(directory, name);
+    writeFileSync(
+      path,
+      `#!/bin/sh\nprintf '%s\\n' "$$" > ${name}.parent\nsleep 30 &\nprintf '%s\\n' "$!" > ${name}.child\nwait\n`,
+    );
+    chmodSync(path, 0o755);
+    return path;
+  };
+  const waitFor = async (ready: () => boolean) => {
+    const deadline = Date.now() + 2_000;
+    while (!ready() && Date.now() < deadline) await delay(10);
+    assert.ok(ready(), 'the child process did not reach the expected state promptly');
+  };
+  const stillRunning = (pid: number) => {
+    if (process.platform === 'linux') {
+      try {
+        return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]?.[0] !== 'Z';
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      }
+    }
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
+    }
+  };
+  const promptly = async (operation: Promise<unknown>, code: string) => {
+    let timer: ReturnType<typeof setTimeout>;
+    try {
+      await assert.rejects(
+        Promise.race([
+          operation,
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('Git cancellation did not settle promptly')),
+              2_000,
+            );
+          }),
+        ]),
+        { code },
+      );
+    } finally {
+      clearTimeout(timer!);
+    }
+  };
+
+  for (const mode of ['timeout', 'abort', 'close'] as const) {
+    const git = new ServerGit(directory, script(mode));
+    const controller = new AbortController();
+    const operation = git.run([], {
+      timeoutMs: mode === 'timeout' ? 1_000 : 10_000,
+      signal: controller.signal,
+    });
+    void operation.catch(() => {});
+    const parentFile = join(directory, `${mode}.parent`);
+    const childFile = join(directory, `${mode}.child`);
+    try {
+      await waitFor(() => existsSync(parentFile) && existsSync(childFile));
+      const parent = Number(readFileSync(parentFile, 'utf8').trim());
+      const child = Number(readFileSync(childFile, 'utf8').trim());
+      assert.ok(stillRunning(parent));
+      assert.ok(stillRunning(child));
+      if (mode === 'abort') controller.abort();
+      if (mode === 'close') git.close();
+      await promptly(
+        operation,
+        mode === 'timeout'
+          ? 'code_git_timeout'
+          : mode === 'abort'
+            ? 'code_git_aborted'
+            : 'code_unavailable',
+      );
+      await waitFor(() => !stillRunning(parent) && !stillRunning(child));
+    } finally {
+      controller.abort();
+      git.close();
+      // Keep the test itself from leaving a sleeper behind if cancellation regresses.
+      for (const file of [parentFile, childFile]) {
+        if (!existsSync(file)) continue;
+        const pid = Number(readFileSync(file, 'utf8').trim());
+        if (Number.isSafeInteger(pid) && pid > 0 && stillRunning(pid)) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+          }
+        }
+      }
+    }
+  }
 });

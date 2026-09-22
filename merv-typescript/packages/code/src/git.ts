@@ -25,6 +25,19 @@ export interface GitOptions {
 
 const MINIMUM = [2, 38] as const;
 
+/** Each child leads its own process group, so cancellation also reaches its descendants. */
+function terminate(child: ChildProcess): void {
+  if (child.pid !== undefined && process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+      return;
+    } catch {
+      // The group may already have exited, or the platform may refuse group signals.
+    }
+  }
+  child.kill('SIGKILL');
+}
+
 /**
  * The only place the server starts Git. Every child sees a fixed PATH, an empty home, no
  * system or user configuration, no prompt and no transport unless the caller names one, so
@@ -117,6 +130,7 @@ export class ServerGit {
             LC_ALL: 'C',
           },
           stdio: ['pipe', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
         },
       );
       this.children.add(child);
@@ -126,7 +140,7 @@ export class ServerGit {
         failure: MervError | undefined;
       const stop = (error: MervError) => {
         failure ??= error;
-        child.kill('SIGKILL');
+        terminate(child);
       };
       const timer = setTimeout(
         () => stop(new MervError('code_git_timeout', 'A Git operation took too long', 503)),
@@ -170,8 +184,7 @@ export class ServerGit {
         abortSignal?.removeEventListener('abort', aborted);
         this.children.delete(child);
         if (failure) reject(failure);
-        else if (this.closed && signal)
-          reject(new MervError('code_unavailable', 'Code is unavailable', 503));
+        else if (this.closed) reject(new MervError('code_unavailable', 'Code is unavailable', 503));
         // A child ended by a signal never reached an exit of its own. Callers read the exit
         // code as Git's answer, so inventing one would pass a kill off as something Git said.
         else if (code === null)
@@ -202,6 +215,6 @@ export class ServerGit {
   /** Refuse new children and end the running ones; every journalled operation can be replayed. */
   close(): void {
     this.closed = true;
-    for (const child of this.children) child.kill('SIGKILL');
+    for (const child of this.children) terminate(child);
   }
 }

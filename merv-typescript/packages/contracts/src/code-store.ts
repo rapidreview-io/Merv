@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { codePendingMergeSchema, gitBranchSchema } from './workspace.js';
 
-const importBranch = gitBranchSchema(200);
+const importBranch = gitBranchSchema(255);
 
 /**
  * The second workspace protocol: Code keeps one repository per project and machines move Git
@@ -123,7 +123,7 @@ export const codeRepositoryImportInputSchema = z
       .object({
         revision: z.number().int().nonnegative(),
         repositoryId: z.number().int().positive(),
-        baseBranch: importBranch,
+        baseBranch: gitBranchSchema(200),
       })
       .strict()
       .optional(),

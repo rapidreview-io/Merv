@@ -286,7 +286,11 @@ test('a repository rebound during import cannot report ready even when its main 
 });
 
 test('repository imports accept Unicode branches while rejecting unsafe Git ref syntax', () => {
-  for (const ref of ['refs/heads/研究/évaluation', 'refs/tags/версия-1']) {
+  for (const ref of [
+    'refs/heads/研究/évaluation',
+    'refs/tags/версия-1',
+    `refs/heads/${'a'.repeat(244)}`,
+  ]) {
     assert.equal(
       codeRepositoryImportInputSchema.safeParse({ source: 'github', ref, requestId: 'ref' })
         .success,
