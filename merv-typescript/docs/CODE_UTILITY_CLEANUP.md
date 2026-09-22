@@ -1,6 +1,6 @@
 # Code as an optional utility
 
-Status: implementation in progress, 2026-09-22.
+Status: implementation complete and verified on staging, 2026-09-22.
 
 Code supplies durable Git operations for parallel research. It never decides research
 logic. Research owners choose dependencies, accepted results, review requirements,
@@ -56,7 +56,8 @@ Git-enabled staging profile; the ordinary default keeps it optional.
 ## Staging
 
 The verified staging host is `azureuser@dev-experiments.rapidreview.io` (`rp-control-dev`),
-public origin `https://dev-experiments.rapidreview.io`, database schema `merv_ts_staging`.
+public origin `https://rp-control-dev.eastus2.cloudapp.azure.com`, database schema
+`merv_ts_staging`. The DNS connection alias and configured browser origin differ.
 The release script defaults to production: both staging arguments must be explicit.
 It ships committed HEAD and does not back up the database. Any schema migration requires
 a separate staging backup before deployment. Historical September 16 staging instructions
@@ -64,29 +65,67 @@ describe the host subsequently promoted to production.
 
 ## Completion evidence
 
-Server/UI typechecks and builds passed. Targeted gates cover command input validation,
-GitHub permissions and pagination, exact repository preparation/replay, no-Code research,
-core mutation projections, generic-owner isolation, writer recovery, and hosted adapter
-unload while core repositories remain usable. Standalone utility storage imports and rebinds
-without research tables; retained base schema stays core-owned so unfinished merges remain
-protected. Research now preserves project-wide Git obligations across provider outages, including
-new cycles and unselected work. Latest full local gate passed: 1,627 passed, 211 PostgreSQL-only cases skipped, zero failures.
-Server/UI typechecks, both builds and deployment-renderer checks also passed. PostgreSQL staging
-gates are still being completed.
+Final application source: `a33fd854`, based on `32a0920f`. Commit `c2846759` updates
+the release acceptance expectation for the current reflection-approval gate.
 
-Checkpoint `178da69a` passed the complete local suite: 1,619 passed, 195 PostgreSQL skips,
-zero failures. Its immutable source is running PostgreSQL tests in an isolated staging container,
-using random disposable schemas and only the staging database credential. The running service
-has not been deployed or modified. A later source candidate must pass its own changed-area gates.
+- Full local suite: 1,839 tests; 1,628 passed, 211 PostgreSQL-only cases skipped,
+  zero failures. Server/UI typechecks, builds and deployment-renderer checks passed.
+- Final Linux Git lifecycle and repository preparation gates: 25/25 passed as an
+  ordinary user. Git cancellation now terminates descendants that retain output pipes.
+- Independent dependency audit found no remaining Workflows/Reviews/research imports
+  in core Code. Runtime core dependencies are State and Scope; the research adapter
+  owns workflow integration and optionally binds Reviews and Sandboxes.
+- A full no-Code research cycle, scratch execution without Git, durable obligations
+  through provider outages, exact review evidence, selected-branch replay/recovery,
+  generic-owner isolation and unload/recovery are covered by the regression suite.
+- Core imports and rebinds without research tables. Technical base schema remains
+  core-owned, and previously published migration SQL remains byte-for-byte unchanged.
 
-The current measured physical source count (2026-09-22, baseline `32a0920f`) is 19,234 →
-19,476 across Code plus its new adapter; all package `src/**/*.ts` files are 67,251 → 67,600.
-Moves are counted on both sides. **The net source-reduction requirement is not yet achieved.**
-New optionality, lifecycle and repository setup behavior outweigh the removed duplication.
-The shared operation journal removes 93 lines and exact PostgreSQL guard composition removes
-95 more, without changing published migration strings. Further simplification must retain
-validation and recovery; moving code or deleting useful comments is not a reduction in responsibility.
+Compiled-runtime acceptance passed on staging PostgreSQL and object storage: all 53
+plugins active, authenticated task/review flow, idempotent verdict replay, signed private
+download, five-lens reflection creation, compiled UI assets and restart persistence.
+Synthetic dispatch remained disabled. Evidence is retained under
+`/opt/merv-typescript/verification/20260922T195512Z-a33fd854/runtime-acceptance-c2846759.json`.
 
-Pending: dependency audit, total source count/diff, full no-Git lifecycle, Git handoff and
-review regressions, builds, staging image/release identity, authenticated acceptance and
-restart persistence. Moving files alone is not simplification or proof of completion.
+The broad staging regression run reached its 20-minute limit after 401 passing tests
+and no failures, before its final files completed. A focused PostgreSQL continuation
+passed all 41 tests with zero skips or failures, covering the remaining consolidation,
+research, optionality and migration cases. It includes all 15 optional-research
+PostgreSQL cases and a complete cycle with Code never loaded. The continuation used
+the final application source and the Git-equipped image as an ordinary user.
+
+The schema and repository backup is verified at
+`/var/backups/merv/code-utility/20260922T202101Z`. It includes the database dump, repository
+data, private environment, container metadata and unchanged Caddy configuration, with
+checked hashes and a readable restore list. Staging restarted healthy after the backup.
+
+## Size and simplification
+
+Physical source lines at the final candidate (package `src/**/*.ts`, including both
+sides of moved code): Code plus its adapter 19,234 → 19,489 (+255); all packages
+67,251 → 67,613 (+362). These counts exclude UI TSX, tests and configuration.
+The user accepted modest net growth for optionality and repository setup on 2026-09-22.
+
+The shared operation journal removes 93 lines and PostgreSQL guard composition removes
+95 more, without changing published migration strings. Other duplication was removed
+from GitHub requests, filesystem helpers, base traversal and tool registration. New
+optionality, lifecycle and repository setup behavior outweigh the removed duplication.
+Preserving recovery and historical workflows takes priority over further cosmetic cuts.
+
+## Deployed staging release
+
+Release `20260922T202229Z-c2846759-77841261f83c` is healthy at
+<https://rp-control-dev.eastus2.cloudapp.azure.com/ui/>. Its image is
+`sha256:07355da621dfa0058652631fae04da81f8397d47256b13eee8f8123771922857`.
+All 54 configured plugins are active: the 53 default plugins plus the existing legacy
+history UI. Core Code and the optional research adapter load separately.
+
+Health, UI and its JavaScript/CSS assets return 200; anonymous protected access returns
+401; the approved origin returns 200 and an unapproved origin returns 403. The container
+has zero restarts. The existing schema, browser origin and Caddy configuration were
+preserved. The prior image and checked database/data backup are available for rollback.
+Release evidence is retained under
+`/opt/merv-typescript/releases/20260922T202229Z-c2846759-77841261f83c/`, including source/build
+manifests, acceptance results and `code-cleanup-final-verification.json`.
+
+Implementation and staging gates are complete. Production was not deployed.
