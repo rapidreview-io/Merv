@@ -7,6 +7,8 @@ import { codeWorkspaceDriver } from '@merv/code/driver/index';
 import { createApp } from './app.js';
 import { uploadArtifact } from './artifact-upload.js';
 import { importRepository } from './code-import.js';
+import { restoreCode } from './code-restore.js';
+import { S3BackupStore } from '@merv/code/store/backup';
 import { defaultConfigFile, loadConfiguration } from './config.js';
 import type {} from '@merv/identity/types';
 import { check, MervError, type Credentials, type Role } from '@merv/contracts';
@@ -18,19 +20,24 @@ function options(command: string, args: string[]) {
       ? ['url', 'file', 'token-env', 'project', 'title', 'media-type']
       : command === 'code-import'
         ? ['url', 'repository', 'ref', 'token-env', 'project']
-        : command === 'runner'
-          ? ['config']
-          : command === 'serve'
-            ? ['dir', 'host', 'port', 'config']
-            : command === 'adopt-project'
-              ? ['dir', 'project', 'config', 'token-env', 'repair-reason']
-              : command === 'init'
-                ? ['dir', 'name']
-                : ['dir', 'name', 'role'],
+        : command === 'code-restore'
+          ? ['root', 'project', 'at', 'deployment', 'verify-only', 'overwrite']
+          : command === 'runner'
+            ? ['config']
+            : command === 'serve'
+              ? ['dir', 'host', 'port', 'config']
+              : command === 'adopt-project'
+                ? ['dir', 'project', 'config', 'token-env', 'repair-reason']
+                : command === 'init'
+                  ? ['dir', 'name']
+                  : ['dir', 'name', 'role'],
   );
+  /** The only options that stand alone; every other still needs its value. */
+  const standalone = new Set(command === 'code-restore' ? ['verify-only', 'overwrite'] : []);
   for (let i = 0; i < args.length; i++) {
+    const alone = args[i].startsWith('--') && standalone.has(args[i].slice(2));
     check(
-      args[i].startsWith('--') && args[i + 1] && !args[i + 1].startsWith('--'),
+      args[i].startsWith('--') && (alone || (args[i + 1] && !args[i + 1].startsWith('--'))),
       'arguments',
       `Expected --option value, got ${args[i]}`,
     );
@@ -42,7 +49,7 @@ function options(command: string, args: string[]) {
     );
     check(allowed.has(name), 'arguments', `Unknown option for ${command}: --${name}`);
     check(!Object.hasOwn(result, name), 'arguments', `Duplicate option: --${name}`);
-    result[name] = args[++i];
+    result[name] = alone ? 'true' : args[++i];
   }
   return result;
 }
@@ -128,6 +135,7 @@ async function main() {
   npm run cli -- runner --config PATH
   npm run cli -- artifact-upload --url URL --file PATH --token-env ENV_NAME [--project ID] [--title TEXT] [--media-type TYPE]
   npm run cli -- code-import --url URL --repository PATH --ref REF --token-env ENV_NAME [--project ID]
+  npm run cli -- code-restore [--verify-only] [--root PATH] [--project ID] [--at STAMP] [--deployment NAME] [--overwrite]
   npm start -- [--dir .merv] [--config PATH] [--port 3081] [--host 127.0.0.1]
 
 init writes the local operator credential to credentials.json (mode 0600).
@@ -153,7 +161,17 @@ code-import brings one branch or tag of a local Git repository into the reposito
 keeps for a project, as a project administrator. It cuts a bundle that leaves out what the
 server already holds, sends it in parts and waits for admission; the local repository is only
 read. It prints the operation, with findings when the history was refused. A history larger
-than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
+than one transfer (512 MiB) is imported oldest first, one ref at a time.
+code-restore reads the verified copies the server writes to object storage. It takes the
+bucket, endpoint, credentials and prefix from MERV_BLOB_*, and the deployment segment from
+MERV_TS_DB_SCHEMA unless --deployment names another. --verify-only downloads each object,
+checks it against its manifest and asks Git to verify each bundle, writing nothing: it is the
+drill, and it is safe to run against a live deployment. Without it, --root names where
+repositories are written; the command takes the writer lock, so a running server refuses it
+with code_repository_locked. A repository already in that root that holds refs the copy does
+not is refused rather than rewound; --overwrite forces the copy over it and destroys whatever
+was admitted since. The database copy is only verified, never applied: restore it
+with the database's own tool before starting the server.`);
     return;
   }
   check(
@@ -165,6 +183,7 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
       'runner',
       'artifact-upload',
       'code-import',
+      'code-restore',
     ].includes(command),
     'arguments',
     `Unknown command: ${command}`,
@@ -218,6 +237,43 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
     });
     console.log(JSON.stringify(operation));
     if (operation.status !== 'completed') process.exitCode = 1;
+    return;
+  }
+  if (command === 'code-restore') {
+    const environment = (name: string) => {
+      const value = process.env[name]?.trim();
+      check(value, 'arguments', `code-restore needs ${name} in the environment`);
+      return value;
+    };
+    const verifyOnly = args['verify-only'] === 'true';
+    check(
+      verifyOnly || args.root,
+      'arguments',
+      'code-restore writes into --root PATH, or checks the copies with --verify-only',
+    );
+    const store = new S3BackupStore({
+      bucket: environment('MERV_BLOB_BUCKET'),
+      endpoint: environment('MERV_BLOB_ENDPOINT_URL'),
+      accessKeyId: environment('MERV_BLOB_ACCESS_KEY_ID'),
+      secretAccessKey: environment('MERV_BLOB_SECRET_ACCESS_KEY'),
+      region: process.env.MERV_BLOB_REGION,
+      prefix: process.env.MERV_BLOB_PREFIX,
+    });
+    try {
+      const report = await restoreCode({
+        store,
+        deployment: args.deployment ?? environment('MERV_TS_DB_SCHEMA'),
+        ...(args.root ? { root: resolve(args.root) } : {}),
+        ...(args.project ? { projectId: args.project } : {}),
+        ...(args.at ? { at: args.at } : {}),
+        ...(args.overwrite === 'true' ? { overwrite: true } : {}),
+        verifyOnly,
+      });
+      console.log(JSON.stringify(report));
+      if (report.problems.length) process.exitCode = 1;
+    } finally {
+      await store.close();
+    }
     return;
   }
   if (command === 'runner') {

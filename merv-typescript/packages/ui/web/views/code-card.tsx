@@ -599,6 +599,20 @@ export function CodeOperations({
     // three rows below are read, rather than one line of machine text beside them.
     !!mirror?.lastError && ['Last refusal', words(mirror.lastError)],
     !!store?.hosted && ['Disk', `${bytes(store.diskBytes)} of ${bytes(store.quotaBytes)}`],
+    // How old the off-host copy is, which is how much work a lost disk would cost. Its
+    // trouble is already a warning on the project, so this line says only what was written —
+    // except that copies configured and never taken must not read as no copies at all.
+    !!store?.backup && [
+      'Backup',
+      store.backup.at === null ? (
+        'never'
+      ) : (
+        <span className="cluster">
+          <span>{bytes(store.backup.bytes)}</span>
+          <Ago at={store.backup.at} className="muted" />
+        </span>
+      ),
+    ],
   ];
   // A fold that opens onto nothing promises machinery it does not hold.
   if (

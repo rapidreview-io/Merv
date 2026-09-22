@@ -4,6 +4,7 @@ import type {} from './types.js';
 import { publicationControlSchema } from './publication-host.js';
 import { publicationReleaseSchema } from './publications.js';
 import { baseControlSchema, type CodeBaseControl } from './bases.js';
+import { codeBackupRunSchema } from './store/backup.js';
 import type { CodeBaseControlInput } from '@merv/contracts';
 import { z } from 'zod';
 import {
@@ -207,6 +208,15 @@ export const codeToolsPlugin = {
         inputSchema: codeUnitFenceInputSchema,
         handler: async (caller: Caller, input: CodeUnitFenceInput) =>
           await ctx.code.fenceUnit(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.backup.run',
+        description:
+          'Take one verified copy of this project’s repository, and of the server’s database, to object storage now instead of waiting for the daily pass. Use it before a risky deploy or migration, and to give the restore drill something fresh to read. The database is dumped first and the repository bundled second, because a repository ahead of its database is recoverable and the reverse is not; the bundle carries every ref, its sha256 travels with it, and both objects are read back before the run is recorded. A project whose refs have not moved since the last copy reuses that bundle and rewrites only the pointer. The answer is the same backup block code.status reports: when the copy was taken and verified, what it wrote, the object a restore would read, and any warning — a repository whose bundle is larger than one object may be leaves the previous copy newest and warns code_backup_too_large. Copies older than the retention window are removed, never the one the pointer names. Only a project administrator or operator key may call it, never a leased worker. One pass runs at a time across the whole server, so a call made while the daily pass or another operator’s run is going is answered with code_backup_busy; ask again when it has finished. Supply a stable requestId: the same request replays its receipt. Answered with code_backup_unconfigured where this server keeps no off-host copy.',
+        inputSchema: codeBackupRunSchema,
+        handler: async (caller: Caller, input: unknown) => await ctx.code.runBackup(caller, input),
       }),
     );
     ctx.effect(() =>

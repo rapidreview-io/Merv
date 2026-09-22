@@ -62,6 +62,13 @@ const incidental = new Set([
   'extensions.objectformat',
 ]);
 
+/**
+ * The name of a project's directory under the root: the first 32 hex of sha256(projectId).
+ * A backup names its objects by the same rule, so there is one naming rule and not two.
+ */
+export const directoryKey = (projectId: string) =>
+  createHash('sha256').update(projectId).digest('hex').slice(0, 32);
+
 /** Write a directory entry to disk, so a rename or a link survives losing power. */
 export async function syncDirectory(path: string): Promise<void> {
   const handle = await open(path, constants.O_RDONLY);
@@ -189,10 +196,7 @@ export class CodeRepositories {
   }
 
   paths(projectId: string): ProjectPaths {
-    const directory = join(
-      this.config.root,
-      createHash('sha256').update(projectId).digest('hex').slice(0, 32),
-    );
+    const directory = join(this.config.root, directoryKey(projectId));
     return {
       directory,
       repository: join(directory, 'repository.git'),
@@ -462,21 +466,35 @@ export class CodeRepositories {
     return bytes;
   }
 
-  /** Refuse bytes the volume or the project's quota cannot take; the refusal passes with time or an operator. */
-  async assertRoom(projectId: string, incoming: number): Promise<void> {
-    const full = (message: string) => new MervError('code_store_full', message, 507);
+  /** Refuse bytes the volume cannot take, whoever they belong to; the refusal passes with time. */
+  async assertVolume(incoming = 0): Promise<void> {
     const volume = await statfs(this.config.root);
     if (volume.bavail * volume.bsize - incoming < this.config.reservedFreeBytes)
-      throw full('The Code volume is below its reserved free space');
+      throw new MervError(
+        'code_store_full',
+        'The Code volume is below its reserved free space',
+        507,
+      );
+  }
+
+  /** Refuse bytes the volume or the project's quota cannot take; the refusal passes with time or an operator. */
+  async assertRoom(projectId: string, incoming: number): Promise<void> {
+    await this.assertVolume(incoming);
     if (incoming && (await this.measure(projectId)) + incoming > this.config.quotaBytes)
-      throw full('This transfer would take the project past its Code disk quota');
+      throw new MervError(
+        'code_store_full',
+        'This transfer would take the project past its Code disk quota',
+        507,
+      );
   }
 
   /**
    * Remove what no operation needs any more: quarantine directories of finished operations,
-   * or of none when they are an hour old, expired exports with their refs, and temporary
-   * packs an interrupted child left behind. Held bundles, every other ref and every pack of
-   * a repository are never touched; nothing here collects garbage or prunes.
+   * or of none when they are an hour old, expired exports with their refs, temporary packs
+   * an interrupted child left behind, and the bundle or dump of a backup pass that died
+   * before its own `finally` ran — each pass names its own, so none is ever overwritten.
+   * Held bundles, every other ref and every pack of a repository are never touched;
+   * nothing here collects garbage or prunes.
    */
   async sweep(
     finished: (operationId: string) => Promise<boolean | undefined>,
@@ -487,9 +505,16 @@ export class CodeRepositories {
         (stat) => nowMs - stat.mtimeMs > age,
         () => false,
       );
+    const leftovers = async (directory: string) => {
+      for (const name of await readdir(directory).catch(() => []))
+        if (name.startsWith('backup-') && (await old(join(directory, name), HOUR)))
+          await rm(join(directory, name), { force: true });
+    };
+    await leftovers(join(this.config.root, 'tmp'));
     for (const entry of await readdir(this.config.root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^[0-9a-f]{32}$/.test(entry.name)) continue;
       const directory = join(this.config.root, entry.name);
+      await leftovers(directory);
       for (const operationId of await readdir(join(directory, 'quarantine')).catch(() => [])) {
         const path = join(directory, 'quarantine', operationId);
         const state = await finished(operationId);

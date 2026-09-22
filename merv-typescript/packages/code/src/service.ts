@@ -27,6 +27,7 @@ import {
   type CodeStoreConfig,
   type FaultPoint,
 } from './store/operations.js';
+import { codeBackupRunSchema } from './store/backup.js';
 import {
   CodeMirrorService,
   enqueueMirror,
@@ -434,6 +435,17 @@ export class CodeService extends CodeCommandService implements Code {
   /** One publication pass now, as the timer would make it. */
   async mirrorStep() {
     await this.mirrorStore?.run();
+  }
+  /** One backup pass over every project now, as the timer would make it. */
+  async backupStep(requestId: string) {
+    await this.requireStore().backup(null, { requestId });
+  }
+  async runBackup(caller: Caller, input: unknown) {
+    const { requestId } = parseCodeInput(codeBackupRunSchema, input);
+    return await this.requireStore().backup(structuredClone(caller), {
+      requestId,
+      projectId: caller.projectId,
+    });
   }
   async controlBase(caller: Caller, input: unknown) {
     if (!this.baseStore)

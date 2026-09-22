@@ -17,6 +17,7 @@ import {
   type CodeRepositoryRebindInput,
   type CodeStoreLimits,
   type CodeStoreOperation,
+  type CodeBackupStatus,
   type CodeStoreStatus,
   type CodeUploadBegin,
   type CodeUploadFinalize,
@@ -33,7 +34,16 @@ import { pendingMerge, verifyResolution } from '../pending-merge.js';
 import { parseCodeInput } from '../input.js';
 import type { WriterFence } from '../writers.js';
 import { admit, AdmissionRejected, bundleHeader, defaultLimits } from './admission.js';
-import { enqueueMirror } from './mirror.js';
+import {
+  CodeBackups,
+  codePrefix,
+  databasePrefix,
+  fingerprinted,
+  stampOf,
+  type CodeBackupReceipt,
+  type CodeBackupSettings,
+} from './backup.js';
+import { enqueueMirror, warnRef } from './mirror.js';
 import { workRef } from './refs.js';
 import {
   CodeRepositories,
@@ -45,6 +55,8 @@ import {
 } from './repository.js';
 
 export interface CodeStoreConfig extends CodeRepositoryConfig {
+  /** Where a verified copy of every repository and of the database goes; without it, nowhere. */
+  backup?: CodeBackupSettings;
   /** How often unfinished operations are taken up again and leftovers are swept. */
   sweepSeconds: number;
   /** How long unloading waits for running operations before it ends their Git children. */
@@ -271,6 +283,26 @@ const next: Record<string, string> = {
     'Call code.repository.import again with the same requestId; reading GitHub needs the administrator who asked for it.',
 };
 const resume = 'Complete the operation again; it resumes where it stopped.';
+/** The server itself, which is who the timer's own copy belongs to. */
+const BACKUP_PRINCIPAL = 'system:code';
+/** Off-host copies are configured here and none has ever been completed. */
+const NEVER_BACKED_UP: CodeBackupStatus = {
+  at: null,
+  verifiedAt: null,
+  bytes: 0,
+  key: null,
+  refsHash: null,
+  warnings: [],
+};
+/** The health line every reader of a backup receipt is given, including the tool that made it. */
+const backupStatus = (receipt: CodeBackupReceipt): CodeBackupStatus => ({
+  at: receipt.takenAt,
+  verifiedAt: receipt.verifiedAt,
+  bytes: receipt.bytes,
+  key: receipt.bundle?.key ?? null,
+  refsHash: receipt.refsHash,
+  warnings: receipt.warnings,
+});
 /** One line of a busy refusal: what is in flight, how much of it, and the first twenty names. */
 const held = (what: string, names: string[]) =>
   names.length ? [`${what} ${names.length} (${names.slice(0, 20).join(', ')})`] : [];
@@ -299,6 +331,9 @@ export class CodeStore {
   private waker?: NodeJS.Timeout;
   private woken = false;
   private maintaining?: Promise<void>;
+  private backing?: Promise<void>;
+  /** When the newest copy was taken, so the bucket is not asked about on every sweep. */
+  private backedUpAtMs = 0;
   private readonly jobs = new Map<string, Promise<void>>();
   private readonly parts = new Map<string, Promise<unknown>>();
   private readonly exports = new Map<
@@ -333,7 +368,12 @@ export class CodeStore {
       throw error;
     }
     this.timer = setInterval(
-      () => void this.maintain().catch(() => {}),
+      // The copy runs on the sweep's timer rather than one of its own, so it is taken between
+      // a project's operations; it is never taken during start-up, which maintain() is part of.
+      () =>
+        void this.maintain()
+          .then(() => this.backupDue())
+          .catch(() => {}),
       this.config.sweepSeconds * 1000,
     );
     this.timer.unref();
@@ -1396,7 +1436,14 @@ export class CodeStore {
         "SELECT result_json FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' ORDER BY completed_at DESC,id LIMIT 50",
         projectId,
       ),
+      // The last receipt is the backup's whole record: it survives a restart, where a memo
+      // in this process would not, and reading it costs no call to the bucket.
+      backup: await sql.get<{ result_json: string }>(
+        "SELECT result_json FROM code_operations WHERE project_id=? AND kind='backup' AND status='completed' ORDER BY completed_at DESC,id LIMIT 1",
+        projectId,
+      ),
     }));
+    const backup = read.backup ? (JSON.parse(read.backup.result_json) as CodeBackupReceipt) : null;
     const stored = read.project?.store_json
       ? (JSON.parse(read.project.store_json) as {
           objectFormat: ObjectFormat;
@@ -1414,9 +1461,329 @@ export class CodeStore {
         diskBytes: await this.repositories.usage(projectId),
         quotaBytes: this.config.quotaBytes,
         limits: this.limits(read.project),
+        // Configured is not the same as copied. A server whose very first pass failed — no
+        // pg_dump on the image, a wrong endpoint — would otherwise read exactly like one
+        // that keeps no copy at all, to the operator who will one day restore from it.
+        backup: backup ? backupStatus(backup) : this.config.backup ? NEVER_BACKED_UP : null,
       },
       operations: [...read.open, ...read.failed].map((row) => this.view(row)),
     };
+  }
+
+  /**
+   * One verified copy of every hosted project and of the database, taken in that order and
+   * entirely outside any transaction: Git, the database's own tool and the bucket are all
+   * reached with no transaction open, and only the journal row is written inside one.
+   *
+   * `caller` is an operator asking for a copy now; the timer passes none and runs as the
+   * server. Either way the work is the same, and each project's pass takes that project's
+   * turn, so a bundle is cut between its operations and never inside one.
+   */
+  async backup(
+    caller: Caller | null,
+    input: { requestId: string; projectId?: string },
+  ): Promise<CodeBackupStatus> {
+    this.assertOpen();
+    if (caller) {
+      // Verbatim the rule every operator route keeps: a leased worker never gains a
+      // human-only power, and a backup is one an operator takes before a risky change.
+      // Both checks stand before anything is read, so no caller learns from a refusal
+      // whether this server keeps copies at all or whether their project has a repository.
+      check(
+        !caller.session,
+        'session_forbidden',
+        'A leased worker cannot make a copy of the project’s repository',
+        403,
+      );
+      await this.state.transaction(async (tx) => await this.scope.require(caller, 'admin', tx));
+    }
+    const settings = this.config.backup;
+    check(
+      settings,
+      'code_backup_unconfigured',
+      'This server keeps no off-host copy of its Code repositories',
+      503,
+    );
+    // One pass at a time, whoever asked. `code.backup.run` reaches this directly, so an
+    // operator run and the timer's would otherwise dump the database, upload and prune the
+    // same prefixes side by side; holding the promise here is also what lets close() drain
+    // a pass it did not start, before the bucket's transport is destroyed under it. Asked
+    // again after the authority await, so a pass cannot begin in the gap close() opens
+    // between marking Code closed and waiting for the pass it can see.
+    this.assertOpen();
+    check(
+      !this.backing,
+      'code_backup_busy',
+      'A copy of this server’s repositories is already running',
+      409,
+    );
+    const pass = this.backupPass(settings, caller, input);
+    this.backing = pass.then(
+      () => {},
+      () => {},
+    );
+    try {
+      return await pass;
+    } finally {
+      this.backing = undefined;
+    }
+  }
+
+  /** The pass itself, once the caller's authority and the one-at-a-time rule have been kept. */
+  private async backupPass(
+    settings: CodeBackupSettings,
+    caller: Caller | null,
+    input: { requestId: string; projectId?: string },
+  ): Promise<CodeBackupStatus> {
+    const backups = new CodeBackups(settings, this.repositories);
+    const takenAt = now();
+    const projects = await this.state.read(
+      async (sql) =>
+        await sql.all<{ project_id: string; repository_id: string }>(
+          input.projectId
+            ? 'SELECT project_id,repository_id FROM code_projects WHERE project_id=?'
+            : 'SELECT project_id,repository_id FROM code_projects ORDER BY project_id',
+          ...(input.projectId ? [input.projectId] : []),
+        ),
+    );
+    const rows: { id: string; project: { project_id: string; repository_id: string } }[] = [];
+    for (const project of projects) {
+      if (!(await this.repositories.exists(project.project_id))) continue;
+      const begun = await this.beginBackup(caller, project.project_id, {
+        requestId: input.requestId,
+        deployment: settings.deployment,
+        scoped: !!input.projectId,
+      });
+      if (begun.replay) {
+        if (projects.length === 1) return backupStatus(begun.replay);
+        continue;
+      }
+      rows.push({ id: begun.id, project });
+    }
+    check(
+      rows.length,
+      'code_backup_nothing',
+      'This server keeps no repository for the projects named',
+      409,
+    );
+    let last: CodeBackupReceipt | undefined;
+    let failure: unknown;
+    // The database first: a repository ahead of its database is recoverable, the reverse is not.
+    const database = await this.finishOnFailure(rows, () => backups.database(takenAt));
+    for (const { id, project } of rows)
+      try {
+        last = await this.finishBackup(id, project.project_id, async () => {
+          const pass = await backups.project(
+            project.project_id,
+            project.repository_id,
+            takenAt,
+            database,
+            // The turn covers the refs and the bundle cut from them; the upload that follows
+            // must not, or every push to a large project would queue behind gigabytes.
+            <T>(job: () => Promise<T>) =>
+              this.repositories.run(project.project_id, () => this.repositories.transfer(job)),
+          );
+          const prefix = codePrefix(settings.deployment, project.project_id);
+          // The pass says what must survive: a pass that wrote no new pointer keeps the one
+          // the last pass left, rather than having an empty keep-list retire it.
+          return { ...pass.receipt, pruned: await backups.prune(prefix, pass.keep) };
+        });
+      } catch (error) {
+        // One project Code cannot copy is that project's failure, written on its own row
+        // and its own warnings; the others are still copied.
+        failure ??= error;
+      }
+    if (!last) throw failure;
+    // Only a pass over every project knows which database copies are still named by a
+    // manifest, so one project's own run never prunes the shared database prefix.
+    if (!input.projectId && database)
+      await backups.prune(databasePrefix(settings.deployment), [database.key]);
+    this.backedUpAtMs = Date.now();
+    return backupStatus(last);
+  }
+
+  /** The journal row of one project's run, or the receipt a finished request already has. */
+  private async beginBackup(
+    caller: Caller | null,
+    projectId: string,
+    /** What a replayed requestId must have meant: the same segment, at the same scope. */
+    input: { requestId: string; deployment: string; scoped: boolean },
+  ): Promise<{ id: string; replay?: CodeBackupReceipt }> {
+    const { requestId, deployment, scoped } = input;
+    const principal = caller ? `actor:${caller.actorId}` : BACKUP_PRINCIPAL;
+    // Only what the request could have meant differently: the bucket segment it names and
+    // whether it asked for this project or for the server. The project is in the lookup.
+    const inputHash = digest({ format: 1, kind: 'backup', deployment, scoped });
+    return await this.state.transaction(async (tx) => {
+      const previous = await tx.get<OperationRow>(
+        `SELECT ${columns} FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?`,
+        projectId,
+        principal,
+        requestId,
+      );
+      if (previous) {
+        check(
+          previous.input_hash === inputHash,
+          'request_conflict',
+          'This request id was used with different input',
+          409,
+        );
+        if (previous.status === 'completed')
+          return {
+            id: previous.id,
+            replay: JSON.parse(previous.result_json!) as CodeBackupReceipt,
+          };
+        check(
+          previous.status !== 'failed',
+          previous.error ?? 'code_backup_failed',
+          'This backup request already failed; ask for another with a new requestId',
+          500,
+        );
+        return { id: previous.id };
+      }
+      const id = newId('cop'),
+        at = now();
+      await tx.run(
+        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        id,
+        projectId,
+        principal,
+        requestId,
+        'backup',
+        inputHash,
+        canonical({ format: 1, actorId: caller?.actorId ?? BACKUP_PRINCIPAL }),
+        'prepared',
+        at,
+        at,
+      );
+      // `phase` stays null, so recovery and the operations list — both of which are about
+      // transfers that move refs — pass this row by; a run that died is simply asked for again.
+      return { id };
+    });
+  }
+
+  /** Complete the row with its fingerprinted receipt, or fail it and say so on the project. */
+  private async finishBackup(
+    id: string,
+    projectId: string,
+    work: () => Promise<Omit<CodeBackupReceipt, 'fingerprint'>>,
+  ): Promise<CodeBackupReceipt> {
+    let receipt: CodeBackupReceipt;
+    try {
+      receipt = fingerprinted(await work());
+    } catch (error) {
+      await this.failBackup(id, projectId, error);
+      throw error;
+    }
+    const at = now();
+    await this.state.transaction(async (tx) => {
+      await tx.run(
+        "UPDATE code_operations SET status='completed',result_json=?,completed_at=?,updated_at=? WHERE id=? AND status='prepared'",
+        canonical(receipt),
+        at,
+        at,
+        id,
+      );
+      await warnRef(
+        tx,
+        projectId,
+        receipt.warnings.length
+          ? {
+              code: receipt.warnings[0],
+              message: 'The last copy of this repository was not complete',
+              at,
+            }
+          : null,
+        'backup',
+      );
+    });
+    return receipt;
+  }
+
+  /** A failure before any project's own step is every started row's failure. */
+  private async finishOnFailure<T>(
+    rows: { id: string; project: { project_id: string } }[],
+    work: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      for (const row of rows) await this.failBackup(row.id, row.project.project_id, error);
+      throw error;
+    }
+  }
+
+  private async failBackup(id: string, projectId: string, error: unknown): Promise<void> {
+    const code = (error as MervError).code ?? 'code_backup_failed';
+    const at = now();
+    await this.state
+      .transaction(async (tx) => {
+        await tx.run(
+          "UPDATE code_operations SET status='failed',error=?,completed_at=?,updated_at=? WHERE id=? AND status='prepared'",
+          code,
+          at,
+          at,
+          id,
+        );
+        await warnRef(
+          tx,
+          projectId,
+          { code, message: 'The last copy of this repository did not finish', at },
+          'backup',
+        );
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * A backup row carries no `phase`, so recovery and the operations list pass it by — and so
+   * would a row a crash left `prepared`, which would then sit in the journal forever and
+   * never reach the project's warnings. Two periods is longer than any pass.
+   */
+  private async failInterruptedBackups(): Promise<void> {
+    const settings = this.config.backup;
+    if (!settings || this.backing) return;
+    const stale = new Date(Date.now() - 2 * settings.everySeconds * 1000).toISOString();
+    const rows = await this.state.read(
+      async (sql) =>
+        await sql.all<{ id: string; project_id: string }>(
+          "SELECT id,project_id FROM code_operations WHERE kind='backup' AND status='prepared' AND updated_at<?",
+          stale,
+        ),
+    );
+    for (const row of rows)
+      await this.failBackup(
+        row.id,
+        row.project_id,
+        new MervError('code_backup_interrupted', 'A copy of this repository was interrupted', 500),
+      );
+  }
+
+  /** Whether enough time has passed since the newest copy for the timer to take another. */
+  private async backupDue(): Promise<void> {
+    const settings = this.config.backup;
+    if (!settings || this.closed || this.backing) return;
+    const every = settings.everySeconds * 1000;
+    if (Date.now() - this.backedUpAtMs < every) return;
+    // The journal is what the period is measured from, so a restart does not start the
+    // clock again; this process remembers it only to keep the sweep from asking every time.
+    const newest = await this.state.read(
+      async (sql) =>
+        await sql.get<{ completed_at: string }>(
+          "SELECT completed_at FROM code_operations WHERE kind='backup' AND status='completed' ORDER BY completed_at DESC,id LIMIT 1",
+        ),
+    );
+    const at = newest ? Date.parse(newest.completed_at) : 0;
+    if (Date.now() - at < every) {
+      this.backedUpAtMs = at;
+      return;
+    }
+    // Taken before the pass, so a pass that fails waits a whole period too: the failure
+    // stands on the project as a warning, and a store that is refusing is not asked again
+    // every five minutes.
+    this.backedUpAtMs = Date.now();
+    // backup() is what holds the pass, so an operator's run and this one cannot overlap.
+    await this.backup(null, { requestId: `backup:${stampOf(now())}` }).catch(() => {});
   }
 
   /**
@@ -1448,6 +1815,7 @@ export class CodeStore {
               .run(row.project_id, () => this.fail(row, 'code_upload_abandoned', null))
               .catch(() => {});
         }
+        await this.failInterruptedBackups();
         if (!sweep) return;
         await this.repositories.sweep(async (operationId) => {
           const row = await this.state.read((sql) => this.row(sql, operationId));
@@ -1479,9 +1847,11 @@ export class CodeStore {
     clearInterval(this.timer);
     clearInterval(this.waker);
     await this.maintaining?.catch(() => {});
+    await this.backing?.catch(() => {});
     await Promise.allSettled([...this.parts.values()]);
     await this.repositories.close(this.config.drainSeconds * 1000);
     await Promise.allSettled([...this.jobs.values()]);
+    await this.config.backup?.store.close();
   }
 
   private assertOpen(): void {

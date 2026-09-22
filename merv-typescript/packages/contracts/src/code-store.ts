@@ -179,6 +179,32 @@ export interface CodeStoreStatus {
   diskBytes: number;
   quotaBytes: number;
   limits: CodeStoreLimits;
+  /** The newest verified copy in object storage; null where none is configured or none has run. */
+  backup: CodeBackupStatus | null;
+}
+
+/**
+ * What the last completed backup run wrote for this project. The disk stays authoritative —
+ * a bare repository needs a filesystem no bucket provides — so this describes a copy that a
+ * restore can be built from, and its age is how much acknowledged work a disk failure costs.
+ * Present with every field null where copies are configured and none has ever completed,
+ * which is a server to attend to and not the same as one that keeps no copy.
+ */
+export interface CodeBackupStatus {
+  /** When the copy was taken, which is what an age is read from; null where none has been. */
+  at: string | null;
+  /**
+   * When the copy was checked in the bucket: the manifest and the pointer read back byte for
+   * byte, the bundle and the database dump sized against what was written, their sha256
+   * having travelled with the write for the store itself to refuse damaged bytes.
+   */
+  verifiedAt: string | null;
+  /** What the run put in the bucket; a project whose refs did not move writes almost nothing. */
+  bytes: number;
+  /** The bundle a restore of this project would read, or null where the repository is empty. */
+  key: string | null;
+  refsHash: string | null;
+  warnings: string[];
 }
 
 /** Something about a project's repository that needs saying and stops nothing. */

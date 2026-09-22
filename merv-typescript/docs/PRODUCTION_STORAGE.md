@@ -67,9 +67,39 @@ Run bootstrap once for a new project and retain its credential file. Later start
 
 Domain record changes, workflow transitions, review verdicts, event entries and command replay receipts commit together in State transactions. A rejected transaction must expose none of those changes. Blob uploads are separately durable before artifact metadata succeeds. Object storage and PostgreSQL do not share a distributed transaction: a later database failure may leave an unreferenced hash object. Do not delete that hash as rollback compensation because another operation may reference it.
 
-Code keeps one Git repository per project on the server's disk, under `repositories.root` of the `code` plugin (`${directory}/code`; `/var/lib/merv-ts/code` in the deployment). It is not in PostgreSQL or the bucket, so a backup must take it together with the database, and one server writes to a volume at a time. It needs Git 2.38 or newer on the server. Quota, free-space floor and restore are in [Code operations](CODE_OPERATIONS.md#the-code-repository).
+Code keeps one Git repository per project on the server's disk, under `repositories.root` of the `code` plugin (`${directory}/code`; `/var/lib/merv-ts/code` in the deployment). The disk is authoritative: Git needs atomic rename, directory fsync and lockfile ref transactions, which object storage does not provide, and one server writes to a volume at a time. Code needs Git 2.38 or newer on the server. Quota and the free-space floor are in [Code operations](CODE_OPERATIONS.md#the-code-repository).
 
-Selecting these providers does not import an existing SQLite database, disk blobs or Python deployment data. Backups must cover the selected PostgreSQL schema and artifact bucket. The current State provider serializes write transactions per schema to preserve existing workflow and event-ordering invariants; this is a compatibility foundation, not a claim of unlimited concurrent write throughput.
+Selecting these providers does not import an existing SQLite database, disk blobs or Python deployment data. The current State provider serializes write transactions per schema to preserve existing workflow and event-ordering invariants; this is a compatibility foundation, not a claim of unlimited concurrent write throughput.
+
+## The off-host copy
+
+`repositories.backup` on the `code` plugin puts a verified copy of the database and of every repository in the bucket, so the VM disk is no longer the only copy of either. It is off unless configured, and configuring it adds no table, no migration and no workflow version. It names environment variables, never credentials:
+
+| Key             | Default environment variable | Purpose                                                |
+| --------------- | ---------------------------- | ------------------------------------------------------ |
+| `bucketEnv`     | `MERV_BLOB_BUCKET`           | The bucket the copies go in                            |
+| `endpointEnv`   | `MERV_BLOB_ENDPOINT_URL`     | HTTPS S3/R2 origin                                     |
+| `prefixEnv`     | `MERV_BLOB_PREFIX`           | The prefix artifacts already use                       |
+| `deploymentEnv` | `MERV_TS_DB_SCHEMA`          | The segment production and rehearsal are kept apart by |
+
+`accessKeyIdEnv` and `secretAccessKeyEnv` default to `MERV_BLOB_ACCESS_KEY_ID` and `MERV_BLOB_SECRET_ACCESS_KEY`, and `regionEnv` to `MERV_BLOB_REGION`. `everySeconds` (86400) is the recovery point, `keepDays` (30) the retention, and `maxBytes` (4 GiB) the single-object ceiling. `database` selects what is copied beside the repositories: `{"backend":"postgres"}` runs `pg_dump --schema` of `schemaEnv` (`MERV_TS_DB_SCHEMA`) against `connectionStringEnv` (`MERV_DB_URL`), reaching the database through PostgreSQL's own tool under a snapshot of its own, with the password in the child's environment and never in an argument; `{"backend":"sqlite","path":"…"}` writes one consistent copy of that file with `VACUUM INTO`. Merv's own connection is not used and no table is read through SQL.
+
+**This reuses the artifact key and bucket**, which is a deliberate first step and not the end state: that key can already delete every artifact, and a copy one compromised key can delete is not a backup. Giving the backup its own key — or one restricted to the `code/` and `db/` prefixes with no delete on artifacts — is a deployment change, made by changing the four `*Env` names to the new variables. Blobs itself is untouched: artifact uploads and inline reads stay limited to 2 MB, and a bundle is not an artifact.
+
+Turning it on is one block on the `code` plugin, beside `repositories.root`:
+
+```json
+{
+  "repositories": {
+    "root": "/var/lib/merv-ts/code",
+    "backup": { "database": { "backend": "postgres" } }
+  }
+}
+```
+
+**Two deployment prerequisites, neither of which this slice makes.** `pg_dump` must be on the server image — `deploy/Dockerfile` installs `git` and not `postgresql-client` — and a client at least as new as the PostgreSQL it dumps, or it refuses the server's catalogue version. And [`deploy/render-config.mjs`](../deploy/render-config.mjs) writes `code` with `repositories.root` alone, so the block above has to be added there for a release to compose it. Without both, the code below ships inert and `store.backup` stays `null`, which is exactly what it reports today.
+
+What is written, what it costs, `code.backup.run`, and the `code-restore` drill are in [Code operations](CODE_OPERATIONS.md#the-code-repository). At published R2 rates a 1 GB repository kept 30 days is about $0.45 a month; an unchanged project writes only its pointer.
 
 The existing-project migration is a separate, explicit operation described in [Legacy import](LEGACY_IMPORT.md). The Azure staging deployment uses [its deployment renderer](../deploy/README.md) to configure shared authentication and the exact public origin. The generic storage example alone is not the complete Azure release configuration.
 
