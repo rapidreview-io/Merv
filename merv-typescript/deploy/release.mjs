@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
-//   node deploy/release.mjs [--host ResearchSuite_Control] [--dry-run] [--resume <release-id>]
+//   node deploy/release.mjs [--host ResearchSuite_Control] [--public https://origin]
+//                           [--dry-run] [--resume <release-id>]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
 // local acceptance (status codes, active plugins, served assets). Then this script runs the
-// public HTTPS checks and appends one row to deploy/RELEASES.md. Never prints private env files.
+// public HTTPS checks against --public and appends one row to the release log. Never prints
+// private env files. --public also selects that log: the production origin writes
+// deploy/RELEASES.md, and any other origin (a staging VM) writes deploy/STAGING_RELEASES.md,
+// so a staging deploy can never be mistaken for a production one.
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
@@ -22,7 +26,14 @@ const dryRun = args.includes('--dry-run');
 const resume = opt('--resume');
 const NODE_IMAGE =
   'node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5';
-const PUBLIC = 'https://experiments.rapidreview.io';
+const PRODUCTION = 'https://experiments.rapidreview.io';
+const PUBLIC = opt('--public', PRODUCTION);
+// The origin is interpolated into the remote job's approved-origin check, so it is an origin
+// and nothing else: no path, no credentials, no shell metacharacters.
+if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/.test(PUBLIC))
+  throw new Error(`--public must be an https origin without a path, got ${PUBLIC}`);
+// A staging deploy never appends to the production release log.
+const RELEASES = PUBLIC === PRODUCTION ? 'deploy/RELEASES.md' : 'deploy/STAGING_RELEASES.md';
 const ROOTS = [
   'package.json',
   'package-lock.json',
@@ -216,10 +227,10 @@ console.log('\n' + JSON.stringify(vm));
 if (vm.rolledBack) {
   // The VM already restored the previous image; record the failure and stop.
   appendFileSync(
-    join(root, 'deploy/RELEASES.md'),
+    join(root, RELEASES),
     `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | — | FAILED | container ${vm.containerHealth} after ${vm.restarts} restarts, rolled back automatically (previous image ${vm.previousHealth}); log: ${vm.log.slice(0, 300)} | rollback \`${vm.previousImage}\` applied |\n`,
   );
-  execFileSync('npx', ['prettier', '--write', 'deploy/RELEASES.md'], {
+  execFileSync('npx', ['prettier', '--write', RELEASES], {
     cwd: root,
     stdio: 'ignore',
   });
@@ -237,8 +248,8 @@ const ok =
   pub.health === 200 &&
   pub.ui === 200;
 appendFileSync(
-  join(root, 'deploy/RELEASES.md'),
+  join(root, RELEASES),
   `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins.replace(' ', '/')} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | rollback \`${vm.previousImage}\` |\n`,
 );
-execFileSync('npx', ['prettier', '--write', 'deploy/RELEASES.md'], { cwd: root, stdio: 'ignore' });
+execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
 if (!ok) process.exit(1);
