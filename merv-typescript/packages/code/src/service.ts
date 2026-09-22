@@ -507,9 +507,6 @@ export class CodeService extends CodeCommandService implements Code {
   async proposal(...args: Parameters<CodeProposalService['proposal']>) {
     return await this.proposalStore.proposal(...args);
   }
-  async proposals(...args: Parameters<CodeProposalService['proposals']>) {
-    return await this.proposalStore.proposals(...args);
-  }
   override async close(): Promise<void> {
     this.publicationClosed = true;
     // Publication stops before the repositories drain: it is the one thing here nothing waits

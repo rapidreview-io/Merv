@@ -8,11 +8,16 @@ import { defaultConfigFile } from '../src/config.js';
 import { sandboxesPlugin } from '@merv/sandboxes';
 import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
 import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
+import { fakeGitHub, seedGit } from './ui-demo-git.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
  * two tasks (one reviewed and done, one awaiting delivery), a pinned review, and feed posts.
  * Type `disable feed`, `enable feed`, `disable ui`, `enable ui`, or `quit` on stdin.
+ *
+ * `--git` seeds the Git model as well: a bound and imported repository, units with their
+ * commits, the bases the server merged from them and one publication. It runs in this process
+ * because a commit needs a leased session and a base needs a repository holding real commits.
  *
  * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
  * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
@@ -22,6 +27,8 @@ import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
  * all of it on port 3210. Without MERV_SANDBOXES_URL the demo composes exactly as before.
  */
 async function main() {
+  const seedsGit = process.argv.includes('--git');
+  if (seedsGit) fakeGitHub();
   const directory = process.env.MERV_DEMO_DIR ?? mkdtempSync(join(tmpdir(), 'merv-ui-demo-'));
   const app = await createApp({
     directory,
@@ -251,6 +258,8 @@ async function main() {
     sandboxes.push(...app.ctx.sandboxes.rows().map((row) => `${url}/ui${row.path}`));
   }
 
+  const git = seedsGit ? await seedGit(app, owner) : undefined;
+
   const heartbeat = setInterval(async () => {
     try {
       await app.ctx.sessions.heartbeat(owner, { sessionId: execution.id, runnerId: 'local-demo' });
@@ -267,6 +276,7 @@ async function main() {
         ui: `${url}/ui/`,
         directory,
         ...(sandboxes.length ? { sandboxes } : {}),
+        ...(git ? { git } : {}),
         tokens: {
           operator: boot.token,
           producer: producer.token,

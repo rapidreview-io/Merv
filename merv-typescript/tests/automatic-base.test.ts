@@ -606,6 +606,14 @@ for (const backend of backends)
         assert.deepEqual(await f.published(waiter), [['code', 'code_base_wait', 'merge']]);
       await assert.rejects(f.pin(waiters[0]!), { code: 'code_base_wait', status: 409 });
       await bases.work(f.project.id);
+      // The accepted commits the base was made from ride along with the ready state: that
+      // set is how a reader joins a unit to a base record without asking for its key.
+      const ready = (await f.code.unit(f.admin, waiters[0]!.id)).baseStatus;
+      assert.ok(ready?.status === 'ready');
+      assert.deepEqual(
+        { kind: ready.kind, merge: [...(ready.merge ?? [])].sort() },
+        { kind: 'merged', merge: [a, b].sort() },
+      );
       const pins = [];
       for (const waiter of waiters) {
         assert.deepEqual(await f.published(waiter), [], 'the wait is lifted for every waiter');

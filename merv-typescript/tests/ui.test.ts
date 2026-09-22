@@ -392,8 +392,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   for (const id of ['tasks', 'experiments'])
     assert.equal(shell.rows.find((entry) => entry.id === id)?.readable, true);
   const emptyCode = {
-    operations: [],
-    proposals: [],
+    commands: [],
     status: {
       project: null,
       // The default composition keeps repositories; this project has imported nothing.

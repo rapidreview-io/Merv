@@ -76,7 +76,7 @@ interface NamedFile {
   id: string;
   title: string;
 }
-interface NamedHome {
+export interface NamedHome {
   actors?: { id: string; name: string }[] | null;
   experiments?: { id: string; name: string }[] | null;
   tasks?: { id: string; title: string }[] | null;

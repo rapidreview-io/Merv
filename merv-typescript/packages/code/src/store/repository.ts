@@ -39,6 +39,8 @@ export interface ProjectPaths {
 
 const HOUR = 3600_000;
 export const EXPORT_TTL_MS = 15 * 60_000;
+/** How long a disk measurement is good enough for a reader, who asks every ten seconds. */
+const USAGE_TTL = 60_000;
 /** A unix socket address holds about a hundred bytes on the systems Merv runs on. */
 const SOCKET_PATH_BYTES = 100;
 /** What Code writes into a repository's configuration; anything else found there is refused. */
@@ -108,6 +110,7 @@ export class CodeRepositories {
   private transfers = 0;
   private readonly waiting: (() => void)[] = [];
   private readonly validated = new Set<string>();
+  private readonly measured = new Map<string, { bytes: number; atMs: number }>();
 
   constructor(
     readonly config: CodeRepositoryConfig,
@@ -342,6 +345,8 @@ export class CodeRepositories {
     );
     this.chains.set(projectId, settled);
     void settled.then(() => {
+      // That work may have changed what the project takes on disk, so the measurement goes.
+      this.measured.delete(projectId);
       if (this.chains.get(projectId) === settled) this.chains.delete(projectId);
     });
     return next;
@@ -360,8 +365,22 @@ export class CodeRepositories {
     }
   }
 
+  /**
+   * How much disk the project's repository takes. Walking it is the most expensive thing a
+   * status read does, so a reader is given a measurement up to a minute old. It is never
+   * older than the last work on that project, which forgets it, and whoever is about to
+   * write takes a fresh one.
+   */
   async usage(projectId: string): Promise<number> {
-    return await diskBytes(this.paths(projectId).directory);
+    const held = this.measured.get(projectId);
+    if (held && Date.now() - held.atMs < USAGE_TTL) return held.bytes;
+    return await this.measure(projectId);
+  }
+
+  private async measure(projectId: string): Promise<number> {
+    const bytes = await diskBytes(this.paths(projectId).directory);
+    this.measured.set(projectId, { bytes, atMs: Date.now() });
+    return bytes;
   }
 
   /** Refuse bytes the volume or the project's quota cannot take; the refusal passes with time or an operator. */
@@ -370,7 +389,7 @@ export class CodeRepositories {
     const volume = await statfs(this.config.root);
     if (volume.bavail * volume.bsize - incoming < this.config.reservedFreeBytes)
       throw full('The Code volume is below its reserved free space');
-    if (incoming && (await this.usage(projectId)) + incoming > this.config.quotaBytes)
+    if (incoming && (await this.measure(projectId)) + incoming > this.config.quotaBytes)
       throw full('This transfer would take the project past its Code disk quota');
   }
 

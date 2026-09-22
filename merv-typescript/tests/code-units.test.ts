@@ -14,6 +14,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code/service';
+import { workBranch } from '@merv/code/store/refs';
 
 const issuer = 'https://identity.example/auth/v1';
 const oid = (char: string) => char.repeat(40);
@@ -235,6 +236,8 @@ for (const backend of backends) {
       // The pinned migration text is stable across a restart.
       await f.reopen();
       const [unit] = (await f.code.status(f.admin)).units;
+      // The branch is a pure function of the id, and is the name the mirror publishes under.
+      assert.equal(unit.branch, workBranch(work.id));
       assert.deepEqual(unit.base, {
         unitId: work.id,
         kind: 'main',

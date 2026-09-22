@@ -273,13 +273,29 @@ export class CodeBaseService {
     return this.record(row);
   }
 
+  /**
+   * Every base of a project, each one told what its two inputs stand for. The whole project
+   * is already in hand, so an input's own record is found in this list rather than read for:
+   * a project of hundreds of bases still costs the one query it always cost.
+   */
   async records(sql: Sql, projectId: string): Promise<CodeBaseRecord[]> {
-    return (
+    const all = (
       await sql.all<BaseRow>(
         `SELECT ${columns} FROM code_bases WHERE project_id=? ORDER BY base_key`,
         projectId,
       )
     ).map((row) => this.record(row));
+    const byKey = new Map(all.map((base) => [base.key, base]));
+    for (const base of all) {
+      // A cancelled base that never produced a result is where the plan stopped; nobody may
+      // build on it again, so what it was to be made of is not worth naming.
+      if (!base.result && base.state === 'cancelled') continue;
+      const parent = (key: string) =>
+        base.members.find((commit) => baseKey([commit]) === key) ??
+        this.stands(byKey.get(key) ?? null);
+      base.parents = [parent(base.left), parent(base.right)];
+    }
+    return all;
   }
 
   async forTask(sql: Sql, projectId: string, taskId: string): Promise<CodeBaseRecord | null> {
@@ -443,6 +459,11 @@ export class CodeBaseService {
     return (await this.find(tx, projectId, wanted))!;
   }
 
+  /** The commit a base stands for; one that is unfinished or unhealthy stands for none. */
+  private stands(record: CodeBaseRecord | null): string | null {
+    return record && !record.quarantined && record.result ? record.result.commit : null;
+  }
+
   /** The commit an input stands for: a lone commit is itself, a record is its result. */
   private async input(
     sql: Sql,
@@ -452,13 +473,12 @@ export class CodeBaseService {
   ): Promise<string | null> {
     const lone = of.find((commit) => baseKey([commit]) === key);
     if (lone) return lone;
-    const row = await sql.get<{ result_json: string | null; health: string }>(
-      'SELECT result_json,health FROM code_bases WHERE project_id=? AND base_key=?',
+    const row = await sql.get<BaseRow>(
+      `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
       projectId,
       key,
     );
-    if (!row?.result_json || row.health !== 'healthy') return null;
-    return (JSON.parse(row.result_json) as { commit: string }).commit;
+    return this.stands(row ? this.record(row) : null);
   }
 
   private async inputsResolved(sql: Sql, projectId: string, keys: string[]): Promise<boolean> {
