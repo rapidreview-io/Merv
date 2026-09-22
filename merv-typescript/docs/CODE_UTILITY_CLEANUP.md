@@ -112,7 +112,7 @@ from GitHub requests, filesystem helpers, base traversal and tool registration. 
 optionality, lifecycle and repository setup behavior outweigh the removed duplication.
 Preserving recovery and historical workflows takes priority over further cosmetic cuts.
 
-## Deployed staging release
+## Staging release before legacy plugin retirement
 
 Release `20260922T202229Z-c2846759-77841261f83c` is healthy at
 <https://rp-control-dev.eastus2.cloudapp.azure.com/ui/>. Its image is
@@ -128,7 +128,7 @@ Release evidence is retained under
 `/opt/merv-typescript/releases/20260922T202229Z-c2846759-77841261f83c/`, including source/build
 manifests, acceptance results and `code-cleanup-final-verification.json`.
 
-Implementation and staging gates are complete. Production was not deployed.
+The initial cleanup passed these staging gates; the later retirement and production release are recorded below.
 
 ## Complete retirement of the dedicated Consolidation plugin
 
@@ -145,4 +145,8 @@ be resumed or merged, and do not block the bounded polling of current unit publi
 
 The preflight census found no dedicated Consolidation records or publications in production,
 and none in staging. Production holds three version-3 Research cycles in `defining`.
-Local/staging retirement verification and the authorized main/production release are pending.
+One of those cycles selected Git and will report the retired handoff; its records are retained, and a new cycle uses ordinary Tasks.
+
+Local retirement checks pass: 1,780 tests, 1,586 passed, 194 PostgreSQL cases skipped locally, zero failures. Server/UI type checks, both builds and deployment configuration tests pass. The strict compiled-runtime acceptance also passes against staging PostgreSQL and S3: all 50 default plugins, task delivery/review/replay, agent continuity, private downloads, reflection and restart persistence. All 55 targeted PostgreSQL checks pass (44 repository/publication/research cases and 11 research automation cases); the full CI formatting gate also passes.
+
+Staging release `20260922T205001Z-b0b1fa62-820589bddbf3` is healthy with 51/51 configured plugins and zero restarts. Its image is `sha256:f8a4789d471beb3e997a57f56add211de5868c92348c225c4aeb51d86f59c027`. Public health, UI, assets, authentication and origin checks pass; schema, blob prefix and Caddy routing remain unchanged. The backup is `/var/backups/merv/consolidation-retirement/20260922T204928Z`. Verification is retained under `/opt/merv-typescript/verification/20260922T205001Z-b0b1fa62-820589bddbf3/`; public checks are in that release's `retirement-final-verification.json`. Main/production promotion is authorized and in progress.
