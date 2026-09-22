@@ -16,6 +16,8 @@ import {
   kindOf,
 } from '../components';
 import { ArrowRightIcon } from '../icons';
+import type { RecordNames } from '../markdown';
+import { firstPersonMove } from './code-blockers';
 import { namesOf } from './people';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import { newest, useHome, type Flow, type HomeData } from './map-data';
@@ -27,7 +29,11 @@ import { newest, useHome, type Flow, type HomeData } from './map-data';
  * the ready action, the blocker's code, the prerequisite's name, who holds it. The
  * server's own instruction is written for the agent holding the tool, so it is
  * never the headline: it stays on the card, folded, for whoever operates the
- * agents. Every block is gated on its owning ui.shell row, so it goes quiet with
+ * agents. A blocker another plugin published whose next move is a person's speaks
+ * in the same voice, through the one vocabulary `code-blockers.ts` holds, and is
+ * the one thing that puts ended work on this page at all — a publication nobody
+ * has merged is a wait on a human and not a record that is running.
+ * Every block is gated on its owning ui.shell row, so it goes quiet with
  * its plugin, and every fact on the page comes from the one read the rail and the
  * map share. An absent value is never rendered as zero and an error is never
  * rendered as empty.
@@ -211,11 +217,18 @@ const openWork = (home: HomeData | undefined): [string, Open[]][] => [
 export function standingOf(
   rows: Row[],
   home: HomeData | undefined,
-  viewer: { id: string; role: string },
+  /** Who is reading, and whether they are a person: the publication verbs answer only one. */
+  viewer: { id: string; role: string; signedIn?: boolean },
   named: Named,
 ): Lines {
   const me = viewer.id;
   const gate = new Map((home?.workflows?.workflows ?? []).map((item) => [item.instanceId, item]));
+  const work = openWork(home);
+  // A blocker that names another record names it the way this app names it, here as on the
+  // record's own page; the server's label is the fallback and an id names nobody.
+  const recordNames: RecordNames = new Map(
+    work.flatMap(([, items]) => items.map((item) => [item.id, { name: item.name }] as const)),
+  );
   const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [] };
   const subjects = new Map<string, Open>();
   const reviewsRow = rowOf(rows, 'reviews');
@@ -230,12 +243,41 @@ export function standingOf(
     (item) => item.createdAt,
   ))
     if (!lastVerdict.has(review.subjectId)) lastVerdict.set(review.subjectId, review.verdict);
-  for (const [kind, items] of openWork(home)) {
+  for (const [kind, items] of work) {
     const row = rowOf(rows, kind);
     for (const item of items) {
       subjects.set(item.id, item);
       if (!row || underReview.has(item.id)) continue;
       const decision = gate.get(item.id);
+      // A blocker another plugin published whose next move is a person's outranks the
+      // record's own gate and stands here whatever that gate says — including on work
+      // that has ended and waits on somebody to carry its accepted code to main.
+      const held = decision && firstPersonMove(decision.providerBlockers ?? [], recordNames);
+      if (held) {
+        // Whose move it is and whether this app can make it are two questions: a move no
+        // page here carries out is still the reader's, and belongs under Needs you with no
+        // control at all. Only a wait on the server is nobody's.
+        const yours =
+          held.move.whose !== 'nobody' && viewer.role === 'operator' && !!viewer.signedIn;
+        lines[yours ? 'yours' : 'unknown'].push({
+          id: item.id,
+          kind,
+          name: item.name,
+          to: `${row.path}/${item.id}`,
+          at: held.blocker.since ?? item.workflow.updatedAt,
+          mine: item.owner === me,
+          sentence: held.move.sentence,
+          who: held.move.who,
+          says: [...said(decision), held.blocker.next].filter(
+            (text, index, all) =>
+              !!text && all.indexOf(text) === index && text !== held.move.sentence,
+          ) as string[],
+          ...(yours && held.move.control
+            ? { desk: { label: held.move.control.label, to: held.move.control.to } }
+            : {}),
+        });
+        continue;
+      }
       if (decision ? decision.terminal : ENDED.includes(item.workflow.state)) continue;
       const mine = item.owner === me;
       // Whoever began the step holds it; before anyone has, it is its owner's.
@@ -452,7 +494,14 @@ export function StandingLine({
 export function OverviewView({ shell }: { shell: ShellData }) {
   const session = useSession();
   const home = useHome();
-  const lines = standingOf(shell.rows, home.data, session.actor, namesOf(home.data?.actors));
+  // The publication verbs refuse a key and a bearer actor outright, so whether the reader
+  // is a person is part of whose move a Code blocker is.
+  const lines = standingOf(
+    shell.rows,
+    home.data,
+    { ...session.actor, signedIn: session.account.kind === 'user' },
+    namesOf(home.data?.actors),
+  );
   return (
     <div className="page-stage overview">
       <h1 className="page-title">Now</h1>

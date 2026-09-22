@@ -4279,6 +4279,11 @@ del.cut {
 .code-refusal {
   color: var(--refutes);
 }
+/* The state word of a refused publication is part of the refusal and reads as one. Only
+   the pill the line itself carries: a status word nested deeper keeps its own tone. */
+.code-refusal > .status {
+  color: var(--refutes);
+}
 /* Borrowed verbatim: nothing reads a change better than +n −m. */
 .diff {
   font-variant-numeric: tabular-nums;

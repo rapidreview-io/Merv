@@ -40,6 +40,8 @@ const MEASURED = 1440;
   disconnect() {}
 };
 const { UnitCode } = await import('../packages/ui/web/views/code-section.js');
+const { firstPersonMove, personMove, publicationBlocker } =
+  await import('../packages/ui/web/views/code-blockers.js');
 
 const row = {
   id: 'code',
@@ -195,6 +197,7 @@ const unit = (id: string, over: Partial<CodeUnit> = {}): CodeUnit => ({
   base: null,
   baseStatus: { status: 'waiting' },
   acceptance: null,
+  publication: null,
   generation: 0,
   writerState: 'idle',
   canonicalHead: null,
@@ -1385,7 +1388,9 @@ test("a record's Code section states the branch, its base, its work and its acce
   assert.ok(!/\d+ behind/.test(said), said);
   // Absence renders nothing: this unit has no acceptance, so it has no Accepted line.
   assert.ok(!said.includes('Accepted'), said);
-  assert.ok(!said.includes('blocker'), 'no blocker is printed in this wave');
+  // Nothing this unit stands on waits on a person, so no sentence of the blocker
+  // vocabulary is drawn and the server's own machine word never reaches the page.
+  assert.ok(!said.includes('blocker'), said);
   assert.equal(document.querySelector('a.btn-text')?.getAttribute('href'), '/code');
 });
 
@@ -1429,4 +1434,419 @@ test('a quarantined unit wears the refusal and says what cannot be reused', asyn
   assert.ok(document.querySelector('.code-refused'), text());
   assert.ok(text().includes('cannot be reused'), text());
   assert.ok(text().includes('succeeded without code'), text());
+});
+
+/* What a person is asked to do ---------------------------------------------- */
+
+/** One blocker as the server serves it, with only what the vocabulary reads filled in. */
+const held = (code: string, over: Record<string, unknown> = {}) => ({
+  code,
+  message: code,
+  status: 409,
+  ...over,
+});
+
+test('exactly the Code blockers whose next move is a person’s are printed, in her words', () => {
+  const said = (code: string, over: Record<string, unknown> = {}) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    personMove(held(code, over) as any);
+
+  // Between acceptance and the first sync no pull request exists, and the blocker says so
+  // by carrying none: the wait is named, and neither a person nor a control is.
+  assert.deepEqual(said('code_publication_pending'), {
+    sentence: 'The publication for this work has not opened its pull request yet',
+    who: 'The server',
+    whose: 'nobody',
+  });
+  assert.deepEqual(
+    said('code_publication_pending', {
+      related: [{ kind: 'pull-request', id: 'https://x/7', label: '#7' }],
+    }),
+    {
+      sentence: 'Waiting on a person to merge the pull request',
+      who: 'A signed-in operator',
+      whose: 'operator',
+      // The reviewed merge is a control this app draws, and it stands on Code, in the
+      // words the control there reads.
+      control: { label: 'Merge reviewed proposal', to: '/code' },
+    },
+  );
+  assert.deepEqual(said('code_publication_stale'), {
+    sentence: 'Main has moved past this accepted code',
+    who: 'A successor task',
+    whose: 'nobody',
+  });
+  assert.deepEqual(said('code_publication_disabled'), {
+    sentence: 'Publication is disabled for this project until an operator clears it',
+    who: 'An operator',
+    whose: 'operator',
+  });
+  assert.deepEqual(said('code_publication_incident'), {
+    sentence: 'A publication incident is kept here until an operator clears it',
+    who: 'An operator',
+    whose: 'operator',
+  });
+  assert.deepEqual(said('code_publish_unverifiable'), {
+    sentence: 'This work was to publish to main and no publication opened for it',
+    who: 'An operator',
+    whose: 'operator',
+  });
+  // The way out is the one both producers of this code agree on: not a release, which only
+  // a false alarm gets, but the operator replanning whoever waits on the quarantined base.
+  assert.deepEqual(said('code_quarantined'), {
+    sentence:
+      'Quarantined: the code kept here cannot be used, and an operator replans the work waiting on it',
+    who: 'An operator',
+    whose: 'operator',
+  });
+  // The cap or budget a person set is named by the server's own word for which one it is.
+  assert.equal(
+    said('code_base_admission', { message: 'Base 9f is queued: budget_exceeded.' })?.sentence,
+    'The budget set for this project is spent',
+  );
+  assert.equal(
+    said('code_base_admission', { message: 'Base 9f is queued: dispatch_disabled.' })?.sentence,
+    'Dispatch is paused for this project',
+  );
+  assert.equal(
+    said('code_base_admission', { message: 'Base 9f is queued: something new.' })?.sentence,
+    'A limit somebody set is holding this merge',
+  );
+  // Only main waits on a person binding or importing; every other pending base is a record.
+  assert.deepEqual(said('code_base_pending', { key: 'main' }), {
+    sentence: 'Main is not in this project’s repository yet',
+    who: 'An administrator',
+    whose: 'administrator',
+  });
+  assert.equal(said('code_base_pending', { key: 'acceptance:wf_1' }), null);
+
+  // A conflict is work in flight until its resolution's review budget suspends it.
+  const conflict = (state: string) =>
+    held('code_merge_conflict', {
+      message: `Base resolution task “Merge A with B” (wf_1) is ${state}. Conflicting paths: a.py`,
+      related: [{ kind: 'task', id: 'wf_1', label: 'Merge A with B' }],
+    });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(personMove(conflict('in_progress') as any), null);
+  assert.deepEqual(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    personMove(conflict('suspended') as any),
+    {
+      sentence:
+        'The resolution “Merge A with B” is suspended; an administrator extends its review limit',
+      who: 'An administrator',
+      whose: 'administrator',
+    },
+  );
+  // The record is named the way this app names it wherever it knows the name itself.
+  assert.match(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    personMove(conflict('suspended') as any, new Map([['wf_1', { name: 'Fold the sweeps' }]]))!
+      .sentence,
+    /“Fold the sweeps”/,
+  );
+
+  // Everything else is work waiting on the server, and the state word already says it.
+  for (const quiet of [
+    'code_base_wait',
+    'code_base_blocked',
+    'code_publication_closed',
+    'code_dependencies_changed',
+    'input_required',
+  ])
+    assert.equal(said(quiet), null, quiet);
+
+  // No sentence is the server's instruction: none of them names a tool or an argument.
+  for (const code of [
+    'code_publication_pending',
+    'code_publication_stale',
+    'code_publication_disabled',
+    'code_publication_incident',
+    'code_publish_unverifiable',
+    'code_quarantined',
+  ])
+    assert.ok(!/code\.|workflow\.|merv /.test(said(code)!.sentence), code);
+});
+
+test('a unit’s own publication is read as the blocker Code publishes about it', () => {
+  assert.equal(publicationBlocker(null), null);
+  assert.equal(publicationBlocker({ state: 'published', mergeCommit: 'm' }), null);
+  assert.deepEqual(publicationBlocker({ state: 'pending' }), { code: 'code_publication_pending' });
+  assert.deepEqual(
+    publicationBlocker({ state: 'stale', pull: { number: 12, url: 'https://x/12' } }),
+    {
+      code: 'code_publication_stale',
+      related: [{ kind: 'pull-request', id: 'https://x/12', label: '#12' }],
+    },
+  );
+  assert.equal(publicationBlocker({ state: 'unsealed' })?.code, 'code_publish_unverifiable');
+  // A pending publication carries a pull only once one exists, and the move follows the
+  // fact: nothing to merge, so nothing offers a merge.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(personMove(publicationBlocker({ state: 'pending' }) as any)?.control, undefined);
+  // The first one whose move is a person's leads, and a list of quiet codes leads nothing.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const first = firstPersonMove([held('code_base_wait'), held('code_quarantined')] as any);
+  assert.equal(first?.blocker.code, 'code_quarantined');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(firstPersonMove([held('code_base_wait')] as any), null);
+});
+
+test('a record’s Code section leads with the move, and folds the agent’s instruction', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  const waiting = unit('u9', {
+    baseStatus: {
+      status: 'blocked',
+      blockers: [
+        {
+          key: 'merge',
+          code: 'code_base_admission',
+          status: 409,
+          message: 'Base 9f is queued: budget_exceeded.',
+          next: 'Enable project dispatch or raise the budget with usage.set_budget.',
+          related: [],
+        },
+      ],
+    },
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u9'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(UnitCode as any, { unit: waiting, named: () => undefined }),
+    ),
+  );
+  const said = text();
+  assert.ok(said.includes('The budget set for this project is spent'), said);
+  assert.ok(said.includes('An administrator'), said);
+  // The server's words are kept for whoever holds the tool, and only in the fold.
+  const fold = document.querySelector('details.ov-said');
+  assert.ok(fold, said);
+  assert.ok(fold.textContent?.includes('usage.set_budget'), fold.textContent ?? '');
+  assert.ok(!document.querySelector('.ov-say')?.textContent?.includes('usage.set_budget'), said);
+  // Nothing here makes this move, so nothing promises one: the only link is the canvas.
+  assert.deepEqual(
+    [...document.querySelectorAll('a.btn-text')].map((a) => a.getAttribute('href')),
+    ['/code'],
+  );
+});
+
+test('a unit waiting on its publication says so, and shows where that publication stands', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  const sealed = unit('u10', {
+    acceptance: accepted('c10'),
+    baseStatus: null,
+    publication: { state: 'pending', pull: { number: 7, url: 'https://github.com/x/y/pull/7' } },
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u10'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(UnitCode as any, { unit: sealed, named: () => 'Ada', signedIn: true }),
+    ),
+  );
+  const said = text();
+  assert.ok(said.includes('Waiting on a person to merge the pull request'), said);
+  assert.ok(said.includes('A signed-in operator'), said);
+  // The move a page of this app makes is offered, level with the sentence.
+  const control = [...document.querySelectorAll('a.btn-text')].find((link) =>
+    link.textContent?.startsWith('Merge reviewed proposal'),
+  );
+  assert.equal(control?.getAttribute('href'), '/code');
+  // The line itself: the state as a pill, the pull request as the link GitHub keeps it at.
+  const line = [...document.querySelectorAll('.kv-row')].find(
+    (node) => node.querySelector('dt')?.textContent === 'Publication',
+  );
+  assert.ok(line, said);
+  assert.equal(line.querySelector('.status')?.textContent, 'pending');
+  const pull = line.querySelector('a');
+  assert.equal(pull?.getAttribute('href'), 'https://github.com/x/y/pull/7');
+  assert.ok(pull?.textContent?.includes('#7'), pull?.textContent ?? '');
+  assert.equal(line.querySelector('.code-refusal'), null, 'a wait is not a refusal');
+  // The server's own instruction is not on this read, so no fold is drawn at all.
+  assert.equal(document.querySelector('details.ov-said'), null, said);
+});
+
+test('the merge is offered to the signed-in operator alone, and said to everyone', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u10'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        UnitCode as any,
+        {
+          unit: unit('u10', {
+            acceptance: accepted('c10'),
+            baseStatus: null,
+            publication: {
+              state: 'pending',
+              pull: { number: 7, url: 'https://github.com/x/y/pull/7' },
+            },
+          }),
+          named: () => 'Ada',
+        },
+      ),
+    ),
+  );
+  const said = text();
+  // A reader, and an operator holding a key, read the wait and who ends it.
+  assert.ok(said.includes('Waiting on a person to merge the pull request'), said);
+  assert.ok(said.includes('A signed-in operator'), said);
+  // The publication verbs refuse them, so nothing here promises them the act: the only
+  // link left is the canvas, and the pull request GitHub keeps.
+  assert.equal(
+    [...document.querySelectorAll('a.btn-text')].find((link) =>
+      link.textContent?.startsWith('Merge reviewed proposal'),
+    ),
+    undefined,
+    said,
+  );
+});
+
+test('a pending publication with no pull request yet promises no merge', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u13'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        UnitCode as any,
+        {
+          unit: unit('u13', {
+            acceptance: accepted('c13'),
+            baseStatus: null,
+            publication: { state: 'pending' },
+          }),
+          named: () => undefined,
+          signedIn: true,
+        },
+      ),
+    ),
+  );
+  const said = text();
+  assert.ok(said.includes('has not opened its pull request yet'), said);
+  assert.ok(!said.includes('merge the pull request'), said);
+  // Nobody is owed this one, so no control is drawn even for the operator who could merge.
+  assert.deepEqual(
+    [...document.querySelectorAll('a.btn-text')].map((a) => a.getAttribute('href')),
+    ['/code'],
+    said,
+  );
+});
+
+test('a publication that stopped reads in the refusal’s colour', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  // Everything that is neither in flight nor arrived has stopped, and the colour says so —
+  // the closed pull request and the acceptance that opened no publication included.
+  for (const state of ['disabled', 'incident', 'stale', 'closed', 'unsealed']) {
+    await mount(
+      createElement(
+        MemoryRouter,
+        { initialEntries: ['/tasks/u11'] },
+        createElement(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          UnitCode as any,
+          {
+            unit: unit('u11', { acceptance: accepted('c11'), publication: { state } }),
+            named: () => undefined,
+          },
+        ),
+      ),
+    );
+    assert.ok(document.querySelector('.kv-row .code-refusal'), state);
+    await unmount();
+  }
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u11'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        UnitCode as any,
+        {
+          unit: unit('u11', { acceptance: accepted('c11'), publication: { state: 'disabled' } }),
+          named: () => undefined,
+        },
+      ),
+    ),
+  );
+  assert.ok(document.querySelector('.kv-row .code-refusal'), text());
+  assert.ok(text().includes('Publication is disabled for this project'), text());
+});
+
+test('a published unit carries the commit that merged it, and waits on nobody', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u12'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        UnitCode as any,
+        {
+          unit: unit('u12', {
+            acceptance: accepted('c12'),
+            publication: {
+              state: 'published',
+              mergeCommit: 'abcdef0123456789abcdef0123456789abcdef01',
+            },
+          }),
+          named: () => undefined,
+        },
+      ),
+    ),
+  );
+  const line = [...document.querySelectorAll('.kv-row')].find(
+    (node) => node.querySelector('dt')?.textContent === 'Publication',
+  );
+  assert.equal(line?.querySelector('.status')?.textContent, 'published');
+  assert.equal(line?.querySelector('.code-refusal'), null);
+  assert.ok(line?.textContent?.includes('abcdef01'), line?.textContent ?? '');
+  // Nothing published is waiting on anybody, so no sentence stands over it.
+  assert.equal(document.querySelector('.ov-say'), null, text());
+});
+
+test('the same move drawn inside the canvas offers no control back to the canvas', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  const sealed = unit('u10', {
+    acceptance: accepted('c10'),
+    baseStatus: null,
+    publication: { state: 'pending', pull: { number: 7, url: 'https://github.com/x/y/pull/7' } },
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/code/unit/u10'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        UnitCode as any,
+        {
+          unit: sealed,
+          named: () => 'Ada',
+          signedIn: true,
+          open: createElement('span', null, 'Open record'),
+        },
+      ),
+    ),
+  );
+  assert.ok(text().includes('Waiting on a person to merge the pull request'), text());
+  assert.equal(
+    [...document.querySelectorAll('a.btn-text')].find((link) =>
+      link.textContent?.startsWith('Merge reviewed proposal'),
+    ),
+    undefined,
+    text(),
+  );
 });

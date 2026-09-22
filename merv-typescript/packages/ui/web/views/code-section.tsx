@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { CodeUnit } from '@merv/contracts/code-units';
-import { Ago, CopyButton, KV, Short, StatusPill, cx, words } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { Ago, CopyButton, KV, Short, StatusPill, Summary, cx, words } from '../components';
+import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
+import { firstPersonMove, publicationBlocker } from './code-blockers';
 
 /**
  * What Git holds for one record, on the record's own page: the branch a writer stands
@@ -11,13 +12,22 @@ import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
  * accepted. It is a section of the record and not a second record page, and it reads
  * the `codeUnit` the row already serves with every record, so it costs no read.
  *
- * A line with no fact behind it is not drawn. No blocker is printed: each is an
- * instruction to the agent holding the tool, and the state words here already say
- * what a person can see.
+ * A line with no fact behind it is not drawn. One blocker may be printed, and only
+ * one whose next move is a person's: it leads the section as the sentence of
+ * `code-blockers.ts`, with who ends the wait and the server's own instruction folded
+ * behind it. Every other code stays unprinted, because the state words here and the
+ * Act ladder already say what a person can see.
  */
 
 /** Where the same facts are drawn as one picture. */
 const CANVAS = '/code';
+
+/**
+ * A publication that stopped rather than one in flight. Only `pending` is still moving and
+ * only `published` arrived; everything else — closed, unsealed, stale, disabled, incident —
+ * is a publication that will not reach main as it stands, and reads in the refusal's colour.
+ */
+const refused = (state: string) => state !== 'pending' && state !== 'published';
 
 /**
  * The branch is the string an operator fetches, so it is stated — but the id inside it
@@ -71,6 +81,7 @@ export function UnitCode({
   unit,
   named,
   open,
+  signedIn,
 }: {
   unit: CodeUnit;
   /** Who accepted it, by name; nobody is named by an identifier. */
@@ -80,6 +91,12 @@ export function UnitCode({
    * inside the drawing, the way out is the record instead.
    */
   open?: ReactNode;
+  /**
+   * Whether the reader is the signed-in operator the publication verbs answer. The move
+   * is said to everybody, and offered only to whoever can make it: a control a reader
+   * would follow to a page that draws no button for them promises an act (ruling 11).
+   */
+  signedIn?: boolean;
 }) {
   const accepted = unit.acceptance;
   const names = useRecordNames(
@@ -89,8 +106,43 @@ export function UnitCode({
   );
   const base = basedOn(unit, names);
   const lagging = !!unit.canonicalHead && unit.canonicalHead !== unit.mirroredHead;
+  const publication = unit.publication;
+  // The blockers this read carries: what a base would refuse now, and the one Code keeps
+  // about a publication, which is the only opinion it holds about work that has ended.
+  const held = firstPersonMove(
+    [
+      ...(unit.baseStatus?.status === 'blocked' ? unit.baseStatus.blockers : []),
+      ...[publicationBlocker(publication)].filter((item) => !!item),
+    ],
+    names,
+  );
   return (
     <div className={cx('stack', unit.quarantine && 'code-refused')}>
+      {/* The move leads, in the standing line's own grammar: the sentence, who ends the
+          wait, the one control a page of this app makes — and the agent's instruction
+          folded in the fold Now uses, so the two readings are one thing. */}
+      {!!held && (
+        <div className="stack stack--tight">
+          <p className="ov-say">{held.move.sentence}</p>
+          <span className="ov-meta">
+            <span>{held.move.who}</span>
+            {!!held.blocker.since && <Ago at={held.blocker.since} />}
+          </span>
+          {/* Every move of this vocabulary is made on the canvas, so drawn inside the
+              canvas the control would lead to the page it already stands on. */}
+          {!!held.move.control && signedIn && !open && (
+            <Link className="btn-text" to={held.move.control.to}>
+              {held.move.control.label} <ArrowRightIcon size={14} />
+            </Link>
+          )}
+          {!!held.blocker.next && (
+            <details className="ov-said">
+              <Summary>Agent instructions</Summary>
+              <p>{held.blocker.next}</p>
+            </details>
+          )}
+        </div>
+      )}
       <KV
         rows={[
           [
@@ -130,6 +182,27 @@ export function UnitCode({
                 {accepted.reviewAttached && <RecordLink id={accepted.reviewRef} names={names} />}
               </>
             ),
+          ],
+          // Where this unit's accepted code stands on its way to main. The state is a pill,
+          // the pull request is the link GitHub keeps it at, and the merge commit is the
+          // one fact that ends it; a publication stopped rather than in flight is read in
+          // the refusal's colour, as everything stopped on this page is.
+          !!publication && [
+            'Publication',
+            <span className={cx('cluster', refused(publication.state) && 'code-refusal')}>
+              <StatusPill value={publication.state} />
+              {!!publication.pull && (
+                <a
+                  className="btn-text"
+                  href={publication.pull.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {`#${publication.pull.number}`} <ExternalIcon size={14} />
+                </a>
+              )}
+              {!!publication.mergeCommit && <Short value={publication.mergeCommit} />}
+            </span>,
           ],
         ]}
       />

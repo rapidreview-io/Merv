@@ -21,6 +21,8 @@ import {
 } from '../components';
 import { Markdown, RecordText, useRecordNames } from '../markdown';
 import { Gate } from '../process';
+import { useSession } from '../session';
+import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import { type Review } from './reviews';
@@ -153,6 +155,9 @@ function ExperimentRecord({
   unit?: CodeUnit | null;
   nameOf(id: string | null | undefined): string | undefined;
 }) {
+  // The publication verbs answer a signed-in operator and nobody else, so the Code
+  // section is told who is reading before it offers the move.
+  const { actor, account } = useSession();
   // One list names every claim this experiment says it tests.
   const mine = (reviews ?? []).filter((review) => review.subjectId === e.id);
   const newest = newestReview(mine, e.id);
@@ -219,7 +224,9 @@ function ExperimentRecord({
         ) : undefined
       }
       description={e.details ? <Markdown source={e.details} /> : undefined}
-      code={unit && <UnitCode unit={unit} named={nameOf} />}
+      code={
+        unit && <UnitCode unit={unit} named={nameOf} signedIn={signedInAdmin(actor, account)} />
+      }
       details={
         <KV rows={[['Owner', nameOf(e.ownerId)], ...timeRows(e.createdAt, e.workflow.updatedAt)]} />
       }

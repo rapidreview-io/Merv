@@ -649,3 +649,106 @@ test('with no room to draw a line, a record says what it points at in words', as
   assert.equal(more.textContent, '+3 more work');
   assert.equal(more.getAttribute('href'), '/work');
 });
+
+test('a Code blocker whose next move is a person’s stands on Now, in the person’s words', () => {
+  // Exactly what a real project serves: the task has ended, and the only opinion left
+  // about it is Code's, that a person still has to carry its accepted code to main.
+  const publication = {
+    instanceId: 'wf_pub',
+    provider: 'code',
+    key: 'publication',
+    code: 'code_publication_pending',
+    status: 409,
+    message: 'waiting on publication: a signed-in operator merges the pull request',
+    next: 'A signed-in project operator merges pull request #1 with code.publication.merge.',
+    related: [{ kind: 'pull-request', id: 'https://github.com/x/y/pull/1', label: '#1' }],
+    since: '2026-09-21T09:00:00.000Z',
+    updatedAt: '2026-09-21T09:00:00.000Z',
+  };
+  const data = home({
+    tasks: [task('wf_pub', me.id, 'done'), task('wf_quiet', me.id)],
+    workflows: {
+      workflows: [
+        gate('wf_pub', { terminal: true, state: 'done', providerBlockers: [publication] }),
+        // A code nobody prints is not a move: the record keeps its own gate, its own
+        // sentence and its own desk, exactly as if Code had published nothing about it.
+        gate('wf_quiet', {
+          providerBlockers: [{ ...publication, instanceId: 'wf_quiet', code: 'code_base_wait' }],
+          nextAction: { action: 'submit_delivery', tool: 'task.submit_delivery', status: 'ready' },
+          actions: [{ action: 'submit_delivery', tool: 'task.submit_delivery', status: 'ready' }],
+        }),
+      ],
+    },
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lines = standingOf(rows as any, data as any, { ...me, signedIn: true }, named);
+  const [line, ordinary] = lines.yours;
+  assert.equal(line?.id, 'wf_pub');
+  assert.equal(line.sentence, 'Waiting on a person to merge the pull request');
+  assert.equal(line.who, 'A signed-in operator');
+  // Since it took this code, not since the record last moved.
+  assert.equal(line.at, '2026-09-21T09:00:00.000Z');
+  // The move this app makes is on the card; the agent's words stay in the fold.
+  assert.deepEqual(line.desk, { label: 'Merge reviewed proposal', to: '/code' });
+  assert.ok(line.says.includes(publication.next), JSON.stringify(line.says));
+  assert.ok(!line.says.includes(line.sentence));
+  // The quiet record is read by its gate and not by Code's opinion of it.
+  assert.equal(ordinary?.id, 'wf_quiet');
+  assert.equal(ordinary.sentence, 'Deliver the work for review');
+  assert.equal(ordinary.who, undefined);
+  assert.deepEqual(ordinary.desk, { label: 'Submit delivery', to: '/tasks/wf_quiet#deliver' });
+  assert.deepEqual([...lines.agent, ...lines.nobody, ...lines.unknown], []);
+
+  // The publication verbs answer a signed-in person and nobody else, so a reader — and an
+  // operator holding a key rather than an account — get the wait and no control at all.
+  for (const other of [
+    { id: me.id, role: 'reader', signedIn: true },
+    { ...me, signedIn: false },
+  ]) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reading = standingOf(rows as any, data as any, other, named);
+    assert.deepEqual(
+      reading.yours.map((item) => item.id),
+      ['wf_quiet'],
+      other.role + String(other.signedIn),
+    );
+    assert.equal(reading.unknown[0]?.sentence, 'Waiting on a person to merge the pull request');
+    assert.equal(reading.unknown[0]?.desk, undefined);
+  }
+});
+
+test('an operator’s move with no control here is still theirs, and promises nothing', () => {
+  // A publication an operator disabled: nothing on any page of this app turns it back on,
+  // and the ruling prints it precisely because the next move is that operator's.
+  const data = home({
+    tasks: [task('wf_off', me.id, 'done')],
+    workflows: {
+      workflows: [
+        gate('wf_off', {
+          terminal: true,
+          state: 'done',
+          providerBlockers: [
+            {
+              instanceId: 'wf_off',
+              provider: 'code',
+              key: 'publication',
+              code: 'code_publication_disabled',
+              status: 409,
+              message: 'publication is not enabled for this project',
+              related: [],
+            },
+          ],
+        }),
+      ],
+    },
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lines = standingOf(rows as any, data as any, { ...me, signedIn: true }, named);
+  assert.equal(lines.yours[0]?.id, 'wf_off');
+  assert.equal(
+    lines.yours[0].sentence,
+    'Publication is disabled for this project until an operator clears it',
+  );
+  assert.equal(lines.yours[0].desk, undefined, 'no page here makes this move');
+  assert.deepEqual([...lines.agent, ...lines.nobody, ...lines.unknown], []);
+});
