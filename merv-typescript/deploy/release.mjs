@@ -112,9 +112,13 @@ docker image inspect ${NODE_IMAGE} > build.log 2>&1 || docker pull ${NODE_IMAGE}
 docker build --platform linux/amd64 --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
 docker run --rm --entrypoint node "$IMG" dist/src/cli.js help >> build.log 2>&1
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")
-PREV=$(docker inspect --format '{{.Config.Image}}' merv-typescript-control-1)
-PREV_ID=$(docker image inspect --format '{{.Id}}' "$PREV")
-PREV_DIR=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
+# A first deploy on a VM has no previous container, and so nothing to roll back to.
+PREV=$(docker inspect --format '{{.Config.Image}}' merv-typescript-control-1 2>/dev/null || true)
+PREV_ID=; PREV_DIR=
+if [ -n "$PREV" ]; then
+  PREV_ID=$(docker image inspect --format '{{.Id}}' "$PREV")
+  PREV_DIR=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
+fi
 mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
 printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
 printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" > build-manifest.json
@@ -130,7 +134,8 @@ done
 if [ "$H" != healthy ]; then
   # The new image never became healthy (or is restart-looping): put the previous image back before reporting.
   LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
-  (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
+  if [ -z "$PREV" ]; then (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1; fi
+  [ -n "$PREV" ] && (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
   P=starting
   for i in $(seq 1 24); do
     P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
