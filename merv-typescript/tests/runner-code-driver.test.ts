@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -334,6 +341,82 @@ test('a final capture Code refuses to read ends the capture instead of being sen
   assert.equal(driver.get('launch-ses_1')!.status, 'captured');
   await driver.close(m.launch('ses_1'));
   assert.equal(driver.get('launch-ses_1')!.status, 'closed');
+});
+
+test('a checkout Code would never keep ends its generation at the last admitted commit', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  const m = machine(t, f);
+  const driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  const work = await command(f, driver, 'ses_1', f.root);
+  const receipt = await driver.checkpointCommit(m.launch('ses_1'), work);
+  // The session leaves a file larger than any repository of Code's keeps. No capture can be
+  // built from this checkout, now or on any later attempt, so asking for one again is asking
+  // forever: the launch would never be given back and the unit would wait for a machine that
+  // can no longer answer. The generation is handed over at the commit Code already admitted.
+  const huge = join(path, 'huge.bin');
+  writeFileSync(huge, '');
+  truncateSync(huge, 51 * 1024 * 1024);
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  m.terminal.add('launch-ses_1');
+  const result = await driver.capture(m.launch('ses_1'));
+  assert.equal(result!.headOid, receipt.headOid);
+  assert.equal(driver.get('launch-ses_1')!.status, 'captured');
+  assert.equal((await f.unit()).canonicalHead, receipt.headOid);
+  assert.equal((await f.unit()).writerState, 'closed');
+  await driver.close(m.launch('ses_1'));
+  assert.equal(driver.get('launch-ses_1')!.status, 'closed');
+  assert.ok(existsSync(huge), 'what Code cannot take stays on the machine');
+  // The machine keeps why it handed over nothing, as it does for a refused commit command.
+  const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+  try {
+    const final = db.prepare("SELECT error FROM code_v2_transfers WHERE kind='final'").get() as {
+      error: string;
+    };
+    assert.equal(final.error, 'workspace_file_too_large');
+  } finally {
+    db.close();
+  }
+  // The unit's checkout on this machine is the next generation's again, and preparing it
+  // takes away what this one left: a retained checkout is put back on the head Code names
+  // and cleaned, so the file Code refused is not handed to a generation that would be
+  // refused for it in turn. The refusal ends one generation, never every later one.
+  assert.equal((await f.lease('ses_2')).generation, 2);
+  assert.equal((await driver.prepare(m.launch('ses_2'), m.session('ses_2'))).path, path);
+  assert.equal(existsSync(huge), false, 'what Code refused is not the next generation’s');
+  await f.event('session.workspace_attached', 'ses_2');
+  writeFileSync(join(path, 'b.txt'), 'two\n');
+  const next = await command(f, driver, 'ses_2', receipt.headOid);
+  const admitted = await driver.checkpointCommit(m.launch('ses_2'), next);
+  assert.equal((await f.unit()).canonicalHead, admitted.headOid);
+});
+
+test('an export Code no longer holds defers the launch rather than failing it', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  // A cut export lives on the server and can go while a machine is reading it — it expired,
+  // or Code was restarted. That is the server's business, not a fault of this launch, and the
+  // machine simply asks for the download again.
+  const m = machine(t, f, (inner) => ({
+    ...inner,
+    readPart: async () => {
+      throw Object.assign(new Error('no such export'), {
+        code: 'code_export_not_found',
+        status: 404,
+      });
+    },
+  }));
+  const driver = m.start();
+  await assert.rejects(
+    driver.prepare(m.launch('ses_1'), m.session('ses_1')),
+    (error: unknown) => error instanceof WorkspaceDeferred && error.cause === 'store_busy',
+  );
+  assert.equal(driver.get('launch-ses_1'), undefined);
+  assert.equal((await f.unit()).writerState, 'reserved');
 });
 
 test('a session that never attached hands over nothing, and its generation simply closes', async (t) => {
