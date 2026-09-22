@@ -16,7 +16,7 @@ The shared `WorkspaceDriver` interface owns preparation, capture and cleanup onl
 
 The private local SQLite database uses WAL, `synchronous=FULL`, and `fullfsync=ON`. Its directory is mode `0700`; its database and logs are `0600`. Use a local filesystem with SQLite locking and durability semantics. A separate SQLite connection holds an exclusive controller lock: losing the controller process releases the lock without blocking supervisor ledger updates.
 
-The ledger is bound to the server URL, source identity, and project. It retains a random runner ID and a private machine HMAC key. Pending lease requests preserve the exact platform and duration before HTTP; a retry derives the same session secret from its request ID. Clearing a pending request does not prevent deriving that same secret when recovering a retained launch.
+The ledger is bound to the server URL, source identity, and project. It retains a random runner ID and a private machine HMAC key. Pending lease requests preserve the exact platform before HTTP; a retry derives the same session secret from its request ID. Clearing a pending request does not prevent deriving that same secret when recovering a retained launch.
 
 Source and session bearers are not stored in the ledger. Reconciliation metadata is bounded JSON and rejects secret fields and recognizable bearer values. Runtime command environment and stdin travel only over authenticated local IPC; profile diagnostic `toJSON` hooks are deliberately bypassed only for that explicit transport. The supervisor receives the session bearer, never the source credential. Child output redacts the session bearer and recognized secret environment values, including values split across output chunks.
 

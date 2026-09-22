@@ -136,10 +136,8 @@ export class ProcessHost {
     if (!terminalLaunch(record)) this.ledger.markUncertain(id, 'stop_unconfirmed');
     return this.required(id);
   }
-  async reconcile(): Promise<LaunchRecord[]> {
-    const result: LaunchRecord[] = [];
-    for (const record of this.ledger.list()) result.push(await this.inspect(record.id));
-    return result;
+  async reconcile(): Promise<void> {
+    for (const record of this.ledger.list()) await this.inspect(record.id);
   }
 
   private required(id: string): LaunchRecord {

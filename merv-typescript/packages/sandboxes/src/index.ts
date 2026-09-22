@@ -1,8 +1,8 @@
-import { check, digest, type Caller, type Json } from '@merv/contracts';
+import { check, digest, type Caller, type Json, type UiManifestRow } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { SandboxClient, sandboxOrigin, sandboxRoute } from './client.js';
-import { parseManifest, type ManifestRow } from './manifest.js';
+import { SandboxClient, sandboxRoute } from './client.js';
+import { parseManifest } from './manifest.js';
 import { SandboxCheckRunner } from './checks.js';
 import type {
   Sandboxes,
@@ -34,12 +34,8 @@ export type {
   SandboxTarget,
 } from './types.js';
 export { checkScript } from './checks.js';
+export { sandboxTools } from './manifest.js';
 
-/**
- * The tools this package ships. A control the manifest binds to anything else is dropped
- * before the row reaches the registry: the browser never renders what it cannot dispatch.
- */
-export const sandboxTools = ['sandbox.extend', 'sandbox.release'];
 /** The service's own lifecycle routes, the only ones a tool ever calls. */
 const sandboxRecord = '/v1/sandboxes/{id}';
 const renewRoute = '/v1/sandboxes/{id}/renew';
@@ -82,7 +78,7 @@ export function withoutSecrets(value: Json, depth = 0): Json {
   );
 }
 
-const toRow = (row: ManifestRow): SandboxRow => ({
+const toRow = (row: UiManifestRow): SandboxRow => ({
   id: `sandboxes-${row.id}`,
   label: row.label,
   group: row.group,
@@ -106,9 +102,8 @@ export class SandboxService implements Sandboxes {
   readonly #client: SandboxClient;
   readonly #connections: SandboxConnection[];
   readonly #refreshMs: number;
-  readonly #registered: (tool: string) => boolean;
   readonly #listeners = new Set<() => void>();
-  #specs = new Map<string, ManifestRow>();
+  #specs = new Map<string, UiManifestRow>();
   #rows: SandboxRow[] = [];
   #digest = '';
   #reachable = false;
@@ -124,18 +119,13 @@ export class SandboxService implements Sandboxes {
    */
   readonly checks?: SandboxChecks;
 
-  /**
-   * `registered` reports whether a tool exists in this process; the plugin answers for the two
-   * tools this package registers, and every other act control the manifest declares is dropped.
-   */
-  constructor(config: SandboxesConfig, registered: (tool: string) => boolean = () => false) {
+  constructor(config: SandboxesConfig) {
     const parsed = configuration.safeParse(config);
     check(parsed.success, 'invalid_sandboxes_config', 'The sandboxes configuration is invalid');
     this.#connections = parsed.data.connections;
     this.#refreshMs = parsed.data.refreshMs;
-    this.#registered = registered;
     this.#client = new SandboxClient(
-      sandboxOrigin(process.env[parsed.data.urlEnv]),
+      process.env[parsed.data.urlEnv],
       parsed.data.timeoutMs,
       parsed.data.storageOrigins,
     );
@@ -224,7 +214,7 @@ export class SandboxService implements Sandboxes {
   }
 
   async #read(): Promise<void> {
-    const collected = new Map<string, ManifestRow>();
+    const collected = new Map<string, UiManifestRow>();
     let reached = false;
     let detail = 'merv-sandboxes is unreachable';
     for (const entry of this.#connections) {
@@ -232,7 +222,7 @@ export class SandboxService implements Sandboxes {
       try {
         const manifest = await this.#client.read(entry, '/v1/ui/manifest');
         // Every connection is the same service, so identical row ids describe one row.
-        for (const row of parseManifest(manifest, this.#registered))
+        for (const row of parseManifest(manifest))
           if (!collected.has(row.id)) collected.set(row.id, row);
         reached = true;
       } catch (error) {
@@ -256,12 +246,10 @@ export class SandboxService implements Sandboxes {
     for (const listener of this.#listeners) listener();
   }
 
-  /** The namespace follows the caller's own project; input never selects a connection. */
-  #connectionOf(caller: Caller): SandboxConnection {
-    return this.#connectionFor(caller.projectId);
-  }
-
-  /** Server-owned work has no caller, and still speaks only as the project it works for. */
+  /**
+   * The namespace follows the caller's own project; input never selects a connection.
+   * Server-owned work has no caller, and still speaks only as the project it works for.
+   */
   #connectionFor(projectId: string): SandboxConnection {
     const entry = this.#connections.find((candidate) => candidate.projectId === projectId);
     check(entry, 'sandbox_not_connected', 'This project has no sandbox connection', 403);
@@ -269,74 +257,68 @@ export class SandboxService implements Sandboxes {
   }
 
   async extend(caller: Caller, input: SandboxExtend): Promise<Json> {
-    return this.#run({ caller, input }, ({ caller, input }) => this.#extend(caller, input));
-  }
-
-  async #extend(caller: Caller, input: SandboxExtend): Promise<Json> {
-    const entry = this.#connectionOf(caller);
-    // A renewal is a total, not an increment: the service sets the lease to now + lease_seconds.
-    // Carry the remaining lifetime and its revision together: the service must refuse a
-    // stale calculation rather than shortening a lease another client just extended.
-    // The service publishes no maximum, so an over-long total is its refusal to give, not ours.
-    const record = (await this.#client.read(entry, sandboxRoute(sandboxRecord, input.id))) as {
-      lease_expires_at?: unknown;
-      revision?: unknown;
-    } | null;
-    check(
-      typeof record?.revision === 'number' &&
-        Number.isSafeInteger(record.revision) &&
-        record.revision >= 0,
-      'sandbox_revision_unavailable',
-      'The sandbox service must return a record revision for safe lease extension',
-      502,
-    );
-    const expires = Date.parse(String(record?.lease_expires_at ?? ''));
-    const left = Number.isNaN(expires) ? 0 : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
-    return withoutSecrets(
-      await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), {
-        lease_seconds: left + input.seconds,
-        expected_revision: record.revision,
-      }),
-    );
+    return this.#run({ caller, input }, async ({ caller, input }) => {
+      const entry = this.#connectionFor(caller.projectId);
+      // A renewal is a total, not an increment: the service sets the lease to now + lease_seconds.
+      // Carry the remaining lifetime and its revision together: the service must refuse a
+      // stale calculation rather than shortening a lease another client just extended.
+      // The service publishes no maximum, so an over-long total is its refusal to give, not ours.
+      const record = (await this.#client.read(entry, sandboxRoute(sandboxRecord, input.id))) as {
+        lease_expires_at?: unknown;
+        revision?: unknown;
+      } | null;
+      check(
+        typeof record?.revision === 'number' &&
+          Number.isSafeInteger(record.revision) &&
+          record.revision >= 0,
+        'sandbox_revision_unavailable',
+        'The sandbox service must return a record revision for safe lease extension',
+        502,
+      );
+      const expires = Date.parse(String(record?.lease_expires_at ?? ''));
+      const left = Number.isNaN(expires)
+        ? 0
+        : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
+      return withoutSecrets(
+        await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), {
+          lease_seconds: left + input.seconds,
+          expected_revision: record.revision,
+        }),
+      );
+    });
   }
 
   async release(caller: Caller, input: SandboxTarget): Promise<Json> {
-    return this.#run({ caller, input }, ({ caller, input }) => this.#release(caller, input));
-  }
-
-  async #release(caller: Caller, input: SandboxTarget): Promise<Json> {
-    const entry = this.#connectionOf(caller);
-    const path = sandboxRoute(sandboxRecord, input.id);
-    // The guard the browser shows is the retention confirmation the legacy tool asked for in a
-    // second call. Deleting an already-stopped sandbox deletes nothing twice, so the answer is
-    // the record either way: releasing twice is the same as releasing once.
-    await this.#client.write(entry, 'DELETE', path, { confirm_retained: true });
-    return withoutSecrets(await this.#client.read(entry, path));
+    return this.#run({ caller, input }, async ({ caller, input }) => {
+      const entry = this.#connectionFor(caller.projectId);
+      const path = sandboxRoute(sandboxRecord, input.id);
+      // The guard the browser shows is the retention confirmation the legacy tool asked for in a
+      // second call. Deleting an already-stopped sandbox deletes nothing twice, so the answer is
+      // the record either way: releasing twice is the same as releasing once.
+      await this.#client.write(entry, 'DELETE', path, { confirm_retained: true });
+      return withoutSecrets(await this.#client.read(entry, path));
+    });
   }
 
   async read(caller: Caller, rowId: string, params: Record<string, unknown> = {}): Promise<Json> {
-    return this.#run({ caller, params }, ({ caller, params }) =>
-      this.#readRow(caller, rowId, params),
-    );
-  }
-
-  async #readRow(caller: Caller, rowId: string, params: Record<string, unknown>): Promise<Json> {
-    const spec = this.#specs.get(rowId);
-    check(spec, 'row_unreadable', 'That row is not published by this service', 404);
-    const entry = this.#connectionOf(caller);
-    // ui.read hands a row its `params`; tolerate a caller that passes the whole tool input.
-    const id = params.id ?? (params.params as { id?: unknown } | undefined)?.id;
-    if (id === undefined || id === null || id === '')
-      return withoutSecrets(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
-    check(typeof id === 'string', 'invalid_sandbox_id', 'A sandbox identifier must be a string');
-    check(spec.record, 'sandbox_record_unavailable', 'This row publishes no record', 404);
-    const record = withoutSecrets(
-      await this.#client.read(entry, sandboxRoute(spec.record.read, id)),
-    );
-    // The manifest's console link may be a path on the service; say where that path lives.
-    return record !== null && typeof record === 'object' && !Array.isArray(record)
-      ? { ...record, console_origin: this.#client.origin }
-      : record;
+    return this.#run({ caller, params }, async ({ caller, params }) => {
+      const spec = this.#specs.get(rowId);
+      check(spec, 'row_unreadable', 'That row is not published by this service', 404);
+      const entry = this.#connectionFor(caller.projectId);
+      // ui.read hands a row its `params`; tolerate a caller that passes the whole tool input.
+      const id = params.id ?? (params.params as { id?: unknown } | undefined)?.id;
+      if (id === undefined || id === null || id === '')
+        return withoutSecrets(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
+      check(typeof id === 'string', 'invalid_sandbox_id', 'A sandbox identifier must be a string');
+      check(spec.record, 'sandbox_record_unavailable', 'This row publishes no record', 404);
+      const record = withoutSecrets(
+        await this.#client.read(entry, sandboxRoute(spec.record.read, id)),
+      );
+      // The manifest's console link may be a path on the service; say where that path lives.
+      return record !== null && typeof record === 'object' && !Array.isArray(record)
+        ? { ...record, console_origin: this.#client.origin }
+        : record;
+    });
   }
 }
 
@@ -344,7 +326,7 @@ export const sandboxesPlugin = {
   name: 'merv-sandboxes',
   Config: configuration,
   apply(ctx: Context, config: SandboxesConfig) {
-    const service = new SandboxService(config, (tool) => sandboxTools.includes(tool));
+    const service = new SandboxService(config);
     ctx.effect(() => service.start());
     ctx.provide('sandboxes', service);
   },

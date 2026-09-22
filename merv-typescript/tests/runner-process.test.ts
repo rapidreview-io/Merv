@@ -51,20 +51,11 @@ test('local ledger binds identity, persists exact retry inputs without bearers, 
   const second = new LocalLedger({ directory, binding });
   t.after(() => second.close());
   assert.throws(() => second.acquireController(), /Another runner controller/);
-  const pending = ledger.request(
-    { name: 'codex', harness: 'codex', model: 'model-a' },
-    { hardDeadlineSeconds: 300 },
-  );
-  assert.deepEqual(
-    second.request(
-      { name: 'codex', harness: 'codex', model: 'changed' },
-      { hardDeadlineSeconds: 600 },
-    ),
-    pending,
-  );
+  const pending = ledger.request({ name: 'codex', harness: 'codex', model: 'model-a' });
+  assert.deepEqual(second.request({ name: 'codex', harness: 'codex', model: 'changed' }), pending);
   assert.deepEqual(second.pendingRequests(), [pending]);
   assert.equal(second.runnerId, ledger.runnerId);
-  assert.equal(second.requestSecret(pending.requestId), pending.secret);
+  assert.equal(second.sessionSecret(pending.requestId), pending.secret);
   assert.throws(
     () => new LocalLedger({ directory, binding: { ...binding, projectId: 'project-b' } }),
     /different server or source/,
@@ -115,12 +106,11 @@ test('local ledger binds identity, persists exact retry inputs without bearers, 
   assert.equal(second.get(record.id)?.metadata.attached, true);
   assert.throws(() =>
     ledger.request(
-      { name: 'unsafe', harness: 'codex' },
-      Object.defineProperty({}, 'hardDeadlineSeconds', {
+      Object.defineProperty({ name: 'unsafe', harness: 'codex' }, 'model', {
         enumerable: true,
         get() {
           callbacks++;
-          return 300;
+          return 'model-a';
         },
       }),
     ),
@@ -217,7 +207,8 @@ test('claimed intent without a reachable guardian stays uncertain and cannot be 
   const db = new DatabaseSync(ledger.path);
   db.prepare("UPDATE launches SET status='starting' WHERE id=?").run(record.id);
   db.close();
-  assert.equal((await host.reconcile())[0].status, 'uncertain');
+  await host.reconcile();
+  assert.equal(ledger.get(record.id)?.status, 'uncertain');
   ledger.updateMetadata(record.id, { session: { status: 'released' } });
   assert.equal((await host.stop(record.id)).status, 'uncertain');
   await assert.rejects(

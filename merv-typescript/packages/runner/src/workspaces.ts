@@ -89,6 +89,14 @@ const statIfPresent = (path: string) => {
   }
 };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+/** Changed files above this size are refused at capture and commit. */
+const MAX_FILE = 50 * 1024 * 1024;
+const repositoryIdentity = (row: RepositoryRow) => ({
+  repositoryId: row.repository_id,
+  sourcePath: row.source_path,
+  baseRef: row.base_ref,
+  initialOid: row.initial_oid,
+});
 const oid = (value: string): string => {
   const result = value.trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result))
@@ -547,31 +555,7 @@ export class GitWorkspaceManager {
       }
       if (!row.read_only) {
         if (status.trim()) {
-          const changed = await this.checkoutGit(row, [
-            'ls-files',
-            '--modified',
-            '--others',
-            '--exclude-standard',
-            '-z',
-          ]);
-          const stagedFiles = await this.checkoutGit(row, [
-            'diff',
-            '--cached',
-            '--no-ext-diff',
-            '--no-textconv',
-            '--name-only',
-            '-z',
-          ]);
-          for (const name of new Set((changed + stagedFiles).split('\0').filter(Boolean))) {
-            const file = resolve(row.path, name);
-            // A tracked final-component symlink is Git data. Never traverse a symlink parent.
-            this.within(row.path, dirname(file));
-            const stat = statIfPresent(file);
-            if (stat) {
-              if (stat.isFile() && stat.size > 50 * 1024 * 1024)
-                throw new WorkspaceError('workspace_file_too_large');
-            }
-          }
+          await this.checkChangedFiles(row);
           await this.checkoutGit(row, ['add', '-A', '--', '.']);
           const staged = await this.checkoutGit(row, [
             'diff',
@@ -838,9 +822,10 @@ export class GitWorkspaceManager {
     );
     for (const name of new Set((changed + staged).split('\0').filter(Boolean))) {
       const file = resolve(row.path, name);
+      // A tracked final-component symlink is Git data. Never traverse a symlink parent.
       this.within(row.path, dirname(file));
       const stat = statIfPresent(file);
-      if (stat?.isFile() && stat.size > 50 * 1024 * 1024)
+      if (stat?.isFile() && stat.size > MAX_FILE)
         throw new WorkspaceError('workspace_file_too_large');
     }
   }
@@ -863,7 +848,7 @@ export class GitWorkspaceManager {
       const tab = entry.indexOf('\t');
       if (!changed.has(entry.slice(tab + 1))) continue;
       const size = entry.slice(0, tab).trim().split(/\s+/)[3];
-      if (size !== '-' && Number(size) > 50 * 1024 * 1024)
+      if (size !== '-' && Number(size) > MAX_FILE)
         throw new WorkspaceError('workspace_file_too_large');
     }
   }
@@ -928,17 +913,11 @@ export class GitWorkspaceManager {
   private async repository(): Promise<RepositoryRow> {
     if (!this.config) throw new WorkspaceError('workspace_repository_required');
     if ('github' in this.config) {
-      const row = this.db.prepare('SELECT * FROM runner_repository WHERE singleton=1').get() as
-        RepositoryRow | undefined;
+      const row = this.repositoryRow();
       if (!row || row.status !== 'ready' || !row.repository_id.startsWith('github:'))
         throw new WorkspaceError('workspace_github_prepare_required');
       this.within(this.root, row.bare_path);
-      marker(join(row.bare_path, 'merv-repository.json'), {
-        repositoryId: row.repository_id,
-        sourcePath: row.source_path,
-        baseRef: row.base_ref,
-        initialOid: row.initial_oid,
-      });
+      marker(join(row.bare_path, 'merv-repository.json'), repositoryIdentity(row));
       await this.validateRepository(row.bare_path);
       return row;
     }
@@ -951,8 +930,7 @@ export class GitWorkspaceManager {
     if (!existsSync(this.config.repository) || lstatSync(this.config.repository).isSymbolicLink())
       throw new WorkspaceError('workspace_repository_missing');
     const source = realpathSync(this.config.repository);
-    let row = this.db.prepare('SELECT * FROM runner_repository WHERE singleton=1').get() as
-      RepositoryRow | undefined;
+    let row = this.repositoryRow();
     if (row && (row.source_path !== source || row.base_ref !== this.config.baseRef))
       throw new WorkspaceError('workspace_repository_changed');
     if (!row) {
@@ -966,35 +944,10 @@ export class GitWorkspaceManager {
           `${this.config.baseRef}^{commit}`,
         ]),
       );
-      this.db
-        .prepare("INSERT INTO runner_repository VALUES(1,?,?,?,?,?,'preparing')")
-        .run(
-          `repo_${randomUUID()}`,
-          source,
-          this.config.baseRef,
-          initial,
-          join(this.root, 'repository.git'),
-        );
-      row = this.db
-        .prepare('SELECT * FROM runner_repository WHERE singleton=1')
-        .get() as RepositoryRow;
+      row = this.insertRepositoryRow(`repo_${randomUUID()}`, source, this.config.baseRef, initial);
     }
-    const identity = {
-      repositoryId: row.repository_id,
-      sourcePath: row.source_path,
-      baseRef: row.base_ref,
-      initialOid: row.initial_oid,
-    };
-    this.within(this.root, row.bare_path);
-    if (!existsSync(row.bare_path)) {
-      if (row.status === 'ready') throw new WorkspaceError('workspace_repository_lost');
-      const stage = join(this.root, `bootstrap-${row.repository_id}`);
-      this.safeDirectory(stage);
-      marker(join(stage, 'owner.json'), identity);
-      const temporary = join(stage, 'repository.git');
-      this.within(stage, temporary);
-      // Only the marked bootstrap directory belongs to this exact durable intent.
-      if (existsSync(temporary)) rmSync(temporary, { recursive: true, force: true });
+    const central = row.initial_oid;
+    await this.materializeBare(row, `bootstrap-${row.repository_id}`, async (temporary) => {
       await this.git(
         [
           'clone',
@@ -1009,16 +962,13 @@ export class GitWorkspaceManager {
         240000,
       );
       await this.git(['--git-dir', temporary, 'remote', 'remove', 'origin']);
-      await this.git(['--git-dir', temporary, 'update-ref', 'refs/merv/central', row.initial_oid]);
-      marker(join(temporary, 'merv-repository.json'), identity);
-      renameSync(temporary, row.bare_path);
-      syncPath(this.root);
-    }
+      await this.git(['--git-dir', temporary, 'update-ref', 'refs/merv/central', central]);
+    });
     const identityFile = join(row.bare_path, 'merv-repository.json');
     if (
       !existsSync(identityFile) ||
       lstatSync(identityFile).isSymbolicLink() ||
-      readFileSync(identityFile, 'utf8') !== JSON.stringify(identity)
+      readFileSync(identityFile, 'utf8') !== JSON.stringify(repositoryIdentity(row))
     )
       throw new WorkspaceError('workspace_foreign_repository');
     await this.validateRepository(row.bare_path);
@@ -1030,6 +980,45 @@ export class GitWorkspaceManager {
     }
     return row;
   }
+  private repositoryRow(): RepositoryRow | undefined {
+    return this.db.prepare('SELECT * FROM runner_repository WHERE singleton=1').get() as
+      RepositoryRow | undefined;
+  }
+  private insertRepositoryRow(
+    repositoryId: string,
+    sourcePath: string,
+    baseRef: string,
+    initialOid: string,
+  ): RepositoryRow {
+    this.db
+      .prepare("INSERT INTO runner_repository VALUES(1,?,?,?,?,?,'preparing')")
+      .run(repositoryId, sourcePath, baseRef, initialOid, join(this.root, 'repository.git'));
+    return this.repositoryRow()!;
+  }
+  /**
+   * Create a durable repository intent's bare copy once: populated inside a marked stage
+   * directory, then renamed into place. A ready repository whose copy is missing was lost.
+   */
+  private async materializeBare(
+    row: RepositoryRow,
+    stageName: string,
+    populate: (temporary: string) => Promise<void>,
+  ): Promise<void> {
+    this.within(this.root, row.bare_path);
+    if (existsSync(row.bare_path)) return;
+    if (row.status === 'ready') throw new WorkspaceError('workspace_repository_lost');
+    const stage = join(this.root, stageName);
+    this.safeDirectory(stage);
+    marker(join(stage, 'owner.json'), repositoryIdentity(row));
+    const temporary = join(stage, 'repository.git');
+    this.within(stage, temporary);
+    // Only the marked bootstrap directory belongs to this exact durable intent.
+    if (existsSync(temporary)) rmSync(temporary, { recursive: true, force: true });
+    await populate(temporary);
+    marker(join(temporary, 'merv-repository.json'), repositoryIdentity(row));
+    renameSync(temporary, row.bare_path);
+    syncPath(this.root);
+  }
   /** Import pinned objects into this machine's private repository, without storing a remote or credential. */
   syncGitHub(value: CodeTransportGrant, references: string[] = []): Promise<void> {
     return this.run({ value, references }, async ({ value, references }) => {
@@ -1037,8 +1026,7 @@ export class GitWorkspaceManager {
       if (!this.config || !('github' in this.config) || grant.target)
         throw new WorkspaceError('workspace_github_config_required');
       const url = this.githubUrl(grant);
-      let row = this.db.prepare('SELECT * FROM runner_repository WHERE singleton=1').get() as
-        RepositoryRow | undefined;
+      let row = this.repositoryRow();
       if (
         row &&
         (row.repository_id !== grant.repositoryId ||
@@ -1046,41 +1034,12 @@ export class GitWorkspaceManager {
           row.base_ref !== grant.baseBranch)
       )
         throw new WorkspaceError('workspace_repository_changed');
-      if (!row) {
-        this.db
-          .prepare("INSERT INTO runner_repository VALUES(1,?,?,?,?,?,'preparing')")
-          .run(
-            grant.repositoryId,
-            url,
-            grant.baseBranch,
-            grant.baseOid,
-            join(this.root, 'repository.git'),
-          );
-        row = this.db
-          .prepare('SELECT * FROM runner_repository WHERE singleton=1')
-          .get() as RepositoryRow;
-      }
-      this.within(this.root, row.bare_path);
-      const identity = {
-        repositoryId: row.repository_id,
-        sourcePath: row.source_path,
-        baseRef: row.base_ref,
-        initialOid: row.initial_oid,
-      };
-      if (!existsSync(row.bare_path)) {
-        if (row.status === 'ready') throw new WorkspaceError('workspace_repository_lost');
-        const stage = join(this.root, 'github-bootstrap');
-        this.safeDirectory(stage);
-        marker(join(stage, 'owner.json'), identity);
-        const temporary = join(stage, 'repository.git');
-        this.within(stage, temporary);
-        if (existsSync(temporary)) rmSync(temporary, { recursive: true, force: true });
+      if (!row)
+        row = this.insertRepositoryRow(grant.repositoryId, url, grant.baseBranch, grant.baseOid);
+      await this.materializeBare(row, 'github-bootstrap', async (temporary) => {
         await this.git(['init', '--bare', `--template=${this.emptyTemplate}`, temporary]);
-        marker(join(temporary, 'merv-repository.json'), identity);
-        renameSync(temporary, row.bare_path);
-        syncPath(this.root);
-      }
-      marker(join(row.bare_path, 'merv-repository.json'), identity);
+      });
+      marker(join(row.bare_path, 'merv-repository.json'), repositoryIdentity(row));
       await this.validateRepository(row.bare_path);
       const commits = [...new Set([row.initial_oid, grant.baseOid, ...references.map(oid)])];
       if (commits.length > 200) throw new WorkspaceError('workspace_reference_limit');
@@ -1226,9 +1185,14 @@ export class GitWorkspaceManager {
     } else {
       const repository = await this.repository();
       this.within(this.root, row.path);
+      // A persistent branch's lineage records its base once; a changed record is refused
+      // before any checkout is added, including the recovery of an existing path.
+      const baseRef = `refs/merv/bases/${hash(row.slot_id)}`;
+      let recorded = row.branch ? await this.optionalRef(repository.bare_path, baseRef) : undefined;
+      if (recorded && recorded !== row.base_oid)
+        throw new WorkspaceError('workspace_recorded_base_changed');
       if (!existsSync(row.path)) {
         this.safeDirectory(dirname(row.path));
-        const ref = `refs/merv/bases/${hash(row.slot_id)}`;
         const heads = (
           await this.git([
             '--git-dir',
@@ -1239,8 +1203,7 @@ export class GitWorkspaceManager {
           ])
         ).split('\n');
         if (row.branch && heads.includes(`refs/heads/${row.branch}`)) {
-          if ((await this.rev(repository.bare_path, ref)) !== row.base_oid)
-            throw new WorkspaceError('workspace_recorded_base_changed');
+          if (!recorded) throw new WorkspaceError('workspace_recorded_base_changed');
           await this.git([
             '--git-dir',
             repository.bare_path,
@@ -1262,27 +1225,23 @@ export class GitWorkspaceManager {
             row.path,
             row.base_oid,
           ]);
-          if (row.branch)
-            await this.git(['--git-dir', repository.bare_path, 'update-ref', ref, row.base_oid]);
+          // A new branch records its base before validation, so a failed validation cannot
+          // leave the lineage without one.
+          if (row.branch) {
+            await this.git([
+              '--git-dir',
+              repository.bare_path,
+              'update-ref',
+              baseRef,
+              row.base_oid,
+            ]);
+            recorded = row.base_oid;
+          }
         }
       }
       await this.validateCheckout(row);
-      if (row.branch) {
-        const ref = `refs/merv/bases/${hash(row.slot_id)}`;
-        const refs = (
-          await this.git([
-            '--git-dir',
-            repository.bare_path,
-            'for-each-ref',
-            '--format=%(refname)',
-            'refs/merv/bases/',
-          ])
-        ).split('\n');
-        if (!refs.includes(ref))
-          await this.git(['--git-dir', repository.bare_path, 'update-ref', ref, row.base_oid]);
-        else if ((await this.rev(repository.bare_path, ref)) !== row.base_oid)
-          throw new WorkspaceError('workspace_recorded_base_changed');
-      }
+      if (row.branch && !recorded)
+        await this.git(['--git-dir', repository.bare_path, 'update-ref', baseRef, row.base_oid]);
     }
     const snapshot = await this.snapshot(row);
     await this.armFence(row);

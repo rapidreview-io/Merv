@@ -4,8 +4,6 @@ import { inspect } from 'node:util';
 import { z } from 'zod';
 import { check, effectiveWorkspace, MervError } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import type { RunnerProfile } from './types.js';
-export type { RunnerProfile } from './types.js';
 
 const text = z
   .string()
@@ -68,6 +66,8 @@ const profileSchema = z.discriminatedUnion('harness', [
     })
     .strict(),
 ]);
+/** Trusted machine configuration. Remote settings can only tune documented fields. */
+export type RunnerProfile = z.infer<typeof profileSchema>;
 
 export interface LaunchSpec {
   executable: string;
@@ -460,11 +460,11 @@ const sealed = (session: LaunchRequest['session']): boolean => {
 
 /** Pure launch preparation. The supervisor owns availability checks, spawning and teardown. */
 export function buildLaunch(
-  profileInput: RunnerProfile,
+  /** Validated where it is read: the local configuration or the launch's persisted profile. */
+  profile: RunnerProfile,
   request: LaunchRequest,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): LaunchSpec {
-  const profile = validateProfile(profileInput);
   check(profile.enabled, 'runner_profile_disabled', 'Runner profile is disabled');
   check(
     /^ms_[A-Za-z0-9_-]{43}$/.test(request.secret),

@@ -217,10 +217,8 @@ const failure = (code: string) => (error: unknown) => {
 };
 
 test('a manifest is accepted only in the published shape, and unusable controls never register', () => {
-  const rows = parseManifest(manifest(), () => false);
-  assert.equal(rows.length, 1);
-  assert.deepEqual(rows[0].record?.act, [], 'a process with no sandbox tool may not act at all');
-  const kept = parseManifest(manifest(), (tool) => sandboxTools.includes(tool));
+  const kept = parseManifest(manifest());
+  assert.equal(kept.length, 1);
   assert.deepEqual(
     kept[0].record?.act?.map((entry) => entry.tool),
     ['sandbox.release', 'sandbox.extend'],
@@ -237,7 +235,6 @@ test('a manifest is accepted only in the published shape, and unusable controls 
         console: { label: 'Open in the console', href: '/ui/sandboxes/{id}' },
       },
     }),
-    () => false,
   );
   assert.equal(relaxed[0].icon, undefined, 'an unavailable value is null, and null means absent');
   assert.equal(relaxed[0].record?.console?.href, '/ui/sandboxes/{id}');
@@ -250,7 +247,7 @@ test('a manifest is accepted only in the published shape, and unusable controls 
     { version: 2, rows: [] } as Json,
   ];
   for (const value of rejected)
-    assert.throws(() => parseManifest(value, () => false), failure('invalid_sandbox_manifest'));
+    assert.throws(() => parseManifest(value), failure('invalid_sandbox_manifest'));
 });
 
 test('published rows register with the manifest identity, route and view', async (t) => {

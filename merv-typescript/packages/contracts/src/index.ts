@@ -92,6 +92,7 @@ export type {
   UiSection,
   UiDetail,
 } from './ui-manifest.js';
+export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
 export { WorkspaceDeferred } from './workspace-driver.js';
 export type {

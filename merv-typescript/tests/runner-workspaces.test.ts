@@ -408,6 +408,29 @@ test('crash after checkout creation replays durable intent without resetting exi
   assert.equal((await f.manager.capture(record))?.stats.filesChanged, 1);
 });
 
+test('a failed validation after a new branch is added still records the lineage base', async (t) => {
+  const f = setup(t),
+    policy = f.policy({ retain: false }),
+    first = f.reserve('first');
+  const manager = f.manager as unknown as { validateCheckout(row: unknown): Promise<void> };
+  const validate = manager.validateCheckout.bind(manager);
+  manager.validateCheckout = async () => {
+    manager.validateCheckout = validate;
+    throw new Error('fixture validation failure');
+  };
+  await assert.rejects(
+    f.manager.prepare(first, f.session(first.id, policy)),
+    /fixture validation failure/,
+  );
+  f.stop(first.id);
+  await f.manager.capture(first);
+  await f.manager.close(first);
+  assert.notEqual(f.git(f.bare, 'for-each-ref', 'refs/merv/bases/'), '');
+  const next = f.reserve('next');
+  const resumed = await f.manager.prepare(next, f.session(next.id, policy));
+  assert.equal(existsSync(resumed.path), true);
+});
+
 test('unsafe private Git filters refuse checkout creation without executing smudge commands', async (t) => {
   const f = setup(t),
     first = f.reserve('first');

@@ -17,7 +17,6 @@ export interface LaunchPlatform {
 }
 export interface PendingLaunchRequest {
   platform: LaunchPlatform;
-  hardDeadlineSeconds?: number;
   requestId: string;
   secret: string;
 }
@@ -37,7 +36,7 @@ export interface LaunchRecord {
 export interface LedgerBinding {
   baseUrl: string;
   sourceId: string;
-  projectId?: string;
+  projectId: string;
 }
 type Row = Record<string, string | number | null>;
 
@@ -94,14 +93,9 @@ export function launchRecord(row: Row): LaunchRecord {
     runDirectory: String(row.run_directory),
   };
 }
+const limits = { depth: 32, nodes: 524288, bytes: 524288, keys: 'any', strings: 'json' } as const;
 function safeData<T>(value: T): T {
-  const detached = plain<T>(value, 'invalid_runner_metadata', {
-    depth: 32,
-    nodes: 524288,
-    bytes: 524288,
-    keys: 'any',
-    strings: 'json',
-  });
+  const detached = plain<T>(value, 'invalid_runner_metadata', limits);
   const encoded = JSON.stringify(detached, (key, item: unknown) => {
     if (
       /^(token|secret|authorization|password|bearer|env|sourceToken|sessionToken|__proto__|constructor|prototype)$/i.test(
@@ -113,7 +107,7 @@ function safeData<T>(value: T): T {
       throw new Error('Credentials must not be persisted in runner metadata');
     return item;
   });
-  if (Buffer.byteLength(encoded) > 524288) throw new Error('Runner metadata is too large');
+  if (Buffer.byteLength(encoded) > limits.bytes) throw new Error('Runner metadata is too large');
   return detached;
 }
 export const terminalLaunch = (record: LaunchRecord): boolean =>
@@ -186,7 +180,7 @@ export class LocalLedger {
     const binding = JSON.stringify({
       baseUrl: url.toString().replace(/\/$/, ''),
       sourceId: options.binding.sourceId,
-      projectId: options.binding.projectId ?? null,
+      projectId: options.binding.projectId,
     });
     try {
       this.db.exec('BEGIN IMMEDIATE');
@@ -233,14 +227,11 @@ export class LocalLedger {
     };
   }
 
-  request(
-    platform: LaunchPlatform,
-    input: { hardDeadlineSeconds?: number } = {},
-  ): PendingLaunchRequest {
-    ({ platform, input } = safeData({ platform, input }));
+  request(platform: LaunchPlatform): PendingLaunchRequest {
+    platform = safeData(platform);
     if (!platform.name || platform.name.length > 200 || !platform.harness)
       throw new Error('Invalid runner platform');
-    const encoded = JSON.stringify({ platform, ...input });
+    const encoded = JSON.stringify({ platform });
     this.db
       .prepare('INSERT OR IGNORE INTO launch_requests VALUES(?,?,?)')
       .run(platform.name, randomUUID(), encoded);
@@ -272,9 +263,6 @@ export class LocalLedger {
   /** Only the private machine key is persisted; bearer values are derived in memory. */
   sessionSecret(requestId: string): string {
     return `ms_${this.mac(`session:${requestId}`)}`;
-  }
-  requestSecret(requestId: string): string {
-    return this.sessionSecret(requestId);
   }
   ipcToken(id: string): string {
     return this.mac(`ipc:${id}`);
@@ -384,7 +372,13 @@ export class LocalLedger {
     try {
       const record = this.get(id);
       if (!record) throw new Error('Unknown launch');
-      const encoded = JSON.stringify(safeData({ ...record.metadata, ...patch }));
+      // The patch was scanned above, as the stored metadata was when it was saved. Only the
+      // merged object's bounds are new.
+      const encoded = JSON.stringify(
+        plain({ ...record.metadata, ...patch }, 'invalid_runner_metadata', limits),
+      );
+      if (Buffer.byteLength(encoded) > limits.bytes)
+        throw new Error('Runner metadata is too large');
       this.db
         .prepare('UPDATE launches SET metadata_json=?,updated_at=? WHERE id=?')
         .run(encoded, Date.now(), id);

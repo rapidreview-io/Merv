@@ -40,7 +40,7 @@ async function boundedText(response: Response, limit: number): Promise<string> {
 }
 
 /** The one origin this plugin may call, taken from the operator's environment. */
-export function sandboxOrigin(value: unknown): string {
+function sandboxOrigin(value: unknown): string {
   let url: URL | undefined;
   try {
     url = new URL(String(value));
@@ -96,7 +96,7 @@ export class SandboxClient {
   readonly #storageOrigins: readonly string[];
   readonly #consumers = new Map<string, string>();
 
-  constructor(origin: string, timeoutMs = 15_000, storageOrigins: readonly string[] = []) {
+  constructor(origin: unknown, timeoutMs = 15_000, storageOrigins: readonly string[] = []) {
     this.#origin = sandboxOrigin(origin);
     this.#timeoutMs = timeoutMs;
     this.#storageOrigins = storageOrigins.map((entry) => sandboxOrigin(entry));

@@ -37,7 +37,7 @@ import {
   validateProfile,
   type RunnerProfile,
 } from './profiles.js';
-import type { Runner, RunnerConfig, RunnerSnapshot } from './types.js';
+import type { Runner, RunnerSnapshot } from './types.js';
 export type * from './types.js';
 
 /** Optional Git command capability; ordinary workspace drivers only own their lifecycle. */
@@ -53,6 +53,7 @@ function commits(driver: WorkspaceDriver): driver is CommitDriver {
   );
 }
 
+/** Local machine configuration. Remote settings can tune profiles, never replace executables. */
 const configSchema = z
   .object({
     directory: z.string().min(1),
@@ -77,7 +78,9 @@ const configSchema = z
           ].includes(name),
       ),
     profiles: z.array(z.unknown()).max(32),
+    /** CLI composition: omit for the existing Code driver, or [] for workspace-free research. */
     workspaceDrivers: z.array(z.literal('code')).max(1).optional(),
+    /** A local source repository; the runner creates and owns its private Git copy. */
     workspace: z
       .union([
         z.object({ github: z.literal(true) }).strict(),
@@ -101,6 +104,9 @@ const configSchema = z
     requestTimeoutMs: z.number().int().min(100).max(30_000).optional(),
   })
   .strict();
+export type RunnerConfig = Omit<z.infer<typeof configSchema>, 'profiles'> & {
+  profiles: RunnerProfile[];
+};
 export function validateRunnerConfig(input: unknown): RunnerConfig {
   const parsed = configSchema.safeParse(input);
   check(
@@ -118,7 +124,6 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
 }
 const liveSession = (session: Session) =>
   session.status === 'offered' || session.status === 'active';
-const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const platformOf = (profile: RunnerProfile): RunnerPlatform => ({
   name: profile.name,
   harness: profile.harness,
@@ -301,14 +306,14 @@ export class MachineRunner implements Runner {
     const workspace = this.driverFor(record).get(record.id);
     return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
   }
+  /** The ledger detaches and bounds the patch; only the source bearer is known here. */
   private save(id: string, patch: Record<string, unknown>): LaunchRecord {
-    const copy = plain(patch);
     check(
-      !JSON.stringify(copy).includes(this.sourceBearer),
+      !JSON.stringify(patch).includes(this.sourceBearer),
       'unsafe_runner_metadata',
       'Source credential cannot be retained in launch metadata',
     );
-    return this.ledger.updateMetadata(id, copy as LaunchMetadata);
+    return this.ledger.updateMetadata(id, patch as LaunchMetadata);
   }
   private async advertise(): Promise<void> {
     const heartbeat = () =>
@@ -450,7 +455,7 @@ export class MachineRunner implements Runner {
         id,
         sessionId: session.id,
         deadline: this.deadline(session),
-        metadata: plain({
+        metadata: {
           session,
           profile,
           platform: profile.name,
@@ -458,7 +463,7 @@ export class MachineRunner implements Runner {
           releasePending: false,
           attached: false,
           ...(driver === undefined ? {} : { workspaceDriver: driver }),
-        }) as unknown as LaunchMetadata,
+        } as unknown as LaunchMetadata,
       });
       if (session.status === 'active') this.ledger.markUncertain(id);
     }
@@ -480,15 +485,9 @@ export class MachineRunner implements Runner {
     try {
       session = await this.client.get(record.sessionId, this.ledger.runnerId);
     } catch (error) {
-      if (error instanceof RunnerControlError && [401, 403, 404, 409].includes(error.status)) {
-        const stopped = await this.host.stop(record.id);
-        if (terminalLaunch(stopped)) await this.captureWorkspace(stopped);
-        this.save(record.id, { releasePending: true, remoteRefusal: error.code });
-      } else if (record.deadline <= this.clock()) {
-        const stopped = await this.host.stop(record.id);
-        if (terminalLaunch(stopped)) await this.captureWorkspace(stopped);
-        this.save(record.id, { releasePending: true });
-      }
+      if (error instanceof RunnerControlError && [401, 403, 404, 409].includes(error.status))
+        await this.halt(record.id, { remoteRefusal: error.code });
+      else if (record.deadline <= this.clock()) await this.halt(record.id);
       throw error;
     }
     record = this.save(record.id, {
@@ -722,13 +721,15 @@ export class MachineRunner implements Runner {
     }
     this.save(record.id, { usageReported: true });
   }
+  /** Stop a launch, capture what an ended one left, and owe the server its release. */
+  private async halt(id: string, patch: Record<string, unknown> = {}): Promise<void> {
+    const stopped = await this.host.stop(id);
+    if (terminalLaunch(stopped)) await this.captureWorkspace(stopped);
+    this.save(id, { releasePending: true, ...patch });
+  }
   private async enforceDeadlines(): Promise<void> {
     for (const record of this.ledger.list())
-      if (!terminalLaunch(record) && record.deadline <= this.clock()) {
-        const stopped = await this.host.stop(record.id);
-        if (terminalLaunch(stopped)) await this.captureWorkspace(stopped);
-        this.save(record.id, { releasePending: true });
-      }
+      if (!terminalLaunch(record) && record.deadline <= this.clock()) await this.halt(record.id);
   }
   private async stopOwned(): Promise<void> {
     await Promise.all(
@@ -737,9 +738,7 @@ export class MachineRunner implements Runner {
         .filter((record) => !terminalLaunch(record))
         .map(async (record) => {
           try {
-            const stopped = await this.host.stop(record.id);
-            if (terminalLaunch(stopped)) await this.captureWorkspace(stopped);
-            this.save(record.id, { releasePending: true });
+            await this.halt(record.id);
           } catch {
             this.lastError = 'local_stop_unconfirmed';
           }
@@ -866,15 +865,7 @@ export class MachineRunner implements Runner {
     if (this.timer) clearInterval(this.timer);
     return (this.stopPromise = (async () => {
       // A failed lock acquisition never grants authority over another controller's children.
-      if (!this.started) {
-        this.finalLaunches = this.summaries();
-        this.finalPendingRequests = this.ledger.pendingRequests().length;
-        this.disposeDrivers();
-        this.ledger.close();
-        this.stopped = true;
-        this.state = 'stopped';
-        return;
-      }
+      if (!this.started) return this.finalize();
       await this.current;
       await this.stopOwned();
       for (const record of this.ledger.list())
@@ -886,14 +877,18 @@ export class MachineRunner implements Runner {
             /* Persisted cleanup remains retryable on restart. */
           }
         }
-      this.finalLaunches = this.summaries();
-      this.finalPendingRequests = this.ledger.pendingRequests().length;
-      this.disposeDrivers();
-      this.unlock?.();
-      this.ledger.close();
-      this.stopped = true;
-      this.state = 'stopped';
+      this.finalize();
     })());
+  }
+  /** Keep the last snapshot, then close everything; a runner that never started holds no lock. */
+  private finalize(): void {
+    this.finalLaunches = this.summaries();
+    this.finalPendingRequests = this.ledger.pendingRequests().length;
+    this.disposeDrivers();
+    this.unlock?.();
+    this.ledger.close();
+    this.stopped = true;
+    this.state = 'stopped';
   }
 }
 
