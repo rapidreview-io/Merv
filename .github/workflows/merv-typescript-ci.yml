@@ -1,0 +1,97 @@
+name: Verify merv-typescript
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - merv-typescript/**
+      - .github/workflows/merv-typescript-ci.yml
+  pull_request:
+    paths:
+      - merv-typescript/**
+      - .github/workflows/merv-typescript-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merv-ts-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: merv-typescript
+
+jobs:
+  verify:
+    name: verify (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - sqlite
+          - postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: merv-typescript/.nvmrc
+          cache: npm
+          cache-dependency-path: merv-typescript/package-lock.json
+
+      # Code and the test fixtures run Git with a fixed PATH of /usr/bin:/bin and
+      # refuse anything older than 2.38 (packages/code/src/git.ts).
+      - name: Check the installed Git
+        run: /usr/bin/git --version
+
+      - name: Install the committed lockfile
+        run: npm ci
+
+      - name: Typecheck the server
+        run: npm run typecheck
+
+      - name: Typecheck the browser layer
+        run: npm run typecheck:ui
+
+      - name: Check formatting
+        run: npx prettier --check packages src tests
+
+      # Each test creates its own schema, so the role owns the database; the suite
+      # opens far more than the default 100 connections.
+      - name: Start PostgreSQL
+        if: matrix.backend == 'postgres'
+        run: |
+          set -euo pipefail
+          docker run --detach --name merv-postgres \
+            --env POSTGRES_USER=merv \
+            --env POSTGRES_PASSWORD=merv \
+            --env POSTGRES_DB=merv \
+            --publish 5432:5432 \
+            postgres:17 \
+            -c max_connections=300 \
+            -c fsync=off
+          for _ in $(seq 60); do
+            if docker exec merv-postgres pg_isready --host 127.0.0.1 --username merv --dbname merv --quiet; then
+              docker exec merv-postgres psql --username merv --dbname merv --command 'SHOW max_connections'
+              url=postgres://merv:merv@localhost:5432/merv
+              echo "MERV_TEST_POSTGRES_URL=$url" >> "$GITHUB_ENV"
+              echo "MERV_TEST_POSTGRES_DSN=$url" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs merv-postgres
+          echo 'PostgreSQL did not accept connections' >&2
+          exit 1
+
+      - name: Run the test suite
+        run: npm test
+
+      - name: Build
+        if: matrix.backend == 'sqlite'
+        run: npm run build
