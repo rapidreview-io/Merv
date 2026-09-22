@@ -168,7 +168,7 @@
     {
       "name": "consolidation",
       "version": 5,
-      "fingerprint": "28ac1545cf3fc2812ddbc64b350c6f30e03cd03b743f8be2a6c59ee9c34a6814",
+      "fingerprint": "136ac52d4fdfdfd017db956dff15c69574e25785f0930f9de3b17118164fca52",
       "published": false
     }
   ],
@@ -741,14 +741,21 @@
       "workflow": "consolidation",
       "version": 5,
       "state": "consolidating",
-      "fingerprint": "352cf88d6b0d91732b3c9cb432fed490e31d52b3be964766e1e0f2cf4a132b13",
+      "fingerprint": "fbfc5567b9c33b55bd228453cd5c47386001a768759efce8f489709a176575b6",
       "published": false
     },
     {
       "workflow": "consolidation",
       "version": 5,
       "state": "consolidation_review",
-      "fingerprint": "72a42eb3bed47b7a29b997322226f002a97e5c0e4f503185fc8c07ff6a0a65f6",
+      "fingerprint": "be479c41735fe107fbfee8534b0629489eccf1d695e7966255714a3f0f56207f",
+      "published": false
+    },
+    {
+      "workflow": "consolidation",
+      "version": 5,
+      "state": "deciding",
+      "fingerprint": "72260806c45e7f09e90cf111fec44ad33eb79ae7bf2edb018c534b219458a77e",
       "published": false
     }
   ],
@@ -1116,13 +1123,19 @@
     {
       "type": "consolidation.consolidating",
       "version": 3,
-      "hash": "e1470e6a0058c900e9d5058c5c19d6e956f5d2075add59a02f1cb4b593770a33",
+      "hash": "65a73d3e573c9bed3a3bb79695c63110d61e6922c42bed8e8f8627039f38e185",
       "published": false
     },
     {
       "type": "consolidation.consolidation_review",
       "version": 3,
       "hash": "6621eadec1a84a3a12bbf3f8f766f825752c22cc821a66b2b0d0b98943beeeed",
+      "published": false
+    },
+    {
+      "type": "consolidation.deciding",
+      "version": 1,
+      "hash": "756824d3a5e0cc05af3b39149c6263471a6c6921c9a7eddedf93126bca62f6e3",
       "published": false
     }
   ]

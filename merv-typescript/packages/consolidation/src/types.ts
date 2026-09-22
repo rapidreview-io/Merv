@@ -24,12 +24,19 @@ export interface ConsolidationCreate {
   /** The decision scope selected by the originating workflow. */
   experimentIds?: string[];
   name: string;
-  /** Explicit opt-in while version 5 is unreleased; default routing remains unchanged. */
+  /** Explicit version 5 requires hosted history; Git creation otherwise routes through Code. */
   version?: 5;
   /** Tasks produced by the cycle, including those no selected experiment depends on. */
   taskIds?: string[];
   workspace?: 'none' | 'git';
   dependsOn?: string[];
+  requestId: string;
+}
+export interface ConsolidationDecide {
+  consolidationId: string;
+  expectedRevision: number;
+  decisions: CodeCandidateDecision[];
+  reconciliations?: CodeReconciliation[];
   requestId: string;
 }
 export interface ConsolidationSubmit {
@@ -75,6 +82,7 @@ export interface ConsolidationRecord {
   experimentIds: string[];
   taskIds?: string[];
   candidates?: CodeCandidateSet;
+  manifest?: CodeDecisionManifest;
   workflow: WorkflowSnapshot;
   reviewId: string | null;
   submissions: ConsolidationSubmission[];
@@ -96,6 +104,7 @@ export interface Consolidation {
   ): Promise<ConsolidationRecord>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<ConsolidationRecord>;
   list(caller: Caller, tx?: Transaction): Promise<ConsolidationRecord[]>;
+  decide(caller: Caller, input: ConsolidationDecide): Promise<ConsolidationRecord>;
   submit(
     caller: Caller,
     input: ConsolidationSubmit,

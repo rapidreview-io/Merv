@@ -166,11 +166,13 @@ export interface CodeCaptures {
  * the owner contract: no tool route reaches them, and the owner has already checked authority.
  */
 export interface CodeUnits {
+  /** Owners may freeze a frontier instead of deriving from every scheduling prerequisite. */
   declareUnit(
     caller: Caller,
     unitId: string,
     tx: Transaction,
     baseReference?: string,
+    derivationInputs?: string[],
   ): Promise<CodeUnit>;
   acceptUnit(
     caller: Caller,

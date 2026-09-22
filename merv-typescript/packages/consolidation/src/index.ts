@@ -4,6 +4,7 @@ import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
+  MervError,
   digest,
   inTransaction,
   newId,
@@ -25,13 +26,15 @@ import {
   type WorkflowDefinition,
   type WorkflowExecutionPolicy,
   type WorkflowExecutionBinding,
+  type WorkflowExecutionReferences,
   type WorkflowLease,
   type Workflows,
 } from '@merv/contracts';
-import type { Code, CodeCandidateDecision, CodeDecisionManifest } from '@merv/code/types';
+import type { Code, CodeCandidateDecision } from '@merv/code/types';
 import type {
   Consolidation,
   ConsolidationCreate,
+  ConsolidationDecide,
   ConsolidationRecord,
   ConsolidationEnd,
   ConsolidationSubmission,
@@ -40,6 +43,7 @@ import type {
 import {
   CONSOLIDATION_LIMITS,
   createSchema,
+  decideSchema,
   endChoiceSchema,
   endSchema,
   getSchema,
@@ -83,7 +87,7 @@ const endable: WorkflowDefinition = {
 };
 /** The versions that can be ended; older instances keep the workflow they were started on. */
 const ENDABLE = new Set([3, 4, 5]);
-/** Version 5 retains the Git workspace contract until its frontier-base preparation ships. */
+/** Published Git versions retain their legacy checkout contracts. */
 const GIT = new Set([2, 4, 5]);
 const criteria = [
   'Every frozen experiment has an explicit retain, adapt, drop or no-code decision justified by the pinned source artifacts and evidence.',
@@ -96,9 +100,22 @@ const instructions = {
   consolidation_review:
     'Independently review the pinned consolidation report, every experiment decision, and the exact sealed code proposal when present. Verify tests and retained evidence. Never change or re-review the pinned source artifacts itself. Submit review.submit: pass completes consolidation; needs_changes or fail returns only to consolidating. Stop after the verdict.',
 };
+const candidateDefinition: WorkflowDefinition = {
+  ...endable,
+  initial: 'deciding',
+  states: ['deciding', ...endable.states],
+  edges: [
+    { from: 'deciding', action: 'decide', to: 'consolidating' },
+    { from: 'deciding', action: 'abandon', to: 'abandoned' },
+    { from: 'deciding', action: 'mark_failed', to: 'failed' },
+    ...endable.edges,
+  ],
+};
 const candidateInstructions = {
+  deciding:
+    'Decide on the frozen accepted candidates before a checkout is prepared. Supply one retain, drop, adapt or no_code decision per unitId to consolidation.decide. Adaptations name a retained accepted replacement; reconcile carried dropped ancestors explicitly. These decisions fix the branch inputs and cannot change. Stop after deciding.',
   consolidating:
-    'Consolidate the pinned sources and frozen accepted units. Supply one retain, drop, adapt or no_code decision per candidate unitId. An adaptation names a retained accepted replacementUnitId already in the frozen set. A carried dropped ancestor requires a reconciliations entry naming unitId, retainedUnitId and rationale. Dropping work on the frozen integration base leaves its effects; removal requires a corrective change. Retain a report and evidence, create a successful code.commit and submit. Stop after submission.',
+    'Consolidate the pinned sources in the prepared checkout of the retained frontier. Decisions and reconciliations are fixed in the manifest; repeat them exactly when submitting. Dropping work already on main leaves its effects; removal requires a corrective change. Retain a report and evidence, create a successful code.commit and submit. Stop after submission.',
   consolidation_review:
     'Independently verify the exact sealed result, frozen candidate-set and decision-manifest hashes, integration base, head, tree and evidence. Review every ancestry conflict and its explicit reconciliation; a drop already on main does not remove effects. Submit review.submit: pass completes consolidation with publication outstanding; other verdicts return to consolidating. Stop after the verdict.',
 };
@@ -107,12 +124,13 @@ const candidateCriteria = [
   'Every carried ancestor conflict has an explicit reconciliation supported by the reviewed result and evidence; drops already on main are not represented as removals.',
   'The exact pinned candidate set, decision manifest, integration base, submitted head and tree, report and tests support the combined result and its limitations.',
 ];
-type ActiveState = keyof typeof instructions;
+type ActiveState = keyof typeof candidateInstructions;
 interface Row {
   id: string;
   record: string;
   review_id: string | null;
   completion: string | null;
+  decisions: string | null;
 }
 interface LeaseRow {
   id: string;
@@ -166,20 +184,28 @@ CREATE TRIGGER consolidation_lease_immutable BEFORE UPDATE OF id,project_id,inst
 CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_leases BEGIN SELECT RAISE(ABORT,'Consolidation leases are retained'); END;
 `,
         },
+        {
+          version: 2,
+          postgres: postgresMigrations[2],
+          sql: `ALTER TABLE consolidations ADD COLUMN decisions TEXT;
+CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidations WHEN OLD.decisions IS NOT NULL AND NEW.decisions IS NOT OLD.decisions BEGIN SELECT RAISE(ABORT,'Consolidation decisions are immutable'); END;`,
+        },
       ]);
       try {
         for (const recipeVersion of [2, 3])
-          for (const state of Object.keys(instructions) as ActiveState[]) {
+          for (const state of Object.keys(
+            recipeVersion === 3 ? candidateInstructions : instructions,
+          ) as ActiveState[]) {
             const guidance = recipeVersion === 3 ? candidateInstructions : instructions;
             this.contexts.set(
               `${recipeVersion}:${state}`,
               await contextBuilder.register({
                 name: `consolidation.${state}`,
-                version: recipeVersion,
-                kind: state === 'consolidating' ? 'work' : 'review',
+                version: state === 'deciding' ? 1 : recipeVersion,
+                kind: state === 'consolidation_review' ? 'review' : 'work',
                 recipe: {
-                  instructions: guidance[state],
-                  outputInstructions: guidance[state],
+                  instructions: (guidance as Record<ActiveState, string>)[state],
+                  outputInstructions: (guidance as Record<ActiveState, string>)[state],
                   maxChars: 200000,
                   sections: [
                     {
@@ -205,7 +231,14 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           this.handles.set(
             version,
             await workflows.register(
-              { ...(ENDABLE.has(version) ? endable : definition), version },
+              {
+                ...(version === 5
+                  ? candidateDefinition
+                  : ENDABLE.has(version)
+                    ? endable
+                    : definition),
+                version,
+              },
               this.policy(version),
             ),
           );
@@ -241,7 +274,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     return this.code;
   }
   private guidance(version: number) {
-    return version === 5 ? candidateInstructions : instructions;
+    return (version === 5 ? candidateInstructions : instructions) as Record<ActiveState, string>;
   }
   private capture(caller: Caller): Caller {
     check(!this.closed, 'consolidation_unavailable', 'Consolidation is unavailable', 503);
@@ -285,6 +318,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       const row = await this.row(caller, id, tx);
       return {
         ...this.stored(row.record),
+        ...(row.decisions ? { manifest: JSON.parse(row.decisions) } : {}),
         workflow: await this.workflows.get(caller, id, tx),
         reviewId: row.review_id,
         completion: row.completion ? JSON.parse(row.completion) : null,
@@ -341,12 +375,13 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             `${id} is not an experiment`,
             404,
           );
-        const version = input.version ?? (input.workspace === 'git' ? 4 : 3);
-        check(
-          version === 5 || input.taskIds === undefined,
-          'invalid_consolidation',
-          'Task candidate scope requires version 5',
-        );
+        const version =
+          input.version ??
+          (input.workspace === 'git'
+            ? this.code && (await this.code.hosted(caller, tx))
+              ? 5
+              : 4
+            : 3);
         check(
           version !== 5 || input.workspace === 'git',
           'invalid_consolidation',
@@ -466,7 +501,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
   private async producer(caller: Caller, record: ConsolidationRecord, tx: Transaction) {
     await this.scope.require(caller, 'write', tx);
     check(
-      record.workflow.state === 'consolidating',
+      ['deciding', 'consolidating'].includes(record.workflow.state),
       'consolidation_not_writable',
       'Consolidation is awaiting review or complete',
       409,
@@ -483,6 +518,15 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     }
     await this.workflows.checkDependencies(caller, record.id, tx);
     if (record.workspace === 'git') this.requireCode();
+    if (record.workflow.version === 5 && record.workflow.state === 'consolidating') {
+      const base = await this.requireCode().baseStatus(caller, record.id, tx);
+      if (base.status === 'blocked')
+        throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
+      if (!caller.session) {
+        const writer = await this.requireCode().writerStatus(caller, record.id, tx);
+        if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
+      }
+    }
   }
   private async review(
     caller: Caller,
@@ -511,7 +555,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
   private async admit(context: WorkflowCheckContext): Promise<ConsolidationRecord> {
     const record = await this.get(context.caller, context.snapshot.id, context.tx);
     this.revision(record, context.snapshot.revision);
-    if (context.snapshot.state === 'consolidating')
+    if (context.snapshot.state !== 'consolidation_review')
       await this.producer(context.caller, record, context.tx);
     else {
       await this.scope.require(context.caller, 'review', context.tx);
@@ -566,7 +610,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         workspace: record.workspace,
         sources: record.sources,
         experimentIds: record.experimentIds,
-        ...(record.candidates ? { candidates: record.candidates, taskIds: record.taskIds } : {}),
+        ...(record.candidates
+          ? { candidates: record.candidates, taskIds: record.taskIds, manifest: record.manifest }
+          : {}),
         submission: current ?? null,
         review,
       }),
@@ -593,10 +639,16 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     record: ConsolidationRecord,
     input: ConsolidationSubmit,
     tx: Transaction,
-    manifest?: CodeDecisionManifest,
   ) {
+    const manifest = record.manifest;
     await this.producer(caller, record, tx);
     this.revision(record, input.expectedRevision);
+    check(
+      record.workflow.state === 'consolidating',
+      'consolidation_not_writable',
+      'Decide before submitting work',
+      409,
+    );
     if (record.workflow.version === 5) {
       check(
         record.candidates && input.decisions.every((d) => 'unitId' in d),
@@ -604,6 +656,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         'Version 5 requires decisions by frozen candidate unitId',
         409,
       );
+      check(manifest, 'consolidation_decisions', 'Decisions must be frozen before work', 409);
       await this.requireCode().verifyCandidates(
         caller,
         record.candidates,
@@ -717,16 +770,11 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     });
   }
 
-  async submit(
-    caller: Caller,
-    value: ConsolidationSubmit,
-    transaction?: Transaction,
-  ): Promise<ConsolidationRecord> {
+  async decide(caller: Caller, value: ConsolidationDecide): Promise<ConsolidationRecord> {
     caller = this.capture(caller);
-    const input = parse(submitSchema, value);
-    const prepared = await inTransaction(this.state, transaction, async (tx) => {
+    const input = parse(decideSchema, value);
+    const prepared = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      // Replays need neither the repository nor a second ancestry inspection.
       if (
         await tx.get(
           'SELECT 1 FROM consolidation_commands WHERE project_id=? AND actor_id=? AND request_id=?',
@@ -734,35 +782,88 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           caller.actorId,
           input.requestId,
         )
-      ) {
+      )
         return {
-          replay: await this.command<ConsolidationRecord>(caller, 'submit', input, tx, () => {
+          replay: await this.command<ConsolidationRecord>(caller, 'decide', input, tx, () => {
             throw new Error('The existing command must replay');
           }),
         };
-      }
       const record = await this.get(caller, input.consolidationId, tx);
-      if (record.workflow.version === 5) {
-        check(
-          !transaction,
-          'consolidation_preparation_required',
-          'Version 5 submission prepares ancestry before opening its own transaction',
-          409,
-        );
-        await this.validateSubmission(caller, record, input, tx);
-      }
+      await this.checkDecisions(caller, record, input, tx);
       return { record };
     });
     if ('replay' in prepared) return prepared.replay!;
-    const preparedManifest =
-      prepared.record.workflow.version === 5
-        ? await this.requireCode().inspectCandidates(
-            caller,
-            prepared.record.candidates!,
-            input.decisions as CodeCandidateDecision[],
-            input.reconciliations ?? [],
-          )
-        : undefined;
+    const manifest = await this.requireCode().inspectCandidates(
+      caller,
+      prepared.record.candidates!,
+      input.decisions,
+      input.reconciliations,
+    );
+    return await this.state.transaction(async (tx) =>
+      this.command(caller, 'decide', input, tx, async () => {
+        const record = await this.get(caller, input.consolidationId, tx);
+        await this.checkDecisions(caller, record, input, tx);
+        await this.requireCode().verifyCandidates(
+          caller,
+          record.candidates!,
+          input.decisions,
+          input.reconciliations,
+          manifest,
+          tx,
+        );
+        await this.handles.get(5)!.transition(
+          caller,
+          {
+            instanceId: record.id,
+            expectedRevision: input.expectedRevision,
+            action: 'decide',
+            input: own(input),
+            requestId: `consolidation:decide:${caller.actorId}:${input.requestId}`,
+          },
+          tx,
+        );
+        await tx.run(
+          'UPDATE consolidations SET decisions=? WHERE id=?',
+          JSON.stringify(manifest),
+          record.id,
+        );
+        await this.requireCode().declareUnit(caller, record.id, tx, undefined, manifest.frontier);
+        await this.event(caller, 'decided', record.id, { manifestHash: manifest.hash }, tx);
+        return await this.get(caller, record.id, tx);
+      }),
+    );
+  }
+  private async checkDecisions(
+    caller: Caller,
+    record: ConsolidationRecord,
+    input: ConsolidationDecide,
+    tx: Transaction,
+  ) {
+    await this.producer(caller, record, tx);
+    this.revision(record, input.expectedRevision);
+    check(
+      record.workflow.version === 5 && record.workflow.state === 'deciding',
+      'consolidation_decisions_frozen',
+      'Decisions are submitted once before consolidation work',
+      409,
+    );
+    await this.requireCode().verifyCandidates(
+      caller,
+      record.candidates!,
+      input.decisions,
+      input.reconciliations ?? [],
+      undefined,
+      tx,
+    );
+  }
+
+  async submit(
+    caller: Caller,
+    value: ConsolidationSubmit,
+    transaction?: Transaction,
+  ): Promise<ConsolidationRecord> {
+    caller = this.capture(caller);
+    const input = parse(submitSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'submit', input, tx, async () => {
@@ -772,7 +873,6 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           record,
           input,
           tx,
-          preparedManifest,
         );
         const ids = [...new Set([report.id, ...evidence.map((a) => a.id)])];
         const authored = new Set(
@@ -907,6 +1007,32 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     );
     if (caller.session) await this.lease(caller, record, tx);
     await this.reviews.checkSubmit(caller, review.id, input, tx);
+    if (record.workflow.version === 5 && input.verdict === 'pass') {
+      check(
+        caller.session,
+        'consolidation_commit_unfetched',
+        'A leased reviewer must inspect the submitted checkout before passing',
+        409,
+      );
+      const lease = await this.lease(caller, record, tx);
+      check(
+        lease.review_id === review.id && lease.claim_id === review.claimId,
+        'stale_claim',
+        'The current review lease is required',
+        409,
+      );
+      const capture = await this.requireCode().capture(
+        caller,
+        { kind: 'session-final', sessionId: caller.session.id },
+        tx,
+      );
+      check(
+        capture.attachedBaseOid === record.submissions.at(-1)!.proposal!.receipt.headOid,
+        'consolidation_commit_unfetched',
+        'The reviewer must attach the exact submitted commit',
+        409,
+      );
+    }
   }
   private async submitReview(
     caller: Caller,
@@ -925,7 +1051,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       const record = await this.get(caller, review.subjectId, tx);
       await this.checkReview(caller, record, input, tx);
       const action = input.verdict === 'pass' ? 'approve' : 'revise';
-      await this.handles.get(record.workflow.version)!.transition(
+      const moved = await this.handles.get(record.workflow.version)!.transition(
         caller,
         {
           instanceId: record.id,
@@ -945,6 +1071,19 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           submission.proposal,
           review.id,
           input.verdict,
+          tx,
+        );
+      if (action === 'approve' && record.workflow.version === 5)
+        await this.requireCode().acceptUnit(
+          caller,
+          {
+            unitId: record.id,
+            terminalRevision: moved.revision,
+            submissionRef: review.snapshotHash,
+            reviewRef: review.id,
+            codeRef: { kind: 'code-commit', commandId: submission.proposal!.receipt.commandId },
+            reviewSessionId: caller.session!.id,
+          },
           tx,
         );
       if (action === 'approve')
@@ -979,7 +1118,8 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     });
     const reviewing = state === 'consolidation_review';
     // 3 and 4 are 1 and 2 with a way out, so each keeps its partner's environment exactly.
-    const git = GIT.has(version);
+    const git = GIT.has(version) && state !== 'deciding';
+    const driver = version === 5 ? { driver: 'code.v2' } : {};
     return {
       readOnly: reviewing,
       workspace: !git
@@ -990,41 +1130,56 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
               namespace: 'consolidation-reviews',
               base: 'reference:code',
               retain: false,
+              ...driver,
             }
           : {
               mode: 'persistent',
               namespace: 'consolidations',
-              base: 'central',
-              perBase: true,
+              base: version === 5 ? 'reference:base' : 'central',
+              perBase: version !== 5,
               retain: true,
               advancesCentral: false,
+              ...driver,
             },
       tools: [
-        grant('workflow.status_and_next', { instanceId: target('instanceId') }),
+        {
+          name: 'workflow.status_and_next',
+          alternatives: [
+            { instanceId: target('instanceId') },
+            ...(version === 5 ? [{ instanceId: oneOf('dependencies') }] : []),
+          ],
+        },
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('consolidation.get', { consolidationId: target('instanceId') }),
         grant('artifact.get', { artifactId: oneOf('artifacts') }),
         grant('artifact.read', { artifactId: oneOf('artifacts') }),
         grant('review.get', { reviewId: oneOf('reviews') }),
-        ...(reviewing
+        ...(state === 'deciding'
           ? [
-              grant('review.start', { reviewId: reference('reviewId') }),
-              grant('review.submit', {
-                reviewId: reference('reviewId'),
-                claimId: reference('claimId'),
+              grant('consolidation.decide', {
+                consolidationId: target('instanceId'),
                 expectedRevision: target('revision'),
               }),
             ]
-          : [
-              grant('artifact.create'),
-              grant('consolidation.submit', {
-                consolidationId: target('instanceId'),
-                expectedRevision: target('revision'),
-                reportArtifactId: oneOf('artifacts'),
-                evidenceArtifactIds: { kind: 'subset' as const, name: 'artifacts' },
-              }),
-              ...(git ? [grant('code.commit'), grant('code.operation')] : []),
-            ]),
+          : reviewing
+            ? [
+                grant('review.start', { reviewId: reference('reviewId') }),
+                grant('review.submit', {
+                  reviewId: reference('reviewId'),
+                  claimId: reference('claimId'),
+                  expectedRevision: target('revision'),
+                }),
+              ]
+            : [
+                grant('artifact.create'),
+                grant('consolidation.submit', {
+                  consolidationId: target('instanceId'),
+                  expectedRevision: target('revision'),
+                  reportArtifactId: oneOf('artifacts'),
+                  evidenceArtifactIds: { kind: 'subset' as const, name: 'artifacts' },
+                }),
+                ...(git ? [grant('code.commit'), grant('code.operation')] : []),
+              ]),
         ...(ENDABLE.has(version)
           ? [
               grant('consolidation.end', {
@@ -1054,7 +1209,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => {
         check(!context.caller.session, 'forbidden', 'An assigned worker cannot delegate work', 403);
         const record = await this.get(context.caller, context.snapshot.id, context.tx);
-        if (context.snapshot.state === 'consolidating') {
+        if (context.snapshot.state !== 'consolidation_review') {
           await this.producer(context.caller, record, context.tx);
           return 'producer';
         }
@@ -1078,6 +1233,18 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           'Consolidation lease must belong to this worker',
           403,
         );
+        if (record.workflow.version === 5 && context.snapshot.state === 'consolidating') {
+          await this.requireCode().pinBase(
+            context.source,
+            { unitId: record.id, leaseId: context.leaseId },
+            context.tx,
+          );
+          await this.requireCode().reserveWriter(
+            context.source,
+            { unitId: record.id, leaseId: context.leaseId },
+            context.tx,
+          );
+        }
         const review =
           context.snapshot.state === 'consolidation_review'
             ? await this.reviews.start(context.caller, record.reviewId!, context.tx)
@@ -1149,7 +1316,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
               : this.guidance(version)[context.snapshot.state as ActiveState],
         };
       },
-      assignments: (Object.keys(instructions) as ActiveState[]).map((state) => ({
+      assignments: (
+        Object.keys(version === 5 ? candidateInstructions : instructions) as ActiveState[]
+      ).map((state) => ({
         state,
         requiresDependencies: true,
         check: async (context) => {
@@ -1164,7 +1333,13 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
               ? await this.review(context.caller, record, context.tx)
               : null;
           const submission = record.submissions.at(-1);
+          const base: WorkflowExecutionReferences = {};
+          if (version === 5 && state === 'consolidating') {
+            const pin = await this.requireCode().basePin(context.caller, record.id, context.tx);
+            if (pin) base.base = pin.reference;
+          }
           return {
+            ...base,
             artifacts: await this.allowed(context.caller, record, context.tx),
             reviews: [...new Set([...record.submissions.map((s) => s.reviewId)])],
             ...(review ? { reviewId: review.id } : {}),
@@ -1193,7 +1368,12 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             },
             context.tx,
           );
-          const tool = state === 'consolidating' ? 'consolidation.submit' : 'review.submit';
+          const tool =
+            state === 'deciding'
+              ? 'consolidation.decide'
+              : state === 'consolidating'
+                ? 'consolidation.submit'
+                : 'review.submit';
           const review =
             state === 'consolidation_review'
               ? await this.review(context.caller, record, context.tx)
@@ -1203,7 +1383,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
               ? 'Call review.start for the exact current review, then refresh workflow.assignment.'
               : this.guidance(version)[state];
           return {
-            role: state === 'consolidating' ? 'producer' : 'reviewer',
+            role: state === 'consolidation_review' ? 'reviewer' : 'producer',
             label: `${record.name}: ${state}`,
             brief: instruction,
             references: preview.sources.map((a) => ({
@@ -1222,6 +1402,34 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         },
       })),
       actions: [
+        ...(version === 5
+          ? [
+              {
+                name: 'decide',
+                states: ['deciding'],
+                transitions: ['decide'],
+                tool: 'consolidation.decide',
+                instruction: candidateInstructions.deciding,
+                requiresDependencies: true,
+                requiredInput: ['decisions'],
+                arguments: (context: WorkflowCheckContext) => ({
+                  consolidationId: context.snapshot.id,
+                  expectedRevision: context.snapshot.revision,
+                }),
+                check: async (context: WorkflowCheckContext) => {
+                  const record = await this.get(context.caller, context.snapshot.id, context.tx);
+                  await this.producer(context.caller, record, context.tx);
+                  if (context.input)
+                    await this.checkDecisions(
+                      context.caller,
+                      record,
+                      parse(decideSchema, { requestId: 'preflight', ...context.input }),
+                      context.tx,
+                    );
+                },
+              },
+            ]
+          : []),
         {
           name: 'submit',
           states: ['consolidating'],
@@ -1293,7 +1501,10 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           ? [
               {
                 name: 'end',
-                states: ['consolidating', 'consolidation_review'],
+                states:
+                  version === 5
+                    ? ['deciding', 'consolidating', 'consolidation_review']
+                    : ['consolidating', 'consolidation_review'],
                 transitions: ['abandon', 'mark_failed'],
                 // Never the suggested move: ending is what you reach for when the work cannot
                 // go on, and the engine offers it by name when a prerequisite has died.

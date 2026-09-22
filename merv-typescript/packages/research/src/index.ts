@@ -659,7 +659,12 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     record: ResearchRecord,
     checks: BindingChecks,
     tx: Transaction,
-  ): Promise<{ sourceArtifactIds: string[]; experimentIds: string[]; dependsOn: string[] }> {
+  ): Promise<{
+    sourceArtifactIds: string[];
+    experimentIds: string[];
+    taskIds: string[];
+    dependsOn: string[];
+  }> {
     const reflection = await this.use('reflections', checks, (service) =>
       service.approved(caller, record.reflectionId!, tx),
     );
@@ -687,6 +692,9 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         reflection.experimentIds ??
         reflection.corpus?.selection.experiments.map((e) => e.id) ??
         [],
+      taskIds: (await this.workflows.dependencies(caller, record.id, tx)).dependencies
+        .filter((item) => item.workflow === 'task' && item.kind !== 'system')
+        .map((item) => item.id),
       dependsOn: [record.reflectionId!, ...record.consolidationDependencies],
     };
   }

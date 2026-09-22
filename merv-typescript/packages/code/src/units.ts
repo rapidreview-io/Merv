@@ -268,6 +268,9 @@ CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
     WHERE project_id=OLD.project_id AND unit_id=OLD.unit_id AND kind='upload' AND status='prepared' AND phase IN ('admitting','objects_durable','refs_applied')
   )
   BEGIN SELECT RAISE(ABORT,'A writer generation cannot change while an admitted upload is unresolved'); END;
+CREATE TABLE code_unit_frontiers(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,inputs_json TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
+CREATE TRIGGER code_unit_frontiers_no_update BEFORE UPDATE ON code_unit_frontiers BEGIN SELECT RAISE(ABORT,'Unit frontier is immutable'); END;
+CREATE TRIGGER code_unit_frontiers_no_delete BEFORE DELETE ON code_unit_frontiers BEGIN SELECT RAISE(ABORT,'Unit frontier is retained'); END;
 CREATE TABLE code_unit_inputs(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,reference TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
 CREATE TRIGGER code_unit_inputs_no_update BEFORE UPDATE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are immutable'); END;
 CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are retained'); END;
@@ -286,10 +289,12 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     unitId: string,
     tx: Transaction,
     baseReference?: string,
+    derivationInputs?: string[],
   ): Promise<CodeUnit> {
     this.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
+    derivationInputs = derivationInputs && [...derivationInputs];
     await this.scope.require(caller, 'read', tx);
     const relations = await this.workflows.dependencyRelations(caller.projectId, unitId, tx);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
@@ -304,6 +309,16 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         now(),
       );
     if (baseReference !== undefined) {
+      check(
+        !(await tx.get(
+          'SELECT 1 FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
+          caller.projectId,
+          unitId,
+        )),
+        'code_base_conflict',
+        'A declared frontier cannot be replaced by a fixed input',
+        409,
+      );
       check(
         !caller.session && oid.test(baseReference),
         'invalid_base',
@@ -327,6 +342,41 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
           caller.projectId,
           unitId,
           baseReference,
+        );
+    }
+    if (derivationInputs !== undefined) {
+      check(
+        baseReference === undefined,
+        'invalid_base',
+        'A unit has either fixed or derived inputs',
+      );
+      const inputs = [...new Set(derivationInputs)].sort();
+      const existing = await tx.get<{ inputs_json: string }>(
+        'SELECT inputs_json FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
+        caller.projectId,
+        unitId,
+      );
+      check(
+        existing ? existing.inputs_json === canonical(inputs) : !row,
+        'code_base_conflict',
+        'The declared unit frontier cannot change',
+        409,
+      );
+      for (const id of inputs) {
+        const input = await this.relations(tx, caller.projectId, id);
+        check(
+          id !== unitId && input.instance.settled,
+          'invalid_base',
+          'Derivation inputs must be successful units of this project',
+          409,
+        );
+      }
+      if (!existing)
+        await tx.run(
+          'INSERT INTO code_unit_frontiers(project_id,unit_id,inputs_json) VALUES (?,?,?)',
+          caller.projectId,
+          unitId,
+          canonical(inputs),
         );
     }
     // A unit that cannot start is shown from the moment it exists, not from its first poll.
@@ -371,9 +421,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     if (row?.quarantine_base_key)
       return { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] };
     if (row?.base_json) return { status: 'pinned', pin: this.pin(row)! };
-    return this.baseState(
-      await this.derive(tx, caller.projectId, await this.relations(tx, caller.projectId, unitId)),
-    );
+    return this.baseState(await this.derive(tx, caller.projectId, unitId));
   }
 
   /** The pin alone, for an owner's references(): that hook runs on every read and must not derive. */
@@ -426,7 +474,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       );
       return this.pin(existing)!;
     }
-    const derived = await this.derive(tx, caller.projectId, relations);
+    const derived = await this.derive(tx, caller.projectId, unitId);
     if (derived.status !== 'ready') {
       // A dependency that is not settled is refused by Workflows before any lease hook runs;
       // should that ever change, the refusal is still one a poll never counts as a failure.
@@ -855,6 +903,26 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
   ): Promise<WorkflowProviderRelations> {
     const relations = await this.workflows.dependencyRelations(projectId, unitId, tx);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
+    const frontier = await tx.get<{ inputs_json: string }>(
+      'SELECT inputs_json FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
+      projectId,
+      unitId,
+    );
+    if (frontier) {
+      // Scheduling prerequisites still gate the owner; only the frozen frontier contributes code.
+      const inputs = await mapAsync(JSON.parse(frontier.inputs_json) as string[], async (id) => {
+        const input = await this.workflows.dependencyRelations(projectId, id, tx);
+        check(input, 'code_unit_not_found', 'A declared frontier unit is missing', 409);
+        return input.instance;
+      });
+      return {
+        ...relations,
+        dependencies: [
+          ...inputs,
+          ...relations.dependencies.filter((edge) => edge.kind === 'system'),
+        ],
+      };
+    }
     return relations;
   }
 
@@ -867,11 +935,8 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
    * Whether a version declares a workspace is Workflows' persisted fact, so the answer is the
    * same while that dependency's owner is unloaded.
    */
-  private async derive(
-    tx: Transaction,
-    projectId: string,
-    relations: WorkflowProviderRelations,
-  ): Promise<Derived> {
+  private async derive(tx: Transaction, projectId: string, unitId: string): Promise<Derived> {
+    let relations = await this.relations(tx, projectId, unitId);
     relations = {
       ...relations,
       dependencies: relations.dependencies.filter((item) => item.kind !== 'system'),
@@ -1204,7 +1269,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     if (!row || row.base_json !== null || row.acceptance_json !== null) return;
     const relations = await this.workflows.dependencyRelations(projectId, unitId, tx);
     if (!relations || relations.instance.terminal) return;
-    let derived = await this.derive(tx, projectId, relations);
+    let derived = await this.derive(tx, projectId, relations.instance.id);
     // The first unit to wait on a set writes its record and plan; this is a writing path,
     // which a derivation itself never is.
     let prerequisites: string[] = [];
@@ -1220,7 +1285,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       prerequisites = path
         .flatMap((record) => (record.resolutionTaskId ? [record.resolutionTaskId] : []))
         .sort();
-      derived = await this.derive(tx, projectId, relations);
+      derived = await this.derive(tx, projectId, relations.instance.id);
       // A pending task has no automatic work to wake; waking it here would schedule another reconciliation forever.
       if (base.state === 'queued') this.bases.soon(projectId);
     }
@@ -1258,7 +1323,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     )) {
       const relations = await this.workflows.dependencyRelations(projectId, row.unit_id, tx);
       if (!relations || relations.instance.terminal) continue;
-      const derived = await this.derive(tx, projectId, relations);
+      const derived = await this.derive(tx, projectId, relations.instance.id);
       if (
         'merge' in derived &&
         derived.merge &&
@@ -1614,7 +1679,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         : base
           ? { status: 'pinned', pin: base }
           : open && !open.instance.terminal
-            ? this.baseState(await this.derive(tx, row.project_id, open))
+            ? this.baseState(await this.derive(tx, row.project_id, row.unit_id))
             : null,
       acceptance: this.acceptance(row),
       ...(await this.writers.facts(tx, row.project_id, row.unit_id)),

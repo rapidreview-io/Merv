@@ -1,5 +1,18 @@
 /** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
 export const postgresMigrations: Record<number, string> = {
+  2: `
+ALTER TABLE consolidations ADD COLUMN decisions TEXT;
+CREATE FUNCTION consolidation_decisions_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF OLD.decisions IS NOT NULL AND NEW.decisions IS DISTINCT FROM OLD.decisions THEN
+    RAISE EXCEPTION USING MESSAGE = 'Consolidation decisions are immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER consolidation_decisions BEFORE UPDATE OF decisions ON consolidations
+FOR EACH ROW EXECUTE FUNCTION consolidation_decisions_guard();
+`,
   1: `
 CREATE TABLE consolidations (
  _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,id TEXT PRIMARY KEY, project_id TEXT NOT NULL, record TEXT NOT NULL, review_id TEXT, completion TEXT);

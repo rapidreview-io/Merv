@@ -90,8 +90,13 @@ export class CodeService extends CodeCommandService implements Code {
     repositories?: CodeStoreOptions,
   ) {
     super(state, scope, sessions);
-    this.consolidationStore = new CodeConsolidation(state, scope, workflows, sessions, () =>
-      this.publicationClosed ? undefined : this.store?.repositories,
+    this.consolidationStore = new CodeConsolidation(
+      state,
+      scope,
+      workflows,
+      sessions,
+      () => (this.publicationClosed ? undefined : this.store?.repositories),
+      () => this.unitStore?.bases,
     );
     this.storage = state;
     this.baseScope = scope;

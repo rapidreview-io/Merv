@@ -121,7 +121,24 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 63);
+  assert.equal(all.length, 64);
+  const consolidation = all.filter(
+    (migration) => migration.owner === 'packages/consolidation/src/index.ts',
+  );
+  for (const dialect of ['sqlite', 'postgres'] as const) {
+    assert.deepEqual(
+      consolidation.flatMap((migration) =>
+        [...migration[dialect].matchAll(/CREATE TABLE (\w+)/g)].map((match) => match[1]),
+      ),
+      [
+        'consolidations',
+        'consolidation_submissions',
+        'consolidation_commands',
+        'consolidation_leases',
+      ],
+    );
+    assert.match(consolidation[1][dialect], /ALTER TABLE consolidations ADD COLUMN decisions TEXT/);
+  }
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

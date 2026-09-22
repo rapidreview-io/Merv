@@ -18,6 +18,7 @@ import type {
 } from './types.js';
 import type { CodeRepositories } from './store/repository.js';
 import { unitContributors } from './provenance.js';
+import type { CodeBaseService } from './bases.js';
 
 interface Accepted {
   unit_id: string;
@@ -39,6 +40,7 @@ export class CodeConsolidation {
     private readonly workflows: Workflows,
     private readonly sessions: Pick<Sessions, 'contributors'>,
     private readonly repositories: () => CodeRepositories | undefined,
+    private readonly bases: () => CodeBaseService | undefined = () => undefined,
   ) {}
 
   private acceptance(row: Accepted): Acceptance {
@@ -344,7 +346,7 @@ export class CodeConsolidation {
     });
     const { selected, candidates } = this.decisions(frozen, decisions);
     // Acceptances, the frozen set and commits are immutable, so a walk performed before
-    // the submission transaction remains valid when that transaction checks its proof.
+    // the owner's committing transaction remains valid when that transaction checks its proof.
     const contains = await this.ancestry(
       caller.projectId,
       frozen.integrationBase,
@@ -464,6 +466,7 @@ export class CodeConsolidation {
     await this.scope.require(caller, 'read', tx);
     const { selected } = this.decisions(frozen, decisions);
     if (!manifest) return;
+    await this.validate(caller.projectId, frozen, tx);
     const { hash, ...body } = manifest;
     const reconciliation = this.reconciliations(reconciliations, body.conflicts);
     check(
@@ -565,6 +568,29 @@ export class CodeConsolidation {
       'The retained contributors no longer match the prepared manifest',
       409,
     );
+    const units = new Map<string, number | null>([[subjectId, null]]);
+    const unit = await tx.get<{ base_json: string | null }>(
+      'SELECT base_json FROM code_units WHERE project_id=? AND unit_id=?',
+      projectId,
+      subjectId,
+    );
+    const pin = unit?.base_json ? JSON.parse(unit.base_json) : null;
+    if (pin?.kind === 'merged') {
+      // Resolution work happens after decisions, so its writers join the final certificate here.
+      const bases = this.bases();
+      const base =
+        bases &&
+        (await bases.records(tx, projectId)).find((base) => base.result?.commit === pin.reference);
+      check(
+        base && !base.quarantined,
+        'code_provenance_unverifiable',
+        'The consolidation base must retain its resolution provenance',
+        409,
+      );
+      for (const step of await bases!.path(tx, projectId, base.key))
+        if (step.resolutionTaskId) units.set(step.resolutionTaskId, null);
+    }
+    const writers = await unitContributors(tx, this.sessions, projectId, units);
     const certificate = {
       formatVersion: 1 as const,
       provider: 'code.consolidation',
@@ -577,8 +603,14 @@ export class CodeConsolidation {
         receipt: proposal.receipt,
         artifacts: proposal.artifacts,
         contributors,
+        writers,
       }),
-      excludedActorIds: contributors.excludedActorIds,
+      excludedActorIds: [
+        ...new Set([
+          ...contributors.excludedActorIds,
+          ...writers.flatMap((writer) => [writer.actorId, writer.authorityId]),
+        ]),
+      ].sort(),
     };
     return { ...certificate, hash: digest(certificate) };
   }

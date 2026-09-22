@@ -21,12 +21,17 @@ import type {
   ConsolidationRecord,
   ConsolidationSubmit,
 } from '@merv/consolidation/types';
-import { backends, optional, gitSource, type Backend } from './fixtures/code-store.js';
+import { backends, optional, gitSource, git, type Backend } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { boundProject } from './fixtures/code-binding.js';
+import { CodeBaseService } from '../packages/code/src/bases.js';
+import type { CodeUnitService } from '../packages/code/src/units.js';
+import { enqueueMirror } from '@merv/code/store/mirror';
+import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 
 async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
   const f = await resolutionFixture(t, backend);
+  await f.sessions.setDispatch(f.admin, { enabled: true });
   const code = await createService(
     new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
   );
@@ -37,7 +42,24 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   // The real candidate service needs Git reads, not the transport's socket writer lock.
   (code as unknown as { consolidationStore: CodeConsolidation }).consolidationStore =
-    new CodeConsolidation(f.state, f.scope, f.workflows, f.sessions, () => repositories);
+    new CodeConsolidation(
+      f.state,
+      f.scope,
+      f.workflows,
+      f.sessions,
+      () => repositories,
+      () => bases,
+    );
+  const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
+  const bases = new CodeBaseService(f.state, repositories, {
+    changed: (tx, projectId) => units.imported(tx, projectId),
+    sponsors: (tx, projectId, members) => units.baseSponsors(tx, projectId, members),
+    serviceWork: f.sessions.serviceWork,
+    resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
+  });
+  await bases.initialize();
+  units.bases = bases;
+  f.beforeClose.push(f.tasks.bindCode(code), () => bases.close());
   const consolidation = await createService(
     new ConsolidationService(
       f.state,
@@ -119,7 +141,7 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
   const producer = await actor('Consolidation producer', 'producer');
   const author = await actor('Candidate author');
   const authority = await actor('Candidate authority');
-  const reviewer = await actor('Independent reviewer', 'reviewer');
+  const reviewer = await actor('Independent reviewer');
   let sequence = 0;
   const id = () => `request-${++sequence}`;
   const handles = new Map();
@@ -248,6 +270,16 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
         tx,
       ),
     );
+    if (commit)
+      await f.state.transaction((tx) =>
+        tx.run(
+          "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,'fixture',?,'import','hash','{}','completed',?,'now','now')",
+          commandId,
+          caller.projectId,
+          commandId,
+          JSON.stringify({ head: commit }),
+        ),
+      );
     if (caller.projectId === f.admin.projectId) await contribution(work.id);
     return work;
   };
@@ -282,9 +314,31 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
     handler: (caller: Caller, input: Data) => Promise<T>,
   ) =>
     f.sessions.prepare(caller, tool, input).then((prepared) => f.sessions.run(prepared, handler));
-  const worker = async (record: ConsolidationRecord) => {
+  const decide = (
+    record: ConsolidationRecord,
+    decisions: CodeCandidateDecision[],
+    reconciliations: CodeReconciliation[] = [],
+    requestId = id(),
+  ) =>
+    consolidation.decide(producer, {
+      consolidationId: record.id,
+      expectedRevision: record.workflow.revision,
+      decisions,
+      reconciliations,
+      requestId,
+    });
+  const heartbeat = (caller: Caller) =>
+    f.sessions.heartbeatRunner(caller, {
+      runnerId: 'test',
+      machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+      platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 4 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
+  const worker = async (record: ConsolidationRecord, head = leaf, director = producer) => {
+    await heartbeat(director);
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    const session = await f.sessions.offer(producer, {
+    const session = await f.sessions.offer(director, {
       instanceId: record.id,
       expectedRevision: record.workflow.revision,
       runnerId: 'test',
@@ -292,39 +346,60 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
       requestId: id(),
     });
     const caller = await f.sessions.authenticate(secret);
+    const base = (await code.unit(producer, record.id)).base!.reference;
+    assert.ok((await code.unit(producer, record.id)).generation >= 1);
+    const policy = session.execution.policy.workspace;
+    assert.ok(policy && policy.mode === 'persistent');
+    assert.equal(policy.driver, 'code.v2');
+    const checkout = join(f.directory, id());
+    git(f.directory, ['clone', '--no-checkout', bare, checkout]);
+    git(checkout, ['checkout', '--detach', base]);
+    assert.equal(git(checkout, ['rev-parse', 'HEAD']), base);
     const control = { sessionId: session.id, runnerId: 'test', hostRef: 'launch' };
-    await f.sessions.attach(producer, {
+    await f.sessions.attach(director, {
       ...control,
       workspace: {
         repositoryId: 'repository',
         workspaceId: record.id,
         mode: 'persistent',
         branch: 'codex/consolidation',
-        baseOid: main,
-        headOid: main,
+        baseOid: base,
+        headOid: base,
         stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
       },
     });
     const operation = await run(
       caller,
       'code.commit',
-      { expectedHead: main, message: 'Consolidated', requestId: id() },
+      { expectedHead: base, message: 'Consolidated', requestId: id() },
       (caller, input) =>
         code.commit(caller, input as unknown as Parameters<CodeService['commit']>[1]),
     );
-    const command = await code.nextCommand(producer, control);
+    const command = await code.nextCommand(director, control);
     assert.equal(command!.id, operation.command.id);
-    await code.completeCommand(producer, {
+    // The fixture supplies the durable upload fact; the actual objects are in the real repository.
+    await f.state.transaction((tx) =>
+      tx.run(
+        "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES (?,?,?,?,'upload','hash','{}','completed',?,'now','now',?)",
+        id(),
+        producer.projectId,
+        `session:${session.id}`,
+        command!.id,
+        JSON.stringify({ head }),
+        record.id,
+      ),
+    );
+    await code.completeCommand(director, {
       ...control,
       commandId: command!.id,
       receipt: {
         commandId: command!.id,
         repositoryId: 'repository',
         workspaceId: record.id,
-        baseOid: main,
-        parentOid: main,
-        headOid: leaf,
-        treeOid: source.git('rev-parse', `${leaf}^{tree}`),
+        baseOid: base,
+        parentOid: base,
+        headOid: head,
+        treeOid: git(bare, ['rev-parse', `${head}^{tree}`]),
         stats: { commitCount: 2, filesChanged: 2, insertions: 2, deletions: 0 },
       },
     });
@@ -353,11 +428,76 @@ async function fixture(t: TestContext, backend: Backend, historyLength = 0) {
         consolidation.submit(caller, input as unknown as ConsolidationSubmit),
       );
     };
-    return { caller, session, report, submit };
+    return { caller, session, report, submit, base, checkout };
+  };
+  const reviewWorker = async (record: ConsolidationRecord) => {
+    await heartbeat(reviewer);
+    const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    const session = await f.sessions.offer(reviewer, {
+      instanceId: record.id,
+      expectedRevision: record.workflow.revision,
+      runnerId: 'test',
+      secret,
+      requestId: id(),
+    });
+    const caller = await f.sessions.authenticate(secret);
+    const head = record.submissions.at(-1)!.proposal!.receipt.headOid;
+    assert.deepEqual(session.execution.policy.workspace, {
+      mode: 'ephemeral',
+      namespace: 'consolidation-reviews',
+      base: 'reference:code',
+      retain: false,
+      driver: 'code.v2',
+    });
+    assert.ok(
+      !session.execution.policy.tools.some((tool) =>
+        ['code.commit', 'code.operation'].includes(tool.name),
+      ),
+    );
+    const checkout = join(f.directory, id());
+    git(f.directory, ['clone', '--no-checkout', bare, checkout]);
+    git(checkout, ['checkout', '--detach', head]);
+    const attachment = {
+      sessionId: session.id,
+      runnerId: 'test',
+      hostRef: 'review',
+      workspace: {
+        repositoryId: 'repository',
+        workspaceId: session.id,
+        mode: 'ephemeral' as const,
+        branch: null,
+        baseOid: head,
+        headOid: head,
+        stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+      },
+    };
+    await assert.rejects(
+      f.sessions.attach(reviewer, {
+        ...attachment,
+        workspace: { ...attachment.workspace, baseOid: main },
+      }),
+      { code: 'workspace_base_conflict' },
+    );
+    await f.sessions.attach(reviewer, attachment);
+    assert.equal(git(checkout, ['rev-parse', 'HEAD']), head);
+    return {
+      caller,
+      session,
+      review: await f.reviews.get(caller, record.reviewId!),
+      apply: (input: Parameters<typeof f.reviews.apply>[1]) =>
+        run(caller, 'review.submit', input as unknown as Data, (caller) =>
+          f.reviews.apply(caller, input),
+        ),
+    };
   };
   return {
     ...f,
     code,
+    bases,
+    decide,
+    run,
+    reviewWorker,
+    captures,
     consolidation,
     source,
     repositories,
@@ -395,6 +535,263 @@ const decision = (
 });
 
 for (const backend of backends) {
+  test(
+    `${backend}: workspace-free decisions produce one merged Code branch and immutable inputs`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const left = await f.unit('experiment', f.leaf);
+      const right = await f.unit('task', f.replacement);
+      const record = await f.create([left.id], [right.id], { version: undefined });
+      assert.equal(record.workflow.version, 5);
+      assert.equal(record.workflow.state, 'deciding');
+      const secret = `ms_${randomBytes(32).toString('base64url')}`;
+      const session = await f.sessions.offer(f.producer, {
+        instanceId: record.id,
+        expectedRevision: 0,
+        runnerId: 'decisions',
+        secret,
+        requestId: f.id(),
+      });
+      assert.deepEqual(session.execution.policy.workspace, { mode: 'none' });
+      assert.ok(
+        !session.execution.policy.tools.some((tool) =>
+          ['code.commit', 'code.operation'].includes(tool.name),
+        ),
+      );
+      const absent = await f.state.read((sql) =>
+        sql.get('SELECT 1 FROM code_units WHERE unit_id=?', record.id),
+      );
+      assert.equal(absent, undefined);
+      const caller = await f.sessions.authenticate(secret);
+      const input = {
+        consolidationId: record.id,
+        expectedRevision: 0,
+        decisions: [decision(left.id, 'retain'), decision(right.id, 'retain')],
+        requestId: f.id(),
+      };
+      const decided = await f.run(
+        caller,
+        'consolidation.decide',
+        input as unknown as Data,
+        (worker) => f.consolidation.decide(worker, input),
+      );
+      assert.equal(decided.workflow.state, 'consolidating');
+      await assert.rejects(
+        f.state.transaction((tx) => f.code.declareUnit(f.admin, record.id, tx, f.main)),
+        { code: 'code_base_conflict' },
+      );
+      await f.sessions.release(f.producer, { sessionId: session.id, runnerId: 'decisions' });
+      await f.bases.work(f.admin.projectId);
+      const base = await f.state.read((sql) =>
+        f.bases.find(sql, f.admin.projectId, [f.leaf, f.replacement]),
+      );
+      assert.equal(base?.state, 'resolved', JSON.stringify(base));
+      assert.equal(base.result?.method, 'auto');
+      const head = base.result!.commit;
+      await assert.rejects(f.decide(decided, input.decisions), {
+        code: 'consolidation_decisions_frozen',
+      });
+      const worker = await f.worker(decided, head);
+      assert.equal(worker.base, head);
+      assert.equal(readFileSync(join(worker.checkout, 'leaf.txt'), 'utf8'), 'leaf');
+      assert.equal(readFileSync(join(worker.checkout, 'replacement.txt'), 'utf8'), 'replacement');
+      assert.deepEqual(
+        (await f.code.unit(f.producer, record.id))
+          .base!.sources.map((entry) => entry.unitId)
+          .sort(),
+        [left.id, right.id].sort(),
+      );
+
+      for (const [table, field, value] of [
+        ['consolidations', 'decisions', '{}'],
+        ['code_unit_frontiers', 'inputs_json', '[]'],
+      ]) {
+        await assert.rejects(
+          f.state.transaction((tx) =>
+            tx.run(
+              `UPDATE ${table} SET ${field}=? WHERE ${table === 'consolidations' ? 'id' : 'unit_id'}=?`,
+              value,
+              record.id,
+            ),
+          ),
+          backend === 'sqlite' ? /immutable/ : { code: /^state_/ },
+        );
+        await assert.rejects(
+          f.state.transaction((tx) =>
+            tx.run(
+              `DELETE FROM ${table} WHERE ${table === 'consolidations' ? 'id' : 'unit_id'}=?`,
+              record.id,
+            ),
+          ),
+          backend === 'sqlite' ? /retained/ : { code: /^state_/ },
+        );
+      }
+      const submitted = await worker.submit(input.decisions);
+      const reviewer = await f.reviewWorker(submitted);
+      assert.equal(reviewer.session.execution.references.code, head);
+    },
+  );
+
+  test(
+    `${backend}: conflicting frontier waits visibly on a system resolution and then checks out its accepted result`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const bare = f.repositories.paths(f.admin.projectId).repository;
+      const commits: string[] = [];
+      for (const name of ['left', 'right']) {
+        f.source.git('checkout', '--detach', f.main);
+        const commit = f.source.commit({ 'main.txt': name });
+        f.source.git('push', bare, `${commit}:refs/heads/${name}`);
+        commits.push(commit);
+      }
+      const left = await f.unit('experiment', commits[0]);
+      const right = await f.unit('task', commits[1]);
+      const record = await f.create([left.id], [right.id]);
+      const decided = await f.decide(record, [
+        decision(left.id, 'retain'),
+        decision(right.id, 'retain'),
+      ]);
+      await f.bases.work(f.admin.projectId);
+      const base = (await f.state.read((sql) => f.bases.find(sql, f.admin.projectId, commits)))!;
+      assert.equal(base.state, 'awaiting_resolution', JSON.stringify(base));
+      const taskId = base.resolutionTaskId!;
+      const status = await f.workflows.evaluate(f.producer, record.id);
+      assert.ok(
+        status.dependencies.some(
+          (edge) => edge.id === taskId && edge.kind === 'system' && !edge.settled,
+        ),
+      );
+      assert.ok(
+        status.providerBlockers.some((blocker) => blocker.related.some((ref) => ref.id === taskId)),
+      );
+      assert.ok(
+        (await f.sessions.stuck(f.admin)).items.some((item) => item.instanceId === record.id),
+      );
+      await assert.rejects(f.worker(decided), { code: 'dependencies_pending' });
+      const pending = (await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, taskId)))!;
+      const commit = f.source.git(
+        'commit-tree',
+        f.source.git('rev-parse', `${commits[0]}^{tree}`),
+        '-p',
+        pending.firstParent,
+        '-p',
+        pending.secondParent,
+        '-m',
+        'Resolved',
+      );
+      f.source.git('push', bare, `${commit}:refs/heads/resolved`);
+      const proof = await verifyResolution(
+        f.repositories.git,
+        f.repositories.environment(f.admin.projectId),
+        pending.firstParent,
+        pending.secondParent,
+        commit,
+      );
+      assert.equal(proof.error, null);
+      const resolver = await f.actor('Resolution author');
+      await f.contribution(taskId, resolver.actorId, resolver.actorId);
+      const report = await f.artifacts.create(f.author, {
+        title: 'Resolution',
+        content: 'Both conflicting inputs reviewed.',
+      });
+      const request = await f.reviews.request(f.author, {
+        subjectId: taskId,
+        subjectRevision: 0,
+        producerId: f.author.actorId,
+        artifactIds: [report.id],
+        criteria: ['The conflict is resolved.'],
+        provenanceOwner: 'code',
+        requestId: f.id(),
+      });
+      const claim = await f.reviews.start(f.reviewer, request.id);
+      await f.reviews.submit(f.reviewer, {
+        reviewId: request.id,
+        claimId: claim.claimId!,
+        verdict: 'pass',
+        notes: 'Verified.',
+        requestId: f.id(),
+      });
+      const commandId = f.id();
+      f.captures.set(commandId, {
+        ref: { kind: 'code-commit', commandId },
+        status: 'ready',
+        provenance: {
+          projectId: f.admin.projectId,
+          instanceId: taskId,
+          readOnly: false,
+        } as CodeCapture['provenance'],
+        workspace: {
+          repositoryId: 'repository',
+          workspaceId: taskId,
+          mode: 'persistent',
+          branch: null,
+          baseOid: pending.firstParent,
+          headOid: commit,
+          stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 1 },
+        },
+        observedAt: 'now',
+        eventId: null,
+      });
+      // Play the resolution owner's terminal delivery and durable upload boundary, as in the base-resolution suite.
+      // Code still verifies the independent certificate, admitted merge proof and actual Git parents.
+      await f.state.transaction(async (tx) => {
+        await tx.run("UPDATE wf_instances SET state='done',revision=1 WHERE id=?", taskId);
+        await tx.run(
+          "UPDATE code_units SET generation=1,writer_state='closed',head_oid=? WHERE unit_id=?",
+          commit,
+          taskId,
+        );
+        await tx.run(
+          'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE unit_id=?',
+          commit,
+          proof.firstMerge,
+          taskId,
+        );
+        await tx.run(
+          "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES (?,?,'fixture',?,'upload','hash','{}','completed',?,'now','now',?)",
+          commandId,
+          f.admin.projectId,
+          commandId,
+          JSON.stringify({
+            head: commit,
+            merge: {
+              plan: pending.plan,
+              left: pending.firstParent,
+              right: pending.secondParent,
+              firstMerge: proof.firstMerge,
+            },
+          }),
+          taskId,
+        );
+        await f.code.acceptUnit(
+          f.reviewer,
+          {
+            unitId: taskId,
+            terminalRevision: 1,
+            submissionRef: request.snapshotHash,
+            reviewRef: request.id,
+            codeRef: { kind: 'code-commit', commandId },
+            reviewSessionId: null,
+          },
+          tx,
+        );
+      });
+      await f.code.reconcileAll();
+      await f.bases.work(f.admin.projectId);
+      await f.workflows.checkDependencies(f.producer, record.id);
+      assert.deepEqual(await f.workflows.blockers(f.producer, record.id), []);
+      const worker = await f.worker(decided, commit);
+      assert.equal(worker.base, commit);
+      assert.equal((await f.code.unit(f.producer, record.id)).base?.reference, commit);
+      const submitted = await worker.submit(decided.manifest!.decisions);
+      const review = await f.reviews.get(f.reviewer, submitted.reviewId!);
+      assert.ok(review.provenance?.excludedActorIds.includes(resolver.actorId));
+      await assert.rejects(f.reviews.start(resolver, review.id), { code: 'review_independence' });
+    },
+  );
+
   test(
     `${backend}: ancestry stops at frozen main history and preserves older candidates and branches`,
     optional(backend),
@@ -612,9 +1009,8 @@ for (const backend of backends) {
       const parent = await f.unit('task', f.ancestor);
       const leaf = await f.unit('experiment', f.leaf, [parent.id]);
       const record = await f.create([leaf.id]);
-      const worker = await f.worker(record);
       const decisions = [decision(parent.id, 'drop'), decision(leaf.id, 'retain')];
-      await assert.rejects(worker.submit(decisions), { code: 'consolidation_reconciliation' });
+      await assert.rejects(f.decide(record, decisions), { code: 'consolidation_reconciliation' });
       assert.equal((await f.consolidation.get(f.producer, record.id)).submissions.length, 0);
       const reconciliations = [
         {
@@ -624,13 +1020,38 @@ for (const backend of backends) {
             'The leaf deliberately preserves the safe ancestor effect; this is not a removal.',
         },
       ];
+      const decided = await f.decide(record, decisions, reconciliations, 'decide');
+      assert.deepEqual(await f.decide(record, decisions, reconciliations, 'decide'), decided);
+      await assert.rejects(f.decide(record, decisions, [], 'decide'), { code: 'request_conflict' });
+      const credential = await f.state.read((sql) =>
+        sql.get<{ id: string }>(
+          'SELECT id FROM actor_credentials WHERE actor_id=?',
+          f.admin.actorId,
+        ),
+      );
+      const director = { ...f.admin, credentialId: credential!.id };
+      const earlier = await f.worker(decided, f.leaf, director);
+      await f.sessions.release(director, { sessionId: earlier.session.id, runnerId: 'test' });
+      // The fixture plays final capture after its admitted upload, as in the resolution tests.
+      await f.state.transaction((tx) =>
+        tx.run(
+          "UPDATE code_units SET writer_state='closed',head_oid=? WHERE unit_id=?",
+          f.leaf,
+          record.id,
+        ),
+      );
+      const worker = await f.worker(decided);
+      assert.equal((await f.code.unit(f.producer, record.id)).generation, 2);
       const submitted = await worker.submit(decisions, reconciliations, 'submit');
       const submission = submitted.submissions[0];
       const review = await f.reviews.get(f.reviewer, submitted.reviewId!);
       assert.ok(review.provenance?.revalidate);
       assert.ok(review.provenance.excludedActorIds.includes(f.author.actorId));
       assert.ok(review.provenance.excludedActorIds.includes(f.authority.actorId));
-      for (const caller of [f.author, f.authority, f.producer])
+      assert.ok(review.provenance.excludedActorIds.includes(earlier.caller.actorId));
+      assert.ok(review.provenance.excludedActorIds.includes(f.admin.actorId));
+      assert.ok(review.provenance.excludedActorIds.includes(worker.caller.actorId));
+      for (const caller of [f.author, f.authority, f.producer, f.admin])
         await assert.rejects(f.reviews.start(caller, review.id), {
           code: caller === f.producer ? 'forbidden' : 'review_independence',
         });
@@ -642,7 +1063,8 @@ for (const backend of backends) {
       assert.equal(pinned.receipt.headOid, f.leaf);
       assert.equal(pinned.receipt.treeOid, f.source.git('rev-parse', `${f.leaf}^{tree}`));
       const calls = f.gitCalls();
-      const claim = await f.reviews.start(f.reviewer, review.id);
+      const reviewing = await f.reviewWorker(submitted);
+      const claim = reviewing.review;
       await assert.rejects(
         f.state.transaction((tx) =>
           tx.run('UPDATE consolidation_submissions SET record=? WHERE id=?', '{}', submission.id),
@@ -666,7 +1088,7 @@ for (const backend of backends) {
         requestId: 'approve',
       };
       await assert.rejects(
-        f.reviews.apply(f.reviewer, {
+        reviewing.apply({
           ...application,
           requestId: 'waive',
           findings: application.findings.map((finding) => ({
@@ -676,9 +1098,14 @@ for (const backend of backends) {
         }),
         { code: 'criterion_not_waivable' },
       );
-      const complete = (await f.reviews.apply(f.reviewer, application)) as ConsolidationRecord;
+      const complete = (await reviewing.apply(application)) as ConsolidationRecord;
       assert.equal(complete.workflow.state, 'complete');
       assert.equal(complete.completion?.centralGit, 'not-published');
+      const accepted = (await f.code.unit(f.producer, record.id)).acceptance!;
+      assert.equal(accepted.reference, f.leaf);
+      assert.equal(accepted.storage, 'code');
+      assert.equal(accepted.reviewAttached, true);
+
       assert.equal(f.gitCalls(), calls, 'Claim and verdict reuse the pinned ancestry');
     },
   );
@@ -735,7 +1162,7 @@ for (const backend of backends) {
       const f = await fixture(t, backend);
       const leaf = await f.unit('experiment', f.leaf);
       const record = await f.create([leaf.id]);
-      const worker = await f.worker(record);
+      const worker = await f.worker(await f.decide(record, [decision(leaf.id, 'retain')]));
       const submitted = await worker.submit([decision(leaf.id, 'retain')]);
       const review = await f.reviews.start(f.reviewer, submitted.reviewId!);
       const later = await f.actor('Later contributor');
@@ -750,7 +1177,9 @@ for (const backend of backends) {
       // It must never inherit the first proposal's review, even with identical decisions.
       for (const claimed of [false, true]) {
         const freshRecord = await f.create([leaf.id]);
-        const freshWorker = await f.worker(freshRecord);
+        const freshWorker = await f.worker(
+          await f.decide(freshRecord, [decision(leaf.id, 'retain')]),
+        );
         const fresh = await freshWorker.submit([decision(leaf.id, 'retain')]);
         if (claimed) await f.reviews.start(f.reviewer, fresh.reviewId!);
         const pinned = fresh.submissions[0].proposal!;

@@ -2,13 +2,15 @@ import { someAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Pool } from 'pg';
 import { CodeService } from '@merv/code/service';
+import { CodeConsolidation } from '../packages/code/src/consolidation.js';
+import { CodeRepositories } from '@merv/code/store/repository';
 import { backends, optional, gitSource, type Backend } from './fixtures/code-store.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
@@ -1021,6 +1023,106 @@ test('a consolidation can hold every prerequisite a cycle is allowed to give it'
     false,
   );
 });
+
+for (const backend of backends)
+  for (const hosted of [false, true])
+    test(
+      `${backend}: research hands task scope to consolidation and its owner routes ${hosted ? 'hosted' : 'unhosted'} Git work`,
+      optional(backend),
+      async (t) => {
+        const f = await fixture(t, backend);
+        const { state, tasks, reviews, code, scope, sessions, workflows } = f.app.ctx;
+        await f.definition();
+        let task = await tasks.create(f.owner, {
+          title: 'Cycle task',
+          goal: 'Retain a checked result.',
+          checks: ['Result is retained.'],
+          requestId: f.id(),
+        });
+        const evidence = await f.artifact(f.owner, 'Task result');
+        task = await tasks.submitDelivery(f.owner, {
+          ...confirmedDelivery({ taskId: task.id, artifactIds: [evidence.id] }),
+          expectedRevision: task.workflow.revision,
+          requestId: f.id(),
+        });
+        const claim = await reviews.start(f.reviewer, task.reviewId!);
+        await reviews.apply(f.reviewer, {
+          reviewId: claim.id,
+          claimId: claim.claimId!,
+          expectedRevision: task.workflow.revision,
+          verdict: 'pass',
+          notes: 'Checked.',
+          synopsis: 'The retained task result satisfies the check.',
+          findings: claim.criteria.map((_, i) => ({
+            criterionNumber: i + 1,
+            status: 'met',
+            evidenceIds: [evidence.id],
+            notes: 'Checked.',
+          })),
+          requestId: f.id(),
+        });
+        if (hosted) {
+          const source = gitSource(t);
+          const main = source.commit({ 'main.txt': 'main' });
+          const root = join(source.directory, 'code');
+          mkdirSync(join(root, 'tmp'), { recursive: true });
+          mkdirSync(join(root, 'empty-template'));
+          const repositories = new CodeRepositories({
+            root,
+            quotaBytes: 1024 ** 3,
+            reservedFreeBytes: 1,
+          });
+          await repositories.ensure(f.owner.projectId, 'repository', 'sha1');
+          source.git(
+            'push',
+            repositories.paths(f.owner.projectId).repository,
+            `${main}:refs/heads/main`,
+          );
+          t.after(() => repositories.git.close());
+          await boundProject(state, f.owner.projectId, main, 'repository');
+          await state.transaction((tx) =>
+            tx.run(
+              'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
+              JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: main }),
+              JSON.stringify({ oid: main, operationId: 'fixture', stored: true }),
+              f.owner.projectId,
+            ),
+          );
+          (code as unknown as { consolidationStore: CodeConsolidation }).consolidationStore =
+            new CodeConsolidation(state, scope, workflows, sessions, () => repositories);
+        }
+        let cycle = await f.research.create(f.owner, {
+          name: 'Cycle with a task',
+          dependsOn: [task.id],
+          consolidationWorkspace: 'git',
+          requestId: f.id(),
+        });
+        cycle = await f.advance(cycle);
+        cycle = await f.advance(cycle);
+        await f.reflect(cycle);
+        const input = {
+          researchId: cycle.id,
+          expectedRevision: cycle.workflow.revision,
+          requestId: f.id(),
+        };
+        cycle = await f.research.advance(f.owner, input);
+        const child = await f.app.ctx.consolidation.get(f.owner, cycle.consolidationId!);
+        assert.equal(child.workflow.version, hosted ? 5 : 4);
+        if (hosted) {
+          assert.deepEqual(child.taskIds, [task.id]);
+          assert.deepEqual(
+            child.candidates!.candidates.map((candidate) => candidate.unitId),
+            [task.id],
+          );
+          assert.equal(child.workflow.state, 'deciding');
+        } else {
+          assert.equal(child.taskIds, undefined);
+          assert.equal(child.candidates, undefined);
+          assert.equal(child.workflow.state, 'consolidating');
+        }
+        assert.deepEqual(await f.research.advance(f.owner, input), cycle);
+      },
+    );
 
 test('consolidation workspace and extra prerequisites are forwarded to the exact child', async (t) => {
   const f = await fixture(t);

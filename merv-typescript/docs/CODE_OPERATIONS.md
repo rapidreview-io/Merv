@@ -11,7 +11,7 @@ Knowledge bind it through Cordis child injections; unloading Code preserves thos
 services, their workflow registrations and non-Git assignments. Git experiment and
 Git task creation and assignment, capture validation, Git task delivery and review,
 and Git consolidation assignments require the service and report `code_unavailable` when it is
-absent. Legacy consolidation creation remains available; explicit version 5 creation also requires Code and hosted history. Retained records remain readable, and artifact-only tasks never ask for Code.
+absent. Legacy consolidation creation remains available. Hosted Git projects automatically create version 5, which also requires imported main; explicit version 5 has the same requirement. Version 5 decides on candidates without a workspace, then waits for Code to prepare the retained frontier before its producer can start. Retained records remain readable, and artifact-only tasks never ask for Code.
 Knowledge reports unavailable Code references as `unavailable`, distinct from
 `missing`, and resolves them normally once Code returns.
 

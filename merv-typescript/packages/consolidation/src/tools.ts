@@ -1,8 +1,20 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { ConsolidationCreate, ConsolidationEnd, ConsolidationSubmit } from './types.js';
-import { createSchema, endSchema, getSchema, listSchema, submitSchema } from './input.js';
+import type {
+  ConsolidationCreate,
+  ConsolidationDecide,
+  ConsolidationEnd,
+  ConsolidationSubmit,
+} from './types.js';
+import {
+  createSchema,
+  decideSchema,
+  endSchema,
+  getSchema,
+  listSchema,
+  submitSchema,
+} from './input.js';
 export const consolidationToolsPlugin = {
   name: 'merv-consolidation-tools',
   inject: ['consolidation', 'tools'],
@@ -12,7 +24,7 @@ export const consolidationToolsPlugin = {
       {
         name: 'consolidation.create',
         description:
-          'Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Default creation remains version 4 for Git while version 5 workspace preparation is unreleased.',
+          'Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Git creation automatically selects version 5 for hosted projects and version 4 otherwise.',
         inputSchema: createSchema,
         handler: async (caller: Caller, input: ConsolidationCreate) =>
           await service.create(caller, input),
@@ -35,9 +47,17 @@ export const consolidationToolsPlugin = {
           await service.get(caller, input.consolidationId),
       },
       {
+        name: 'consolidation.decide',
+        description:
+          'Freeze version 5 candidate decisions and reconciliations before work begins. This prepares the retained frontier as the consolidation branch base; resolution prerequisites may block its checkout. Decisions cannot change after this call.',
+        inputSchema: decideSchema,
+        handler: async (caller: Caller, input: ConsolidationDecide) =>
+          await service.decide(caller, input),
+      },
+      {
         name: 'consolidation.submit',
         description:
-          'Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 adaptations name a retained replacementUnitId in the frozen set; carried ancestor conflicts require reconciliations with unitId, retainedUnitId and rationale. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.',
+          'Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 repeats the exact decisions and reconciliations frozen by consolidation.decide. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.',
         inputSchema: submitSchema,
         handler: async (caller: Caller, input: ConsolidationSubmit) =>
           await service.submit(caller, input),

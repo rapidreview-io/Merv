@@ -29,6 +29,26 @@ export const createSchema = z
   .strict();
 export const getSchema = z.object({ consolidationId: id }).strict();
 export const listSchema = z.object({}).strict();
+const candidateDecisionSchema = z
+  .object({
+    unitId: id,
+    decision: z.enum(['retain', 'adapt', 'drop', 'no_code']),
+    replacementUnitId: id.optional(),
+    rationale: text(12000),
+  })
+  .strict();
+const reconciliationsSchema = z
+  .array(z.object({ unitId: id, retainedUnitId: id, rationale: text(12000) }).strict())
+  .max(1000);
+export const decideSchema = z
+  .object({
+    consolidationId: id,
+    expectedRevision: z.number().int().min(0),
+    decisions: z.array(candidateDecisionSchema).max(1000),
+    reconciliations: reconciliationsSchema.default([]),
+    requestId: id,
+  })
+  .strict();
 export const submitSchema = z
   .object({
     consolidationId: id,
@@ -45,21 +65,11 @@ export const submitSchema = z
               rationale: text(12000),
             })
             .strict(),
-          z
-            .object({
-              unitId: id,
-              decision: z.enum(['retain', 'adapt', 'drop', 'no_code']),
-              replacementUnitId: id.optional(),
-              rationale: text(12000),
-            })
-            .strict(),
+          candidateDecisionSchema,
         ]),
       )
       .max(1000),
-    reconciliations: z
-      .array(z.object({ unitId: id, retainedUnitId: id, rationale: text(12000) }).strict())
-      .max(1000)
-      .optional(),
+    reconciliations: reconciliationsSchema.optional(),
     commandId: id.optional(),
     requestId: id,
   })

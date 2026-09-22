@@ -515,7 +515,12 @@
       "exposedTools": [
         {
           "name": "consolidation.create",
-          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Default creation remains version 4 for Git while version 5 workspace preparation is unreleased.",
+          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Git creation automatically selects version 5 for hosted projects and version 4 otherwise.",
+          "readOnly": false
+        },
+        {
+          "name": "consolidation.decide",
+          "description": "Freeze version 5 candidate decisions and reconciliations before work begins. This prepares the retained frontier as the consolidation branch base; resolution prerequisites may block its checkout. Decisions cannot change after this call.",
           "readOnly": false
         },
         {
@@ -535,7 +540,7 @@
         },
         {
           "name": "consolidation.submit",
-          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 adaptations name a retained replacementUnitId in the frozen set; carried ancestor conflicts require reconciliations with unitId, retainedUnitId and rationale. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
+          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 repeats the exact decisions and reconciliations frozen by consolidation.decide. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
           "readOnly": false
         }
       ]
@@ -560,7 +565,12 @@
       "exposedTools": [
         {
           "name": "consolidation.create",
-          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Default creation remains version 4 for Git while version 5 workspace preparation is unreleased.",
+          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Git creation automatically selects version 5 for hosted projects and version 4 otherwise.",
+          "readOnly": false
+        },
+        {
+          "name": "consolidation.decide",
+          "description": "Freeze version 5 candidate decisions and reconciliations before work begins. This prepares the retained frontier as the consolidation branch base; resolution prerequisites may block its checkout. Decisions cannot change after this call.",
           "readOnly": false
         },
         {
@@ -580,7 +590,7 @@
         },
         {
           "name": "consolidation.submit",
-          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 adaptations name a retained replacementUnitId in the frozen set; carried ancestor conflicts require reconciliations with unitId, retainedUnitId and rationale. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
+          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 repeats the exact decisions and reconciliations frozen by consolidation.decide. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
           "readOnly": false
         }
       ]
