@@ -9,6 +9,7 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createApp } from './fixtures/app.js';
 import { collectRemoteCatalog } from '../packages/mounts/src/remote-catalog.js';
 import {
+  callable,
   RemoteFixture,
   representativeTools,
   representativeResult,
@@ -32,7 +33,7 @@ async function fixture(t: test.TestContext) {
     rmSync(directory, { recursive: true, force: true });
   });
   await remote.connect(new StreamableHTTPClientTransport(new URL(upstream.url)));
-  await catalog.replace(await collectRemoteCatalog(remote));
+  await catalog.replace(callable(remote, await collectRemoteCatalog(remote)));
   const identity = await app.ctx.scope.bootstrap({
     projectName: 'Transport test',
     actorName: 'Operator',

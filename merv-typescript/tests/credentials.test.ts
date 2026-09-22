@@ -84,39 +84,33 @@ test('upstream credentials select exact current project, actor and mount without
     async () => await provider.resolve({ ...other, projectId: caller.projectId }, 'sandboxes'),
     code('forbidden'),
   );
-  provider.replace([binding(readerCaller, first.ref)]);
+  const reloaded = new EnvironmentCredentials(scope, [binding(readerCaller, first.ref)]);
   assert.equal(
-    (await provider.resolve(readerCaller, 'sandboxes')).headers().authorization,
+    (await reloaded.resolve(readerCaller, 'sandboxes')).headers().authorization,
     'Bearer first-upstream-token',
   );
 });
 
-test('actor and binding revocation deny the next resolution, and invalid replacements preserve the old selection', async (t) => {
+test('actor and binding revocation deny the next resolution, and invalid binding sets are refused whole', async (t) => {
   const { scope, caller, operator, readerCaller } = await fixture(t);
   const env = environment(t, 'revocable-upstream-token');
   const original = binding(caller, env.ref);
   const provider = new EnvironmentCredentials(scope, [original, binding(readerCaller, env.ref)]);
-  const before = (await provider.resolve(caller, 'sandboxes')).identityKey;
-  assert.throws(
-    () =>
-      provider.replace([binding(readerCaller, env.ref), { ...original, secretRef: 'raw-secret' }]),
-    code('invalid_credential_config'),
-  );
-  assert.equal((await provider.resolve(caller, 'sandboxes')).identityKey, before);
-  assert.throws(
-    () => provider.replace([original, { ...original, id: 'another-id' }]),
-    code('invalid_credential_config'),
-  );
-  assert.throws(
-    () => provider.replace([original, binding(readerCaller, env.ref, { id: original.id })]),
-    code('invalid_credential_config'),
-  );
+  for (const bindings of [
+    [binding(readerCaller, env.ref), { ...original, secretRef: 'raw-secret' }],
+    [original, { ...original, id: 'another-id' }],
+    [original, binding(readerCaller, env.ref, { id: original.id })],
+  ])
+    assert.throws(
+      () => new EnvironmentCredentials(scope, bindings),
+      code('invalid_credential_config'),
+    );
   await scope.revokeActor(operator, caller.actorId);
   await assert.rejects(async () => await provider.resolve(caller, 'sandboxes'), code('forbidden'));
   assert.ok(await provider.resolve(readerCaller, 'sandboxes'));
-  provider.replace([]);
+  // Binding changes apply by reloading Mounts, which constructs a new provider.
   await assert.rejects(
-    async () => await provider.resolve(readerCaller, 'sandboxes'),
+    async () => await new EnvironmentCredentials(scope, []).resolve(readerCaller, 'sandboxes'),
     code('credential_forbidden'),
   );
 });
@@ -140,26 +134,31 @@ test('identity snapshots isolate caller configuration and change with rotation, 
   const equal = binding(caller, env.ref, {
     headers: { 'X-Subject': 'subject-a', 'x-namespace': 'project-a' },
   });
-  provider.replace([equal]);
-  assert.equal((await provider.resolve(caller, 'sandboxes')).identityKey, first.identityKey);
+  const reload = (bindings: CredentialBinding[]) => new EnvironmentCredentials(scope, bindings);
+  assert.equal((await reload([equal]).resolve(caller, 'sandboxes')).identityKey, first.identityKey);
   process.env[env.name] = 'rotation-after';
   const rotated = await provider.resolve(caller, 'sandboxes');
   assert.notEqual(rotated.identityKey, first.identityKey);
   assert.equal(first.headers().authorization, 'Bearer rotation-before');
   assert.equal(rotated.headers().authorization, 'Bearer rotation-after');
-  provider.replace([{ ...equal, headers: { ...equal.headers, 'X-Subject': 'subject-b' } }]);
-  const changedSelector = await provider.resolve(caller, 'sandboxes');
+  const changedSelector = await reload([
+    { ...equal, headers: { ...equal.headers, 'X-Subject': 'subject-b' } },
+  ]).resolve(caller, 'sandboxes');
   assert.notEqual(changedSelector.identityKey, rotated.identityKey);
   // Keep the binding ID, secret reference and selectors identical to isolate scope in the hash.
-  provider.replace([{ ...equal, ...readerCaller }]);
   assert.notEqual(
-    (await provider.resolve(readerCaller, 'sandboxes')).identityKey,
+    (await reload([{ ...equal, ...readerCaller }]).resolve(readerCaller, 'sandboxes')).identityKey,
     rotated.identityKey,
   );
-  provider.replace([{ ...equal, ...other }]);
-  assert.notEqual((await provider.resolve(other, 'sandboxes')).identityKey, rotated.identityKey);
-  provider.replace([{ ...equal, mountId: 'other-mount' }]);
-  assert.notEqual((await provider.resolve(caller, 'other-mount')).identityKey, rotated.identityKey);
+  assert.notEqual(
+    (await reload([{ ...equal, ...other }]).resolve(other, 'sandboxes')).identityKey,
+    rotated.identityKey,
+  );
+  assert.notEqual(
+    (await reload([{ ...equal, mountId: 'other-mount' }]).resolve(caller, 'other-mount'))
+      .identityKey,
+    rotated.identityKey,
+  );
 });
 
 test('resolved credentials expose only an opaque identity during serialization and inspection', async (t) => {
@@ -196,7 +195,6 @@ test('resolved credentials expose only an opaque identity during serialization a
 test('configuration rejects inline authentication, protocol headers, wildcards and unsafe selectors without echoing values', async (t) => {
   const { scope, caller } = await fixture(t);
   const env = environment(t, 'valid-upstream-token');
-  const provider = new EnvironmentCredentials(scope);
   const sentinel = 'SHOULD-NOT-APPEAR-IN-ERROR';
   const invalid: unknown[] = [
     null,
@@ -235,7 +233,7 @@ test('configuration rejects inline authentication, protocol headers, wildcards a
     invalid.push(binding(caller, env.ref, { headers: { [name]: sentinel } }));
   for (const value of invalid) {
     assert.throws(
-      () => provider.replace([value as CredentialBinding]),
+      () => new EnvironmentCredentials(scope, [value as CredentialBinding]),
       (error: unknown) => {
         assert.ok(code('invalid_credential_config')(error));
         assert.ok(!String(error).includes(sentinel));
@@ -342,49 +340,3 @@ test('unexpected Scope recognition failures are sanitized and do not admit crede
     },
   );
 });
-
-for (const change of ['remove', 'replace', 'rotate'] as const) {
-  test(`credential resolution rejects ${change} during local-token validation`, async (t) => {
-    const { scope, caller } = await fixture(t);
-    const env = environment(t, 'before-change');
-    const original = binding(caller, env.ref);
-    const provider = new EnvironmentCredentials(scope, [original]);
-    let enter!: () => void, release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const waiting = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    t.after(() => release());
-    const recognizes = scope.recognizesCredential.bind(scope);
-    let held = false;
-    t.mock.method(scope, 'recognizesCredential', async (secret: string) => {
-      const result = await recognizes(secret);
-      if (!held) {
-        held = true;
-        enter();
-        await waiting;
-      }
-      return result;
-    });
-    const pending = provider.resolve(caller, 'sandboxes');
-    const rejected = assert.rejects(pending, { code: 'credential_changed' });
-    await entered;
-    if (change === 'remove') provider.replace([]);
-    else if (change === 'replace')
-      provider.replace([{ ...original, headers: { 'x-subject': 'new-subject' } }]);
-    else process.env[env.name] = 'after-change';
-    release();
-    await rejected;
-    if (change === 'remove') {
-      await assert.rejects(provider.resolve(caller, 'sandboxes'), { code: 'credential_forbidden' });
-    } else {
-      const fresh = await provider.resolve(caller, 'sandboxes');
-      assert.equal(
-        fresh.headers()[change === 'replace' ? 'x-subject' : 'authorization'],
-        change === 'replace' ? 'new-subject' : 'Bearer after-change',
-      );
-    }
-  });
-}

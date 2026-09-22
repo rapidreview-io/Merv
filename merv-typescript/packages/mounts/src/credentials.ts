@@ -82,21 +82,15 @@ function validateBinding(input: CredentialBinding): CredentialBinding {
 
 class CredentialSnapshot implements ResolvedCredential {
   #headers: Readonly<Record<string, string>>;
-  #current: () => void;
   constructor(
     readonly identityKey: string,
     headers: Record<string, string>,
-    current: () => void,
   ) {
     this.#headers = Object.freeze({ ...headers });
-    this.#current = current;
     Object.freeze(this);
   }
   headers(): Readonly<Record<string, string>> {
     return this.#headers;
-  }
-  assertCurrent(): void {
-    this.#current();
   }
   toJSON(): { identityKey: string } {
     return { identityKey: this.identityKey };
@@ -106,35 +100,32 @@ class CredentialSnapshot implements ResolvedCredential {
   }
 }
 
-/** Exact actor/project bindings; secrets are read only when a new invocation resolves authority. */
+/**
+ * Exact actor/project bindings, fixed at construction; reload the Mounts entry to change them.
+ * Secrets are read only when a new invocation resolves authority.
+ */
 export class EnvironmentCredentials implements CredentialProvider {
-  #scope: Scope;
-  #bindings = new Map<string, CredentialBinding>();
+  readonly #scope: Scope;
+  readonly #bindings = new Map<string, CredentialBinding>();
   constructor(scope: Scope, bindings: CredentialBinding[] = []) {
     this.#scope = scope;
-    this.replace(bindings);
-  }
-
-  replace(bindings: CredentialBinding[]): void {
     check(
       Array.isArray(bindings),
       'invalid_credential_config',
       'Credential bindings must be an array',
     );
-    const candidate = new Map<string, CredentialBinding>(),
-      ids = new Set<string>();
+    const ids = new Set<string>();
     for (const input of bindings) {
       const binding = validateBinding(input),
         key = bindingKey(binding, binding.mountId);
       check(
-        !ids.has(binding.id) && !candidate.has(key),
+        !ids.has(binding.id) && !this.#bindings.has(key),
         'invalid_credential_config',
         'Credential binding IDs and actor/project/mount selections must be unique',
       );
       ids.add(binding.id);
-      candidate.set(key, binding);
+      this.#bindings.set(key, binding);
     }
-    this.#bindings = candidate;
   }
 
   async resolve(caller: Caller, mountId: string): Promise<ResolvedCredential> {
@@ -183,31 +174,9 @@ export class EnvironmentCredentials implements CredentialProvider {
       'A Merv bearer credential cannot be used for an upstream service',
       503,
     );
-    // Local-token validation yields to storage. Do not return a snapshot of a
-    // binding or secret that was withdrawn while that validation was pending.
-    check(
-      this.#bindings.get(selection) === binding &&
-        process.env[binding.secretRef.slice(4)] === secret,
-      'credential_changed',
-      'Upstream credential changed during resolution',
-      409,
-    );
-    const identityKey = `credential_${digest({ ...binding, secret })}`;
-    return new CredentialSnapshot(
-      identityKey,
-      { ...binding.headers, authorization: `Bearer ${secret}` },
-      () => {
-        const current = this.#bindings.get(selection);
-        const currentSecret = current && process.env[current.secretRef.slice(4)];
-        check(
-          current &&
-            typeof currentSecret === 'string' &&
-            `credential_${digest({ ...current, secret: currentSecret })}` === identityKey,
-          'credential_changed',
-          'Upstream credential changed before dispatch',
-          409,
-        );
-      },
-    );
+    return new CredentialSnapshot(`credential_${digest({ ...binding, secret })}`, {
+      ...binding.headers,
+      authorization: `Bearer ${secret}`,
+    });
   }
 }

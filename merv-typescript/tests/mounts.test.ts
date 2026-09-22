@@ -566,15 +566,14 @@ test(
         headers: { 'x-sandbox-namespace': 'public', 'x-sandbox-subject': 'discovery' },
       },
     ];
-    services.credentials.replace(bindings);
-    services.access.replace(
-      [services.caller, discovery].map((caller) => ({
-        ...caller,
-        mountId: 'fixture',
-        tools: ['inspect'],
-      })),
-    );
-    const manager = new MountManager(services.registry, services.credentials, services.access, {
+    const credentials = new EnvironmentCredentials(services.scope, bindings);
+    const grants = [services.caller, discovery].map((caller) => ({
+      ...caller,
+      mountId: 'fixture',
+      tools: ['inspect'],
+    }));
+    services.access.replace(grants);
+    const manager = new MountManager(services.registry, credentials, services.access, {
       mounts: [
         {
           id: 'fixture',
@@ -597,14 +596,15 @@ test(
       upstream.connections.map((connection) => connection.identity),
       ['discovery', 'caller'],
     );
-    services.credentials.replace([bindings[0]]);
+    // Revoking only the discovery actor's grant withdraws the catalog it discovered.
+    services.access.replace(grants.slice(0, 1));
     await until(
       () => manager.status()[0].toolCount === 0,
-      'Revoked discovery credential remained active',
+      'Revoked discovery authority remained active',
     );
     assert.deepEqual(await names(services.registry), ['native']);
-    assert.equal(manager.status()[0].errorCode, 'credential_forbidden');
-    services.credentials.replace(bindings);
+    assert.equal(manager.status()[0].errorCode, 'tool_forbidden');
+    services.access.replace(grants);
     await manager.reconnect('fixture');
     assert.equal(manager.status()[0].state, 'ready');
   },
@@ -650,7 +650,8 @@ test(
     let resolutions = 0;
     t.mock.method(services.credentials, 'resolve', async (...args: Parameters<typeof resolve>) => {
       const credential = await resolve(...args);
-      if (++resolutions === 3) await discovery!.close();
+      // Discovery resolves once before connecting and once after collection, before publication.
+      if (++resolutions === 2) await discovery!.close();
       return credential;
     });
     const manager = new MountManager(services.registry, services.credentials, services.access, {
@@ -667,7 +668,7 @@ test(
     });
     t.after(() => manager.close());
     await manager.start();
-    assert.equal(resolutions, 3);
+    assert.equal(resolutions, 2);
     assert.equal(manager.status()[0].toolCount, 0);
     assert.equal(manager.status()[0].errorCode, 'mount_disconnected');
     assert.deepEqual(await names(services.registry), ['native']);

@@ -17,8 +17,10 @@ const losslessResult = z.custom<CallToolResult>(
   'Remote tool returned an invalid MCP result',
 );
 
+/** One pool serves one mount endpoint. */
 export interface ScopedRemoteClientOptions {
-  mounts: Record<string, { url: string }>;
+  mountId: string;
+  url: string;
   /** Applies separately to connection, invocation, and connection cleanup. */
   timeoutMs?: number;
   /** Test seam; the helper always attaches its own authenticated SDK HTTP transport. */
@@ -33,7 +35,6 @@ interface Connection {
   ready: Promise<void>;
   users: number;
   retired: boolean;
-  credentialFailure?: MervError;
   closing?: Promise<void>;
 }
 
@@ -41,10 +42,15 @@ function unavailable(): MervError {
   return new MervError('remote_unavailable', 'Remote tool service is unavailable', 502);
 }
 
-function deadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
+/** Rejects with a fixed timeout code; the operation itself keeps running until its owner stops it. */
+export function withDeadline<T>(
+  operation: Promise<T>,
+  milliseconds: number,
+  code: 'mount_timeout' | 'remote_timeout',
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new MervError('remote_timeout', 'Remote tool operation timed out', 504)),
+      () => reject(new MervError(code, 'Remote operation timed out', 504)),
       milliseconds,
     );
     operation.then(
@@ -61,8 +67,6 @@ function deadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
 }
 
 function transportError(error: unknown): MervError {
-  if (error instanceof MervError && error.code === 'credential_changed')
-    return new MervError('credential_changed', 'Upstream credential changed before dispatch', 409);
   if (
     (error instanceof MervError && error.code === 'remote_timeout') ||
     (error instanceof McpError && error.code === ErrorCode.RequestTimeout)
@@ -73,12 +77,12 @@ function transportError(error: unknown): MervError {
 
 /** Actor/project credentials are resolved per admission; only matching identities share a client. */
 export class ScopedRemoteClients {
-  private readonly mounts = new Map<string, string>();
   private readonly connections = new Map<string, Connection>();
   private readonly current = new Map<string, Connection>();
   private readonly all = new Set<Connection>();
   private readonly running = new Set<Promise<CallToolResult>>();
   private readonly timeoutMs: number;
+  private readonly url: string;
   private cleanupFailed = false;
   private stopping = false;
   private closing?: Promise<void>;
@@ -100,20 +104,18 @@ export class ScopedRemoteClients {
         'invalid_remote_config',
         'timeoutMs must be a positive supported timeout',
       );
-    for (const [mountId, mount] of Object.entries(options.mounts)) {
-      let url: URL;
-      try {
-        url = new URL(mount.url);
-      } catch {
-        throw new MervError('invalid_remote_config', 'Mount endpoint must be an HTTP(S) URL');
-      }
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
-        throw new MervError(
-          'invalid_remote_config',
-          'Mount endpoint must be an HTTP(S) URL without credentials or fragment',
-        );
-      this.mounts.set(mountId, url.href);
+    let url: URL;
+    try {
+      url = new URL(options.url);
+    } catch {
+      throw new MervError('invalid_remote_config', 'Mount endpoint must be an HTTP(S) URL');
     }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
+      throw new MervError(
+        'invalid_remote_config',
+        'Mount endpoint must be an HTTP(S) URL without credentials or fragment',
+      );
+    this.url = url.href;
   }
 
   async call(
@@ -128,9 +130,9 @@ export class ScopedRemoteClients {
       let connection: Connection;
       let lane: string | undefined;
       try {
-        const url = this.mounts.get(mountId);
-        if (!url)
+        if (mountId !== this.options.mountId)
           throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
+        const url = this.url;
         lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
         await this.admit(caller, mountId, rawToolName, args);
         const credential = await this.credentials.resolve(caller, mountId);
@@ -196,20 +198,8 @@ export class ScopedRemoteClients {
       try {
         const transport = new StreamableHTTPClientTransport(new URL(url), {
           requestInit: { headers: { ...credential.headers() } },
-          fetch: (address, init) => {
-            try {
-              credential.assertCurrent?.();
-            } catch {
-              // The SDK can wrap a failed initialized notification as a protocol
-              // error. Retain the local, sanitized cause through that boundary.
-              connection.credentialFailure = new MervError(
-                'credential_changed',
-                'Upstream credential changed before dispatch',
-                409,
-              );
-              throw connection.credentialFailure;
-            }
-            return fetch(address, {
+          fetch: (address, init) =>
+            fetch(address, {
               ...init,
               // The binding authorizes this endpoint, not a redirect destination. Even
               // when fetch strips Authorization, it forwards tool bodies and MCP headers.
@@ -218,16 +208,16 @@ export class ScopedRemoteClients {
                 ...(init?.signal ? [init.signal] : []),
                 AbortSignal.timeout(this.timeoutMs),
               ]),
-            });
-          },
+            }),
         });
-        await deadline(
+        await withDeadline(
           client.connect(transport, { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs }),
           this.timeoutMs,
+          'remote_timeout',
         );
       } catch (error) {
         this.retire(connection);
-        throw connection.credentialFailure ?? transportError(error);
+        throw transportError(error);
       }
     })();
     return connection;
@@ -243,9 +233,8 @@ export class ScopedRemoteClients {
     connection.users++;
     try {
       await connection.ready;
-      // Connection setup can yield. Revocation or rotation during that wait must
-      // be observed before an operation crosses the upstream boundary.
-      await this.admit(caller, mountId, name, args);
+      // Connection setup and credential resolution can yield. Rotation or revocation
+      // during either wait must be observed before an operation crosses the upstream boundary.
       const currentCredential = await this.credentials.resolve(caller, mountId);
       if (currentCredential.identityKey !== connection.identityKey)
         throw new MervError(
@@ -253,22 +242,19 @@ export class ScopedRemoteClients {
           'Upstream credential changed before dispatch',
           409,
         );
-      // Credential resolution can also yield after the connection is ready.
       await this.admit(caller, mountId, name, args);
-      currentCredential.assertCurrent?.();
-      return await deadline(
+      return await withDeadline(
         connection.client.request(
           { method: 'tools/call', params: { name, arguments: args } },
           losslessResult,
           { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs },
         ),
         this.timeoutMs,
+        'remote_timeout',
       );
     } catch (error) {
       this.retire(connection);
-      throw (
-        connection.credentialFailure ?? (error instanceof MervError ? error : transportError(error))
-      );
+      throw error instanceof MervError ? error : transportError(error);
     } finally {
       connection.users--;
       // A failed shared connection is withdrawn immediately; other admitted calls retain it.
@@ -286,7 +272,11 @@ export class ScopedRemoteClients {
   }
 
   private dispose(connection: Connection): Promise<void> {
-    return (connection.closing ??= deadline(connection.client.close(), this.timeoutMs)
+    return (connection.closing ??= withDeadline(
+      connection.client.close(),
+      this.timeoutMs,
+      'remote_timeout',
+    )
       .catch((error: unknown) => {
         // Retirements can finish before shutdown snapshots the live clients.
         // Retain their cleanup outcome after removing the connection itself.

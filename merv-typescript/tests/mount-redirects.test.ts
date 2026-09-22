@@ -11,7 +11,6 @@ import type { CredentialProvider } from '../packages/mounts/src/types.js';
 
 const caller = { projectId: 'project_redirect', actorId: 'actor_redirect' };
 const credentials: CredentialProvider = {
-  replace: () => {},
   resolve: async () => ({
     identityKey: 'fixture_identity',
     headers: () => ({
@@ -134,7 +133,8 @@ for (const mode of ['invocation', 'discovery']) {
       ],
     });
     const pool = new ScopedRemoteClients(credentials, fixtureAccess, {
-      mounts: { fixture: { url } },
+      mountId: 'fixture',
+      url,
       timeoutMs: 1000,
     });
     try {
@@ -154,7 +154,8 @@ for (const redirectMethod of ['initialize', 'tools/call']) {
   test(`invocation refuses a cross-origin redirect during ${redirectMethod}`, async (t) => {
     const { url, received } = await fixture(t, redirectMethod);
     const pool = new ScopedRemoteClients(credentials, fixtureAccess, {
-      mounts: { fixture: { url } },
+      mountId: 'fixture',
+      url,
       timeoutMs: 1000,
     });
     try {

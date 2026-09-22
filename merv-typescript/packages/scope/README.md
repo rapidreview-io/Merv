@@ -32,7 +32,3 @@ Trusted application code can call `scope.toolPolicy.replace(grants)`. Replacemen
 Session tool calls are admitted by the Sessions provider through the tool registry (`ctx.tools.registerSessionPolicy()`), not through `toolPolicy`. Scope keeps only its session authority slot (`registerSessionAuthority()`), which lets worker actors resolve without a Scope-to-Sessions dependency.
 
 `ToolPolicy` and `ToolGrant` are public types in `@merv/contracts`. The implementation stays in `src/tool-policy.ts` alongside Scope's other internal modules.
-
-## Migration from the Access plugin
-
-Remove the `@merv/access` configuration entry and move its `config.grants` onto the existing `@merv/scope` entry. Consumers inject `scope` and use `ctx.scope.toolPolicy`; there is no separate `Context.access` service. Import policy types from `@merv/contracts`. Credentials and Identity remain separate plugins.

@@ -9,14 +9,31 @@ import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
   CallToolRequestSchema,
+  CallToolResultSchema,
   ListToolsRequestSchema,
   isInitializeRequest,
   type CallToolResult,
   type ListToolsResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import type { RemoteToolDefinition } from '@merv/api/types';
+
+/** Calls one shared client directly; mounts instead route each call through its scoped pool. */
+export const callable = (client: Pick<Client, 'request'>, tools: Tool[]): RemoteToolDefinition[] =>
+  tools.map((tool) => ({
+    ...tool,
+    kind: 'mcp',
+    handler: (_caller, input) =>
+      client.request(
+        { method: 'tools/call', params: { name: tool.name, arguments: input } },
+        // Validate without the SDK's parsed copy, which can strip extension metadata.
+        z.custom<CallToolResult>((value) => CallToolResultSchema.safeParse(value).success),
+      ),
+  }));
 
 export interface RemoteRequestLog {
   method: 'tools/list' | 'tools/call';

@@ -280,7 +280,6 @@ test('mount connection setup retains the original credential fence before upstre
   let calls = 0;
   const remote = new ScopedRemoteClients(
     {
-      replace() {},
       async resolve(caller) {
         await scope.require(caller, 'read');
         return {
@@ -291,7 +290,8 @@ test('mount connection setup retains the original credential fence before upstre
     },
     access,
     {
-      mounts: { bridge: { url: 'http://127.0.0.1:1/mcp' } },
+      mountId: 'bridge',
+      url: 'http://127.0.0.1:1/mcp',
       clientFactory: () =>
         ({
           connect: () => ready,

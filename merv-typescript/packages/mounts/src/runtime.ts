@@ -7,7 +7,7 @@ import type { CredentialProvider, ResolvedCredential } from './types.js';
 import type { ToolPolicy } from '@merv/contracts';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
-import { ScopedRemoteClients } from './credential-client.js';
+import { ScopedRemoteClients, withDeadline } from './credential-client.js';
 
 const safeCodes = new Set([
   'forbidden',
@@ -29,24 +29,6 @@ const safeCodes = new Set([
 ]);
 const safeCode = (error: unknown) =>
   error instanceof MervError && safeCodes.has(error.code) ? error.code : 'mount_unavailable';
-function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new MervError('mount_timeout', 'Mount operation timed out', 504)),
-      timeoutMs,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
 
 /** One dedicated discovery session; invocation connections are separately scoped by the pool. */
 export class MountRuntime {
@@ -85,7 +67,7 @@ export class MountRuntime {
     this.pool = new ScopedRemoteClients(
       credentials,
       access,
-      { mounts: { [config.id]: { url: config.url } }, timeoutMs: this.timeoutMs },
+      { mountId: config.id, url: config.url, timeoutMs: this.timeoutMs },
       tools,
     );
     this.catalog = tools.createCatalog(config.id);
@@ -144,12 +126,6 @@ export class MountRuntime {
       await this.resetDiscovery();
     if (!this.client) await this.connect(credential);
     const client = this.client!;
-    check(
-      (await this.credential())?.identityKey === this.discoveryIdentity,
-      'credential_changed',
-      'Discovery credential changed before query',
-      409,
-    );
     const definitions = await collectRemoteCatalog(client, {
       timeoutMs: this.timeoutMs,
       signal: this.discoveryAbort!.signal,
@@ -179,7 +155,8 @@ export class MountRuntime {
       check(definition, 'mount_missing_tool', 'A selected remote tool is missing', 502);
       return {
         ...definition,
-        // The discovery handler is deliberately discarded; every call selects its own authority.
+        kind: 'mcp',
+        // Every call selects its own authority; discovery's credential never invokes tools.
         handler: async (caller, input) => this.pool.call(caller, this.config.id, name, input),
       };
     });
@@ -216,7 +193,6 @@ export class MountRuntime {
     const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
       ...(credential ? { requestInit: { headers: { ...credential.headers() } } } : {}),
       fetch: async (address, init) => {
-        credential?.assertCurrent?.();
         const lifetime = [controller.signal, ...(init?.signal ? [init.signal] : [])];
         if (init?.method?.toUpperCase() !== 'GET')
           return fetch(address, {
@@ -241,9 +217,10 @@ export class MountRuntime {
       },
     });
     try {
-      await bounded(
+      await withDeadline(
         client.connect(transport, { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs }),
         this.timeoutMs,
+        'mount_timeout',
       );
       check(
         !this.stopping && this.client === client,
@@ -291,7 +268,7 @@ export class MountRuntime {
   }
   private async closeClient(client: Client): Promise<void> {
     try {
-      await bounded(client.close(), this.timeoutMs);
+      await withDeadline(client.close(), this.timeoutMs, 'mount_timeout');
     } catch {
       this.cleanupFailed = true;
       throw new MervError('mount_cleanup_failed', 'Discovery resource cleanup failed', 503);

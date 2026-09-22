@@ -13,13 +13,9 @@ export interface ResolvedCredential {
   readonly identityKey: string;
   /** Explicit server-side access; callers must not serialize or log these headers. */
   headers(): Readonly<Record<string, string>>;
-  /** Synchronous dispatch fence for providers backed by mutable local configuration. */
-  assertCurrent?(): void;
 }
 export interface CredentialProvider {
   resolve(caller: Caller, mountId: string): Promise<ResolvedCredential>;
-  /** Trusted in-process configuration replacement; never an agent-facing operation. */
-  replace(bindings: CredentialBinding[]): void;
 }
 
 export interface MountConfig {

@@ -32,15 +32,11 @@ test('two projects use separate upstream credentials and connections through rea
     { id: 'upstream-a-rotated', token: secrets[2], namespace: 'namespace-a', subject: 'subject-a' },
   ]);
   await upstream.start();
-  const credentials = new EnvironmentCredentials(app.ctx.scope);
-  const pool = new ScopedRemoteClients(credentials, app.ctx.scope.toolPolicy, {
-    mounts: { bridge: { url: upstream.url } },
-    timeoutMs: 2000,
-  });
   const clients: Client[] = [];
+  const pools: ScopedRemoteClients[] = [];
   t.after(async () => {
     await Promise.all(clients.map((client) => client.close()));
-    await pool.close();
+    await Promise.all(pools.map((pool) => pool.close()));
     await upstream.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
@@ -69,14 +65,26 @@ test('two projects use separate upstream credentials and connections through rea
       'x-sandbox-subject': `subject-${i === 0 ? 'a' : 'b'}`,
     },
   }));
-  credentials.replace(bindings);
+  // Binding changes apply by reloading Mounts, which builds a new provider and pool.
+  const load = (credentials: EnvironmentCredentials) => {
+    const pool = new ScopedRemoteClients(credentials, app.ctx.scope.toolPolicy, {
+      mountId: 'bridge',
+      url: upstream.url,
+      timeoutMs: 2000,
+    });
+    pools.push(pool);
+    return pool;
+  };
+  const credentials = new EnvironmentCredentials(app.ctx.scope, bindings);
+  const pool = load(credentials);
+  let active = pool;
   app.ctx.tools.createCatalog('bridge').replace([
     {
       kind: 'mcp',
       name: 'inspect',
       inputSchema: { type: 'object', additionalProperties: false },
       annotations: { readOnlyHint: true },
-      handler: async (caller, input) => pool.call(caller, 'bridge', 'inspect', input),
+      handler: async (caller, input) => active.call(caller, 'bridge', 'inspect', input),
     },
   ]);
   const connect = async (token: string) => {
@@ -124,11 +132,11 @@ test('two projects use separate upstream credentials and connections through rea
   assert.equal((await mcpCall(mcpB)).isError, true);
   assert.equal(upstream.calls.length, count);
   app.ctx.scope.toolPolicy.replace(grants);
-  credentials.replace([bindings[0]]);
+  active = load(new EnvironmentCredentials(app.ctx.scope, [bindings[0]]));
   assert.equal((await httpCall(readerB.token)).status, 403);
   assert.equal((await mcpCall(mcpB)).isError, true);
-  assert.equal(upstream.calls.length, count, 'Revoked bindings must not reuse the cached client');
-  credentials.replace(bindings);
+  assert.equal(upstream.calls.length, count, 'A revoked binding must not reach upstream');
+  active = pool;
   process.env[envNames[0]] = secrets[2];
   const rotated = await mcpCall(mcpA);
   assert.equal(rotated.structuredContent?.identity, 'upstream-a-rotated');

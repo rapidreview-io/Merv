@@ -70,7 +70,8 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       const connections: { closes: number }[] = [];
       const dispatched: unknown[] = [];
       const pool = new ScopedRemoteClients(credentials, access, {
-        mounts: { bridge: { url: 'https://unused-mount.example/mcp' } },
+        mountId: 'bridge',
+        url: 'https://unused-mount.example/mcp',
         timeoutMs: 1500,
         clientFactory: () => {
           const connection = { closes: 0 };

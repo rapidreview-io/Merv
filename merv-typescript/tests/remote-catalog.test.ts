@@ -8,8 +8,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { MervError, type Caller, type Scope } from '@merv/contracts';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import { collectRemoteCatalog, RemoteCatalog } from '../packages/mounts/src/remote-catalog.js';
+import { collectRemoteCatalog } from '../packages/mounts/src/remote-catalog.js';
 import {
+  callable,
   RemoteFixture,
   representativeTools,
   representativeResult,
@@ -49,27 +50,20 @@ async function setup(t: TestContext, options: RemoteFixtureOptions = {}) {
   const fixture = new RemoteFixture(options),
     client = new Client({ name: 'merv-catalog-test', version: '1' }),
     registry = new ToolRegistry(scope, fixtureAccess);
-  const controllers: RemoteCatalog[] = [];
   t.after(async () => {
     await fixture.close();
     await client.close();
-    await Promise.allSettled(controllers.map(async (controller) => controller.close()));
     await registry.close();
   });
   await fixture.start();
   await client.connect(new StreamableHTTPClientTransport(new URL(fixture.url)));
+  const catalog = registry.createCatalog('fixture');
   return {
     fixture,
     client,
     registry,
-    controller: (
-      mount = 'fixture',
-      options: ConstructorParameters<typeof RemoteCatalog>[2] = {},
-    ) => {
-      const controller = new RemoteCatalog(client, registry.createCatalog(mount), options);
-      controllers.push(controller);
-      return controller;
-    },
+    /** Collects the complete upstream catalog, then swaps it in as one generation. */
+    refresh: async () => catalog.replace(callable(client, await collectRemoteCatalog(client))),
   };
 }
 
@@ -77,19 +71,15 @@ test(
   'independent paginated MCP catalog retains schemas, metadata, remote arguments and every content block',
   { timeout: 10000 },
   async (t) => {
-    const { fixture, client, registry } = await setup(t, { pageSize: 1 });
-    const definitions = await collectRemoteCatalog(client);
-    assert.deepEqual(
-      definitions.map(({ kind: _kind, handler: _handler, ...description }) => description),
-      representativeTools,
-    );
+    const { fixture, client, registry, refresh } = await setup(t, { pageSize: 1 });
+    assert.deepEqual(await collectRemoteCatalog(client), representativeTools);
     assert.deepEqual(
       fixture.requests
         .filter((request) => request.method === 'tools/list')
         .map((request) => request.cursor),
       [undefined, '1', '2'],
     );
-    await registry.createCatalog('fixture').replace(definitions);
+    await refresh();
     assert.deepEqual(await names(registry), [
       '_fixture.failure',
       '_fixture.inspect',
@@ -151,40 +141,6 @@ test(
 );
 
 test(
-  'one controller owns a client notification handler until it closes',
-  { timeout: 10000 },
-  async (t) => {
-    const { fixture, registry, controller } = await setup(t);
-    let firstRefreshes = 0;
-    const first = controller('first', {
-      onRefresh: () => {
-        firstRefreshes++;
-      },
-    });
-    await first.refresh();
-    assert.throws(() => controller('duplicate'), code('remote_catalog_client_owned'));
-    await fixture.notifyToolsChanged();
-    await until(
-      () => firstRefreshes === 2,
-      'Rejected duplicate must not replace the first handler',
-    );
-    await first.close();
-    let secondRefreshes = 0;
-    const second = controller('second', {
-      onRefresh: () => {
-        secondRefreshes++;
-      },
-    });
-    await second.refresh();
-    await first.close();
-    fixture.setTools([simple('fresh')]);
-    await fixture.notifyToolsChanged();
-    await until(() => secondRefreshes === 2, 'Repeated old close must not remove the new handler');
-    assert.deepEqual(await names(registry), ['_second.fresh']);
-  },
-);
-
-test(
   'catalog collection rejects repeated cursors and explicit page/tool limit overruns',
   { timeout: 10000 },
   async (t) => {
@@ -234,15 +190,14 @@ test(
   'refresh validates the entire new catalog before replacing any old tool',
   { timeout: 10000 },
   async (t) => {
-    const { fixture, registry, controller } = await setup(t);
+    const { fixture, registry, refresh } = await setup(t);
     registry.register({
       name: 'native',
       description: 'Independent native operation',
       inputSchema: z.object({}).strict(),
       handler: () => 'native-alive',
     });
-    const remote = controller();
-    await remote.refresh();
+    await refresh();
     const original = await names(registry);
     fixture.setTools([
       simple('fresh'),
@@ -254,8 +209,7 @@ test(
         },
       },
     ]);
-    await assert.rejects(remote.refresh(), /schema|reference|\$ref/i);
-    assert.ok(remote.lastError);
+    await assert.rejects(refresh(), /schema|reference|\$ref/i);
     assert.deepEqual(await names(registry), original);
     assert.equal(await registry.call('native', caller, {}), 'native-alive');
     assert.deepEqual(await registry.call('_fixture.media', caller, {}), representativeResult);
@@ -266,16 +220,15 @@ test(
   'atomic refresh withdraws removed tools while draining an already admitted remote call',
   { timeout: 10000 },
   async (t) => {
-    const { fixture, registry, controller } = await setup(t);
-    const remote = controller();
-    await remote.refresh();
+    const { fixture, registry, refresh } = await setup(t);
+    await refresh();
     const held = fixture.holdNextCall('media');
     const admitted = registry.call('_fixture.media', caller, {});
     await held.entered;
     fixture.setTools([simple('fresh')]);
     fixture.setResult('fresh', { content: [{ type: 'text', text: 'New generation.' }] });
     let settled = false;
-    const replacement = remote.refresh().then(() => {
+    const replacement = refresh().then(() => {
       settled = true;
     });
     try {
@@ -294,90 +247,5 @@ test(
     }
     assert.deepEqual(await admitted, representativeResult);
     await replacement;
-  },
-);
-
-test(
-  'tools/list_changed serializes refreshes and reports invalid updates without losing live tools',
-  { timeout: 10000 },
-  async (t) => {
-    const { fixture, client, registry, controller } = await setup(t);
-    let notified!: () => void;
-    const received = new Promise<void>((resolve) => {
-      notified = resolve;
-    });
-    const install = client.setNotificationHandler.bind(client);
-    const observe: Client['setNotificationHandler'] = (schema, handler) =>
-      install(schema, (notification) => {
-        notified();
-        return handler(notification);
-      });
-    t.mock.method(client, 'setNotificationHandler', observe);
-    let completed = 0;
-    const failures: unknown[] = [];
-    const remote = controller('fixture', {
-      onRefresh: () => {
-        completed++;
-      },
-      onError: (error) => {
-        failures.push(error);
-      },
-    });
-    await remote.refresh();
-    await fixture.waitForNotificationStream();
-    const held = fixture.holdNextList();
-    fixture.setTools([simple('fresh')]);
-    fixture.setResult('fresh', { content: [] });
-    const active = remote.refresh();
-    await held.entered;
-    const listsBeforeNotification = fixture.requests.filter(
-      (request) => request.method === 'tools/list',
-    ).length;
-    await fixture.notifyToolsChanged();
-    await received;
-    assert.equal(
-      fixture.requests.filter((request) => request.method === 'tools/list').length,
-      listsBeforeNotification,
-      'Notification refresh must queue behind the held collection',
-    );
-    held.release();
-    await active;
-    await remote.whenIdle();
-    assert.equal(completed, 3);
-    assert.deepEqual(await names(registry), ['_fixture.fresh']);
-    fixture.setTools([
-      {
-        name: 'bad',
-        inputSchema: {
-          type: 'object',
-          properties: { value: { $ref: 'https://invalid.example/schema' } },
-        },
-      },
-    ]);
-    await fixture.notifyToolsChanged();
-    await until(() => failures.length > 0, 'Invalid notification refresh was not reported');
-    assert.deepEqual(await names(registry), ['_fixture.fresh']);
-    assert.equal(remote.lastError, failures[0]);
-  },
-);
-
-test(
-  'closing withdraws tools immediately and cancels an unfinished catalog collection',
-  { timeout: 10000 },
-  async (t) => {
-    const { fixture, registry, controller } = await setup(t);
-    const remote = controller();
-    await remote.refresh();
-    const held = fixture.holdNextList();
-    const pending = remote.refresh();
-    const rejected = assert.rejects(pending, code('remote_catalog_closed'));
-    await held.entered;
-    const closing = remote.close();
-    assert.deepEqual(await names(registry), []);
-    await assert.rejects(registry.call('_fixture.media', caller, {}), code('unknown_tool'));
-    await rejected;
-    await closing;
-    held.release();
-    await assert.rejects(remote.refresh(), code('remote_catalog_closed'));
   },
 );

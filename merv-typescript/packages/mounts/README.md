@@ -39,8 +39,8 @@ Discovery, invocation, and notification requests refuse HTTP redirects. Configur
 
 The following helper modules now belong to this package:
 
-- `@merv/mounts/remote-catalog` exports `collectRemoteCatalog` and `RemoteCatalog`. Collection is bounded by page, tool, and time limits. Catalog replacement validates a complete generation before publication, and controller shutdown withdraws tools before waiting for admitted calls. The controller owns its client's `tools/list_changed` handler.
-- `@merv/mounts/credential-client` exports `ScopedRemoteClients`. The pool isolates connections by mount, endpoint, actor, project, and credential identity. It rechecks grants and credentials after connection setup, retires changed identities, and drains admitted calls during shutdown.
+- `@merv/mounts/remote-catalog` exports `collectRemoteCatalog`. Collection is bounded by page, tool, and time limits and returns upstream descriptions without handlers; each mount attaches a handler that routes every call through its scoped pool. Catalog replacement validates a complete generation before publication, and catalog disposal withdraws tools before waiting for admitted calls.
+- `@merv/mounts/credential-client` exports `ScopedRemoteClients`. One pool serves one mount endpoint and isolates connections by actor, project, and credential identity. It rechecks grants and credentials after connection setup, retires changed identities, and drains admitted calls during shutdown.
 
 These helpers were relocated from API without changing their tool transport behavior. Pool shutdown also retains earlier retirement cleanup failures so a later close cannot incorrectly report success. They contain upstream SDK transport ownership, while the public types module remains free of runtime code.
 
@@ -62,4 +62,4 @@ The internal resolver selects exact project/actor/mount bindings and checks curr
 
 Secret snapshots hide headers from JSON and diagnostic inspection. Their opaque identity includes the binding and current secret, so rotation selects a different connection. The client rechecks authority and credential identity after connection setup, before dispatch. Upstream tokens never become agent-facing tool results. This move adds no OAuth flow or automatic token refresh.
 
-Resolution rejects bindings or secrets changed while local-token validation is pending. Environment-backed snapshots also supply a synchronous `assertCurrent()` fence, checked after the final policy await and at the HTTP transport boundary, including discovery. Custom mutable credential providers can supply the same optional fence. Equivalent binding replacements keep cached connections usable; requests already sent can drain with their original identity.
+Bindings are fixed for each load of the Mounts entry. A secret rotated in the environment changes the resolved identity, so the next admission retires the old connection and opens a new one; requests already sent drain with their original identity.

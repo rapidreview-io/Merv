@@ -419,7 +419,7 @@ test('leased mounted calls require source grants and keep upstream project argum
   const pool = new ScopedRemoteClients(
     credentials,
     f.app.ctx.scope.toolPolicy,
-    { mounts: { sandbox: { url: upstream.url } } },
+    { mountId: 'sandbox', url: upstream.url },
     f.app.ctx.tools,
   );
   f.cleanup.push(async () => {
