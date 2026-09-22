@@ -607,6 +607,18 @@ test(
     services.access.replace(grants);
     await manager.reconnect('fixture');
     assert.equal(manager.status()[0].state, 'ready');
+    // A discovery credential that no longer resolves withdraws the catalog too.
+    const discoveryToken = process.env[discoveryEnv]!;
+    delete process.env[discoveryEnv];
+    await until(
+      () => manager.status()[0].toolCount === 0,
+      'Unresolvable discovery credential remained active',
+    );
+    assert.deepEqual(await names(services.registry), ['native']);
+    assert.equal(manager.status()[0].errorCode, 'credential_unavailable');
+    process.env[discoveryEnv] = discoveryToken;
+    await manager.reconnect('fixture');
+    assert.equal(manager.status()[0].state, 'ready');
   },
 );
 

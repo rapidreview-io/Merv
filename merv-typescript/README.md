@@ -452,7 +452,7 @@ npm test
 | `tests/workflows.test.ts`          | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
 | `tests/tasks.test.ts`              | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
 | `tests/remote-registry.test.ts`    | Remote schema validation, namespace collisions, atomic replacement, result validation, and draining                                                                    |
-| `tests/remote-catalog.test.ts`     | Independent MCP pagination, catalog refresh notifications, limits, failures, and cleanup                                                                               |
+| `tests/remote-catalog.test.ts`     | Independent MCP pagination, limits, repeated cursors/names, collection timeout, atomic replacement and drain                                                           |
 | `tests/remote-http.test.ts`        | Lossless remote HTTP/MCP results, separate project selection, and withdrawal during a held call                                                                        |
 | `tests/protocol.test.ts`           | Actual legacy negotiation/list/call and explicit unsupported version behavior                                                                                          |
 | `tests/protocol-proxy.test.ts`     | Safe metadata capture and transparent JSON/SSE forwarding for live-agent evidence                                                                                      |
