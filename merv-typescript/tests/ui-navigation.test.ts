@@ -189,14 +189,14 @@ test('the document is titled by its page, its project and the app, each said onc
 });
 
 test('a missing page speaks of a plugin only where the shell can show one that is not active', () => {
-  const kinds = ['feed', 'claims', 'settings'];
+  const kinds = ['feed', 'paper', 'settings'];
   const plugin = (id: string, state: string, name = `@merv/${id}`): PluginState => ({
     id,
     name,
     state,
   });
   const rows = [row('artifacts', 'artifacts', 'work', 21)];
-  const plugins = [plugin('claims-ui', 'active'), plugin('feed-ui', 'disabled')];
+  const plugins = [plugin('paper-ui', 'active'), plugin('feed-ui', 'disabled')];
   assert.equal(dormantOwner('/feed', kinds, rows, plugins)?.id, 'feed-ui');
   assert.equal(dormantOwner('/feed/post_1', kinds, rows, plugins)?.id, 'feed-ui');
   // An entry is named by whoever configured it; the module it loads says what it is.
@@ -212,6 +212,6 @@ test('a missing page speaks of a plugin only where the shell can show one that i
     dormantOwner('/telemetry', kinds, rows, [plugin('telemetry-ui', 'disabled')]),
     undefined,
   );
-  assert.equal(dormantOwner('/claims/claim_1/extra', kinds, rows, plugins), undefined);
+  assert.equal(dormantOwner('/paper/methods/extra', kinds, rows, plugins), undefined);
   assert.equal(dormantOwner('/feed', kinds, rows, [plugin('feed-ui', 'active')]), undefined);
 });

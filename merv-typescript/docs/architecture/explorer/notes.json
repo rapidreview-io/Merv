@@ -26,7 +26,6 @@
       "label": "Research",
       "caption": "The work & what we learn",
       "members": [
-        "claims",
         "tasks",
         "experiments",
         "knowledge",
@@ -97,10 +96,6 @@
     "sandboxes": {
       "label": "Sandboxes",
       "purpose": "Connects to the remote compute service over HTTP, reads its published views and scoped records, and extends or releases sandbox leases. Its tool adapter enforces project write permission; its UI adapter publishes the service's views. The provider owns upstream credentials and has no injected Cordis dependencies."
-    },
-    "claims": {
-      "label": "Archived claims",
-      "purpose": "Preserves retired research claims as read-only history. New research uses the living paper and named experiment links; no claim editing tools or active Claims page remain."
     },
     "tasks": {
       "label": "Tasks",

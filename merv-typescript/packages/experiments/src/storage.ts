@@ -10,7 +10,6 @@ export interface ExperimentRow {
   owner_id: string;
   created_by: string;
   created_at: string;
-  tested_claim_ids: string;
   workspace: 'none' | 'git';
   attempt_index: number;
   review_id: string | null;

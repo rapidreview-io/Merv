@@ -36,7 +36,7 @@ import {
 } from '../components';
 import { EditIcon, PlusIcon } from '../icons';
 import { Markdown, RecordText } from '../markdown';
-import { ArchivedClaims, ReferenceLookup } from './paper-references';
+import { ReferenceLookup } from './paper-references';
 import { RecordPicker, filePick } from '../record-picker';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
@@ -245,7 +245,7 @@ function Editor({
 }) {
   return (
     <OpenedForm
-      className="card stack claims-form"
+      className="card stack entry-form"
       aria-label={label}
       onClose={onDone}
       locked={command.locked}
@@ -1059,7 +1059,6 @@ function PaperPage({ row, shell }: ViewProps) {
               ],
             ]}
           />
-          <ArchivedClaims />
           <details>
             <Summary>Check references</Summary>
             <ReferenceLookup />

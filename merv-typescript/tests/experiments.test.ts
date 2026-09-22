@@ -219,7 +219,7 @@ test('Experiment reads retain their caller while pending', async (t) => {
 test('Experiments run both independent gates, pin exact evidence/exhibit without research claims', async (t) => {
   const f = await fixture(t);
   let e = await f.create('Paired-test');
-  assert.equal(e.testedClaimIds, undefined);
+  assert.equal(Object.hasOwn(e, 'testedClaimIds'), false);
   assert.equal(e.attempt.index, 1);
   assert.equal(e.workflow.revision, 0);
   const p = await f.attach(e, 'plan', plan);
@@ -527,7 +527,7 @@ test('Active cap, name uniqueness and same-project dependencies fail atomically'
   const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' }),
     caller = { actorId: other.actor.id, projectId: other.project.id };
   await assert.rejects(
-    async () => await f.create('Foreign-claim', { testedClaimIds: ['claim_retired'] }),
+    async () => await f.create('Retired-field', { testedClaimIds: ['claim_retired'] }),
     code('invalid_experiment_input'),
   );
   for (let i = 0; i < 6; i++) await f.create(`Active-${i}`);

@@ -1,23 +1,25 @@
 # Knowledge
 
 Knowledge provides current project research records, scoped reference resolution
-and immutable corpus snapshots for an owning program. Claims, Tasks,
-Experiments, Artifacts, Reviews and Code continue to own their source records.
-A saved corpus is not a published Reflection.
+and immutable corpus snapshots for an owning program. Tasks, Experiments,
+Artifacts, Reviews and Code continue to own their source records. A saved corpus
+is not a published Reflection. Research claims were retired: each one was
+converted into a Markdown text artifact titled `Claim: …`, which resolves like any
+other artifact.
 
-| Entrypoint              | Requires                                                           | Provides                                |
-| ----------------------- | ------------------------------------------------------------------ | --------------------------------------- |
-| `@merv/knowledge`       | State, Scope, Claims, Tasks, Experiments, Artifacts, Reviews, Code | `knowledge` service                     |
-| `@merv/knowledge/tools` | Knowledge, Tools                                                   | `project.records`, `project.references` |
-| `@merv/knowledge/ui`    | Knowledge, UI                                                      | Research records page                   |
+| Entrypoint              | Requires                                                   | Provides                                |
+| ----------------------- | ---------------------------------------------------------- | --------------------------------------- |
+| `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Code | `knowledge` service                     |
+| `@merv/knowledge/tools` | Knowledge, Tools                                           | `project.records`, `project.references` |
+| `@merv/knowledge/ui`    | Knowledge, UI                                              | Research records page                   |
 
 `project.records` returns the current Scope project record, including its
-Introduction, archived claims and all task/experiment metadata. It performs no
+Introduction and all task/experiment metadata. It performs no
 artifact-body reads, prompt rendering, session reconciliation, exit evaluation
 or workflow mutation. Gate and next-action guidance stays in Workflows.
 
 `project.references` resolves up to 200 input references in order. Supported
-explicit forms are `claim:ID`, `task:ID`, `experiment:ID`, `artifact:ID`,
+explicit forms are `task:ID`, `experiment:ID`, `artifact:ID`,
 `review:ID`, `code-proposal:ID`, `code-commit:ID` and `session-final:ID`; supported
 record-ID prefixes also work. Results distinguish resolved, missing, unsupported
 and unpublished. No lookup falls back to another project. A resolved code

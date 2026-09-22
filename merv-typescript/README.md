@@ -22,9 +22,9 @@ support fixed project or explicit account grants, current membership roles,
 rotation and recursive revocation. Owners manage them through the UI and account
 HTTP routes. [Assignment-scoped sessions](docs/SESSION_LEASES.md) now enforce workflow tool policies and worker ownership. The [runner control plane](docs/RUNNER_CONTROL_PLANE.md) adds automatic assignment, project pause/halt and a Sessions page; the optional [machine Runner](docs/MACHINE_RUNNER.md) executes scratch and Git assignments through scoped native agents. [Git workspaces](docs/WORKSPACES.md) preserve captured commits across handoffs and controller restarts. The independent [Code service](docs/CODE_OPERATIONS.md) queues `code.commit` requests from live workers and retains the Runner's immutable commit receipts; `code.operation` reads their progress. Its service API also seals immutable proposal artifacts inside an admitting domain command's transaction; this adds no agent tool or standalone workflow.
 
-The living paper holds the project’s hypotheses and conclusions, citing experiments by name with links to their plans, evidence and reviews. The separate claims feature is retired; [historical claims](packages/claims/README.md) remain read-only and accessible from the paper’s Details view.
+The living paper holds the project’s hypotheses and conclusions, citing experiments by name with links to their plans, evidence and reviews. The separate research claims feature is retired: each existing claim was converted into a Markdown text artifact titled `Claim: …`, and its original events remain in the event log.
 
-[Experiments](docs/EXPERIMENTS.md) owns real experiment records and attempts: plan, independent design review, execution, and independent results review. It pins the approved plan and exact evidence for each submission, creates deterministic metrics exhibits, and routes rejected work back to planning or execution. Workflow guidance checks the same evidence gates as submission. The Experiments page displays current guidance, attempts and sealed submissions. Completing an experiment does not automatically change its linked claims.
+[Experiments](docs/EXPERIMENTS.md) owns real experiment records and attempts: plan, independent design review, execution, and independent results review. It pins the approved plan and exact evidence for each submission, creates deterministic metrics exhibits, and routes rejected work back to planning or execution. Workflow guidance checks the same evidence gates as submission. The Experiments page displays current guidance, attempts and sealed submissions.
 
 ## Durable recovery and context recipes
 
@@ -295,8 +295,6 @@ flowchart TB
   ContextBuilder --> State
   ContextBuilder --> Scope
   ContextBuilder --> Artifacts
-  Claims["@merv/claims"] --> State
-  Claims --> Scope
   Experiments["@merv/experiments"] --> State
   Experiments --> Scope
   Experiments --> Artifacts
@@ -338,26 +336,25 @@ flowchart TB
   Adapters -.-> Experiments
 ```
 
-| Package                 | Owns                                                                                      | Required capabilities                                               |
-| ----------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `@merv/domain-events`   | Durable local event delivery, progress and retries                                        | State                                                               |
-| `@merv/context-builder` | Versioned recipes and immutable agent context packages                                    | State, scope, artifacts                                             |
-| `@merv/state`           | Async SQLite or PostgreSQL transactions, per-component migrations, durable events         | None                                                                |
-| `@merv/blobs`           | Async immutable bytes on disk or S3/R2, project namespaces, content hashes                | None                                                                |
-| `@merv/scope`           | Projects, actor identities, bearer credentials, roles and access checks                   | State                                                               |
-| `@merv/identity`        | Shared signed-user identity verification                                                  | None                                                                |
-| `@merv/claims`          | Research statements, status/confidence, revision checks and mutation receipts             | State, scope                                                        |
-| `@merv/experiments`     | Experiment attempts, evidence and metrics, design/results reviews and recovery            | State, scope, claims, artifacts, workflows, reviews, contextBuilder |
-| `@merv/artifacts`       | Completed immutable documents/files, metadata and authorship                              | State, scope, blobs                                                 |
-| `@merv/workflows`       | Versioned graphs, durable instances, transitions, revisions and request deduplication     | State, scope                                                        |
-| `@merv/reviews`         | Pinned evidence/criteria snapshots, independent claims and immutable verdicts             | State, scope, artifacts, domainEvents                               |
-| `@merv/tasks`           | Brief/delivery rules, task records, installed task graph and atomic review routing        | State, scope, workflows, artifacts, reviews, contextBuilder         |
-| `@merv/feed`            | Immutable project posts, artifact attachments, cursor reads and durable activity          | State, scope, artifacts                                             |
-| `@merv/sessions`        | Scoped worker leases, activation, source fencing and runner controls                      | State, scope, workflows, domainEvents                               |
-| `@merv/code`            | Durable commit commands, immutable receipts and sealed proposals                          | State, scope, sessions, artifacts                                   |
-| `@merv/mounts`          | External MCP connections, exact upstream credential bindings and private secret snapshots | Tools, scope                                                        |
-| `@merv/api`             | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining       | Registry: scope. Transport: scope, registry, identity               |
-| `@merv/runner`          | Machine-local process ownership, Git workspaces and fixed commit execution over HTTP      | None; separate machine context                                      |
+| Package                 | Owns                                                                                      | Required capabilities                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `@merv/domain-events`   | Durable local event delivery, progress and retries                                        | State                                                       |
+| `@merv/context-builder` | Versioned recipes and immutable agent context packages                                    | State, scope, artifacts                                     |
+| `@merv/state`           | Async SQLite or PostgreSQL transactions, per-component migrations, durable events         | None                                                        |
+| `@merv/blobs`           | Async immutable bytes on disk or S3/R2, project namespaces, content hashes                | None                                                        |
+| `@merv/scope`           | Projects, actor identities, bearer credentials, roles and access checks                   | State                                                       |
+| `@merv/identity`        | Shared signed-user identity verification                                                  | None                                                        |
+| `@merv/experiments`     | Experiment attempts, evidence and metrics, design/results reviews and recovery            | State, scope, artifacts, workflows, reviews, contextBuilder |
+| `@merv/artifacts`       | Completed immutable documents/files, metadata and authorship                              | State, scope, blobs                                         |
+| `@merv/workflows`       | Versioned graphs, durable instances, transitions, revisions and request deduplication     | State, scope                                                |
+| `@merv/reviews`         | Pinned evidence/criteria snapshots, independent claims and immutable verdicts             | State, scope, artifacts, domainEvents                       |
+| `@merv/tasks`           | Brief/delivery rules, task records, installed task graph and atomic review routing        | State, scope, workflows, artifacts, reviews, contextBuilder |
+| `@merv/feed`            | Immutable project posts, artifact attachments, cursor reads and durable activity          | State, scope, artifacts                                     |
+| `@merv/sessions`        | Scoped worker leases, activation, source fencing and runner controls                      | State, scope, workflows, domainEvents                       |
+| `@merv/code`            | Durable commit commands, immutable receipts and sealed proposals                          | State, scope, sessions, artifacts                           |
+| `@merv/mounts`          | External MCP connections, exact upstream credential bindings and private secret snapshots | Tools, scope                                                |
+| `@merv/api`             | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining       | Registry: scope. Transport: scope, registry, identity       |
+| `@merv/runner`          | Machine-local process ownership, Git workspaces and fixed commit execution over HTTP      | None; separate machine context                              |
 
 `@merv/contracts` contains shared interfaces and runtime helpers. Domain packages import those contracts or type-only public contracts such as `@merv/feed/types`, rather than sibling implementations. Each feature's `tools.ts` is an optional adapter depending on the generic registry and its own service. `src/app.ts` is the composition root; services also work through explicit constructor injection without HTTP, MCP, or the task program.
 
@@ -377,7 +374,7 @@ For example, an artifacts-only Cordis application can install `statePlugin`, `bl
 - **Migrations belong to components.** Applied SQL is hashed under `(component, version)`. Changing an applied migration or inserting an older version is rejected. Migration failure rolls back the component's changes.
 - **Artifacts are completed and immutable.** Bytes are content-addressed, writes do not overwrite existing content, reads verify hashes, and database triggers reject metadata updates/deletes. Upload streaming and mutable drafts are outside this version. A failed metadata transaction can leave an unreferenced blob; no garbage collector runs automatically.
 - **Workflow versions are pinned.** Persisted graph definitions are fingerprinted and immutable. Existing instances retain their version. Publishing another version does not migrate live instances. A managed graph returns an owner registration handle; direct generic mutations are rejected. The task program keeps that handle private.
-- **Supported mutations are retryable.** Claim commands, task commands, workflow commands, and review request/verdict commands persist their original response. Reusing a request ID with different input is a conflict. `artifact.create` and `actor.create` are not deduplicated commands. Revision checks reject stale transitions; request retries return the previously committed response.
+- **Supported mutations are retryable.** Task commands, workflow commands, and review request/verdict commands persist their original response. Reusing a request ID with different input is a conflict. `artifact.create` and `actor.create` are not deduplicated commands. Revision checks reject stale transitions; request retries return the previously committed response.
 - **Review routing is atomic.** Reviews owns `review.submit` and selects exactly one registered domain owner. Tasks applies its verdict, transition, events and deduplication records in that same transaction, preserving its existing result and replay behavior. Missing or ambiguous ownership is refused, including while Tasks drains during unload. `needs_changes` permits a new delivery and a fresh review snapshot.
 - **Revoked claims recover automatically.** Domain Events persists per-consumer progress and retries. Reviews releases unfinished claims while preserving evidence; current claim IDs fence context builds, checkpoints and verdicts. See [recovery and context](docs/RECOVERY_AND_CONTEXT.md).
 - **Open claims can also be replaced manually.** `task.reissue_review` atomically supersedes the current unsubmitted review, pins the same evidence and criteria into a new review, increments the task revision, and records the reason. Only the task producer or an operator can do this. Stale claims and stale revisions cannot submit a verdict against the replacement.
@@ -480,7 +477,7 @@ Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each 
 
 ## Optional upstream mounts
 
-The current complete plugin network is available as a [PNG diagram](docs/architecture/current-dependencies.png), [zoomable SVG](docs/architecture/current-dependencies.svg), and [extracted dependency list](docs/architecture/current-dependencies.json). It contains 44 plugins, with 21 service providers (20 server providers and one machine Runner) and 103 direct Cordis dependencies. The server default has 41 entries; Mounts, its UI adapter and the separate machine Runner are optional. Nisa and Sandboxes connect through Mounts as external MCP services.
+The plugin network as of 2026-09-16 is drawn as a [PNG diagram](docs/architecture/current-dependencies.png) and [zoomable SVG](docs/architecture/current-dependencies.svg); that snapshot predates the Consolidation and Claims retirements, and the [extracted dependency list](docs/architecture/current-dependencies.json) is the current inventory. The snapshot contains 44 plugins, with 21 service providers (20 server providers and one machine Runner) and 103 direct Cordis dependencies. The server default has 41 entries; Mounts, its UI adapter and the separate machine Runner are optional. Nisa and Sandboxes connect through Mounts as external MCP services.
 
 Add a `@merv/mounts` entry to your explicit application config alongside the default entries. No bootstrap implementation changes are needed. The domain/API composition has 38 entries and 64 domain tools. The explicit default configuration also includes the optional browser layer (53 entries and 66 tools including two UI tools). For the intended sandbox connection, the additional entry is:
 

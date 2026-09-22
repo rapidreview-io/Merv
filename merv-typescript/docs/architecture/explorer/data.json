@@ -36,7 +36,6 @@
       "label": "Research",
       "caption": "The work & what we learn",
       "members": [
-        "claims",
         "tasks",
         "experiments",
         "knowledge",
@@ -249,65 +248,6 @@
       "owner": "blobs",
       "label": "Blobs",
       "purpose": "Stores and reads file bytes by content hash. It has no State dependency; Artifacts owns the associated file metadata.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-claims",
-      "source": "packages/claims/src/index.ts",
-      "provides": [
-        "claims"
-      ],
-      "requires": [
-        "state",
-        "scope"
-      ],
-      "optional": [],
-      "kind": "service",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "claims",
-      "group": "research",
-      "owner": "claims",
-      "label": "Archived claims",
-      "purpose": "Preserves retired research claims as read-only history. New research uses the living paper and named experiment links; no claim editing tools or active Claims page remain.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-claims-tools",
-      "source": "packages/claims/src/tools.ts",
-      "provides": [],
-      "requires": [
-        "claims",
-        "tools"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": false,
-      "id": "merv-claims-tools",
-      "group": "front",
-      "owner": "claims",
-      "label": "Archived claims · tools adapter",
-      "purpose": "Connects Archived claims to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-claims-ui",
-      "source": "packages/claims/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "claims",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": false,
-      "id": "merv-claims-ui",
-      "group": "front",
-      "owner": "claims",
-      "label": "Archived claims · ui adapter",
-      "purpose": "Connects Archived claims to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -655,7 +595,7 @@
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -705,7 +645,7 @@
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent, optional details and tested claim IDs. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -878,7 +818,6 @@
       "requires": [
         "state",
         "scope",
-        "claims",
         "tasks",
         "experiments",
         "artifacts",
@@ -899,12 +838,12 @@
       "exposedTools": [
         {
           "name": "project.records",
-          "description": "Read all project tasks and experiments, with retired claims available only as archivedClaims, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
+          "description": "Read all project tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
           "readOnly": true
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Historical claim: references remain readable. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -929,12 +868,12 @@
       "exposedTools": [
         {
           "name": "project.records",
-          "description": "Read all project tasks and experiments, with retired claims available only as archivedClaims, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
+          "description": "Read all project tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
           "readOnly": true
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Historical claim: references remain readable. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -2216,36 +2155,6 @@
       "optional": false
     },
     {
-      "from": "claims",
-      "to": "state",
-      "optional": false
-    },
-    {
-      "from": "claims",
-      "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "merv-claims-tools",
-      "to": "claims",
-      "optional": false
-    },
-    {
-      "from": "merv-claims-tools",
-      "to": "tools",
-      "optional": false
-    },
-    {
-      "from": "merv-claims-ui",
-      "to": "claims",
-      "optional": false
-    },
-    {
-      "from": "merv-claims-ui",
-      "to": "ui",
-      "optional": false
-    },
-    {
       "from": "code",
       "to": "state",
       "optional": false
@@ -2453,11 +2362,6 @@
     {
       "from": "knowledge",
       "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "knowledge",
-      "to": "claims",
       "optional": false
     },
     {
@@ -2927,10 +2831,10 @@
     }
   ],
   "counts": {
-    "plugins": 58,
-    "providers": 26,
-    "adapters": 32,
-    "dependencies": 152
+    "plugins": 55,
+    "providers": 25,
+    "adapters": 30,
+    "dependencies": 145
   },
   "network": [
     {

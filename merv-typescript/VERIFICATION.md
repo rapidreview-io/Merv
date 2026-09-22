@@ -153,7 +153,7 @@ mutant removing only the final authority checks fails that corrected test. The
 historical 553-test records remain unchanged; this checkpoint supersedes that
 specific weak proof. Production Code logic did not need a change.
 
-[Claims contract](docs/CLAIMS.md) · [Python reference](docs/CLAIMS_PARITY_REFERENCE.md) ·
+[Claims contract](https://github.com/rapidreview-io/Merv/blob/1883f27ae6669fe255bb317011ae505bb4b04322/merv-typescript/docs/CLAIMS.md) · [Python reference](https://github.com/rapidreview-io/Merv/blob/1883f27ae6669fe255bb317011ae505bb4b04322/merv-typescript/docs/CLAIMS_PARITY_REFERENCE.md) (both removed with the claims retirement) ·
 [Verification](verification/claims.json) · [Native evidence](verification/claims-live.json).
 Claims-linked experiments, history UI and reviewed reflection writes remain open.
 The next domain slice is the complete Experiment lifecycle, followed by corpus

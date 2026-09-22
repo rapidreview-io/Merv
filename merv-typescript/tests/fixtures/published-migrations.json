@@ -17,7 +17,8 @@
       "component": "claims",
       "version": 1,
       "hash": "da705fe4a1574098d71f9a9674e7b09ce3d66216bf3c06d566d63dd23eb42a95",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_bases",

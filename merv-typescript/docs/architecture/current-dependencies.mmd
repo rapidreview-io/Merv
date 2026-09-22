@@ -5,9 +5,6 @@ flowchart BT
     merv_artifact_ui["merv-artifact-ui"]
     artifacts["artifacts"]
     blobs["blobs"]
-    claims["claims"]
-    merv_claims_tools["merv-claims-tools"]
-    merv_claims_ui["merv-claims-ui"]
     code["code"]
     merv_code_api["merv-code-api"]
     codeResearch["codeResearch"]
@@ -71,12 +68,6 @@ flowchart BT
   artifacts --> state
   artifacts --> scope
   artifacts --> blobs
-  claims --> state
-  claims --> scope
-  merv_claims_tools --> claims
-  merv_claims_tools --> tools
-  merv_claims_ui --> claims
-  merv_claims_ui --> ui
   code --> state
   code --> scope
   merv_code_api --> api
@@ -119,7 +110,6 @@ flowchart BT
   merv_feed_ui --> ui
   knowledge --> state
   knowledge --> scope
-  knowledge --> claims
   knowledge --> tasks
   knowledge --> experiments
   knowledge --> artifacts

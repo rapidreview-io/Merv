@@ -29,7 +29,7 @@ fixtures prove their stated mechanisms only. See [Code publication ordering](COD
 The current task recipes explicitly remain planning/reflection tasks:
 [definitions](../packages/tasks/src/definitions.ts),
 [Context Builder limits](../packages/context-builder/README.md).
-The [Claims foundation](CLAIMS.md) is integrated. Experiments now provides real records, attempts, evidence, both review stages,
+The Claims foundation was integrated and then retired on 2026-09-22: each claim became a Markdown text artifact titled `Claim: …`. Experiments now provides real records, attempts, evidence, both review stages,
 recovery recipes and scoped tools/UI. Project-knowledge and Reflections providers
 remain open. Review routing and sealing passed the
 [553-test checkpoint and native acceptance](../verification/code-proposals.json).
@@ -89,7 +89,7 @@ calls with no failures and read all three pinned artifacts in full. They routed
 producer and approved plan were seeded; these destinations end that fixture.
 This is not production Experiment or four-stage scientific acceptance.
 
-### 1. Claim facts — integrated
+### 1. Claim facts — integrated, retired 2026-09-22
 
 The independent Claims provider and `claim.create`, `claim.list`, `claim.update`
 are implemented with State/Scope only. Records have project identity, statement,
@@ -106,7 +106,8 @@ agents completed nine successful MCP calls with no failures. A role-aware Claims
 UI passed built-browser checks for exact retry recovery, stale revision conflicts,
 project switching and reader permissions using synthetic local credentials.
 The 566-test suite also passed after the UI retry fix. Real provider login was
-not exercised. See [the implemented contract and limits](CLAIMS.md).
+not exercised. The feature was retired on 2026-09-22: each claim became a Markdown text
+artifact titled `Claim: …`, and the plugin and its documentation were removed.
 
 Later reflection publication still needs a trusted transaction-taking writer
 for reviewed statement/scope changes and publication provenance. Linked

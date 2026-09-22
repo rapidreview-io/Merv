@@ -1134,7 +1134,7 @@ The architecture now has 40 plugins, 21 providers and 84 direct dependencies,
 sets and has been visually inspected. Browser interaction evidence and final build
 checks are recorded in [Claims verification](verification/claims.json).
 
-See [Claims](docs/CLAIMS.md), [Python reference](docs/CLAIMS_PARITY_REFERENCE.md) and
+See [Claims](https://github.com/rapidreview-io/Merv/blob/1883f27ae6669fe255bb317011ae505bb4b04322/merv-typescript/docs/CLAIMS.md), [Python reference](https://github.com/rapidreview-io/Merv/blob/1883f27ae6669fe255bb317011ae505bb4b04322/merv-typescript/docs/CLAIMS_PARITY_REFERENCE.md) (both removed with the claims retirement) and
 [native evidence](verification/claims-live.json). The next slice is the complete
 Experiment lifecycle, followed by authoritative corpus references, Reflection,
 and its consolidation/publication gate. History/linked-experiment UI and trusted

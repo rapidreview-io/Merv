@@ -13,7 +13,6 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { Claims } from '@merv/claims/types';
 import type { Experiments, ExperimentSubmission } from '@merv/experiments/types';
 import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type {
@@ -44,7 +43,6 @@ const errorCode = (error: unknown) =>
   error && typeof error === 'object' && 'code' in error ? error.code : undefined;
 const missingCodes = new Set([
   'not_found',
-  'claim_not_found',
   'experiment_not_found',
   'code_proposal_not_found',
   'code_capture_not_found',
@@ -60,7 +58,6 @@ export class KnowledgeService implements Knowledge {
   constructor(
     private state: State,
     private scope: Scope,
-    private claims: Claims,
     private tasks: Tasks,
     private experiments: Experiments,
     private artifacts: Artifacts,
@@ -101,7 +98,6 @@ export class KnowledgeService implements Knowledge {
       const result: KnowledgeRecords = {
         formatVersion: 1,
         project: await this.scope.project(caller, tx),
-        archivedClaims: await this.claims.list(caller, tx),
         tasks: await this.tasks.records(caller, tx),
         experiments: await this.experiments.list(caller, tx),
         publication: publication(),
@@ -307,7 +303,6 @@ export class KnowledgeService implements Knowledge {
     } else {
       id = ref;
       kind = [
-        ['claim_', 'claim'],
         ['art_', 'artifact'],
         ['review_', 'review'],
         ['codeprop_', 'code-proposal'],
@@ -331,16 +326,6 @@ export class KnowledgeService implements Knowledge {
     ): KnowledgeReference => ({ ref, status: 'resolved', kind: known, id, ...facts });
     if (!id || !knowledgeIdSchema.safeParse(id).success)
       return { ref, status: 'unsupported', kind: null, id: null };
-    if (kind === 'claim') {
-      const claim = await this.optional(async () => await this.claims.get(caller, id, tx));
-      return claim
-        ? resolved('claim', {
-            label: claim.statement,
-            revision: claim.revision,
-            state: claim.status,
-          })
-        : missing('claim');
-    }
     if (kind === 'work-item') {
       // A work item is whatever program its instance runs; only tasks and experiments resolve.
       const snapshot = await this.optional(async () => await this.workflows.get(caller, id, tx));
@@ -425,14 +410,13 @@ export class KnowledgeService implements Knowledge {
 
 export const knowledgePlugin = {
   name: 'merv-knowledge',
-  inject: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
+  inject: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
         new KnowledgeService(
           ctx.state,
           ctx.scope,
-          ctx.claims,
           ctx.tasks,
           ctx.experiments,
           ctx.artifacts,

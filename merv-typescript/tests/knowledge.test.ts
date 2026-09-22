@@ -1,4 +1,3 @@
-import { seedArchivedClaim } from './fixtures/archived-claim.js';
 import { canonical, createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
@@ -14,7 +13,6 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { ClaimService } from '@merv/claims';
 import { TaskService } from '@merv/tasks';
 import { ExperimentService } from '@merv/experiments';
 import { DurableEvents } from '@merv/domain-events';
@@ -47,7 +45,6 @@ async function fixture(t: TestContext) {
     workflows: WorkflowsService,
     reviews: ReviewService,
     builder: RecipeContextBuilder,
-    claims: ClaimService,
     tasks: TaskService,
     experiments: ExperimentService,
     events: DurableEvents,
@@ -63,7 +60,6 @@ async function fixture(t: TestContext) {
     workflows = await createService(new WorkflowsService(state, scope));
     reviews = await createService(new ReviewService(state, scope, artifacts));
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-    claims = await createService(new ClaimService(state, scope));
     tasks = await createService(
       new TaskService(state, scope, artifacts, workflows, reviews, builder),
     );
@@ -83,17 +79,7 @@ async function fixture(t: TestContext) {
       ),
     );
     knowledge = await createService(
-      new KnowledgeService(
-        state,
-        scope,
-        claims,
-        tasks,
-        experiments,
-        artifacts,
-        reviews,
-        workflows,
-        code,
-      ),
+      new KnowledgeService(state, scope, tasks, experiments, artifacts, reviews, workflows, code),
     );
   };
   const close = async () => {
@@ -102,7 +88,6 @@ async function fixture(t: TestContext) {
     code.close();
     await sessions.close();
     tasks.dispose();
-    claims.close();
     builder.close();
     workflows.close();
     await events.close();
@@ -272,9 +257,6 @@ async function fixture(t: TestContext) {
     get reviews() {
       return reviews;
     },
-    get claims() {
-      return claims;
-    },
     get tasks() {
       return tasks;
     },
@@ -359,10 +341,6 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   const f = await fixture(t);
   const task = await f.completeTask(),
     experiment = await f.createExperiment();
-  const claim = await seedArchivedClaim(f.state, f.producer, {
-    statement: 'A referenced claim.',
-    requestId: f.id(),
-  });
   const other = await f.scope.bootstrap({
     projectName: 'Private other project',
     actorName: 'Other operator',
@@ -377,7 +355,8 @@ test('Scoped references distinguish missing, unsupported and unpublished without
     content: 'Private.',
   });
   const refs = [
-    claim.id,
+    // Research claims are retired: an old claim reference is an unknown kind.
+    'claim:claim_retired',
     task.id,
     `experiment:${experiment.id}`,
     task.briefId,
@@ -396,8 +375,8 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   t.mock.method(f.workflows, 'evaluate', () => assert.fail('Resolver must not evaluate guidance'));
   const head = await f.state.eventHead();
   const caller = { ...f.reader };
-  const lookup = f.claims.get.bind(f.claims);
-  t.mock.method(f.claims, 'get', async (...args: Parameters<typeof lookup>) => {
+  const lookup = f.tasks.record.bind(f.tasks);
+  t.mock.method(f.tasks, 'record', async (...args: Parameters<typeof lookup>) => {
     const result = await lookup(...args);
     Object.assign(caller, otherCaller);
     return result;
@@ -408,7 +387,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   assert.deepEqual(
     results.map((item) => item.status),
     [
-      'resolved',
+      'unsupported',
       'resolved',
       'resolved',
       'resolved',
@@ -424,7 +403,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
       'missing',
     ],
   );
-  assert.equal(results[0]!.label, claim.statement);
+  assert.equal(results[0]!.kind, null);
   assert.equal(results[1]!.kind, 'task');
   assert.equal(results[2]!.kind, 'experiment');
   assert.equal(results[3]!.hash, (await f.artifacts.get(f.reader, task.briefId)).hash);

@@ -800,8 +800,7 @@ details.stack > summary {
 .agent-detail summary,
 .pr-details > summary,
 .crit-file > summary,
-details.stack > summary,
-summary.claim-line {
+details.stack > summary {
   padding-block: calc((var(--hit) - 20px) / 2);
   margin-block: calc((20px - var(--hit)) / 2);
 }
@@ -1122,7 +1121,7 @@ a.states-clause::after {
 }
 .input,
 .textarea,
-.claims-form :where(input:not([type='checkbox']):not([type='radio']), select, textarea),
+.entry-form :where(input:not([type='checkbox']):not([type='radio']), select, textarea),
 .identity-form :where(input:not([type='checkbox']):not([type='radio']), select, textarea) {
   width: 100%;
   padding: 7px 11px;
@@ -1141,7 +1140,7 @@ a.states-clause::after {
   opacity: 1;
 }
 select.input,
-.claims-form select,
+.entry-form select,
 .identity-form select {
   width: fit-content;
   max-width: 100%;
@@ -1149,7 +1148,7 @@ select.input,
 }
 .input:focus,
 .textarea:focus,
-.claims-form :where(input:not([type='checkbox']):not([type='radio']), select, textarea):focus,
+.entry-form :where(input:not([type='checkbox']):not([type='radio']), select, textarea):focus,
 .identity-form :where(input:not([type='checkbox']):not([type='radio']), select, textarea):focus {
   outline: none;
   border-color: var(--active);
@@ -1161,7 +1160,7 @@ select.input,
   max-width: 640px;
 }
 .identity-form,
-.claims-form fieldset {
+.entry-form fieldset {
   display: grid;
   gap: 12px;
   border: 0;
@@ -1171,14 +1170,14 @@ select.input,
   margin: 16px 0;
 }
 .identity-form label,
-.claims-form label {
+.entry-form label {
   display: grid;
   gap: 6px;
   font-size: var(--text-sm);
   color: var(--muted);
 }
 /* A group of boxes is named the way a field is. */
-.claims-form legend {
+.entry-form legend {
   margin-bottom: 6px;
   font-size: var(--text-sm);
   color: var(--muted);
@@ -2503,7 +2502,7 @@ select.input,
   select,
   /* A form's bare field, as the form names it — but not a record picker's cursor,
      which stands inside a field that is already that tall. */
-  :is(.claims-form, .identity-form)
+  :is(.entry-form, .identity-form)
     input:not([type='checkbox']):not([type='radio']):not([role='combobox']),
   .rail-row,
   .account-row,
@@ -2520,7 +2519,7 @@ select.input,
   select,
   textarea,
   .picker-field > input,
-  :is(.claims-form, .identity-form)
+  :is(.entry-form, .identity-form)
     :is(input:not([type='checkbox']):not([type='radio']), select, textarea) {
     font-size: var(--text-lg);
   }
@@ -2539,8 +2538,7 @@ select.input,
   .agent-detail summary,
   .pr-details > summary,
   .crit-file > summary,
-  details.stack > summary,
-  summary.claim-line {
+  details.stack > summary {
     margin-block: 0;
   }
   .crit-file[open] > summary {

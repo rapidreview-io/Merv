@@ -43,7 +43,6 @@ const names = {
   sessions: 'Agent Sessions',
   runner: 'Runner',
   code: 'Code',
-  claims: 'Claims',
   experiments: 'Experiments',
   knowledge: 'Knowledge',
   paper: 'Paper',

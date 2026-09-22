@@ -96,8 +96,6 @@ export interface Experiment {
   ownerId: string;
   createdBy: string;
   createdAt: string;
-  /** Historical links only; new experiments express hypotheses in their plans. */
-  testedClaimIds?: string[];
   /** Present only when explicitly created with the Git program. */
   workspace?: 'git';
   /** Present only when the Git checkout starts from that task's delivered commit. */

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useTool } from '../api';
-import { Area, Failure, LoadState, StatusPill, Summary, words } from '../components';
-import { Markdown, RecordText } from '../markdown';
+import { Area, Failure, LoadState, StatusPill, words } from '../components';
+import { RecordText } from '../markdown';
 
 /**
  * What `project.references` answers about one reference: what it names, and
@@ -41,7 +41,7 @@ export function ReferenceLookup() {
   return (
     <section className="stack">
       <form
-        className="card stack claims-form"
+        className="card stack entry-form"
         aria-label="Look up cited references"
         onSubmit={submit}
       >
@@ -77,33 +77,5 @@ export function ReferenceLookup() {
         </ul>
       )}
     </section>
-  );
-}
-
-export function ArchivedClaims() {
-  const records = useTool<{
-    archivedClaims?: {
-      id: string;
-      statement: string;
-      scope: string;
-      status: string;
-      confidence: string;
-    }[];
-  }>('project.records');
-  if (!records.data?.archivedClaims?.length) return null;
-  return (
-    <details className="stack">
-      <Summary>Archived research claims</Summary>
-      <p>Historical records from before the paper became the project’s research narrative.</p>
-      {records.data.archivedClaims.map((claim) => (
-        <section key={claim.id}>
-          <Markdown source={claim.statement} />
-          {claim.scope && <Markdown source={claim.scope} />}
-          <p className="faint">
-            {words(claim.status)} · {claim.confidence} confidence at archival
-          </p>
-        </section>
-      ))}
-    </details>
   );
 }

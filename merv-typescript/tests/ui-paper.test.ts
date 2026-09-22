@@ -270,29 +270,3 @@ test('the main agent UI can save Methods and Results directly', async (t) => {
   }
   assert.deepEqual(sent, ['methods', 'results']);
 });
-
-test('the paper retains historical claims as read-only archived context', async (t) => {
-  t.after(unmount);
-  boot(workspace([]));
-  serve('/tools/project.records', {
-    body: {
-      result: {
-        archivedClaims: [
-          {
-            id: 'claim_old',
-            statement: 'Earlier retrieval hypothesis',
-            scope: 'Small held-out corpus',
-            status: 'weakened',
-            confidence: 'low',
-          },
-        ],
-      },
-    },
-  });
-  await open();
-  assert.ok(text().includes('Archived research claims'));
-  assert.ok(text().includes('Earlier retrieval hypothesis'));
-  assert.ok(text().includes('Small held-out corpus'));
-  assert.ok(!text().includes('New claim'));
-  assert.ok(!document.querySelector('.claim-edit'));
-});

@@ -263,7 +263,7 @@ project repository authority and object transport remain explicit work.
 
 ## Claims checkpoint — 2026-09-15
 
-The [Claims provider](docs/CLAIMS.md) is integrated with project facts, explicit
+The [Claims provider](https://github.com/rapidreview-io/Merv/blob/1883f27ae6669fe255bb317011ae505bb4b04322/merv-typescript/docs/CLAIMS.md) (removed with the claims retirement) is integrated with project facts, explicit
 transactions, revision-checked edits, stable request receipts, three tools and an
 optional Claims page. It depends only on State and Scope and owns no workflow.
 The suite passes 566 tests; two fresh native agents verify retries, worker

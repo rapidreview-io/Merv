@@ -29,8 +29,10 @@ There are also 30 project-synthesis workflows (7 writing), five research waves, 
 | `projects`                    | `projects`                                                       | Same ID/name/summary/time. Preserve extra legacy settings/status in the archive.                                        |
 | `project_members`             | `shared_users`, `actors`, `member_actors`, `project_memberships` | Same verified Supabase issuer/subject, deterministic per-project member actor, no invented bearer token.                |
 | Complete `artifacts`          | `artifacts` plus verified destination bytes                      | Same ID, hash, size, MIME and original `created_by` attribution. No upload tokens.                                      |
-| `claims`                      | `claims`                                                         | Same ID and scientific assertion. The importer is recorded as the mapping actor; it does not claim original authorship. |
+| `claims`                      | Not imported                                                     | Research claims are retired. The export still carries them and they stay part of the foundation fingerprint.            |
 | Standalone `project_api_keys` | Potentially `user_keys`                                          | Both use SHA-256 `mk_` keys. Requires separate policy and exact format validation; not part of the foundation importer. |
+
+The foundation importer ignores `snapshot.claims`: it still checks their shape and fingerprints them, but writes no claim rows, and its receipt counts no claims. The original claim rows remain readable in the history archive. Claims imported before the retirement were converted into Markdown text artifacts titled `Claim: …`.
 
 Legacy membership has no role column. Its HTTP routes explicitly let **any human member add and remove members** (`merv/.../surface/transport/api/projects.py`, add/delete routes). Mapping that existing project administration to `operator` is justified by this policy, not by guessing a project creator. Creation events contain only the project name. The import must not create memberships for users absent from the source.
 

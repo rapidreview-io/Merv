@@ -15,7 +15,10 @@ interface Row {
   /** digest() of this version's PostgreSQL SQL, as State writes it to component_migrations.hash. */
   hash: string;
   published: boolean;
-  /** Deliberately no longer registered: production still holds the row this version wrote. */
+  /**
+   * Deliberately no longer registered. Production still holds the row this version wrote, unless
+   * the component's retirement removed it together with its tables, as the claims retirement does.
+   */
   retired?: true;
 }
 

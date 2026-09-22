@@ -37,10 +37,10 @@ Implementation: [Scope](../packages/scope/src/project-context.ts),
 
 Knowledge exposes two read-only tools:
 
-| Tool                 | Result                                                                                                                  |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `project.records`    | Current project metadata, archived claims, all task records and all experiments, plus explicit publication availability |
-| `project.references` | Up to 200 references resolved in input order to project-scoped metadata                                                 |
+| Tool                 | Result                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `project.records`    | Current project metadata, all task records and all experiments, plus explicit publication availability |
+| `project.references` | Up to 200 references resolved in input order to project-scoped metadata                                |
 
 Inventory includes active and terminal work. It does not render prompts, read
 artifact bodies, reconcile sessions, evaluate exit gates or advance workflows.
@@ -48,9 +48,9 @@ artifact bodies, reconcile sessions, evaluate exit gates or advance workflows.
 next actions. Domain services retain ownership of their records; Knowledge
 passes one State transaction through their public read contracts.
 
-Reference input supports record IDs and explicit `claim:`, `task:`,
-`experiment:`, `artifact:`, `review:`, `code-proposal:`, `code-commit:` and
-`session-final:` prefixes. The resolver distinguishes `resolved`, `missing`,
+Reference input supports record IDs and explicit `task:`, `experiment:`,
+`artifact:`, `review:`, `code-proposal:`, `code-commit:` and `session-final:`
+prefixes. The resolver distinguishes `resolved`, `missing`,
 `unsupported` and `unpublished`. A foreign-project ID is missing in this
 project. Unsupported services are not fabricated. A resolved code-capture
 reference can still have a `pending` capture status: resolving the identity
@@ -60,7 +60,7 @@ The optional Knowledge UI is the **Research records** page. Its data comes from
 these live reads. Introduction editing remains a Scope operation, separate from
 research publication.
 
-Historical claim records remain available through `project.records.archivedClaims` and the paper’s Details view. New corpus selections do not include claims; existing snapshots are unchanged.
+Research claims are retired: each existing claim was converted into a Markdown text artifact titled `Claim: …`, which resolves like any other artifact. A `claim:` reference is now an unknown kind and resolves as `unsupported`. Corpus selections do not include claims; existing snapshots are unchanged.
 
 ## What a corpus captures
 

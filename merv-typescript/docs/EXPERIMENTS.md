@@ -4,7 +4,7 @@ The production Experiments plugin connects a research question to design review,
 execution, result review and an explicit conclusion. It retains every attempt
 and submitted evidence selection. A completed experiment means its research was
 accepted by an independent reviewer; a negative or inconclusive finding can pass.
-Completion does not automatically change a claim's status or confidence.
+Reviewers carry what it means into the living paper.
 
 ## Ownership and dependencies
 
@@ -315,9 +315,7 @@ research system. Knowledge now provides current metadata inventory, scoped
 reference resolution and immutable terminal corpus snapshots; see
 [research inputs](RESEARCH_INPUTS.md). Remaining work includes reflection-wave
 scheduling and its seven-slot reservation/threshold policy, five-lens reflection,
-reviewed claim publication/history, and production code consolidation and
-central publication. No completed experiment automatically changes linked
-claims.
+and production code consolidation and central publication.
 
 ## Explicit Git execution
 

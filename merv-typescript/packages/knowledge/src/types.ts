@@ -6,7 +6,6 @@ import type {
   TaskRecord,
   Transaction,
 } from '@merv/contracts';
-import type { Claim } from '@merv/claims/types';
 import type { Experiment } from '@merv/experiments/types';
 import type { CodeCapture, CodeCaptureRef } from '@merv/code-research/types';
 import type {} from 'cordis';
@@ -21,14 +20,11 @@ export interface KnowledgeRecords {
   formatVersion: 1;
   /** Current Scope facts, including introduction when configured; independent of publication. */
   project: Project;
-  /** Read-only records retained from the retired claims feature. */
-  archivedClaims: Claim[];
   tasks: TaskRecord[];
   experiments: Experiment[];
   publication: KnowledgePublication;
 }
 export type KnowledgeReferenceKind =
-  | 'claim'
   | 'task'
   | 'experiment'
   | 'artifact'
@@ -60,8 +56,6 @@ export type KnowledgeCapture =
 export interface KnowledgeSelection {
   projectFacts: 'pinned-at-capture';
   project: Project;
-  /** Present only in historical snapshots. */
-  claims?: Claim[];
   tasks: TaskRecord[];
   experiments: Experiment[];
   assessments: KnowledgeAssessment[];

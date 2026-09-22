@@ -322,7 +322,6 @@ const receiptSchema = z
   .strict();
 const fields = {
   projects: ['id', 'name', 'summary', 'created_at', 'status'],
-  claims: ['id', 'project_id', 'statement', 'scope', 'status', 'confidence', 'created_at'],
   artifacts: [
     'id',
     'project_id',
@@ -353,7 +352,7 @@ export function prepareLegacyMediaFoundation(
     'legacy_media_source_mismatch',
     'Foundation and media use different source snapshots',
   );
-  for (const type of ['projects', 'claims', 'artifacts'] as const) {
+  for (const type of ['projects', 'artifacts'] as const) {
     const original = history.records
       .filter((r) => r.type === type && (type !== 'artifacts' || r.data.status === 'complete'))
       .map((r) => Object.fromEntries(fields[type].map((field) => [field, r.data[field]])))

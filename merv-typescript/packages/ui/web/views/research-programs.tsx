@@ -54,7 +54,6 @@ interface FrozenSource {
       project: { name: string };
       experiments: { id: string; name: string; workflow: Workflow }[];
       tasks: { id: string; title: string; workflow: Workflow }[];
-      claims?: { id: string; statement: string; status: string }[];
       artifacts: (
         { id: string; status: 'retained'; artifact: Artifact } | { id: string; status: 'missing' }
       )[];
@@ -162,14 +161,6 @@ function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'
           ))}
         />
         <Band
-          title="Archived claims at capture"
-          items={(corpus.selection.claims ?? []).map((claim) => (
-            <li key={claim.id}>
-              {claim.statement} · {claim.status}
-            </li>
-          ))}
-        />
-        <Band
           title="Exact evidence"
           items={corpus.selection.artifacts.map((entry) => (
             <li key={entry.id}>
@@ -235,7 +226,7 @@ function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void
     void command.submit(title.trim() ? { title: title.trim() } : {});
   };
   return (
-    <form className="card stack claims-form" onSubmit={submit} aria-label="New reflection">
+    <form className="card stack entry-form" onSubmit={submit} aria-label="New reflection">
       <h2 className="section-title">New reflection</h2>
       <fieldset disabled={command.locked}>
         <Field

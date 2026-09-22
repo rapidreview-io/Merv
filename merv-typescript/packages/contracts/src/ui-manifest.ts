@@ -23,7 +23,7 @@ export interface UiManifestRow {
   label: string;
   group: UiManifestGroup;
   order: number;
-  /** One of the browser's icon names (home, now, research, claims, paper, knowledge, tasks,
+  /** One of the browser's icon names (home, now, research, paper, knowledge, tasks,
    *  experiments, reviews, reflections, people, sessions, code, connections,
    *  artifacts, feed, settings); unknown names fall back to the generic glyph. */
   icon?: string;

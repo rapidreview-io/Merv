@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import ts from 'typescript';
 import { postgresMigrations as migrations0 } from '../packages/artifacts/src/index.postgres.js';
-import { postgresMigrations as migrations1 } from '../packages/claims/src/index.postgres.js';
 import { postgresMigrations as migrations2 } from '../packages/code-research/src/commands.postgres.js';
 import { postgresMigrations as migrations3 } from '../packages/code-research/src/proposals.postgres.js';
 import { postgresMigrations as migrations25 } from '../packages/code/src/units.postgres.js';
@@ -35,7 +34,6 @@ import { postgresMigrations as migrations24 } from '../packages/workflows/src/in
 type DomainMigration = { owner: string; version: number; sqlite: string; postgres: string };
 const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/artifacts/src/index.ts': migrations0,
-  'packages/claims/src/index.ts': migrations1,
   'packages/code-research/src/commands.ts': migrations2,
   'packages/code-research/src/proposals.ts': migrations3,
   'packages/context-builder/src/index.ts': migrations5,
@@ -119,7 +117,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 67);
+  assert.equal(all.length, 66);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

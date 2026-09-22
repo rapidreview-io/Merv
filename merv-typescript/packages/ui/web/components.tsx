@@ -34,7 +34,6 @@ export const cx = (...names: (string | false | null | undefined)[]) =>
  */
 export const KIND: Record<string, { color: string; label: string }> = {
   research: { color: 'var(--kind-purple)', label: 'Research' },
-  claims: { color: 'var(--kind-purple)', label: 'Claim' },
   paper: { color: 'var(--kind-blue)', label: 'Paper' },
   tasks: { color: 'var(--kind-teal)', label: 'Task' },
   experiments: { color: 'var(--kind-teal)', label: 'Experiment' },

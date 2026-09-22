@@ -63,7 +63,8 @@ The following support, task-program, claim-record and experiment gaps from the o
   transaction. Reviews owns the shared verdict tool and routes to one domain owner;
   existing Tasks keeps its response/replay/transition behavior. Production research
   proposals still require the actual experiment and reflection domains.
-- [Claims](CLAIMS.md): project-scoped records and create/list/update tools, fixed public
+- Claims (**retired 2026-09-22**: each claim became a Markdown text artifact titled
+  `Claim: …`, and the plugin was removed). Before that: project-scoped records and create/list/update tools, fixed public
   statement/scope, revision CAS, original request receipts, atomic attributed events
   and a role-aware UI. Claims requires only State and Scope; linked experiment
   evidence, belief-history UI and reviewed reflection text updates remain open.
@@ -87,8 +88,8 @@ passed 566 tests (13 Claims-specific). Two fresh native agents completed nine
 successful MCP calls with no failures on synthetic claim records. The actual
 built Claims page also passed browser checks for exact retry recovery, revision
 conflicts, project switching and reader permissions through a local synthetic
-fixture; no real shared-provider login was performed. See [Claims](CLAIMS.md)
-for the exact implemented behavior, verification limits and remaining gaps.
+fixture; no real shared-provider login was performed. Claims has
+since been retired; its records became Markdown text artifacts.
 The subsequent return-path prerequisite passed **574/574** full-suite tests,
 **30/30** focused checks and **17/17** independent checks. Two fresh native
 reviewers made seven successful MCP calls with no failures, read all three pinned

@@ -35,8 +35,6 @@ export interface ChangeSpecExperiment {
   name: string;
   question: string;
   details: string;
-  /** Only present in retained plans from before claims were retired. */
-  testedClaimIds?: string[];
   /** Keys of task items in the same plan: an experiment waits only on tasks. */
   dependsOn: string[];
   rationale: string;
@@ -44,7 +42,7 @@ export interface ChangeSpecExperiment {
 export type WorkItem = ChangeSpecTask | ChangeSpecExperiment;
 /** A change specification submitted as application/json: the next wave's work, stated as records. */
 interface ChangeSpecBody {
-  /** What a text change specification says: scope, claim and consolidation changes, as prose. */
+  /** What a text change specification says: scope and consolidation changes, as prose. */
   changes: string;
   next:
     | { decision: 'continue'; name: string; rationale: string }

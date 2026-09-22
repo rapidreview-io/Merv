@@ -232,7 +232,7 @@ export function Graph({
               }
             >
               <KindLabel kind={node.kind} />
-              {/* A claim is named by its statement, which may mention a record by its id. */}
+              {/* A node's name may mention a record by its id. */}
               <span className="map-node-name">
                 <RecordText text={node.name} names={names} plain />
               </span>

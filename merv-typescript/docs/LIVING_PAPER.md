@@ -62,7 +62,7 @@ where the experiment supports, qualifies or contradicts the prose. The UI resolv
 known experiment references to names, including older references written as IDs.
 These are ordinary document links, not a new relationship registry.
 
-Existing claims are read-only historical records, visible in the paper’s Details
-view and in `project.records.archivedClaims`. Older experiment associations and
-snapshots are retained; new experiments and reflection plans do not accept
+Research claims are retired: each existing claim was converted into a Markdown
+text artifact titled `Claim: …`, which keeps its statement, status, confidence,
+scope, author and edit history. Experiments and reflection plans do not accept
 `testedClaimIds`. The reviewer `claimId` still identifies a review assignment lock.

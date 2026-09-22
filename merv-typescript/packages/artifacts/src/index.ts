@@ -1,5 +1,6 @@
 import { visible, recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
+import { retireClaims } from './claims-retirement.js';
 import type { Context } from 'cordis';
 import { isUtf8 } from 'node:buffer';
 import {
@@ -209,10 +210,9 @@ export const artifactsPlugin = {
   name: 'merv-artifacts',
   inject: ['state', 'scope', 'blobs'],
   async apply(ctx: Context) {
-    ctx.provide(
-      'artifacts',
-      await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs)),
-    );
+    const artifacts = await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs));
+    await retireClaims(ctx.state, ctx.blobs);
+    ctx.provide('artifacts', artifacts);
   },
 };
 export default artifactsPlugin;

@@ -35,7 +35,6 @@ const views: Record<string, ComponentType<ViewProps>> = {
   settings: SettingsView,
   sessions: SessionsView,
   code: CodeView,
-  claims: moved('/paper'),
   experiments: ExperimentsView,
   knowledge: moved('/paper'),
   paper: PaperView,

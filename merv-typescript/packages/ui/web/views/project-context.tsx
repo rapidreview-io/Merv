@@ -57,7 +57,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
   };
   return (
     <OpenedForm
-      className="card stack claims-form"
+      className="card stack entry-form"
       aria-labelledby={heading}
       onSubmit={submit}
       onClose={cancel}

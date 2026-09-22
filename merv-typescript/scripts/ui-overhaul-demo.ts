@@ -455,7 +455,6 @@ async function main() {
           readerProjects: 3,
           agents: { live: 1, idle: 1, retired: 1 },
           tasks: 'working, reviewed/done, awaiting review, blocked, failed',
-          claims: 5,
           experiments: 3,
           researchCycles: 1,
           archivedExperiments: 65,

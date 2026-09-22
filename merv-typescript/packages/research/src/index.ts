@@ -900,8 +900,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
   /**
    * Everything about the project that can refuse the plan, judged before the cycle moves. A
    * plan reported ready and refused on every attempt would leave skipping as the only way on,
-   * and skipping discards the reviewed plan. Only whether a tested claim exists is left to
-   * creation: Research holds no Claims.
+   * and skipping discards the reviewed plan.
    *
    * A workspace declaration is also admitted by the item's owner at creation, not pre-checked
    * here: a refusal while Code is unloaded rolls the whole advance back and leaves the

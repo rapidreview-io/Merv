@@ -32,7 +32,7 @@ ctx.effect(() =>
     // A count always means open work against the project, never a total: tasks
     // not done or failed, experiments outside complete/abandoned/failed, reviews
     // requested or started, cycles, reflections and consolidations not finished,
-    // live sessions. A row you consult rather than work — Claims, Records,
+    // live sessions. A row you consult rather than work — Records,
     // Artifacts, People, Code, Connections, Paper — reports no count at all, and
     // an absent count renders as nothing rather than as a zero.
     read: (caller) => data, // optional row-owned data served by ui.read

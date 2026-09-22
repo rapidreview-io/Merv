@@ -77,7 +77,6 @@ async function fixture(t: TestContext, postgres = false) {
         { id: 'scope', name: '@merv/scope' },
         { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
         { id: 'artifacts', name: '@merv/artifacts' },
-        { id: 'claims', name: '@merv/claims' },
       ],
     },
   });
@@ -109,7 +108,6 @@ async function fixture(t: TestContext, postgres = false) {
       projects: (await sql.all('SELECT id FROM projects')).length,
       members: (await sql.all('SELECT id FROM project_memberships')).length,
       artifacts: (await sql.all('SELECT id FROM artifacts')).length,
-      claims: (await sql.all('SELECT id FROM claims')).length,
     }));
   return { app, services, counts, reads: () => reads };
 }
@@ -123,7 +121,7 @@ for (const postgres of [false, true]) {
       const receipt = await importLegacyFoundation(f.services, snapshot());
       assert.equal(receipt.researchHistoryImported, false);
       assert.equal(receipt.credentialsImported, false);
-      assert.deepEqual(await f.counts(), { projects: 1, members: 1, artifacts: 1, claims: 1 });
+      assert.deepEqual(await f.counts(), { projects: 1, members: 1, artifacts: 1 });
       const principal = await f.app.ctx.scope.acceptVerifiedIdentity({
         issuer,
         subject: 'same-supabase-user',
@@ -137,10 +135,16 @@ for (const postgres of [false, true]) {
       const artifact = await f.app.ctx.artifacts.read(caller, 'art_original');
       assert.equal(artifact.content, content.toString());
       assert.equal(artifact.artifact.createdBy, 'legacy-agent-attribution');
-      assert.equal(
-        (await f.app.ctx.claims.get(caller, 'claim_original')).statement,
-        snapshot().claims[0]!.statement,
+      // Research claims are retired: the export still carries them, and nothing imports them.
+      assert.equal('claims' in receipt, false);
+      const claimsTable = await f.app.ctx.state.read((sql) =>
+        sql.get<{ name: string | null }>(
+          postgres
+            ? "SELECT to_regclass('claims') AS name"
+            : "SELECT name FROM sqlite_master WHERE name='claims'",
+        ),
       );
+      assert.equal(claimsTable?.name ?? null, null);
       const outsider = await f.app.ctx.scope.acceptVerifiedIdentity({
         issuer,
         subject: 'other-user',
@@ -185,7 +189,7 @@ test('foundation validation rejects cross-project references and identifies unsu
     code: 'legacy_large_artifacts_unsupported',
   });
   assert.equal(f.reads(), 0);
-  assert.deepEqual(await f.counts(), { projects: 0, members: 0, artifacts: 0, claims: 0 });
+  assert.deepEqual(await f.counts(), { projects: 0, members: 0, artifacts: 0 });
 });
 
 test('source or destination corruption never commits artifact metadata or project access', async (t) => {
@@ -210,7 +214,7 @@ test('source or destination corruption never commits artifact metadata or projec
     ),
     { code: 'legacy_blob_mismatch' },
   );
-  assert.deepEqual(await f.counts(), { projects: 0, members: 0, artifacts: 0, claims: 0 });
+  assert.deepEqual(await f.counts(), { projects: 0, members: 0, artifacts: 0 });
 });
 
 test('a late transactional failure rolls back every native row and permits a clean retry', async (t) => {
@@ -222,7 +226,7 @@ test('a late transactional failure rolls back every native row and permits a cle
     async <T>(fn: (tx: Transaction) => T | Promise<T>) =>
       original(async (tx) => {
         const result = await fn(tx);
-        if (await tx.get('SELECT id FROM claims WHERE id=?', 'claim_original'))
+        if (await tx.get('SELECT id FROM artifacts WHERE id=?', 'art_original'))
           throw new Error('Injected after final insert');
         return result;
       }),
@@ -232,7 +236,7 @@ test('a late transactional failure rolls back every native row and permits a cle
     /Injected after final insert/,
   );
   mock.mock.restore();
-  assert.deepEqual(await f.counts(), { projects: 0, members: 0, artifacts: 0, claims: 0 });
+  assert.deepEqual(await f.counts(), { projects: 0, members: 0, artifacts: 0 });
   assert.equal(
     (await f.app.ctx.state.read((sql) => sql.all('SELECT * FROM legacy_foundation_imports')))
       .length,

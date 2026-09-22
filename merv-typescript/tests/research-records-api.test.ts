@@ -1,4 +1,3 @@
-import { seedArchivedClaim } from './fixtures/archived-claim.js';
 import { mapAsync } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -150,10 +149,6 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     expectedSummary: '',
     requestId: 'intro',
   });
-  const claim = await seedArchivedClaim(f.app.ctx.state, f.caller, {
-    statement: 'The fixed estimator is more accurate.',
-    requestId: 'claim',
-  });
   const task = await f.app.ctx.tasks.create(f.caller, {
     title: 'Retain source data',
     goal: 'Keep the exact input.',
@@ -180,9 +175,9 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     actorName: 'Other owner',
   });
   const foreignCaller = { actorId: foreign.actor.id, projectId: foreign.project.id };
-  const foreignClaim = await seedArchivedClaim(f.app.ctx.state, foreignCaller, {
-    statement: 'Private claim.',
-    requestId: 'foreign',
+  const foreignArtifact = await f.app.ctx.artifacts.create(foreignCaller, {
+    title: 'Private input',
+    content: 'private bytes',
   });
   const head = await f.app.ctx.state.eventHead();
   t.mock.method(f.app.ctx.artifacts, 'read', () =>
@@ -202,21 +197,18 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   const records = await f.call(client, 'project.records');
   assert.notEqual(records.result.isError, true);
   assert.deepEqual(records.value.project, intro);
-  assert.deepEqual(
-    records.value.archivedClaims.map((record: any) => record.id),
-    [claim.id],
-  );
+  assert.equal(Object.hasOwn(records.value, 'archivedClaims'), false);
   assert.equal(records.value.tasks[0].workflow.state, 'failed');
   assert.equal(Object.hasOwn(records.value.tasks[0], 'guidance'), false);
   assert.equal(records.value.experiments[0].id, experiment.id);
   assert.equal(records.value.publication.status, 'none');
   const refs = [
-    claim.id,
     `task:${task.id}`,
     experiment.id,
     artifact.id,
-    foreignClaim.id,
-    'claim:claim_missing',
+    foreignArtifact.id,
+    // Research claims are retired; the kind is unknown like any other.
+    'claim:claim_retired',
     'paper:arxiv-1234',
   ];
   const resolved = (await f.http('project.references', { refs }, f.reader.token)).body.result;
@@ -226,14 +218,14 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   );
   assert.deepEqual(
     resolved.map((item: any) => item.status),
-    ['resolved', 'resolved', 'resolved', 'resolved', 'missing', 'missing', 'unsupported'],
+    ['resolved', 'resolved', 'resolved', 'missing', 'unsupported', 'unsupported'],
   );
-  assert.equal(resolved[3].hash, artifact.hash);
-  assert.equal(JSON.stringify(resolved).includes(foreignClaim.statement), false);
+  assert.equal(resolved[2].hash, artifact.hash);
+  assert.equal(JSON.stringify(resolved).includes(foreignArtifact.title), false);
   assert.equal(await f.app.ctx.state.eventHead(), head);
   assert.equal((await f.http('project.records', { invented: true })).status, 400);
   assert.equal(
-    (await f.http('project.references', { refs: Array(201).fill(claim.id) })).status,
+    (await f.http('project.references', { refs: Array(201).fill(artifact.id) })).status,
     400,
   );
   assert.equal((await f.http('project.records', {}, null)).status, 401);

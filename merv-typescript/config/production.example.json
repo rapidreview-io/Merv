@@ -66,10 +66,6 @@
       "name": "@merv/experiments"
     },
     {
-      "id": "claims",
-      "name": "@merv/claims"
-    },
-    {
       "id": "code-tools",
       "name": "@merv/code-research/tools",
       "required": false

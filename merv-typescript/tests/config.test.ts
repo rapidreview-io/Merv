@@ -29,7 +29,6 @@ test('default configuration includes session enforcement and API adds its contro
       'reflections',
       'knowledge',
       'experiments',
-      'claims',
       'code-research',
       'code',
       'sessions',
@@ -59,7 +58,7 @@ test('default configuration includes session enforcement and API adds its contro
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 37, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 36, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -81,8 +80,7 @@ test('default configuration includes session enforcement and API adds its contro
       'workflows',
       'domain-events',
     ],
-    claims: ['state', 'scope'],
-    knowledge: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews'],
+    knowledge: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews'],
     experiments: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'context-builder'],
     sessions: ['state', 'scope', 'workflows', 'domain-events'],
     tools: ['scope'],
@@ -162,7 +160,7 @@ test('default Feed is optional so disabling it preserves the other declarations'
   ) as ApplicationConfig;
   config.plugins.find((entry) => entry.id === 'feed')!.disabled = true;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 50);
+  assert.equal(loaded.entries.length, 49);
   assert.deepEqual(
     loaded.entries.find((entry) => entry.id === 'feed'),
     { id: 'feed', name: '@merv/feed', required: false, disabled: true },
@@ -299,7 +297,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    50,
+    49,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

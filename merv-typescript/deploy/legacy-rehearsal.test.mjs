@@ -351,7 +351,6 @@ test('reconciliation proves native files and every unchanged archived row plus a
         { id: 'scope', name: '@merv/scope' },
         { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
         { id: 'artifacts', name: '@merv/artifacts' },
-        { id: 'claims', name: '@merv/claims' },
       ],
     },
   });

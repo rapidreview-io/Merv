@@ -157,7 +157,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
   });
   return (
     <form
-      className="card stack claims-form"
+      className="card stack entry-form"
       onSubmit={(event) => {
         event.preventDefault();
         void command.submit({

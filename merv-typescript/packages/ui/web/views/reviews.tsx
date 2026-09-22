@@ -621,7 +621,7 @@ function Desk({
     // One form's width and one field anatomy with the producer's desk, which stands in
     // this same slot on the task's page: the field keeps its name once something is typed.
     <div
-      className="stack creation claims-form"
+      className="stack creation entry-form"
       data-draft={
         !!synopsis.trim() || !!verdict || drafted(values) || command.locked ? '' : undefined
       }

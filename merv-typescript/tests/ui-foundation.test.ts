@@ -337,13 +337,13 @@ function Locking({ items }: { items: Item[] }) {
   const filter = useListFilter(items, {});
   return createElement(ListPage<Item>, {
     load: { loading: false, data: items },
-    noun: 'claims',
-    kind: 'claims',
+    noun: 'notes',
+    kind: 'notes',
     filter,
     line: (item: Item) => ({ name: item.name }),
-    emptyTitle: 'No claims yet',
+    emptyTitle: 'No notes yet',
     create: {
-      label: 'New claim',
+      label: 'New note',
       form: (close: () => void) => createElement(LockingForm, { close }),
     },
   });
@@ -352,11 +352,11 @@ function LockingForm({ close }: { close(): void }) {
   const [locked, setLocked] = useState(false);
   return createElement(
     'form',
-    { 'aria-label': 'New claim' },
+    { 'aria-label': 'New note' },
     createElement(
       'fieldset',
       { disabled: locked },
-      createElement('input', { 'aria-label': 'Statement' }),
+      createElement('input', { 'aria-label': 'Text' }),
     ),
     createElement('button', { type: 'button', onClick: () => setLocked(true) }, 'Send'),
     createElement('button', { type: 'button', onClick: close }, 'Land'),
@@ -376,11 +376,11 @@ test('while a form’s request is in flight neither Escape nor Cancel can take i
   await mount(
     createElement(
       MemoryRouter,
-      { initialEntries: ['/claims'] },
+      { initialEntries: ['/notes'] },
       createElement(Locking, { items: [task('t1')] }),
     ),
   );
-  await click('New claim');
+  await click('New note');
   await click('Send');
   await settle(0);
   const opener = document.querySelector<HTMLButtonElement>('.action-row [data-opens="create"]')!;
@@ -402,8 +402,8 @@ test('the cursor follows the opener from the empty state to the row once the fir
     land = () => setItems([task('t1')]);
     return createElement(Locking, { items });
   }
-  await mount(createElement(MemoryRouter, { initialEntries: ['/claims'] }, createElement(Book)));
-  await click('New claim');
+  await mount(createElement(MemoryRouter, { initialEntries: ['/notes'] }, createElement(Book)));
+  await click('New note');
   await click('Land');
   assert.ok(
     cursorOn('.empty-state [data-opens="create"]'),

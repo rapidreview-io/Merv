@@ -47,6 +47,8 @@ const snapshotSchema = row({
       size_bytes: z.number().int().nonnegative(),
     }),
   ),
+  // Research claims are retired and no longer imported. The legacy export still carries them and
+  // they stay part of the fingerprint, so an existing receipt still replays for the same export.
   claims: z.array(
     row({
       id,
@@ -68,7 +70,6 @@ export interface LegacyFoundationReceipt {
   projects: number;
   memberships: number;
   artifacts: number;
-  claims: number;
   researchHistoryImported: false;
   credentialsImported: false;
 }
@@ -96,12 +97,8 @@ export function planLegacyFoundation(input: unknown) {
     snapshot.artifacts.map((a) => a.id),
     'artifact',
   );
-  unique(
-    snapshot.claims.map((c) => c.id),
-    'claim',
-  );
   const projects = new Set(snapshot.projects.map((p) => p.id));
-  for (const record of [...snapshot.memberships, ...snapshot.artifacts, ...snapshot.claims])
+  for (const record of [...snapshot.memberships, ...snapshot.artifacts])
     check(
       projects.has(record.project_id),
       'invalid_legacy_snapshot',
@@ -128,6 +125,7 @@ export function planLegacyFoundation(input: unknown) {
     `${a.project_id}/${a.user_id}`.localeCompare(`${b.project_id}/${b.user_id}`),
   );
   snapshot.artifacts.sort((a, b) => a.id.localeCompare(b.id));
+  // Ignored claims are still sorted so that the fingerprint of an export does not change.
   snapshot.claims.sort((a, b) => a.id.localeCompare(b.id));
   return {
     snapshot,
@@ -135,7 +133,6 @@ export function planLegacyFoundation(input: unknown) {
     projects: snapshot.projects.length,
     memberships: snapshot.memberships.length,
     artifacts: snapshot.artifacts.length,
-    claims: snapshot.claims.length,
     distinctBlobs: sizes.size,
     oversizedArtifacts: snapshot.artifacts.filter((a) => a.size_bytes > 2_000_000).map((a) => a.id),
     researchHistoryImported: false as const,
@@ -182,7 +179,7 @@ const memberId = (prefix: string, projectId: string, issuer: string, subject: st
   `${prefix}_${digest({ projectId, issuer, subject }).slice(0, 32)}`;
 
 /**
- * Trusted, offline foundation import. Initialize Scope/Artifacts/Claims first and use an empty
+ * Trusted, offline foundation import. Initialize Scope/Artifacts first and use an empty
  * isolated target. This imports no workflow history, credentials or active assignments.
  * Every source/destination byte operation finishes before the metadata writer opens.
  */
@@ -336,20 +333,6 @@ export async function importLegacyFoundation(
         artifact.size_bytes,
         artifact.created_at,
       );
-    for (const claim of snapshot.claims)
-      await tx.run(
-        'INSERT INTO claims(id,project_id,statement,scope,status,confidence,revision,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,0,?,?,?,?)',
-        claim.id,
-        claim.project_id,
-        claim.statement,
-        claim.scope,
-        claim.status,
-        claim.confidence,
-        'system:legacy-import',
-        'system:legacy-import',
-        claim.created_at,
-        claim.created_at,
-      );
     const receipt: LegacyFoundationReceipt = {
       sourceId: snapshot.sourceId,
       fingerprint,
@@ -357,7 +340,6 @@ export async function importLegacyFoundation(
       projects: plan.projects,
       memberships: plan.memberships,
       artifacts: plan.artifacts,
-      claims: plan.claims,
       researchHistoryImported: false,
       credentialsImported: false,
     };

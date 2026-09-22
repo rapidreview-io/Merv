@@ -84,8 +84,8 @@ packages/experiments/
 ```
 
 Knowledge now owns metadata inventory, exact reference resolution and immutable
-terminal corpus capture. Reflection waves, reviewed claim publication and code
-consolidation remain separate implementation work.
+terminal corpus capture. Reflection waves and code consolidation remain separate
+implementation work.
 This program does not publish code.
 
 Omitting create `workspace`, or choosing `"none"`, retains the original scratch

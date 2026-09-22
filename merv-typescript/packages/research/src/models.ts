@@ -108,7 +108,7 @@ export interface ResearchDigest {
     reason: string | null;
     createdAt: string;
     composedAt: string;
-    /** Composed after the cycle finished, so claims and work read as they were then, not at the end. */
+    /** Composed after the cycle finished, so work reads as it was then, not at the end. */
     late: boolean;
   };
   previousCycleId: string | null;
@@ -134,25 +134,13 @@ export interface ResearchDigest {
     state: string;
     attempts: number;
     submissions: number;
-    /** Historical only. */
-    testedClaimIds?: string[];
     conclusion: string | null;
   }[];
   tasks: { id: string; title: string; state: string }[];
-  /** The claims the cycle's experiments tested. */
-  claims?: {
-    id: string;
-    statement: string;
-    status: string;
-    confidence: string;
-    testedBy: string[];
-  }[];
   /** Selected work that failed or was abandoned. */
   dropped: string[];
   /** Selected work still unfinished. */
   carriedOver: string[];
-  /** Tested claims still draft or active: derived, not authored. */
-  openQuestions?: { claimId: string; statement: string }[];
   /** Alternatives the approved structured plan weighed and turned down, so they are not proposed again unknowingly. */
   rejected: { title: string; reason: string }[];
   /** Entries left out to keep the digest within its bound. */

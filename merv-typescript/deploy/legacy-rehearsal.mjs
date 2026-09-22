@@ -214,6 +214,7 @@ export async function captureSnapshot(client, sourceId, issuer) {
             'size_bytes',
           ]),
         ),
+      // Not imported (claims are retired); kept so the export format and fingerprint stay the same.
       claims: tables.claims.map((row) =>
         pick(row, ['id', 'project_id', 'statement', 'scope', 'status', 'confidence', 'created_at']),
       ),
@@ -288,11 +289,6 @@ export function planSnapshot(snapshot, unavailableAudit) {
   const byId = (rows) => [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   for (const [name, fields, filter] of [
     ['projects', ['id', 'name', 'summary', 'created_at', 'status'], () => true],
-    [
-      'claims',
-      ['id', 'project_id', 'statement', 'scope', 'status', 'confidence', 'created_at'],
-      () => true,
-    ],
     [
       'artifacts',
       [
@@ -442,7 +438,6 @@ function summary(snapshot, plan) {
       projects: plan.foundation.projects,
       memberships: plan.foundation.memberships,
       artifacts: plan.foundation.artifacts,
-      claims: plan.foundation.claims,
     },
     historyCounts: plan.history.counts,
     historyProjectCounts: plan.history.projectCounts,
@@ -558,21 +553,6 @@ export async function reconcile(state, snapshot, plan, artifactRetention) {
         created_at: row.created_at,
       })),
     );
-    rows.claims = await sql.all(
-      'SELECT id,project_id,statement,scope,status,confidence,created_at FROM claims',
-    );
-    sameRows(
-      rows.claims,
-      f.claims.map(({ id, project_id, statement, scope, status, confidence, created_at }) => ({
-        id,
-        project_id,
-        statement,
-        scope,
-        status,
-        confidence,
-        created_at,
-      })),
-    );
     const retained = await sql.all(
       'SELECT project_id,record_type,source_key,content_hash,data_json,summary_json FROM legacy_history_records WHERE source_id=?',
       f.sourceId,
@@ -618,7 +598,6 @@ export async function reconcile(state, snapshot, plan, artifactRetention) {
         projects: 1,
         memberships: f.memberships.filter((row) => row.project_id === project.id).length,
         artifacts: f.artifacts.filter((row) => row.project_id === project.id).length,
-        claims: f.claims.filter((row) => row.project_id === project.id).length,
         history: plan.history.projectCounts[project.id],
       };
     return {
@@ -644,7 +623,7 @@ async function withTarget(fn) {
     readFileSync(new URL('../dist/config/default.json', import.meta.url), 'utf8'),
   );
   config.plugins = config.plugins.filter((entry) =>
-    ['state', 'scope', 'blobs', 'artifacts', 'claims'].includes(entry.id),
+    ['state', 'scope', 'blobs', 'artifacts'].includes(entry.id),
   );
   config.plugins.find((entry) => entry.id === 'state').config = {
     backend: 'postgres',
@@ -830,7 +809,6 @@ async function main() {
         projects: preparedPlan.projects,
         memberships: preparedPlan.memberships,
         artifacts: preparedPlan.artifacts,
-        claims: preparedPlan.claims,
       },
       mediaManifestFingerprint: prepared.manifest.fingerprint,
       derivedMediaArtifacts: prepared.manifest.derivedArtifacts,

@@ -20,6 +20,15 @@ release (the VM keeps no automatic backup, so take one before any release that m
 forward on the new image. Never delete rows from `component_migrations` to quiet the refusal: the
 schema they name is still there, and the older code reads it on terms that no longer hold.
 
+**The release that retires research claims** is the one exception: at startup Artifacts converts
+every claim into a `Claim: …` Markdown artifact, then drops `claims` and `claim_commands` (on
+PostgreSQL also their guard functions) and deletes the `claims` rows from `component_migrations`,
+all in one transaction. Claim events stay in the event log. Rolling back to the previous image
+therefore raises no `migration_ahead`: its Claims plugin re-runs claims v1 and starts with empty
+claims tables, while the converted artifacts remain. The next start of the new image converts
+anything written there meanwhile and drops those tables again. Only the database backup taken
+before the release brings the claims back as rows.
+
 **Before the release that carries the shared Code repository and automatic bases (Git model S1–S3 together).** The server
 must be deployed before any machine built from it: a runner that advertises `capabilities` is
 refused by an older server's closed heartbeat schema, so deploy here first and update the

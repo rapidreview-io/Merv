@@ -271,9 +271,6 @@ export class ExperimentService implements Experiments {
         ownerId: row.owner_id,
         createdBy: row.created_by,
         createdAt: row.created_at,
-        ...(row.tested_claim_ids !== '[]'
-          ? { testedClaimIds: JSON.parse(row.tested_claim_ids) }
-          : {}),
         ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
         ...(typeof workflow.data.baseTaskId === 'string'
           ? { baseTaskId: workflow.data.baseTaskId }
@@ -403,6 +400,8 @@ export class ExperimentService implements Experiments {
           tx,
         );
         const createdAt = now();
+        // tested_claim_ids belongs to the retired research claims; the column is NOT NULL, so
+        // new rows store an empty list and nothing reads it.
         await tx.run(
           'INSERT INTO experiments(id,project_id,name,intent,details,owner_id,created_by,created_at,tested_claim_ids,attempt_index,workspace) VALUES(?,?,?,?,?,?,?,?,?,1,?)',
           workflow.id,

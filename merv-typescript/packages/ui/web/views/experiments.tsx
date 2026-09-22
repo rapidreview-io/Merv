@@ -158,7 +158,6 @@ function ExperimentRecord({
   // The publication verbs answer a signed-in operator and nobody else, so the Code
   // section is told who is reading before it offers the move.
   const { actor, account } = useSession();
-  // One list names every claim this experiment says it tests.
   const mine = (reviews ?? []).filter((review) => review.subjectId === e.id);
   const newest = newestReview(mine, e.id);
   const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;

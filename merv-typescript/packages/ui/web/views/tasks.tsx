@@ -259,7 +259,7 @@ function DeliveryDesk({
         : undefined;
   return (
     <div
-      className="stack creation claims-form"
+      className="stack creation entry-form"
       id={DELIVER}
       ref={desk}
       data-draft={files.length > 0 || drafted(values) || command.locked ? '' : undefined}

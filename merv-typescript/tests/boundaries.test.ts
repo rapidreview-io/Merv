@@ -72,18 +72,8 @@ const capabilities: Record<string, readonly string[]> = {
   blobs: [],
   scope: ['state'],
   artifacts: ['state', 'scope', 'blobs'],
-  claims: ['state', 'scope'],
   experiments: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
-  knowledge: [
-    'state',
-    'scope',
-    'claims',
-    'tasks',
-    'experiments',
-    'artifacts',
-    'reviews',
-    'workflows',
-  ],
+  knowledge: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
   research: ['state', 'scope', 'workflows'],
   paper: ['state', 'scope', 'artifacts'],
   reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
@@ -675,7 +665,6 @@ test('feature adapters inject their owner and one registry, without acquiring si
   const expected: Record<keyof typeof adapterKinds, string[]> = {
     tools: [
       'artifacts',
-      'claims',
       'code-research',
 
       'experiments',
@@ -693,7 +682,6 @@ test('feature adapters inject their owner and one registry, without acquiring si
     ],
     ui: [
       'artifacts',
-      'claims',
       'code-research',
 
       'experiments',
