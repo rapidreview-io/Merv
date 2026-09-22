@@ -1221,6 +1221,11 @@ DROP TABLE task_leases_backup;`,
       create: async (input, tx) => {
         input = structuredClone(input);
         this.state.assertTransaction(tx);
+        check(
+          (input.baseReference === undefined) === (input.dependsOn?.length ?? 0) > 0,
+          'invalid_base',
+          'A service task names its base commit or the prerequisites it derives one from',
+        );
         const caller = await this.scope.serviceActor(provider, input.projectId, tx);
         return await this.createTask(
           caller,
@@ -1230,6 +1235,7 @@ DROP TABLE task_leases_backup;`,
             checks: input.checks,
             workspace: 'git',
             requestId: input.requestId,
+            dependsOn: input.dependsOn,
           },
           tx,
           { provider, baseReference: input.baseReference },
@@ -1246,7 +1252,7 @@ DROP TABLE task_leases_backup;`,
     caller: Caller,
     input: TaskCreate,
     transaction?: Transaction,
-    service?: { provider: string; baseReference: string },
+    service?: { provider: string; baseReference?: string },
   ): Promise<Task> {
     caller = structuredClone(caller);
     input = plain<TaskCreate>(input);
