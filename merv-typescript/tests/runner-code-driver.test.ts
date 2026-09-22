@@ -305,6 +305,37 @@ test('a final capture Code quarantines reports the last admitted head, and what 
   assert.ok(unit.quarantine);
 });
 
+test('a final capture Code refuses to read ends the capture instead of being sent forever', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  // A bundle larger than one transfer may be is refused at the schema, before Code looks at
+  // any state, and every replay sends the identical bytes. The capture must end at the last
+  // admitted head and give the launch back, not ask again for as long as the runner lives.
+  const m = machine(t, f, (inner) => ({
+    ...inner,
+    call: async (route, body) => {
+      if (route === 'finalize')
+        throw Object.assign(new Error('bundle bytes: too large'), {
+          code: 'invalid_code_input',
+          status: 400,
+        });
+      return await inner.call(route, body);
+    },
+  }));
+  const driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'huge.bin'), 'more than may be sent\n');
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  m.terminal.add('launch-ses_1');
+  const result = await driver.capture(m.launch('ses_1'));
+  assert.equal(result!.headOid, f.root);
+  assert.equal(driver.get('launch-ses_1')!.status, 'captured');
+  await driver.close(m.launch('ses_1'));
+  assert.equal(driver.get('launch-ses_1')!.status, 'closed');
+});
+
 test('a session that never attached hands over nothing, and its generation simply closes', async (t) => {
   const f = await writerFixture(t, 'sqlite');
   await f.lease('ses_1');

@@ -151,7 +151,17 @@ export class ServerGit {
         if (failure) reject(failure);
         else if (this.closed && signal)
           reject(new MervError('code_unavailable', 'Code is unavailable', 503));
-        else resolve({ code: code ?? 1, stdout: Buffer.concat(chunks), stderr: stderr.trim() });
+        // A child ended by a signal never reached an exit of its own. Callers read the exit
+        // code as Git's answer, so inventing one would pass a kill off as something Git said.
+        else if (code === null)
+          reject(
+            new MervError(
+              'code_git_failed',
+              `A Git operation was ended by ${signal ?? 'a signal'}`,
+              503,
+            ),
+          );
+        else resolve({ code, stdout: Buffer.concat(chunks), stderr: stderr.trim() });
       });
     });
   }

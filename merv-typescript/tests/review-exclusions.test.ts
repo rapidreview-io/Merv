@@ -443,3 +443,34 @@ test('review submission retains the decision checked before a pending validation
   assert.equal((await f.state.events(f.operator.projectId)).at(-1)!.actorId, f.reviewer.actorId);
   assert.deepEqual(await f.reviews.submit(f.reviewer, original), result);
 });
+
+test('a reissue replays the exclusions a delivery pinned, whoever asks for the new claim', async (t) => {
+  const f = await fixture(t);
+  const runner = {
+    actorId: (await f.scope.issueActor(f.operator, { name: 'Fleet runner', role: 'operator' }))
+      .actor.id,
+    projectId: f.operator.projectId,
+  };
+  // A leased delivery pins the record's owner and the authority that directed the worker.
+  // That authority is rarely the one asking for the new claim, and the set it pinned is not
+  // the reissuer's to justify again: it was admitted once, when the delivery made it.
+  const review = await f.reviews.request(runner, {
+    ...f.input(),
+    excludedActorIds: [f.producer.actorId, runner.actorId],
+  });
+  assert.deepEqual(review.excludedActorIds, [f.producer.actorId, runner.actorId].sort());
+  for (const [caller, requestId] of [
+    [f.producer, 'reissue-by-owner'],
+    [f.operator, 'reissue-by-another-operator'],
+  ] as const) {
+    const reissued = await f.reviews.reissue(caller, {
+      reviewId: review.id,
+      subjectRevision: 5,
+      requestId,
+    });
+    assert.deepEqual(reissued.excludedActorIds, review.excludedActorIds);
+    await assert.rejects(async () => await f.reviews.start(runner, reissued.id), {
+      code: 'review_independence',
+    });
+  }
+});

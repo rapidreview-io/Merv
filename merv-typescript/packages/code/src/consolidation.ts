@@ -578,11 +578,21 @@ export class CodeConsolidation {
     if (pin?.kind === 'merged') {
       // Resolution work happens after decisions, so its writers join the final certificate here.
       const bases = this.bases();
-      const base =
-        bases &&
-        (await bases.records(tx, projectId)).find((base) => base.result?.commit === pin.reference);
+      // A base is named by the set of commits it merges, and several records can end at the
+      // same result commit — a task-resolved base's commit is an accepted commit like any
+      // other. So the pinned acceptances say which record this is, and its result confirms it.
+      const pinned = new Set(pin.sources.map((source: { unitId: string }) => source.unitId));
+      const merged = new Set<string>();
+      for (const row of await tx.all<Accepted>(
+        `SELECT ${columns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
+        projectId,
+      )) {
+        const accepted = JSON.parse(row.acceptance_json) as Acceptance;
+        if (pinned.has(row.unit_id) && accepted.code) merged.add(accepted.code.commit);
+      }
+      const base = bases && (await bases.find(tx, projectId, merged));
       check(
-        base && !base.quarantined,
+        base && !base.quarantined && base.result?.commit === pin.reference,
         'code_provenance_unverifiable',
         'The consolidation base must retain its resolution provenance',
         409,

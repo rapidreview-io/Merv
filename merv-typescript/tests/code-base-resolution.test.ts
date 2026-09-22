@@ -609,8 +609,11 @@ for (const backend of backends) {
         }
         return result;
       });
-      await assert.rejects(f.acceptResolution(commit), /Crash after resolution ref/);
+      // A seal that cannot finish leaves the acceptance for the next drain and says why,
+      // rather than escaping the drain and stopping every other merge in the project.
+      await f.acceptResolution(commit);
       assert.equal((await f.record())!.state, 'awaiting_resolution');
+      assert.match((await f.record())!.blocker!, /Crash after resolution ref/);
       assert.deepEqual(await f.bases.due(), [f.admin.projectId]);
       await assert.rejects(
         f.state.transaction((tx) =>
@@ -633,7 +636,43 @@ for (const backend of backends) {
       f.units.bases = restarted;
       await restarted.work(f.admin.projectId);
       assert.equal((await f.record())!.result?.commit, commit);
+      assert.equal((await f.record())!.blocker, null);
       assert.deepEqual(await restarted.due(), []);
+    },
+  );
+
+  test(
+    `${backend}: Git failing to read a resolution lineage is not a verdict on the resolution`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      t.mock.method(f.bases, 'soon', () => {});
+      await f.waiter();
+      await f.bases.work(f.admin.projectId);
+      const base = (await f.record())!;
+      const commit = await f.resolveCommit();
+      const run = f.repositories.git.run.bind(f.repositories.git);
+      let failing = true;
+      t.mock.method(f.repositories.git, 'run', async (...args: Parameters<typeof run>) =>
+        failing && args[0][0] === 'rev-list'
+          ? { code: 128, stdout: Buffer.alloc(0), stderr: 'fatal: unable to read the object store' }
+          : await run(...args),
+      );
+      await f.state.transaction((tx) =>
+        f.bases.recordAcceptance(tx, f.admin.projectId, base, commit),
+      );
+      await f.bases.work(f.admin.projectId);
+      const stuck = (await f.record())!;
+      assert.equal(stuck.resolutionError, null);
+      assert.equal(stuck.state, 'awaiting_resolution');
+      assert.match(stuck.blocker!, /lineage could not be read/);
+      assert.deepEqual(await f.bases.due(), [f.admin.projectId]);
+      failing = false;
+      await f.bases.work(f.admin.projectId);
+      const sealed = (await f.record())!;
+      assert.equal(sealed.result?.commit, commit);
+      assert.equal(sealed.blocker, null);
+      assert.deepEqual(await f.bases.due(), []);
     },
   );
 

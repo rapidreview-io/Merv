@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -191,4 +199,19 @@ test('a download is weighed against the project quota before it takes a byte of 
   const found = await download(f, 'ses_1', []);
   assert.ok(!('upToDate' in found));
   assert.ok(f.refs().some((ref) => ref.startsWith(`refs/merv/exports/${found.exportId} `)));
+});
+
+test('a bundle Git could not write is a refusal, never an answer that nothing is missing', async (t) => {
+  const f = await writerFixture(t, 'sqlite');
+  await f.lease('ses_1');
+  // Only Git refusing an empty bundle means the machine already holds the history. A bundle
+  // that could not be written at all (here the directory cannot be written to, as a full
+  // disk or a killed child would leave it) must not send the machine away believing it is up
+  // to date: it would import nothing and work from a head it does not have.
+  mkdirSync(f.paths.exports, { recursive: true, mode: 0o700 });
+  chmodSync(f.paths.exports, 0o500);
+  t.after(() => existsSync(f.paths.exports) && chmodSync(f.paths.exports, 0o700));
+  await assert.rejects(download(f, 'ses_1', []), refused('code_git_failed'));
+  chmodSync(f.paths.exports, 0o700);
+  assert.ok(!('upToDate' in (await download(f, 'ses_1', []))));
 });

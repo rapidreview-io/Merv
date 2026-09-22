@@ -601,6 +601,15 @@ export class CodeStore {
         await git.run(['update-ref', '-d', ref], { env });
         await git.run(['update-ref', '-d', `${ref}-second`], { env });
         this.exports.delete(exportId);
+        // Any other failure is Git not writing the bundle at all. Calling that up to date
+        // would send the machine away believing it holds a history it never received; said
+        // as a failure, the machine defers and asks again.
+        check(
+          /empty bundle/i.test(made.stderr),
+          'code_git_failed',
+          `git bundle failed: ${made.stderr.split('\n')[0] ?? ''}`.trim(),
+          500,
+        );
         return { upToDate: true as const, head: input.head };
       }
       await chmod(file, 0o600);
@@ -1695,6 +1704,18 @@ export class CodeStore {
       (found) => found.size,
       () => 0,
     );
+    // Only Git's refusal to write an empty bundle means the repository already holds that
+    // history. Any other failure reported as "already current" would send an administrator
+    // away from the retry the import actually needs.
+    if (made.code !== 0 && !/empty bundle/i.test(made.stderr)) {
+      await this.fail(
+        row,
+        'code_import_fetch_failed',
+        null,
+        `git bundle failed: ${made.stderr.split('\n')[0] ?? ''}`.trim(),
+      );
+      return null;
+    }
     if (made.code !== 0 || size > CODE_BUNDLE_MAX_BYTES) {
       await this.fail(
         row,

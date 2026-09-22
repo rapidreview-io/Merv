@@ -293,11 +293,13 @@ export class PublicationHost {
       controls.visibility = { incomplete: evidence.incomplete, evidence, observedAt: now() };
       await this.saveControls(caller.projectId, controls, tx);
     });
-    // Missing visibility alone does not refuse activation. Known absent rules do refuse a merge.
+    // Missing visibility alone does not refuse activation. Known absent rules refuse a merge,
+    // and so do rules nobody could read: not knowing what protects main is exactly when
+    // nothing else would stop an unreviewed merge from landing on it.
     check(
-      !merging || !evidence.available || (evidence.strict && evidence.pullRequest),
+      !merging || (evidence.available && evidence.strict && evidence.pullRequest),
       'code_publication_rules_required',
-      'Main must require PRs and strict checks including the App-sourced merv/consolidation-approved status',
+      'Main must require PRs and strict checks including the App-sourced merv/consolidation-approved status, and a merge waits until those rules can be read',
       409,
     );
     return evidence.required;

@@ -291,6 +291,20 @@ export abstract class StateStore implements State {
         if (rebuild) await connection.exec('PRAGMA foreign_keys=OFF');
         try {
           await this.transact(connection, async (tx) => {
+            const ahead = await tx.get<{ version: number | null }>(
+              'SELECT MAX(version) AS version FROM component_migrations WHERE component=? AND version>?',
+              component,
+              ordered.at(-1)?.version ?? 0,
+            );
+            // A database that has already run migrations this code has never seen belongs to a
+            // newer server. Reading that schema on the terms this code knows would be silent
+            // and wrong, so a rollback that left the database behind fails here instead.
+            check(
+              !ahead?.version,
+              'migration_ahead',
+              `The database has ${component} migration ${ahead?.version}, which this server does not know`,
+              409,
+            );
             for (const migration of ordered) {
               const sql = this.dialect === 'postgres' ? migration.postgres! : migration.sql;
               const hash = digest(sql);
