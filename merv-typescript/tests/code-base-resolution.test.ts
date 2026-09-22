@@ -875,6 +875,48 @@ for (const backend of backends) {
   );
 
   test(
+    `${backend}: a service task derives its base from prerequisites when it names no commit`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const provider = f.units.resolutionTasks!;
+      const brief = {
+        projectId: f.admin.projectId,
+        title: 'Consolidate',
+        goal: 'Consolidate the accepted work.',
+        checks: ['The result builds.'],
+      };
+      const { id } = await f.state.transaction((tx) =>
+        provider.create({ ...brief, requestId: 'derived', dependsOn: [f.left.id, f.extra.id] }, tx),
+      );
+      const task = await f.tasks.get(f.admin, id);
+      assert.equal(task.workflow.version, 6);
+      assert.deepEqual(
+        task.dependencies.map((edge) => edge.id).sort(),
+        [f.left.id, f.extra.id].sort(),
+      );
+      await f.bases.work(f.admin.projectId);
+      const status = (await f.code.unit(f.admin, id)).baseStatus;
+      assert.equal(status?.status, 'ready');
+      if (status?.status === 'ready') {
+        assert.equal(status.kind, 'merged');
+        assert.deepEqual(status.sources, [f.left.id, f.extra.id].sort());
+        assert.deepEqual(status.merge?.sort(), [f.a, f.d].sort());
+      }
+      for (const [requestId, base] of Object.entries({
+        neither: {},
+        both: { baseReference: f.a, dependsOn: [f.left.id] },
+      }))
+        await assert.rejects(
+          f.state.transaction((tx) =>
+            provider.create({ ...brief, requestId, ...base } as never, tx),
+          ),
+          { code: 'invalid_base' },
+        );
+    },
+  );
+
+  test(
     `${backend}: derivation ignores a system edge below a code-less success`,
     optional(backend),
     async (t) => {

@@ -1632,8 +1632,11 @@ export interface ServiceTaskCreator {
       title: string;
       goal: string;
       checks: string[];
-      baseReference: string;
-    },
+    } & (
+      | { baseReference: string; dependsOn?: never }
+      /** Prerequisites of the same project; Code derives the base from them as for a public task. */
+      | { dependsOn: string[]; baseReference?: never }
+    ),
     tx: Transaction,
   ): Promise<{ id: string }>;
 }
