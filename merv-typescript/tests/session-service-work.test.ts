@@ -160,14 +160,19 @@ for (const backend of backends) {
       const outcomes = await Promise.all(inputs.map(f.admit));
       assert.equal(outcomes.filter((o) => o.admitted).length, 1);
       assert.equal(outcomes.filter((o) => !o.admitted && o.reason === 'capacity_full').length, 1);
+      // Both admissions race for the one slot, each on its own connection, so the slot goes to
+      // whichever reached the writer lock first rather than to whichever was called first.
+      const reserved = inputs[outcomes.findIndex((o) => o.admitted)]!;
+      const refused = inputs[outcomes.findIndex((o) => !o.admitted)]!;
+      await assert.rejects(f.settle(refused), { code: 'service_work_missing' });
       f.advance(11_000);
       const retry = {
-        ...f.input,
+        ...reserved,
         executionEpoch: 2,
         deadline: new Date(f.clock() + 10_000).toISOString(),
       };
       assert.equal((await f.admit(retry)).admitted, true);
-      await f.settle();
+      await f.settle(reserved);
       assert.equal(
         (await f.usage()).totals.wallMs,
         10_000,
