@@ -1,3 +1,5 @@
+import { postgresGuard } from '@merv/code/postgres-guard';
+
 /** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -15,21 +17,7 @@ CREATE TABLE code_proposals (
   UNIQUE(project_id,session_id,request_id)
 );
 CREATE INDEX code_proposals_project ON code_proposals(project_id,instance_id,revision);
-CREATE OR REPLACE FUNCTION code_proposals_no_update_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code proposals are immutable', ERRCODE = '23514';
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_proposals_no_update BEFORE UPDATE ON code_proposals
-FOR EACH ROW EXECUTE FUNCTION code_proposals_no_update_guard();
-CREATE OR REPLACE FUNCTION code_proposals_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code proposals are retained', ERRCODE = '23514';
-  RETURN OLD;
-END;
-$merv$;
-CREATE TRIGGER code_proposals_no_delete BEFORE DELETE ON code_proposals
-FOR EACH ROW EXECUTE FUNCTION code_proposals_no_delete_guard();
+${postgresGuard('code_proposals', 'no_update', 'UPDATE', 'Code proposals are immutable')}
+${postgresGuard('code_proposals', 'no_delete', 'DELETE', 'Code proposals are retained')}
 `,
 };

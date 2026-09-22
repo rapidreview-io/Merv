@@ -1,3 +1,4 @@
+import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
   check,
@@ -445,21 +446,9 @@ export class CodeStore {
           'Bind this project with code.local.bind before importing its repository',
           409,
         );
-        const previous = await tx.get<OperationRow>(
-          `SELECT ${columns} FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?`,
-          caller.projectId,
-          principal,
-          requestId,
-        );
-        if (previous || !insert) {
-          check(
-            !previous || previous.input_hash === inputHash,
-            'request_conflict',
-            'This request id was used with different input',
-            409,
-          );
-          return previous;
-        }
+        const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
+        const previous = await journal.previous<OperationRow>(columns);
+        if (previous || !insert) return previous;
         await this.assertReceiving(tx, caller.projectId);
         const id = newId('cop'),
           at = now();
@@ -523,19 +512,9 @@ export class CodeStore {
     // the read below enforces inside this transaction rather than an index.
     const prepared = await this.state.transaction(async (tx) => {
       await this.humanAdministrator(caller, tx);
-      const previous = await tx.get<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?`,
-        caller.projectId,
-        principal,
-        requestId,
-      );
+      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const previous = await journal.previous<OperationRow>(columns);
       if (previous) {
-        check(
-          previous.input_hash === inputHash,
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
         // A finished rebind replays its own answer; the refusals below are about work in
         // flight, and one of them — the identity this project is bound to — it has itself made.
         if (previous.status !== 'prepared') return previous;
@@ -975,21 +954,9 @@ export class CodeStore {
     const superseded: OperationRow[] = [];
     const id = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const previous = await tx.get<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?`,
-        caller.projectId,
-        principal,
-        requestId,
-      );
-      if (previous) {
-        check(
-          previous.input_hash === inputHash,
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
-        return previous.id;
-      }
+      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const previous = await journal.previous<OperationRow>(columns);
+      if (previous) return previous.id;
       await this.hooks.fenced(tx, fence, input.kind);
       const open = await tx.all<OperationRow>(
         `SELECT ${columns} FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'`,
@@ -1247,21 +1214,15 @@ export class CodeStore {
         409,
       );
       const principal = `actor:${caller.actorId}`;
-      const previous = await tx.get<{ input_hash: string; result_json: string }>(
-        'SELECT input_hash,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+      const journal = new OperationJournal(
+        tx,
         caller.projectId,
         principal,
         requestId,
+        digest(body),
       );
-      if (previous) {
-        check(
-          previous.input_hash === digest(body),
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
-        return JSON.parse(previous.result_json) as CodeStoreLimits;
-      }
+      const previous = await journal.previous();
+      if (previous) return JSON.parse(previous.result_json) as CodeStoreLimits;
       const id = newId('cop'),
         at = now();
       await tx.run(
@@ -1270,20 +1231,7 @@ export class CodeStore {
         at,
         caller.projectId,
       );
-      await tx.run(
-        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        id,
-        caller.projectId,
-        principal,
-        requestId,
-        'configure',
-        digest(body),
-        canonical(body),
-        'completed',
-        canonical(limits),
-        at,
-        at,
-      );
+      await journal.complete(id, 'configure', body, limits, at);
       await recorded(this.state, tx, caller, 'code.repository_configured', caller.projectId, {
         operationId: id,
         denyGlobs: limits.denyGlobs.length,
@@ -1650,19 +1598,9 @@ export class CodeStore {
     // whether it asked for this project or for the server. The project is in the lookup.
     const inputHash = digest({ format: 1, kind: 'backup', deployment, scoped });
     return await this.state.transaction(async (tx) => {
-      const previous = await tx.get<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?`,
-        projectId,
-        principal,
-        requestId,
-      );
+      const journal = new OperationJournal(tx, projectId, principal, requestId, inputHash);
+      const previous = await journal.previous<OperationRow>(columns);
       if (previous) {
-        check(
-          previous.input_hash === inputHash,
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
         if (previous.status === 'completed')
           return {
             id: previous.id,

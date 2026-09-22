@@ -1,3 +1,4 @@
+import { OperationJournal } from '@merv/code/operation-journal';
 import {
   clip,
   canonical,
@@ -23,7 +24,11 @@ import { CodeGitHubService } from '@merv/code/github';
 import type { CodeTransportService } from './transport.js';
 import { parseCodeInput } from '@merv/code/input';
 import { migratePublications } from '@merv/code/publications-schema';
-import { PublicationIncident, type PublicationHost } from './publication-host.js';
+import {
+  publicationApproval,
+  PublicationIncident,
+  type PublicationHost,
+} from './publication-host.js';
 
 /** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
 export interface CodeUnitPublicationSeal {
@@ -601,11 +606,11 @@ export class CodePublicationService implements CodePublicationApi {
               );
               const review = this.decode(latest).review;
               if (hosted && current.successor && pull.state === 'open') {
-                await client.successorComment(
+                await client.commentOnce(
                   token,
                   current.repository,
                   pull.number,
-                  current.successor,
+                  `Superseded by Merv proposal ${current.successor}. Main moved; a new independent review is required.`,
                 );
                 pull = await client.updatePull(token, current.repository, pull.number, {
                   state: 'closed',
@@ -613,7 +618,13 @@ export class CodePublicationService implements CodePublicationApi {
               }
               if (pull.state === 'open' && review) {
                 if (hosted && review.verdict === 'pass')
-                  await client.approvalStatus(token, current.repository, current.headOid, true);
+                  await client.appStatus(
+                    token,
+                    current.repository,
+                    current.headOid,
+                    publicationApproval,
+                    true,
+                  );
                 if (review.verdict !== 'pass')
                   pull = await client.updatePull(token, current.repository, pull.number, {
                     state: 'closed',
@@ -681,21 +692,15 @@ export class CodePublicationService implements CodePublicationApi {
         'A leased worker cannot release a publication',
         403,
       );
-      const previous = await tx.get<{ input_hash: string; result_json: string }>(
-        'SELECT input_hash,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+      const journal = new OperationJournal(
+        tx,
         caller.projectId,
         principal,
         requestId,
+        digest(body),
       );
-      if (previous) {
-        check(
-          previous.input_hash === digest(body),
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
-        return JSON.parse(previous.result_json) as CodePublication;
-      }
+      const previous = await journal.previous();
+      if (previous) return JSON.parse(previous.result_json) as CodePublication;
       const row = await this.row(caller, input.proposalId, tx);
       check(
         !row.lock_until || row.lock_until < now(),
@@ -745,20 +750,7 @@ export class CodePublicationService implements CodePublicationApi {
       );
       check(result.changes === 1, 'publication_busy', 'Publication changed while releasing', 409);
       const released = this.decode(await this.row(caller, input.proposalId, tx));
-      await tx.run(
-        'INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-        newId('cop'),
-        caller.projectId,
-        principal,
-        requestId,
-        'publication-release',
-        digest(body),
-        canonical(body),
-        'completed',
-        canonical(released),
-        now(),
-        now(),
-      );
+      await journal.complete(newId('cop'), 'publication-release', body, released, now(), now());
       return released;
     });
   }
@@ -886,7 +878,7 @@ export class CodePublicationService implements CodePublicationApi {
             }
             requiredChecks = await this.host!.rules(caller, client, token, record);
             check(
-              await client.approvalStatus(token, record.repository, record.headOid),
+              await client.appStatus(token, record.repository, record.headOid, publicationApproval),
               'publication_review_required',
               'The exact approved head must carry merv/consolidation-approved',
               409,

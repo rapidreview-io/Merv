@@ -1667,10 +1667,10 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  async list(caller: Caller): Promise<WorkflowSnapshot[]> {
+  async list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return (
         await tx.all<InstanceRow>(

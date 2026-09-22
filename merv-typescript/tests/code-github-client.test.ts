@@ -191,3 +191,67 @@ test('branch names are encoded as a single REST path parameter', async (t) => {
     sha,
   );
 });
+
+test('generic App statuses verify the exact context, commit and issuer before and after emission', async (t) => {
+  const status = { context: 'build/reproducibility', description: 'Verified by the build owner' };
+  let statuses = [
+    { context: status.context, sha, state: 'success', creator: { login: 'other[bot]' } },
+  ];
+  const emitted: unknown[] = [];
+  const api = client((url, init) => {
+    if (url.pathname.endsWith('/statuses')) return statuses;
+    assert.equal(url.pathname, `/repos/example/research/statuses/${sha}`);
+    const body = JSON.parse(String(init.body));
+    emitted.push(body);
+    statuses = [{ ...body, sha, creator: { login: 'merv[bot]' } }];
+    return statuses[0];
+  });
+  t.after(() => api.close());
+  assert.equal(await api.appStatus('private-test-token', 'example/research', sha, status), false);
+  assert.equal(
+    await api.appStatus('private-test-token', 'example/research', sha, status, true),
+    true,
+  );
+  assert.equal(
+    await api.appStatus('private-test-token', 'example/research', sha, status, true),
+    true,
+  );
+  assert.deepEqual(emitted, [{ state: 'success', ...status }]);
+  statuses[0].sha = base;
+  assert.equal(await api.appStatus('private-test-token', 'example/research', sha, status), false);
+});
+
+test('rules inspect a caller-selected App status and comments preserve caller text once', async (t) => {
+  const context = 'build/reproducibility';
+  const comments: { body: string }[] = [];
+  const api = client((url, init) => {
+    if (url.pathname.endsWith('/rules/branches/main'))
+      return [
+        {
+          type: 'required_status_checks',
+          parameters: {
+            strict_required_status_checks_policy: true,
+            required_status_checks: [{ context, integration_id: 7 }],
+          },
+        },
+      ];
+    if (url.pathname.endsWith('/rulesets')) return [];
+    if (url.pathname === '/apps/merv') return { id: 7 };
+    assert.equal(url.pathname, '/repos/example/research/issues/3/comments');
+    if (init.method === 'POST') comments.push(JSON.parse(String(init.body)));
+    return comments;
+  });
+  t.after(() => api.close());
+  assert.equal(
+    (await api.rules('private-test-token', 'example/research', 'main', context)).strict,
+    true,
+  );
+  assert.equal(
+    (await api.rules('private-test-token', 'example/research', 'main', 'other/check')).strict,
+    false,
+  );
+  const body = 'This build is retained under its original identifier.';
+  await api.commentOnce('private-test-token', 'example/research', 3, body);
+  await api.commentOnce('private-test-token', 'example/research', 3, body);
+  assert.deepEqual(comments, [{ body }]);
+});

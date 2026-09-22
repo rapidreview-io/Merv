@@ -20,6 +20,11 @@ import type { GitHubClient } from '@merv/code/github-client';
 import { z } from 'zod';
 import { parseCodeInput } from '@merv/code/input';
 
+export const publicationApproval = {
+  context: 'merv/consolidation-approved',
+  description: 'Independent Merv review of this exact commit passed',
+};
+
 export const publicationControlSchema = z
   .object({
     action: z.enum(['acknowledge_rules', 'record_canary', 'clear']),
@@ -313,7 +318,12 @@ export class PublicationHost {
   ) {
     let evidence: Awaited<ReturnType<GitHubClient['rules']>>;
     try {
-      evidence = await client.rules(token, record.repository, record.baseBranch);
+      evidence = await client.rules(
+        token,
+        record.repository,
+        record.baseBranch,
+        publicationApproval.context,
+      );
     } catch {
       evidence = {
         rules: [],

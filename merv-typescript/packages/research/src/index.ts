@@ -639,7 +639,9 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       JSON.stringify(record),
       predecessorId,
       (await this.selectedCode(caller, input.dependsOn, tx)) ||
-        (this.bindings.code && (await this.use('code', [], (code) => code.hosted(caller, tx))))
+        (this.bindings.code
+          ? await this.use('code', [], (code) => code.hosted(caller, tx))
+          : await this.retainedCode(caller, tx))
         ? 1
         : 0,
     );
@@ -1162,20 +1164,39 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
   }
 
   /** Workspace declarations survive provider unload; older experiments ask their owner. */
-  private async selectedCode(caller: Caller, ids: string[], tx: Transaction): Promise<boolean> {
+  private async selectedCode(
+    caller: Caller,
+    ids: string[] | undefined,
+    tx: Transaction,
+  ): Promise<boolean> {
     const selected = new Set(ids);
-    for (const id of ids)
+    for (const id of ids ?? [])
       for (const dependency of await this.workflows.dependencyClosure(caller, id, tx))
         selected.add(dependency);
-    for (const id of selected) {
-      const work = await this.workflows.get(caller, id, tx);
-      if (work.data.workspace === 'git') return true;
-      if (work.workflow === 'experiment' && work.data.workspace === undefined) {
-        const experiment = await this.use('experiments', [], (owner) => owner.get(caller, id, tx));
+    const work =
+      ids === undefined
+        ? await this.workflows.list(caller, tx)
+        : await Promise.all([...selected].map((id) => this.workflows.get(caller, id, tx)));
+    for (const item of work) {
+      if (item.data.workspace === 'git') return true;
+      if (item.workflow === 'experiment' && item.data.workspace === undefined) {
+        const experiment = await this.use('experiments', [], (owner) =>
+          owner.get(caller, item.id, tx),
+        );
         if (experiment.workspace === 'git') return true;
       }
     }
     return false;
+  }
+
+  /** Integration considers the whole project; provider absence cannot erase earlier Git work. */
+  private async retainedCode(caller: Caller, tx: Transaction): Promise<boolean> {
+    return (
+      !!(await tx.get(
+        'SELECT id FROM research_cycles WHERE project_id=? AND (code_required=1 OR code_required IS NULL) LIMIT 1',
+        caller.projectId,
+      )) || (await this.selectedCode(caller, undefined, tx))
+    );
   }
 
   /**
@@ -1206,7 +1227,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         row.code_required === 1 ||
         !!record.integrations.length ||
         hosted ||
-        (await this.selectedCode(caller, record.researchDependencies, tx));
+        (await this.selectedCode(caller, record.researchDependencies, tx)) ||
+        (!binding && (await this.retainedCode(caller, tx)));
       if (required || (binding && row.code_required === null))
         await tx.run(
           'UPDATE research_cycles SET code_required=? WHERE id=?',

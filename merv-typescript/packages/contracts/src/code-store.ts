@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { codePendingMergeSchema } from './workspace.js';
-import { githubBranchSchema } from './code-github.js';
+import { codePendingMergeSchema, gitBranchSchema } from './workspace.js';
+
+const importBranch = gitBranchSchema(200);
 
 /**
  * The second workspace protocol: Code keeps one repository per project and machines move Git
@@ -114,8 +115,7 @@ export const codeRepositoryImportInputSchema = z
       .max(255)
       .regex(/^refs\/(?:heads|tags)\//)
       .refine(
-        (value) =>
-          githubBranchSchema.safeParse(value.replace(/^refs\/(?:heads|tags)\//, '')).success,
+        (value) => importBranch.safeParse(value.replace(/^refs\/(?:heads|tags)\//, '')).success,
       )
       .optional(),
     /** Freeze the selected GitHub connection when preparation spans retries. */
@@ -123,7 +123,7 @@ export const codeRepositoryImportInputSchema = z
       .object({
         revision: z.number().int().nonnegative(),
         repositoryId: z.number().int().positive(),
-        baseBranch: githubBranchSchema,
+        baseBranch: importBranch,
       })
       .strict()
       .optional(),

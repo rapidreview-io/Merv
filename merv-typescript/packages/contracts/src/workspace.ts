@@ -9,23 +9,24 @@ export type {
 const label = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const count = z.number().int().nonnegative().safe();
-const branch = z
-  .string()
-  .min(1)
-  .max(500)
-  .refine(
-    (value) =>
-      !/[\x00-\x20\x7f~^:?*\[\\]/.test(value) &&
-      !value.startsWith('/') &&
-      !value.startsWith('-') &&
-      !value.endsWith('/') &&
-      !value.endsWith('.') &&
-      !value.includes('..') &&
-      !value.includes('//') &&
-      !value.includes('@{') &&
-      value !== '@' &&
-      value.split('/').every((part) => !part.startsWith('.') && !part.endsWith('.lock')),
-  );
+export const gitBranchSchema = (maxLength: number) =>
+  z
+    .string()
+    .min(1)
+    .max(maxLength)
+    .refine(
+      (value) =>
+        !/[\x00-\x20\x7f~^:?*\[\\]/.test(value) &&
+        !value.startsWith('/') &&
+        !value.startsWith('-') &&
+        !value.endsWith('/') &&
+        !value.endsWith('.') &&
+        !value.includes('..') &&
+        !value.includes('//') &&
+        !value.includes('@{') &&
+        value !== '@' &&
+        value.split('/').every((part) => !part.startsWith('.') && !part.endsWith('.lock')),
+    );
 /** The frozen merge and admitted checkpoint carried by a Code workspace. */
 export const codePendingMergeSchema = z
   .object({
@@ -89,7 +90,7 @@ export const sessionWorkspaceSchema = z
         repositoryId: label,
         workspaceId: label,
         mode: z.enum(['ephemeral', 'persistent']),
-        branch: branch.nullable(),
+        branch: gitBranchSchema(500).nullable(),
         baseOid: oid,
         headOid: oid,
         treeOid: oid.optional(),

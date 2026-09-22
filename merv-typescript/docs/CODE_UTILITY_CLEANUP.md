@@ -67,15 +67,25 @@ describe the host subsequently promoted to production.
 Server/UI typechecks and builds passed. Targeted gates cover command input validation,
 GitHub permissions and pagination, exact repository preparation/replay, no-Code research,
 core mutation projections, generic-owner isolation, writer recovery, and hosted adapter
-unload while core repositories remain usable. Full local and PostgreSQL staging gates are
-still being completed.
+unload while core repositories remain usable. Standalone utility storage imports and rebinds
+without research tables; retained base schema stays core-owned so unfinished merges remain
+protected. Research now preserves project-wide Git obligations across provider outages, including
+new cycles and unselected work. Latest full local gate passed: 1,627 passed, 211 PostgreSQL-only cases skipped, zero failures.
+Server/UI typechecks, both builds and deployment-renderer checks also passed. PostgreSQL staging
+gates are still being completed.
+
+Checkpoint `178da69a` passed the complete local suite: 1,619 passed, 195 PostgreSQL skips,
+zero failures. Its immutable source is running PostgreSQL tests in an isolated staging container,
+using random disposable schemas and only the staging database credential. The running service
+has not been deployed or modified. A later source candidate must pass its own changed-area gates.
 
 The current measured physical source count (2026-09-22, baseline `32a0920f`) is 19,234 →
-19,618 across Code plus its new adapter; all package `src/**/*.ts` files are 67,251 → 67,729.
+19,476 across Code plus its new adapter; all package `src/**/*.ts` files are 67,251 → 67,600.
 Moves are counted on both sides. **The net source-reduction requirement is not yet achieved.**
 New optionality, lifecycle and repository setup behavior outweigh the removed duplication.
-Further simplification must retain validation and recovery; moving code or deleting useful
-comments is not a reduction in responsibility.
+The shared operation journal removes 93 lines and exact PostgreSQL guard composition removes
+95 more, without changing published migration strings. Further simplification must retain
+validation and recovery; moving code or deleting useful comments is not a reduction in responsibility.
 
 Pending: dependency audit, total source count/diff, full no-Git lifecycle, Git handoff and
 review regressions, builds, staging image/release identity, authenticated acceptance and

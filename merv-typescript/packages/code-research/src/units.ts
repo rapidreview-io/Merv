@@ -16,6 +16,7 @@ import {
   type CodeUnitAcceptance,
   type CodeUnitAcceptInput,
   type Scope,
+  type Sql,
   type State,
   type StoredEvent,
   type Transaction,
@@ -1429,6 +1430,32 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       409,
     );
     await this.retainPublishedAcceptance(caller, unitId, reviewId, revision, tx);
+  }
+
+  /** Publication enforcement is research policy; the durable store reports retained facts. */
+  protected override async publicationOf(
+    sql: Sql,
+    projectId: string,
+    row: UnitRow,
+  ): Promise<CodeUnitPublication | null> {
+    const publication = await super.publicationOf(sql, projectId, row);
+    if (publication?.state !== 'pending') return publication;
+    const controls = await sql.get<{ record_json: string }>(
+      'SELECT record_json FROM code_publication_controls WHERE project_id=?',
+      projectId,
+    );
+    const enforcement = controls
+      ? (JSON.parse(controls.record_json) as {
+          disabled?: boolean;
+          canary?: unknown;
+          visibility?: { incomplete?: boolean };
+        })
+      : {};
+    // Match the publication gate: unavailable enforcement must name the operator recovery,
+    // never tell a researcher that a merge can proceed.
+    return enforcement.disabled || !enforcement.canary || enforcement.visibility?.incomplete
+      ? { ...publication, state: 'disabled' }
+      : publication;
   }
 
   protected override async record(tx: Transaction, row: UnitRow): Promise<CodeUnit> {

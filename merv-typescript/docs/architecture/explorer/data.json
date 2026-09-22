@@ -439,6 +439,11 @@
           "readOnly": false
         },
         {
+          "name": "code.repository.prepare",
+          "description": "Prepare the linked GitHub repository for research using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Binds the repository and imports its history using durable operations; ready means the selected commit is stored. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.",
+          "readOnly": false
+        },
+        {
           "name": "code.repository.rebind",
           "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including every reviewed consolidation round’s, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished, any publication is unsettled or any consolidation holds a frozen candidate set, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid, and work accepted under it can still be frozen into a later consolidation and published to main, because the binding retains every repository it has been bound to; a frozen candidate set never spans a rebind, because one that is still outstanding refuses it. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
           "readOnly": false
@@ -536,6 +541,11 @@
         {
           "name": "code.repository.import",
           "description": "Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker, and the project must already be bound with code.local.bind. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.prepare",
+          "description": "Prepare the linked GitHub repository for research using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Binds the repository and imports its history using durable operations; ready means the selected commit is stored. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.",
           "readOnly": false
         },
         {

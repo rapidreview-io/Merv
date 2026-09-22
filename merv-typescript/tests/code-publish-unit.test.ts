@@ -4,6 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createService, type WorkflowSnapshot } from '@merv/contracts';
 import { CodeService } from '@merv/code-research/service';
+import { CodeUnitStore } from '@merv/code/units';
+import { CodeWriterService } from '@merv/code/writers';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeCapture } from '@merv/code-research/types';
 import type { CodeBaseService } from '../packages/code-research/src/bases.js';
@@ -736,6 +738,13 @@ for (const backend of backends) {
         reason: 'The disposable stale pull request merged under a bypass.',
         requestId: 'failed-canary',
       });
+      const core = new CodeUnitStore(
+        f.state,
+        f.scope,
+        new CodeWriterService(f.state, f.scope, 900),
+      );
+      assert.equal((await core.unit(f.admin, work.id)).publication?.state, 'pending');
+      core.close();
       assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'disabled');
       assert.equal((await f.blockers(work.id))[0].code, 'code_publication_disabled');
       await assert.rejects(

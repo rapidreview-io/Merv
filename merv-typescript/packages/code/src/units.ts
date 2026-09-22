@@ -1,3 +1,4 @@
+import { OperationJournal } from './operation-journal.js';
 import {
   canonical,
   check,
@@ -26,6 +27,7 @@ import {
 import { migratePendingMerges } from './pending-merge.js';
 import { postgresMigrations } from './units.postgres.js';
 import { migratePublications } from './publications-schema.js';
+import { migrateBases } from './base-schema.js';
 import { parseCodeInput } from './input.js';
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from './writers.js';
@@ -325,6 +327,7 @@ CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
     ]);
     await migratePendingMerges(this.state);
     await migratePublications(this.state);
+    await migrateBases(this.state);
   }
 
   /** The pin alone, for an owner's references(): that hook runs on every read and must not derive. */
@@ -411,19 +414,9 @@ CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
       const principal = `actor:${caller.actorId}`;
       const { requestId, ...payload } = input;
       const inputHash = digest(payload);
-      const previous = await tx.get<{ input_hash: string; result_json: string }>(
-        'SELECT input_hash,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
-        caller.projectId,
-        principal,
-        requestId,
-      );
+      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const previous = await journal.previous();
       if (previous) {
-        check(
-          previous.input_hash === inputHash,
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
         // Every bind journalled before the lineage existed stored a result without `previous`,
         // and the contract now says the field is always there: the journal stays byte-identical
         // and the answer is normalised on the way out.
@@ -482,20 +475,7 @@ CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
       // Naming main is what every unit with no accepted code beneath it was waiting for.
       await this.writers.changes.emit({ kind: 'binding', projectId: caller.projectId }, tx);
       const result = (await this.project(tx, caller.projectId))!;
-      await tx.run(
-        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        operationId,
-        caller.projectId,
-        principal,
-        requestId,
-        'local_bind',
-        inputHash,
-        canonical(payload),
-        'completed',
-        canonical(result),
-        at,
-        at,
-      );
+      await journal.complete(operationId, 'local_bind', payload, result, at);
       await recorded(this.state, tx, caller, 'code.local_bound', caller.projectId, {
         operationId,
         repositoryId: input.repositoryId,
@@ -653,22 +633,6 @@ CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
     const merge = publication.merge_json
       ? (JSON.parse(publication.merge_json) as { commitSha: string | null })
       : null;
-    const controls = await sql.get<{ record_json: string }>(
-      'SELECT record_json FROM code_publication_controls WHERE project_id=?',
-      projectId,
-    );
-    const enforcement = controls
-      ? (JSON.parse(controls.record_json) as {
-          disabled?: boolean;
-          canary?: unknown;
-          visibility?: { incomplete?: boolean };
-        })
-      : {};
-    // Every project condition PublicationHost.check and rules() refuse a merge on reads the
-    // same way to a unit waiting on one: until an administrator repairs it, no merge of this
-    // pull request can succeed, so the wait must not name a merge as the thing that ends it.
-    const disabled =
-      !!enforcement.disabled || !enforcement.canary || !!enforcement.visibility?.incomplete;
     const mergeCommit = merge?.commitSha ?? pull?.mergeCommitSha ?? null;
     const state = publication.incident_json
       ? 'incident'
@@ -678,9 +642,7 @@ CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
           ? 'stale'
           : pull && pull.state === 'closed' && !pull.merged
             ? 'closed'
-            : disabled
-              ? 'disabled'
-              : 'pending';
+            : 'pending';
     return {
       state,
       ...(pull ? { pull: { number: pull.number, url: pull.url } } : {}),

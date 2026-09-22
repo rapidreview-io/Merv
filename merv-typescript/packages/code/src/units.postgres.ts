@@ -1,3 +1,5 @@
+import { postgresGuard } from './postgres-guard.js';
+
 /** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -58,119 +60,21 @@ CREATE TABLE code_operations (
     (status='failed' AND result_json IS NULL AND error IS NOT NULL AND completed_at IS NOT NULL)
   )
 );
-CREATE OR REPLACE FUNCTION code_projects_binding_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.mode IS DISTINCT FROM OLD.mode OR NEW.repository_id IS DISTINCT FROM OLD.repository_id OR NEW.binding_json IS DISTINCT FROM OLD.binding_json THEN
-    RAISE EXCEPTION USING MESSAGE = 'Code repository binding is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
-FOR EACH ROW EXECUTE FUNCTION code_projects_binding_guard();
-CREATE OR REPLACE FUNCTION code_projects_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code repository bindings are retained', ERRCODE = '23514';
-  RETURN OLD;
-END;
-$merv$;
-CREATE TRIGGER code_projects_no_delete BEFORE DELETE ON code_projects
-FOR EACH ROW EXECUTE FUNCTION code_projects_no_delete_guard();
-CREATE OR REPLACE FUNCTION code_units_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.unit_id IS DISTINCT FROM OLD.unit_id OR NEW.workflow IS DISTINCT FROM OLD.workflow OR NEW.version IS DISTINCT FROM OLD.version OR NEW.declared_at IS DISTINCT FROM OLD.declared_at THEN
-    RAISE EXCEPTION USING MESSAGE = 'Code unit identity is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_units_identity BEFORE UPDATE ON code_units
-FOR EACH ROW EXECUTE FUNCTION code_units_identity_guard();
-CREATE OR REPLACE FUNCTION code_units_base_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF OLD.base_json IS NOT NULL AND (NEW.base_json IS DISTINCT FROM OLD.base_json OR NEW.base_hash IS DISTINCT FROM OLD.base_hash OR NEW.base_lease_id IS DISTINCT FROM OLD.base_lease_id OR NEW.based_at IS DISTINCT FROM OLD.based_at) THEN
-    RAISE EXCEPTION USING MESSAGE = 'The base pin of a unit is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_units_base BEFORE UPDATE ON code_units
-FOR EACH ROW EXECUTE FUNCTION code_units_base_guard();
-CREATE OR REPLACE FUNCTION code_units_acceptance_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF OLD.acceptance_json IS NOT NULL AND (NEW.acceptance_json IS DISTINCT FROM OLD.acceptance_json OR NEW.acceptance_hash IS DISTINCT FROM OLD.acceptance_hash OR NEW.accepted_at IS DISTINCT FROM OLD.accepted_at) THEN
-    RAISE EXCEPTION USING MESSAGE = 'The acceptance of a unit is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_units_acceptance BEFORE UPDATE ON code_units
-FOR EACH ROW EXECUTE FUNCTION code_units_acceptance_guard();
-CREATE OR REPLACE FUNCTION code_units_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code units are retained', ERRCODE = '23514';
-  RETURN OLD;
-END;
-$merv$;
-CREATE TRIGGER code_units_no_delete BEFORE DELETE ON code_units
-FOR EACH ROW EXECUTE FUNCTION code_units_no_delete_guard();
-CREATE OR REPLACE FUNCTION code_edges_no_update_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code lineage is immutable', ERRCODE = '23514';
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_edges_no_update BEFORE UPDATE ON code_edges
-FOR EACH ROW EXECUTE FUNCTION code_edges_no_update_guard();
-CREATE OR REPLACE FUNCTION code_edges_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code lineage is retained', ERRCODE = '23514';
-  RETURN OLD;
-END;
-$merv$;
-CREATE TRIGGER code_edges_no_delete BEFORE DELETE ON code_edges
-FOR EACH ROW EXECUTE FUNCTION code_edges_no_delete_guard();
-CREATE OR REPLACE FUNCTION code_operations_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.principal_scope IS DISTINCT FROM OLD.principal_scope OR NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.input_hash IS DISTINCT FROM OLD.input_hash OR NEW.payload_json IS DISTINCT FROM OLD.payload_json OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-    RAISE EXCEPTION USING MESSAGE = 'Code operation identity is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_operations_identity BEFORE UPDATE ON code_operations
-FOR EACH ROW EXECUTE FUNCTION code_operations_identity_guard();
-CREATE OR REPLACE FUNCTION code_operations_result_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF OLD.status <> 'prepared' THEN
-    RAISE EXCEPTION USING MESSAGE = 'A finished Code operation is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_operations_result BEFORE UPDATE ON code_operations
-FOR EACH ROW EXECUTE FUNCTION code_operations_result_guard();
-CREATE OR REPLACE FUNCTION code_operations_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  RAISE EXCEPTION USING MESSAGE = 'Code operations are retained', ERRCODE = '23514';
-  RETURN OLD;
-END;
-$merv$;
-CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
-FOR EACH ROW EXECUTE FUNCTION code_operations_no_delete_guard();
+${postgresGuard('code_projects', 'binding', 'UPDATE', 'Code repository binding is immutable', `NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.mode IS DISTINCT FROM OLD.mode OR NEW.repository_id IS DISTINCT FROM OLD.repository_id OR NEW.binding_json IS DISTINCT FROM OLD.binding_json`)}
+${postgresGuard('code_projects', 'no_delete', 'DELETE', 'Code repository bindings are retained')}
+${postgresGuard('code_units', 'identity', 'UPDATE', 'Code unit identity is immutable', `NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.unit_id IS DISTINCT FROM OLD.unit_id OR NEW.workflow IS DISTINCT FROM OLD.workflow OR NEW.version IS DISTINCT FROM OLD.version OR NEW.declared_at IS DISTINCT FROM OLD.declared_at`)}
+${postgresGuard('code_units', 'base', 'UPDATE', 'The base pin of a unit is immutable', `OLD.base_json IS NOT NULL AND (NEW.base_json IS DISTINCT FROM OLD.base_json OR NEW.base_hash IS DISTINCT FROM OLD.base_hash OR NEW.base_lease_id IS DISTINCT FROM OLD.base_lease_id OR NEW.based_at IS DISTINCT FROM OLD.based_at)`)}
+${postgresGuard('code_units', 'acceptance', 'UPDATE', 'The acceptance of a unit is immutable', `OLD.acceptance_json IS NOT NULL AND (NEW.acceptance_json IS DISTINCT FROM OLD.acceptance_json OR NEW.acceptance_hash IS DISTINCT FROM OLD.acceptance_hash OR NEW.accepted_at IS DISTINCT FROM OLD.accepted_at)`)}
+${postgresGuard('code_units', 'no_delete', 'DELETE', 'Code units are retained')}
+${postgresGuard('code_edges', 'no_update', 'UPDATE', 'Code lineage is immutable')}
+${postgresGuard('code_edges', 'no_delete', 'DELETE', 'Code lineage is retained')}
+${postgresGuard('code_operations', 'identity', 'UPDATE', 'Code operation identity is immutable', `NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.principal_scope IS DISTINCT FROM OLD.principal_scope OR NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.input_hash IS DISTINCT FROM OLD.input_hash OR NEW.payload_json IS DISTINCT FROM OLD.payload_json OR NEW.created_at IS DISTINCT FROM OLD.created_at`)}
+${postgresGuard('code_operations', 'result', 'UPDATE', 'A finished Code operation is immutable', `OLD.status <> 'prepared'`)}
+${postgresGuard('code_operations', 'no_delete', 'DELETE', 'Code operations are retained')}
 
 
 ALTER TABLE code_projects ADD COLUMN store_json TEXT;
-CREATE OR REPLACE FUNCTION code_projects_store_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
-BEGIN
-  IF OLD.store_json IS NOT NULL AND NEW.store_json IS DISTINCT FROM OLD.store_json THEN
-    RAISE EXCEPTION USING MESSAGE = 'The repository of a project is recorded once and is immutable', ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$merv$;
-CREATE TRIGGER code_projects_store BEFORE UPDATE ON code_projects
-FOR EACH ROW EXECUTE FUNCTION code_projects_store_guard();
+${postgresGuard('code_projects', 'store', 'UPDATE', 'The repository of a project is recorded once and is immutable', `OLD.store_json IS NOT NULL AND NEW.store_json IS DISTINCT FROM OLD.store_json`)}
 ALTER TABLE code_units ADD COLUMN generation BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE code_units ADD COLUMN writer_state TEXT NOT NULL DEFAULT 'idle' CHECK (writer_state IN ('idle','reserved','active','closing','closed','recovery_required'));
 ALTER TABLE code_units ADD COLUMN writer_session_id TEXT;

@@ -1227,7 +1227,7 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<WorkflowSnapshot>;
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
-  list(caller: Caller): Promise<WorkflowSnapshot[]>;
+  list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]>;
   history(caller: Caller, instanceId: string): Promise<WorkflowHistoryEntry[]>;
   catalog(): WorkflowDefinition[];
   /** Derived on read from the definition and the record; never pinned, never authored. */

@@ -1,3 +1,4 @@
+import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
   check,
@@ -273,19 +274,15 @@ export class CodeMirrorService {
       );
       const { requestId, ...body } = input;
       const principal = `actor:${caller.actorId}`;
-      const previous = await tx.get<{ input_hash: string }>(
-        'SELECT input_hash FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+      const journal = new OperationJournal(
+        tx,
         caller.projectId,
         principal,
         requestId,
+        digest(body),
       );
+      const previous = await journal.previous<{ input_hash: string }>('input_hash');
       if (previous) {
-        check(
-          previous.input_hash === digest(body),
-          'request_conflict',
-          'This request id was used with different input',
-          409,
-        );
         return;
       }
       const row = await tx.get<MirrorRow>(
@@ -333,18 +330,11 @@ export class CodeMirrorService {
         null,
         (JSON.parse(row.payload_json) as MirrorPayload).ref,
       );
-      await tx.run(
-        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      await journal.complete(
         newId('cop'),
-        caller.projectId,
-        principal,
-        requestId,
         'mirror-retry',
-        digest(body),
-        canonical(body),
-        'completed',
-        canonical({ operationId: input.operationId }),
-        at,
+        body,
+        { operationId: input.operationId },
         at,
       );
     });

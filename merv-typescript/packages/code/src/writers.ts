@@ -1,3 +1,4 @@
+import { OperationJournal } from './operation-journal.js';
 import {
   canonical,
   check,
@@ -225,21 +226,9 @@ export class CodeWriterService {
     );
     const principal = `actor:${caller.actorId}`;
     const { requestId, ...body } = input;
-    const previous = await tx.get<{ input_hash: string; result_json: string }>(
-      'SELECT input_hash,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
-      caller.projectId,
-      principal,
-      requestId,
-    );
-    if (previous) {
-      check(
-        previous.input_hash === digest(body),
-        'request_conflict',
-        'This request id was used with different input',
-        409,
-      );
-      return JSON.parse(previous.result_json) as CodeWriterStatus;
-    }
+    const journal = new OperationJournal(tx, caller.projectId, principal, requestId, digest(body));
+    const previous = await journal.previous();
+    if (previous) return JSON.parse(previous.result_json) as CodeWriterStatus;
     const row = await this.row(tx, caller.projectId, input.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
     check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
@@ -271,20 +260,7 @@ export class CodeWriterService {
     await this.changed(tx, row);
     const result = this.view((await this.row(tx, caller.projectId, input.unitId))!);
     const id = newId('cop');
-    await tx.run(
-      'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      id,
-      caller.projectId,
-      principal,
-      requestId,
-      'fence',
-      digest(body),
-      canonical(body),
-      'completed',
-      canonical(result),
-      at,
-      at,
-    );
+    await journal.complete(id, 'fence', body, result, at);
     await recorded(this.state, tx, caller, 'code.unit_fenced', input.unitId, {
       operationId: id,
       generation: result.generation,

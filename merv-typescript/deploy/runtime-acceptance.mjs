@@ -270,7 +270,6 @@ export async function exerciseRuntime(start) {
     });
     let research = await call(operator, 'research.create', {
       name: 'Synthetic research cycle',
-      consolidationWorkspace: 'none',
       requestId: 'research-create',
     });
     assert.equal(research.workflow.state, 'defining');

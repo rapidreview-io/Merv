@@ -605,10 +605,12 @@ export class GitHubClient {
       ),
     );
   }
-  async approvalStatus(
+  /** Verify a successful status from this App, optionally creating it and verifying again. */
+  async appStatus(
     token: string,
     repository: string,
     sha: string,
+    status: { context: string; description: string },
     emit = false,
   ): Promise<boolean> {
     githubResponse(githubOid, sha);
@@ -618,7 +620,7 @@ export class GitHubClient {
       `${repositoryPath(repository)}/commits/${sha}/statuses`,
     );
     const found = statuses.find(
-      (entry) => (entry as { context?: string }).context === 'merv/consolidation-approved',
+      (entry) => (entry as { context?: string }).context === status.context,
     );
     const approved =
       !!found &&
@@ -631,12 +633,12 @@ export class GitHubClient {
     if (approved || !emit) return approved;
     await this.request(`${path}/statuses/${sha}`, token, {
       state: 'success',
-      context: 'merv/consolidation-approved',
-      description: 'Independent Merv review of this exact commit passed',
+      context: status.context,
+      description: status.description,
     });
-    return this.approvalStatus(token, repository, sha);
+    return this.appStatus(token, repository, sha, status);
   }
-  async rules(token: string, repository: string, branch: string) {
+  async rules(token: string, repository: string, branch: string, expectedContext: string) {
     // Effective branch rules omit bypass lists; visibility is incomplete until every ruleset
     // can be inspected. A missing field is never evidence that nobody bypasses the rule.
     const rules = await this.collection(
@@ -711,7 +713,7 @@ export class GitHubClient {
         (r) =>
           r.parameters?.strict_required_status_checks_policy &&
           r.parameters.required_status_checks?.some(
-            (s) => s.context === 'merv/consolidation-approved' && s.integration_id === app.id,
+            (s) => s.context === expectedContext && s.integration_id === app.id,
           ),
       ),
       pullRequest: rules.some((r) => (r as { type?: string }).type === 'pull_request'),
@@ -743,8 +745,7 @@ export class GitHubClient {
       );
     });
   }
-  async successorComment(token: string, repository: string, number: number, successor: string) {
-    const body = `Superseded by Merv proposal ${successor}. Main moved; a new independent review is required.`;
+  async commentOnce(token: string, repository: string, number: number, body: string) {
     const path = `${repositoryPath(repository)}/issues/${number}/comments`;
     const comments = await this.collection(token, path);
     if (!comments.some((comment) => (comment as { body?: string }).body === body))

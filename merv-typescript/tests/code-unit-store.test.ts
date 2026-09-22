@@ -8,6 +8,8 @@ import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { CodeUnitStore, type AcceptanceBody, type BaseBody } from '@merv/code/units';
 import { CodeWriterService } from '@merv/code/writers';
+import { CodeStore } from '@merv/code/store/operations';
+import { gitSource } from './fixtures/code-store.js';
 
 /** The storage capability accepts facts from an owner; it has no research service to consult. */
 class OwnerStore extends CodeUnitStore {
@@ -73,6 +75,8 @@ async function fixture(t: TestContext) {
     storage: 'none',
   });
   return {
+    root,
+    scope,
     state,
     caller,
     body,
@@ -131,6 +135,101 @@ test('Code unit storage runs without research services and rolls facts back with
     { code: 'code_acceptance_conflict' },
   );
   assert.deepEqual((await f.store.status(f.caller)).blockers, []);
+});
+
+test('standalone Code storage imports and rebinds while retaining unfinished bases and their commits', async (t) => {
+  const f = await fixture(t);
+  const source = gitSource(t);
+  const head = source.commit({ 'research.txt': 'retained baseline' });
+  const store = await createService(
+    new CodeStore(
+      f.state,
+      f.scope,
+      {
+        root: join(f.root, 'repositories'),
+        reservedFreeBytes: 1,
+        settleMs: 60_000,
+      },
+      {
+        imported: async () => {},
+        workspaces: async () => [],
+        frozen: async () => [],
+        fenced: async () => {},
+        advanced: async () => {},
+        quarantined: async () => {},
+      },
+      {
+        read: async (_caller, use) =>
+          use({
+            url: source.repository,
+            protocol: 'file',
+            repository: { id: 1, fullName: 'owner/repository' },
+            env: {},
+          }),
+      },
+    ),
+  );
+  try {
+    await f.store.bindLocal(f.caller, {
+      repositoryId: 'original',
+      mainOid: head,
+      requestId: 'bind',
+    });
+    const imported = await store.importRepository(f.caller, {
+      source: 'github',
+      ref: 'refs/heads/main',
+      requestId: 'import',
+    });
+    assert.equal(imported.status, 'completed');
+    const rebind = () =>
+      store.rebindRepository(f.caller, {
+        repositoryId: 'renamed',
+        mainOid: head,
+        reason: 'Keep the retained history',
+        requestId: 'rebind',
+      });
+    const at = new Date().toISOString();
+    await f.state.transaction((tx) =>
+      tx.run(
+        'INSERT INTO code_bases(project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+        f.caller.projectId,
+        'base',
+        '[]',
+        head,
+        head,
+        'git',
+        'queued',
+        at,
+        at,
+      ),
+    );
+    await assert.rejects(rebind(), { code: 'code_rebind_busy' });
+    await f.state.transaction((tx) =>
+      tx.run(
+        "UPDATE code_bases SET state='suspended',check_state='running' WHERE project_id=?",
+        f.caller.projectId,
+      ),
+    );
+    await assert.rejects(rebind(), { code: 'code_rebind_busy' });
+    await f.state.transaction((tx) =>
+      tx.run(
+        "UPDATE code_bases SET state='resolved',check_state='none',result_json=? WHERE project_id=?",
+        JSON.stringify({ commit: head }),
+        f.caller.projectId,
+      ),
+    );
+    assert.equal((await rebind()).status, 'completed');
+    assert.equal((await f.store.status(f.caller)).project?.repositoryId, 'renamed');
+    const tables = await f.state.read((sql) =>
+      sql.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'"),
+    );
+    assert.equal(
+      tables.some(({ name }) => /^(wf_|reviews$|sessions$|research_)/.test(name)),
+      false,
+    );
+  } finally {
+    await store.close();
+  }
 });
 
 test('review-round records stay separate from published acceptance and reject changed replay', async (t) => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { gitBranchSchema } from './workspace.js';
 import type { Caller } from './index.js';
 import type {
   GitHubRepository,
@@ -21,22 +22,7 @@ export const githubRepositoryInputSchema = githubRevisionSchema
   })
   .strict()
   .refine((v) => (v.installationId === null) === (v.repositoryId === null));
-export const githubBranchSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine(
-    (value) =>
-      !/[\x00-\x20\x7f~^:?*\[\\]/.test(value) &&
-      !value.includes('..') &&
-      !value.includes('@{') &&
-      value !== '@' &&
-      !value.startsWith('-') &&
-      !value.endsWith('.') &&
-      value
-        .split('/')
-        .every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock')),
-  );
+export const githubBranchSchema = gitBranchSchema(200);
 export const githubAutomationSchema = githubRevisionSchema
   .extend({
     mode: z.enum(['off', 'read', 'write']),
