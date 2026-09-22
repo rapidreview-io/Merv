@@ -25,6 +25,58 @@ import type {
 import type {} from 'cordis';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 
+/** Opaque, immutable inputs frozen before a consolidation chooses its retained frontier. */
+export interface CodeCandidateSet {
+  formatVersion: 1;
+  projectId: string;
+  repositoryId: string;
+  integrationBase: string;
+  candidates: { unitId: string; acceptanceHash: string; reference: string | null }[];
+  hash: string;
+}
+export interface CodeCandidateDecision {
+  unitId: string;
+  decision: 'retain' | 'adapt' | 'drop' | 'no_code';
+  replacementUnitId?: string;
+  rationale: string;
+}
+export interface CodeReconciliation {
+  unitId: string;
+  retainedUnitId: string;
+  rationale: string;
+}
+export interface CodeDecisionManifest {
+  formatVersion: 1;
+  candidateSetHash: string;
+  decisionsHash: string;
+  contributors: { references: string[]; sourceHash: string; excludedActorIds: string[] };
+  decisions: CodeCandidateDecision[];
+  reconciliations: CodeReconciliation[];
+  frontier: string[];
+  conflicts: (
+    | { kind: 'carried'; unitId: string; retainedUnitId: string; message: string }
+    | { kind: 'on_main'; unitId: string; message: string }
+  )[];
+  hash: string;
+}
+export interface CodeConsolidations {
+  freezeCandidates(caller: Caller, roots: string[], tx: Transaction): Promise<CodeCandidateSet>;
+  inspectCandidates(
+    caller: Caller,
+    frozen: CodeCandidateSet,
+    decisions: CodeCandidateDecision[],
+    reconciliations: CodeReconciliation[],
+  ): Promise<CodeDecisionManifest>;
+  verifyCandidates(
+    caller: Caller,
+    frozen: CodeCandidateSet,
+    decisions: CodeCandidateDecision[],
+    reconciliations: CodeReconciliation[],
+    manifest: CodeDecisionManifest | undefined,
+    tx: Transaction,
+  ): Promise<void>;
+}
+
 export interface CodeCommands {
   merge(
     caller: Caller,
@@ -189,6 +241,7 @@ export interface CodeRepositoryControls {
 export interface Code
   extends
     CodeCommands,
+    CodeConsolidations,
     CodeProposals,
     CodeCaptures,
     CodeUnits,

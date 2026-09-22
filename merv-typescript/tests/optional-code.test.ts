@@ -22,6 +22,8 @@ async function fixture(t: TestContext, enabled: boolean) {
       !['api', 'identity', 'ui'].includes(id) && !id.endsWith('-api') && !id.endsWith('-ui'),
   );
   config.plugins.find(({ id }) => id === 'code')!.disabled = !enabled;
+  // Optional-provider lifecycle needs Code's services, not the repository writer socket.
+  config.plugins.find(({ id }) => id === 'code')!.config = {};
   const app = await createApp({ directory, config });
   t.after(async () => {
     await app.stop();
@@ -59,7 +61,15 @@ async function fixture(t: TestContext, enabled: boolean) {
       requestId: name,
     });
   const active = () => {
-    for (const id of ['experiments', 'knowledge', 'reflections', 'research', 'tasks', 'sessions'])
+    for (const id of [
+      'experiments',
+      'knowledge',
+      'reflections',
+      'research',
+      'tasks',
+      'sessions',
+      'consolidation',
+    ])
       assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
   };
   let sequence = 0;
@@ -159,8 +169,8 @@ async function fixture(t: TestContext, enabled: boolean) {
 test('server boots without Code and completes no-code research after reflection approval', async (t) => {
   const f = await fixture(t, false);
   f.active();
-  for (const id of ['code-tools', 'consolidation', 'consolidation-tools'])
-    assert.equal(f.app.status().find((entry) => entry.id === id)?.state, 'pending', id);
+  assert.equal(f.app.status().find((entry) => entry.id === 'code-tools')?.state, 'pending');
+  assert.equal(f.app.status().find((entry) => entry.id === 'consolidation-tools')?.state, 'active');
   assert.equal(
     (await f.app.ctx.tools.list()).filter((tool) => tool.name === 'reflection.create').length,
     1,
@@ -273,6 +283,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     sessions: f.app.ctx.sessions,
     reflections: f.app.ctx.reflections,
     research: f.app.ctx.research,
+    consolidation: f.app.ctx.consolidation,
   };
   const git = await f.experiment('Git-work', 'git');
   const gitConsolidation = await f.consolidation('Git-consolidation');
@@ -307,8 +318,8 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     assert.deepEqual(await f.app.ctx.sessions.authenticate(secret), worker);
     assert.deepEqual(await f.app.ctx.workflows.assignment(worker, scratch.id), packet);
     assert.equal((await f.app.ctx.experiments.get(f.owner, git.id)).workspace, 'git');
-    assert.equal(f.app.status().find(({ id }) => id === 'consolidation')?.state, 'pending');
-    assert.ok(!(await f.app.ctx.tools.list()).some((tool) => tool.name === 'consolidation.create'));
+    assert.equal(f.app.status().find(({ id }) => id === 'consolidation')?.state, 'active');
+    assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'consolidation.create'));
     assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'reflection.create'));
     await assert.rejects(async () => await f.app.ctx.workflows.assignment(f.owner, git.id), {
       code: 'code_unavailable',
@@ -330,7 +341,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     await assert.rejects(
       async () => await f.app.ctx.workflows.assignment(f.owner, gitConsolidation.id),
       {
-        code: 'workflow_unavailable',
+        code: 'code_unavailable',
       },
     );
     assert.equal(
@@ -367,7 +378,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
   assert.equal(session.assignment.instanceId, scratch.id);
 });
 
-test('Git research reports missing consolidation, then retries the same handoff after Code loads', async (t) => {
+test('Git research creates its legacy consolidation without Code and resumes that child after Code loads', async (t) => {
   const f = await fixture(t, false);
   let record = await f.cycle('git');
   await f.reflect(record);
@@ -378,20 +389,24 @@ test('Git research reports missing consolidation, then retries the same handoff 
   };
   const research = f.app.ctx.research;
   const advance = async () => await f.app.ctx.research.advance(f.owner, input);
-  const blocked = await f.app.ctx.workflows.evaluate(f.owner, record.id);
-  assert.ok(JSON.stringify(blocked).includes('consolidation_unavailable'));
-  await assert.rejects(advance, { code: 'consolidation_unavailable' });
-  await assert.rejects(advance, { code: 'consolidation_unavailable' });
-  assert.equal((await f.app.ctx.research.get(f.owner, record.id)).consolidationId, null);
-  assert.equal(
-    (await f.app.ctx.research.get(f.owner, record.id)).workflow.revision,
-    record.workflow.revision,
+  record = await advance();
+  const child = await f.app.ctx.consolidation.get(f.owner, record.consolidationId!);
+  assert.equal(child.workflow.version, 4);
+  assert.equal(child.workspace, 'git');
+  await assert.rejects(f.app.ctx.workflows.assignment(f.owner, child.id), {
+    code: 'code_unavailable',
+  });
+  await assert.rejects(
+    f.app.ctx.consolidation.create(f.owner, {
+      name: 'Frozen candidates',
+      workspace: 'git',
+      version: 5,
+      sourceArtifactIds: [f.source.id],
+      requestId: 'needs-code',
+    }),
+    { code: 'code_unavailable' },
   );
-  assert.equal(
-    (await f.app.ctx.workflows.list(f.owner)).filter((work) => work.workflow === 'consolidation')
-      .length,
-    0,
-  );
+  assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 1);
 
   await f.app.setEnabled('code', true);
   assert.equal(f.app.ctx.research, research);
@@ -406,11 +421,7 @@ test('Git research reports missing consolidation, then retries the same handoff 
   const childId = record.consolidationId;
   await f.app.setEnabled('code', false);
   assert.equal(f.app.ctx.research, research);
-  assert.deepEqual(
-    await advance(),
-    record,
-    'completed handoff can replay while its child provider is absent',
-  );
+  assert.deepEqual(await advance(), record, 'completed handoff can replay while Code is absent');
   assert.equal((await f.app.ctx.research.get(f.owner, record.id)).consolidationId, childId);
   await f.app.setEnabled('code', true);
   assert.equal(f.app.ctx.research, research);

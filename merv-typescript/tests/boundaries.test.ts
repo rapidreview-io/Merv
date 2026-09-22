@@ -1,4 +1,3 @@
-import { mapAsync } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -87,7 +86,7 @@ const capabilities: Record<string, readonly string[]> = {
   research: ['state', 'scope', 'workflows'],
   paper: ['state', 'scope', 'artifacts'],
   reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
-  consolidation: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'code'],
+  consolidation: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder'],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
   tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder'],
@@ -105,6 +104,7 @@ const capabilities: Record<string, readonly string[]> = {
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
   code: ['reviews'],
+  consolidation: ['code'],
   experiments: ['code'],
   research: [
     'domainEvents',

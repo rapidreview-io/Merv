@@ -1,5 +1,11 @@
 import type { Artifact, Caller, Transaction, WorkflowSnapshot } from '@merv/contracts';
-import type { CodeProposal } from '@merv/code/types';
+import type {
+  CodeProposal,
+  CodeCandidateSet,
+  CodeCandidateDecision,
+  CodeDecisionManifest,
+  CodeReconciliation,
+} from '@merv/code/types';
 import type {} from 'cordis';
 
 export interface ConsolidationDecision {
@@ -18,6 +24,10 @@ export interface ConsolidationCreate {
   /** The decision scope selected by the originating workflow. */
   experimentIds?: string[];
   name: string;
+  /** Explicit opt-in while version 5 is unreleased; default routing remains unchanged. */
+  version?: 5;
+  /** Tasks produced by the cycle, including those no selected experiment depends on. */
+  taskIds?: string[];
   workspace?: 'none' | 'git';
   dependsOn?: string[];
   requestId: string;
@@ -27,7 +37,8 @@ export interface ConsolidationSubmit {
   expectedRevision: number;
   reportArtifactId: string;
   evidenceArtifactIds?: string[];
-  decisions: ConsolidationDecision[];
+  decisions: (ConsolidationDecision | CodeCandidateDecision)[];
+  reconciliations?: CodeReconciliation[];
   /** Required in Git mode; an exact successful code.commit receipt from this worker. */
   commandId?: string;
   requestId: string;
@@ -49,8 +60,9 @@ export interface ConsolidationSubmission {
   createdAt: string;
   report: Artifact;
   evidence: Artifact[];
-  decisions: ConsolidationDecision[];
+  decisions: (ConsolidationDecision | CodeCandidateDecision)[];
   proposal: CodeProposal | null;
+  manifest?: CodeDecisionManifest;
 }
 export interface ConsolidationRecord {
   id: string;
@@ -61,6 +73,8 @@ export interface ConsolidationRecord {
   workspace: 'none' | 'git';
   sources: Artifact[];
   experimentIds: string[];
+  taskIds?: string[];
+  candidates?: CodeCandidateSet;
   workflow: WorkflowSnapshot;
   reviewId: string | null;
   submissions: ConsolidationSubmission[];

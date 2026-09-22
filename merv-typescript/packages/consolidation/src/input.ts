@@ -20,6 +20,8 @@ export const createSchema = z
     sourceArtifactIds: z.array(id).min(1).max(CONSOLIDATION_LIMITS.sourceArtifactIds),
     experimentIds: z.array(id).max(CONSOLIDATION_LIMITS.experimentIds).default([]),
     name: text(200),
+    version: z.literal(5).optional(),
+    taskIds: z.array(id).max(1000).optional(),
     workspace: z.enum(['none', 'git']).default('none'),
     dependsOn: z.array(id).max(CONSOLIDATION_LIMITS.dependsOn).default([]),
     requestId: id,
@@ -35,15 +37,29 @@ export const submitSchema = z
     evidenceArtifactIds: z.array(id).max(48).default([]),
     decisions: z
       .array(
-        z
-          .object({
-            experimentId: id,
-            decision: z.enum(['retain', 'adapt', 'drop', 'no_code']),
-            rationale: text(12000),
-          })
-          .strict(),
+        z.union([
+          z
+            .object({
+              experimentId: id,
+              decision: z.enum(['retain', 'adapt', 'drop', 'no_code']),
+              rationale: text(12000),
+            })
+            .strict(),
+          z
+            .object({
+              unitId: id,
+              decision: z.enum(['retain', 'adapt', 'drop', 'no_code']),
+              replacementUnitId: id.optional(),
+              rationale: text(12000),
+            })
+            .strict(),
+        ]),
       )
       .max(1000),
+    reconciliations: z
+      .array(z.object({ unitId: id, retainedUnitId: id, rationale: text(12000) }).strict())
+      .max(1000)
+      .optional(),
     commandId: id.optional(),
     requestId: id,
   })

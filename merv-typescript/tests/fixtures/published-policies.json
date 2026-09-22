@@ -164,6 +164,12 @@
       "version": 3,
       "fingerprint": "5e0093bff552b86ce6278304b51fd50782dc67fa366bdb06d3b4d1780538edcb",
       "published": false
+    },
+    {
+      "name": "consolidation",
+      "version": 5,
+      "fingerprint": "28ac1545cf3fc2812ddbc64b350c6f30e03cd03b743f8be2a6c59ee9c34a6814",
+      "published": false
     }
   ],
   "policies": [
@@ -730,6 +736,20 @@
       "state": "synthesizing",
       "fingerprint": "dec725959810b5c636b232643f33bd0f2408d60c7312107b77659c7e0a0b359f",
       "published": false
+    },
+    {
+      "workflow": "consolidation",
+      "version": 5,
+      "state": "consolidating",
+      "fingerprint": "352cf88d6b0d91732b3c9cb432fed490e31d52b3be964766e1e0f2cf4a132b13",
+      "published": false
+    },
+    {
+      "workflow": "consolidation",
+      "version": 5,
+      "state": "consolidation_review",
+      "fingerprint": "72a42eb3bed47b7a29b997322226f002a97e5c0e4f503185fc8c07ff6a0a65f6",
+      "published": false
     }
   ],
   "recipes": [
@@ -1091,6 +1111,18 @@
       "type": "reflection.synthesis",
       "version": 8,
       "hash": "d8c490d4eff3b9cb20d2ff85dee6df1ff1268bd7a8e0acc22603bb67a5e07b80",
+      "published": false
+    },
+    {
+      "type": "consolidation.consolidating",
+      "version": 3,
+      "hash": "e1470e6a0058c900e9d5058c5c19d6e956f5d2075add59a02f1cb4b593770a33",
+      "published": false
+    },
+    {
+      "type": "consolidation.consolidation_review",
+      "version": 3,
+      "hash": "6621eadec1a84a3a12bbf3f8f766f825752c22cc821a66b2b0d0b98943beeeed",
       "published": false
     }
   ]

@@ -10,6 +10,7 @@ import type { GitHubConfig } from './github-client.js';
 import { CodeTransportService } from './transport.js';
 import { CodePublicationService } from './publications.js';
 import { CodeUnitService } from './units.js';
+import { CodeConsolidation } from './consolidation.js';
 import { CodeBaseService } from './bases.js';
 import { CodeWriterService } from './writers.js';
 import { CodeWorkspaceProtocol } from './protocol.js';
@@ -54,6 +55,7 @@ export class CodeService extends CodeCommandService implements Code {
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
+  private consolidationStore: CodeConsolidation;
   private writerStore!: CodeWriterService;
   private store?: CodeStore;
   private mirrorStore?: CodeMirrorService;
@@ -88,6 +90,9 @@ export class CodeService extends CodeCommandService implements Code {
     repositories?: CodeStoreOptions,
   ) {
     super(state, scope, sessions);
+    this.consolidationStore = new CodeConsolidation(state, scope, workflows, sessions, () =>
+      this.publicationClosed ? undefined : this.store?.repositories,
+    );
     this.storage = state;
     this.baseScope = scope;
     this.github = new CodeGitHubService(state, scope, github, fetcher);
@@ -232,8 +237,14 @@ export class CodeService extends CodeCommandService implements Code {
       .register((projectId, subjectId, tx) =>
         this.unitStore.reviewProvenance(projectId, subjectId, tx),
       );
+    const releaseConsolidation = reviews
+      .provenance('code.consolidation')
+      .register((projectId, subjectId, tx) =>
+        this.consolidationStore.provenance(projectId, subjectId, tx),
+      );
     return () => {
       release();
+      releaseConsolidation();
       if (this.unitStore.reviews === reviews) this.unitStore.reviews = undefined;
     };
   }
@@ -243,6 +254,21 @@ export class CodeService extends CodeCommandService implements Code {
     return () => {
       if (this.unitStore.resolutionTasks === provider) this.unitStore.resolutionTasks = undefined;
     };
+  }
+
+  async freezeCandidates(...args: Parameters<CodeConsolidation['freeze']>) {
+    if (this.publicationClosed) throw new MervError('code_unavailable', 'Code is unavailable', 503);
+    this.storage.assertTransaction(args[2]);
+    return await this.consolidationStore.freeze(...args);
+  }
+  async inspectCandidates(...args: Parameters<CodeConsolidation['inspect']>) {
+    if (this.publicationClosed) throw new MervError('code_unavailable', 'Code is unavailable', 503);
+    return await this.consolidationStore.inspect(...args);
+  }
+  async verifyCandidates(...args: Parameters<CodeConsolidation['verify']>) {
+    if (this.publicationClosed) throw new MervError('code_unavailable', 'Code is unavailable', 503);
+    this.storage.assertTransaction(args[5]);
+    return await this.consolidationStore.verify(...args);
   }
 
   async declareUnit(...args: Parameters<CodeUnitService['declareUnit']>) {

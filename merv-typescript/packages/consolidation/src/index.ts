@@ -28,7 +28,7 @@ import {
   type WorkflowLease,
   type Workflows,
 } from '@merv/contracts';
-import type { Code } from '@merv/code/types';
+import type { Code, CodeCandidateDecision, CodeDecisionManifest } from '@merv/code/types';
 import type {
   Consolidation,
   ConsolidationCreate,
@@ -82,9 +82,9 @@ const endable: WorkflowDefinition = {
   ],
 };
 /** The versions that can be ended; older instances keep the workflow they were started on. */
-const ENDABLE = new Set([3, 4]);
-/** Versions pair off by workspace, not by age: 1 and 3 carry no repository, 2 and 4 do. */
-const GIT = new Set([2, 4]);
+const ENDABLE = new Set([3, 4, 5]);
+/** Version 5 retains the Git workspace contract until its frontier-base preparation ships. */
+const GIT = new Set([2, 4, 5]);
 const criteria = [
   'Every frozen experiment has an explicit retain, adapt, drop or no-code decision justified by the pinned source artifacts and evidence.',
   'The consolidated result implements the pinned source artifacts without silently replacing its research conclusions or source corpus.',
@@ -96,6 +96,17 @@ const instructions = {
   consolidation_review:
     'Independently review the pinned consolidation report, every experiment decision, and the exact sealed code proposal when present. Verify tests and retained evidence. Never change or re-review the pinned source artifacts itself. Submit review.submit: pass completes consolidation; needs_changes or fail returns only to consolidating. Stop after the verdict.',
 };
+const candidateInstructions = {
+  consolidating:
+    'Consolidate the pinned sources and frozen accepted units. Supply one retain, drop, adapt or no_code decision per candidate unitId. An adaptation names a retained accepted replacementUnitId already in the frozen set. A carried dropped ancestor requires a reconciliations entry naming unitId, retainedUnitId and rationale. Dropping work on the frozen integration base leaves its effects; removal requires a corrective change. Retain a report and evidence, create a successful code.commit and submit. Stop after submission.',
+  consolidation_review:
+    'Independently verify the exact sealed result, frozen candidate-set and decision-manifest hashes, integration base, head, tree and evidence. Review every ancestry conflict and its explicit reconciliation; a drop already on main does not remove effects. Submit review.submit: pass completes consolidation with publication outstanding; other verdicts return to consolidating. Stop after the verdict.',
+};
+const candidateCriteria = [
+  'Every frozen accepted candidate has one justified decision; every adaptation names an independently accepted retained replacement in the frozen set.',
+  'Every carried ancestor conflict has an explicit reconciliation supported by the reviewed result and evidence; drops already on main are not represented as removals.',
+  'The exact pinned candidate set, decision manifest, integration base, submitted head and tree, report and tests support the combined result and its limitations.',
+];
 type ActiveState = keyof typeof instructions;
 interface Row {
   id: string;
@@ -122,7 +133,7 @@ export class ConsolidationService implements Consolidation {
   readonly limits = CONSOLIDATION_LIMITS;
   private closed = false;
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
-  private contexts = new Map<ActiveState, ContextRegistration>();
+  private contexts = new Map<string, ContextRegistration>();
   private withdrawReview?: () => void;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
@@ -133,7 +144,7 @@ export class ConsolidationService implements Consolidation {
     private workflows: Workflows,
     private reviews: Reviews,
     contextBuilder: ContextBuilder,
-    private code: Code,
+    private code?: Code,
   ) {
     this.initialize = async () => {
       await state.migrate('consolidation', [
@@ -157,35 +168,40 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         },
       ]);
       try {
-        for (const state of Object.keys(instructions) as ActiveState[]) {
-          this.contexts.set(
-            state,
-            await contextBuilder.register({
-              name: `consolidation.${state}`,
-              version: 2,
-              kind: state === 'consolidating' ? 'work' : 'review',
-              recipe: {
-                instructions: instructions[state],
-                outputInstructions: instructions[state],
-                maxChars: 200000,
-                sections: [
-                  {
-                    key: 'assignment',
-                    title: 'Frozen pinned source artifacts and experiment decisions',
-                    required: true,
-                  },
-                  { key: 'evidence', title: 'Pinned reports and evidence', required: true },
-                  {
-                    key: 'feedback',
-                    title: 'Previous consolidation review feedback',
-                    required: false,
-                  },
-                ],
-              },
-            }),
-          );
-        }
-        for (const version of [1, 2, 3, 4])
+        for (const recipeVersion of [2, 3])
+          for (const state of Object.keys(instructions) as ActiveState[]) {
+            const guidance = recipeVersion === 3 ? candidateInstructions : instructions;
+            this.contexts.set(
+              `${recipeVersion}:${state}`,
+              await contextBuilder.register({
+                name: `consolidation.${state}`,
+                version: recipeVersion,
+                kind: state === 'consolidating' ? 'work' : 'review',
+                recipe: {
+                  instructions: guidance[state],
+                  outputInstructions: guidance[state],
+                  maxChars: 200000,
+                  sections: [
+                    {
+                      key: 'assignment',
+                      title:
+                        recipeVersion === 3
+                          ? 'Frozen accepted candidates, decisions and ancestry reconciliation'
+                          : 'Frozen pinned source artifacts and experiment decisions',
+                      required: true,
+                    },
+                    { key: 'evidence', title: 'Pinned reports and evidence', required: true },
+                    {
+                      key: 'feedback',
+                      title: 'Previous consolidation review feedback',
+                      required: false,
+                    },
+                  ],
+                },
+              }),
+            );
+          }
+        for (const version of [1, 2, 3, 4, 5])
           this.handles.set(
             version,
             await workflows.register(
@@ -208,6 +224,24 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         throw error;
       }
     };
+  }
+  bindCode(code: Code): () => void {
+    this.code = code;
+    return () => {
+      if (this.code === code) this.code = undefined;
+    };
+  }
+  private requireCode(): Code {
+    check(
+      this.code,
+      'code_unavailable',
+      'Code is unavailable; load Code before starting or operating a Git consolidation',
+      503,
+    );
+    return this.code;
+  }
+  private guidance(version: number) {
+    return version === 5 ? candidateInstructions : instructions;
   }
   private capture(caller: Caller): Caller {
     check(!this.closed, 'consolidation_unavailable', 'Consolidation is unavailable', 503);
@@ -307,11 +341,38 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
             `${id} is not an experiment`,
             404,
           );
-        const workflow = await this.handles.get(input.workspace === 'git' ? 4 : 3)!.start(
+        const version = input.version ?? (input.workspace === 'git' ? 4 : 3);
+        check(
+          version === 5 || input.taskIds === undefined,
+          'invalid_consolidation',
+          'Task candidate scope requires version 5',
+        );
+        check(
+          version !== 5 || input.workspace === 'git',
+          'invalid_consolidation',
+          'Version 5 requires a Git workspace',
+        );
+        const taskIds = [...new Set(input.taskIds ?? [])].sort();
+        for (const id of taskIds)
+          check(
+            (await this.workflows.get(caller, id, tx)).workflow === 'task',
+            'invalid_consolidation',
+            `${id} is not a task`,
+            404,
+          );
+        const candidates =
+          version === 5
+            ? await this.requireCode().freezeCandidates(
+                caller,
+                [...experimentIds, ...taskIds, ...input.dependsOn],
+                tx,
+              )
+            : undefined;
+        const workflow = await this.handles.get(version)!.start(
           caller,
           {
             workflow: 'consolidation',
-            version: input.workspace === 'git' ? 4 : 3,
+            version,
             requestId: `consolidation:${caller.actorId}:${input.requestId}`,
             dependsOn: [...new Set(input.dependsOn)],
             data: { name: input.name },
@@ -327,6 +388,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           createdAt: now(),
           sources,
           experimentIds,
+          ...(candidates ? { taskIds, candidates } : {}),
         };
         await tx.run(
           'INSERT INTO consolidations(id,project_id,record) VALUES(?,?,?)',
@@ -420,6 +482,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       );
     }
     await this.workflows.checkDependencies(caller, record.id, tx);
+    if (record.workspace === 'git') this.requireCode();
   }
   private async review(
     caller: Caller,
@@ -503,6 +566,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         workspace: record.workspace,
         sources: record.sources,
         experimentIds: record.experimentIds,
+        ...(record.candidates ? { candidates: record.candidates, taskIds: record.taskIds } : {}),
         submission: current ?? null,
         review,
       }),
@@ -529,16 +593,36 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
     record: ConsolidationRecord,
     input: ConsolidationSubmit,
     tx: Transaction,
+    manifest?: CodeDecisionManifest,
   ) {
     await this.producer(caller, record, tx);
     this.revision(record, input.expectedRevision);
-    const experiments = [...record.experimentIds].sort();
-    check(
-      digest(input.decisions.map((d) => d.experimentId).sort()) === digest(experiments),
-      'consolidation_decisions',
-      'Exactly one decision is required for every experiment in the declared experiment scope',
-      409,
-    );
+    if (record.workflow.version === 5) {
+      check(
+        record.candidates && input.decisions.every((d) => 'unitId' in d),
+        'consolidation_decisions',
+        'Version 5 requires decisions by frozen candidate unitId',
+        409,
+      );
+      await this.requireCode().verifyCandidates(
+        caller,
+        record.candidates,
+        input.decisions as CodeCandidateDecision[],
+        input.reconciliations ?? [],
+        manifest,
+        tx,
+      );
+    } else {
+      check(
+        input.reconciliations === undefined &&
+          input.decisions.every((d) => 'experimentId' in d) &&
+          digest(input.decisions.map((d) => ('experimentId' in d ? d.experimentId : '')).sort()) ===
+            digest([...record.experimentIds].sort()),
+        'consolidation_decisions',
+        'Exactly one decision is required for every experiment in the declared experiment scope',
+        409,
+      );
+    }
     check(
       record.workspace === 'git' ||
         input.decisions.every((d) => d.decision === 'drop' || d.decision === 'no_code'),
@@ -592,7 +676,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       );
       return artifact;
     });
-    return { report, evidence };
+    return { report, evidence, manifest };
   }
   /**
    * End a consolidation that cannot continue. The usual reason is a prerequisite that ended
@@ -640,11 +724,56 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
   ): Promise<ConsolidationRecord> {
     caller = this.capture(caller);
     const input = parse(submitSchema, value);
+    const prepared = await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      // Replays need neither the repository nor a second ancestry inspection.
+      if (
+        await tx.get(
+          'SELECT 1 FROM consolidation_commands WHERE project_id=? AND actor_id=? AND request_id=?',
+          caller.projectId,
+          caller.actorId,
+          input.requestId,
+        )
+      ) {
+        return {
+          replay: await this.command<ConsolidationRecord>(caller, 'submit', input, tx, () => {
+            throw new Error('The existing command must replay');
+          }),
+        };
+      }
+      const record = await this.get(caller, input.consolidationId, tx);
+      if (record.workflow.version === 5) {
+        check(
+          !transaction,
+          'consolidation_preparation_required',
+          'Version 5 submission prepares ancestry before opening its own transaction',
+          409,
+        );
+        await this.validateSubmission(caller, record, input, tx);
+      }
+      return { record };
+    });
+    if ('replay' in prepared) return prepared.replay!;
+    const preparedManifest =
+      prepared.record.workflow.version === 5
+        ? await this.requireCode().inspectCandidates(
+            caller,
+            prepared.record.candidates!,
+            input.decisions as CodeCandidateDecision[],
+            input.reconciliations ?? [],
+          )
+        : undefined;
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'submit', input, tx, async () => {
         const record = await this.get(caller, input.consolidationId, tx);
-        const { report, evidence } = await this.validateSubmission(caller, record, input, tx);
+        const { report, evidence, manifest } = await this.validateSubmission(
+          caller,
+          record,
+          input,
+          tx,
+          preparedManifest,
+        );
         const ids = [...new Set([report.id, ...evidence.map((a) => a.id)])];
         const authored = new Set(
           caller.session
@@ -654,7 +783,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
         const pinnedInputIds = ids.filter((id) => !authored.has(id));
         const proposal =
           record.workspace === 'git'
-            ? await this.code.seal(
+            ? await this.requireCode().seal(
                 caller,
                 {
                   commandId: input.commandId!,
@@ -663,7 +792,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
                   pinnedInputIds,
                   provenance: own({
                     sources: record.sources.map((a) => ({ id: a.id, hash: a.hash })),
-                    decisions: input.decisions,
+                    ...(manifest
+                      ? { candidates: record.candidates, manifest }
+                      : { decisions: input.decisions }),
                   }),
                   requestId: input.requestId,
                 },
@@ -707,7 +838,10 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
               : {}),
             artifactIds: reviewArtifacts,
             pinnedInputIds: [...new Set([...pinnedInputIds, ...sourceReports])],
-            criteria,
+            criteria: record.workflow.version === 5 ? candidateCriteria : criteria,
+            ...(manifest
+              ? { provenanceOwner: 'code.consolidation', requiredCriteria: [1, 2, 3] }
+              : {}),
             formatVersion: 2,
             requestId: `consolidation:review:${caller.actorId}:${input.requestId}`,
           },
@@ -722,8 +856,9 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           createdAt: now(),
           report,
           evidence,
-          decisions: input.decisions,
+          decisions: manifest?.decisions ?? input.decisions,
           proposal,
+          ...(manifest ? { manifest } : {}),
         };
         await tx.run(
           'INSERT INTO consolidation_submissions(id,instance_id,revision,record) VALUES(?,?,?,?)',
@@ -805,7 +940,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
       await this.reviews.submit(caller, verdict, tx);
       const submission = record.submissions.find((s) => s.reviewId === review.id)!;
       if (submission.proposal)
-        await this.code.recordPublicationReview(
+        await this.requireCode().recordPublicationReview(
           caller,
           submission.proposal,
           review.id,
@@ -1011,7 +1146,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           waiting:
             context.snapshot.state === 'complete'
               ? 'Reviewed consolidation complete. Central Git publication is separate.'
-              : instructions[context.snapshot.state as ActiveState],
+              : this.guidance(version)[context.snapshot.state as ActiveState],
         };
       },
       assignments: (Object.keys(instructions) as ActiveState[]).map((state) => ({
@@ -1046,7 +1181,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
                 ReturnType<ConsolidationService['inputs']>
               >)
             : await this.inputs(context.caller, record, context.tx);
-          const preview = await this.contexts.get(state)!.preview(
+          const preview = await this.contexts.get(`${version === 5 ? 3 : 2}:${state}`)!.preview(
             context.caller,
             {
               subject: { id: record.id, revision: record.workflow.revision },
@@ -1066,7 +1201,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           const instruction =
             review?.status === 'requested'
               ? 'Call review.start for the exact current review, then refresh workflow.assignment.'
-              : instructions[state];
+              : this.guidance(version)[state];
           return {
             role: state === 'consolidating' ? 'producer' : 'reviewer',
             label: `${record.name}: ${state}`,
@@ -1092,7 +1227,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           states: ['consolidating'],
           transitions: ['submit'],
           tool: 'consolidation.submit',
-          instruction: instructions.consolidating,
+          instruction: this.guidance(version).consolidating,
           requiresDependencies: true,
           // Git mode also needs the commandId of this worker's own successful code.commit,
           // and only a leased worker can obtain one. Saying so here is the difference between
@@ -1124,7 +1259,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
           states: ['consolidation_review'],
           transitions: ['approve', 'revise'],
           tool: 'review.submit',
-          instruction: instructions.consolidation_review,
+          instruction: this.guidance(version).consolidation_review,
           requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
           arguments: async (context) => {
             const review = await this.review(
@@ -1225,7 +1360,7 @@ CREATE TRIGGER consolidation_lease_retained BEFORE DELETE ON consolidation_lease
 }
 export const consolidationPlugin = {
   name: 'merv-consolidation',
-  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'code'],
+  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder'],
   async apply(ctx: Context) {
     const service = await createService(
       new ConsolidationService(
@@ -1235,9 +1370,11 @@ export const consolidationPlugin = {
         ctx.workflows,
         ctx.reviews,
         ctx.contextBuilder,
-        ctx.code,
       ),
     );
+    ctx.inject(['code'], (ctx) => {
+      ctx.effect(() => service.bindCode(ctx.code));
+    });
     ctx.effect(function* () {
       yield () => service.close();
       yield ctx.provide('consolidation', service);

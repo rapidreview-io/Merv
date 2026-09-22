@@ -29,7 +29,7 @@ Research requires only State, Scope and Workflows. Paper, Reflections, Knowledge
 
 Knowledge's extra reflection-evidence resolver exists only while Knowledge is bound. Removing it withdraws those additional read permissions without stopping the core reflection workflow. It does not turn unavailable evidence into an empty successful result. Creating a reflection wave itself does not require Knowledge.
 
-A missing provider produces a named action blocker. A cycle requesting Git consolidation waits safely if Consolidation is unavailable; it neither skips the requested stage nor changes the outer cycle before creating the child. No-code cycles can complete without Consolidation or Code. Code remains mandatory inside Consolidation because it seals and validates code proposals. The UI hides and clears consolidation prerequisites when no code changes are selected and sends an empty prerequisite list for that branch.
+A missing provider produces a named action blocker. A cycle requesting Git consolidation waits safely if Consolidation is unavailable; it neither skips the requested stage nor changes the outer cycle before creating the child. No-code cycles can complete without Consolidation or Code. Consolidation remains available without Code and can record its legacy version-4 child; that child refuses Git assignments until Code returns. Research does not select the explicit, unreleased version-5 candidate path yet. The UI hides and clears consolidation prerequisites when no code changes are selected and sends an empty prerequisite list for that branch.
 
 Child creation, dependency links, outer transition and replay receipt share one transaction. Request IDs reject different-input reuse. Owner/operator authorization and project scope apply throughout.
 

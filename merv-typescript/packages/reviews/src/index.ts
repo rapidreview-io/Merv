@@ -420,6 +420,20 @@ export class ReviewService implements Reviews {
     review: ReviewRequest,
     tx: Transaction,
   ): Promise<boolean> {
+    if (review.provenance?.revalidate) {
+      const current = await this.certificate(
+        review.provenance.provider,
+        review.projectId,
+        review.subjectId,
+        tx,
+      );
+      check(
+        canonical(current) === canonical(review.provenance),
+        'review_provenance_changed',
+        'The exact pinned review result and contributors must still match; request a new review',
+        409,
+      );
+    }
     // Existing evidence exclusions and owner-certified contributors share one identity rule.
     return (
       !excludedFromReview(review, caller.actorId) &&

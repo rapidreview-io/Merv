@@ -1301,6 +1301,8 @@ export type ReviewFinding = {
 };
 /** Owner-derived identities and a digest of the retained records that justify them. */
 export interface ReviewProvenance {
+  /** Recompute this certificate inside claim and verdict transactions; absence keeps legacy review rules. */
+  revalidate?: true;
   formatVersion: 1;
   provider: string;
   reference: string;

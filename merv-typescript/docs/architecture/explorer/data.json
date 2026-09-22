@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-21",
+  "snapshot": "2026-09-22",
   "groups": [
     {
       "id": "front",
@@ -499,10 +499,11 @@
         "artifacts",
         "workflows",
         "reviews",
-        "contextBuilder",
+        "contextBuilder"
+      ],
+      "optional": [
         "code"
       ],
-      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -514,7 +515,7 @@
       "exposedTools": [
         {
           "name": "consolidation.create",
-          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.",
+          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Default creation remains version 4 for Git while version 5 workspace preparation is unreleased.",
           "readOnly": false
         },
         {
@@ -524,7 +525,7 @@
         },
         {
           "name": "consolidation.get",
-          "description": "Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
+          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
           "readOnly": true
         },
         {
@@ -534,7 +535,7 @@
         },
         {
           "name": "consolidation.submit",
-          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
+          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 adaptations name a retained replacementUnitId in the frozen set; carried ancestor conflicts require reconciliations with unitId, retainedUnitId and rationale. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
           "readOnly": false
         }
       ]
@@ -559,7 +560,7 @@
       "exposedTools": [
         {
           "name": "consolidation.create",
-          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.",
+          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Default creation remains version 4 for Git while version 5 workspace preparation is unreleased.",
           "readOnly": false
         },
         {
@@ -569,7 +570,7 @@
         },
         {
           "name": "consolidation.get",
-          "description": "Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
+          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
           "readOnly": true
         },
         {
@@ -579,7 +580,7 @@
         },
         {
           "name": "consolidation.submit",
-          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
+          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 adaptations name a retained replacementUnitId in the frozen set; carried ancestor conflicts require reconciliations with unitId, retainedUnitId and rationale. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
           "readOnly": false
         }
       ]
@@ -2367,7 +2368,7 @@
     {
       "from": "consolidation",
       "to": "code",
-      "optional": false
+      "optional": true
     },
     {
       "from": "merv-consolidation-tools",

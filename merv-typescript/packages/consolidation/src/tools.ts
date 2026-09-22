@@ -12,7 +12,7 @@ export const consolidationToolsPlugin = {
       {
         name: 'consolidation.create',
         description:
-          'Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code.',
+          'Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Default creation remains version 4 for Git while version 5 workspace preparation is unreleased.',
         inputSchema: createSchema,
         handler: async (caller: Caller, input: ConsolidationCreate) =>
           await service.create(caller, input),
@@ -28,7 +28,7 @@ export const consolidationToolsPlugin = {
       {
         name: 'consolidation.get',
         description:
-          'Read a consolidation and its pinned source artifacts, experiment decisions, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.',
+          'Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.',
         readOnly: true,
         inputSchema: getSchema,
         handler: async (caller: Caller, input: { consolidationId: string }) =>
@@ -37,7 +37,7 @@ export const consolidationToolsPlugin = {
       {
         name: 'consolidation.submit',
         description:
-          'Seal this producer’s report, evidence and exactly one decision per frozen experiment for independent review. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.',
+          'Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 adaptations name a retained replacementUnitId in the frozen set; carried ancestor conflicts require reconciliations with unitId, retainedUnitId and rationale. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.',
         inputSchema: submitSchema,
         handler: async (caller: Caller, input: ConsolidationSubmit) =>
           await service.submit(caller, input),

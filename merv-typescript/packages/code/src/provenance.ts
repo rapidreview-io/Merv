@@ -2,6 +2,27 @@ import { check, digest, type ReviewProvenance, type Transaction } from '@merv/co
 import type { Sessions } from '@merv/sessions/types';
 import type { CodeBaseService } from './bases.js';
 
+/** Accepted work must retain its producing actors and the authorities who directed them. */
+export async function unitContributors(
+  tx: Transaction,
+  sessions: Pick<Sessions, 'contributors'>,
+  projectId: string,
+  units: Map<string, number | null>,
+) {
+  const sources = [];
+  for (const [unitId, revision] of [...units].sort(([a], [b]) => a.localeCompare(b))) {
+    const contributors = await sessions.contributors(projectId, unitId, revision, tx);
+    check(
+      revision === null || contributors.length,
+      'code_provenance_unverifiable',
+      'An accepted input has no retained producing session',
+      409,
+    );
+    sources.push(...contributors.map((source) => ({ unitId, ...source })));
+  }
+  return sources;
+}
+
 /** Code identifies the contributing units; Sessions owns their retained authorship. */
 export async function resolutionProvenance(
   tx: Transaction,
@@ -50,17 +71,7 @@ export async function resolutionProvenance(
     }
   }
   for (const base of path) if (base.resolutionTaskId) units.set(base.resolutionTaskId, null);
-  const sources = [];
-  for (const [unitId, revision] of [...units].sort(([a], [b]) => a.localeCompare(b))) {
-    const contributors = await sessions.contributors(projectId, unitId, revision, tx);
-    check(
-      revision === null || contributors.length,
-      'code_provenance_unverifiable',
-      'An accepted input has no retained producing session',
-      409,
-    );
-    sources.push(...contributors.map((source) => ({ unitId, ...source })));
-  }
+  const sources = await unitContributors(tx, sessions, projectId, units);
   const body = {
     formatVersion: 1 as const,
     provider: 'code',

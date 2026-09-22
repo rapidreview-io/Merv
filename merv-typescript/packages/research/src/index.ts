@@ -1048,7 +1048,15 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       (submission) => submission.id === consolidation.completion!.submissionId,
     );
     const decisions = new Map(
-      (approvedSubmission?.decisions ?? []).map((decision) => [decision.experimentId, decision]),
+      (approvedSubmission?.decisions ?? [])
+        .filter(
+          (decision) =>
+            'experimentId' in decision || consolidation!.experimentIds.includes(decision.unitId),
+        )
+        .map((decision) => [
+          'experimentId' in decision ? decision.experimentId : decision.unitId,
+          decision,
+        ]),
     );
     const experimentIds = new Set([
       ...selected.filter((item) => item.workflow === 'experiment').map((item) => item.id),
@@ -1062,7 +1070,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     const decided = (decision: string) =>
       [...decisions.values()]
         .filter((entry) => entry.decision === decision)
-        .map((entry) => entry.experimentId);
+        .map((entry) => ('experimentId' in entry ? entry.experimentId : entry.unitId));
     const lists = {
       experiments: experiments.map((entry) => ({
         id: entry.id,
