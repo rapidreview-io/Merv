@@ -139,8 +139,6 @@ export const currentCycle = (cycles: ResearchRecord[] | undefined) => {
 export function CreateResearch({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState('');
   const [dependencies, setDependencies] = useState<string[]>([]);
-  const [consolidationDependencies, setConsolidationDependencies] = useState<string[]>([]);
-  const [workspace, setWorkspace] = useState('none');
   const [automatic, setAutomatic] = useState(false);
   const [maxCycles, setMaxCycles] = useState('10');
   // What a cycle may wait on is the work this page lists, chosen by name.
@@ -152,7 +150,6 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
     onSuccess: () => {
       setName('');
       setDependencies([]);
-      setConsolidationDependencies([]);
       // The new cycle's gate rides the shared home read, which its header's move reads.
       refreshTools('ui.home');
       onSaved();
@@ -166,8 +163,6 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
         void command.submit({
           name,
           dependsOn: dependencies,
-          consolidationDependsOn: workspace === 'git' ? consolidationDependencies : [],
-          consolidationWorkspace: workspace,
           ...(automatic ? { automatic: true, maxCycles: Number(maxCycles) } : {}),
         });
       }}
@@ -201,30 +196,6 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
               onChange={(event) => setMaxCycles(event.target.value)}
             />
           </label>
-        )}
-        <label>
-          Code changes
-          <select
-            value={workspace}
-            onChange={(event) => {
-              setWorkspace(event.target.value);
-              if (event.target.value === 'none') setConsolidationDependencies([]);
-            }}
-          >
-            <option value="none">No code changes</option>
-            <option value="git">Git consolidation</option>
-          </select>
-        </label>
-        {workspace === 'git' && (
-          <RecordPicker
-            label="Consolidation prerequisites"
-            {...work}
-            options={work.options.filter(
-              (item) => !['failed', 'abandoned'].includes(item.state ?? ''),
-            )}
-            value={consolidationDependencies}
-            onChange={setConsolidationDependencies}
-          />
         )}
       </fieldset>
       <Failure message={command.error} />
@@ -262,10 +233,7 @@ export function WorkList({ shell }: { shell: ShellData }) {
   // The cycle the head shows is the one the narrowing means.
   const cycle = cycles.data?.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
-  const inCycle = new Set([
-    ...(cycle?.researchDependencies ?? []),
-    ...(cycle?.consolidationDependencies ?? []),
-  ]);
+  const inCycle = new Set(cycle?.researchDependencies);
   const items: Item[] = chained(
     [
       ...(tasks.data ?? []).map((task): Item => ({

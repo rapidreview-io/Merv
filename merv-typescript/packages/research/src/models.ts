@@ -1,13 +1,10 @@
-import type { Artifact, WorkflowSnapshot } from '@merv/contracts/types';
+import type { Artifact, CodeUnitPublication, WorkflowSnapshot } from '@merv/contracts/types';
 import type { PaperRevision } from '@merv/paper/models';
 
 export interface ResearchCreate {
   name: string;
   /** Existing project work selected by the coordinator, not automatically invented. */
   dependsOn?: string[];
-  /** New cycles: none finishes after reflection; git adds implementation and review. */
-  consolidationWorkspace?: 'none' | 'git';
-  consolidationDependsOn?: string[];
   /**
    * A finished or ended cycle this one follows. Its digest is composed now if it has none, and
    * this cycle's reflection receives it. A cycle is followed by at most one other.
@@ -32,6 +29,8 @@ export interface ResearchAdvance extends ResearchCommandBase {
    * no caller creates agent-planned work without saying so; ignored everywhere else.
    */
   nextWave?: 'create' | 'skip';
+  /** Inject a fresh consolidation task after the current one ended without acceptance. */
+  retryIntegration?: boolean;
 }
 /** Ending a cycle that cannot reach an answer. Terminal; the reason is recorded. */
 export interface ResearchEnd extends ResearchCommandBase {
@@ -68,13 +67,16 @@ export interface ResearchRecord {
   name: string;
   createdAt: string;
   researchDependencies: string[];
-  consolidationWorkspace: 'none' | 'git';
-  consolidationDependencies: string[];
+  /** Legacy only: cycles before version 6 chose a consolidation workflow at creation. */
+  consolidationWorkspace?: 'none' | 'git';
+  consolidationDependencies?: string[];
   workflow: WorkflowSnapshot;
   /** Exact definition accepted on leaving the defining stage. */
   problem: PaperRevision | null;
   reflectionId: string | null;
   consolidationId: string | null;
+  /** The consolidation tasks this cycle injected, oldest first; a stale publication appends a successor. */
+  integrations: string[];
   /** Null for a cycle somebody created by hand. */
   origin: ResearchOrigin | null;
   /** The cycle this one's approved plan opened, if it did. */
@@ -124,7 +126,8 @@ export interface ResearchDigest {
       rationale: string;
     } | null;
   } | null;
-  consolidation: { id: string; reviewId: string; report: ResearchArtifactRef } | null;
+  /** The consolidation task that took the cycle's accepted code to main, and where its publication stood. */
+  integration: { taskId: string; publication: CodeUnitPublication['state'] | null } | null;
   experiments: {
     id: string;
     name: string;
@@ -134,9 +137,6 @@ export interface ResearchDigest {
     /** Historical only. */
     testedClaimIds?: string[];
     conclusion: string | null;
-    /** The approved consolidation's decision for this experiment, when there was one. */
-    decision: 'retain' | 'adapt' | 'drop' | 'no_code' | null;
-    rationale: string | null;
   }[];
   tasks: { id: string; title: string; state: string }[];
   /** The claims the cycle's experiments tested. */
@@ -147,9 +147,9 @@ export interface ResearchDigest {
     confidence: string;
     testedBy: string[];
   }[];
-  /** Selected work that failed or was abandoned, and experiments consolidation dropped. */
+  /** Selected work that failed or was abandoned. */
   dropped: string[];
-  /** Selected work still unfinished, and experiments consolidation chose to adapt. */
+  /** Selected work still unfinished. */
   carriedOver: string[];
   /** Tested claims still draft or active: derived, not authored. */
   openQuestions?: { claimId: string; statement: string }[];

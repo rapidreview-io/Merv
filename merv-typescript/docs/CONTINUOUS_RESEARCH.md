@@ -1,8 +1,8 @@
 # Continuous research
 
-Tasks and experiments finish → reflection → optional consolidation → the approved next wave.
+Tasks and experiments finish → reflection → the consolidation task, when main lacks accepted code → the approved next wave.
 
-On **Work → New cycle**, select the work and enable **Continue automatically through reviewed research waves**. Choose a maximum cycle count (default 10, including the first cycle). Existing cycles and API calls that omit automatic mode remain manual. New cycles use `research@5`; historical versions retain their original rules.
+On **Work → New cycle**, select the work and enable **Continue automatically through reviewed research waves**. Choose a maximum cycle count (default 10, including the first cycle). Existing cycles and API calls that omit automatic mode remain manual. New cycles use `research@6`; historical versions retain their original rules.
 
 The equivalent tool input is:
 
@@ -12,7 +12,6 @@ The equivalent tool input is:
   "dependsOn": ["TASK_OR_EXPERIMENT_ID"],
   "automatic": true,
   "maxCycles": 10,
-  "consolidationWorkspace": "none",
   "requestId": "start-continuous-research"
 }
 ```
@@ -25,10 +24,10 @@ Research consumes existing durable workflow events. It checks the same workflow 
 
 - **Defining:** pin the complete project definition and enter researching.
 - **Researching:** wait for all selected work to finish, including failed and abandoned work, then create the five-lens reflection.
-- **Reflecting:** wait for independent approval. If Git consolidation was selected, create it; otherwise complete this cycle and apply the approved next-wave decision.
-- **Consolidating:** wait for independent approval, then complete and apply the next-wave decision.
-- **Continue:** create the approved tasks, experiments and successor in the existing transaction. The successor inherits the original authority, consolidation choice and cycle limit.
-- **Stop:** complete without a successor. At the cycle limit, finish reflection and any required consolidation, then complete without creating more work. The approved proposal remains retained.
+- **Reflecting:** wait for independent approval. Where the project is not hosted by Code, complete this cycle and apply the approved next-wave decision. Where it is, whether main lacks accepted code is Git's answer, given outside a transaction; the consumer's transaction cannot ask, so the cycle shows `integration_candidates_unavailable` until the owner advances it from a client, which injects the consolidation task or completes the cycle.
+- **Consolidating:** wait for the consolidation task to be accepted and published. `dependencies_pending` and `publication_pending` are waits recorded as the cycle's blocker, never failures, and cost no cycle; a published task completes the cycle and applies the next-wave decision. A stale publication or a task ended without acceptance is likewise a visible wait for the owner's advance.
+- **Continue:** create the approved tasks, experiments and successor in the existing transaction. The successor inherits the original authority and cycle limit, and starts from main.
+- **Stop:** complete without a successor. At the cycle limit, finish reflection and any consolidation, then complete without creating more work. The approved proposal remains retained.
 
 Automatic reflections require an `application/json` change specification with an explicit continue/stop decision. This requirement is in their frozen assignment and checked by both submission and preflight. Manual and standalone reflections still accept prose. Independent reviews and return paths are unchanged.
 
@@ -36,7 +35,7 @@ A successor automatically accepts the preceding definition only if its revision 
 
 ## Failed work is an outcome
 
-Version 5 uses the selected work as the wave's subject, not as a success requirement. Completed, failed and abandoned records remain in the selection, evidence inventory, lineage and digest. Reflection and consolidation approvals govern later stages; the old failed experiment cannot block the cycle again.
+Versions 5 and 6 use the selected work as the wave's subject, not as a success requirement. Completed, failed and abandoned records remain in the selection, evidence inventory, lineage and digest. Reflection approval and the consolidation task's publication govern later stages; the old failed experiment cannot block the cycle again.
 
 Execution dependencies still require successful inputs. Before opening reflection, automatic Research closes selected, never-started work whose required input has terminally failed. A task is marked failed; an experiment is abandoned. The retained reason starts with **Not run: required input ended without success**, identifies the input, and names the research wave. The closure repeats through the selected chain, including chains listed in reverse order.
 
@@ -50,7 +49,7 @@ The durable consumer resumes its cursor across restarts. Startup and provider re
 
 The cycle's `automation` read model exposes its root, cycle number, maximum cycles and current blocker. Source credentials are never returned. `research.automatically_advanced`, `research.blocked_work_closed` and `research.automatic_status` preserve system attribution alongside the original owner and existing workflow history.
 
-The cycle cap covers this automatic chain. Existing session budgets and review limits continue to apply. This change does not add live cost accounting, central Git publication or cross-machine code transport. A reviewed Git consolidation still has its existing publication semantics.
+The cycle cap covers this automatic chain. Existing session budgets and review limits continue to apply. This change does not add live cost accounting or cross-machine code transport. A consolidation task publishes to main through the same pull request and operator merge as any unit marked to publish.
 
 ## Verification
 

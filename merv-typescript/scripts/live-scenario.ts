@@ -35,8 +35,7 @@ const RUN_ID = randomBytes(4).toString('hex');
  * PROJECT, CLAIMS, TASKS, EXPERIMENTS, REFLECTION, FEED, LIMITS. Inside them:
  *
  *   PROJECT      **Name:** `project` — and an **Introduction** blockquote; the
- *                **Research cycle** bullets supply `name` and
- *                `consolidationWorkspace`.
+ *                **Research cycle** bullets supply `name`.
  *   CLAIMS       `### C1` with `- \`statement\`: "…"`, `- \`scope\`: "…"` and
  *                `- \`confidence\`: \`medium\``.
  *   TASKS        `### Task \`name\`` with **Title:**, a **Goal:** blockquote and a
@@ -107,7 +106,7 @@ export interface Brief {
   project: {
     name: string;
     introduction: string;
-    cycle?: { name: string; consolidationWorkspace?: 'none' | 'git'; dependsOn?: string[] };
+    cycle?: { name: string; dependsOn?: string[] };
   };
   claims: ClaimBrief[];
   records: RecordBrief[];
@@ -405,12 +404,7 @@ export function parseBrief(markdown: string): Brief {
       introduction,
       ...(cycleName
         ? {
-            cycle: {
-              name: cycleName,
-              consolidationWorkspace: (ticked(inline(cycleBody, /`consolidationWorkspace`:?/))[0] ??
-                'none') as 'none' | 'git',
-              dependsOn: [...names],
-            },
+            cycle: { name: cycleName, dependsOn: [...names] },
           }
         : {}),
     },
@@ -825,7 +819,6 @@ async function main(options: Options) {
         dependsOn: (brief.project.cycle.dependsOn ?? [])
           .map((name) => observed.get(name)?.id)
           .filter((id): id is string => !!id),
-        consolidationWorkspace: brief.project.cycle.consolidationWorkspace ?? 'none',
         requestId: `scenario:cycle:${brief.project.cycle.name.replace(/[^A-Za-z0-9_.:-]+/g, '-')}`,
       });
       cycleId = cycle.id;

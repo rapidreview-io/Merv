@@ -87,24 +87,51 @@ export async function automaticResearch(
           await tx.run('RELEASE SAVEPOINT research_automatic_cycle');
           if (!(error instanceof MervError) || (error.status >= 500 && error.status !== 503))
             throw error;
-          blocker = { code: error.code, message: clip(error.message, 2000) };
+          blocker = automaticBlocker(error);
         }
-        const encoded = blocker ? JSON.stringify(blocker) : null;
-        if (encoded !== row.blocker_json) {
-          await tx.run(
-            'UPDATE research_automation SET blocker_json=? WHERE research_id=?',
-            encoded,
-            row.research_id,
-          );
-          await state.appendEvent(tx, {
-            projectId: row.project_id,
-            actorId: JSON.parse(row.source_json).actorId,
-            type: 'research.automatic_status',
-            subjectId: row.research_id,
-            data: { performedBy: 'system:research', causeEventId: event.id, blocker },
-          });
-        }
+        await recordBlocker(state, tx, row, blocker, { causeEventId: event.id });
       }
+    },
+  });
+}
+
+export const automaticBlocker = (error: MervError): ResearchAutomation['blocker'] => ({
+  code: error.code,
+  message: clip(error.message, 2000),
+});
+
+/**
+ * Replaces the blocker a cycle shows. The consumer writes over whatever it found, as the
+ * advance it made may already have cleared one; a deferred advance writes only over the marker
+ * it was left, so a reconcile since is never overwritten. The change is an event, so a reader
+ * learns of it the way it learns of every other.
+ */
+export async function recordBlocker(
+  state: State,
+  tx: Transaction,
+  row: Pick<AutomaticRow, 'research_id' | 'project_id' | 'source_json' | 'blocker_json'>,
+  blocker: ResearchAutomation['blocker'],
+  options: { causeEventId?: number; onlyOver?: string } = {},
+): Promise<void> {
+  const encoded = blocker ? JSON.stringify(blocker) : null;
+  if (encoded === row.blocker_json) return;
+  const { onlyOver } = options;
+  const written = await tx.run(
+    `UPDATE research_automation SET blocker_json=? WHERE research_id=?${onlyOver === undefined ? '' : ' AND blocker_json=?'}`,
+    encoded,
+    row.research_id,
+    ...(onlyOver === undefined ? [] : [onlyOver]),
+  );
+  if (!written.changes) return;
+  await state.appendEvent(tx, {
+    projectId: row.project_id,
+    actorId: JSON.parse(row.source_json).actorId,
+    type: 'research.automatic_status',
+    subjectId: row.research_id,
+    data: {
+      performedBy: 'system:research',
+      ...(options.causeEventId ? { causeEventId: options.causeEventId } : {}),
+      blocker,
     },
   });
 }

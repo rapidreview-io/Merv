@@ -160,6 +160,12 @@
       "published": true
     },
     {
+      "name": "research",
+      "version": 6,
+      "fingerprint": "8fcb40d0a497dacab0ef66e569ec8954eadaae22a74c03f15858b9d8e38c66d8",
+      "published": false
+    },
+    {
       "name": "reflection",
       "version": 3,
       "fingerprint": "5e0093bff552b86ce6278304b51fd50782dc67fa366bdb06d3b4d1780538edcb",
@@ -715,6 +721,34 @@
       "state": "researching",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
       "published": true
+    },
+    {
+      "workflow": "research",
+      "version": 6,
+      "state": "consolidating",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 6,
+      "state": "defining",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 6,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "research",
+      "version": 6,
+      "state": "researching",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
     },
     {
       "workflow": "reflection",

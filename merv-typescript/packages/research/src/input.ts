@@ -5,11 +5,6 @@ export const createSchema = z
   .object({
     name: z.string().trim().min(1).max(200).refine(visible),
     dependsOn: z.array(id).max(100).default([]),
-    consolidationWorkspace: z
-      .enum(['none', 'git'])
-      .default('none')
-      .describe('none: finish after reflection approval; git: add code implementation and review'),
-    consolidationDependsOn: z.array(id).max(100).default([]),
     // Optional with no default, so the stored input of a request made before it existed still replays.
     previousCycleId: id
       .optional()
@@ -40,13 +35,23 @@ const nextWave = z
   .describe(
     'Required when the approved reflection carries a plan that continues: create opens its tasks, experiments and the next cycle; skip completes this cycle without them',
   );
-// Optional with no default, so the stored input of a request made before it existed still replays.
-export const advanceSchema = commandSchema.extend({ nextWave: nextWave.optional() }).strict();
+const retryIntegration = z
+  .boolean()
+  .describe(
+    'Inject a fresh consolidation task after the current one ended without acceptance; ignored otherwise',
+  );
+// Both optional with no default, so the stored input of a request made before they existed still replays.
+const choices = { nextWave: nextWave.optional(), retryIntegration: retryIntegration.optional() };
+export const advanceSchema = commandSchema.extend(choices).strict();
 /**
- * The owner's choice as a guard reads it. Not strict, for the reason endChoiceSchema is not:
- * a preflight carries the bound fields alongside it.
+ * The owner's choices as a guard reads them, with the move the advance computed after asking
+ * Git, which no client input carries. Not strict, for the reason endChoiceSchema is not: a
+ * preflight carries the bound fields alongside them.
  */
-export const nextWaveChoiceSchema = z.object({ nextWave: nextWave.optional() });
+export const nextWaveChoiceSchema = z.object({
+  ...choices,
+  move: z.enum(['advance', 'complete', 'inject', 'reinject']).optional(),
+});
 export const replanSchema = commandSchema.extend({ dependsOn: z.array(id).max(100) }).strict();
 export const endSchema = commandSchema
   .extend({

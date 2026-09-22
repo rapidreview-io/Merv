@@ -14,6 +14,7 @@ import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchCreate } from '@merv/research/types';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { hostedCode, legacyCycle, type Main } from './fixtures/research.js';
 
 const stop: ChangeSpec = {
   version: 2,
@@ -98,6 +99,7 @@ async function fixture(t: TestContext, plugin = false) {
             app.ctx.tasks,
             app.ctx.experiments,
             app.ctx.artifacts,
+            app.ctx.code,
           ),
         );
   let research = await service();
@@ -213,12 +215,15 @@ async function fixture(t: TestContext, plugin = false) {
     const evidence = await artifact(owner, 'The input is available and verified.');
     const submitted = await app.ctx.tasks.submitDelivery(
       owner,
-      confirmedDelivery({
-        taskId,
-        expectedRevision: task.workflow.revision,
-        artifactIds: [evidence.id],
-        requestId: id(),
-      }),
+      confirmedDelivery(
+        {
+          taskId,
+          expectedRevision: task.workflow.revision,
+          artifactIds: [evidence.id],
+          requestId: id(),
+        },
+        task.checks.length,
+      ),
     );
     await review(submitted.reviewId!, submitted.workflow.revision);
   };
@@ -269,6 +274,20 @@ async function fixture(t: TestContext, plugin = false) {
     await release?.();
     release = undefined;
   };
+  /** An automatic cycle on retained version 5 that chose Git consolidation. */
+  const git = async (dependsOn: string[], maxCycles: number) => {
+    await disable();
+    research.close();
+    const cycleId = await legacyCycle(app.ctx, owner, id(), {
+      version: 5,
+      consolidationWorkspace: 'git',
+      dependsOn,
+      automatic: { maxCycles },
+    });
+    research = await service();
+    await enable();
+    return await research.get(owner, cycleId);
+  };
   t.after(async () => {
     await disable();
     if (!plugin) research.close();
@@ -300,6 +319,7 @@ async function fixture(t: TestContext, plugin = false) {
     failTask,
     failExperiment,
     create,
+    git,
     pump,
     artifact,
     review,
@@ -615,7 +635,7 @@ test('automatic continuation waits for the selected Git consolidation and its ac
   await f.define();
   await f.enable();
   const work = await f.task();
-  const cycle = await f.create([work.id], { consolidationWorkspace: 'git', maxCycles: 2 });
+  const cycle = await f.git([work.id], 2);
   await f.failTask(work.id);
   await f.pump();
   await f.approve(cycle.id, next('aftergit'));
@@ -745,6 +765,50 @@ test('automatic continuation waits for the selected Git consolidation and its ac
   assert.equal(
     (await f.app.ctx.consolidation.get(f.owner, consolidation.id)).completion!.centralGit,
     'not-published',
+  );
+});
+
+test('an automatic cycle waits on its consolidation task and its publication as blockers, never as failures', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const work = await f.task();
+  const cycle = await f.create([work.id], { maxCycles: 3 });
+  await f.finishTask(work.id);
+  await f.pump();
+  const main: Main = { unitIds: [work.id] };
+  hostedCode(f.research, f.app.ctx, f.owner, main);
+  await f.approve(cycle.id, next('after-main'));
+  // The driver advances inside its consumer transaction, where Git cannot say what main
+  // lacks; the same advance runs again on its own once that has committed, and injects.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await f.pump();
+  let record = await f.research.get(f.owner, cycle.id);
+  assert.equal(record.workflow.state, 'consolidating');
+  assert.equal(record.successorId, null);
+  const [taskId] = record.integrations;
+  assert.equal(
+    (await f.research.get(f.owner, cycle.id)).automation!.blocker!.code,
+    'dependencies_pending',
+  );
+  await f.finishTask(taskId);
+  main.publication = { state: 'pending', pull: { number: 3, url: 'https://example.test/pull/3' } };
+  await f.pump();
+  record = await f.research.get(f.owner, cycle.id);
+  assert.equal(record.workflow.state, 'consolidating');
+  assert.deepEqual(record.automation!.blocker!.code, 'publication_pending');
+  assert.match(record.automation!.blocker!.message, /https:\/\/example\.test\/pull\/3/);
+  assert.equal(record.automation!.cycle, 1);
+  main.publication = { state: 'published', mergeCommit: 'd'.repeat(40) };
+  await f.research.wakeAutomatic();
+  await f.pump();
+  record = await f.research.get(f.owner, cycle.id);
+  assert.equal(record.workflow.state, 'complete');
+  assert.equal(record.automation!.blocker, null);
+  assert.equal(
+    (await f.research.get(f.owner, record.successorId!)).automation!.cycle,
+    2,
+    'the waits cost no cycle',
   );
 });
 

@@ -1660,6 +1660,8 @@ export interface Tasks {
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;
   reissueReview(caller: Caller, input: TaskReissue): Promise<Task>;
   markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
+  /** The owner capability another plugin creates service tasks with, under its own provider name. */
+  serviceTasks(provider: string): ServiceTaskCreator;
 }
 declare module 'cordis' {
   interface Context {

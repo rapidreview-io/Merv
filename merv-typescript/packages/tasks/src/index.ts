@@ -1216,7 +1216,7 @@ DROP TABLE task_leases_backup;`,
   }
 
   /** The binding captures its provider; a public create can never select this version. */
-  private serviceTasks(provider: string): ServiceTaskCreator {
+  serviceTasks(provider: string): ServiceTaskCreator {
     return {
       create: async (input, tx) => {
         input = structuredClone(input);

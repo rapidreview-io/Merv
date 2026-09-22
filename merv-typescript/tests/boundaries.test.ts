@@ -115,6 +115,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'tasks',
     'experiments',
     'artifacts',
+    'code',
   ],
   knowledge: ['code'],
   tasks: ['code'],

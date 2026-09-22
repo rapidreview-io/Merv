@@ -60,4 +60,7 @@ FOR EACH ROW EXECUTE FUNCTION research_identity_guard();
 CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
 FOR EACH ROW EXECUTE FUNCTION research_retained_guard();
 `,
+  5: `
+ALTER TABLE research_cycles ADD COLUMN integrations TEXT;
+`,
 };

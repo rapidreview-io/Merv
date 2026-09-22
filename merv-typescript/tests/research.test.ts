@@ -14,11 +14,12 @@ import { CodeRepositories } from '@merv/code/store/repository';
 import { backends, optional, gitSource, type Backend } from './fixtures/code-store.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { hostedCode, legacyCycle, type LegacyCycle, type Main } from './fixtures/research.js';
 import type { CodeStoreOperation, Data, SessionWorkspace } from '@merv/contracts';
 import { createApp } from '../src/app.js';
 import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchRecord } from '../packages/research/src/types.js';
-import type { Caller, ReviewApplication, WorkflowDefinition } from '@merv/contracts';
+import type { Caller, ReviewApplication } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import type { ConsolidationDecision } from '@merv/consolidation/types';
 import type { ResearchDigest } from '../packages/research/src/types.js';
@@ -61,6 +62,7 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
         app.ctx.tasks,
         app.ctx.experiments,
         digests ? app.ctx.artifacts : undefined,
+        app.ctx.code,
       ),
     );
   let research = await service(),
@@ -101,61 +103,22 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
         { id: 'constraints', content: 'Use only the frozen available corpus.' },
       ],
     });
-  const create = async (consolidationWorkspace: 'none' | 'git' = 'none') =>
-    await research.create(owner, {
-      name: 'Research loop',
-      consolidationWorkspace,
-      requestId: id(),
-    });
-  const legacy = async () => {
+  const create = async () =>
+    await research.create(owner, { name: 'Research loop', requestId: id() });
+  /** A cycle on a retained version: v2 by default, or a v5 cycle that chose Git consolidation. */
+  const legacy = async (options: LegacyCycle = {}) => {
     research.close();
-    // Seed an actual v2 record through its unchanged persisted graph, never by
-    // relabelling a v3 instance or bypassing the immutable definition checks.
-    const stored = await app.ctx.state.read(
-      async (sql) =>
-        (await sql.get<{ definition_json: string }>(
-          "SELECT definition_json FROM wf_definitions WHERE name='research' AND version=2",
-        ))!,
-    );
-    const definition = JSON.parse(stored.definition_json) as WorkflowDefinition;
-    const handle = await app.ctx.workflows.register(definition, {
-      successStates: ['complete'],
-      actions: definition.edges.map((edge) => ({
-        name: `advance_${edge.from}`,
-        states: [edge.from],
-        transitions: [edge.action],
-        tool: 'research.advance',
-        instruction: 'Advance the legacy research cycle.',
-        check: () => {},
-      })),
-    });
-    const workflow = await app.ctx.state.transaction(async (tx) => {
-      const workflow = await handle.start(
-        owner,
-        { workflow: 'research', version: 2, requestId: id() },
-        tx,
-      );
-      await tx.run(
-        'INSERT INTO research_cycles(id,project_id,record) VALUES(?,?,?)',
-        workflow.id,
-        owner.projectId,
-        JSON.stringify({
-          id: workflow.id,
-          projectId: owner.projectId,
-          ownerId: owner.actorId,
-          name: 'Retained v2 research',
-          createdAt: workflow.createdAt,
-          researchDependencies: [],
-          consolidationWorkspace: 'none',
-          consolidationDependencies: [],
-        }),
-      );
-      return workflow;
-    });
-    handle.dispose();
+    const cycleId = await legacyCycle(app.ctx, owner, id(), options);
     research = await service();
-    return await research.get(owner, workflow.id);
+    return await research.get(owner, cycleId);
   };
+  const git = async (dependsOn: string[] = [], consolidationDependencies: string[] = []) =>
+    await legacy({
+      version: 5,
+      consolidationWorkspace: 'git',
+      dependsOn,
+      consolidationDependencies,
+    });
   const advance = async (record: ResearchRecord) =>
     await research.advance(owner, {
       researchId: record.id,
@@ -211,6 +174,19 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
     });
     return (await review(wave.review!.id, wave.workflow.revision)) as Reflection;
   };
+  /** A workspace-free task delivered and reviewed to done. */
+  const finish = async (taskId: string) => {
+    const task = await app.ctx.tasks.get(owner, taskId);
+    const submitted = await app.ctx.tasks.submitDelivery(owner, {
+      ...confirmedDelivery(
+        { taskId, artifactIds: [(await artifact(owner, 'Delivered')).id] },
+        task.checks.length,
+      ),
+      expectedRevision: task.workflow.revision,
+      requestId: id(),
+    });
+    await review(submitted.reviewId!, submitted.workflow.revision);
+  };
   const consolidate = async (record: ResearchRecord, decisions: ConsolidationDecision[] = []) => {
     const work = await app.ctx.consolidation.get(owner, record.consolidationId!);
     const submitted = await app.ctx.consolidation.submit(owner, {
@@ -251,12 +227,20 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
     advance,
     artifact,
     reflect,
+    finish,
     consolidate,
     legacy,
+    git,
     /** The same storage with Artifacts unbound or bound again, as when a plugin is unloaded. */
     async rebind(digests: boolean) {
       research.close();
       research = await service(digests);
+    },
+    /** This service is not the plugin's, so what Cordis would rebind for it is rebound here. */
+    async code(enabled: boolean) {
+      await app.setEnabled('code', enabled);
+      const bound = research.bindCode(app.ctx.code);
+      if (!enabled) bound();
     },
     async restart() {
       research.close();
@@ -397,7 +381,7 @@ test('new no-code research completes after approved reflection without consolida
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'complete');
   // New cycles observe failed outcomes instead of requiring successful experiments.
-  assert.equal(record.workflow.version, 5);
+  assert.equal(record.workflow.version, 6);
   assert.equal(record.consolidationId, null);
   assert.equal((await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.length, 1);
   assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 0);
@@ -406,6 +390,199 @@ test('new no-code research completes after approved reflection without consolida
   // A text change specification opens nothing: the cycle neither follows nor leads another.
   assert.equal(record.origin, null);
   assert.equal(record.successorId, null);
+});
+
+/**
+ * A version-6 cycle whose reflection is approved, with Code answering for a hosted project
+ * whose main lacks `unitIds`. Returns the cycle, the units marked to publish, and an advance
+ * that carries the choices given.
+ */
+async function hosted(f: Awaited<ReturnType<typeof fixture>>, main: Main) {
+  await f.definition();
+  let record = await f.advance(await f.advance(await f.create()));
+  await f.reflect(record);
+  record = await f.research.get(f.owner, record.id);
+  const published = hostedCode(f.research, f.app.ctx, f.owner, main);
+  const advance = async (choice: { retryIntegration?: boolean } = {}) =>
+    await f.research.advance(f.owner, {
+      researchId: record.id,
+      expectedRevision: (await f.research.get(f.owner, record.id)).workflow.revision,
+      requestId: f.id(),
+      ...choice,
+    });
+  return { record, published, advance };
+}
+/** A finished task standing for accepted code main lacks. */
+const work = async (f: Awaited<ReturnType<typeof fixture>>) => {
+  const task = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Accepted work',
+    goal: 'Deliver code main will need.',
+    checks: ['It is delivered'],
+    requestId: f.id(),
+  });
+  await f.finish(task.id);
+  return task;
+};
+
+test('a version-6 cycle whose accepted code is all on main completes at reflection approval', async (t) => {
+  const f = await fixture(t);
+  const { published, advance } = await hosted(f, { unitIds: [] });
+  const done = await advance();
+  assert.equal(done.workflow.version, 6);
+  assert.equal(done.workflow.state, 'complete');
+  assert.deepEqual(done.integrations, []);
+  assert.deepEqual(published, []);
+  assert.equal((await digestOf(f, done)).digest.integration, null);
+});
+
+test('accepted code main lacks injects one consolidation task marked to publish, and the cycle waits on it', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const { record, published, advance } = await hosted(f, {
+    unitIds: [accepted.id],
+    quarantined: ['wf_quarantined'],
+  });
+  const input = {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    requestId: f.id(),
+  };
+  const moved = await f.research.advance(f.owner, input);
+  assert.equal(moved.workflow.state, 'consolidating');
+  assert.equal(moved.integrations.length, 1);
+  const [taskId] = moved.integrations;
+  assert.deepEqual(published, [taskId]);
+  const task = await f.app.ctx.tasks.get(f.owner, taskId);
+  assert.equal(task.title, 'Research loop: consolidation');
+  assert.match(task.goal, /^Integrate this cycle's accepted work onto one branch\./);
+  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  assert.ok(
+    task.goal.endsWith(
+      `Origin: reflection ${approved.id}, report ${approved.report.id} (${approved.report.hash}), change specification ${approved.changeSpec.id} (${approved.changeSpec.hash}).`,
+    ),
+  );
+  assert.equal(task.checks.length, 3);
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, taskId)).dependencies.map((d) => d.id),
+    [accepted.id],
+  );
+  // The task is a child the cycle waits on, not part of the wave it reflected over.
+  assert.ok(
+    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.some(
+      (d) => d.id === taskId,
+    ),
+  );
+  assert.deepEqual(moved.researchDependencies, []);
+  assert.deepEqual(
+    (await advanced(f, record.id)).at(-1).quarantined,
+    ['wf_quarantined'],
+    'what was left out is on the record',
+  );
+  assert.deepEqual(await f.research.advance(f.owner, input), moved);
+  assert.equal(published.length, 1);
+  await assert.rejects(advance(), { code: 'dependencies_pending' });
+});
+
+test('an accepted consolidation task whose publication waits on an operator holds the cycle', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const main: Main = { unitIds: [accepted.id] };
+  const { record, advance } = await hosted(f, main);
+  const moved = await advance();
+  await f.finish(moved.integrations[0]);
+  const pull = { number: 7, url: 'https://github.com/org/repo/pull/7' };
+  main.publication = { state: 'pending', pull };
+  await assert.rejects(advance(), {
+    code: 'publication_pending',
+    message: new RegExp(`merges its pull request ${pull.url}`),
+  });
+  assert.match(
+    JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
+    /publication_pending/,
+  );
+  for (const state of ['closed', 'incident'] as const) {
+    main.publication = { state };
+    await assert.rejects(advance(), { code: 'publication_pending', message: /investigates/ });
+  }
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'consolidating');
+});
+
+test('a publication main overtook injects a successor task on what main lacks now', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const main: Main = { unitIds: [accepted.id] };
+  const { record, published, advance } = await hosted(f, main);
+  const [first] = (await advance()).integrations;
+  await f.finish(first);
+  main.publication = { state: 'stale' };
+  main.unitIds = [accepted.id, first];
+  const again = await advance();
+  assert.equal(again.workflow.state, 'consolidating');
+  assert.equal(again.integrations.length, 2);
+  const [, second] = again.integrations;
+  assert.deepEqual(published, [first, second]);
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, second)).dependencies.map((d) => d.id).sort(),
+    [accepted.id, first].sort(),
+  );
+  assert.equal((await advanced(f, record.id)).at(-1).to, 'consolidating');
+  // Stale again, but main holds everything now: nothing is left to integrate.
+  await f.finish(second);
+  main.unitIds = [];
+  assert.equal((await advance()).workflow.state, 'complete');
+  assert.equal(published.length, 2);
+});
+
+test('a published consolidation completes the cycle and its digest names the task', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const main: Main = { unitIds: [accepted.id] };
+  const { advance } = await hosted(f, main);
+  const [taskId] = (await advance()).integrations;
+  await f.finish(taskId);
+  main.publication = { state: 'published', mergeCommit: 'c'.repeat(40) };
+  const done = await advance();
+  assert.equal(done.workflow.state, 'complete');
+  assert.deepEqual((await digestOf(f, done)).digest.integration, {
+    taskId,
+    publication: 'published',
+  });
+});
+
+test('a consolidation task that ended without acceptance is replaced only by an explicit retry', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const { advance, published } = await hosted(f, { unitIds: [accepted.id] });
+  const [first] = (await advance()).integrations;
+  await f.app.ctx.tasks.markFailed(f.owner, {
+    taskId: first,
+    expectedRevision: (await f.app.ctx.tasks.get(f.owner, first)).workflow.revision,
+    reason: 'The merge could not be completed.',
+    requestId: f.id(),
+  });
+  await assert.rejects(advance(), {
+    code: 'integration_failed',
+    message: new RegExp(
+      `The consolidation task ${first} ended failed\\. Retry with research\\.advance`,
+    ),
+  });
+  const retried = await advance({ retryIntegration: true });
+  assert.equal(retried.workflow.state, 'consolidating');
+  assert.equal(retried.integrations.length, 2);
+  assert.notEqual(retried.integrations[1], first);
+  assert.deepEqual(published, retried.integrations);
+});
+
+test('research.create no longer takes a consolidation workspace', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(
+    f.research.create(f.owner, {
+      name: 'Old input',
+      consolidationWorkspace: 'git',
+      requestId: f.id(),
+    } as never),
+    { code: 'invalid_research_input' },
+  );
 });
 
 test('a cycle follows at most one other, and which one never changes', async (t) => {
@@ -508,7 +685,7 @@ test('completing a cycle digests what it decided, once, without naming anyone', 
     hash: approved.changeSpec.hash,
   });
   assert.equal(digest.reflection!.reviewId, approved.reviewId);
-  assert.equal(digest.consolidation, null);
+  assert.equal(digest.integration, null);
   assert.equal(digest.omitted, 0);
   // Handing the digest to a later worker or reviewer must say nothing about who did the work.
   for (const actor of await f.app.ctx.scope.actors(f.owner))
@@ -524,7 +701,7 @@ test('completing a cycle digests what it decided, once, without naming anyone', 
   );
 });
 
-test('a consolidated cycle digests each consolidation decision', async (t) => {
+test('a consolidated legacy cycle digests its work from workflow states alone', async (t) => {
   const f = await fixture(t);
   const experiment = await f.app.ctx.experiments.create(f.owner, {
     name: 'ruled-out',
@@ -532,8 +709,6 @@ test('a consolidated cycle digests each consolidation decision', async (t) => {
     requestId: f.id(),
   });
   await f.definition();
-  // A cycle from before consolidation became optional consolidates without a Git workspace.
-  let record = await f.advance(await f.advance(await f.legacy()));
   await f.app.ctx.experiments.attach(f.owner, {
     experimentId: experiment.id,
     artifactId: (await f.artifact(f.owner, 'Plan')).id,
@@ -543,7 +718,6 @@ test('a consolidated cycle digests each consolidation decision', async (t) => {
     expectedRevision: 0,
     requestId: f.id(),
   });
-  await f.reflect(record);
   const current = await f.app.ctx.experiments.get(f.owner, experiment.id);
   await f.app.ctx.experiments.transition(f.owner, {
     experimentId: current.id,
@@ -552,22 +726,20 @@ test('a consolidated cycle digests each consolidation decision', async (t) => {
     evidence: { reason: 'The feasibility analysis ruled out this approach.' },
     requestId: f.id(),
   });
+  // A cycle from before consolidation became optional consolidates without a Git workspace.
+  let record = await f.advance(await f.advance(await f.legacy()));
+  await f.reflect(record);
   record = await f.advance(record);
   const rationale = 'Its code encodes the approach the analysis ruled out.';
   await f.consolidate(record, [{ experimentId: experiment.id, decision: 'drop', rationale }]);
   record = await f.advance(record);
-  const { digest } = await digestOf(f, record);
-  assert.equal(digest.consolidation!.id, record.consolidationId);
-  assert.deepEqual(
-    digest.experiments.map(({ id, state, decision, rationale }) => ({
-      id,
-      state,
-      decision,
-      rationale,
-    })),
-    [{ id: experiment.id, state: 'abandoned', decision: 'drop', rationale }],
-  );
-  assert.deepEqual(digest.dropped, [experiment.id]);
+  const { digest, content } = await digestOf(f, record);
+  // The consolidation's decisions are its own record: an experiment the cycle never selected
+  // is not in the digest, and the decision does not put it there.
+  assert.equal(digest.integration, null);
+  assert.ok(!content.includes(rationale));
+  assert.deepEqual(digest.experiments, []);
+  assert.deepEqual(digest.dropped, []);
   assert.equal(digest.claims, undefined);
   assert.equal(digest.openQuestions, undefined);
 });
@@ -1007,7 +1179,7 @@ test('a research cycle that cannot reach an answer can be ended', async (t) => {
 });
 
 test('a consolidation can hold every prerequisite a cycle is allowed to give it', () => {
-  // research.create takes up to 100 consolidationDependsOn and the advance adds the cycle's
+  // A legacy cycle holds up to 100 consolidation prerequisites and the advance adds its
   // own reflection, so a child cap of 100 made a 100-prerequisite cycle refuse its own
   // consolidation on every attempt while reporting the advance ready.
   const parse = (value: unknown) =>
@@ -1091,12 +1263,7 @@ for (const backend of backends)
           (code as unknown as { consolidationStore: CodeConsolidation }).consolidationStore =
             new CodeConsolidation(state, scope, workflows, sessions, () => repositories);
         }
-        let cycle = await f.research.create(f.owner, {
-          name: 'Cycle with a task',
-          dependsOn: [task.id],
-          consolidationWorkspace: 'git',
-          requestId: f.id(),
-        });
+        let cycle = await f.git([task.id]);
         cycle = await f.advance(cycle);
         cycle = await f.advance(cycle);
         await f.reflect(cycle);
@@ -1154,12 +1321,7 @@ test('consolidation workspace and extra prerequisites are forwarded to the exact
     workflow: 'research-extra-prerequisite',
     requestId: f.id(),
   });
-  let record = await f.research.create(f.owner, {
-    name: 'Git cycle',
-    consolidationWorkspace: 'git',
-    consolidationDependsOn: [extra.id],
-    requestId: f.id(),
-  });
+  let record = await f.git([], [extra.id]);
   record = await f.advance(record);
   record = await f.advance(record);
   await f.reflect(record);
@@ -1225,7 +1387,7 @@ test('Research selects live research evidence and completed experiments when adv
   const evidence = await f.artifact(f.owner, 'Plan retained during reflection');
   const unrelated = await f.artifact(f.owner, 'Unattached project file');
   await f.definition();
-  let record = await f.advance(await f.advance(await f.create('git')));
+  let record = await f.advance(await f.advance(await f.git()));
   await f.app.ctx.experiments.attach(f.owner, {
     experimentId: completed.id,
     artifactId: evidence.id,
@@ -1355,9 +1517,9 @@ const planned = (
   ...overrides,
 });
 /** A no-consolidation cycle whose approved reflection carries the plan, ready to complete. */
-async function reflected(f: Awaited<ReturnType<typeof fixture>>, plan: ChangeSpec, git = false) {
+async function reflected(f: Awaited<ReturnType<typeof fixture>>, plan: ChangeSpec) {
   await f.definition();
-  let record = await f.advance(await f.advance(await f.create(git ? 'git' : 'none')));
+  let record = await f.advance(await f.advance(await f.create()));
   await f.reflect(record, plan);
   record = await f.research.get(f.owner, record.id);
   const command = (nextWave?: 'create' | 'skip') => ({
@@ -1624,9 +1786,9 @@ test('a consolidated cycle creates the plan when consolidation completes, not at
   const successor = await f.research.get(f.owner, record.successorId!);
   assert.equal(successor.origin?.items.length, 4);
   // What follows a retained cycle is a cycle of today.
-  assert.equal(successor.workflow.version, 5);
+  assert.equal(successor.workflow.version, 6);
 
-  let git = await f.advance(await f.advance(await f.create('git')));
+  let git = await f.advance(await f.advance(await f.git()));
   await f.reflect(git, planned({ items: planned().items.slice(0, 1) }));
   const waiting = await counts(f);
   git = await f.advance(git);
@@ -1767,6 +1929,7 @@ test('a capability replaced while the plan is being created invalidates the whol
   let entered = false;
   f.research.bindTasks({
     ...tasks,
+    serviceTasks: (provider) => tasks.serviceTasks(provider),
     create: async (...args) => {
       const task = await tasks.create(...args);
       // Reflections was read earlier in this advance; what it said may no longer hold.
@@ -1857,7 +2020,7 @@ for (const backend of backends) {
         const { record, command } = await reflected(f, plan);
         const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
         const before = await counts(f);
-        await f.app.setEnabled('code', false);
+        await f.code(false);
         const input = command('create');
         await assert.rejects(f.research.advance(f.owner, input), { code: 'code_unavailable' });
         assert.deepEqual(await counts(f), before);
@@ -1869,17 +2032,16 @@ for (const backend of backends) {
           (await f.research.get(f.owner, record.id)).workflow.revision,
           record.workflow.revision,
         );
-        await f.app.setEnabled('code', true);
+        await f.code(true);
         assert.ok((await f.research.advance(f.owner, input)).successorId);
       },
     );
 
   test(
-    `${backend}: v1 plans keep their exact hash and workspace-free behavior with Code unloaded`,
+    `${backend}: v1 plans keep their exact hash and workspace-free behavior`,
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
-      await f.app.setEnabled('code', false);
       const current = planned();
       const { record, command } = await reflected(f, current);
       const plan: ChangeSpec = {
@@ -2187,7 +2349,7 @@ for (const backend of backends)
       await f.reflect(record, workspacePlan());
       const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
       const before = await counts(f);
-      await f.app.setEnabled('code', false);
+      await f.code(false);
       const release = await f.research.bindAutomatic(f.app.ctx.domainEvents);
       try {
         await f.app.ctx.domainEvents.drain();
@@ -2199,7 +2361,7 @@ for (const backend of backends)
           await f.app.ctx.reflections.approved(f.owner, record.reflectionId!),
           approved,
         );
-        await f.app.setEnabled('code', true);
+        await f.code(true);
         await f.research.wakeAutomatic();
         await f.app.ctx.domainEvents.drain();
         const done = await f.research.get(f.owner, record.id);

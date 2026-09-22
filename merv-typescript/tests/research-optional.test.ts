@@ -9,6 +9,7 @@ import type { ResearchRecord } from '@merv/research/types';
 import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
+import { legacyCycle } from './fixtures/research.js';
 
 async function fixture(t: TestContext, coreOnly = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-research-optional-'));
@@ -36,15 +37,24 @@ async function fixture(t: TestContext, coreOnly = false) {
   };
   let sequence = 0;
   const id = () => `optional-research-${++sequence}`;
-  const research = app.ctx.research as ResearchService;
-  const create = (workspace: 'none' | 'git' = 'none') =>
-    research.create(owner, { name: 'Cycle', consolidationWorkspace: workspace, requestId: id() });
+  const research = () => app.ctx.research as ResearchService;
+  const create = () => research().create(owner, { name: 'Cycle', requestId: id() });
+  /** A retained version-5 cycle that chose Git consolidation, seeded while the plugin is out. */
+  const git = async () => {
+    await app.setEnabled('research', false);
+    const cycleId = await legacyCycle(app.ctx, owner, id(), {
+      version: 5,
+      consolidationWorkspace: 'git',
+    });
+    await app.setEnabled('research', true);
+    return await research().get(owner, cycleId);
+  };
   const command = (record: ResearchRecord) => ({
     researchId: record.id,
     expectedRevision: record.workflow.revision,
     requestId: id(),
   });
-  const advance = (record: ResearchRecord) => research.advance(owner, command(record));
+  const advance = (record: ResearchRecord) => research().advance(owner, command(record));
   const define = async () =>
     app.ctx.paper.patch(owner, {
       kind: 'problem',
@@ -107,7 +117,20 @@ async function fixture(t: TestContext, coreOnly = false) {
       requestId: id(),
     });
   };
-  return { app, owner, research, create, command, advance, define, approve, id };
+  return {
+    app,
+    owner,
+    get research() {
+      return research();
+    },
+    create,
+    git,
+    command,
+    advance,
+    define,
+    approve,
+    id,
+  };
 }
 
 const pending = () => {
@@ -123,7 +146,7 @@ test('Research boots with only State, Scope and Workflows and reports the missin
   const record = await f.create();
   assert.equal(f.app.status().find(({ id }) => id === 'research')!.state, 'active');
   assert.deepEqual(await f.research.list(f.owner), [record]);
-  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 5);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 6);
   assert.match(
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
     /paper_unavailable/,
@@ -180,7 +203,7 @@ test('optional provider unload keeps Research and its tools alive; only the curr
 test('reflection.create remains usable without Knowledge; live Git handoff waits for actual evidence access', async (t) => {
   const f = await fixture(t);
   await f.define();
-  let record = await f.advance(await f.create('git'));
+  let record = await f.advance(await f.git());
   await f.app.setEnabled('knowledge', false);
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'reflecting');
@@ -248,7 +271,7 @@ test('a withdrawn optional provider cannot commit results returned after an awai
 test('Knowledge withdrawal during live handoff rolls back children and same-request retry remains valid', async (t) => {
   const f = await fixture(t);
   await f.define();
-  const record = await f.advance(await f.advance(await f.create('git')));
+  const record = await f.advance(await f.advance(await f.git()));
   await f.approve(record);
   const input = f.command(record);
   const knowledge = f.app.ctx.knowledge;
@@ -317,7 +340,7 @@ test('live read grants reject in-flight results from a replaced Knowledge regist
 test('a previously used Reflections binding replaced during Knowledge await invalidates the whole handoff', async (t) => {
   const f = await fixture(t);
   await f.define();
-  const record = await f.advance(await f.advance(await f.create('git')));
+  const record = await f.advance(await f.advance(await f.git()));
   await f.approve(record);
   const input = f.command(record);
   const knowledge = f.app.ctx.knowledge;
@@ -357,7 +380,7 @@ test('historical approved corpus handoff uses only its retained sources without 
     content: 'Unrelated later evidence.',
   });
   await f.define();
-  const record = await f.advance(await f.advance(await f.create('git')));
+  const record = await f.advance(await f.advance(await f.git()));
   await f.approve(record);
   const reflections = f.app.ctx.reflections;
   const approved = await reflections.approved(f.owner, record.reflectionId!);
@@ -386,7 +409,7 @@ test('historical approved corpus handoff uses only its retained sources without 
 test('replacement between stage checks and provider use never invokes a second provider lifetime', async (t) => {
   const f = await fixture(t);
   await f.define();
-  const record = await f.advance(await f.advance(await f.create('git')));
+  const record = await f.advance(await f.advance(await f.git()));
   await f.approve(record);
   const input = f.command(record);
   const reflections = f.app.ctx.reflections;

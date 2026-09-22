@@ -720,7 +720,6 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
   });
   await settle(10);
   assert.deepEqual(sent?.dependsOn, ['wf_sweep']);
-  assert.deepEqual(sent?.consolidationDependsOn, []);
   assert.equal(sent?.name, 'Wave one');
   assert.equal(sent?.automatic, true);
   assert.equal(sent?.maxCycles, 10);

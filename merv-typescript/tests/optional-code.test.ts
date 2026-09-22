@@ -10,6 +10,7 @@ import type { Reflection } from '@merv/reflections/types';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { legacyCycle } from './fixtures/research.js';
 
 async function fixture(t: TestContext, enabled: boolean) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-optional-code-'));
@@ -80,6 +81,7 @@ async function fixture(t: TestContext, enabled: boolean) {
       expectedRevision: record.workflow.revision,
       requestId: id(),
     });
+  /** A current cycle, or a retained version-5 one that chose Git consolidation. */
   const cycle = async (consolidationWorkspace: 'none' | 'git' = 'none') => {
     await app.ctx.paper.patch(owner, {
       kind: 'problem',
@@ -92,15 +94,22 @@ async function fixture(t: TestContext, enabled: boolean) {
         { id: 'constraints', content: 'Do not assert unsupported empirical conclusions.' },
       ],
     });
-    return await advance(
-      await advance(
-        await app.ctx.research.create(owner, {
-          name: 'Optional code research',
-          consolidationWorkspace,
-          requestId: id(),
-        }),
-      ),
-    );
+    let record;
+    if (consolidationWorkspace === 'none')
+      record = await app.ctx.research.create(owner, {
+        name: 'Optional code research',
+        requestId: id(),
+      });
+    else {
+      await app.setEnabled('research', false);
+      const cycleId = await legacyCycle(app.ctx, owner, id(), {
+        version: 5,
+        consolidationWorkspace,
+      });
+      await app.setEnabled('research', true);
+      record = await app.ctx.research.get(owner, cycleId);
+    }
+    return await advance(await advance(record));
   };
   const artifact = async (caller: Caller, title: string) =>
     await app.ctx.artifacts.create(caller, {
@@ -166,7 +175,7 @@ async function fixture(t: TestContext, enabled: boolean) {
   };
 }
 
-test('server boots without Code and completes no-code research after reflection approval', async (t) => {
+test('server boots without Code; no-code research completes after reflection approval once Code answers for main', async (t) => {
   const f = await fixture(t, false);
   f.active();
   assert.equal(f.app.status().find((entry) => entry.id === 'code-tools')?.state, 'pending');
@@ -253,19 +262,21 @@ test('server boots without Code and completes no-code research after reflection 
   await f.app.ctx.sessions.release(f.owner, { sessionId: session.id, runnerId: 'fixture' });
   await f.app.ctx.domainEvents.drain();
   assert.equal((await f.reflect(record)).workflow.state, 'approved');
+  // Whether accepted code is missing from main is Code's to say, so the cycle waits for it.
+  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+  const research = f.app.ctx.research;
+  await f.app.setEnabled('code', true);
+  assert.equal(f.app.ctx.research, research);
   record = await f.advance(record);
-  assert.equal(record.workflow.version, 5);
+  assert.equal(record.workflow.version, 6);
   assert.equal(record.workflow.state, 'complete');
   assert.equal(record.consolidationId, null);
+  assert.deepEqual(record.integrations, []);
   assert.equal(
     (await f.app.ctx.workflows.list(f.owner)).filter((work) => work.workflow === 'consolidation')
       .length,
     0,
   );
-
-  const research = f.app.ctx.research;
-  await f.app.setEnabled('code', true);
-  assert.equal(f.app.ctx.research, research);
   assert.equal(f.app.status().find(({ id }) => id === 'consolidation')?.state, 'active');
   assert.equal((await f.experiment('Now-with-code', 'git')).workspace, 'git');
   assert.equal((await f.consolidation('Now-with-code')).workspace, 'git');

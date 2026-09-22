@@ -120,7 +120,6 @@ test('a scenario brief parses into the records the harness creates', () => {
   );
   assert.deepEqual(parsed.project.cycle, {
     name: 'Fixture wave 1',
-    consolidationWorkspace: 'none',
     dependsOn: ['harness', 'probe'],
   });
   assert.deepEqual(parsed.claims, [

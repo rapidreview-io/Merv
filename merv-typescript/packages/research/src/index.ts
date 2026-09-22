@@ -1,8 +1,10 @@
 import { mapAsync, type DomainEvents } from '@merv/contracts';
 import {
+  automaticBlocker,
   automaticResearch,
   automaticRequest,
   automaticStatus,
+  recordBlocker,
   type AutomaticRow,
 } from './automatic.js';
 import { clip, createService, ordered, recorded, replayed, visible } from '@merv/contracts';
@@ -12,12 +14,15 @@ import {
   check,
   digest,
   inTransaction,
+  MervError,
   now,
   type Artifact,
   type Artifacts,
   type Caller,
+  type CodeAcceptedSince,
   type Data,
   type Scope,
+  type ServiceTaskCreator,
   type State,
   type Tasks,
   type Transaction,
@@ -36,6 +41,7 @@ import type {
   Reflections,
 } from '@merv/reflections/types';
 import type { Consolidation } from '@merv/consolidation/types';
+import type { Code } from '@merv/code/types';
 import type {
   Research,
   ResearchAdvance,
@@ -61,19 +67,28 @@ import {
 export type * from './types.js';
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 type Stage = (typeof stages)[number];
+/** What Research asks of Code; a test may bind exactly this much. */
+type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance' | 'unit'>;
 interface Capabilities {
   paper: Paper;
   reflections: Reflections;
   consolidation: Consolidation;
   knowledge: Knowledge;
   tasks: Tasks;
+  integrations: ServiceTaskCreator;
   experiments: Experiments;
   artifacts: Artifacts;
+  code: ResearchCode;
 }
 /** An approved reflection whose plan says the project continues. */
 type Continuing = ApprovedReflection & {
   plan: ChangeSpec & { next: { decision: 'continue' } };
 };
+/** The accepted units main does not hold, read outside the transaction that acts on them. */
+type Unpublished = Pick<CodeAcceptedSince, 'unitIds' | 'quarantined'>;
+/** What an advance does from where the cycle stands; see `move`. */
+type Move = 'advance' | 'complete' | 'inject' | 'reinject';
+type Choice = ReturnType<typeof parse<typeof nextWaveChoiceSchema>>;
 type Binding<T> = { value: T };
 type BindingChecks = (() => void)[];
 const unavailable = {
@@ -83,12 +98,25 @@ const unavailable = {
   knowledge: 'This handoff needs live research evidence from Knowledge; enable it to continue',
   tasks:
     'Creating the approved plan\'s work needs Tasks; enable it, or complete this cycle with nextWave: "skip"',
+  integrations: 'Injecting the consolidation task needs Tasks; enable it to continue',
   experiments:
     'Creating the approved plan\'s experiments needs Experiments; enable it, or complete this cycle with nextWave: "skip"',
   artifacts: "Artifacts are unavailable, so the predecessor cycle's digest cannot be retained",
+  code: 'This stage needs Code; enable it to continue',
 };
 const nextWaveGuidance =
-  'When the approved reflection carries a structured plan that continues, completing the cycle requires nextWave: "create" opens the plan\'s tasks, experiments and the next research cycle in the same transaction, and "skip" completes without them. A text change specification creates nothing; follow-on work is then the owner\'s to create.';
+  'When the approved reflection carries a structured plan that continues, completing the cycle requires nextWave: "create" opens the plan\'s tasks, experiments and the next research cycle in the same transaction, and "skip" completes without them. The cycle completes only once its accepted code is on main, so the next wave starts from main. A text change specification creates nothing; follow-on work is then the owner\'s to create.';
+const integrationGoal =
+  "Integrate this cycle's accepted work onto one branch. Account for every experiment in this cycle as kept, adapted or dropped, with reasons; a drop is a reverting commit visible in the diff. Main is part of your base; the branch you deliver is what reaches main.";
+const integrationChecks = [
+  'Every experiment in this cycle is accounted for as kept, adapted or dropped, with a reason each.',
+  'The report names what was dropped and why.',
+  'The delivered branch passes the checks the project defines.',
+];
+/** Where text an agent wrote and an owner accepted came from, for the record that carries it. */
+const origin = (approved: ApprovedReflection, ...named: string[]) =>
+  `\n\nOrigin: reflection ${approved.id}, ${named.join(', ')}.`;
+const pinned = (kind: string, { id, hash }: Artifact) => `${kind} ${id} (${hash})`;
 /** A cycle in one of these states is over: it may be digested and it may be followed. */
 const over = new Set(['complete', 'abandoned', 'failed']);
 /**
@@ -108,10 +136,10 @@ const instructions: Record<Stage, string> = {
     'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
   researching:
     'Finish the selected research workflows successfully, then advance to open a reflection wave over live research.',
-  reflecting: `Complete all reflection lenses and independent synthesis review, then finish the cycle or start the selected Git consolidation. ${nextWaveGuidance}`,
-  consolidating: `Finish consolidation and its independent review, then complete the research cycle. Paper changes are reviewed within the experiment and reflection workflows. ${nextWaveGuidance}`,
+  reflecting: `Complete all reflection lenses and independent synthesis review, then finish the cycle or start its consolidation: accepted code that main does not hold yet is integrated by one task and published to main. ${nextWaveGuidance}`,
+  consolidating: `Wait for the consolidation task to be accepted and its publication to reach main, then complete the research cycle. A publication main overtook injects a successor task. Paper changes are reviewed within the experiment and reflection workflows. ${nextWaveGuidance}`,
   complete:
-    'The selected research, reflection and any required consolidation are complete. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here. Central Git publication is separate.',
+    'The selected research, reflection and any consolidation are complete, and accepted code reached main. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here.',
 };
 const definition: WorkflowDefinition = {
   name: 'research',
@@ -134,18 +162,15 @@ interface Row {
   results_update_id: string | null;
   predecessor_id: string | null;
   digest: string | null;
+  integrations: string | null;
 }
-/** The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. */
+/**
+ * The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. A
+ * record written before version 6 also carries the consolidation choice it was opened with.
+ */
 type StoredRecord = Pick<
   ResearchRecord,
-  | 'id'
-  | 'projectId'
-  | 'ownerId'
-  | 'name'
-  | 'createdAt'
-  | 'researchDependencies'
-  | 'consolidationWorkspace'
-  | 'consolidationDependencies'
+  'id' | 'projectId' | 'ownerId' | 'name' | 'createdAt' | 'researchDependencies'
 > & { origin?: Omit<ResearchOrigin, 'researchId'> };
 
 /** A small coordinator over existing workflows; child programs own their actual assignments. */
@@ -168,6 +193,7 @@ export class ResearchService implements Research {
     tasks?: Tasks,
     experiments?: Experiments,
     artifacts?: Artifacts,
+    code?: ResearchCode,
   ) {
     this.initialize = async () => {
       await state.migrate('research', [
@@ -215,11 +241,18 @@ CREATE TRIGGER research_automation_identity BEFORE UPDATE OF research_id,project
 CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation BEGIN SELECT RAISE(ABORT,'Research automation is retained'); END;
 `,
         },
+        {
+          // The consolidation tasks a version-6 cycle injected, newest last; unlike the children it changes.
+          version: 5,
+          postgres: postgresMigrations[5],
+          sql: 'ALTER TABLE research_cycles ADD COLUMN integrations TEXT;',
+        },
       ]);
       try {
-        // Existing cycles keep their immutable state machine; only new cycles may skip
-        // consolidation, and only version 4 can be ended before it reaches an answer.
-        for (const version of [2, 3, 4, 5]) {
+        // Existing cycles keep their immutable state machine: only new cycles may skip
+        // consolidation, only version 4 on can be ended before it reaches an answer, and only
+        // version 6 consolidates through an injected task it may inject again.
+        for (const version of [2, 3, 4, 5, 6]) {
           const ends = version >= 4;
           this.handles.set(
             version,
@@ -244,6 +277,9 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
                         { from, action: 'mark_failed', to: 'failed' },
                       ])
                     : []),
+                  ...(version >= 6
+                    ? [{ from: 'consolidating' as const, action: 'reinject', to: 'consolidating' }]
+                    : []),
                 ],
               },
               this.policy(version),
@@ -257,6 +293,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         if (tasks) this.bindTasks(tasks);
         if (experiments) this.bindExperiments(experiments);
         if (artifacts) this.bindArtifacts(artifacts);
+        if (code) this.bindCode(code);
       } catch (error) {
         for (const handle of this.handles.values()) handle.dispose();
         throw error;
@@ -334,8 +371,11 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         ...stages.slice(0, -1).map((stage) => ({
           name: `advance_${stage}`,
           states: [stage],
-          transitions:
-            version >= 3 && stage === 'reflecting' ? ['advance', 'complete'] : ['advance'],
+          transitions: [
+            'advance',
+            ...(version >= 3 && stage === 'reflecting' ? ['complete'] : []),
+            ...(version >= 6 && stage === 'consolidating' ? ['reinject'] : []),
+          ],
           tool: 'research.advance',
           instruction:
             version >= 5 && stage === 'researching'
@@ -354,18 +394,25 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
               record,
               context.tx,
               [],
-              parse(nextWaveChoiceSchema, context.input ?? {}).nextWave,
+              parse(nextWaveChoiceSchema, context.input ?? {}),
             );
           },
           // Creating a plan's work is never implied by an advance: a caller that does not know
           // about the plan is asked, rather than launching work an agent wrote.
           ...(stage === 'reflecting' || stage === 'consolidating'
             ? {
-                requiredInput: async (context: WorkflowCheckContext) => {
+                requiredInput: async ({ caller, snapshot, tx, input }: WorkflowCheckContext) => {
                   // A choice already made was judged by the check; a skip must not need Reflections.
-                  if (parse(nextWaveChoiceSchema, context.input ?? {}).nextWave) return [];
-                  const record = await this.get(context.caller, context.snapshot.id, context.tx);
-                  return (await this.continuing(context.caller, record, context.tx, []))
+                  const choice = parse(nextWaveChoiceSchema, input ?? {});
+                  if (choice.nextWave) return [];
+                  const record = await this.get(caller, snapshot.id, tx);
+                  return (await this.continuing(
+                    caller,
+                    record,
+                    tx,
+                    [],
+                    await this.assumed(caller, record, tx, choice),
+                  ))
                     ? ['nextWave']
                     : [];
                 },
@@ -398,8 +445,9 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const row = await this.row(caller, id, tx);
+      const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
       // The selection is what the cycle waits on now, not what it was created with.
-      const children = [row.reflection_id, row.consolidation_id];
+      const children = [row.reflection_id, row.consolidation_id, ...integrations];
       const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
       const successor = await tx.get<{ id: string }>(
         'SELECT id FROM research_cycles WHERE predecessor_id=? AND project_id=?',
@@ -439,6 +487,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         problem: row.problem ? JSON.parse(row.problem) : null,
         reflectionId: row.reflection_id,
         consolidationId: row.consolidation_id,
+        integrations,
       };
     });
   }
@@ -532,14 +581,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       'Assigned workers cannot create an outer research cycle',
       403,
     );
-    check(
-      input.consolidationWorkspace === 'git' || !input.consolidationDependsOn.length,
-      'invalid_research_input',
-      'Consolidation prerequisites require Git consolidation',
-    );
-    // Validate every prerequisite in this project even if consolidation starts much later.
-    for (const id of [...input.dependsOn, ...input.consolidationDependsOn])
-      await this.workflows.get(caller, id, tx);
+    for (const id of input.dependsOn) await this.workflows.get(caller, id, tx);
     check(
       input.automatic || input.maxCycles === undefined,
       'invalid_research_input',
@@ -560,11 +602,11 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         );
       }
     }
-    const workflow = await this.handles.get(5)!.start(
+    const workflow = await this.handles.get(6)!.start(
       caller,
       {
         workflow: 'research',
-        version: 5,
+        version: 6,
         requestId: this.request(caller, input.requestId, step),
         dependsOn: input.dependsOn,
         data: { name: input.name },
@@ -572,8 +614,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       tx,
     );
     let predecessorId = input.previousCycleId ?? null;
-    let pinned: StoredRecord['origin'];
-    if (origin) ({ researchId: predecessorId, ...pinned } = origin);
+    let from: StoredRecord['origin'];
+    if (origin) ({ researchId: predecessorId, ...from } = origin);
     const record: StoredRecord = {
       id: workflow.id,
       projectId: caller.projectId,
@@ -581,9 +623,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       name: input.name,
       createdAt: now(),
       researchDependencies: [...new Set(input.dependsOn)],
-      consolidationWorkspace: input.consolidationWorkspace,
-      consolidationDependencies: [...new Set(input.consolidationDependsOn)],
-      ...(pinned ? { origin: pinned } : {}),
+      ...(from ? { origin: from } : {}),
     };
     await tx.run(
       'INSERT INTO research_cycles(id,project_id,record,predecessor_id) VALUES(?,?,?,?)',
@@ -695,25 +735,32 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       taskIds: (await this.workflows.dependencies(caller, record.id, tx)).dependencies
         .filter((item) => item.workflow === 'task' && item.kind !== 'system')
         .map((item) => item.id),
-      dependsOn: [record.reflectionId!, ...record.consolidationDependencies],
+      dependsOn: [record.reflectionId!, ...(record.consolidationDependencies ?? [])],
     };
   }
 
+  /**
+   * Refuses what the stage cannot pass and answers with the move the advance makes. `since` is
+   * what main lacks, which only an advance has asked; the guard reads the move it chose instead.
+   */
   private async ready(
     caller: Caller,
     record: ResearchRecord,
     tx: Transaction,
     checks: BindingChecks = [],
-    nextWave?: ResearchAdvance['nextWave'],
-  ): Promise<void> {
+    choice: Choice = {},
+    since?: Unpublished | null,
+  ): Promise<Move> {
     const stage = record.workflow.state as Stage;
     check(stage !== 'complete', 'research_complete', 'This research cycle is complete', 409);
     if (stage === 'defining') {
       await this.definition(caller, tx, checks);
-      return;
+      return 'advance';
     }
     if (stage === 'researching' || stage === 'reflecting')
       this.requireCapability('reflections', checks);
+    if (record.workflow.version >= 6 && (stage === 'reflecting' || stage === 'consolidating'))
+      this.requireCapability('code', checks);
     // Only one wave reflects at a time; the cycle's own, just started, is not another.
     if (stage === 'researching') {
       const open = await this.use('reflections', checks, (service) => service.open(caller, tx));
@@ -766,7 +813,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
           );
       }
     }
-    if (stage === 'consolidating') {
+    if (stage === 'consolidating' && record.workflow.version < 6) {
       check(
         record.consolidationId,
         'research_child_missing',
@@ -777,16 +824,107 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         service.approved(caller, record.consolidationId!, tx),
       );
     }
+    const move = await this.move(caller, record, tx, checks, since, choice);
     // A skip reads no plan, so it completes a cycle whose plan can no longer be created, or
     // whose Reflections is gone. Anything else must know whether a plan waits for an answer.
-    if (nextWave !== 'skip') {
-      const approved = await this.continuing(caller, record, tx, checks);
-      if (approved && nextWave === 'create') {
+    if (choice.nextWave !== 'skip') {
+      const approved = await this.continuing(caller, record, tx, checks, move);
+      if (approved && choice.nextWave === 'create') {
         this.checkAutomaticContinuation(caller, record);
         await this.creatable(caller, approved.plan, tx, checks, record.workflow.version >= 5);
       }
     }
     checks.forEach((check) => check());
+    return move;
+  }
+
+  /**
+   * The transition an advance makes; `inject` and `reinject` first inject a consolidation task.
+   * A version-6 cycle consolidates through that task: an unfinished one, one that ended without
+   * acceptance and one not on main yet are refused here, so a preflight reports the same wait.
+   * Whether main lacks accepted code is Git's answer: an advance reads it as `since` and hands
+   * the guard the move it chose; a preflight has neither and reads the move main lacking makes.
+   */
+  private async move(
+    caller: Caller,
+    record: ResearchRecord,
+    tx: Transaction,
+    checks: BindingChecks,
+    since: Unpublished | null | undefined,
+    choice: Choice,
+  ): Promise<Move> {
+    const stage = record.workflow.state as Stage;
+    if (stage !== 'reflecting' && stage !== 'consolidating') return 'advance';
+    if (record.workflow.version < 6)
+      return stage === 'reflecting' && !this.needsConsolidation(record) ? 'complete' : 'advance';
+    // A preflight that answers the completion question is read as completing, so a plan that
+    // would refuse is reported before the advance, as it always was.
+    const judged = (holds: Move, lacks: Move): Move => {
+      if (since !== undefined) {
+        this.asked(since);
+        return since.unitIds.length ? lacks : holds;
+      }
+      return (choice.move ?? (choice.nextWave ? holds : lacks)) === holds ? holds : lacks;
+    };
+    if (stage === 'reflecting') return judged('complete', 'inject');
+    const taskId = record.integrations.at(-1)!;
+    const task = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.find(
+      (item) => item.id === taskId,
+    )!;
+    if (task.failed) {
+      check(
+        choice.retryIntegration,
+        'integration_failed',
+        `The consolidation task ${taskId} ended ${task.state}. Retry with research.advance { retryIntegration: true } to inject a fresh task, or end the cycle with research.end.`,
+        409,
+      );
+      return judged('advance', 'reinject');
+    }
+    check(
+      task.settled,
+      'dependencies_pending',
+      `Waiting for the consolidation task: ${task.name} (${task.state})`,
+      409,
+    );
+    const { publication } = await this.use('code', checks, (code) => code.unit(caller, taskId, tx));
+    if (publication?.state === 'published') return 'advance';
+    // Main moved first, or the task ended without acceptance: what main lacks now decides
+    // between a successor task and completing, as it did at reflection.
+    if (publication?.state === 'stale') return judged('advance', 'reinject');
+    const pull = publication?.pull ? ` ${publication.pull.url}` : '';
+    throw new MervError(
+      'publication_pending',
+      publication?.state === 'pending'
+        ? `The consolidation task ${taskId} is accepted; a signed-in operator merges its pull request${pull} before the cycle completes`
+        : `The consolidation task ${taskId} is accepted, but its publication is ${publication?.state ?? 'not open'}; a signed-in operator clears or investigates it${pull} before the cycle completes`,
+      409,
+    );
+  }
+
+  /**
+   * The move a preflight reads for the choice it asks. A version-6 cycle is read as completing:
+   * without Git's answer the choice is asked whenever the plan continues, and honoured only when
+   * the cycle does complete.
+   */
+  private async assumed(
+    caller: Caller,
+    record: ResearchRecord,
+    tx: Transaction,
+    choice: Choice,
+  ): Promise<Move> {
+    return record.workflow.version >= 6
+      ? 'complete'
+      : await this.move(caller, record, tx, [], undefined, choice);
+  }
+
+  /** Git answers what main lacks outside every transaction; null says it could not be asked. */
+  private asked(since: Unpublished | null): asserts since is Unpublished {
+    check(
+      since !== null,
+      'integration_candidates_unavailable',
+      'What main lacks is asked of Git outside a transaction; this advance runs again on its own',
+      409,
+    );
   }
 
   /** The approved reflection, when this advance completes the cycle and its plan continues. */
@@ -795,10 +933,10 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     record: ResearchRecord,
     tx: Transaction,
     checks: BindingChecks,
+    move: Move,
   ): Promise<Continuing | undefined> {
-    const stage = record.workflow.state;
     const completing =
-      stage === 'consolidating' || (stage === 'reflecting' && !this.needsConsolidation(record));
+      move === 'complete' || (record.workflow.state === 'consolidating' && move === 'advance');
     if (!completing || !record.reflectionId) return undefined;
     const approved = await this.use('reflections', checks, (service) =>
       service.approved(caller, record.reflectionId!, tx),
@@ -906,7 +1044,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     for (const item of ordered<ChangeSpec['items'][number]>(plan.items)!) {
       // The text was written by a leased agent and is filed under the owner who accepted it;
       // this line is what lets a reader of the record trace it back to the reviewed plan.
-      const provenance = `\n\nWhy: ${item.rationale}\n\nOrigin: reflection ${approved.id}, change specification ${approved.changeSpec.id} (${approved.changeSpec.hash}), item ${item.key}.`;
+      const provenance = `\n\nWhy: ${item.rationale}${origin(approved, pinned('change specification', approved.changeSpec), `item ${item.key}`)}`;
       const dependsOn = item.dependsOn.map((key) => created.get(key)!);
       const itemRequestId = this.request(caller, requestId, `item:${item.key}`);
       // Retained v1 plans never requested a workspace; only an explicit declaration does.
@@ -949,7 +1087,6 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       parse(createSchema, {
         name: plan.next.name,
         dependsOn: [...created.values(), ...carriedOver],
-        consolidationWorkspace: record.consolidationWorkspace,
         requestId,
       }),
       'successor',
@@ -967,6 +1104,69 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       },
       tx,
     );
+  }
+
+  /**
+   * One ordinary Git task that integrates the accepted units main lacks and publishes the
+   * result: it stands on them, so its base holds them and main, and its acceptance seals the
+   * publication. The advance records it after the move, so the guard judges the task before it.
+   */
+  private async inject(
+    caller: Caller,
+    record: ResearchRecord,
+    units: Unpublished,
+    requestId: string,
+    tx: Transaction,
+    checks: BindingChecks,
+  ): Promise<string> {
+    const approved = await this.use('reflections', checks, (service) =>
+      service.approved(caller, record.reflectionId!, tx),
+    );
+    const count = record.integrations.length + 1;
+    const step = count === 1 ? 'integration' : `integration:${count}`;
+    const task = await this.use('integrations', checks, (service) =>
+      service.create(
+        {
+          projectId: caller.projectId,
+          requestId: this.request(caller, requestId, step),
+          title: `${clip(record.name, 180)}: consolidation`,
+          goal: `${integrationGoal}${origin(approved, pinned('report', approved.report), pinned('change specification', approved.changeSpec))}`,
+          checks: integrationChecks,
+          dependsOn: units.unitIds,
+        },
+        tx,
+      ),
+    );
+    await this.use('code', checks, (code) =>
+      code.publishOnAcceptance(caller, { unitId: task.id }, tx),
+    );
+    return task.id;
+  }
+
+  /**
+   * What main lacks, for a version-6 cycle leaving reflection or consolidating again; nothing
+   * where Code does not host the project, so nothing could publish. Git answers outside every
+   * transaction, so it is asked before the advance opens one; inside a caller's, null says it
+   * could not be.
+   */
+  private async unpublished(
+    caller: Caller,
+    researchId: string,
+    tx?: Transaction,
+  ): Promise<Unpublished | null> {
+    const code = this.bindings.code?.value;
+    const asks =
+      !!code &&
+      (await inTransaction(this.state, tx, async (tx) => {
+        const { workflow } = await this.get(caller, researchId, tx);
+        return (
+          workflow.version >= 6 &&
+          ['reflecting', 'consolidating'].includes(workflow.state) &&
+          (await code.hosted(caller, tx))
+        );
+      }));
+    if (!asks) return { unitIds: [], quarantined: [] };
+    return tx ? null : await code.acceptedSince(caller);
   }
 
   /**
@@ -991,7 +1191,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       'artifacts',
       'knowledge',
       ...(record.reflectionId ? (['reflections'] as const) : []),
-      ...(record.consolidationId ? (['consolidation'] as const) : []),
+      ...(record.integrations.length ? (['code'] as const) : []),
     ];
     if (!options.required && needed.some((name) => !this.bindings[name])) return null;
     const content = JSON.stringify(await this.compose(caller, record, tx, checks, options.late));
@@ -1038,7 +1238,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     const selected = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.filter(
       (item) => !children.includes(item.id),
     );
-    // A cycle ended while reflecting or consolidating has a child with nothing approved in it.
+    // A cycle ended while reflecting has a child with nothing approved in it.
     const reflection = record.reflectionId
       ? await this.use('reflections', checks, async (service) =>
           (await service.get(caller, record.reflectionId!, tx)).workflow.state === 'approved'
@@ -1046,39 +1246,23 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
             : null,
         )
       : null;
-    const consolidation = record.consolidationId
-      ? await this.use('consolidation', checks, async (service) => {
-          const work = await service.get(caller, record.consolidationId!, tx);
-          return work.completion ? work : null;
-        })
+    const taskId = record.integrations.at(-1);
+    const integration = taskId
+      ? {
+          taskId,
+          publication:
+            (await this.use('code', checks, (code) => code.unit(caller, taskId, tx))).publication
+              ?.state ?? null,
+        }
       : null;
-    const approvedSubmission = consolidation?.submissions.find(
-      (submission) => submission.id === consolidation.completion!.submissionId,
-    );
-    const decisions = new Map(
-      (approvedSubmission?.decisions ?? [])
-        .filter(
-          (decision) =>
-            'experimentId' in decision || consolidation!.experimentIds.includes(decision.unitId),
-        )
-        .map((decision) => [
-          'experimentId' in decision ? decision.experimentId : decision.unitId,
-          decision,
-        ]),
-    );
     const experimentIds = new Set([
       ...selected.filter((item) => item.workflow === 'experiment').map((item) => item.id),
       ...(reflection?.experimentIds ?? []),
-      ...decisions.keys(),
     ]);
     const experiments = records.experiments.filter((entry) => experimentIds.has(entry.id));
     const taskIds = new Set(
       selected.filter((item) => item.workflow === 'task').map((item) => item.id),
     );
-    const decided = (decision: string) =>
-      [...decisions.values()]
-        .filter((entry) => entry.decision === decision)
-        .map((entry) => ('experimentId' in entry ? entry.experimentId : entry.unitId));
     const lists = {
       experiments: experiments.map((entry) => ({
         id: entry.id,
@@ -1087,24 +1271,12 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         attempts: entry.attempts.length,
         submissions: entry.submissions.length,
         conclusion: entry.conclusion === null ? null : text(entry.conclusion),
-        decision: decisions.get(entry.id)?.decision ?? null,
-        rationale: decisions.has(entry.id) ? text(decisions.get(entry.id)!.rationale) : null,
       })),
       tasks: records.tasks
         .filter((task) => taskIds.has(task.id))
         .map((task) => ({ id: task.id, title: text(task.title), state: task.workflow.state })),
-      dropped: [
-        ...new Set([
-          ...selected.filter((item) => item.failed).map((item) => item.id),
-          ...decided('drop'),
-        ]),
-      ],
-      carriedOver: [
-        ...new Set([
-          ...selected.filter((item) => !item.settled).map((item) => item.id),
-          ...decided('adapt'),
-        ]),
-      ],
+      dropped: selected.filter((item) => item.failed).map((item) => item.id),
+      carriedOver: selected.filter((item) => !item.settled).map((item) => item.id),
       rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
         title: text(entry.title),
         reason: text(entry.reason),
@@ -1142,14 +1314,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
             }
           : null,
       },
-      consolidation:
-        consolidation && approvedSubmission
-          ? {
-              id: consolidation.id,
-              reviewId: consolidation.completion!.reviewId,
-              report: ref(approvedSubmission.report),
-            }
-          : null,
+      integration,
       ...lists,
       omitted,
     });
@@ -1304,6 +1469,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     this.open();
     caller = structuredClone(caller);
     const input = parse(advanceSchema, value);
+    // Git answers what main lacks outside every transaction, so it is asked before this opens.
+    const since = await this.unpublished(caller, input.researchId, transaction);
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
@@ -1322,9 +1489,12 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
           'This historical research version cannot be advanced',
           409,
         );
-        await this.ready(caller, record, tx, checks, input.nextWave);
+        const move = await this.ready(caller, record, tx, checks, input, since);
+        const injecting = move === 'inject' || move === 'reinject';
         const continuing =
-          input.nextWave === 'skip' ? undefined : await this.continuing(caller, record, tx, checks);
+          input.nextWave === 'skip'
+            ? undefined
+            : await this.continuing(caller, record, tx, checks, move);
         check(
           !continuing || input.nextWave,
           'next_wave_choice_required',
@@ -1332,6 +1502,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
           400,
         );
         const childIds: string[] = [];
+        if (injecting)
+          childIds.push(await this.inject(caller, record, since!, input.requestId, tx, checks));
         switch (record.workflow.state as Stage) {
           case 'defining':
             await tx.run(
@@ -1374,7 +1546,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
             break;
           }
           case 'reflecting': {
-            if (!this.needsConsolidation(record)) break;
+            if (injecting || !this.needsConsolidation(record)) break;
             await this.use('reflections', checks, (service) =>
               service.approved(caller, record.reflectionId!, tx),
             );
@@ -1402,22 +1574,26 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
             break;
           }
           case 'consolidating':
-            await this.use('consolidation', checks, (service) =>
-              service.approved(caller, record.consolidationId!, tx),
-            );
+            if (record.workflow.version < 6)
+              await this.use('consolidation', checks, (service) =>
+                service.approved(caller, record.consolidationId!, tx),
+              );
             break;
         }
+        // The guard inside the transition judges the same choices the preflight did, and the
+        // move Git's answer decided, which it cannot ask for itself.
+        const choice: Choice = {
+          ...(input.nextWave ? { nextWave: input.nextWave } : {}),
+          ...(input.retryIntegration ? { retryIntegration: true } : {}),
+          ...(record.workflow.version >= 6 ? { move } : {}),
+        };
         const moved = await handle.transition(
           caller,
           {
             instanceId: record.id,
             expectedRevision: input.expectedRevision,
-            action:
-              record.workflow.state === 'reflecting' && !this.needsConsolidation(record)
-                ? 'complete'
-                : 'advance',
-            // The guard inside the transition judges the same choice the preflight did.
-            ...(input.nextWave ? { input: { nextWave: input.nextWave } } : {}),
+            action: move === 'inject' ? 'advance' : move,
+            ...(Object.keys(choice).length ? { input: choice } : {}),
             requestId: this.request(caller, input.requestId, 'advance'),
           },
           tx,
@@ -1427,6 +1603,12 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         const successor = continuing
           ? await this.materialise(caller, record, continuing, input.requestId, tx, checks)
           : undefined;
+        if (injecting)
+          await tx.run(
+            'UPDATE research_cycles SET integrations=? WHERE id=?',
+            JSON.stringify([...record.integrations, ...childIds]),
+            record.id,
+          );
         if (childIds.length)
           await handle.addDependencies(
             caller,
@@ -1450,6 +1632,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
             from: record.workflow.state,
             to: moved.state,
             children: childIds,
+            // Quarantined acceptances are unpublished code the task may not build on.
+            ...(injecting && since?.quarantined.length ? { quarantined: since.quarantined } : {}),
             ...(successor ? { successorId: successor.id } : {}),
             ...(moved.state === 'complete' && input.nextWave === 'skip'
               ? { nextWave: 'skipped' }
@@ -1551,17 +1735,24 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         ? { code: blocker.code, message: clip(blocker.message, 2000) }
         : { code: 'research_waiting', message: guidance.instruction };
     }
-    const stoppedByLimit = atLimit && !!(await this.continuing(caller, record, tx, []));
-    const advanced = await this.advance(
-      caller,
-      {
-        researchId: record.id,
-        expectedRevision: record.workflow.revision,
-        nextWave,
-        requestId: automaticRequest(record.id, record.workflow.revision, 'advance'),
-      },
-      tx,
-    );
+    const stoppedByLimit =
+      atLimit &&
+      !!(await this.continuing(caller, record, tx, [], await this.assumed(caller, record, tx, {})));
+    const input: ResearchAdvance = {
+      researchId: record.id,
+      expectedRevision: record.workflow.revision,
+      nextWave,
+      requestId: automaticRequest(record.id, record.workflow.revision, 'advance'),
+    };
+    let advanced: ResearchRecord;
+    try {
+      advanced = await this.advance(caller, input, tx);
+    } catch (error) {
+      // Git is asked outside every transaction, so the same advance runs again on its own.
+      if (error instanceof MervError && error.code === 'integration_candidates_unavailable')
+        this.soon(caller, automatic, input, automaticBlocker(error));
+      throw error;
+    }
     await this.event(
       caller,
       'automatically_advanced',
@@ -1580,6 +1771,43 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
           message: `Finished the authorized ${automatic.max_cycles} research cycles; no further wave was created`,
         }
       : null;
+  }
+
+  /**
+   * The advance the consumer could not make, run on its own once its transaction has committed,
+   * outside every transaction's context. Success is a transition event the consumer answers; a
+   * refusal is written only over the marker the consumer left, so a reconcile since is never
+   * overwritten and nothing loops: the marker returns on the next event, today's retry cadence.
+   */
+  private soon(
+    caller: Caller,
+    row: AutomaticRow,
+    input: ResearchAdvance,
+    marker: ResearchAutomation['blocker'],
+  ): void {
+    if (this.closed) return;
+    const run = async () => {
+      try {
+        await this.advance(caller, input);
+      } catch (error) {
+        if (
+          this.closed ||
+          !(error instanceof MervError) ||
+          (error.status >= 500 && error.status !== 503)
+        )
+          return;
+        const left = JSON.stringify(marker);
+        await this.state.transaction((tx) =>
+          recordBlocker(this.state, tx, { ...row, blocker_json: left }, automaticBlocker(error), {
+            onlyOver: left,
+          }),
+        );
+      }
+    };
+    const release = this.state.onEventsCommitted(() => {
+      release();
+      void run().catch(() => undefined);
+    });
   }
 
   /** A permanently failed input cannot strand never-started work in this selected wave. */
@@ -1675,7 +1903,14 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     return this.bind('consolidation', consolidation);
   }
   bindTasks(tasks: Tasks): () => void {
-    return this.bind('tasks', tasks);
+    const releases = [
+      this.bind('tasks', tasks),
+      this.bind('integrations', tasks.serviceTasks('research')),
+    ];
+    return () => releases.forEach((release) => release());
+  }
+  bindCode(code: ResearchCode): () => void {
+    return this.bind('code', code);
   }
   bindExperiments(experiments: Experiments): () => void {
     return this.bind('experiments', experiments);
@@ -1742,11 +1977,15 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     checks.forEach((check) => check());
     return result;
   }
+  /** Cycles before version 6 chose a consolidation workflow; since then a task is injected. */
   private needsConsolidation(record: ResearchRecord): boolean {
-    return record.workflow.version < 3 || record.consolidationWorkspace === 'git';
+    const { version } = record.workflow;
+    return version < 3 || (version < 6 && record.consolidationWorkspace === 'git');
   }
   private children(record: ResearchRecord): string[] {
-    return [record.reflectionId, record.consolidationId].filter((id): id is string => !!id);
+    return [record.reflectionId, record.consolidationId, ...record.integrations].filter(
+      (id): id is string => !!id,
+    );
   }
   private request(caller: Caller, requestId: string, step: string) {
     return `research:${step}:${digest({ actorId: caller.actorId, requestId })}`;
@@ -1820,6 +2059,12 @@ export const researchPlugin = {
       ctx.inject(['artifacts'], (ctx) => {
         ctx.effect(async function* () {
           yield service.bindArtifacts(ctx.artifacts);
+          await service.wakeAutomatic();
+        });
+      });
+      ctx.inject(['code'], (ctx) => {
+        ctx.effect(async function* () {
+          yield service.bindCode(ctx.code);
           await service.wakeAutomatic();
         });
       });
