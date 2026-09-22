@@ -374,14 +374,31 @@ for (const backend of backends) {
     `[${backend}] one pass runs at a time, whoever asked for it`,
     optional(backend),
     async (t) => {
-      const { f } = await backedUp(t, backend, { database: undefined });
-      const [first, second] = await Promise.allSettled([
-        f.code.runBackup(f.admin, { requestId: 'copy-one' }),
-        f.code.runBackup(f.admin, { requestId: 'copy-two' }),
-      ]);
-      assert.equal(first.status, 'fulfilled');
-      assert.equal(second.status, 'rejected');
-      assert.equal((second as PromiseRejectedResult).reason.code, 'code_backup_busy');
+      const { f, store } = await backedUp(t, backend, { database: undefined });
+      const head = store.head.bind(store);
+      let entered!: () => void;
+      let release!: () => void;
+      const inPass = new Promise<void>((resolve) => (entered = resolve));
+      const resume = new Promise<void>((resolve) => (release = resolve));
+      let held = false;
+      store.head = async (key) => {
+        if (!held) {
+          held = true;
+          entered();
+          await resume;
+        }
+        return head(key);
+      };
+      const first = f.code.runBackup(f.admin, { requestId: 'copy-one' });
+      await inPass;
+      try {
+        await assert.rejects(f.code.runBackup(f.admin, { requestId: 'copy-two' }), {
+          code: 'code_backup_busy',
+        });
+      } finally {
+        release();
+        await first;
+      }
       // The refusal is the whole of it: the run that was refused left no journal row behind.
       const after = await f.code.runBackup(f.admin, { requestId: 'copy-two' });
       assert.equal(after.warnings.length, 0);
