@@ -32,7 +32,11 @@ export const bytes = (n: number) =>
     ? `${n} B`
     : n < 1_048_576
       ? `${(n / 1024).toFixed(1)} KB`
-      : `${(n / 1_048_576).toFixed(1)} MB`;
+      : n < 1_073_741_824
+        ? `${(n / 1_048_576).toFixed(1)} MB`
+        : // A file never reaches this, but a repository's quota does, and a size a
+          // person cannot read at a glance is no size at all.
+          `${(n / 1_073_741_824).toFixed(1)} GB`;
 
 /** artifact.create keeps a file of one byte to this many, and nothing outside that. */
 export const MAX_FILE = 2_000_000;

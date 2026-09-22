@@ -98,7 +98,7 @@ const colourOf = (to: string | undefined) =>
   (to && COLOUR.find(([prefix]) => to.startsWith(prefix))?.[1]) || 'code';
 
 /** Two member sets name the same merge when they hold the same commits. */
-const sameMerge = (left: readonly string[], right: readonly string[]) =>
+export const sameMerge = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && [...left].sort().join() === [...right].sort().join();
 
 /** The accepted commits a unit's base was or will be made from; empty where it is one. */
@@ -363,6 +363,69 @@ export function gitModel(
   }
 
   return { nodes, edges, lanes, ranks: ranksOf(inputs), word };
+}
+
+/**
+ * The units still waiting for this exact merge. A waiting unit carries the accepted
+ * commits its base will be made from and a base carries the ones it was made from, so
+ * the join is the member set itself: the browser asks the server for no second name and
+ * prints no digest. A base made of nothing answers nobody.
+ */
+export const waitersOf = (base: CodeBaseRecord, units: readonly CodeUnit[]): string[] =>
+  base.members.length
+    ? units.filter((unit) => sameMerge(mergeOf(unit), base.members)).map((unit) => unit.unitId)
+    : [];
+
+/** One filter: the work a group of blockers is about, and the nodes it names. */
+export interface GitChip {
+  label: string;
+  count: number;
+  lights: ReadonlySet<string>;
+}
+/**
+ * A blocker's code says which of four things is holding work up; anything else Code
+ * publishes is work waiting on the server, which is what every remaining code says in
+ * its own words. Nothing here prints a blocker: the chip is a filter, and the node's
+ * own state word is what says why it stands where it does.
+ */
+const GROUPS: [string, RegExp][] = [
+  ['Conflicted', /conflict/],
+  // Quarantine is the strongest word this vocabulary has: nothing may ever be built on
+  // it again. A writer stuck mid-generation is recoverable and waits with the rest.
+  ['Quarantined', /quarantin/],
+  ['To publish', /publish|publication/],
+];
+const ORDER = ['Conflicted', 'Waiting', 'Quarantined', 'To publish'];
+
+export function chipsOf(
+  blockers: NonNullable<CodeProjectStatus['blockers']>,
+  model: GitModel,
+): GitChip[] {
+  const drawn = new Set(model.nodes.map((node) => node.id));
+  const held = new Map<string, { work: Set<string>; lights: Set<string> }>();
+  for (const blocker of blockers) {
+    // Blockers are every one the project holds while the drawing keeps a window of units,
+    // so a chip counts only what pressing it can light: a filter never names what it
+    // cannot then show.
+    if (!drawn.has(blocker.instanceId)) continue;
+    const label = GROUPS.find(([, code]) => code.test(blocker.code))?.[0] ?? 'Waiting';
+    const group = held.get(label) ?? { work: new Set<string>(), lights: new Set<string>() };
+    held.set(label, group);
+    // One unit held up is one thing to look at, however many opinions say so.
+    group.work.add(blocker.instanceId);
+    for (const id of [blocker.instanceId, ...blocker.related.map((item) => item.id)])
+      if (drawn.has(id)) group.lights.add(id);
+  }
+  // The base a lit unit is waiting behind is what the reader is being sent to look at,
+  // so the square and the lanes converging on it light together.
+  for (const group of held.values())
+    for (const edge of model.edges)
+      if (edge.verb === 'waiting on' && group.lights.has(edge.to)) group.lights.add(edge.from);
+  return ORDER.flatMap((label) => {
+    const group = held.get(label);
+    // A chip of zero is a filter with nothing behind it, so it is not drawn at all.
+    return group?.work.size ? [{ label, count: group.work.size, lights: group.lights }] : [];
+  });
 }
 
 /**

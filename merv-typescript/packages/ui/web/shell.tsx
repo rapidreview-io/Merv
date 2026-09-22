@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool } from './api';
 import { useSession } from './session';
@@ -277,16 +277,39 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   );
 }
 
-/** Settings is one place with rooms, not a list with records: every room is still Settings. */
-const roomy = (row: Row) => row.view.kind === 'settings';
+/**
+ * A place whose deeper addresses are not records: Settings is one place with rooms, and
+ * Code's are selections on the one drawing. Both keep the line the shell titles them
+ * with, because in neither case has the reader left the page.
+ */
+const roomy = (row: Row) => ['settings', 'code'].includes(row.view.kind);
 
 /**
- * The page header the shell owns: the collection you are in, and nothing to
- * click. Navigation is the rail's job alone now, so no eyebrow and no siblings.
- * A record's page names itself, so the line stands on a row's index route alone —
- * and over every room of a place that has rooms.
+ * What a page counted, said on the line the shell titles it with. The shell owns that
+ * line, so a page hands its facts up rather than drawing a heading of its own under it.
  */
-export function TitleLine({ rows }: { rows: Row[] }) {
+export type PageFacts = [string, ReactNode][];
+const Counted = createContext<(facts: PageFacts) => void>(() => {});
+export function usePageFacts(facts: PageFacts) {
+  const say = useContext(Counted);
+  // The facts are new objects on every render, so the line is told about them only when
+  // what they say has changed; what it is told is always the newest reading.
+  const held = useRef(facts);
+  held.current = facts;
+  const said = facts.map(([label, value]) => `${label} ${String(value)}`).join(' · ');
+  useEffect(() => {
+    say(held.current);
+    return () => say([]);
+  }, [said, say]);
+}
+
+/**
+ * The page header the shell owns: the collection you are in, what it counted, and
+ * nothing to click. Navigation is the rail's job alone now, so no eyebrow and no
+ * siblings. A record's page names itself, so the line stands on a row's index route
+ * alone — and over every room of a place that has rooms.
+ */
+function TitleLine({ rows, facts }: { rows: Row[]; facts: PageFacts }) {
   const { pathname } = useLocation();
   const current =
     pathname === '/'
@@ -309,7 +332,29 @@ export function TitleLine({ rows }: { rows: Row[] }) {
           </>
         )}
       </h1>
+      {/* What the page itself counted stands beside the name on the same line, never
+          centred in a band of its own beneath it. */}
+      {facts.length > 0 && (
+        <p className="lede-facts">
+          {facts.map(([label, value]) => (
+            <span key={label}>
+              {label} <b>{value}</b>
+            </span>
+          ))}
+        </p>
+      )}
     </header>
+  );
+}
+
+/** The line and the page under it, so what the page counts can reach the line. */
+export function PageLede({ rows, children }: { rows: Row[]; children: ReactNode }) {
+  const [facts, setFacts] = useState<PageFacts>([]);
+  return (
+    <Counted.Provider value={setFacts}>
+      <TitleLine rows={rows} facts={facts} />
+      {children}
+    </Counted.Provider>
   );
 }
 

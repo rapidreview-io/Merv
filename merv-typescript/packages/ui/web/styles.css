@@ -554,9 +554,18 @@ p,
 .kv dd {
   max-width: 68ch;
 }
-/* The title line the shell renders above a row's index route. */
+/* The title line the shell renders above a row's index route: the name of the place,
+   and what the page counted beside it on the same line. The row is the shell's own
+   header alone — the class is shared with a page that puts a whole header inside it,
+   and a header is a block there and not a flex item. */
 .page-lede {
   padding: var(--page-pad-top) var(--page-pad-x) 0;
+}
+header.page-lede {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
 }
 .page-lede + .page-stage {
   padding-top: 18px;
@@ -582,6 +591,20 @@ p,
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   color: var(--faint);
+}
+/* A page's own counts are facts about the place, so they stand with its name rather
+   than in a band of their own under it. */
+.lede-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.lede-facts b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .page-header {
   margin-bottom: 22px;
@@ -3151,7 +3174,7 @@ a.tile:hover small {
   grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: var(--space-2);
 }
-.map-graph--stacked > :is(.plane-title, .map-more, .map-props) {
+.map-graph--stacked > :is(.plane-title, .map-more, .map-props, .code-card) {
   grid-column: 1 / -1;
 }
 .map-graph--stacked .map-node {
@@ -4175,17 +4198,77 @@ del.cut {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
-/* What the drawing counts, level with its top edge and out of its label column. */
-.code-counts {
+/* The drawing and the card it opens: beside it where the page column is wide enough
+   for both, under it wherever it is not, and inside the stacked list where there is
+   no drawing to select on at all. The rule is the room itself rather than the size of
+   the screen, because the rail can be hidden and the drawing has a width it needs:
+   the two sit side by side only while the page holds the drawing's own minimum and
+   the card, and the card drops under the moment it does not. */
+.code-plane {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-4);
-  color: var(--muted);
+  align-items: flex-start;
+  container-type: inline-size;
+}
+.code-plane > * {
+  flex: 1 1 800px;
+  min-width: 0;
+}
+/* Wrapped under the drawing the card takes the whole column, rather than standing at
+   its own width in the middle of an empty page. */
+.code-plane > .code-card {
+  flex: 1 1 380px;
+}
+/* Beside it — which is the room for the drawing, its gap and the card, and not a
+   screen size — the card is its own width and the drawing takes every pixel past it. */
+@container (min-width: 1196px) {
+  .code-plane > .code-card {
+    flex: 0 1 380px;
+  }
+}
+.code-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.code-card-name {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.code-card .kv,
+.code-card .stack {
+  width: 100%;
+}
+.code-card .kv {
   font-size: var(--text-sm);
 }
-.code-counts b {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
+/* The verbs stand in one row under the facts they act on, and wrap rather than
+   press themselves narrower than a finger. */
+.code-verbs {
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.code-ops-row {
+  font-size: var(--text-sm);
+  gap: var(--space-3);
+}
+/* One commit and the record accepted with it are one value: they hug each other, and
+   the space between two of them is wider than the space inside either. */
+.code-members {
+  gap: var(--space-2);
+}
+.code-member {
+  gap: 0 var(--space-2);
+}
+.stack--tight {
+  gap: 2px;
 }
 /* What Git holds for a record it cannot be reused from wears the refusal, so the
    section says it with its colour rather than with a second sentence. */

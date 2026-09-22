@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
-import { Sidebar, ShellFrame, TitleLine, useShell, type ShellData } from './shell';
+import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
 import { EmptyState, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
 import { dormantOwner, humanizeGroup } from './navigation';
@@ -86,31 +86,32 @@ function Workspace() {
             <LoadState {...shell} />
           </div>
         )}
-        {shell.data && <TitleLine rows={rows} />}
-        {shell.data ? (
-          <Routes>
-            {/* The map is the home; the standing line it summarises stays one click away. */}
-            <Route path="/" element={<MapView shell={shell.data} />} />
-            <Route path="/now" element={<OverviewView shell={shell.data} />} />
-            {/* The wave of work is the shell's own page: no one plugin owns it. */}
-            <Route path="/work" element={<WorkView shell={shell.data} />} />
-            {rows.map((row) => {
-              const View = viewFor(row.view.kind);
-              return (
-                <Route
-                  key={row.id}
-                  path={`${row.path}/*`}
-                  element={<View row={row} shell={shell.data!} />}
-                />
-              );
-            })}
-            <Route path="*" element={<NotFound shell={shell.data} />} />
-          </Routes>
-        ) : (
-          <div className="page-stage">
-            <LoadState loading={shell.loading} error={shell.error} />
-          </div>
-        )}
+        <PageLede rows={shell.data ? rows : []}>
+          {shell.data ? (
+            <Routes>
+              {/* The map is the home; the standing line it summarises stays one click away. */}
+              <Route path="/" element={<MapView shell={shell.data} />} />
+              <Route path="/now" element={<OverviewView shell={shell.data} />} />
+              {/* The wave of work is the shell's own page: no one plugin owns it. */}
+              <Route path="/work" element={<WorkView shell={shell.data} />} />
+              {rows.map((row) => {
+                const View = viewFor(row.view.kind);
+                return (
+                  <Route
+                    key={row.id}
+                    path={`${row.path}/*`}
+                    element={<View row={row} shell={shell.data!} />}
+                  />
+                );
+              })}
+              <Route path="*" element={<NotFound shell={shell.data} />} />
+            </Routes>
+          ) : (
+            <div className="page-stage">
+              <LoadState loading={shell.loading} error={shell.error} />
+            </div>
+          )}
+        </PageLede>
       </ShellFrame>
     </>
   );

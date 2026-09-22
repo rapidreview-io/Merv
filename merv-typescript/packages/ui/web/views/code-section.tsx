@@ -19,6 +19,14 @@ import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
 /** Where the same facts are drawn as one picture. */
 const CANVAS = '/code';
 
+/**
+ * The branch is the string an operator fetches, so it is stated — but the id inside it
+ * is read the way every digest here is read: its head and its tail, the whole of it in
+ * the hover and on the clipboard. Nobody types thirty-two hex digits.
+ */
+const shortBranch = (branch: string) =>
+  branch.replace(/[0-9a-f]{24,}/gi, (id) => `${id.slice(0, 8)}…${id.slice(-6)}`);
+
 /** The records whose acceptances a base was made of, named rather than printed as oids. */
 const sources = (of: { unitId: string }[], names: RecordNames) =>
   of.map((source) => <RecordLink key={source.unitId} id={source.unitId} names={names} />);
@@ -62,10 +70,16 @@ function basedOn(unit: CodeUnit, names: RecordNames): ReactNode {
 export function UnitCode({
   unit,
   named,
+  open,
 }: {
   unit: CodeUnit;
   /** Who accepted it, by name; nobody is named by an identifier. */
   named(id: string | null | undefined): string | undefined;
+  /**
+   * The section's one link. On a record's page it is the way to the drawing; drawn
+   * inside the drawing, the way out is the record instead.
+   */
+  open?: ReactNode;
 }) {
   const accepted = unit.acceptance;
   const names = useRecordNames(
@@ -82,7 +96,9 @@ export function UnitCode({
           [
             'Branch',
             <>
-              <code className="mono">{unit.branch}</code>
+              <code className="mono" title={unit.branch}>
+                {shortBranch(unit.branch)}
+              </code>
               <CopyButton text={unit.branch} label="Copy branch name" />
             </>,
           ],
@@ -120,9 +136,11 @@ export function UnitCode({
       {unit.quarantine && (
         <p className="code-refusal">The pin and the acceptance retained here cannot be reused.</p>
       )}
-      <Link className="btn-text" to={CANVAS}>
-        Open in the canvas <ArrowRightIcon size={14} />
-      </Link>
+      {open ?? (
+        <Link className="btn-text" to={CANVAS}>
+          Open in the canvas <ArrowRightIcon size={14} />
+        </Link>
+      )}
     </div>
   );
 }

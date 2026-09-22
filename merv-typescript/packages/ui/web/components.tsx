@@ -220,6 +220,8 @@ export function ConfirmAction({
   confirm,
   busy,
   note,
+  danger = true,
+  onToggle,
   onConfirm,
   children,
 }: {
@@ -230,6 +232,13 @@ export function ConfirmAction({
   busy?: string;
   /** What the command answered, rendered under the guard that asked it. */
   note?: ReactNode;
+  /**
+   * Whether this act is the kind that cannot be undone. The refusal's colour is the
+   * page's one cue for that, so a reversible verb's confirm does not wear it.
+   */
+  danger?: boolean;
+  /** Said as the guard opens and closes, so a caller can draw only the open one. */
+  onToggle?(open: boolean): void;
   onConfirm(): void | Promise<boolean | void>;
   children: ReactNode;
 }) {
@@ -238,9 +247,13 @@ export function ConfirmAction({
   useEffect(() => {
     if (open) box.current?.querySelector('button')?.focus();
   }, [open]);
+  const show = (next: boolean) => {
+    setOpen(next);
+    onToggle?.(next);
+  };
   if (!open)
     return (
-      <button className="btn" onClick={() => setOpen(true)}>
+      <button className="btn" onClick={() => show(true)}>
         {label}
       </button>
     );
@@ -250,20 +263,20 @@ export function ConfirmAction({
       role="alertdialog"
       aria-label={title}
       ref={box}
-      onKeyDown={(event) => event.key === 'Escape' && setOpen(false)}
+      onKeyDown={(event) => event.key === 'Escape' && show(false)}
     >
       <strong>{title}</strong>
       {children}
       {note}
       <div className="cluster">
         <button
-          className="btn btn--danger"
+          className={danger ? 'btn btn--danger' : 'btn btn--primary'}
           disabled={!!busy}
-          onClick={() => void Promise.resolve(onConfirm()).then((done) => done && setOpen(false))}
+          onClick={() => void Promise.resolve(onConfirm()).then((done) => done && show(false))}
         >
           {busy ?? confirm}
         </button>
-        <button className="btn" disabled={!!busy} onClick={() => setOpen(false)}>
+        <button className="btn" disabled={!!busy} onClick={() => show(false)}>
           Cancel
         </button>
       </div>

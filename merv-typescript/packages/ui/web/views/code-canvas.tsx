@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { KindLabel, StatusPill, cx, kindOf, kindStyle, toneOf, words } from '../components';
 import { ArrowRightIcon } from '../icons';
-import { MAIN, relationsOf, type GitEdge, type GitLane, type GitModel } from './code-model';
+import { MAIN, relationsOf, type GitModel } from './code-model';
 
 /**
  * The Git canvas: main as a trunk across the top, one lane per unit of work beneath
@@ -18,11 +18,17 @@ import { MAIN, relationsOf, type GitEdge, type GitLane, type GitModel } from './
  * stacked as a list, where each node says in words what the lines would have said.
  */
 
-/** Under this there is no room for a lane and its label, so nothing is placed. */
-const NARROW = 900;
+/**
+ * Under this there is no room for a lane and its label, so nothing is placed. It is
+ * what the drawing needs, not what a screen is: at 1440 with the rail open the page
+ * holds about 1216px, and the drawing and the card stand side by side within it.
+ */
+const NARROW = 800;
 /** The label column, held at its width so the drawing takes every pixel past it. */
-const LABEL = 320;
-const TRUNK_Y = 56;
+const LABEL = 260;
+/** The trunk sits as near the top as its own label's ascender allows: the drawing
+    begins under the title line, not after a band of nothing. */
+const TRUNK_Y = 24;
 const ROW = 76;
 /** The room a lane leaves after the point it was cut from, and its elbow's radius. */
 const CUT = 32;
@@ -126,17 +132,32 @@ const clip = (text: string) => {
   return text.length > most ? `${text.slice(0, most - 1)}…` : text;
 };
 
+/** What the reader is looking at, and what the page hangs off it. */
+interface Held {
+  /** The node the address names, which is the one the card is open on. */
+  selected: string | null;
+  onSelect(id: string | null): void;
+  /** The nodes a pressed chip names; everything else is dimmed. Null while none is. */
+  lit?: ReadonlySet<string> | null;
+  /**
+   * The property card. Beside the drawing it is a card and wears its own head; opened
+   * in place under the row that was pressed, that row is the head already, so it is
+   * asked for without one rather than saying the same four facts twice.
+   */
+  card?(of: { head: boolean }): ReactNode;
+}
+
 /**
  * The drawing, placed from one measured width. Hovering or selecting a node lights
  * its edges and its neighbours and dims the rest, the keyboard walks the rows, and
- * Enter opens the record a lane belongs to — the map's grammar, on a DAG.
+ * Enter opens the record a lane belongs to — the map's grammar, on a DAG. The
+ * selection is the page's, because the address is what holds it.
  */
-export function BranchCanvas({ model }: { model: GitModel }) {
+export function BranchCanvas({ model, selected, onSelect, lit, card }: Held & { model: GitModel }) {
   const navigate = useNavigate();
   const frame = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
     const element = frame.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
@@ -145,7 +166,14 @@ export function BranchCanvas({ model }: { model: GitModel }) {
     return () => observer.disconnect();
   }, []);
   const g = width ? canvas(model, width) : null;
-  if (!g) return <div ref={frame}>{width ? <BranchList model={model} /> : null}</div>;
+  if (!g)
+    return (
+      <div ref={frame}>
+        {width ? (
+          <BranchList model={model} selected={selected} onSelect={onSelect} lit={lit} card={card} />
+        ) : null}
+      </div>
+    );
 
   const focus = hover ?? selected;
   const near = new Set(focus ? [focus] : []);
@@ -153,6 +181,10 @@ export function BranchCanvas({ model }: { model: GitModel }) {
     if (edge.from === focus) near.add(edge.to);
     if (edge.to === focus) near.add(edge.from);
   }
+  // Two ways of narrowing, one grammar: a chip keeps the nodes it names, a held node
+  // keeps itself and its neighbours, and whatever neither keeps is dimmed rather than
+  // taken away — the drawing stays whole under both.
+  const dim = (id: string) => (!!lit && !lit.has(id)) || (!!focus && !near.has(id));
   const rank = (id: string) => model.ranks.get(id) ?? 0;
   const walk = [...model.nodes].sort(
     (a, b) => a.row - b.row || rank(a.id) - rank(b.id) || a.id.localeCompare(b.id),
@@ -161,11 +193,11 @@ export function BranchCanvas({ model }: { model: GitModel }) {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const node = walk.find((item) => item.id === selected);
     const move = MOVES[event.key];
-    if (event.key === 'Escape') setSelected(null);
+    if (event.key === 'Escape') onSelect(null);
     else if (event.key === 'Enter' && node?.to) navigate(node.to);
     else if (move !== undefined) {
       const index = walk.findIndex((item) => item.id === selected);
-      setSelected(walk[Math.min(walk.length - 1, Math.max(0, index + move))]?.id ?? null);
+      onSelect(walk[Math.min(walk.length - 1, Math.max(0, index + move))]?.id ?? null);
     } else return;
     event.preventDefault();
   };
@@ -173,11 +205,11 @@ export function BranchCanvas({ model }: { model: GitModel }) {
   const group = (id: string, colour: string, children: ReactNode) => (
     <g
       key={id}
-      className={cx('bg-node', selected === id && 'on', focus && !near.has(id) && 'dim')}
+      className={cx('bg-node', selected === id && 'on', dim(id) && 'dim')}
       style={kindStyle(colour)}
       onMouseEnter={() => setHover(id)}
       onMouseLeave={() => setHover((held) => (held === id ? null : held))}
-      onClick={() => setSelected((held) => (held === id ? null : id))}
+      onClick={() => onSelect(selected === id ? null : id)}
     >
       {children}
     </g>
@@ -185,162 +217,186 @@ export function BranchCanvas({ model }: { model: GitModel }) {
   const trunk = g.trunk;
   const nodeOf = (id: string) => model.nodes.find((node) => node.id === id)!;
   return (
-    <div
-      ref={frame}
-      tabIndex={0}
-      role="group"
-      aria-label="Branches"
-      className="branch-frame"
-      onKeyDown={onKeyDown}
-    >
-      <svg viewBox={`0 0 ${g.width} ${g.height}`} className="branch-graph">
-        <path className="bg-trunk" d={`M ${trunk.x0},${trunk.y} H ${trunk.solid}`} />
-        {/* Past the last commit Merv can name the trunk is a dash: the base branch has
-            history this process never read, and the drawing says so rather than invent it. */}
-        <path
-          className="bg-trunk bg-trunk--beyond"
-          d={`M ${trunk.solid},${trunk.y} H ${trunk.end}`}
-        />
-        <text className="bg-ref" x={8} y={trunk.y + 4}>
-          {nodeOf(MAIN).name}
-        </text>
-        {g.edges.map(({ edge, d, x, y }) => {
-          const on = !!focus && (edge.from === focus || edge.to === focus);
-          return (
-            <g
-              key={`${edge.from}|${edge.to}|${edge.verb}`}
-              className={cx(
-                'bg-edge',
-                edge.dashed && 'bg-edge--waiting',
-                edge.refusal && 'bg-edge--refusal',
-                on && 'on',
-                focus && !on && 'dim',
-              )}
-            >
-              <path d={d} />
-              {/* An edge's verb is written in the gap only while an end of it is held. */}
-              {on && (
-                <text x={x} y={y} textAnchor="middle">
-                  {edge.verb}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        {g.lanes.map((lane) => {
-          const node = nodeOf(lane.id);
-          const word = model.word.get(lane.id);
-          return group(
-            lane.id,
-            node.colour,
+    <>
+      <div
+        ref={frame}
+        tabIndex={0}
+        role="group"
+        aria-label="Branches"
+        className="branch-frame"
+        onKeyDown={onKeyDown}
+      >
+        <svg viewBox={`0 0 ${g.width} ${g.height}`} className="branch-graph">
+          {/* The trunk is a node like any other: it is selected, and it says what it is. */}
+          {group(
+            MAIN,
+            'code',
             <>
-              <path className="bg-lane" d={lane.path} />
-              {lane.hollow && <path className="bg-lane bg-lane--hollow" d={lane.hollow} />}
-              <text className="bg-kind" x={8} y={lane.y - 16}>
-                {kindOf(node.colour).label.toUpperCase()}
+              <path className="bg-trunk" d={`M ${trunk.x0},${trunk.y} H ${trunk.solid}`} />
+              {/* Past the last commit Merv can name the trunk is a dash: the base branch
+                  has history this process never read, and the drawing says so rather
+                  than invent it. */}
+              <path
+                className="bg-trunk bg-trunk--beyond"
+                d={`M ${trunk.solid},${trunk.y} H ${trunk.end}`}
+              />
+              <text className="bg-ref" x={8} y={trunk.y + 4}>
+                {nodeOf(MAIN).name}
               </text>
-              <text className="bg-name" x={8} y={lane.y + 4}>
-                {clip(node.name)}
-                <title>{node.name}</title>
-              </text>
-              <text className={cx('bg-meta', `status--${tone(word)}`)} x={8} y={lane.y + 23}>
-                ● {words(word ?? '').toUpperCase()}
-              </text>
-              {lane.dots.map((dot) => (
-                <g key={dot.x}>
-                  {dot.stat && (
-                    <text className="bg-stat" x={dot.x} y={lane.y - 12}>
-                      <tspan className="add">+{dot.add}</tspan>{' '}
-                      <tspan className="del">−{dot.del}</tspan>
-                    </text>
-                  )}
-                  <circle className="bg-dot" cx={dot.x} cy={lane.y} r={4}>
-                    <title>{dot.title}</title>
-                  </circle>
-                </g>
-              ))}
-              {lane.tip.kind === 'accepted' && (
-                <rect
-                  className={cx('bg-accepted', node.hollow && 'bg-hollow')}
-                  x={lane.tip.x - 5}
-                  y={lane.y - 5}
-                  width={10}
-                  height={10}
-                />
-              )}
-              {lane.tip.kind === 'head' && (
-                <circle
-                  className={cx('bg-dot', 'bg-dot--tip', node.hollow && 'bg-hollow')}
-                  cx={lane.tip.x}
-                  cy={lane.y}
-                  r={4.5}
-                />
-              )}
             </>,
-          );
-        })}
-        {model.nodes
-          .filter((node) => node.kind === 'base' || node.kind === 'publication')
-          .map((node) => {
-            const { x, y } = g.at.get(node.id)!;
-            const word = model.word.get(node.id);
-            return group(
-              node.id,
-              node.colour,
-              node.kind === 'base' ? (
-                <>
-                  {/* A base is where lanes meet and never a line that runs, so it is a mark. */}
-                  <rect
-                    className={cx('bg-merge', node.hollow && 'bg-hollow')}
-                    x={x - 7}
-                    y={y - 7}
-                    width={14}
-                    height={14}
-                    transform={`rotate(45 ${x} ${y})`}
-                  />
-                  <text
-                    className={cx('bg-mark', `status--${tone(word)}`)}
-                    x={x}
-                    y={y + 24}
-                    textAnchor="middle"
-                  >
-                    {words(word ?? '').toUpperCase()}
+          )}
+          {g.edges.map(({ edge, d, x, y }) => {
+            const on = !!focus && (edge.from === focus || edge.to === focus);
+            return (
+              <g
+                key={`${edge.from}|${edge.to}|${edge.verb}`}
+                className={cx(
+                  'bg-edge',
+                  edge.dashed && 'bg-edge--waiting',
+                  edge.refusal && 'bg-edge--refusal',
+                  on && 'on',
+                  // A line belongs to both its ends: it is kept only while both are.
+                  (dim(edge.from) || dim(edge.to)) && !on && 'dim',
+                )}
+              >
+                <path d={d} />
+                {/* An edge's verb is written in the gap only while an end of it is held. */}
+                {on && (
+                  <text x={x} y={y} textAnchor="middle">
+                    {edge.verb}
                   </text>
-                </>
-              ) : (
-                <circle
-                  className={cx('bg-ring', node.hollow && 'bg-ring--refusal')}
-                  cx={x}
-                  cy={y}
-                  r={7}
-                >
-                  <title>{node.name}</title>
-                </circle>
-              ),
+                )}
+              </g>
             );
           })}
-      </svg>
-    </div>
+          {g.lanes.map((lane) => {
+            const node = nodeOf(lane.id);
+            const word = model.word.get(lane.id);
+            return group(
+              lane.id,
+              node.colour,
+              <>
+                <path className="bg-lane" d={lane.path} />
+                {lane.hollow && <path className="bg-lane bg-lane--hollow" d={lane.hollow} />}
+                <text className="bg-kind" x={8} y={lane.y - 16}>
+                  {kindOf(node.colour).label.toUpperCase()}
+                </text>
+                <text className="bg-name" x={8} y={lane.y + 4}>
+                  {clip(node.name)}
+                  <title>{node.name}</title>
+                </text>
+                <text className={cx('bg-meta', `status--${tone(word)}`)} x={8} y={lane.y + 23}>
+                  ● {words(word ?? '').toUpperCase()}
+                </text>
+                {lane.dots.map((dot) => (
+                  <g key={dot.x}>
+                    {dot.stat && (
+                      <text className="bg-stat" x={dot.x} y={lane.y - 12}>
+                        <tspan className="add">+{dot.add}</tspan>{' '}
+                        <tspan className="del">−{dot.del}</tspan>
+                      </text>
+                    )}
+                    <circle className="bg-dot" cx={dot.x} cy={lane.y} r={4}>
+                      <title>{dot.title}</title>
+                    </circle>
+                  </g>
+                ))}
+                {lane.tip.kind === 'accepted' && (
+                  <rect
+                    className={cx('bg-accepted', node.hollow && 'bg-hollow')}
+                    x={lane.tip.x - 5}
+                    y={lane.y - 5}
+                    width={10}
+                    height={10}
+                  />
+                )}
+                {lane.tip.kind === 'head' && (
+                  <circle
+                    className={cx('bg-dot', 'bg-dot--tip', node.hollow && 'bg-hollow')}
+                    cx={lane.tip.x}
+                    cy={lane.y}
+                    r={4.5}
+                  />
+                )}
+              </>,
+            );
+          })}
+          {model.nodes
+            .filter((node) => node.kind === 'base' || node.kind === 'publication')
+            .map((node) => {
+              const { x, y } = g.at.get(node.id)!;
+              const word = model.word.get(node.id);
+              return group(
+                node.id,
+                node.colour,
+                node.kind === 'base' ? (
+                  <>
+                    {/* A base is where lanes meet and never a line that runs, so it is a mark. */}
+                    <rect
+                      className={cx('bg-merge', node.hollow && 'bg-hollow')}
+                      x={x - 7}
+                      y={y - 7}
+                      width={14}
+                      height={14}
+                      transform={`rotate(45 ${x} ${y})`}
+                    />
+                    <text
+                      className={cx('bg-mark', `status--${tone(word)}`)}
+                      x={x}
+                      y={y + 24}
+                      textAnchor="middle"
+                    >
+                      {words(word ?? '').toUpperCase()}
+                    </text>
+                  </>
+                ) : (
+                  <circle
+                    className={cx('bg-ring', node.hollow && 'bg-ring--refusal')}
+                    cx={x}
+                    cy={y}
+                    r={7}
+                  >
+                    <title>{node.name}</title>
+                  </circle>
+                ),
+              );
+            })}
+        </svg>
+      </div>
+      {card?.({ head: true })}
+    </>
   );
 }
 
 /**
  * The same model where there is no room to draw it: one row per node, each saying
  * in words what the lines would have said. It is the map's stacked fallback, so a
- * phone reads the graph rather than being told there is one.
+ * phone reads the graph rather than being told there is one. With no drawing to
+ * select on, the card opens in place under the row it was opened from — the end of
+ * this list is screens away from the row that was pressed.
  */
-export function BranchList({ model }: { model: GitModel }) {
+export function BranchList({ model, selected, onSelect, lit, card }: Held & { model: GitModel }) {
   const relations = relationsOf(model);
   return (
     <div className="plane map-graph map-graph--stacked" role="group" aria-label="Branches">
       {[...model.nodes]
         .sort((a, b) => a.row - b.row)
-        .map((node) => {
-          // What is drawn hollow wears the refusal here instead, so the two readings say
-          // the same thing about the one fact nothing may be built on again.
-          const className = cx('map-node', node.hollow && 'code-refused');
-          const body = (
-            <>
+        .map((node) => (
+          <Fragment key={node.id}>
+            <button
+              type="button"
+              // What is drawn hollow wears the refusal here instead, so the two readings
+              // say the same thing about the one fact nothing may be built on again.
+              className={cx(
+                'map-node',
+                node.hollow && 'code-refused',
+                selected === node.id && 'on',
+                !!lit && !lit.has(node.id) && 'dim',
+              )}
+              aria-pressed={selected === node.id}
+              style={kindStyle(node.colour)}
+              onClick={() => onSelect(selected === node.id ? null : node.id)}
+            >
               <KindLabel kind={node.colour} />
               <span className="map-node-name">{node.name}</span>
               <span className="map-node-foot">
@@ -352,18 +408,10 @@ export function BranchList({ model }: { model: GitModel }) {
                   {said}
                 </span>
               ))}
-            </>
-          );
-          return node.to ? (
-            <Link className={className} key={node.id} to={node.to} style={kindStyle(node.colour)}>
-              {body}
-            </Link>
-          ) : (
-            <div className={className} key={node.id} style={kindStyle(node.colour)}>
-              {body}
-            </div>
-          );
-        })}
+            </button>
+            {selected === node.id && card?.({ head: false })}
+          </Fragment>
+        ))}
     </div>
   );
 }

@@ -14,12 +14,18 @@ import type {
 } from '@merv/contracts/code-units';
 import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
 import type { CodePublication } from '@merv/contracts/types';
-import { mount, serve, text, unmount } from './ui-render.js';
+import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
-const { createElement } = await import('react');
-const { MemoryRouter } = await import('react-router-dom');
-const { CodePage } = await import('../packages/ui/web/views/code.js');
-const { gitModel, relationsOf } = await import('../packages/ui/web/views/code-model.js');
+// The credential is read as api.ts is evaluated, so it is stored before anything loads.
+sessionStorage.setItem('merv:token', 'fixture-token');
+
+const { createElement, useEffect } = await import('react');
+const { act } = await import('react-dom/test-utils');
+const { MemoryRouter, useLocation } = await import('react-router-dom');
+const { CodePage, managesCode, signedInAdmin } = await import('../packages/ui/web/views/code.js');
+const { PageLede } = await import('../packages/ui/web/shell.js');
+const { chipsOf, gitModel, relationsOf, waitersOf } =
+  await import('../packages/ui/web/views/code-model.js');
 const { canvas, BranchCanvas, BranchList } =
   await import('../packages/ui/web/views/code-canvas.js');
 
@@ -51,16 +57,76 @@ const waves = {
   path: '/consolidation',
   view: { kind: 'consolidation' },
 };
-const page = (rows = [row]) =>
+/** Where the page thinks it is, which is the one thing that says a node is selected. */
+let where = '';
+const Probe = () => {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    where = pathname;
+  }, [pathname]);
+  return null;
+};
+/**
+ * The page inside the frame that titles it, because the counts it makes stand on the
+ * shell's own line and nowhere else. `manages` is the principal: false is what a leased
+ * session sees.
+ */
+const page = (rows = [row], { at = '/code', manages = true, signedIn = manages } = {}) =>
   createElement(
     MemoryRouter,
-    { initialEntries: ['/code'] },
+    { initialEntries: [at] },
+    createElement(Probe),
     createElement(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      CodePage as any,
-      { row, shell: { rows, plugins: [] }, operator: true, named: () => undefined },
+      PageLede as any,
+      { rows },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        CodePage as any,
+        {
+          row,
+          shell: { rows, plugins: [] },
+          manages,
+          signedIn,
+          named: () => undefined,
+        },
+      ),
     ),
   );
+/** Press a node of the drawing by the name it carries, which is what a reader presses. */
+const pickNode = async (name: string) => {
+  const label = [
+    ...document.querySelectorAll('svg .bg-name title, svg .bg-ring title, .bg-ref'),
+  ].find((node) => node.textContent === name);
+  const node = label?.closest('g.bg-node');
+  if (!node) throw new Error(`No node reading “${name}”. Page: ${text().slice(0, 600)}`);
+  await press(node);
+};
+/** A merge is a mark and not a word, so it is pressed by where it stands in the plan. */
+const pickBase = async (at: number) => {
+  const mark = [...document.querySelectorAll('svg .bg-merge')][at]?.closest('g.bg-node');
+  if (!mark) throw new Error(`No merge at ${at}. Page: ${text().slice(0, 600)}`);
+  await press(mark);
+};
+const press = async (node: Element) => {
+  await act(async () => {
+    node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await settle(0);
+};
+/** Answer a field by its label, the way a person does: type, and let the page follow. */
+const write = async (label: string, value: string) => {
+  const field = [...document.querySelectorAll('label')]
+    .find((item) => item.textContent?.startsWith(label))
+    ?.querySelector<HTMLTextAreaElement | HTMLInputElement>('textarea, input');
+  if (!field) throw new Error(`No field called “${label}”. Page: ${text().slice(0, 600)}`);
+  const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!;
+  await act(async () => {
+    set.call(field, value);
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await settle(0);
+};
 const github = (over: Record<string, unknown> = {}) => ({
   body: {
     configured: true,
@@ -239,7 +305,11 @@ const published = (over: Partial<CodePublication> = {}): CodePublication => ({
   ...over,
 });
 /** The whole project read, of which the drawing uses two parts. */
-const status = (units: CodeUnit[], bases: CodeBaseRecord[]): CodeProjectStatus => ({
+const status = (
+  units: CodeUnit[],
+  bases: CodeBaseRecord[],
+  over: Partial<CodeProjectStatus> = {},
+): CodeProjectStatus => ({
   project: null,
   store: null,
   operations: [],
@@ -248,6 +318,24 @@ const status = (units: CodeUnit[], bases: CodeBaseRecord[]): CodeProjectStatus =
   blockers: [],
   units,
   bases,
+  ...over,
+});
+/** One opinion Code published about why a unit cannot proceed. */
+const blocker = (
+  instanceId: string,
+  code: string,
+  related: { kind: string; id: string; label: string }[] = [],
+): CodeProjectStatus['blockers'][number] => ({
+  instanceId,
+  provider: 'code',
+  key: 'merge',
+  code,
+  status: 409,
+  message: 'Code says so.',
+  next: 'An operator looks at the base.',
+  related,
+  since: '2026-09-04T00:00:00.000Z',
+  updatedAt: '2026-09-04T00:00:00.000Z',
 });
 
 /**
@@ -257,106 +345,131 @@ const status = (units: CodeUnit[], bases: CodeBaseRecord[]): CodeProjectStatus =
  * waiting behind it, a quarantined lane, a lane tainted by a quarantined base,
  * and a publication that reached main.
  */
-const project = () => {
-  const units = [
-    unit('u1', {
-      base: pin('main', 'c0'),
-      acceptance: accepted('c1'),
-      generation: 1,
-      writerState: 'closed',
-      canonicalHead: 'c1',
-      mirroredHead: 'r1',
-      mirroredAt: '2026-09-02T00:00:00.000Z',
-      baseStatus: null,
-    }),
-    unit('u2', {
-      base: pin('accepted', 'c1', ['u1']),
-      acceptance: accepted('c2'),
-      canonicalHead: 'c2',
-      mirroredHead: 'c2',
-      baseStatus: null,
-    }),
-    unit('u3', {
-      base: pin('main', 'c0'),
-      acceptance: accepted('c3'),
-      canonicalHead: 'c3',
-      mirroredHead: 'c3',
-      baseStatus: null,
-    }),
-    unit('u4', {
-      base: pin('merged', 'm1', ['u2', 'u3']),
-      generation: 2,
-      writerState: 'active',
-      canonicalHead: 'w4',
-      mirroredHead: null,
-      baseStatus: { status: 'pinned', pin: pin('merged', 'm1', ['u2', 'u3']) },
-    }),
-    unit('u5', {
-      base: pin('main', 'c0'),
-      baseStatus: { status: 'pinned', pin: pin('main', 'c0') },
-    }),
-    unit('u6', { baseStatus: { status: 'blocked', blockers: [], merge: ['c1', 'm1'] } }),
-    unit('u7', {
-      base: pin('main', 'c0'),
-      acceptance: accepted('c7'),
-      canonicalHead: 'c7',
-      mirroredHead: 'c7',
-      baseStatus: null,
-    }),
-    unit('u8', {
-      quarantine: { operationId: 'op_1' },
-      canonicalHead: 'w8',
-      generation: 1,
-      writerState: 'recovery_required',
-      baseStatus: { status: 'pinned', pin: pin('main', 'c0') },
-    }),
-    // Tainted through a quarantined base rather than by its own capture: the server
-    // says so with a blocker and no quarantine of its own.
-    unit('u9', {
-      baseStatus: {
-        status: 'blocked',
-        blockers: [
-          {
-            key: 'quarantine',
-            code: 'code_quarantined',
-            status: 409,
-            message: 'This unit uses a quarantined base.',
-            next: 'An administrator creates corrective work.',
-            related: [],
-          },
+const units = (): CodeUnit[] => [
+  unit('u1', {
+    base: pin('main', 'c0'),
+    acceptance: accepted('c1'),
+    generation: 1,
+    writerState: 'closed',
+    canonicalHead: 'c1',
+    mirroredHead: 'r1',
+    mirroredAt: '2026-09-02T00:00:00.000Z',
+    baseStatus: null,
+  }),
+  unit('u2', {
+    base: pin('accepted', 'c1', ['u1']),
+    acceptance: accepted('c2'),
+    canonicalHead: 'c2',
+    mirroredHead: 'c2',
+    baseStatus: null,
+  }),
+  unit('u3', {
+    base: pin('main', 'c0'),
+    acceptance: accepted('c3'),
+    canonicalHead: 'c3',
+    mirroredHead: 'c3',
+    baseStatus: null,
+  }),
+  unit('u4', {
+    base: pin('merged', 'm1', ['u2', 'u3']),
+    generation: 2,
+    writerState: 'active',
+    canonicalHead: 'w4',
+    mirroredHead: null,
+    baseStatus: { status: 'pinned', pin: pin('merged', 'm1', ['u2', 'u3']) },
+  }),
+  unit('u5', {
+    base: pin('main', 'c0'),
+    baseStatus: { status: 'pinned', pin: pin('main', 'c0') },
+  }),
+  unit('u6', { baseStatus: { status: 'blocked', blockers: [], merge: ['c1', 'm1'] } }),
+  unit('u7', {
+    base: pin('main', 'c0'),
+    acceptance: accepted('c7'),
+    canonicalHead: 'c7',
+    mirroredHead: 'c7',
+    baseStatus: null,
+  }),
+  unit('u8', {
+    quarantine: { operationId: 'op_1' },
+    canonicalHead: 'w8',
+    generation: 1,
+    writerState: 'recovery_required',
+    baseStatus: { status: 'pinned', pin: pin('main', 'c0') },
+  }),
+  // Tainted through a quarantined base rather than by its own capture: the server
+  // says so with a blocker and no quarantine of its own.
+  unit('u9', {
+    baseStatus: {
+      status: 'blocked',
+      blockers: [
+        {
+          key: 'quarantine',
+          code: 'code_quarantined',
+          status: 409,
+          message: 'This unit uses a quarantined base.',
+          next: 'An administrator creates corrective work.',
+          related: [],
+        },
+      ],
+    },
+  }),
+];
+const bases = (): CodeBaseRecord[] => [
+  base('b1', {
+    members: ['c2', 'c3'],
+    parents: ['c2', 'c3'],
+    state: 'resolved',
+    quarantined: true,
+    result: { method: 'auto', commit: 'm1', tree: 't', engine: 'git' },
+  }),
+  base('b2', {
+    members: ['c1', 'm1'],
+    parents: ['c1', 'm1'],
+    state: 'awaiting_resolution',
+    conflict: { paths: ['train/loop.py'], messages: 'both changed' },
+    resolutionTaskId: 'u5',
+  }),
+];
+const names = new Map([
+  ['main', { name: 'main' }],
+  ['u1', { name: 'Pin the tokenizer', to: '/tasks/u1' }],
+  ['u2', { name: 'Baseline p97', to: '/experiments/u2' }],
+  ['u3', { name: 'Sweep depth', to: '/experiments/u3' }],
+  ['u4', { name: 'Fold both sweeps', to: '/tasks/u4' }],
+  ['u5', { name: 'Resolve loader', to: '/tasks/u5' }],
+  ['u6', { name: 'Long-run grokking', to: '/experiments/u6' }],
+  ['u7', { name: 'Wave one', to: '/consolidation/u7' }],
+  ['u9', { name: 'Re-run the ablation grid', to: '/experiments/u9' }],
+]);
+const commands = () => [receipt('u1', 'a1', 1), receipt('u1', 'a2', 2), receipt('u1', 'c1', 3)];
+const project = () => gitModel(status(units(), bases()), commands(), [published()], names);
+
+/** That same project as the page reads it, with the lists that name its lanes. */
+const servedProject = (over: Partial<CodeProjectStatus> = {}) => {
+  serve('/tools/ui.read', {
+    body: { result: { commands: commands(), status: status(units(), bases(), over) } },
+  });
+  serve('/tools/ui.home', {
+    body: {
+      result: {
+        tasks: [
+          { id: 'u1', title: 'Pin the tokenizer' },
+          { id: 'u4', title: 'Fold both sweeps' },
+          { id: 'u5', title: 'Resolve loader' },
+        ],
+        experiments: [
+          { id: 'u2', name: 'Baseline p97' },
+          { id: 'u3', name: 'Sweep depth' },
+          { id: 'u6', name: 'Long-run grokking' },
+          { id: 'u9', name: 'Re-run the ablation grid' },
         ],
       },
-    }),
-  ];
-  const bases = [
-    base('b1', {
-      members: ['c2', 'c3'],
-      parents: ['c2', 'c3'],
-      state: 'resolved',
-      quarantined: true,
-      result: { method: 'auto', commit: 'm1', tree: 't', engine: 'git' },
-    }),
-    base('b2', {
-      members: ['c1', 'm1'],
-      parents: ['c1', 'm1'],
-      state: 'awaiting_resolution',
-      conflict: { paths: ['train/loop.py'], messages: 'both changed' },
-      resolutionTaskId: 'u5',
-    }),
-  ];
-  const names = new Map([
-    ['main', { name: 'main' }],
-    ['u1', { name: 'Pin the tokenizer', to: '/tasks/u1' }],
-    ['u2', { name: 'Baseline p97', to: '/experiments/u2' }],
-    ['u3', { name: 'Sweep depth', to: '/experiments/u3' }],
-    ['u4', { name: 'Fold both sweeps', to: '/tasks/u4' }],
-    ['u5', { name: 'Resolve loader', to: '/tasks/u5' }],
-    ['u6', { name: 'Long-run grokking', to: '/experiments/u6' }],
-    ['u7', { name: 'Wave one', to: '/consolidation/u7' }],
-    ['u9', { name: 'Re-run the ablation grid', to: '/experiments/u9' }],
-  ]);
-  const commands = [receipt('u1', 'a1', 1), receipt('u1', 'a2', 2), receipt('u1', 'c1', 3)];
-  return gitModel(status(units, bases), commands, [published()], names);
+    },
+  });
+  serve('/tools/consolidation.list', { body: { result: [{ id: 'u7', name: 'Wave one' }] } });
+  serve('/code/publications', { body: { publications: [published()] } });
+  serve('/code/github', connected());
 };
 
 test('the model draws every kind of node and states every relation a record carries', () => {
@@ -458,7 +571,10 @@ test('a relation is said by the record whose own field says it', () => {
 
 test('the drawing and the list are placed from the same model, or not placed at all', () => {
   const model = project();
-  assert.equal(canvas(model, 899), null, 'below 900 there is no room for a lane and its label');
+  assert.equal(canvas(model, 799), null, 'under its own minimum there is no room to place it');
+  // The room a 1440 screen leaves beside the card, with the rail open: the drawing is
+  // placed there rather than falling back to the list beside an orphaned card.
+  assert.ok(canvas(model, 820), 'the drawing is placed in the room the card leaves at 1440');
   for (const width of [1280, 2560]) {
     const placed = canvas(model, width)!;
     assert.ok(placed, `${width} places the drawing`);
@@ -480,7 +596,7 @@ test('the drawing and the list are placed from the same model, or not placed at 
     assert.ok(placed.trunk.end > width - 8, `the trunk reaches the edge at ${width}`);
     assert.ok(placed.lanes.every((lane) => lane.tip.x <= width));
     const deepest = Math.max(...[...placed.at.values()].map((point) => point.x));
-    const column = (width - 360 - 48) / Math.max(...model.ranks.values());
+    const column = (width - 300 - 48) / Math.max(...model.ranks.values());
     assert.ok(width - 48 - deepest < column, `the drawing reaches the right edge at ${width}`);
     // Main is named at the commit the lanes were cut from, merged publication or not.
     assert.ok(placed.trunk.solid > placed.trunk.x0);
@@ -530,7 +646,7 @@ test('too narrow to draw, the same model reads as a list of the same nodes', asy
       MemoryRouter,
       { initialEntries: ['/code'] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(BranchList as any, { model }),
+      createElement(BranchList as any, { model, selected: null, onSelect: () => {} }),
     ),
   );
   const rows = [...document.querySelectorAll('.map-node')];
@@ -554,6 +670,86 @@ test('too narrow to draw, the same model reads as a list of the same nodes', asy
   assert.ok(/QUARANTINED/i.test(refused[0]!.textContent ?? ''), refused[0]!.textContent);
 });
 
+test('with no drawing to select on, the card opens under the row it was opened from', async (t) => {
+  t.after(unmount);
+  const model = project();
+  let asked: { head: boolean } | null = null;
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/code/unit/u6'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        BranchList as any,
+        {
+          model,
+          selected: 'u6',
+          onSelect: () => {},
+          card: (of: { head: boolean }) => {
+            asked = of;
+            return createElement('div', { id: 'code-props' }, 'what u6 is');
+          },
+        },
+      ),
+    ),
+  );
+  const held = [...document.querySelectorAll('.map-node')].find((item) =>
+    item.textContent?.includes('Long-run grokking'),
+  );
+  assert.ok(held?.className.includes('on'), 'the row says it is the one in hand');
+  assert.equal(held?.nextElementSibling?.id, 'code-props', 'and the card is the next thing read');
+  // The row that was pressed is the head already, so what opens under it starts at the
+  // first fact rather than saying the kind, the name and the state a second time.
+  assert.deepEqual(asked, { head: false });
+});
+
+test('the fold under a row says the row’s own head once, and the card beside says it', async (t) => {
+  t.after(unmount);
+  servedProject();
+  await mount(page([row], { at: '/code/unit/u6' }));
+  const beside = document.querySelector('#code-props');
+  assert.ok(beside?.querySelector('.code-card-name'), 'beside the drawing the card names itself');
+  await unmount();
+  // Stacked, the same card opens inside the row, which has already said all of that.
+  servedProject();
+  const model = project();
+  const { CodeCard } = await import('../packages/ui/web/views/code-card.js');
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/code/unit/u6'] },
+      createElement(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        BranchList as any,
+        {
+          model,
+          selected: 'u6',
+          onSelect: () => {},
+          card: (of: { head: boolean }) =>
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            createElement(CodeCard as any, {
+              ...of,
+              id: 'u6',
+              model,
+              status: status(units(), bases()),
+              publications: [],
+              names,
+              manages: false,
+              signedIn: false,
+              named: () => undefined,
+              onSelect: () => {},
+              onDone: () => {},
+            }),
+        },
+      ),
+    ),
+  );
+  const fold = document.querySelector('.code-card');
+  assert.ok(fold, text().slice(0, 300));
+  assert.equal(fold.querySelector('.code-card-name'), null, 'the fold repeats no head');
+  assert.equal(fold.getAttribute('aria-label'), 'Long-run grokking', 'and still names itself');
+});
+
 test('the drawing is one SVG, with a mark for every node the model holds', async (t) => {
   t.after(unmount);
   const model = project();
@@ -563,7 +759,7 @@ test('the drawing is one SVG, with a mark for every node the model holds', async
       MemoryRouter,
       { initialEntries: ['/code'] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(BranchCanvas as any, { model }),
+      createElement(BranchCanvas as any, { model, selected: null, onSelect: () => {} }),
     ),
   );
   const svg = document.querySelector('svg.branch-graph');
@@ -621,10 +817,14 @@ test('the page builds its model from what it reads, and titles nothing twice', a
   serve('/code/publications', { body: { publications: [published()] } });
   serve('/code/github', connected({ baseBranch: 'trunk' }));
   await mount(page([row, waves]));
-  assert.ok(text().includes('Branches 3'), text().slice(0, 400));
-  assert.ok(text().includes('Merges 1'), text().slice(0, 400));
-  // The shell titles the row, so the page adds no heading of its own.
-  assert.equal(document.querySelector('h1'), null, text().slice(0, 200));
+  // The shell titles the row and the page's own counts stand on that one line beside
+  // its name, so the page draws no heading and no band of its own under it.
+  const lede = document.querySelector('.page-lede');
+  assert.ok(lede?.textContent?.includes('Code'), text().slice(0, 200));
+  assert.ok(lede?.textContent?.includes('Branches 3'), lede?.textContent);
+  assert.ok(lede?.textContent?.includes('Merges 1'), lede?.textContent);
+  assert.equal(document.querySelectorAll('h1').length, 1, text().slice(0, 200));
+  assert.ok(!document.querySelector('.page-stage h1'), 'the page itself titles nothing');
   // Only one of the two says the pull request count: the section that lists them.
   assert.equal(text().match(/Pull requests/g)?.length, 1, text());
   const labels = [...document.querySelectorAll('.bg-name')].map((node) => node.textContent);
@@ -637,6 +837,521 @@ test('the page builds its model from what it reads, and titles nothing twice', a
     labels.join(' · '),
   );
   assert.equal(document.querySelector('.bg-ref')?.textContent, 'trunk', 'the trunk is named');
+});
+
+/* What a chip groups, and who waits on a merge ------------------------------ */
+
+test('a chip is a group of blockers, its lights are what they name, and a zero is not drawn', () => {
+  const model = project();
+  const chips = chipsOf(
+    [
+      blocker('u6', 'code_merge_conflict', [{ kind: 'task', id: 'u5', label: 'Resolve loader' }]),
+      // Two opinions about one unit are one thing to look at, not two.
+      blocker('u6', 'code_merge_conflict'),
+      blocker('u9', 'code_quarantined'),
+      blocker('u4', 'code_base_wait'),
+      // A code the table does not name is still work waiting on the server.
+      blocker('u8', 'code_writer_busy'),
+    ],
+    model,
+  );
+  assert.deepEqual(
+    chips.map((chip) => [chip.label, chip.count]),
+    [
+      ['Conflicted', 1],
+      ['Waiting', 2],
+      ['Quarantined', 1],
+    ],
+    'the groups keep their order, and “To publish” has nothing behind it',
+  );
+  const lit = chips[0]!.lights;
+  assert.ok(lit.has('u6') && lit.has('u5'), 'the unit and the record the blocker names');
+  // The base it is waiting behind is what the reader is being sent to look at.
+  assert.ok(lit.has('b2'), [...lit].join(' · '));
+  assert.ok(!lit.has('u1'), 'and nothing the blocker did not name');
+});
+
+test('a recoverable writer waits; only quarantine is called quarantine', () => {
+  const model = project();
+  const chips = chipsOf(
+    [
+      blocker('u8', 'code_recovery_required'),
+      blocker('u9', 'code_quarantined'),
+      // Blockers are every one the project holds; the drawing keeps a window of units,
+      // so a chip never counts work pressing it could not light.
+      blocker('u404', 'code_merge_conflict'),
+    ],
+    model,
+  );
+  assert.deepEqual(
+    chips.map((chip) => [chip.label, chip.count]),
+    [
+      ['Waiting', 1],
+      ['Quarantined', 1],
+    ],
+    'a writer stuck mid-generation is recoverable and is not called quarantined',
+  );
+  assert.ok(
+    chips.every((chip) => chip.lights.size > 0),
+    'a chip that lights nothing is not drawn at all',
+  );
+});
+
+test('the two principals are the server’s two rules, and each verb hangs off one', () => {
+  const account = (kind: 'user' | 'key' | 'actor') => ({ kind, projects: [] }) as never;
+  const actor = (role: string) => ({ id: 'a', projectId: 'p', name: 'Ada', role, active: true });
+  for (const kind of ['user', 'key', 'actor'] as const) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(managesCode(actor('operator') as any), true, `an operator by ${kind}`);
+    assert.equal(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      signedInAdmin(actor('operator') as any, account(kind)),
+      kind === 'user',
+      'only a person fences a writer or merges a publication',
+    );
+  }
+  for (const role of ['producer', 'reviewer', 'reader']) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(managesCode(actor(role) as any), false, `${role} controls no server work`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(signedInAdmin(actor(role) as any, account('user')), false, role);
+  }
+});
+
+test('the units waiting on a base are joined by the member set alone', () => {
+  const all = units();
+  const [clean, conflicted] = bases();
+  assert.deepEqual(waitersOf(conflicted!, all), ['u6'], 'the same commits, in any order');
+  assert.deepEqual(waitersOf(clean!, all), [], 'a unit already pinned on it waits no longer');
+  assert.deepEqual(
+    waitersOf(base('b3', { members: [] }), all),
+    [],
+    'a base made of nothing answers nobody',
+  );
+});
+
+/* The address, the card, and the operator's verbs --------------------------- */
+
+test('selecting a node is an address, and the drawing it was made on never remounts', async (t) => {
+  t.after(unmount);
+  servedProject();
+  await mount(page());
+  const drawing = document.querySelector('svg.branch-graph');
+  assert.ok(drawing, text().slice(0, 300));
+  await pickNode('Long-run grokking');
+  assert.equal(where, '/code/unit/u6', 'a lane is its record');
+  assert.ok(document.querySelector('#code-props')?.textContent?.includes('Long-run grokking'));
+  assert.ok(
+    document.querySelector('svg.branch-graph') === drawing,
+    'the canvas is the same element it was before the address changed',
+  );
+  await pickBase(1);
+  assert.equal(where, '/code/merge/b2', 'a base is its key, and only in the address');
+  assert.ok(
+    document.querySelector('svg.branch-graph') === drawing,
+    'and again when the selection moves from a lane to a merge',
+  );
+  // Pressing the held node again lets it go, and the address goes back with it.
+  await pickBase(1);
+  assert.equal(where, '/code');
+  assert.equal(document.querySelector('#code-props'), null);
+});
+
+test('the base card names what was merged, what conflicted and who waits — never the key', async (t) => {
+  t.after(unmount);
+  servedProject();
+  await mount(page([row], { at: '/code/merge/b2' }));
+  const card = document.querySelector('#code-props');
+  const said = card?.textContent ?? '';
+  assert.ok(said.includes('A merge of 2'), said);
+  assert.ok(/AWAITING RESOLUTION/i.test(said), said);
+  // A commit that went in is named by the record accepted with it, and shown as a short.
+  assert.ok(said.includes('Pin the tokenizer'), said);
+  assert.ok(card?.querySelectorAll('.mono').length, 'the commits are machine text');
+  assert.ok(said.includes('train/loop.py'), said);
+  assert.ok(said.includes('Resolve loader'), said);
+  assert.ok(
+    /IN PROGRESS|READY|WORKING|PINNED/i.test(said),
+    `the resolution task's own state: ${said}`,
+  );
+  // The units waiting on it come from the member set, not from a field the server sends.
+  assert.ok(said.includes('Long-run grokking'), said);
+  assert.ok(!text().includes('b2'), 'the digest is in the address and nowhere on the page');
+  // On the ordinary pairwise merge the parents are the members, so the card does not
+  // print the same two commits again with the record names taken off them.
+  assert.ok(!said.includes('Joined'), `the one fact is said once: ${said}`);
+  // Every record the card names is named the one way, as a link to the record itself.
+  const waiting = [...(card?.querySelectorAll('.kv-row') ?? [])].find((line) =>
+    line.textContent?.startsWith('Waiting on it'),
+  );
+  assert.ok(waiting?.querySelector('a'), `a waiter is a link, as its resolver is: ${said}`);
+  assert.equal(waiting?.querySelector('button'), null, 'and never a control dressed as a value');
+});
+
+test('a merge made from an earlier merge says what it joined, by name', async (t) => {
+  t.after(unmount);
+  const model = gitModel(status(units(), bases()), commands(), [], names);
+  const { CodeCard } = await import('../packages/ui/web/views/code-card.js');
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/code/merge/b2'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(CodeCard as any, {
+        id: 'b2',
+        model,
+        // b2 joins one accepted commit with the result of b1, so its parents are not
+        // its members and the small tree is worth saying.
+        status: status(units(), [
+          bases()[0]!,
+          { ...bases()[1]!, members: ['c1', 'c7', 'm1'], parents: ['c1', 'm1'] },
+        ]),
+        publications: [],
+        names,
+        manages: false,
+        signedIn: false,
+        named: () => undefined,
+        onSelect: () => {},
+        onDone: () => {},
+      }),
+    ),
+  );
+  const joined = [...document.querySelectorAll('.kv-row')].find((line) =>
+    line.textContent?.startsWith('Joined'),
+  );
+  assert.ok(joined, `a merge of merges says what it joined: ${text().slice(0, 300)}`);
+  assert.ok(
+    joined.textContent?.includes('Pin the tokenizer'),
+    `and names each parent as its record: ${joined.textContent}`,
+  );
+});
+
+test('the unit card is the record’s own Code section, and the trunk says what it holds', async (t) => {
+  t.after(unmount);
+  servedProject({
+    project: {
+      mode: 'local',
+      repositoryId: 'repo',
+      boundBy: 'actor_1',
+      boundAt: '2026-09-01T00:00:00.000Z',
+      main: {
+        oid: 'c0',
+        admittedBy: 'actor_1',
+        admittedAt: '2026-09-01T00:00:00.000Z',
+        stored: true,
+      },
+      durability: 'code',
+    },
+  });
+  await mount(page([row], { at: '/code/unit/u8' }));
+  const said = document.querySelector('#code-props')?.textContent ?? '';
+  // A lane no list names is its branch, and the section states the branch either way.
+  assert.ok(said.includes('merv/work/u8'), said);
+  assert.ok(/RECOVERY REQUIRED/i.test(said), said);
+  assert.ok(said.includes('cannot be reused'), said);
+  assert.ok(document.querySelector('#code-props')?.className.includes('code-refused'), said);
+  await pickNode('main');
+  const trunk = document.querySelector('#code-props')?.textContent ?? '';
+  assert.ok(trunk.includes('in the repository this server keeps'), trunk);
+});
+
+test('an operator verb names its consequence and keeps the reason; a session is offered none', async (t) => {
+  t.after(unmount);
+  servedProject();
+  let sent: Record<string, unknown> = {};
+  serve('/tools/code.base.quarantine', (_call, body) => {
+    sent = body;
+    return { body: { result: { key: 'b2', quarantined: true } } };
+  });
+  await mount(page([row], { at: '/code/merge/b2' }));
+  const named = (label: string) =>
+    [...document.querySelectorAll('button')].find((item) => item.textContent === label);
+  for (const label of ['Suspend merge', 'Cancel merge', 'Quarantine base'])
+    assert.ok(named(label), `${label} stands on the base it acts on: ${text().slice(0, 300)}`);
+  assert.ok(!named('Retry merge'), 'only infrastructure work is retried, and this is a conflict');
+  assert.ok(!named('Resume merge'), 'and only a suspended base resumes');
+  // What cannot be undone wears the refusal's colour and never the page's accent.
+  for (const label of ['Cancel merge', 'Quarantine base']) {
+    const control = named(label)!;
+    assert.ok(control.closest('.act-danger'), `${label} is drawn in the refusal's colour`);
+    assert.ok(!control.className.includes('btn--primary'), `${label} does not wear the accent`);
+  }
+  await click('Quarantine base');
+  const guard = document.querySelector('[role="alertdialog"]');
+  assert.ok(guard?.textContent?.includes('cannot be reused'), guard?.textContent);
+  // While a guard is open it is the only verb drawn, so no other sentence's control
+  // stands a press away from this one's confirmation.
+  for (const label of ['Suspend merge', 'Cancel merge'])
+    assert.ok(!named(label), `${label} stands aside while another guard is open`);
+  // The reason the tool keeps is asked for here, and nothing is sent without it.
+  await click('Quarantine base');
+  assert.equal(requests.filter((line) => line.includes('code.base.quarantine')).length, 0);
+  assert.ok(document.querySelector('.error-message'), text().slice(0, 400));
+  await write('Reason', 'The retained result is poisoned.');
+  // The refusal is read from the field, so it goes the moment the field has an answer.
+  assert.equal(document.querySelector('.error-message'), null, text().slice(0, 400));
+  await click('Quarantine base');
+  assert.equal(sent.key, 'b2', JSON.stringify(sent));
+  assert.equal(sent.reason, 'The retained result is poisoned.');
+  assert.equal(typeof sent.requestId, 'string', 'the same request can be retried as itself');
+  assert.equal(document.querySelector('[role="alertdialog"]'), null, 'the guard closes on a yes');
+});
+
+test('the refusal colour marks what cannot be undone, opener and confirm alike', async (t) => {
+  t.after(unmount);
+  servedProject();
+  await mount(page([row], { at: '/code/merge/b2' }));
+  // A reversible verb's confirmation is the page's ordinary forward control; only the
+  // two acts that cannot be taken back are drawn in the colour that says so.
+  await click('Suspend merge');
+  const confirm = [...document.querySelectorAll('[role="alertdialog"] button')][0]!;
+  assert.ok(confirm.textContent?.includes('Suspend merge'), confirm.textContent);
+  assert.ok(!confirm.className.includes('btn--danger'), confirm.className);
+  await click('Cancel');
+  await click('Quarantine base');
+  const refusal = [...document.querySelectorAll('[role="alertdialog"] button')][0]!;
+  assert.ok(refusal.className.includes('btn--danger'), refusal.className);
+});
+
+test('fencing a writer is offered to a person and to nobody else', async (t) => {
+  t.after(unmount);
+  // An operator holding a key manages the bases; the server answers this one tool only
+  // to a signed-in person, so the page does not offer what would come back refused.
+  servedProject();
+  await mount(page([row], { at: '/code/unit/u8', manages: true, signedIn: false }));
+  assert.ok(!text().includes('Fence the writer'), text().slice(0, 300));
+  await unmount();
+  servedProject();
+  let sent: Record<string, unknown> = {};
+  serve('/tools/code.unit.fence', (_call, body) => {
+    sent = body;
+    return { body: { result: { unitId: 'u8', state: 'closed' } } };
+  });
+  await mount(page([row], { at: '/code/unit/u8', manages: true, signedIn: true }));
+  await click('Fence the writer');
+  await click('Fence the writer');
+  assert.deepEqual(Object.keys(sent).sort(), ['requestId', 'unitId'], JSON.stringify(sent));
+  assert.equal(sent.unitId, 'u8');
+});
+
+test('a session principal reads the page and is offered none of its verbs', async (t) => {
+  t.after(unmount);
+  servedProject({
+    mirror: {
+      state: 'blocked',
+      repository: 'lab/grokking',
+      blockedBy: null,
+      pending: 1,
+      oldestPendingAt: '2026-09-05T00:00:00.000Z',
+      lastError: null,
+      blockedRefs: [
+        {
+          operationId: 'op_9',
+          unitId: 'u1',
+          ref: 'refs/heads/merv/work/u1',
+          code: 'code_mirror_failed',
+          message: 'GitHub refused the push.',
+          at: '2026-09-05T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  await mount(page([row], { at: '/code/merge/b2', manages: false }));
+  const said = text();
+  // Everything the page reads is still there: only the verbs are not.
+  assert.ok(said.includes('A merge of 2'), said.slice(0, 300));
+  assert.ok(said.includes('refs/heads/merv/work/u1'), 'the blocked ref is still stated');
+  for (const label of ['Suspend merge', 'Cancel merge', 'Quarantine base', 'Retry mirror'])
+    assert.ok(!said.includes(label), `${label} is not offered to a session: ${said.slice(0, 300)}`);
+});
+
+test('the Operations fold holds the machinery, and a blocked ref its one verb', async (t) => {
+  t.after(unmount);
+  servedProject({
+    store: {
+      hosted: true,
+      objectFormat: 'sha1',
+      rootOid: null,
+      source: 'github',
+      tips: [],
+      diskBytes: 1_048_576,
+      quotaBytes: 10_485_760,
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+    },
+    operations: [
+      {
+        id: 'op_1',
+        kind: 'upload',
+        status: 'prepared',
+        phase: 'receiving',
+        unitId: 'u1',
+        generation: 1,
+        received: 512,
+        bytes: 2048,
+        partBytes: 512,
+        head: null,
+        error: null,
+        findings: [],
+        waiting: {
+          code: 'code_store_busy',
+          message: 'Another transfer holds the repository.',
+          next: 'It goes on by itself.',
+          at: '2026-09-05T00:00:00.000Z',
+        },
+        createdAt: '2026-09-05T00:00:00.000Z',
+        updatedAt: '2026-09-05T00:00:00.000Z',
+        completedAt: null,
+      },
+      {
+        id: 'op_2',
+        kind: 'import',
+        status: 'failed',
+        phase: null,
+        unitId: null,
+        generation: null,
+        received: 0,
+        bytes: null,
+        partBytes: 512,
+        head: null,
+        error: 'code_admission_refused',
+        findings: [{ rule: 'secret', path: 'configs/key.pem', oid: null }],
+        waiting: null,
+        createdAt: '2026-09-05T00:00:00.000Z',
+        updatedAt: '2026-09-05T00:00:00.000Z',
+        completedAt: '2026-09-05T00:01:00.000Z',
+      },
+    ],
+    warnings: [
+      {
+        code: 'code_ref_skipped',
+        ref: 'refs/heads/spike',
+        message: 'A branch nobody claims was left alone.',
+        at: '2026-09-05T00:00:00.000Z',
+      },
+    ],
+    mirror: {
+      state: 'blocked',
+      repository: 'lab/grokking',
+      blockedBy: null,
+      pending: 1,
+      oldestPendingAt: '2026-09-05T00:00:00.000Z',
+      lastError: 'code_mirror_failed',
+      blockedRefs: [
+        {
+          operationId: 'op_9',
+          unitId: 'u1',
+          ref: 'refs/heads/merv/work/u1',
+          code: 'code_mirror_diverged',
+          message: 'The published branch holds a commit Merv did not write.',
+          at: '2026-09-05T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  await mount(page());
+  const fold = document.querySelector('.code-ops');
+  const said = fold?.textContent ?? '';
+  assert.ok(said.startsWith('Operations'), said.slice(0, 120));
+  // Mirror lag is a state and a time, never a count of how far behind it is.
+  assert.ok(/BLOCKED/i.test(said) && said.includes('lab/grokking'), said);
+  assert.ok(!/\d+ (refs?|commits?) behind/.test(said), said);
+  assert.ok(said.includes('refs/heads/merv/work/u1'), said);
+  assert.ok(said.includes('configs/key.pem'), 'a refusal names the place and not the text');
+  assert.ok(said.includes('A branch nobody claims was left alone.'), said);
+  // The refusal the mirror kept is a code, and is read as the refused transfers are.
+  assert.ok(said.includes('code mirror failed'), said);
+  assert.ok(!said.includes('code_mirror_failed'), said);
+  // Both halves of one sentence are written for a person, in the one unit.
+  assert.ok(said.includes('1.0 MB of 10.0 MB'), `disk against quota: ${said}`);
+  // A ref that holds somebody's work goes back in the queue only against the commit
+  // the operator says they kept, which is what the server requires and nothing sends
+  // without.
+  await click('Retry mirror');
+  assert.ok(
+    [...document.querySelectorAll('label')].some((item) =>
+      item.textContent?.includes('The commit you kept'),
+    ),
+    document.querySelector('[role="alertdialog"]')?.textContent,
+  );
+  await click('Retry mirror');
+  assert.equal(
+    requests.filter((line) => line.includes('code.mirror.retry')).length,
+    0,
+    'nothing is sent to be refused',
+  );
+  assert.ok(document.querySelector('.error-message'), text().slice(0, 400));
+  await write('The commit you kept', 'deadbeefdeadbeef');
+  await click('Retry mirror');
+  assert.equal(requests.filter((line) => line.includes('code.mirror.retry')).length, 1);
+});
+
+test('publishing that is off says why, and a fold with no machinery does not open', async (t) => {
+  t.after(unmount);
+  servedProject({
+    // The one configuration this fold exists to make repairable: nothing is published,
+    // and the reason is the fact that is present.
+    mirror: {
+      state: 'off',
+      repository: null,
+      blockedBy: 'code_automation_off',
+      pending: 0,
+      oldestPendingAt: null,
+      lastError: null,
+      blockedRefs: [],
+    },
+  });
+  await mount(page());
+  const said = document.querySelector('.code-ops')?.textContent ?? '';
+  assert.ok(/OFF/i.test(said), said);
+  assert.ok(said.includes('code automation off'), said);
+  await unmount();
+  // A project kept on its runner, with nothing linked and nothing in flight, has no
+  // machinery to fold: the summary is not drawn over an empty list. (Letting the page
+  // go takes the fixtures with it, so the next reading is served again.)
+  servedProject({
+    store: {
+      hosted: false,
+      objectFormat: 'sha1',
+      rootOid: null,
+      source: 'github',
+      tips: [],
+      diskBytes: 0,
+      quotaBytes: 0,
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+    },
+    mirror: null,
+  });
+  await mount(page());
+  assert.equal(document.querySelector('.code-ops'), null, text().slice(0, 400));
+});
+
+test('a superseded publication names the wave that replaced it, and never its id', async (t) => {
+  t.after(unmount);
+  const later = published({ proposalId: 'p2', instanceId: 'u7', title: 'Wave two' });
+  const stale = published({ stale: true, successor: 'p2', merge: null });
+  serve('/code/publications', { body: { publications: [stale, later] } });
+  serve('/tools/ui.read', {
+    body: { result: { commands: commands(), status: status(units(), bases()) } },
+  });
+  serve('/tools/ui.home', { body: { result: {} } });
+  serve('/tools/consolidation.list', { body: { result: [{ id: 'u7', name: 'Wave one' }] } });
+  serve('/code/github', connected());
+  await mount(page([row], { at: '/code/unit/p1' }));
+  const card = document.querySelector('#code-props');
+  const said = card?.textContent ?? '';
+  assert.ok(said.includes('Superseded'), text().slice(0, 400));
+  assert.ok(said.includes('Wave two'), said);
+  assert.ok(!said.includes('p2'), `the proposal id is not on screen: ${said}`);
+  // It is the ring beside it, so it is a control that goes there.
+  const control = [...(card?.querySelectorAll('button') ?? [])].find(
+    (item) => item.textContent === 'Wave two',
+  );
+  assert.ok(control?.className.includes('btn-text'), control?.className);
+  await press(control!);
+  assert.ok(
+    document.querySelector('#code-props')?.textContent?.includes('Wave two'),
+    'pressing it opens that wave’s own card',
+  );
 });
 
 /* The record's own section ------------------------------------------------- */
