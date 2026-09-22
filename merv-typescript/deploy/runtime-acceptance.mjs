@@ -293,7 +293,7 @@ export async function exerciseRuntime(start) {
         expectedRevision: research.workflow.revision,
         requestId: 'blocked-until-reflected',
       }),
-      { code: 'dependencies_pending' },
+      { code: 'reflection_not_approved' },
     );
 
     checkpoint('restart-persistence');
