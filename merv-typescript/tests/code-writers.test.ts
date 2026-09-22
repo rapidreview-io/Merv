@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { refused, writerFixture } from './fixtures/code-writers.js';
-import { CodeWriterService } from '@merv/code/writers';
+import { ResearchCodeWriters as CodeWriterService } from '@merv/code-research/writers';
 import { backends, faultAt, git, optional } from './fixtures/code-store.js';
 
 const fixture = writerFixture;
@@ -223,7 +223,7 @@ for (const backend of backends) {
       });
       assert.ok(!existsSync(join(f.paths.quarantine, abandoned.id)), 'superseded bytes are swept');
 
-      const writers = new CodeWriterService(f.state, f.scope, f.workflows, 900);
+      const writers = new CodeWriterService(f.state, f.scope, 900);
       const receipt = { headOid: first } as never;
       const completion = (commandId: string) =>
         ({ sessionId: 'ses_1', commandId, receipt }) as never;

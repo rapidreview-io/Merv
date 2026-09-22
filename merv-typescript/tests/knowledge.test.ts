@@ -19,7 +19,7 @@ import { TaskService } from '@merv/tasks';
 import { ExperimentService } from '@merv/experiments';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '../packages/code/src/service.js';
+import { CodeService } from '../packages/code-research/src/service.js';
 import { KnowledgeService } from '../packages/knowledge/src/index.js';
 import {
   MervError,

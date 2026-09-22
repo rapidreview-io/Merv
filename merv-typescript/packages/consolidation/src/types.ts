@@ -5,7 +5,7 @@ import type {
   CodeCandidateDecision,
   CodeDecisionManifest,
   CodeReconciliation,
-} from '@merv/code/types';
+} from '@merv/code-research/types';
 import type {} from 'cordis';
 
 export interface ConsolidationDecision {

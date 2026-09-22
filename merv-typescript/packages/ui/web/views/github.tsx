@@ -3,6 +3,7 @@ import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
 import { LoadState, StatusPill } from '../components';
 import { GitHubAutomation } from './github-automation';
+import { GitHubPreparation } from './github-prepare';
 
 const request = <T,>(action = '', body?: unknown) =>
   accountRequest<T>(`/code/github${action}`, {
@@ -137,7 +138,9 @@ export function GitHubConnection() {
               </a>
               <p className="faint">
                 {status.repository.private ? 'Private' : 'Public'} ·{' '}
-                {status.repository.defaultBranch ?? 'No default branch'}
+                {status.baseBranch
+                  ? `Research base: ${status.baseBranch}`
+                  : `GitHub default: ${status.repository.defaultBranch ?? 'No default branch'}`}
               </p>
             </div>
           ) : (
@@ -260,7 +263,10 @@ export function GitHubConnection() {
                       </button>
                     </>
                   ) : (
-                    <p className="muted">No accessible repositories</p>
+                    <p className="muted">
+                      No accessible repositories. Grant access with “Choose repositories on GitHub”,
+                      then select again.
+                    </p>
                   )}
                 </div>
               )}
@@ -279,6 +285,12 @@ export function GitHubConnection() {
           }
         />
       )}
+      {status?.repository &&
+        status.canManage &&
+        status.automation !== 'off' &&
+        status.baseBranch && (
+          <GitHubPreparation key={`${epoch}:${status.revision}`} status={status} />
+        )}
     </section>
   );
 }

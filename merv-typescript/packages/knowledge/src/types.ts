@@ -8,7 +8,7 @@ import type {
 } from '@merv/contracts';
 import type { Claim } from '@merv/claims/types';
 import type { Experiment } from '@merv/experiments/types';
-import type { CodeCapture, CodeCaptureRef } from '@merv/code/types';
+import type { CodeCapture, CodeCaptureRef } from '@merv/code-research/types';
 import type {} from 'cordis';
 
 /** No publication writer exists yet. A corpus snapshot is not a published reflection. */

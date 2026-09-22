@@ -10,7 +10,7 @@ import {
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { CodeCapture, CodeCaptureRef } from './types.js';
-import { parseCodeInput } from './input.js';
+import { parseCodeInput } from '@merv/code/input';
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 export const codeCaptureRefSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('session-final'), sessionId: id }).strict(),

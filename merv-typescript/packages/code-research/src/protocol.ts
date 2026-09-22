@@ -12,12 +12,12 @@ import {
   type State,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
-import { pendingMerge } from './pending-merge.js';
-import { parseCodeInput } from './input.js';
-import type { CodeStore } from './store/operations.js';
-import { workBranch } from './store/refs.js';
+import { pendingMerge } from '@merv/code/pending-merge';
+import { parseCodeInput } from '@merv/code/input';
+import type { CodeStore } from '@merv/code/store/operations';
+import { workBranch } from '@merv/code/store/refs';
 import { CODE_DRIVER } from './units.js';
-import type { CodeWriterService } from './writers.js';
+import type { CodeWriterService } from '@merv/code/writers';
 
 /**
  * The second workspace protocol, as machines speak it. The API forwards a route and an opaque

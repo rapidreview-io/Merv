@@ -14,8 +14,8 @@
     "@merv/claims": "0.1.0",
     "@merv/tasks": "0.1.0",
     "@merv/experiments": "0.1.0",
-    "@merv/code": "0.1.0",
     "@merv/api": "0.1.0",
-    "@merv/ui": "0.1.0"
+    "@merv/ui": "0.1.0",
+    "@merv/code-research": "0.1.0"
   }
 }

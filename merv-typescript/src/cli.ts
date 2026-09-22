@@ -3,12 +3,8 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Context } from 'cordis';
 import { runnerWith, validateRunnerConfig } from '@merv/runner';
-import { codeWorkspaceDriver } from '@merv/code/driver/index';
 import { createApp } from './app.js';
 import { uploadArtifact } from './artifact-upload.js';
-import { importRepository } from './code-import.js';
-import { restoreCode } from './code-restore.js';
-import { S3BackupStore } from '@merv/code/store/backup';
 import { defaultConfigFile, loadConfiguration } from './config.js';
 import type {} from '@merv/identity/types';
 import { check, MervError, type Credentials, type Role } from '@merv/contracts';
@@ -101,7 +97,11 @@ async function runMachine(configPath: string) {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
-    const fiber = ctx.plugin(runnerWith([codeWorkspaceDriver]), config);
+    const drivers =
+      parsed.workspaceDrivers?.length === 0
+        ? []
+        : [(await import('@merv/code/driver/index')).codeWorkspaceDriver];
+    const fiber = ctx.plugin(runnerWith(drivers), config);
     await fiber.await();
     if (stopping) return;
     const runner = ctx.get('runner');
@@ -217,6 +217,7 @@ with the database's own tool before starting the server.`);
     return;
   }
   if (command === 'code-import') {
+    const { importRepository } = await import('./code-import.js');
     check(
       args.url &&
         args.repository &&
@@ -240,6 +241,8 @@ with the database's own tool before starting the server.`);
     return;
   }
   if (command === 'code-restore') {
+    const { restoreCode } = await import('./code-restore.js');
+    const { S3BackupStore } = await import('@merv/code/store/backup');
     const environment = (name: string) => {
       const value = process.env[name]?.trim();
       check(value, 'arguments', `code-restore needs ${name} in the environment`);

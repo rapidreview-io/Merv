@@ -1,5 +1,5 @@
 import { visible, check, type TaskConfirmation } from '@merv/contracts';
-import type { CodeCapture } from '@merv/code/types';
+import type { CodeCapture } from '@merv/code-research/types';
 
 export const acceptanceChecks = (checks: string[]) =>
   checks.map((text, index) => ({ number: index + 1, text }));

@@ -27,9 +27,20 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { chmod, link, lstat, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
+import {
+  appendFile,
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  rm,
+  stat,
+} from 'node:fs/promises';
 import { join } from 'node:path';
+import { hashFile, syncPath } from '../files.js';
 import { pendingMerge, verifyResolution } from '../pending-merge.js';
 import { parseCodeInput } from '../input.js';
 import type { WriterFence } from '../writers.js';
@@ -49,7 +60,6 @@ import {
   CodeRepositories,
   diskBytes,
   EXPORT_TTL_MS,
-  syncDirectory,
   type CodeRepositoryConfig,
   type ObjectFormat,
 } from './repository.js';
@@ -110,6 +120,7 @@ export interface CodeImportRemote {
       repository: { id: number; fullName: string };
       env: Record<string, string>;
     }) => Promise<T>,
+    binding?: CodeRepositoryImportInput['githubBinding'],
   ): Promise<T>;
 }
 /** What a machine needs to read a download, or the word that it already has the head. */
@@ -170,7 +181,8 @@ interface OperationRow {
 }
 type Bundle = { sha256: string; bytes: number };
 type ImportPayload = { format: 1; actorId: string } & (
-  { source: 'bundle'; tip: string; bundle: Bundle } | { source: 'github'; ref: string }
+  | { source: 'bundle'; tip: string; bundle: Bundle }
+  | { source: 'github'; ref: string; githubBinding?: CodeRepositoryImportInput['githubBinding'] }
 );
 /**
  * An upload pins everything its later calls are compared with: who began it, from which
@@ -327,6 +339,18 @@ export class CodeStore {
   readonly repositories: CodeRepositories;
   readonly config: CodeStoreConfig;
   private closed = false;
+  private closing?: Promise<void>;
+  private readonly cancellation = new AbortController();
+  private readonly active = new Set<Promise<unknown>>();
+  private owned<T>(operation: () => Promise<T>): Promise<T> {
+    const work = this.repositories.git.scoped(this.cancellation.signal, operation);
+    this.active.add(work);
+    void work.then(
+      () => this.active.delete(work),
+      () => this.active.delete(work),
+    );
+    return work;
+  }
   private timer?: NodeJS.Timeout;
   private waker?: NodeJS.Timeout;
   private woken = false;
@@ -353,14 +377,15 @@ export class CodeStore {
     private readonly remote?: CodeImportRemote,
     /** Throws at a named boundary, which is how a test ends the process there. */
     private readonly fault: (point: FaultPoint) => void = () => {},
+    private readonly sharedRepositories?: CodeRepositories,
   ) {
     this.config = { ...defaultStoreConfig, ...config };
-    this.repositories = new CodeRepositories(this.config);
+    this.repositories = sharedRepositories ?? new CodeRepositories(this.config);
   }
 
   /** Take the writer lock, then finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {
-    await this.repositories.open();
+    if (!this.sharedRepositories) await this.repositories.open();
     try {
       await this.maintain();
     } catch (error) {
@@ -402,7 +427,13 @@ export class CodeStore {
             tip: input.tip!,
             bundle: input.bundle!,
           }
-        : { format: 1, actorId: caller.actorId, source: 'github', ref: input.ref! };
+        : {
+            format: 1,
+            actorId: caller.actorId,
+            source: 'github',
+            ref: input.ref!,
+            ...(input.githubBinding ? { githubBinding: input.githubBinding } : {}),
+          };
     const inputHash = digest(body);
     const principal = `actor:${caller.actorId}`;
     const begin = async (insert: boolean) =>
@@ -544,7 +575,9 @@ export class CodeStore {
       return (await this.row(tx, id))!;
     });
     if (prepared.status !== 'prepared') return this.view(prepared);
-    await this.repositories.run(prepared.project_id, () => this.rebind(caller, prepared, input));
+    await this.owned(() =>
+      this.repositories.run(prepared.project_id, () => this.rebind(caller, prepared, input)),
+    );
     return this.view((await this.state.read((sql) => this.row(sql, prepared.id)))!);
   }
 
@@ -1039,6 +1072,13 @@ export class CodeStore {
     input: { sessionId: string; head: string; haves: string[]; secondParent?: string },
   ): Promise<CodeExport> {
     this.assertOpen();
+    return this.owned(() => this.writeExport(caller, input));
+  }
+
+  private async writeExport(
+    caller: Caller,
+    input: { sessionId: string; head: string; haves: string[]; secondParent?: string },
+  ): Promise<CodeExport> {
     const projectId = caller.projectId;
     const env = this.repositories.environment(projectId);
     const git = this.repositories.git;
@@ -1124,11 +1164,9 @@ export class CodeStore {
         return { upToDate: true as const, head: input.head };
       }
       await chmod(file, 0o600);
-      const hash = createHash('sha256');
-      for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
       const view = {
         exportId,
-        sha256: hash.digest('hex'),
+        sha256: await hashFile(file),
         bytes: (await stat(file)).size,
         head: input.head,
         prerequisites: (await bundleHeader(file, true)).prerequisites,
@@ -1320,12 +1358,7 @@ export class CodeStore {
           'These bytes exceed what the operation was promised',
           413,
         );
-        const handle = await open(file, 'a', 0o600);
-        try {
-          await handle.write(bytes);
-        } finally {
-          await handle.close();
-        }
+        await appendFile(file, bytes, { mode: 0o600 });
         received = held + bytes.length;
       } else
         check(
@@ -1408,9 +1441,11 @@ export class CodeStore {
   /** Whether the project's repository holds this commit. */
   async contains(projectId: string, oid: string): Promise<boolean> {
     if (!(await this.repositories.exists(projectId))) return false;
-    const found = await this.repositories.git.run(['cat-file', '-e', `${oid}^{commit}`], {
-      env: this.repositories.environment(projectId),
-    });
+    const found = await this.owned(() =>
+      this.repositories.git.run(['cat-file', '-e', `${oid}^{commit}`], {
+        env: this.repositories.environment(projectId),
+      }),
+    );
     return found.code === 0;
   }
 
@@ -1517,7 +1552,7 @@ export class CodeStore {
       'A copy of this server’s repositories is already running',
       409,
     );
-    const pass = this.backupPass(settings, caller, input);
+    const pass = this.owned(() => this.backupPass(settings, caller, input));
     this.backing = pass.then(
       () => {},
       () => {},
@@ -1793,7 +1828,7 @@ export class CodeStore {
    */
   async maintain(sweep = true): Promise<void> {
     if (this.closed) return;
-    this.maintaining ??= (async () => {
+    this.maintaining ??= this.owned(async () => {
       try {
         await this.hooks.maintained?.();
         const rows = await this.state.read(
@@ -1827,7 +1862,7 @@ export class CodeStore {
       } finally {
         this.maintaining = undefined;
       }
-    })();
+    });
     await this.maintaining;
   }
 
@@ -1841,17 +1876,26 @@ export class CodeStore {
   }
 
   /** Stop the timer, let running operations finish or end them at the deadline, release the lock. */
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    return (this.closing ??= this.drain());
+  }
+  private async drain(): Promise<void> {
     this.closed = true;
     clearInterval(this.timer);
     clearInterval(this.waker);
-    await this.maintaining?.catch(() => {});
-    await this.backing?.catch(() => {});
-    await Promise.allSettled([...this.parts.values()]);
-    await this.repositories.close(this.config.drainSeconds * 1000);
-    await Promise.allSettled([...this.jobs.values()]);
-    await this.config.backup?.store.close();
+    const timer = setTimeout(() => this.cancellation.abort(), this.config.drainSeconds * 1000);
+    try {
+      await this.maintaining?.catch(() => {});
+      await this.backing?.catch(() => {});
+      await Promise.allSettled([...this.parts.values()]);
+      while (this.active.size || this.jobs.size)
+        await Promise.allSettled([...this.active, ...this.jobs.values()]);
+      if (!this.sharedRepositories) await this.repositories.close(0);
+      await this.config.backup?.store.close();
+    } finally {
+      clearTimeout(timer);
+      this.cancellation.abort();
+    }
   }
 
   private assertOpen(): void {
@@ -1984,8 +2028,9 @@ export class CodeStore {
   private start(row: OperationRow, caller?: Caller): Promise<void> {
     let job = this.jobs.get(row.id);
     if (!job) {
-      job = this.repositories
-        .run(row.project_id, () => this.advance(row.id, caller))
+      job = this.owned(() =>
+        this.repositories.run(row.project_id, () => this.advance(row.id, caller)),
+      )
         .catch(async (failure: unknown) => {
           const error = refusal(failure);
           await this.stalled(row.id, error).catch(() => {});
@@ -2498,9 +2543,7 @@ export class CodeStore {
       `This operation holds ${held} of ${payload.bundle.bytes} bytes`,
       409,
     );
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(part)) hash.update(chunk as Buffer);
-    if (hash.digest('hex') !== payload.bundle.sha256) {
+    if ((await hashFile(part)) !== payload.bundle.sha256) {
       await rm(part, { force: true });
       await this.state.transaction(async (tx) => {
         const current = await this.row(tx, row.id);
@@ -2513,14 +2556,9 @@ export class CodeStore {
       );
     }
     // The retained bundle is what a start after a crash admits again, so it must be on disk.
-    const handle = await open(part, 'r');
-    try {
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
+    await syncPath(part);
     await rename(part, bundle);
-    await syncDirectory(directory);
+    await syncPath(directory);
     return { oid: payload.tip };
   }
 
@@ -2567,49 +2605,59 @@ export class CodeStore {
     };
     const result = await this.repositories.transfer(
       async () =>
-        await this.remote!.read(caller, async (target) => {
-          const stop = new AbortController();
-          const watch = setInterval(() => {
-            void diskBytes(directory).then((bytes) => {
-              if (bytes > CODE_BUNDLE_MAX_BYTES) stop.abort();
-            });
-          }, 1000);
-          try {
-            const fetch = await git
-              .run(
-                [
-                  '-c',
-                  'http.followRedirects=false',
-                  '-c',
-                  'fetch.fsckObjects=true',
-                  '-c',
-                  'fetch.unpackLimit=1',
-                  '-c',
-                  'gc.auto=0',
-                  'fetch',
-                  '--quiet',
-                  '--no-tags',
-                  '--no-write-fetch-head',
-                  '--no-recurse-submodules',
-                  target.url,
-                  `+${payload.ref}:refs/merv/fetched`,
-                ],
-                {
-                  env: { ...target.env, ...env },
-                  protocol: target.protocol,
-                  timeoutMs: FETCH_TIMEOUT_MS,
-                  signal: stop.signal,
-                },
-              )
-              .catch((error: unknown) => {
-                if (error instanceof MervError && error.code === 'code_git_aborted') return null;
-                throw error;
+        await this.remote!.read(
+          caller,
+          async (target) => {
+            const stop = new AbortController();
+            const watch = setInterval(() => {
+              void diskBytes(directory).then((bytes) => {
+                if (bytes > CODE_BUNDLE_MAX_BYTES) stop.abort();
               });
-            return { fetch, repository: target.repository };
-          } finally {
-            clearInterval(watch);
-          }
-        }),
+            }, 1000);
+            try {
+              const fetch = await git
+                .run(
+                  [
+                    '-c',
+                    'http.followRedirects=false',
+                    '-c',
+                    'fetch.fsckObjects=true',
+                    '-c',
+                    'fetch.unpackLimit=1',
+                    '-c',
+                    'gc.auto=0',
+                    'fetch',
+                    '--quiet',
+                    '--no-tags',
+                    '--no-write-fetch-head',
+                    '--no-recurse-submodules',
+                    target.url,
+                    `+${payload.ref}:refs/merv/fetched`,
+                  ],
+                  {
+                    env: { ...target.env, ...env },
+                    protocol: target.protocol,
+                    timeoutMs: FETCH_TIMEOUT_MS,
+                    signal: stop.signal,
+                  },
+                )
+                .catch((error: unknown) => {
+                  if (
+                    error instanceof MervError &&
+                    error.code === 'code_git_aborted' &&
+                    stop.signal.aborted &&
+                    !this.cancellation.signal.aborted
+                  )
+                    return null;
+                  throw error;
+                });
+              return { fetch, repository: target.repository };
+            } finally {
+              clearInterval(watch);
+            }
+          },
+          payload.githubBinding,
+        ),
     );
     if (!result.fetch || result.fetch.code !== 0) {
       await this.fail(
@@ -2671,15 +2719,10 @@ export class CodeStore {
       if (current?.status === 'prepared')
         await this.progress(tx, current, { target: oid, github, received: size });
     });
-    const handle = await open(part, 'r');
-    try {
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
+    await syncPath(part);
     await rm(scratch, { recursive: true, force: true });
     await rename(part, bundle);
-    await syncDirectory(directory);
+    await syncPath(directory);
     return { oid, github };
   }
 
@@ -2712,14 +2755,9 @@ export class CodeStore {
           409,
         );
       }
-      const handle = await open(join(to, name), 'r');
-      try {
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
+      await syncPath(join(to, name));
     }
-    await syncDirectory(to);
+    await syncPath(to);
   }
 
   /** End an operation without admitting anything. Findings keep their bundle for an operator. */

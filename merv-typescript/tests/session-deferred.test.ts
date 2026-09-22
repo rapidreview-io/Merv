@@ -8,7 +8,7 @@ import type { Caller, CodeStoreOperation } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
-import type { CodeService } from '@merv/code/service';
+import type { CodeService } from '@merv/code-research/service';
 import { createApp } from '../src/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource } from './fixtures/code-store.js';
@@ -33,7 +33,7 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const { code, tasks, sessions, state } = app.ctx;
+  const { codeResearch: code, tasks, sessions, state } = app.ctx;
 
   await boundProject(state, owner.projectId, main, 'fixture-repository');
   const v2 = (code as unknown as CodeService).v2!;

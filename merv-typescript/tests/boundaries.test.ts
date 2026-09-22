@@ -28,6 +28,7 @@ import { feedPlugin } from '@merv/feed';
 import { identityPlugin } from '@merv/identity';
 import { sessionsPlugin } from '@merv/sessions';
 import { runnerPlugin } from '@merv/runner';
+import { codePlugin } from '@merv/code';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packagesRoot = join(root, 'packages');
@@ -93,7 +94,8 @@ const capabilities: Record<string, readonly string[]> = {
   feed: ['state', 'scope', 'artifacts'],
   identity: [],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
-  code: ['state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
+  code: ['state', 'scope'],
+  codeResearch: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
   runner: [],
   // A proxy for rows a service outside this process publishes: no Merv capability at all.
   sandboxes: [],
@@ -104,10 +106,10 @@ const capabilities: Record<string, readonly string[]> = {
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
   // Optional: a deployment may run no sandboxes at all, and a project may have no
-  // connection. The edge runs Code -> sandboxes only, for the project check of a base.
-  code: ['reviews', 'sandboxes'],
-  consolidation: ['code'],
-  experiments: ['code'],
+  // connection. Research integration owns project checks; Code is an independent utility.
+  codeResearch: ['reviews', 'sandboxes'],
+  consolidation: ['codeResearch'],
+  experiments: ['codeResearch'],
   research: [
     'domainEvents',
     'paper',
@@ -117,10 +119,10 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'tasks',
     'experiments',
     'artifacts',
-    'code',
+    'codeResearch',
   ],
-  knowledge: ['code'],
-  tasks: ['code'],
+  knowledge: ['codeResearch'],
+  tasks: ['codeResearch'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
@@ -168,6 +170,28 @@ const adapterKind = (path: string) =>
   undefined;
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
+const capabilityOf = (owner: string) => (owner === 'code-research' ? 'codeResearch' : owner);
+
+/** This adapter composes the Git utility; no other feature may import its implementation. */
+const codeUtilityExports = new Set([
+  'base-merge',
+  'base-plan',
+  'changes',
+  'git',
+  'github',
+  'github-client',
+  'input',
+  'pending-merge',
+  'publications-schema',
+  'service',
+  'store/backup',
+  'store/mirror',
+  'store/operations',
+  'store/refs',
+  'store/repository',
+  'units',
+  'writers',
+]);
 
 interface ModuleReference {
   specifier: string;
@@ -358,11 +382,17 @@ function assertComponentReferences(
   for (const reference of moduleReferences(source)) {
     const { specifier, typeOnly } = reference;
     if (specifier.startsWith('@merv/') && specifier !== '@merv/contracts') {
-      assert.ok(
-        typeOnly,
-        `${path}: importing another component requires an explicit type-only import: ${specifier}`,
-      );
-      assertTypeOnlyModule(publicTypesTarget(specifier, base), base, seen);
+      const utility =
+        owner === 'code-research' &&
+        specifier.startsWith('@merv/code/') &&
+        codeUtilityExports.has(specifier.slice('@merv/code/'.length));
+      if (!utility) {
+        assert.ok(
+          typeOnly,
+          `${path}: importing another component requires an explicit type-only import: ${specifier}`,
+        );
+        assertTypeOnlyModule(publicTypesTarget(specifier, base), base, seen);
+      }
     }
     if (specifier.startsWith('.')) {
       const target = resolve(dirname(path), specifier);
@@ -389,6 +419,90 @@ function assertComponentReferences(
 
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));
+});
+
+/** Git accepts opaque unit identities and checkout DTOs, never research services or decisions. */
+function assertCodeUtility(source: ts.SourceFile): void {
+  for (const { specifier } of moduleReferences(source))
+    assert.ok(
+      !/^@merv\/(?:sessions|workflows|reviews|sandboxes|code-research)(?:\/|$)/.test(specifier),
+      `${source.fileName}: Code must not depend on a research service: ${specifier}`,
+    );
+  visit(source, (node) => {
+    if (ts.isIdentifier(node))
+      assert.ok(
+        !/^(?:Workflows?|Reviews?|Sessions|Sandboxes)(?:$|[A-Z])/.test(node.text) ||
+          (node.text === 'WorkflowWorkspacePolicy' &&
+            /[/\\]driver[/\\]index\.ts$/.test(source.fileName)),
+        `${source.fileName}: research service or policy type ${node.text} belongs in Code Research`,
+      );
+    if (
+      ts.isStringLiteralLike(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node)
+    ) {
+      assert.ok(
+        !/\b(?:FROM|JOIN|UPDATE|INTO|TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+(?:wf_\w+|reviews|review_\w+|tasks|task_\w+|experiments|experiment_\w+|research_\w+|reflections|reflection_\w+|consolidations|sessions|session_\w+)\b/i.test(
+          node.text,
+        ),
+        `${source.fileName}: Code must not inspect research-owned tables`,
+      );
+      assert.ok(
+        !new Set([
+          'workflow.transition',
+          'in_progress',
+          'in_review',
+          'in_design_review',
+          'in_results_review',
+          'awaiting_publication',
+          'consolidating',
+          'reflecting',
+          'researching',
+          'defining',
+        ]).has(node.text),
+        `${source.fileName}: Code must not interpret research workflow states or events`,
+      );
+    }
+  });
+}
+
+test('Code stays independent of research services, their storage and their lifecycle decisions', () => {
+  for (const path of sourceFiles.filter((path) => ownerOf(path) === 'code'))
+    assertCodeUtility(parse(path));
+  const manifest = JSON.parse(readFileSync(join(packagesRoot, 'code', 'package.json'), 'utf8'));
+  assert.deepEqual(
+    Object.keys(manifest.dependencies).filter((name) => name.startsWith('@merv/')),
+    ['@merv/contracts'],
+    'The Git utility depends only on shared Merv contracts',
+  );
+});
+
+test('the Code boundary rejects service aliases, private SQL and lifecycle coupling while allowing transport DTOs', () => {
+  const verify = (code: string, path = '/code/src/example.ts') =>
+    assertCodeUtility(ts.createSourceFile(path, code, ts.ScriptTarget.Latest, true));
+  assert.doesNotThrow(() => verify("import type { SessionWorkspace } from '@merv/contracts';"));
+  assert.doesNotThrow(() =>
+    verify(
+      "import type { WorkflowWorkspacePolicy } from '@merv/contracts';",
+      '/code/src/driver/index.ts',
+    ),
+  );
+  assert.doesNotThrow(() => verify("const endpoint = '/pulls/42/reviews';"));
+  for (const code of [
+    "import type { Sessions } from '@merv/sessions/types';",
+    "export type { Code } from '@merv/code-research/types';",
+    "const owner = import('@merv/workflows');",
+    "import type { Workflows as Work } from '@merv/contracts';",
+    "type Policy = import('@merv/contracts').ReviewRequest;",
+    "type Policy = import('@merv/contracts').WorkflowWorkspacePolicy;",
+    "await tx.get('SELECT * FROM reviews WHERE id=?');",
+    'await tx.get(`SELECT id FROM wf_instances WHERE project_id=${project}`);',
+    "await tx.run('UPDATE experiment_attempts SET ended_revision=?');",
+    "if (state === 'awaiting_publication') publish();",
+    "subscribe({ type: 'workflow.transition' });",
+  ])
+    assert.throws(() => verify(code), /research|Code Research/);
 });
 
 test('public contract imports resolve genuine type-only modules without runtime or implementation bypasses', (t) => {
@@ -479,13 +593,13 @@ test('optional capabilities cannot escape their Cordis child injection', () => {
       [],
       new Set(),
     );
-  assert.doesNotThrow(() => verify("ctx.inject(['code'], (ctx) => ctx.code);"));
+  assert.doesNotThrow(() => verify("ctx.inject(['codeResearch'], (ctx) => ctx.codeResearch);"));
   assert.throws(
-    () => verify("ctx.inject(['code'], (ctx) => ctx.code); ctx.code;"),
+    () => verify("ctx.inject(['codeResearch'], (ctx) => ctx.codeResearch); ctx.codeResearch;"),
     /undeclared dependency/,
   );
   assert.throws(
-    () => verify("ctx.inject(['code'], (ctx) => ctx.sessions);"),
+    () => verify("ctx.inject(['codeResearch'], (ctx) => ctx.sessions);"),
     /undeclared dependency/,
   );
 });
@@ -561,7 +675,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
     tools: [
       'artifacts',
       'claims',
-      'code',
+      'code-research',
       'consolidation',
       'experiments',
       'feed',
@@ -579,7 +693,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
     ui: [
       'artifacts',
       'claims',
-      'code',
+      'code-research',
       'consolidation',
       'experiments',
       'feed',
@@ -594,7 +708,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['code', 'sessions'],
+    api: ['code-research', 'sessions'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];
@@ -602,6 +716,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
     assert.deepEqual(sorted(adapters.map(ownerOf)), expected[kind]);
     for (const path of adapters) {
       const owner = ownerOf(path);
+      const capability = capabilityOf(owner);
       const declarations: ts.ObjectLiteralExpression[] = [];
       visit(parse(path), (node) => {
         if (
@@ -619,10 +734,13 @@ test('feature adapters inject their owner and one registry, without acquiring si
         assert.ok(ts.isStringLiteral(value));
         return value.text;
       });
-      assert.ok(declared.includes(owner), `${owner}: ${kind} adapter must inject its own feature`);
+      assert.ok(
+        declared.includes(capability),
+        `${owner}: ${kind} adapter must inject its own feature`,
+      );
       assert.ok(declared.includes(registry), `${owner}: ${kind} adapter must inject ${registry}`);
       assert.ok(
-        declared.every((name) => [owner, registry, 'scope'].includes(name)),
+        declared.every((name) => [capability, registry, 'scope'].includes(name)),
         `${owner}: cross-feature orchestration belongs in a program service`,
       );
       visit(declaration, (child) => {
@@ -731,6 +849,7 @@ test('each service boots with only its declared dependency closure and without A
     feed: { plugin: feedPlugin },
     identity: { plugin: identityPlugin },
     sessions: { plugin: sessionsPlugin },
+    code: { plugin: codePlugin },
     runner: {
       plugin: runnerPlugin,
       config: {

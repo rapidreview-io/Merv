@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
-import type { CodeProposal } from '@merv/code/types';
+import type { CodeProposal } from '@merv/code-research/types';
 import type {
   Caller,
   CodeCommandRecord,
@@ -223,7 +223,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   assert.equal(queued.status, 'queued');
   assert.equal(queued.command.actorId, session.actorId);
   assert.deepEqual(await commands(), [queued]);
-  const originalProvider = app.ctx.code;
+  const originalProvider = app.ctx.codeResearch;
   const originalSessions = app.ctx.sessions;
   const eventTypes = async () =>
     (await app.ctx.state.events(boot.project.id))
@@ -235,7 +235,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   for (const id of ['code-tools', 'code-api', 'code-ui']) {
     const entry = app.status().find((entry) => entry.id === id);
     assert.equal(entry?.state, 'pending', id);
-    assert.deepEqual(entry?.missingDependencies, ['code'], id);
+    assert.deepEqual(entry?.missingDependencies, ['codeResearch'], id);
   }
   for (const id of ['state', 'scope', 'sessions', 'workflows', 'api', 'ui'])
     assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
@@ -260,7 +260,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   });
 
   await app.setEnabled('code', true);
-  assert.notEqual(app.ctx.code, originalProvider);
+  assert.notEqual(app.ctx.codeResearch, originalProvider);
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
   assert.deepEqual(await commands(), [queued]);
@@ -299,7 +299,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
           },
           tx,
         );
-        return await app.ctx.code.seal(
+        return await app.ctx.codeResearch.seal(
           caller,
           {
             commandId: input.commandId,
@@ -319,7 +319,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   } finally {
     await disposeSeal();
   }
-  const proposalProvider = app.ctx.code;
+  const proposalProvider = app.ctx.codeResearch;
   const manifest = await app.ctx.artifacts.read(source, proposal.manifestArtifact.id);
   assert.equal(manifest.encoding, 'utf8');
   const manifestHash = createHash('sha256').update(manifest.content).digest('hex');
@@ -332,15 +332,15 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   assert.deepEqual(proposal.receipt, receipt);
   // A sealed proposal is read on the record that made it, one at a time, and it survives
   // the capability that sealed it being taken away and put back.
-  assert.deepEqual(await app.ctx.code.proposal(source, proposal.id), proposal);
+  assert.deepEqual(await app.ctx.codeResearch.proposal(source, proposal.id), proposal);
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
   await app.setEnabled('code', false);
   await assert.rejects(async () => await proposalProvider.proposal(source, proposal.id), {
     code: 'code_unavailable',
   });
   await app.setEnabled('code', true);
-  assert.notEqual(app.ctx.code, proposalProvider);
-  assert.deepEqual(await app.ctx.code.proposal(source, proposal.id), proposal);
+  assert.notEqual(app.ctx.codeResearch, proposalProvider);
+  assert.deepEqual(await app.ctx.codeResearch.proposal(source, proposal.id), proposal);
   assert.deepEqual(await app.ctx.artifacts.read(source, proposal.manifestArtifact.id), manifest);
   const sealedEvents = (await app.ctx.state.events(boot.project.id)).filter(
     (event) => event.type === 'code.proposal_sealed',

@@ -10,7 +10,7 @@ import type {
   SandboxChecks,
 } from '@merv/sandboxes';
 import { checkScript } from '@merv/sandboxes';
-import { checkBriefSections, checkResolutionCheck } from '@merv/code/base-check';
+import { checkBriefSections, checkResolutionCheck } from '@merv/code-research/base-check';
 import { backends, optional } from './fixtures/code-store.js';
 import { baseFixture } from './fixtures/code-bases.js';
 

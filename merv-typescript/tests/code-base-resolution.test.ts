@@ -11,13 +11,13 @@ import {
   type WorkflowSnapshot,
   type Transaction,
 } from '@merv/contracts';
-import { CodeService } from '@merv/code/service';
+import { CodeService } from '@merv/code-research/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeCapture } from '@merv/code/types';
+import type { CodeCapture } from '@merv/code-research/types';
 import type { SandboxCheckHandle } from '@merv/sandboxes';
 import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
-import { CodeBaseService } from '../packages/code/src/bases.js';
-import type { CodeUnitService } from '../packages/code/src/units.js';
+import { CodeBaseService } from '../packages/code-research/src/bases.js';
+import type { CodeUnitService } from '../packages/code-research/src/units.js';
 import { backends, optional, gitSource, git, type Backend } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
@@ -1607,6 +1607,18 @@ for (const backend of backends) {
       t.mock.method(f.bases, 'soon', () => {});
       const waiter = await f.waiter();
       const key = (await f.record())!.key;
+      // Another Code consumer's quarantine is outside the research base policy.
+      await f.state.transaction((tx) =>
+        tx.run(
+          'INSERT INTO code_units(project_id,unit_id,workflow,version,declared_at,quarantine_base_key) VALUES(?,?,?,?,?,?)',
+          f.admin.projectId,
+          'external-unit',
+          'external-owner',
+          1,
+          new Date().toISOString(),
+          'external-quarantine',
+        ),
+      );
       const control = (action: string, requestId = action) =>
         f.bases.control(f.scope, f.admin, { key, action, requestId, reason: `Operator ${action}` });
       const service = await f.state.transaction((tx) =>
@@ -1649,6 +1661,18 @@ for (const backend of backends) {
       const quarantined = await control('quarantine');
       assert.equal(quarantined.quarantined, true);
       assert.equal(quarantined.resolutionTaskId, task);
+      assert.equal(
+        (
+          await f.state.read((sql) =>
+            sql.get<{ quarantine_base_key: string }>(
+              'SELECT quarantine_base_key FROM code_units WHERE project_id=? AND unit_id=?',
+              f.admin.projectId,
+              'external-unit',
+            ),
+          )
+        )?.quarantine_base_key,
+        'external-quarantine',
+      );
       blocker = (await f.workflows.blockers(f.admin, waiter.id))[0]!;
       assert.equal(blocker.code, 'code_quarantined');
       const history = await f.state.read((sql) =>

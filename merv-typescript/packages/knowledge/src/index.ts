@@ -15,7 +15,7 @@ import {
 } from '@merv/contracts';
 import type { Claims } from '@merv/claims/types';
 import type { Experiments, ExperimentSubmission } from '@merv/experiments/types';
-import type { Code, CodeCaptureRef } from '@merv/code/types';
+import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type {
   Knowledge,
   KnowledgeAssessment,
@@ -442,8 +442,8 @@ export const knowledgePlugin = {
         ),
       );
       yield () => service.close();
-      ctx.inject(['code'], (ctx) => {
-        ctx.effect(() => service.bindCode(ctx.code));
+      ctx.inject(['codeResearch'], (ctx) => {
+        ctx.effect(() => service.bindCode(ctx.codeResearch));
       });
       yield ctx.provide('knowledge', service);
     });

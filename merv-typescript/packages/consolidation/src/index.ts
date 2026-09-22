@@ -31,7 +31,7 @@ import {
   type WorkflowLease,
   type Workflows,
 } from '@merv/contracts';
-import type { Code, CodeCandidateDecision } from '@merv/code/types';
+import type { Code, CodeCandidateDecision } from '@merv/code-research/types';
 import type {
   Consolidation,
   ConsolidationCreate,
@@ -1737,8 +1737,8 @@ export const consolidationPlugin = {
         ctx.contextBuilder,
       ),
     );
-    ctx.inject(['code'], (ctx) => {
-      ctx.effect(() => service.bindCode(ctx.code));
+    ctx.inject(['codeResearch'], (ctx) => {
+      ctx.effect(() => service.bindCode(ctx.codeResearch));
     });
     ctx.effect(function* () {
       yield () => service.close();

@@ -10,6 +10,7 @@ flowchart BT
     merv_claims_ui["merv-claims-ui"]
     code["code"]
     merv_code_api["merv-code-api"]
+    codeResearch["codeResearch"]
     merv_code_tools["merv-code-tools"]
     merv_code_ui["merv-code-ui"]
     consolidation["consolidation"]
@@ -81,17 +82,20 @@ flowchart BT
   merv_claims_ui --> ui
   code --> state
   code --> scope
-  code --> sessions
-  code --> artifacts
-  code --> workflows
-  code --> domainEvents
-  code -. optional .-> reviews
-  code -. optional .-> sandboxes
   merv_code_api --> api
-  merv_code_api --> code
-  merv_code_tools --> code
+  merv_code_api --> codeResearch
+  codeResearch --> code
+  codeResearch --> state
+  codeResearch --> scope
+  codeResearch --> sessions
+  codeResearch --> artifacts
+  codeResearch --> workflows
+  codeResearch --> domainEvents
+  codeResearch -. optional .-> reviews
+  codeResearch -. optional .-> sandboxes
+  merv_code_tools --> codeResearch
   merv_code_tools --> tools
-  merv_code_ui --> code
+  merv_code_ui --> codeResearch
   merv_code_ui --> ui
   consolidation --> state
   consolidation --> scope
@@ -99,7 +103,7 @@ flowchart BT
   consolidation --> workflows
   consolidation --> reviews
   consolidation --> contextBuilder
-  consolidation -. optional .-> code
+  consolidation -. optional .-> codeResearch
   merv_consolidation_tools --> consolidation
   merv_consolidation_tools --> tools
   merv_consolidation_ui --> consolidation
@@ -115,7 +119,7 @@ flowchart BT
   experiments --> reviews
   experiments --> contextBuilder
   experiments --> paper
-  experiments -. optional .-> code
+  experiments -. optional .-> codeResearch
   merv_experiments_tools --> experiments
   merv_experiments_tools --> tools
   merv_experiments_ui --> experiments
@@ -135,7 +139,7 @@ flowchart BT
   knowledge --> artifacts
   knowledge --> reviews
   knowledge --> workflows
-  knowledge -. optional .-> code
+  knowledge -. optional .-> codeResearch
   merv_knowledge_tools --> knowledge
   merv_knowledge_tools --> tools
   merv_knowledge_ui --> knowledge
@@ -173,7 +177,7 @@ flowchart BT
   research -. optional .-> tasks
   research -. optional .-> experiments
   research -. optional .-> artifacts
-  research -. optional .-> code
+  research -. optional .-> codeResearch
   merv_research_tools --> research
   merv_research_tools --> tools
   merv_research_ui --> research
@@ -216,7 +220,7 @@ flowchart BT
   tasks --> workflows
   tasks --> reviews
   tasks --> contextBuilder
-  tasks -. optional .-> code
+  tasks -. optional .-> codeResearch
   tools --> scope
   ui --> api
   ui --> tools

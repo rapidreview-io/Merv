@@ -36,6 +36,7 @@ import type { ViewProps } from './index';
 
 /** Where the waves live when no row says otherwise, as the plugin registers them. */
 const REFLECTIONS = '/reflections';
+const hasCode = (shell: ShellData) => shell.rows.some((row) => row.id === 'code' && row.readable);
 
 // Browser read models intentionally omit server services and authentication types.
 interface Artifact {
@@ -421,7 +422,11 @@ function ReflectionDetail({ row, shell }: ViewProps) {
           {wave.workflow.state === 'approved' &&
             consolidationRow &&
             (actor.role === 'operator' || actor.role === 'producer') && (
-              <NewConsolidation wave={wave} path={consolidationRow.path} />
+              <NewConsolidation
+                wave={wave}
+                path={consolidationRow.path}
+                codeAvailable={hasCode(shell)}
+              />
             )}
         </WaveGate>
       }
@@ -524,10 +529,12 @@ export const outputsOf = (wave: Reflection) => ({
  */
 export function CreateConsolidation({
   from,
+  codeAvailable = false,
   onCreated,
   onCancel,
 }: {
   from: ReturnType<typeof outputsOf>;
+  codeAvailable?: boolean;
   onCreated: (record: ConsolidationRecord) => void;
   onCancel: () => void;
 }) {
@@ -554,6 +561,7 @@ export function CreateConsolidation({
       locked={command.locked}
       onSubmit={(event) => {
         event.preventDefault();
+        if (workspace === 'git' && !codeAvailable) return;
         void command.submit({
           sourceArtifactIds: sources,
           experimentIds: experiments,
@@ -585,16 +593,25 @@ export function CreateConsolidation({
           value={experiments}
           onChange={setExperiments}
         />
-        <label>
-          Work environment
-          <select
-            value={workspace}
-            onChange={(event) => setWorkspace(event.target.value as 'none' | 'git')}
-          >
-            <option value="none">Research report and decisions</option>
-            <option value="git">Git workspace for code changes</option>
-          </select>
-        </label>
+        {(codeAvailable || workspace === 'git') && (
+          <label>
+            Work environment
+            <select
+              value={workspace}
+              onChange={(event) => setWorkspace(event.target.value as 'none' | 'git')}
+            >
+              <option value="none">Research report and decisions</option>
+              <option value="git" disabled={!codeAvailable}>
+                Git workspace for code changes
+              </option>
+            </select>
+          </label>
+        )}
+        {workspace === 'git' && !codeAvailable && (
+          <p role="status">
+            Code is unavailable. Choose a research report or wait for Code to return.
+          </p>
+        )}
         <RecordPicker
           label="Prerequisites"
           options={unique([from.wave, ...work.options])}
@@ -609,7 +626,7 @@ export function CreateConsolidation({
           busy={command.busy}
           retry={command.retry}
           saving="Starting…"
-          disabled={!sources.length || !name.trim()}
+          disabled={!sources.length || !name.trim() || (workspace === 'git' && !codeAvailable)}
         />
         <button type="button" className="btn" disabled={command.busy} onClick={onCancel}>
           Cancel
@@ -623,7 +640,15 @@ export function CreateConsolidation({
  * The last phase a wave can open, offered where every other move is: the record's
  * Act slot, once the reflection is approved, carrying the wave's own outputs.
  */
-function NewConsolidation({ wave, path }: { wave: Reflection; path: string }) {
+function NewConsolidation({
+  wave,
+  path,
+  codeAvailable,
+}: {
+  wave: Reflection;
+  path: string;
+  codeAvailable: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   if (!open)
@@ -637,6 +662,7 @@ function NewConsolidation({ wave, path }: { wave: Reflection; path: string }) {
   return (
     <CreateConsolidation
       from={outputsOf(wave)}
+      codeAvailable={codeAvailable}
       onCreated={(record) => navigate(`${path}/${record.id}`)}
       onCancel={() => setOpen(false)}
     />
@@ -740,7 +766,13 @@ function ConsolidationDetail({ shell }: ViewProps) {
       back={<Link to={back}>← Reflections</Link>}
       kind="consolidation"
       name={record.name}
-      standing={record.workspace === 'git' ? 'Git workspace' : 'Research consolidation'}
+      standing={
+        record.workspace === 'git'
+          ? hasCode(shell)
+            ? 'Git workspace'
+            : 'Git workspace · Code unavailable'
+          : 'Research consolidation'
+      }
       state={<StatusPill value={record.workflow.state} />}
       act={<WaveGate id={record.id} kind="consolidation" />}
       title="Synthesis"

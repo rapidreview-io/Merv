@@ -19,10 +19,10 @@ import {
 } from '@merv/contracts';
 import { z } from 'zod';
 import type { CodeProposal } from './types.js';
-import { CodeGitHubService } from './github.js';
+import { CodeGitHubService } from '@merv/code/github';
 import type { CodeTransportService } from './transport.js';
-import { parseCodeInput } from './input.js';
-import { publicationMigration } from './publications-schema.js';
+import { parseCodeInput } from '@merv/code/input';
+import { migratePublications } from '@merv/code/publications-schema';
 import { PublicationIncident, type PublicationHost } from './publication-host.js';
 
 /** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
@@ -38,11 +38,6 @@ export interface CodeUnitPublicationSeal {
   approval: NonNullable<CodePublication['approval']>;
 }
 
-const schema = `CREATE TABLE code_publications (
-  proposal_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record_json TEXT NOT NULL,binding_json TEXT NOT NULL,
-  review_json TEXT,pull_json TEXT,merge_json TEXT,error TEXT,lock_id TEXT,lock_until TEXT,synced_at TEXT NOT NULL DEFAULT '',settled INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX code_publications_project ON code_publications(project_id);`;
 export const publicationReleaseSchema = z
   .object({
     proposalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
@@ -92,10 +87,7 @@ export class CodePublicationService implements CodePublicationApi {
     private host?: PublicationHost,
   ) {}
   async initialize() {
-    await this.state.migrate('code_publications', [
-      { version: 1, sql: schema, postgres: schema },
-      publicationMigration,
-    ]);
+    await migratePublications(this.state);
   }
   private decode(row: Row): CodePublication {
     return {
@@ -287,12 +279,14 @@ export class CodePublicationService implements CodePublicationApi {
       409,
     );
     const accepted = JSON.parse(round.acceptance_json);
-    const review = await tx.get<{ provenance_json: string; verdict: string }>(
-      'SELECT provenance_json,verdict FROM reviews WHERE id=? AND project_id=?',
-      round.review_id,
-      caller.projectId,
+    check(
+      this.host,
+      'publication_owner_unavailable',
+      'Load the publication owner before publishing',
+      503,
     );
-    const certificate = review?.provenance_json && JSON.parse(review.provenance_json);
+    const review = await this.host.review(caller, round.review_id, tx);
+    const certificate = review.provenance;
     check(
       review?.verdict === 'pass' &&
         certificate?.reference === proposal.id &&

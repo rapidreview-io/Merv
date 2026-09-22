@@ -12,10 +12,14 @@ import {
   type Data,
   type WorkflowSnapshot,
 } from '@merv/contracts';
-import { CodeService } from '@merv/code/service';
-import { CodeConsolidation } from '../packages/code/src/consolidation.js';
+import { CodeService } from '@merv/code-research/service';
+import { CodeConsolidation } from '../packages/code-research/src/consolidation.js';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeCapture, CodeCandidateDecision, CodeReconciliation } from '@merv/code/types';
+import type {
+  CodeCapture,
+  CodeCandidateDecision,
+  CodeReconciliation,
+} from '@merv/code-research/types';
 import { ConsolidationService } from '@merv/consolidation';
 import type {
   ConsolidationCreate,
@@ -25,11 +29,11 @@ import type {
 import { backends, optional, gitSource, git, type Backend } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { CodeBaseService } from '../packages/code/src/bases.js';
-import type { CodeUnitService } from '../packages/code/src/units.js';
+import { CodeBaseService } from '../packages/code-research/src/bases.js';
+import type { CodeUnitService } from '../packages/code-research/src/units.js';
 import { enqueueMirror } from '@merv/code/store/mirror';
 import { githubFixture, config as githubConfig } from './github-fixture.js';
-import type { PublicationHost } from '../packages/code/src/publication-host.js';
+import type { PublicationHost } from '../packages/code-research/src/publication-host.js';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 
 async function fixture(t: TestContext, backend: Backend, historyLength = 0, connected = false) {

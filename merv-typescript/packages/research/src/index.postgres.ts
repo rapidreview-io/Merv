@@ -63,4 +63,7 @@ FOR EACH ROW EXECUTE FUNCTION research_retained_guard();
   5: `
 ALTER TABLE research_cycles ADD COLUMN integrations TEXT;
 `,
+  6: `
+ALTER TABLE research_cycles ADD COLUMN code_required INTEGER CHECK(code_required IN (0,1));
+`,
 };

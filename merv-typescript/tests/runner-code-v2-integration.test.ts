@@ -17,7 +17,7 @@ import type { Caller, CodeStoreOperation, Data } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeService } from '@merv/code/service';
+import type { CodeService } from '@merv/code-research/service';
 import { createApp } from '../src/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
@@ -209,7 +209,7 @@ test(
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const { code, tasks, sessions, reviews, state } = app.ctx;
+    const { codeResearch: code, tasks, sessions, reviews, state } = app.ctx;
 
     await boundProject(state, owner.projectId, main, 'fixture-repository');
     const v2 = (code as unknown as CodeService).v2!;

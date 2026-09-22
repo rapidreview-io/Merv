@@ -86,17 +86,22 @@
     },
     {
       "id": "code-tools",
-      "name": "@merv/code/tools",
+      "name": "@merv/code-research/tools",
       "required": false
     },
     {
       "id": "code-api",
-      "name": "@merv/code/api",
+      "name": "@merv/code-research/api",
       "required": false
     },
     {
       "id": "code-ui",
-      "name": "@merv/code/ui",
+      "name": "@merv/code-research/ui",
+      "required": false
+    },
+    {
+      "id": "code-research",
+      "name": "@merv/code-research",
       "required": false
     },
     {
@@ -106,7 +111,8 @@
         "repositories": {
           "root": "${directory}/code"
         }
-      }
+      },
+      "required": false
     },
     {
       "id": "sessions-api",

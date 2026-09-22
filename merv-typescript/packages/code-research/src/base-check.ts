@@ -12,7 +12,7 @@ import type {
   SandboxCheckPlan,
   SandboxCheckVerdict,
 } from '@merv/sandboxes/types';
-import type { ServerGit } from './git.js';
+import type { ServerGit } from '@merv/code/git';
 
 /**
  * The project check of one base, on the Code side. A base that merged cleanly is not sealed

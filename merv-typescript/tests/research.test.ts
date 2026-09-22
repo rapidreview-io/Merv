@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Pool } from 'pg';
-import { CodeService } from '@merv/code/service';
-import { CodeConsolidation } from '../packages/code/src/consolidation.js';
+import { CodeService } from '@merv/code-research/service';
+import { CodeConsolidation } from '../packages/code-research/src/consolidation.js';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { backends, optional, gitSource, type Backend } from './fixtures/code-store.js';
 import { boundProject } from './fixtures/code-binding.js';
@@ -62,7 +62,7 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
         app.ctx.tasks,
         app.ctx.experiments,
         digests ? app.ctx.artifacts : undefined,
-        app.ctx.code,
+        app.ctx.codeResearch,
       ),
     );
   let research = await service(),
@@ -239,7 +239,7 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
     /** This service is not the plugin's, so what Cordis would rebind for it is rebound here. */
     async code(enabled: boolean) {
       await app.setEnabled('code', enabled);
-      const bound = research.bindCode(app.ctx.code);
+      const bound = research.bindCode(app.ctx.codeResearch);
       if (!enabled) bound();
     },
     async restart() {
@@ -533,11 +533,12 @@ test('a publication main overtook injects a successor task on what main lacks no
   assert.equal(published.length, 2);
 });
 
-test('a published consolidation completes the cycle and its digest names the task', async (t) => {
+test('a published integration completes without the legacy Consolidation plugin and names its task', async (t) => {
   const f = await fixture(t);
   const accepted = await work(f);
   const main: Main = { unitIds: [accepted.id] };
   const { advance } = await hosted(f, main);
+  await f.app.setEnabled('consolidation', false);
   const [taskId] = (await advance()).integrations;
   await f.finish(taskId);
   main.publication = { state: 'published', mergeCommit: 'c'.repeat(40) };
@@ -1203,7 +1204,7 @@ for (const backend of backends)
       optional(backend),
       async (t) => {
         const f = await fixture(t, backend);
-        const { state, tasks, reviews, code, scope, sessions, workflows } = f.app.ctx;
+        const { state, tasks, reviews, codeResearch: code, scope, sessions, workflows } = f.app.ctx;
         await f.definition();
         let task = await tasks.create(f.owner, {
           title: 'Cycle task',
@@ -2088,7 +2089,7 @@ for (const backend of backends)
       const f = await fixture(t, backend, true);
       const source = gitSource(t);
       const main = source.commit({ 'README.md': 'Research harness\n' });
-      const { code, sessions, tasks, workflows, artifacts } = f.app.ctx;
+      const { codeResearch: code, sessions, tasks, workflows, artifacts } = f.app.ctx;
       const protocol = (code as CodeService).v2!;
       await boundProject(f.app.ctx.state, f.owner.projectId, main, 'fixture-repository');
       const complete = async (operation: CodeStoreOperation) => {

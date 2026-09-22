@@ -13,7 +13,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '@merv/code/service';
+import { CodeService } from '@merv/code-research/service';
 import { workBranch } from '@merv/code/store/refs';
 
 const issuer = 'https://identity.example/auth/v1';

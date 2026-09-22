@@ -1,3 +1,11 @@
+import type { State } from '@merv/contracts';
+
+const schema = `CREATE TABLE code_publications (
+  proposal_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record_json TEXT NOT NULL,binding_json TEXT NOT NULL,
+  review_json TEXT,pull_json TEXT,merge_json TEXT,error TEXT,lock_id TEXT,lock_until TEXT,synced_at TEXT NOT NULL DEFAULT '',settled INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX code_publications_project ON code_publications(project_id);`;
+
 /** Published publication rows keep their first migration; reviewed rounds add retained facts. */
 const additions = `
 ALTER TABLE code_publications ADD COLUMN stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0,1));
@@ -40,3 +48,11 @@ export const publicationMigration = {
       )
       .join('\n'),
 };
+
+/** Preserve deployed migration identities while storage remains available without research. */
+export async function migratePublications(state: State): Promise<void> {
+  await state.migrate('code_publications', [
+    { version: 1, sql: schema, postgres: schema },
+    publicationMigration,
+  ]);
+}

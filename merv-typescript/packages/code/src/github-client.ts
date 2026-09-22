@@ -470,14 +470,16 @@ export class GitHubClient {
     }
   }
   async user(token: string) {
-    const user = userSchema.safeParse(await this.request('https://api.github.com/user', token));
-    check(user.success, 'github_response', 'GitHub returned an invalid user', 502);
-    return user.data;
+    return githubResponse(userSchema, await this.request('https://api.github.com/user', token));
   }
   /** Bounded REST collections; callers never mistake a truncated result for a complete one. */
-  private async collection(token: string, path: string, field?: string): Promise<unknown[]> {
+  private async collection(
+    token: string,
+    path: string,
+    field?: string,
+    deadline = Date.now() + 30_000,
+  ): Promise<unknown[]> {
     const result: unknown[] = [];
-    const deadline = Date.now() + 30_000;
     for (let page = 1; page <= 20; page++) {
       check(Date.now() < deadline, 'github_unavailable', 'GitHub listing took too long', 502);
       const value = await this.request(
@@ -808,43 +810,9 @@ export class GitHubClient {
       statusCount: combined.total_count,
     };
   }
-  private async pages(
-    token: string,
-    path: string,
-    field: string,
-    deadline = Date.now() + 30_000,
-  ): Promise<unknown[]> {
-    const items: unknown[] = [];
-    for (let page = 1; page <= 20; page++) {
-      check(
-        Date.now() < deadline,
-        'github_unavailable',
-        'GitHub listing took too long; try again later',
-        502,
-      );
-      const body = (await this.request(
-        `https://api.github.com${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`,
-        token,
-      )) as Record<string, unknown>;
-      const rows = body && body[field];
-      check(
-        Array.isArray(rows) && rows.length <= 100,
-        'github_response',
-        'GitHub returned an invalid list',
-        502,
-      );
-      items.push(...rows);
-      if (rows.length < 100) return items;
-    }
-    throw new MervError(
-      'github_limit',
-      'Too many repositories; narrow the GitHub App installation to selected repositories',
-      409,
-    );
-  }
   async repositories(token: string): Promise<GitHubRepository[]> {
     const deadline = Date.now() + 30_000;
-    const installations = await this.pages(token, '/user/installations', 'installations');
+    const installations = await this.collection(token, '/user/installations', 'installations');
     check(
       installations.length <= 20,
       'github_limit',
@@ -853,16 +821,8 @@ export class GitHubClient {
     );
     const repositories: GitHubRepository[] = [];
     for (const raw of installations) {
-      const installation = z.object({ id }).safeParse(raw);
-      check(
-        installation.success,
-        'github_response',
-        'GitHub returned an invalid installation',
-        502,
-      );
-      repositories.push(
-        ...(await this.installationRepositories(token, installation.data.id, deadline)),
-      );
+      const installation = githubResponse(z.object({ id }), raw);
+      repositories.push(...(await this.installationRepositories(token, installation.id, deadline)));
       check(
         repositories.length <= 2000,
         'github_limit',
@@ -877,16 +837,14 @@ export class GitHubClient {
     installationId: number,
     deadline?: number,
   ): Promise<GitHubRepository[]> {
-    const rows = await this.pages(
+    const rows = await this.collection(
       token,
       `/user/installations/${installationId}/repositories`,
       'repositories',
       deadline,
     );
     return rows.map((raw) => {
-      const parsed = repositorySchema.safeParse(raw);
-      check(parsed.success, 'github_response', 'GitHub returned an invalid repository', 502);
-      const repo = parsed.data;
+      const repo = githubResponse(repositorySchema, raw);
       return {
         id: repo.id,
         installationId,

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { check, type Data, type WorkflowAssignmentRule } from '@merv/contracts';
-import type {} from '@merv/code/types';
+import type {} from '@merv/code-research/types';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
 
@@ -230,7 +230,7 @@ const handles = [
     handler: async (caller, input) =>
       await app.ctx.state.transaction(async (tx) => {
         await app.ctx.scope.require(caller, 'write', tx);
-        const operation = await app.ctx.code.operation(caller, input.commandId);
+        const operation = await app.ctx.codeResearch.operation(caller, input.commandId);
         check(
           operation.status === 'succeeded' && operation.receipt,
           'commit_required',
@@ -246,7 +246,7 @@ const handles = [
           'The proposal must use this worker’s own exact operation',
           403,
         );
-        const proposal = await app.ctx.code.seal(
+        const proposal = await app.ctx.codeResearch.seal(
           caller,
           {
             commandId: input.commandId,
@@ -306,7 +306,11 @@ const handles = [
         'This is not the current proposal review',
         409,
       );
-      const proposal = await app.ctx.code.proposal(caller, String(snapshot.data.proposalId), tx);
+      const proposal = await app.ctx.codeResearch.proposal(
+        caller,
+        String(snapshot.data.proposalId),
+        tx,
+      );
       const session = await app.ctx.sessions.describe(caller);
       check(
         proposal.manifestHash === snapshot.data.proposalHash &&
@@ -411,8 +415,8 @@ try {
     source,
     String(final.data.proposalArtifactId),
   );
-  const proposal = await app.ctx.code.proposal(source, String(final.data.proposalId));
-  const operation = await app.ctx.code.operation(source, String(final.data.commandId));
+  const proposal = await app.ctx.codeResearch.proposal(source, String(final.data.proposalId));
+  const operation = await app.ctx.codeResearch.operation(source, String(final.data.commandId));
   const sessions = (await app.ctx.sessions.list(source)).sort(
     (a, b) => a.expectedRevision - b.expectedRevision,
   );

@@ -23,9 +23,9 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
-import { CodeCommandService } from '../packages/code/src/commands.js';
-import { CodeProposalService } from '../packages/code/src/proposals.js';
-import type { CodeProposalInput } from '../packages/code/src/types.js';
+import { CodeCommandService } from '../packages/code-research/src/commands.js';
+import { CodeProposalService } from '../packages/code-research/src/proposals.js';
+import type { CodeProposalInput } from '../packages/code-research/src/types.js';
 
 const oid = (digit: string) => digit.repeat(40);
 const workspace: SessionWorkspace = {

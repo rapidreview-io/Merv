@@ -1,7 +1,7 @@
 import { postgresMigrations as migrations0 } from '../packages/artifacts/src/index.postgres.js';
 import { postgresMigrations as migrations1 } from '../packages/claims/src/index.postgres.js';
-import { postgresMigrations as migrations2 } from '../packages/code/src/commands.postgres.js';
-import { postgresMigrations as migrations3 } from '../packages/code/src/proposals.postgres.js';
+import { postgresMigrations as migrations2 } from '../packages/code-research/src/commands.postgres.js';
+import { postgresMigrations as migrations3 } from '../packages/code-research/src/proposals.postgres.js';
 import { postgresMigrations as migrations4 } from '../packages/consolidation/src/index.postgres.js';
 import { postgresMigrations as migrations5 } from '../packages/context-builder/src/index.postgres.js';
 import { postgresMigrations as migrations6 } from '../packages/domain-events/src/index.postgres.js';
@@ -37,8 +37,8 @@ type DomainMigration = { owner: string; version: number; sqlite: string; postgre
 const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/artifacts/src/index.ts': migrations0,
   'packages/claims/src/index.ts': migrations1,
-  'packages/code/src/commands.ts': migrations2,
-  'packages/code/src/proposals.ts': migrations3,
+  'packages/code-research/src/commands.ts': migrations2,
+  'packages/code-research/src/proposals.ts': migrations3,
   'packages/consolidation/src/index.ts': migrations4,
   'packages/context-builder/src/index.ts': migrations5,
   'packages/domain-events/src/index.ts': migrations6,
@@ -121,7 +121,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 68);
+  assert.equal(all.length, 69);
   const consolidation = all.filter(
     (migration) => migration.owner === 'packages/consolidation/src/index.ts',
   );

@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   copyFileSync,
-  createReadStream,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -35,6 +34,7 @@ import {
   type WorkspaceSession,
   type WorkspaceTransport,
 } from '@merv/contracts';
+import { hashFile } from '../files.js';
 import { MERGE_SETTINGS } from '../merge-settings.js';
 import { DriverGit, WorkspaceError } from './git.js';
 
@@ -1010,13 +1010,11 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         '--not',
         journal.expected_head,
       ]);
-      const digest = createHash('sha256');
-      for await (const chunk of createReadStream(file)) digest.update(chunk as Buffer);
       this.db
         .prepare(
           'UPDATE code_v2_transfers SET bundle_path=?,bundle_hash=?,bundle_bytes=? WHERE request_id=? AND bundle_hash IS NULL',
         )
-        .run(file, digest.digest('hex'), lstatSync(file).size, journal.request_id);
+        .run(file, await hashFile(file), lstatSync(file).size, journal.request_id);
       journal = this.transfer(journal.request_id)!;
     }
     const sending = journal.bundle_hash !== null;

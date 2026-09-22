@@ -2,8 +2,8 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { check, createService, type Caller, type CodeCommitReceipt } from '@merv/contracts';
 import type { Sessions, Session } from '@merv/sessions/types';
-import type { CodeCommands } from '../packages/code/src/types.js';
-import { CodeTransportService } from '../packages/code/src/transport.js';
+import type { CodeCommands } from '../packages/code-research/src/types.js';
+import { CodeTransportService } from '../packages/code-research/src/transport.js';
 import { githubFixture, headOid, baseOid, treeOid } from './github-fixture.js';
 
 async function setup(t: TestContext) {

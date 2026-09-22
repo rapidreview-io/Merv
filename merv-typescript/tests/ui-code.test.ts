@@ -13,13 +13,13 @@ import type {
   CodeUnitAcceptance,
 } from '@merv/contracts/code-units';
 import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
-import type { CodePublication } from '@merv/contracts/types';
+import type { CodePublication, GitHubStatus } from '@merv/contracts/types';
 import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
 sessionStorage.setItem('merv:token', 'fixture-token');
 
-const { createElement, useEffect } = await import('react');
+const { createElement, useEffect, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { MemoryRouter, useLocation } = await import('react-router-dom');
 const { CodePage, managesCode, signedInAdmin } = await import('../packages/ui/web/views/code.js');
@@ -1910,3 +1910,132 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     text(),
   );
 });
+
+{
+  const { GitHubConnection } = await import('../packages/ui/web/views/github.js');
+  const { GitHubAutomation } = await import('../packages/ui/web/views/github-automation.js');
+  const { GitHubPreparation } = await import('../packages/ui/web/views/github-prepare.js');
+
+  const status: GitHubStatus = {
+    configured: true,
+    revision: 1,
+    status: 'connected',
+    user: { id: 1, login: 'researcher' },
+    repository: {
+      id: 42,
+      installationId: 8,
+      fullName: 'research/project',
+      url: 'https://github.com/research/project',
+      defaultBranch: 'main',
+      private: true,
+    },
+    canManage: true,
+    canBrowse: true,
+    installUrl: 'https://github.com/apps/merv/installations/new',
+    automationConfigured: true,
+    automation: 'write',
+    baseBranch: 'research-base',
+  };
+
+  test('repository settings name the selected research branch rather than the GitHub default', async (t) => {
+    t.after(unmount);
+    serve('/code/github', { body: status });
+    await mount(createElement(GitHubConnection));
+    assert.match(text(), /Research base: research-base/);
+    assert.doesNotMatch(text(), /GitHub default: main/);
+    assert.match(text(), /It can have any branch name/);
+  });
+
+  test('branch selection saves the chosen branch with the connection revision', async (t) => {
+    t.after(unmount);
+    serve('/code/github/branches', {
+      body: { branches: [{ name: 'release/science', sha: 'a'.repeat(40), protected: true }] },
+    });
+    let sent: Record<string, unknown> | undefined;
+    serve('/code/github/automation', (_call, body) => {
+      sent = body;
+      return { body: { ...status, revision: 2, baseBranch: 'release/science' } };
+    });
+    let changed = 0;
+    await mount(createElement(GitHubAutomation, { status, onChanged: () => changed++ }));
+    await click('Choose branch');
+    const select = document.querySelectorAll('select')[1];
+    await act(async () => {
+      select.value = 'release/science';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    await click('Save automation');
+    assert.deepEqual(sent, { expectedRevision: 1, mode: 'write', baseBranch: 'release/science' });
+    assert.equal(changed, 1);
+  });
+
+  test('uncertain preparation retries the selected commit and request even after its branch moves', async (t) => {
+    t.after(unmount);
+    serve('/tools/code.status', { body: { result: { project: null, store: { hosted: false } } } });
+    serve('/code/github/branches', {
+      body: { branches: [{ name: status.baseBranch, sha: 'a'.repeat(40) }] },
+    });
+    const sent: Record<string, unknown>[] = [];
+    serve('/tools/code.repository.prepare', (_count, body) => {
+      sent.push(body);
+      return sent.length === 1
+        ? { network: true }
+        : {
+            body: {
+              result: {
+                state: 'ready',
+                baseBranch: status.baseBranch,
+                headOid: 'a'.repeat(40),
+                operation: { id: 'imported', status: 'completed' },
+              },
+            },
+          };
+    });
+    await mount(createElement(MemoryRouter, null, createElement(GitHubPreparation, { status })));
+    await click('Prepare repository');
+    assert.match(text(), /Retry same preparation/);
+    serve('/code/github/branches', {
+      body: { branches: [{ name: status.baseBranch, sha: 'b'.repeat(40) }] },
+    });
+    await click('Retry same preparation');
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[1], sent[0]);
+    assert.equal(sent[0].headOid, 'a'.repeat(40));
+    assert.match(text(), /Ready at/);
+    assert.match(text(), /View changes/);
+  });
+
+  test('a branch response from an earlier repository connection cannot replace the new selection', async (t) => {
+    t.after(unmount);
+    let release!: (value: Response) => void;
+    t.mock.method(
+      globalThis,
+      'fetch',
+      async () =>
+        await new Promise<Response>((done) => {
+          release = done;
+        }),
+    );
+    let change!: (value: GitHubStatus) => void;
+    const Settings = () => {
+      const [value, setValue] = useState(status);
+      change = setValue;
+      return createElement(GitHubAutomation, { status: value, onChanged: () => {} });
+    };
+    await mount(createElement(Settings));
+    await click('Choose branch');
+    await act(async () => change({ ...status, revision: 2, baseBranch: 'new-research-base' }));
+    await act(async () => {
+      release(
+        new Response(JSON.stringify({ branches: [{ name: 'old-repository-branch' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    });
+    await settle();
+    assert.match(text(), /new-research-base/);
+    assert.doesNotMatch(text(), /old-repository-branch/);
+    assert.equal(document.querySelectorAll('select').length, 1);
+  });
+}

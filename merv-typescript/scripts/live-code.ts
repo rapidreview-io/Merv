@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { check, type Data, type WorkflowAssignmentRule } from '@merv/contracts';
-import type {} from '@merv/code/types';
+import type {} from '@merv/code-research/types';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
 
@@ -220,7 +220,7 @@ const handles = [
     handler: async (caller, input) =>
       await app.ctx.state.transaction(async (tx) => {
         await app.ctx.scope.require(caller, 'write', tx);
-        const operation = await app.ctx.code.operation(caller, input.commandId);
+        const operation = await app.ctx.codeResearch.operation(caller, input.commandId);
         check(
           operation.status === 'succeeded' && operation.receipt,
           'commit_required',
@@ -385,7 +385,7 @@ try {
   const final = await app.ctx.workflows.get(source, target.id);
   const review = await app.ctx.reviews.get(source, String(final.data.reviewId));
   const proposal = await app.ctx.artifacts.read(source, String(final.data.proposalArtifactId));
-  const operation = await app.ctx.code.operation(source, String(final.data.commandId));
+  const operation = await app.ctx.codeResearch.operation(source, String(final.data.commandId));
   const sessions = (await app.ctx.sessions.list(source)).sort(
     (a, b) => a.expectedRevision - b.expectedRevision,
   );

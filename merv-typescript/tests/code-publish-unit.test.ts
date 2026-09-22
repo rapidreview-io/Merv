@@ -3,10 +3,10 @@ import test, { type TestContext } from 'node:test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createService, type WorkflowSnapshot } from '@merv/contracts';
-import { CodeService } from '@merv/code/service';
+import { CodeService } from '@merv/code-research/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeCapture } from '@merv/code/types';
-import type { CodeBaseService } from '../packages/code/src/bases.js';
+import type { CodeCapture } from '@merv/code-research/types';
+import type { CodeBaseService } from '../packages/code-research/src/bases.js';
 import { backends, optional, git, gitSource, type Backend } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { boundProject } from './fixtures/code-binding.js';
@@ -254,8 +254,10 @@ async function fixture(t: TestContext, backend: Backend, connected = false) {
       requestId: 'canary',
     });
   const unbind = f.tasks.bindCode(code);
+  const unbindReviews = code.bindReviews(f.reviews);
   f.beforeClose.push(async () => {
     unbind();
+    unbindReviews();
     await code.close();
     repositories.git.close();
   });

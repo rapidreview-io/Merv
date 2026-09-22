@@ -97,6 +97,15 @@
         "runner"
       ],
       "description": "Runner has its own Cordis context. It talks to the server over authenticated HTTP and launches scoped agents in scratch or Git workspaces. It has no injected server-plugin dependencies."
+    },
+    {
+      "id": "other",
+      "label": "New providers",
+      "caption": "Discovered in source",
+      "members": [
+        "codeResearch"
+      ],
+      "description": "These providers were discovered automatically and await a visual grouping in notes.json."
     }
   ],
   "nodes": [
@@ -309,6 +318,47 @@
       ],
       "requires": [
         "state",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "code",
+      "group": "coordination",
+      "owner": "code",
+      "label": "Code",
+      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. Also owns optional project GitHub connections and repository selection through its existing API/UI adapters. Runner executes Git; GitHub adds no Cordis dependency.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-code-api",
+      "source": "packages/code-research/src/api.ts",
+      "provides": [],
+      "requires": [
+        "api",
+        "codeResearch"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-api",
+      "group": "front",
+      "owner": "codeResearch",
+      "label": "codeResearch · api adapter",
+      "purpose": "Connects codeResearch to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-code-research",
+      "source": "packages/code-research/src/index.ts",
+      "provides": [
+        "codeResearch"
+      ],
+      "requires": [
+        "code",
+        "state",
         "scope",
         "sessions",
         "artifacts",
@@ -322,12 +372,17 @@
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
-      "id": "code",
-      "group": "coordination",
-      "owner": "code",
-      "label": "Code",
-      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. Also owns optional project GitHub connections and repository selection through its existing API/UI adapters. Runner executes Git; GitHub adds no Cordis dependency.",
+      "id": "codeResearch",
+      "group": "other",
+      "owner": "codeResearch",
+      "label": "codeResearch",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
       "exposedTools": [
+        {
+          "name": "code.backup.run",
+          "description": "Take one verified copy of this project’s repository, and of the server’s database, to object storage now instead of waiting for the daily pass. Use it before a risky deploy or migration, and to give the restore drill something fresh to read. The database is dumped first and the repository bundled second, because a repository ahead of its database is recoverable and the reverse is not; the bundle carries every ref, its sha256 travels with it, and both objects are read back before the run is recorded. A project whose refs have not moved since the last copy reuses that bundle and rewrites only the pointer. The answer is the same backup block code.status reports: when the copy was taken and verified, what it wrote, the object a restore would read, and any warning — a repository whose bundle is larger than one object may be leaves the previous copy newest and warns code_backup_too_large. Copies older than the retention window are removed, never the one the pointer names. Only a project administrator or operator key may call it, never a leased worker. One pass runs at a time across the whole server, so a call made while the daily pass or another operator’s run is going is answered with code_backup_busy; ask again when it has finished. Supply a stable requestId: the same request replays its receipt. Answered with code_backup_unconfigured where this server keeps no off-host copy.",
+          "readOnly": false
+        },
         {
           "name": "code.commit",
           "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
@@ -406,30 +461,11 @@
       ]
     },
     {
-      "plugin": "merv-code-api",
-      "source": "packages/code/src/api.ts",
-      "provides": [],
-      "requires": [
-        "api",
-        "code"
-      ],
-      "optional": [],
-      "kind": "api",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-code-api",
-      "group": "front",
-      "owner": "code",
-      "label": "Code · api adapter",
-      "purpose": "Connects Code to the API registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
       "plugin": "merv-code-tools",
-      "source": "packages/code/src/tools.ts",
+      "source": "packages/code-research/src/tools.ts",
       "provides": [],
       "requires": [
-        "code",
+        "codeResearch",
         "tools"
       ],
       "optional": [],
@@ -438,10 +474,15 @@
       "defaultConfiguration": true,
       "id": "merv-code-tools",
       "group": "front",
-      "owner": "code",
-      "label": "Code · tools adapter",
-      "purpose": "Connects Code to the Tools registry. This adapter owns no domain state.",
+      "owner": "codeResearch",
+      "label": "codeResearch · tools adapter",
+      "purpose": "Connects codeResearch to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
+        {
+          "name": "code.backup.run",
+          "description": "Take one verified copy of this project’s repository, and of the server’s database, to object storage now instead of waiting for the daily pass. Use it before a risky deploy or migration, and to give the restore drill something fresh to read. The database is dumped first and the repository bundled second, because a repository ahead of its database is recoverable and the reverse is not; the bundle carries every ref, its sha256 travels with it, and both objects are read back before the run is recorded. A project whose refs have not moved since the last copy reuses that bundle and rewrites only the pointer. The answer is the same backup block code.status reports: when the copy was taken and verified, what it wrote, the object a restore would read, and any warning — a repository whose bundle is larger than one object may be leaves the previous copy newest and warns code_backup_too_large. Copies older than the retention window are removed, never the one the pointer names. Only a project administrator or operator key may call it, never a leased worker. One pass runs at a time across the whole server, so a call made while the daily pass or another operator’s run is going is answered with code_backup_busy; ask again when it has finished. Supply a stable requestId: the same request replays its receipt. Answered with code_backup_unconfigured where this server keeps no off-host copy.",
+          "readOnly": false
+        },
         {
           "name": "code.commit",
           "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
@@ -521,10 +562,10 @@
     },
     {
       "plugin": "merv-code-ui",
-      "source": "packages/code/src/ui.ts",
+      "source": "packages/code-research/src/ui.ts",
       "provides": [],
       "requires": [
-        "code",
+        "codeResearch",
         "ui"
       ],
       "optional": [],
@@ -533,9 +574,9 @@
       "defaultConfiguration": true,
       "id": "merv-code-ui",
       "group": "front",
-      "owner": "code",
-      "label": "Code · ui adapter",
-      "purpose": "Connects Code to the UI registry. This adapter owns no domain state.",
+      "owner": "codeResearch",
+      "label": "codeResearch · ui adapter",
+      "purpose": "Connects codeResearch to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -553,7 +594,7 @@
         "contextBuilder"
       ],
       "optional": [
-        "code"
+        "codeResearch"
       ],
       "kind": "service",
       "runtime": "server",
@@ -723,7 +764,7 @@
         "paper"
       ],
       "optional": [
-        "code"
+        "codeResearch"
       ],
       "kind": "service",
       "runtime": "server",
@@ -972,7 +1013,7 @@
         "workflows"
       ],
       "optional": [
-        "code"
+        "codeResearch"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1312,7 +1353,7 @@
         "tasks",
         "experiments",
         "artifacts",
-        "code"
+        "codeResearch"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1330,12 +1371,12 @@
         },
         {
           "name": "research.advance",
-          "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.",
+          "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.",
           "readOnly": false
         },
         {
           "name": "research.create",
-          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
           "readOnly": false
         },
         {
@@ -1390,12 +1431,12 @@
         },
         {
           "name": "research.advance",
-          "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.",
+          "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.",
           "readOnly": false
         },
         {
           "name": "research.create",
-          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
           "readOnly": false
         },
         {
@@ -2038,7 +2079,7 @@
         "contextBuilder"
       ],
       "optional": [
-        "code"
+        "codeResearch"
       ],
       "kind": "service",
       "runtime": "server",
@@ -2343,48 +2384,63 @@
       "optional": false
     },
     {
-      "from": "code",
-      "to": "sessions",
-      "optional": false
-    },
-    {
-      "from": "code",
-      "to": "artifacts",
-      "optional": false
-    },
-    {
-      "from": "code",
-      "to": "workflows",
-      "optional": false
-    },
-    {
-      "from": "code",
-      "to": "domainEvents",
-      "optional": false
-    },
-    {
-      "from": "code",
-      "to": "reviews",
-      "optional": true
-    },
-    {
-      "from": "code",
-      "to": "sandboxes",
-      "optional": true
-    },
-    {
       "from": "merv-code-api",
       "to": "api",
       "optional": false
     },
     {
       "from": "merv-code-api",
+      "to": "codeResearch",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
       "to": "code",
       "optional": false
     },
     {
+      "from": "codeResearch",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "codeResearch",
+      "to": "reviews",
+      "optional": true
+    },
+    {
+      "from": "codeResearch",
+      "to": "sandboxes",
+      "optional": true
+    },
+    {
       "from": "merv-code-tools",
-      "to": "code",
+      "to": "codeResearch",
       "optional": false
     },
     {
@@ -2394,7 +2450,7 @@
     },
     {
       "from": "merv-code-ui",
-      "to": "code",
+      "to": "codeResearch",
       "optional": false
     },
     {
@@ -2434,7 +2490,7 @@
     },
     {
       "from": "consolidation",
-      "to": "code",
+      "to": "codeResearch",
       "optional": true
     },
     {
@@ -2514,7 +2570,7 @@
     },
     {
       "from": "experiments",
-      "to": "code",
+      "to": "codeResearch",
       "optional": true
     },
     {
@@ -2614,7 +2670,7 @@
     },
     {
       "from": "knowledge",
-      "to": "code",
+      "to": "codeResearch",
       "optional": true
     },
     {
@@ -2804,7 +2860,7 @@
     },
     {
       "from": "research",
-      "to": "code",
+      "to": "codeResearch",
       "optional": true
     },
     {
@@ -3019,7 +3075,7 @@
     },
     {
       "from": "tasks",
-      "to": "code",
+      "to": "codeResearch",
       "optional": true
     },
     {
@@ -3059,10 +3115,10 @@
     }
   ],
   "counts": {
-    "plugins": 60,
-    "providers": 26,
+    "plugins": 61,
+    "providers": 27,
     "adapters": 34,
-    "dependencies": 161
+    "dependencies": 164
   },
   "network": [
     {

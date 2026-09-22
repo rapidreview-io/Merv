@@ -1,7 +1,6 @@
 import { check, MervError } from '@merv/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, connect, type Server } from 'node:net';
-import { constants } from 'node:fs';
 import {
   lstat,
   mkdir,
@@ -18,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ServerGit } from '../git.js';
+import { syncPath } from '../files.js';
 
 export type ObjectFormat = 'sha1' | 'sha256';
 export interface CodeRepositoryConfig {
@@ -68,16 +68,6 @@ const incidental = new Set([
  */
 export const directoryKey = (projectId: string) =>
   createHash('sha256').update(projectId).digest('hex').slice(0, 32);
-
-/** Write a directory entry to disk, so a rename or a link survives losing power. */
-export async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, constants.O_RDONLY);
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
 
 /** The bytes beneath a path; a missing path holds none. */
 export async function diskBytes(path: string): Promise<number> {
@@ -236,7 +226,7 @@ export class CodeRepositories {
       } finally {
         await marker.close();
       }
-      await syncDirectory(paths.directory);
+      await syncPath(paths.directory);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
@@ -256,7 +246,7 @@ export class CodeRepositories {
         for (const [key, value] of Object.entries(controlled))
           await this.git.ok(['config', '--file', join(target, 'config'), key, value]);
         await rename(target, paths.repository);
-        await syncDirectory(paths.directory);
+        await syncPath(paths.directory);
       } finally {
         await rm(bootstrap, { recursive: true, force: true });
       }
@@ -326,7 +316,7 @@ export class CodeRepositories {
       await handle.close();
     }
     await rename(next, paths.marker);
-    await syncDirectory(paths.directory);
+    await syncPath(paths.directory);
     // validate() answers from this memo for the life of the process, so the next Git operation
     // of this project would otherwise never read the identity just written.
     this.validated.delete(projectId);
@@ -421,7 +411,16 @@ export class CodeRepositories {
   run<T>(projectId: string, job: () => Promise<T>): Promise<T> {
     if (this.closing)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
-    const next = (this.chains.get(projectId) ?? Promise.resolve()).then(job, job);
+    const signal = this.git.signal;
+    const aborted = () => new MervError('code_git_aborted', 'A Git operation was stopped', 503);
+    if (signal?.aborted) return Promise.reject(aborted());
+    let started = false;
+    const perform = () => {
+      if (signal?.aborted) throw aborted();
+      started = true;
+      return job();
+    };
+    const next = (this.chains.get(projectId) ?? Promise.resolve()).then(perform, perform);
     const settled = next.then(
       () => {},
       () => {},
@@ -432,14 +431,40 @@ export class CodeRepositories {
       this.measured.delete(projectId);
       if (this.chains.get(projectId) === settled) this.chains.delete(projectId);
     });
-    return next;
+    if (!signal) return next;
+    return new Promise<T>((resolve, reject) => {
+      // A cancelled waiter leaves its place in the chain until its predecessor ends, so a
+      // later client cannot overtake that predecessor. The cancelled job itself never runs.
+      const cancel = () => {
+        if (!started) reject(aborted());
+      };
+      signal.addEventListener('abort', cancel, { once: true });
+      void next.then(resolve, reject).then(() => signal.removeEventListener('abort', cancel));
+    });
   }
 
   /** At most two imports or exports index or write packs at once, across every project. */
   async transfer<T>(job: () => Promise<T>): Promise<T> {
-    if (this.transfers >= 2) await new Promise<void>((resolve) => this.waiting.push(resolve));
+    const signal = this.git.signal;
+    const aborted = () => new MervError('code_git_aborted', 'A Git operation was stopped', 503);
+    if (signal?.aborted) throw aborted();
+    if (this.transfers >= 2)
+      await new Promise<void>((resolve, reject) => {
+        const ready = () => {
+          signal?.removeEventListener('abort', cancel);
+          resolve();
+        };
+        const cancel = () => {
+          const index = this.waiting.indexOf(ready);
+          if (index >= 0) this.waiting.splice(index, 1);
+          reject(aborted());
+        };
+        this.waiting.push(ready);
+        signal?.addEventListener('abort', cancel, { once: true });
+      });
     else this.transfers++;
     try {
+      if (signal?.aborted) throw aborted();
       return await job();
     } finally {
       const next = this.waiting.shift();

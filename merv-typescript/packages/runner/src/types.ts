@@ -28,6 +28,8 @@ export interface RunnerConfig {
   profiles: RunnerProfile[];
   /** A local source repository; the runner creates and owns its private Git copy. */
   workspace?: { repository: string; baseRef: string } | { github: true };
+  /** CLI composition: omit for the existing Code driver, or [] for workspace-free research. */
+  workspaceDrivers?: 'code'[];
   capacity?: number;
   pollIntervalMs?: number;
   requestTimeoutMs?: number;

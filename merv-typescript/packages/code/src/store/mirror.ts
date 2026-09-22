@@ -352,9 +352,10 @@ export class CodeMirrorService {
     return await this.describe(caller.projectId);
   }
 
-  close(): void {
+  async close(): Promise<void> {
     this.closed = true;
     clearInterval(this.timer);
+    await this.running?.catch(() => {});
   }
 
   private assertOpen(): void {

@@ -1,4 +1,3 @@
-import type { CodeCommitCommand, CodeCommitReceipt } from './code.js';
 import type { SessionWorkspace } from './sessions-models.js';
 import type { WorkflowExecution } from './index.js';
 
@@ -30,11 +29,6 @@ export interface WorkspaceSession {
 export interface WorkspaceDriver {
   get(launchId: string): WorkspaceHandle | undefined;
   prepare(launch: WorkspaceLaunch, session: WorkspaceSession): Promise<WorkspaceHandle>;
-  /** Commit the current checkout through a replayable, path-free server command. */
-  checkpointCommit(launch: WorkspaceLaunch, command: CodeCommitCommand): Promise<CodeCommitReceipt>;
-  pendingCommits(launchId: string): CodeCommitCommand[];
-  commitOutcome(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
-  acknowledgeCommit(commandId: string): void;
   /** Only after the launch's process has provably stopped. */
   capture(launch: WorkspaceLaunch): Promise<SessionWorkspace | undefined>;
   close(launch: WorkspaceLaunch): Promise<void>;

@@ -17,6 +17,7 @@ import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { z } from 'zod';
+import { hashFile } from '../files.js';
 import { directoryKey, type CodeRepositories, type ObjectFormat } from './repository.js';
 
 /** One copy, now, instead of at the next turn of the timer. */
@@ -436,12 +437,6 @@ export const codePrefix = (deployment: string, projectId: string) =>
   `${deployment}/code/${directoryKey(projectId)}/`;
 export const databasePrefix = (deployment: string) => `${deployment}/db/`;
 export const LATEST = 'latest.json';
-
-const hashFile = async (file: string) => {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
-  return hash.digest('hex');
-};
 
 /**
  * The verified copy of what Code keeps on disk. Nothing here runs inside a database

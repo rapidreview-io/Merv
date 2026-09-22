@@ -7,17 +7,18 @@ import {
   type Caller,
   type CodePublication,
   type CodeProjectStatus,
+  type Reviews,
   type Scope,
   type State,
   type Transaction,
 } from '@merv/contracts';
 import type { PublicationOwner } from './types.js';
-import type { CodeRepositories } from './store/repository.js';
-import type { MirrorTransport } from './store/mirror.js';
-import type { GitHubBinding } from './github.js';
-import type { GitHubClient } from './github-client.js';
+import type { CodeRepositories } from '@merv/code/store/repository';
+import type { MirrorTransport } from '@merv/code/store/mirror';
+import type { GitHubBinding } from '@merv/code/github';
+import type { GitHubClient } from '@merv/code/github-client';
 import { z } from 'zod';
-import { parseCodeInput } from './input.js';
+import { parseCodeInput } from '@merv/code/input';
 
 export const publicationControlSchema = z
   .object({
@@ -43,6 +44,7 @@ type Controls = Omit<NonNullable<CodeProjectStatus['publication']>['controls'], 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
 export class PublicationHost {
   private owner?: PublicationOwner;
+  private reviews?: { service: Pick<Reviews, 'get'> };
   constructor(
     private state: State,
     private scope: Scope,
@@ -64,6 +66,20 @@ export class PublicationHost {
       tx: Transaction,
     ) => Promise<void>,
   ) {}
+  bindReviews(service: Pick<Reviews, 'get'>): () => void {
+    const binding = { service };
+    this.reviews = binding;
+    return () => {
+      if (this.reviews === binding) this.reviews = undefined;
+    };
+  }
+  async review(caller: Caller, reviewId: string, tx: Transaction) {
+    const binding = this.reviews;
+    check(binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
+    const review = await binding.service.get(caller, reviewId, tx);
+    check(this.reviews === binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
+    return review;
+  }
   register(owner: PublicationOwner) {
     this.owner = owner;
     return () => {
@@ -130,22 +146,12 @@ export class PublicationHost {
       'The publication no longer matches its accepted review',
       409,
     );
-    const review = await tx.get<{
-      verdict: string;
-      reviewer_id: string;
-      provenance_json: string | null;
-    }>(
-      'SELECT verdict,reviewer_id,provenance_json FROM reviews WHERE id=? AND project_id=?',
-      record.review!.id,
-      caller.projectId,
-    );
+    const review = await this.review(caller, record.review!.id, tx);
     check(
-      review?.verdict === 'pass' &&
-        review.reviewer_id === record.review!.actorId &&
+      review.verdict === 'pass' &&
+        review.reviewerId === record.review!.actorId &&
         // An ordinary unit review carries no certificate; one that does is bound exactly.
-        (envelope.certificateHash === null ||
-          (!!review.provenance_json &&
-            JSON.parse(review.provenance_json).hash === envelope.certificateHash)),
+        (envelope.certificateHash === null || review.provenance?.hash === envelope.certificateHash),
       'publication_review_required',
       'The exact independent review certificate is required',
       409,

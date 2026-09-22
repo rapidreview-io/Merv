@@ -43,6 +43,9 @@ const ROOTS = [
   'scripts',
   'tests',
   'config/default.json',
+  'config/no-code.example.json',
+  'config/runner-no-code.example.json',
+  'config/production.example.json',
   'deploy',
   'docs/architecture',
 ];

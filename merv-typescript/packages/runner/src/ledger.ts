@@ -71,7 +71,7 @@ function privateFile(path: string): void {
   }
   chmodSync(path, 0o600);
 }
-function syncDirectory(path: string): void {
+export function syncPath(path: string): void {
   const fd = openSync(path, 'r');
   try {
     fsyncSync(fd);
@@ -199,7 +199,7 @@ export class LocalLedger {
       this.runnerId = String(row.runner_id);
       this.machineKey = Buffer.from(row.machine_key as Uint8Array);
       this.db.exec('COMMIT');
-      syncDirectory(this.directory);
+      syncPath(this.directory);
     } catch (error) {
       try {
         this.db.exec('ROLLBACK');
@@ -325,7 +325,7 @@ export class LocalLedger {
         createHash('sha256').update(input.id).digest('hex'),
       );
       privateDirectory(runDirectory);
-      syncDirectory(join(this.directory, 'launches'));
+      syncPath(join(this.directory, 'launches'));
       this.db
         .prepare(
           `INSERT INTO launches(id,session_id,fingerprint,deadline,metadata_json,status,created_at,updated_at,run_directory)

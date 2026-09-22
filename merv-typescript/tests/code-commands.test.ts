@@ -19,7 +19,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeCommandService } from '../packages/code/src/commands.js';
+import { CodeCommandService } from '../packages/code-research/src/commands.js';
 
 const oid = (digit: string) => digit.repeat(40);
 const input = (requestId = 'commit'): CodeCommitInput => ({

@@ -54,7 +54,7 @@ import {
   type ServiceTaskCreator,
 } from '@merv/contracts';
 
-import type { Code, CodeCapture } from '@merv/code/types';
+import type { Code, CodeCapture } from '@merv/code-research/types';
 import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
 import { TASK_TYPES, TYPE_REQUIRED_CHECKS, RESERVED_CONTEXT_INPUTS } from './definitions.js';
 import {
@@ -2735,8 +2735,8 @@ export const tasksPlugin = {
         config.limits,
       ),
     );
-    ctx.inject(['code'], (ctx) => {
-      ctx.effect(() => tasks.bindCode(ctx.code));
+    ctx.inject(['codeResearch'], (ctx) => {
+      ctx.effect(() => tasks.bindCode(ctx.codeResearch));
     });
     // Keep the graph registration until every consumer of Tasks has been disposed.
     ctx.effect(function* () {

@@ -230,6 +230,12 @@
       "published": true
     },
     {
+      "component": "research",
+      "version": 6,
+      "hash": "81b882e8c30088c1dcb6b829b79687a8425a3f94578f87fffe303bd7c41a4963",
+      "published": false
+    },
+    {
       "component": "reviews",
       "version": 1,
       "hash": "1c3c4873d3b3a2a78f79fa5f20fd566b38f35a17650118154b45926c9b46ff5c",

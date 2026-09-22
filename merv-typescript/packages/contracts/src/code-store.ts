@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { codePendingMergeSchema } from './workspace.js';
+import { githubBranchSchema } from './code-github.js';
 
 /**
  * The second workspace protocol: Code keeps one repository per project and machines move Git
@@ -111,8 +112,20 @@ export const codeRepositoryImportInputSchema = z
     ref: z
       .string()
       .max(255)
-      .regex(/^refs\/(?:heads|tags)\/[A-Za-z0-9][A-Za-z0-9._/-]*$/)
-      .refine((value) => !value.includes('..') && !value.endsWith('/') && !value.includes('//'))
+      .regex(/^refs\/(?:heads|tags)\//)
+      .refine(
+        (value) =>
+          githubBranchSchema.safeParse(value.replace(/^refs\/(?:heads|tags)\//, '')).success,
+      )
+      .optional(),
+    /** Freeze the selected GitHub connection when preparation spans retries. */
+    githubBinding: z
+      .object({
+        revision: z.number().int().nonnegative(),
+        repositoryId: z.number().int().positive(),
+        baseBranch: githubBranchSchema,
+      })
+      .strict()
       .optional(),
     requestId: id,
   })
@@ -120,11 +133,29 @@ export const codeRepositoryImportInputSchema = z
   .refine(
     (value) =>
       value.source === 'bundle'
-        ? value.tip !== undefined && value.bundle !== undefined && value.ref === undefined
+        ? value.tip !== undefined &&
+          value.bundle !== undefined &&
+          value.ref === undefined &&
+          value.githubBinding === undefined
         : value.ref !== undefined && value.tip === undefined && value.bundle === undefined,
     'A bundle import names tip and bundle; a GitHub import names ref',
   );
 export type CodeRepositoryImportInput = z.infer<typeof codeRepositoryImportInputSchema>;
+
+/** The branch and exact commit selected by a repository administrator before preparation. */
+export interface CodeRepositoryPrepareInput {
+  expectedRevision: number;
+  baseBranch: string;
+  headOid: string;
+  expectedMainOid?: string;
+  requestId: string;
+}
+export interface CodeRepositoryPreparation {
+  state: 'ready' | 'importing' | 'failed';
+  baseBranch: string;
+  headOid: string;
+  operation: CodeStoreOperation;
+}
 
 /**
  * Bind a hosted project to another repository identity. `repositoryId` is the same opaque

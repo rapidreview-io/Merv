@@ -1,4 +1,3 @@
-import { types } from 'node:util';
 import { z } from 'zod';
 import {
   canonical,
@@ -11,6 +10,7 @@ import {
   digest,
   newId,
   now,
+  parsed,
   type Caller,
   type CodeCommandCompletion,
   type CodeCommandControl,
@@ -18,13 +18,12 @@ import {
   type CodeCommitCommand,
   type CodeCommitInput,
   type Data,
-  type Json,
   type Scope,
   type State,
   type Transaction,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
-import { pendingMerge } from './pending-merge.js';
+import { pendingMerge } from '@merv/code/pending-merge';
 import { postgresMigrations } from './commands.postgres.js';
 import type { CodeCommands } from './types.js';
 
@@ -45,58 +44,16 @@ const terminal = (status: Row['status']) =>
   status === 'succeeded' || status === 'failed' || status === 'cancelled';
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 
-// Inspect descriptors before Zod, canonical(), or JSON.stringify can invoke a getter or
-// toJSON method. The schemas below need only small, plain JSON records (no arrays).
-function parse<T>(schema: z.ZodType<T>, input: unknown): T {
-  let nodes = 0;
-  let characters = 0;
-  const seen = new Set<object>();
-  const copy = (value: unknown, depth = 0): Json => {
-    check(++nodes <= 128 && depth <= 8, 'invalid_code_input', 'Code input is too large');
-    if (value === null || typeof value === 'boolean') return value;
-    if (typeof value === 'string') {
-      characters += value.length;
-      check(characters <= 16_384, 'invalid_code_input', 'Code input is too large');
-      return value;
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    check(
-      typeof value === 'object' &&
-        value !== null &&
-        !types.isProxy(value) &&
-        Object.getPrototypeOf(value) === Object.prototype &&
-        !seen.has(value),
-      'invalid_code_input',
-      'Code input must be plain JSON',
-    );
-    seen.add(value);
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    check(
-      Reflect.ownKeys(value).every((key) => typeof key === 'string') &&
-        Object.values(descriptors).every(
-          (descriptor) => Object.hasOwn(descriptor, 'value') && descriptor.enumerable,
-        ),
-      'invalid_code_input',
-      'Code input must be plain JSON',
-    );
-    const result: Data = {};
-    for (const [key, descriptor] of Object.entries(descriptors)) {
-      check(
-        !['__proto__', 'prototype', 'constructor'].includes(key),
-        'invalid_code_input',
-        'Code input contains an invalid field',
-      );
-      characters += key.length;
-      check(characters <= 16_384, 'invalid_code_input', 'Code input is too large');
-      result[key] = copy(descriptor.value, depth + 1);
-    }
-    seen.delete(value);
-    return result;
-  };
-  const parsed = schema.safeParse(copy(input));
-  check(parsed.success, 'invalid_code_input', 'Code input does not match its schema');
-  return parsed.data;
-}
+// Share the bounded, descriptor-safe JSON parser used by the other service inputs.
+const parse = <T>(schema: z.ZodType<T>, input: unknown): T =>
+  parsed(schema, input, 'invalid_code_input', {
+    nodes: 128,
+    depth: 8,
+    bytes: 16_384,
+    strings: 'json',
+    undefined: 'reject',
+    nullPrototype: false,
+  });
 
 /** Durable server commands. Git execution and object verification belong to the runner. */
 export class CodeCommandService implements CodeCommands {

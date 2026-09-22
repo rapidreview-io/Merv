@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
-import type {} from '@merv/code/types';
+import type {} from '@merv/code-research/types';
 
 test(
   'live producer commits through MCP, retains authorship and recovers a lost command acknowledgement after handoff',
@@ -132,7 +132,7 @@ test(
       inputSchema: z.object({ commandId: z.string(), artifactId: z.string() }).strict(),
       handler: async (caller, input) =>
         await app.ctx.state.transaction(async (tx) => {
-          const operation = await app.ctx.code.operation(caller, input.commandId);
+          const operation = await app.ctx.codeResearch.operation(caller, input.commandId);
           assert.equal(operation.status, 'succeeded');
           assert.equal(operation.command.actorId, caller.actorId);
           const review = await app.ctx.reviews.request(
@@ -208,7 +208,7 @@ test(
     }
     assert.ok(dropped);
     assert.ok(completions >= 2);
-    const operation = (await app.ctx.code.list(source))[0];
+    const operation = (await app.ctx.codeResearch.list(source))[0];
     assert.equal(operation.status, 'succeeded');
     const session = (await app.ctx.sessions.list(source))[0];
     assert.equal(operation.command.actorId, session.actorId);
@@ -228,7 +228,7 @@ test(
     await runner.start();
     assert.equal(runner.snapshot().launches.length, 1);
     assert.equal(
-      (await app.ctx.code.operation(source, operation.command.id)).receipt!.headOid,
+      (await app.ctx.codeResearch.operation(source, operation.command.id)).receipt!.headOid,
       operation.receipt!.headOid,
     );
   },

@@ -1,6 +1,7 @@
 import { MervError } from '@merv/contracts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 export interface GitResult {
   code: number;
@@ -30,6 +31,7 @@ const MINIMUM = [2, 38] as const;
  * what a child does depends on its arguments and the repository Code itself configured.
  */
 export class ServerGit {
+  private readonly cancellation = new AsyncLocalStorage<AbortSignal>();
   private readonly children = new Set<ChildProcess>();
   private closed = false;
   constructor(
@@ -37,6 +39,18 @@ export class ServerGit {
     private readonly home: string,
     private readonly command = 'git',
   ) {}
+
+  /** One client's operations inherit its cancellation without affecting other clients. */
+  scoped<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+    const parent = this.signal;
+    return this.cancellation.run(
+      parent && parent !== signal ? AbortSignal.any([parent, signal]) : signal,
+      operation,
+    );
+  }
+  get signal(): AbortSignal | undefined {
+    return this.cancellation.getStore();
+  }
 
   /** The installed version, refused when it predates what admission relies on. */
   async assertGit(): Promise<string> {
@@ -67,6 +81,12 @@ export class ServerGit {
 
   /** The child's exit code and output. Only a child that could not run or finish in time throws. */
   run(args: string[], options: GitOptions = {}): Promise<GitResult> {
+    const signals = [this.signal, options.signal].filter(
+      (signal): signal is AbortSignal => !!signal,
+    );
+    const abortSignal = signals.length ? AbortSignal.any(signals) : undefined;
+    if (abortSignal?.aborted)
+      return Promise.reject(new MervError('code_git_aborted', 'A Git operation was stopped', 503));
     if (this.closed)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
     const maxBuffer = options.maxBuffer ?? 32 * 1024 * 1024;
@@ -114,8 +134,8 @@ export class ServerGit {
       );
       const aborted = () =>
         stop(new MervError('code_git_aborted', 'A Git operation was stopped', 503));
-      if (options.signal?.aborted) aborted();
-      else options.signal?.addEventListener('abort', aborted, { once: true });
+      if (abortSignal?.aborted) aborted();
+      else abortSignal?.addEventListener('abort', aborted, { once: true });
       child.stdout.on('data', (chunk: Buffer) => {
         if (options.output) return options.output(chunk);
         bytes += chunk.length;
@@ -139,6 +159,7 @@ export class ServerGit {
       }
       child.once('error', (error) => {
         clearTimeout(timer);
+        abortSignal?.removeEventListener('abort', aborted);
         this.children.delete(child);
         reject(
           failure ?? new MervError('code_git_failed', `Git could not run: ${error.message}`, 500),
@@ -146,7 +167,7 @@ export class ServerGit {
       });
       child.once('close', (code, signal) => {
         clearTimeout(timer);
-        options.signal?.removeEventListener('abort', aborted);
+        abortSignal?.removeEventListener('abort', aborted);
         this.children.delete(child);
         if (failure) reject(failure);
         else if (this.closed && signal)

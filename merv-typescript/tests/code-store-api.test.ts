@@ -326,7 +326,7 @@ test('code-import brings a local branch into a served project, in steps, as its 
     ['completed', one, true],
   );
   assert.ok(first.bytes! > PART);
-  let status = (await app.ctx.code.status(owner)) as CodeProjectStatus;
+  let status = (await app.ctx.codeResearch.status(owner)) as CodeProjectStatus;
   assert.deepEqual([status.project!.durability, status.project!.main.stored], ['code', false]);
   // An acceptance kept only in a runner's repository names a commit the next import may
   // deliver as history rather than as its tip; what the import turns out to hold is recorded
@@ -357,7 +357,7 @@ test('code-import brings a local branch into a served project, in steps, as its 
     'the import records the accepted commit its history contains',
   );
   assert.ok(second.bytes! < 5_000, 'the branch is sent as a continuation of the tag');
-  status = (await app.ctx.code.status(owner)) as CodeProjectStatus;
+  status = (await app.ctx.codeResearch.status(owner)) as CodeProjectStatus;
   assert.deepEqual(
     [status.project!.main.stored, status.store!.tips.sort(), status.operations],
     [true, [one, two].sort(), []],
@@ -393,13 +393,13 @@ test('a server configured with no repository root keeps none, and everything els
     credentialId: boot.credential.id,
   };
   await boundProject(app.ctx.state, owner.projectId, 'a'.repeat(40));
-  const status = await app.ctx.code.status(owner);
+  const status = await app.ctx.codeResearch.status(owner);
   assert.deepEqual(
     [status.store, status.operations, status.project!.durability],
     [null, [], 'legacy-local'],
   );
   await assert.rejects(
-    app.ctx.code.importRepository(owner, {
+    app.ctx.codeResearch.importRepository(owner, {
       source: 'github',
       ref: 'refs/heads/main',
       requestId: 'r',

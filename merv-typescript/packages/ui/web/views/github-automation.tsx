@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { StatusPill } from '../components';
@@ -11,6 +11,9 @@ export function GitHubAutomation({
   onChanged(): void;
 }) {
   const epoch = useScopeVersion();
+  const revision = useRef(status.revision);
+  revision.current = status.revision;
+  const current = () => epoch === scopeVersion() && revision.current === status.revision;
   const [mode, setMode] = useState(status.automation);
   const [base, setBase] = useState(status.baseBranch ?? status.repository?.defaultBranch ?? '');
   const [branches, setBranches] = useState<GitHubBranch[]>();
@@ -37,10 +40,10 @@ export function GitHubAutomation({
     try {
       await fn();
     } catch (e) {
-      if (epoch === scopeVersion())
+      if (current())
         setError(e instanceof Error ? e.message : 'GitHub could not confirm this change');
     } finally {
-      if (epoch === scopeVersion()) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   return (
@@ -109,7 +112,7 @@ export function GitHubAutomation({
                     onClick={() =>
                       void act(async () => {
                         const value = await request<{ branches: GitHubBranch[] }>('branches');
-                        if (epoch === scopeVersion()) setBranches(value.branches);
+                        if (current()) setBranches(value.branches);
                       })
                     }
                   >
@@ -118,6 +121,12 @@ export function GitHubAutomation({
                 </div>
               )}
             </label>
+          )}
+          {mode !== 'off' && (
+            <p className="muted">
+              Merv uses this branch as the project’s main branch for new work and reviewed changes.
+              It can have any branch name.
+            </p>
           )}
           <div>
             <button
@@ -135,7 +144,7 @@ export function GitHubAutomation({
                     mode,
                     baseBranch: mode === 'off' ? null : base,
                   });
-                  if (epoch === scopeVersion()) onChanged();
+                  if (current()) onChanged();
                 })
               }
             >

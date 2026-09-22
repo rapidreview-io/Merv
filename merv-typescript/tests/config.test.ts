@@ -31,6 +31,7 @@ test('default configuration includes session enforcement and API adds its contro
       'knowledge',
       'experiments',
       'claims',
+      'code-research',
       'code',
       'sessions',
       'feed',
@@ -48,7 +49,7 @@ test('default configuration includes session enforcement and API adds its contro
   assert.ok(
     core.entries.every(
       (entry) =>
-        entry.required === !['feed', 'consolidation'].includes(entry.id) &&
+        entry.required === !['feed', 'consolidation', 'code', 'code-research'].includes(entry.id) &&
         entry.disabled === false,
     ),
   );
@@ -59,7 +60,7 @@ test('default configuration includes session enforcement and API adds its contro
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 38, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 39, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -70,8 +71,17 @@ test('default configuration includes session enforcement and API adds its contro
   const requirements: Record<string, string[]> = {
     api: ['tools', 'scope', 'identity'],
     'sessions-api': ['sessions', 'api'],
-    'code-api': ['code', 'api'],
-    code: ['state', 'scope', 'sessions', 'artifacts'],
+    'code-api': ['code-research', 'api'],
+    code: ['state', 'scope'],
+    'code-research': [
+      'code',
+      'state',
+      'scope',
+      'sessions',
+      'artifacts',
+      'workflows',
+      'domain-events',
+    ],
     claims: ['state', 'scope'],
     knowledge: ['state', 'scope', 'claims', 'tasks', 'experiments', 'artifacts', 'reviews'],
     consolidation: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'context-builder'],
@@ -102,10 +112,10 @@ test('default configuration includes session enforcement and API adds its contro
     'scope',
     'workflows',
   ]) {
-    requirements[`${name}-tools`] = [name, 'tools'];
+    requirements[`${name}-tools`] = [name === 'code' ? 'code-research' : name, 'tools'];
     assert.equal(
       full.entries.find((entry) => entry.id === `${name}-tools`)?.name,
-      `@merv/${name}/tools`,
+      `@merv/${name === 'code' ? 'code-research' : name}/tools`,
     );
   }
   for (const [consumer, providers] of Object.entries(requirements))
@@ -156,7 +166,7 @@ test('default Feed and Consolidation are optional so disabling them preserves th
   config.plugins.find((entry) => entry.id === 'feed')!.disabled = true;
   config.plugins.find((entry) => entry.id === 'consolidation')!.disabled = true;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 52);
+  assert.equal(loaded.entries.length, 53);
   assert.deepEqual(
     loaded.entries.find((entry) => entry.id === 'feed'),
     { id: 'feed', name: '@merv/feed', required: false, disabled: true },
@@ -188,6 +198,8 @@ test('default Feed and Consolidation are optional so disabling them preserves th
             'feed-tools',
             'consolidation',
             'consolidation-tools',
+            'code',
+            'code-research',
             'code-tools',
             'code-api',
           ].includes(entry.id) && !browser(entry.id),
@@ -311,7 +323,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    52,
+    53,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

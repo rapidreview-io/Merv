@@ -2,6 +2,16 @@
 
 `LocalLedger` and `ProcessHost` run on Darwin and Linux. They have no dependency on the server's State plugin. The controller must acquire the ledger's controller lock before scheduling, reserve an immutable launch ID and session ID, and attach that launch ID remotely before calling the process host.
 
+## Optional Code driver
+
+For research that does not use Git, set `"workspaceDrivers": []` in the runner's local JSON configuration and omit `workspace`. The CLI then loads no Code plugin modules, advertises no Code capability, and runs workspace-free assignments in scratch directories without Git installed. Code-only import and restore commands load their modules only when invoked.
+
+[The server configuration without Code](../../config/no-code.example.json) includes research, experiments, tasks, reviews, reflection, retained evidence and the browser, with neither Code nor its research integration loaded. Start it with `npm run cli -- serve --dir .merv-no-code --config config/no-code.example.json`. [The matching runner configuration](../../config/runner-no-code.example.json) sets `workspaceDrivers` to an empty array; fill in its project ID and credential environment before using `npm run cli -- runner --config config/runner-no-code.example.json`.
+
+Omitting `workspaceDrivers` preserves the existing CLI behavior; `"workspaceDrivers": ["code"]` enables it explicitly. These runners advertise `code.v2` when Code's driver can initialize. The older `workspace` repository/GitHub configuration remains supported for frozen assignments that do not name a driver.
+
+The shared `WorkspaceDriver` interface owns preparation, capture and cleanup only. Drivers supporting Code commands additionally provide the commit journal methods consumed by Runner. A lifecycle-only driver never polls Code commands; a policy that grants `code.commit` requires a driver with that capability.
+
 ## Durable intent and credentials
 
 The private local SQLite database uses WAL, `synchronous=FULL`, and `fullfsync=ON`. Its directory is mode `0700`; its database and logs are `0600`. Use a local filesystem with SQLite locking and durability semantics. A separate SQLite connection holds an exclusive controller lock: losing the controller process releases the lock without blocking supervisor ledger updates.

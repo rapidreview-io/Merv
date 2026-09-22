@@ -15,12 +15,10 @@ import {
   type Scope,
   type Sql,
   type State,
-  type StoredEvent,
   type Transaction,
-  type WorkflowProvidedBlockerInput,
-  type Workflows,
 } from '@merv/contracts';
 import { parseCodeInput } from './input.js';
+import { CodeChanges } from './changes.js';
 
 export interface WriterRow {
   project_id: string;
@@ -49,11 +47,8 @@ export interface WriterFence {
   /** Whether the upload proposes another head than it expects. */
   moves: boolean;
 }
-const writerColumns =
+export const writerColumns =
   'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id,quarantine_base_key';
-const PROVIDER = 'code';
-const FENCE =
-  'A signed-in project administrator reads the findings in code.status and runs code.unit.fence, which closes this writer at the last commit Code admitted; the next lease continues from there.';
 
 /**
  * The writer fence of a unit. One leased session at a time may advance a unit's branch in
@@ -67,8 +62,8 @@ export class CodeWriterService {
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
-    private readonly workflows: Workflows,
-    private readonly finalizeGraceSeconds: number,
+    readonly finalizeGraceSeconds: number,
+    readonly changes = new CodeChanges(state),
   ) {}
 
   /**
@@ -115,24 +110,6 @@ export class CodeWriterService {
     return row ? this.view(row) : { generation: 0, state: 'idle', blocked: null };
   }
 
-  /** The durable consumer of a session's attach and end, which open and end its generation. */
-  async sessionChanged(event: StoredEvent, tx: Transaction): Promise<void> {
-    const row = await tx.get<WriterRow>(
-      `SELECT ${writerColumns} FROM code_units WHERE project_id=? AND writer_session_id=?`,
-      event.projectId,
-      event.subjectId,
-    );
-    if (!row) return;
-    if (event.type === 'session.workspace_attached') {
-      if (row.writer_state === 'reserved') await this.move(tx, row, 'active');
-      return;
-    }
-    // Nothing can have been edited in a checkout that was never attached, so that generation
-    // simply closes; an attached one waits for the final capture of its machine.
-    if (row.writer_state === 'reserved') await this.move(tx, row, 'closed');
-    else if (row.writer_state === 'active') await this.move(tx, row, 'closing');
-  }
-
   /** A generation whose final capture never came is shown as needing an operator. */
   async expire(): Promise<void> {
     if (this.closed) return;
@@ -143,17 +120,7 @@ export class CodeWriterService {
         before,
       )) {
         await this.move(tx, row, 'recovery_required');
-        await this.publish(tx, row, [
-          {
-            key: 'writer',
-            code: 'code_recovery_required',
-            message:
-              'The machine that last worked on this unit never handed over its final capture, so what it left is unknown',
-            status: 409,
-            next: `Start that runner again so it can finish, or: ${FENCE}`,
-            related: [],
-          },
-        ]);
+        await this.changed(tx, row);
       }
     });
   }
@@ -224,7 +191,7 @@ export class CodeWriterService {
       fence.projectId,
       fence.unitId,
     );
-    await this.publish(tx, row, []);
+    await this.changed(tx, row);
   }
 
   /** A final capture with findings: nothing advanced, and the unit waits for an operator. */
@@ -238,17 +205,7 @@ export class CodeWriterService {
       fence.projectId,
       fence.unitId,
     );
-    await this.publish(tx, row, [
-      {
-        key: 'capture',
-        code: 'code_capture_quarantined',
-        message:
-          'The final capture of this unit holds something Code does not keep, so nothing of it was admitted',
-        status: 409,
-        next: FENCE,
-        related: [],
-      },
-    ]);
+    await this.changed(tx, row);
   }
 
   /**
@@ -311,7 +268,7 @@ export class CodeWriterService {
       caller.projectId,
       input.unitId,
     );
-    await this.publish(tx, row, []);
+    await this.changed(tx, row);
     const result = this.view((await this.row(tx, caller.projectId, input.unitId))!);
     const id = newId('cop');
     await tx.run(
@@ -463,7 +420,7 @@ export class CodeWriterService {
     };
   }
 
-  private async move(tx: Transaction, row: WriterRow, to: CodeWriterState): Promise<void> {
+  protected async move(tx: Transaction, row: WriterRow, to: CodeWriterState): Promise<void> {
     await tx.run(
       'UPDATE code_units SET writer_state=?,writer_changed_at=? WHERE project_id=? AND unit_id=?',
       to,
@@ -473,23 +430,7 @@ export class CodeWriterService {
     );
   }
 
-  private async publish(
-    tx: Transaction,
-    row: WriterRow,
-    blockers: WorkflowProvidedBlockerInput[],
-  ): Promise<void> {
-    // A writer opinion is about work still to be done. Work that has ended lost its rows at
-    // that transition and nothing here runs again to withdraw one, so a row written onto it
-    // afterwards — the grace sweep reaches units that ended while closing — would be a
-    // blocker nobody could ever clear. Clearing is always allowed.
-    if (
-      blockers.length &&
-      (await this.workflows.dependencyRelations(row.project_id, row.unit_id, tx))?.instance.terminal
-    )
-      return;
-    await this.workflows.replaceBlockers(
-      { projectId: row.project_id, instanceId: row.unit_id, provider: PROVIDER, blockers },
-      tx,
-    );
+  private async changed(tx: Transaction, row: WriterRow): Promise<void> {
+    await this.changes.emit({ kind: 'writer', projectId: row.project_id, unitId: row.unit_id }, tx);
   }
 }

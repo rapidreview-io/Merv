@@ -6,9 +6,9 @@ import { Pool } from 'pg';
 import { ProjectScope } from '@merv/scope';
 import { CodeGitHubService } from '../packages/code/src/github.js';
 import { randomUUID } from 'node:crypto';
-import { CodePublicationService } from '../packages/code/src/publications.js';
-import type { CodeTransportService } from '../packages/code/src/transport.js';
-import type { CodeProposal } from '../packages/code/src/types.js';
+import { CodePublicationService } from '../packages/code-research/src/publications.js';
+import type { CodeTransportService } from '../packages/code-research/src/transport.js';
+import type { CodeProposal } from '../packages/code-research/src/types.js';
 import {
   githubFixture,
   repository,

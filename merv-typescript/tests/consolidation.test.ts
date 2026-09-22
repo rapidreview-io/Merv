@@ -21,7 +21,7 @@ import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '../packages/code/src/service.js';
+import { CodeService } from '../packages/code-research/src/service.js';
 import { githubFixture, config as githubConfig } from './github-fixture.js';
 import { ConsolidationService } from '../packages/consolidation/src/index.js';
 import type { ApprovedReflection } from '@merv/reflections/types';

@@ -10,8 +10,10 @@ import {
   sessionUsageReportSchema,
   WorkspaceDeferred,
   type CodeCommitCommand,
+  type CodeCommitReceipt,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
+  type WorkspaceLaunch,
 } from '@merv/contracts';
 import type {
   RunnerPlatform,
@@ -38,6 +40,19 @@ import {
 import type { Runner, RunnerConfig, RunnerSnapshot } from './types.js';
 export type * from './types.js';
 
+/** Optional Git command capability; ordinary workspace drivers only own their lifecycle. */
+interface CommitDriver extends WorkspaceDriver {
+  checkpointCommit(launch: WorkspaceLaunch, command: CodeCommitCommand): Promise<CodeCommitReceipt>;
+  pendingCommits(launchId: string): CodeCommitCommand[];
+  commitOutcome(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
+  acknowledgeCommit(commandId: string): void;
+}
+function commits(driver: WorkspaceDriver): driver is CommitDriver {
+  return ['checkpointCommit', 'pendingCommits', 'commitOutcome', 'acknowledgeCommit'].every(
+    (method) => typeof (driver as unknown as Record<string, unknown>)[method] === 'function',
+  );
+}
+
 const configSchema = z
   .object({
     directory: z.string().min(1),
@@ -62,6 +77,7 @@ const configSchema = z
           ].includes(name),
       ),
     profiles: z.array(z.unknown()).max(32),
+    workspaceDrivers: z.array(z.literal('code')).max(1).optional(),
     workspace: z
       .union([
         z.object({ github: z.literal(true) }).strict(),
@@ -596,6 +612,14 @@ export class MachineRunner implements Runner {
   }
   private async reconcileCodeCommands(record: LaunchRecord, session?: Session): Promise<void> {
     const workspaces = this.driverFor(record);
+    if (!commits(workspaces)) {
+      check(
+        !session?.execution.policy.tools.some((tool) => tool.name === 'code.commit'),
+        'workspace_commit_unsupported',
+        'This workspace driver does not support Code commands',
+      );
+      return;
+    }
     const local = this.local(record);
     const perform = async (command: CodeCommitCommand) => {
       // A restart may owe only a receipt, even after the worker or workspace has closed.

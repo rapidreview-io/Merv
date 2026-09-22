@@ -20,8 +20,10 @@ const { TaskChecks, useDelivery } = await import('../packages/ui/web/views/tasks
 const { fileInput } = await import('../packages/ui/web/views/artifacts.js');
 const { Gate } = await import('../packages/ui/web/process.js');
 const { CreateResearch, chained } = await import('../packages/ui/web/views/work.js');
-const { CreateConsolidation, outputsOf } =
+const { CreateConsolidation, ConsolidationView, outputsOf } =
   await import('../packages/ui/web/views/research-programs.js');
+const { SessionProvider } = await import('../packages/ui/web/session.js');
+const { setToken } = await import('../packages/ui/web/api.js');
 
 const BRIEF = 'art_00000000000000000000000000000001';
 const DELIVERY = 'art_00000000000000000000000000000002';
@@ -726,87 +728,167 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
   assert.equal(saved, 1);
 });
 
-test('a new consolidation opens on what its wave hands over, by name, and sends ids', async (t) => {
-  t.after(async () => await unmount());
-  const REPORT = 'art_000000000000000000000000000000aa';
-  const LENS = 'art_000000000000000000000000000000bb';
-  const pinned = (id: string, title: string) => ({ id, title, hash: 'abc' });
-  const wave = {
-    id: 'wf_wave',
-    title: 'First reflection',
-    attempt: 1,
-    createdAt: new Date().toISOString(),
-    workflow: { workflow: 'reflection', state: 'approved', revision: 9 },
-    experimentIds: ['wf_exp'],
-    lenses: [
-      {
-        id: 'lens_1',
-        perspective: 'evidence',
-        instructions: '',
-        workflow: { workflow: 'lens', state: 'complete', revision: 2 },
-        producerId: null,
-        artifact: pinned(LENS, 'Lens: evidence'),
+for (const codeAvailable of [false, true])
+  test(`a new consolidation offers Git only with Code available (${codeAvailable}) and retains its wave inputs`, async (t) => {
+    t.after(async () => await unmount());
+    const REPORT = 'art_000000000000000000000000000000aa';
+    const LENS = 'art_000000000000000000000000000000bb';
+    const pinned = (id: string, title: string) => ({ id, title, hash: 'abc' });
+    const wave = {
+      id: 'wf_wave',
+      title: 'First reflection',
+      attempt: 1,
+      createdAt: new Date().toISOString(),
+      workflow: { workflow: 'reflection', state: 'approved', revision: 9 },
+      experimentIds: ['wf_exp'],
+      lenses: [
+        {
+          id: 'lens_1',
+          perspective: 'evidence',
+          instructions: '',
+          workflow: { workflow: 'lens', state: 'complete', revision: 2 },
+          producerId: null,
+          artifact: pinned(LENS, 'Lens: evidence'),
+        },
+      ],
+      report: pinned(REPORT, 'Reflection report'),
+      changeSpec: null,
+      review: null,
+      corpus: null,
+      paper: null,
+    };
+    // The one list no longer reaches the wave's files; the wave itself still names them.
+    serve('/tools/artifact.list', { body: { result: [file(BRIEF, 'Brief: reproduce grokking')] } });
+    serve('/tools/task.list', { body: { result: [] } });
+    serve('/tools/experiment.list', {
+      body: {
+        result: [{ id: 'wf_exp', name: 'wd-sweep-grokking', workflow: { state: 'failed' } }],
       },
-    ],
-    report: pinned(REPORT, 'Reflection report'),
-    changeSpec: null,
-    review: null,
-    corpus: null,
-    paper: null,
+    });
+    let sent: Record<string, unknown> | undefined;
+    serve('/tools/consolidation.create', (_call, body) => {
+      sent = body;
+      return { body: { result: { id: 'wf_cons', workflow: { workflow: 'consolidation' } } } };
+    });
+    let cancelled = 0;
+    let setCode!: (value: boolean) => void;
+    function Form() {
+      const [available, update] = useState(codeAvailable);
+      setCode = update;
+      return createElement(CreateConsolidation as any, {
+        from: outputsOf(wave),
+        codeAvailable: available,
+        onCreated() {},
+        onCancel: () => cancelled++,
+      });
+    }
+    await mount(
+      createElement(
+        MemoryRouter,
+        null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        createElement(Form),
+      ),
+    );
+    await settle(10);
+    assert.equal(document.querySelector('textarea'), null, 'nowhere to type an id');
+    assert.deepEqual(
+      all('.picker > label').map((node) => node.textContent),
+      ['Source files', 'Experiments requiring a decision', 'Prerequisites'],
+    );
+    // A decision may be about an experiment that failed, so that one is named too.
+    assert.deepEqual(
+      all('.picker-chip-name').map((node) => node.textContent),
+      ['Reflection report', 'Lens: evidence', 'wd-sweep-grokking', 'First reflection'],
+    );
+    assert.doesNotMatch(text(), /art_0|wf_/, 'no identifier is printed');
+
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;
+    await act(async () => {
+      set.call(name, 'Consolidate the findings');
+      name.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    assert.equal(!!document.querySelector('option[value="git"]'), codeAvailable);
+    if (codeAvailable) {
+      const select = document.querySelector<HTMLSelectElement>('select')!;
+      await act(async () => {
+        select.value = 'git';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+      });
+      await act(async () => setCode(false));
+      assert.match(text(), /Code is unavailable/);
+      assert.equal(
+        select.value,
+        'git',
+        'unloading Code must not silently change the requested work',
+      );
+      assert.equal(
+        document.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled,
+        true,
+      );
+      await act(async () => setCode(true));
+    }
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+    await settle(10);
+    assert.deepEqual(sent?.sourceArtifactIds, [REPORT, LENS]);
+    assert.deepEqual(sent?.experimentIds, ['wf_exp']);
+    assert.deepEqual(sent?.dependsOn, ['wf_wave']);
+    assert.equal(sent?.workspace, codeAvailable ? 'git' : 'none');
+  });
+
+test('existing Git consolidation remains readable when Code is unavailable', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setToken(null);
+  });
+  setToken('fixture-no-code');
+  const project = { id: 'project_1', name: 'Research project' };
+  const actor = { id: 'actor_1', projectId: project.id, name: 'Researcher', role: 'operator' };
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', { body: { kind: 'actor', actor, projects: [project] } });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  const record = {
+    id: 'wf_cons',
+    name: 'Retained Git consolidation',
+    workspace: 'git',
+    createdAt: new Date().toISOString(),
+    workflow: { workflow: 'consolidation', state: 'consolidating', revision: 1 },
+    sources: [{ id: BRIEF, title: 'Retained source evidence', hash: 'abc' }],
+    experimentIds: [],
+    submissions: [],
+    completion: null,
   };
-  // The one list no longer reaches the wave's files; the wave itself still names them.
-  serve('/tools/artifact.list', { body: { result: [file(BRIEF, 'Brief: reproduce grokking')] } });
-  serve('/tools/task.list', { body: { result: [] } });
-  serve('/tools/experiment.list', {
-    body: {
-      result: [{ id: 'wf_exp', name: 'wd-sweep-grokking', workflow: { state: 'failed' } }],
-    },
-  });
-  let sent: Record<string, unknown> | undefined;
-  serve('/tools/consolidation.create', (_call, body) => {
-    sent = body;
-    return { body: { result: { id: 'wf_cons', workflow: { workflow: 'consolidation' } } } };
-  });
-  let cancelled = 0;
+  serve('/tools/consolidation.get', { body: { result: record } });
+  serve('/tools/consolidation.list', { body: { result: [record] } });
+  serve('/tools/reflection.list', { body: { result: [] } });
+  const row = {
+    id: 'consolidation',
+    path: '/consolidations',
+    label: 'Consolidation',
+    view: { kind: 'consolidation' },
+  };
   await mount(
     createElement(
       MemoryRouter,
-      null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(CreateConsolidation as any, {
-        from: outputsOf(wave),
-        onCreated() {},
-        onCancel: () => cancelled++,
+      { initialEntries: ['/wf_cons'] },
+      createElement(SessionProvider, {
+        children: createElement(ConsolidationView as any, {
+          row,
+          shell: { rows: [row], plugins: [] },
+        }),
       }),
     ),
   );
   await settle(10);
-  assert.equal(document.querySelector('textarea'), null, 'nowhere to type an id');
-  assert.deepEqual(
-    all('.picker > label').map((node) => node.textContent),
-    ['Source files', 'Experiments requiring a decision', 'Prerequisites'],
+  assert.match(text(), /Retained Git consolidation/);
+  assert.match(text(), /Git workspace · Code unavailable/);
+  assert.ok(
+    document.querySelector(`a[href="/artifacts/${BRIEF}"]`),
+    'retained evidence stays reachable',
   );
-  // A decision may be about an experiment that failed, so that one is named too.
-  assert.deepEqual(
-    all('.picker-chip-name').map((node) => node.textContent),
-    ['Reflection report', 'Lens: evidence', 'wd-sweep-grokking', 'First reflection'],
-  );
-  assert.doesNotMatch(text(), /art_0|wf_/, 'no identifier is printed');
-
-  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-  const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;
-  await act(async () => {
-    set.call(name, 'Consolidate the findings');
-    name.dispatchEvent(new window.Event('input', { bubbles: true }));
-  });
-  await act(async () => {
-    document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
-  });
-  await settle(10);
-  assert.deepEqual(sent?.sourceArtifactIds, [REPORT, LENS]);
-  assert.deepEqual(sent?.experimentIds, ['wf_exp']);
-  assert.deepEqual(sent?.dependsOn, ['wf_wave']);
-  assert.equal(sent?.workspace, 'none');
 });
 
 test('work is listed as its chains: what waits stands under what it waits on, newest chain first', () => {

@@ -175,7 +175,7 @@ async function fixture(t: TestContext, enabled: boolean) {
   };
 }
 
-test('server boots without Code; no-code research completes after reflection approval once Code answers for main', async (t) => {
+test('server boots without Code and completes no-code research after reflection approval', async (t) => {
   const f = await fixture(t, false);
   f.active();
   assert.equal(f.app.status().find((entry) => entry.id === 'code-tools')?.state, 'pending');
@@ -262,12 +262,11 @@ test('server boots without Code; no-code research completes after reflection app
   await f.app.ctx.sessions.release(f.owner, { sessionId: session.id, runnerId: 'fixture' });
   await f.app.ctx.domainEvents.drain();
   assert.equal((await f.reflect(record)).workflow.state, 'approved');
-  // Whether accepted code is missing from main is Code's to say, so the cycle waits for it.
-  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+  record = await f.advance(record);
+  assert.equal(record.workflow.state, 'complete');
   const research = f.app.ctx.research;
   await f.app.setEnabled('code', true);
   assert.equal(f.app.ctx.research, research);
-  record = await f.advance(record);
   assert.equal(record.workflow.version, 6);
   assert.equal(record.workflow.state, 'complete');
   assert.equal(record.consolidationId, null);

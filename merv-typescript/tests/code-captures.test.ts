@@ -158,7 +158,7 @@ async function fixture(t: TestContext) {
       expectedHead = oid('a'),
     ) {
       return (
-        await app.ctx.code.commit(worker.caller, {
+        await app.ctx.codeResearch.commit(worker.caller, {
           requestId,
           expectedHead,
           message: 'Retain exact source evidence',
@@ -185,18 +185,18 @@ test('Exact command captures retain historical parent/head/tree/provenance after
     worker = await f.offer(),
     command = await f.queue(worker);
   const ref = { kind: 'code-commit' as const, commandId: command.id };
-  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
-  await f.app.ctx.code.nextCommand(f.source, worker.control);
-  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
+  assert.equal((await f.app.ctx.codeResearch.capture(f.reader, ref)).status, 'pending');
+  await f.app.ctx.codeResearch.nextCommand(f.source, worker.control);
+  assert.equal((await f.app.ctx.codeResearch.capture(f.reader, ref)).status, 'pending');
   const source = { ...f.source };
-  const completing = f.app.ctx.code.completeCommand(source, {
+  const completing = f.app.ctx.codeResearch.completeCommand(source, {
     ...worker.control,
     commandId: command.id,
     receipt: receipt(command),
   });
   source.actorId = 'missing';
   await completing;
-  const expected = await f.app.ctx.code.capture(f.reader, ref);
+  const expected = await f.app.ctx.codeResearch.capture(f.reader, ref);
   assert.equal(expected.status, 'ready');
   assert.deepEqual(expected.workspace, {
     ...attachment,
@@ -234,8 +234,8 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   assert.equal(expected.eventId, event.id);
   assert.equal(expected.observedAt, event.createdAt);
   const second = await f.queue(worker, 'second', oid('b'));
-  await f.app.ctx.code.nextCommand(f.source, worker.control);
-  await f.app.ctx.code.completeCommand(f.source, {
+  await f.app.ctx.codeResearch.nextCommand(f.source, worker.control);
+  await f.app.ctx.codeResearch.completeCommand(f.source, {
     ...worker.control,
     commandId: second.id,
     receipt: receipt(second, 'd'),
@@ -252,17 +252,17 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   });
   await f.app.ctx.sessions.workspaceResult(f.source, { ...worker.control, workspace: final });
   assert.deepEqual(
-    await f.app.ctx.code.capture(f.reader, ref),
+    await f.app.ctx.codeResearch.capture(f.reader, ref),
     expected,
     'A later command/final result cannot replace this immutable commit',
   );
   await f.app.ctx.scope.revokeActor(f.admin, f.source.actorId);
   await f.app.ctx.domainEvents.drain();
-  await assert.rejects(async () => await f.app.ctx.code.capture(f.source, ref), {
+  await assert.rejects(async () => await f.app.ctx.codeResearch.capture(f.source, ref), {
     code: 'forbidden',
   });
   assert.deepEqual(
-    await f.app.ctx.code.capture(f.reader, ref),
+    await f.app.ctx.codeResearch.capture(f.reader, ref),
     expected,
     'Historical reads use the reader authority, not the dead source',
   );
@@ -278,12 +278,12 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   f.app.ctx.artifacts.read = async () => {
     throw new Error('Capture metadata must not read artifact bytes');
   };
-  const detached = await f.app.ctx.code.capture(f.reader, ref);
+  const detached = await f.app.ctx.codeResearch.capture(f.reader, ref);
   detached.workspace!.headOid = oid('f');
   detached.workspace!.stats.filesChanged = 99;
   detached.provenance.source.actorId = 'changed';
   detached.ref.kind = 'session-final';
-  assert.deepEqual(await f.app.ctx.code.capture(f.reader, ref), expected);
+  assert.deepEqual(await f.app.ctx.codeResearch.capture(f.reader, ref), expected);
   assert.deepEqual(await f.snapshot(), before);
 });
 
@@ -292,13 +292,13 @@ test('Failed, cancelled and undelivered command observations never claim a succe
   const failedWorker = await f.offer(),
     failed = await f.queue(failedWorker);
   const failedRef = { kind: 'code-commit' as const, commandId: failed.id };
-  await f.app.ctx.code.nextCommand(f.source, failedWorker.control);
-  await f.app.ctx.code.completeCommand(f.source, {
+  await f.app.ctx.codeResearch.nextCommand(f.source, failedWorker.control);
+  await f.app.ctx.codeResearch.completeCommand(f.source, {
     ...failedWorker.control,
     commandId: failed.id,
     error: 'workspace_changed',
   });
-  const failedCapture = await f.app.ctx.code.capture(f.reader, failedRef);
+  const failedCapture = await f.app.ctx.codeResearch.capture(f.reader, failedRef);
   assert.equal(failedCapture.status, 'failed');
   assert.equal(failedCapture.workspace, null);
   assert.equal(failedCapture.error, 'workspace_changed');
@@ -311,19 +311,19 @@ test('Failed, cancelled and undelivered command observations never claim a succe
   });
   const pending = await f.snapshot();
   assert.equal(
-    (await f.app.ctx.code.capture(f.reader, cancelledRef)).status,
+    (await f.app.ctx.codeResearch.capture(f.reader, cancelledRef)).status,
     'pending',
     'Observation does not cancel a queued command by itself',
   );
   assert.deepEqual(await f.snapshot(), pending);
-  assert.equal(await f.app.ctx.code.nextCommand(f.source, cancelledWorker.control), null);
-  const cancelledCapture = await f.app.ctx.code.capture(f.reader, cancelledRef);
+  assert.equal(await f.app.ctx.codeResearch.nextCommand(f.source, cancelledWorker.control), null);
+  const cancelledCapture = await f.app.ctx.codeResearch.capture(f.reader, cancelledRef);
   assert.equal(cancelledCapture.status, 'failed');
   assert.equal(cancelledCapture.workspace, null);
   assert.equal(cancelledCapture.error, 'session_closed');
   const before = await f.snapshot();
-  assert.deepEqual(await f.app.ctx.code.capture(f.reader, failedRef), failedCapture);
-  assert.deepEqual(await f.app.ctx.code.capture(f.reader, cancelledRef), cancelledCapture);
+  assert.deepEqual(await f.app.ctx.codeResearch.capture(f.reader, failedRef), failedCapture);
+  assert.deepEqual(await f.app.ctx.codeResearch.capture(f.reader, cancelledRef), cancelledCapture);
   assert.deepEqual(await f.snapshot(), before);
 });
 
@@ -332,35 +332,35 @@ test('Capture reads compose with an existing transaction and retain legacy final
     worker = await f.offer(),
     command = await f.queue(worker);
   const ref = { kind: 'code-commit' as const, commandId: command.id };
-  await f.app.ctx.code.nextCommand(f.source, worker.control);
+  await f.app.ctx.codeResearch.nextCommand(f.source, worker.control);
   const before = await f.snapshot();
   await assert.rejects(
     async () =>
       await f.app.ctx.state.transaction(async (tx) => {
-        await f.app.ctx.code.completeCommand(f.source, {
+        await f.app.ctx.codeResearch.completeCommand(f.source, {
           ...worker.control,
           commandId: command.id,
           receipt: receipt(command),
         });
-        assert.equal((await f.app.ctx.code.capture(f.reader, ref, tx)).status, 'ready');
+        assert.equal((await f.app.ctx.codeResearch.capture(f.reader, ref, tx)).status, 'ready');
         throw new Error('rollback observation transaction');
       }),
     /rollback observation transaction/,
   );
   assert.deepEqual(await f.snapshot(), before);
-  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'pending');
+  assert.equal((await f.app.ctx.codeResearch.capture(f.reader, ref)).status, 'pending');
   const other = new SqliteState(':memory:');
   try {
     await other.transaction(
       async (tx) =>
-        await assert.rejects(async () => await f.app.ctx.code.capture(f.reader, ref, tx), {
+        await assert.rejects(async () => await f.app.ctx.codeResearch.capture(f.reader, ref, tx), {
           code: 'invalid_transaction',
         }),
     );
   } finally {
     await other.close();
   }
-  await f.app.ctx.code.completeCommand(f.source, {
+  await f.app.ctx.codeResearch.completeCommand(f.source, {
     ...worker.control,
     commandId: command.id,
     receipt: receipt(command),
@@ -371,7 +371,7 @@ test('Capture reads compose with an existing transaction and retain legacy final
   });
   const legacy = { ...attachment, headOid: oid('b'), stats: receipt(command).stats };
   await f.app.ctx.sessions.workspaceResult(f.source, { ...worker.control, workspace: legacy });
-  const result = await f.app.ctx.code.capture(f.reader, {
+  const result = await f.app.ctx.codeResearch.capture(f.reader, {
     kind: 'session-final',
     sessionId: worker.session.id,
   });
@@ -389,7 +389,7 @@ test('A final capture of a session halted before any host attached is failed, no
   const f = await fixture(t);
   const { session } = await f.offer(false);
   const ref = { kind: 'session-final' as const, sessionId: session.id };
-  const unattached = await f.app.ctx.code.capture(f.reader, ref);
+  const unattached = await f.app.ctx.codeResearch.capture(f.reader, ref);
   assert.equal(unattached.status, 'pending');
   assert.equal(
     Object.hasOwn(unattached, 'attachedBaseOid'),
@@ -397,15 +397,15 @@ test('A final capture of a session halted before any host attached is failed, no
     'A session no runner attached worked from no commit',
   );
   await f.app.ctx.sessions.halt(f.source, { sessionId: session.id });
-  assert.equal((await f.app.ctx.code.capture(f.reader, ref)).status, 'failed');
+  assert.equal((await f.app.ctx.codeResearch.capture(f.reader, ref)).status, 'failed');
 });
 
 test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched command/session provenance', async (t) => {
   const f = await fixture(t),
     worker = await f.offer(),
     command = await f.queue(worker);
-  await f.app.ctx.code.nextCommand(f.source, worker.control);
-  await f.app.ctx.code.completeCommand(f.source, {
+  await f.app.ctx.codeResearch.nextCommand(f.source, worker.control);
+  await f.app.ctx.codeResearch.completeCommand(f.source, {
     ...worker.control,
     commandId: command.id,
     receipt: receipt(command),
@@ -421,13 +421,13 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
     credentialId: foreign.credential.id,
   };
   const before = await f.snapshot();
-  await assert.rejects(async () => await f.app.ctx.code.capture(caller, ref), {
+  await assert.rejects(async () => await f.app.ctx.codeResearch.capture(caller, ref), {
     code: 'code_capture_not_found',
   });
   for (const target of [ref, { kind: 'session-final' as const, sessionId: worker.session.id }]) {
     await t.test(target.kind, async () => {
       const source = { ...caller };
-      const pending = f.app.ctx.code.capture(source, target);
+      const pending = f.app.ctx.codeResearch.capture(source, target);
       Object.assign(source, f.reader);
       await assert.rejects(pending, {
         code: target.kind === 'code-commit' ? 'code_capture_not_found' : 'session_not_found',
@@ -436,7 +436,10 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
   }
   await assert.rejects(
     async () =>
-      await f.app.ctx.code.capture(f.reader, { ...ref, actorId: worker.caller.actorId } as never),
+      await f.app.ctx.codeResearch.capture(f.reader, {
+        ...ref,
+        actorId: worker.caller.actorId,
+      } as never),
     { code: 'invalid_code_input' },
   );
   const observe = f.app.ctx.sessions.workspaceObservation.bind(f.app.ctx.sessions);
@@ -445,21 +448,21 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
     observation.provenance.actorId = f.source.actorId;
     return observation;
   };
-  await assert.rejects(async () => await f.app.ctx.code.capture(f.reader, ref), {
+  await assert.rejects(async () => await f.app.ctx.codeResearch.capture(f.reader, ref), {
     code: 'code_capture_provenance',
   });
   f.app.ctx.sessions.workspaceObservation = observe;
   assert.equal(
-    (await f.app.ctx.code.capture(f.reader, ref)).provenance.actorId,
+    (await f.app.ctx.codeResearch.capture(f.reader, ref)).provenance.actorId,
     worker.caller.actorId,
   );
   assert.deepEqual(await f.snapshot(), before);
   await f.app.ctx.scope.revokeCredential(f.admin, f.reader.credentialId);
-  await assert.rejects(async () => await f.app.ctx.code.capture(f.reader, ref), {
+  await assert.rejects(async () => await f.app.ctx.codeResearch.capture(f.reader, ref), {
     code: 'forbidden',
   });
-  f.app.ctx.code.close();
-  await assert.rejects(async () => await f.app.ctx.code.capture(f.admin, ref), {
+  f.app.ctx.codeResearch.close();
+  await assert.rejects(async () => await f.app.ctx.codeResearch.capture(f.admin, ref), {
     code: 'code_unavailable',
   });
 });

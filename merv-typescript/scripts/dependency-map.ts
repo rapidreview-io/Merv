@@ -11,7 +11,7 @@ const walk = (path: string): string[] =>
     entry.isDirectory() ? walk(resolve(path, entry.name)) : [resolve(path, entry.name)],
   );
 const config = JSON.parse(readFileSync(resolve(root, 'config/default.json'), 'utf8')) as {
-  plugins: { id: string }[];
+  plugins: { id: string; name: string }[];
 };
 const configured = new Set(config.plugins.map((p) => p.id));
 const plugins: {
@@ -92,7 +92,9 @@ for (const file of walk(resolve(root, 'packages')).filter(
           optional,
           kind,
           runtime: name.text === 'merv-runner' ? 'machine' : 'server',
-          defaultConfiguration: configured.has(id),
+          defaultConfiguration:
+            configured.has(id) ||
+            config.plugins.some((entry) => entry.name === `@merv/${owner}/${kind}`),
         });
       }
     }

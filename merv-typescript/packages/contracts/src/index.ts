@@ -61,6 +61,8 @@ export type {
   CodeStoreLimits,
   CodeRepositoryConfigureInput,
   CodeRepositoryImportInput,
+  CodeRepositoryPrepareInput,
+  CodeRepositoryPreparation,
   CodeRepositoryRebindInput,
   CodeStoreOperation,
   CodeStoreStatus,

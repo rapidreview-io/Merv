@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller, ReviewRequest } from '@merv/contracts';
-import type { CodeCapture } from '@merv/code/types';
+import type { CodeCapture } from '@merv/code-research/types';
 import { MachineRunner } from '@merv/runner';
 import { programVersion } from '@merv/experiments/program';
 import { createApp } from '../src/app.js';
@@ -324,7 +324,7 @@ try {
   if (gitMode) {
     assert.ok(results.codeCaptureRef?.kind === 'session-final');
     assert.equal(results.codeCaptureRef.sessionId, sessions[2].id);
-    const capture = await app.ctx.code.capture(source, results.codeCaptureRef);
+    const capture = await app.ctx.codeResearch.capture(source, results.codeCaptureRef);
     assert.equal(capture.status, 'ready');
     const captured = capture.workspace!;
     assert.ok(captured.treeOid);

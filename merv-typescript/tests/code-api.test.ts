@@ -17,7 +17,7 @@ import {
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { CodeApiProvider } from '../packages/api/src/types.js';
-import codeApiPlugin from '../packages/code/src/api.js';
+import codeApiPlugin from '../packages/code-research/src/api.js';
 
 const control: CodeCommandControl = {
   sessionId: 'session_fixture',
@@ -326,7 +326,7 @@ test(
     const f = await fixture(t);
     const ctx = new Context();
     ctx.provide('api', f.api);
-    ctx.provide('code', {
+    ctx.provide('codeResearch', {
       ...f.provider,
       commit: () => {
         throw new Error('Not a transport operation');

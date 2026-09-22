@@ -19,7 +19,7 @@ import {
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { CodeCommands, CodeProposal, CodeProposalInput, CodeProposals } from './types.js';
-import { parseCodeInput } from './input.js';
+import { parseCodeInput } from '@merv/code/input';
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const data = z.record(z.unknown()).transform((value) => value as Data);

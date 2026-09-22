@@ -26,7 +26,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
-import type { Code, CodeCaptureRef } from '@merv/code/types';
+import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type {
   Experiment,
   ExperimentAttach,
@@ -395,6 +395,7 @@ export class ExperimentService implements Experiments {
             dependsOn: input.dependsOn,
             // What waits on this experiment names it, so the instance carries the name.
             data: {
+              workspace: input.workspace ?? 'none',
               name: input.name,
               ...(input.baseTaskId === undefined ? {} : { baseTaskId: input.baseTaskId }),
             },
@@ -1526,8 +1527,8 @@ export const experimentsPlugin = {
         config.limits,
       ),
     );
-    ctx.inject(['code'], (ctx) => {
-      ctx.effect(() => experiments.bindCode(ctx.code));
+    ctx.inject(['codeResearch'], (ctx) => {
+      ctx.effect(() => experiments.bindCode(ctx.codeResearch));
     });
     ctx.effect(function* () {
       yield () => experiments.close();

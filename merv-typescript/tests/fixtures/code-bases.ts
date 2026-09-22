@@ -12,11 +12,11 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { CodeService } from '@merv/code/service';
+import { CodeService } from '@merv/code-research/service';
 import { LeasedSessions } from '@merv/sessions';
 import { SqliteState, PostgresState } from '@merv/state';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { CodeBaseService } from '@merv/code/bases';
+import { CodeBaseService } from '@merv/code-research/bases';
 import type { Backend } from './code-store.js';
 
 /** A project repository holding four accepted commits off one main: a and c collide, b and d do not. */

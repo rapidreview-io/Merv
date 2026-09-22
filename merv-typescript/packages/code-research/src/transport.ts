@@ -12,8 +12,8 @@ import {
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { CodeCommands } from './types.js';
-import { CodeGitHubService, type GitHubBinding } from './github.js';
-import { parseCodeInput } from './input.js';
+import { CodeGitHubService, type GitHubBinding } from '@merv/code/github';
+import { parseCodeInput } from '@merv/code/input';
 
 interface Workspace {
   project_id: string;

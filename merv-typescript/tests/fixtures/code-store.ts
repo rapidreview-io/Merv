@@ -14,7 +14,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import type { Sessions } from '@merv/sessions/types';
-import { CodeService, type CodeStoreOptions } from '@merv/code/service';
+import { CodeService, type CodeStoreOptions } from '@merv/code-research/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeStoreConfig, FaultPoint } from '@merv/code/store/operations';
 import { boundProject } from './code-binding.js';

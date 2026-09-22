@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller, CodeStoreOperation } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
-import type { CodeService } from '@merv/code/service';
+import type { CodeService } from '@merv/code-research/service';
 import type { Session } from '@merv/sessions/types';
 import { createApp } from '../src/app.js';
 import { boundProject } from './fixtures/code-binding.js';
@@ -166,7 +166,7 @@ test(
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const { code, tasks, sessions, state } = app.ctx;
+    const { codeResearch: code, tasks, sessions, state } = app.ctx;
     await boundProject(state, owner.projectId, main, 'fixture-repository');
 
     // Two Git tasks made before the import, which are the versions a legacy machine serves.

@@ -157,6 +157,45 @@ test('Research boots with only State, Scope and Workflows and reports the missin
   });
 });
 
+test('a hosted cycle retains its Code obligation when the provider unloads', async (t) => {
+  const f = await fixture(t);
+  const code = f.app.ctx.codeResearch;
+  const unbind = f.research.bindCode({
+    hosted: async () => true,
+    acceptedSince: code.acceptedSince.bind(code),
+    publishOnAcceptance: code.publishOnAcceptance.bind(code),
+    unit: code.unit.bind(code),
+  });
+  await f.define();
+  let record = await f.advance(await f.advance(await f.create()));
+  await f.approve(record);
+  unbind();
+  await f.app.setEnabled('code', false);
+  await f.app.setEnabled('research', false);
+  await f.app.setEnabled('research', true);
+  record = await f.research.get(f.owner, record.id);
+  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+});
+
+test('becoming hosted during a cycle records the obligation even when advance waits for review', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  const code = f.app.ctx.codeResearch;
+  const unbind = f.research.bindCode({
+    hosted: async () => true,
+    acceptedSince: async () => ({ unitIds: [], quarantined: [], main: 'main', hash: 'reading' }),
+    publishOnAcceptance: code.publishOnAcceptance.bind(code),
+    unit: code.unit.bind(code),
+  });
+  await assert.rejects(f.advance(record), { code: 'reflection_not_approved' });
+  unbind();
+  await f.app.setEnabled('code', false);
+  await f.approve(record);
+  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+});
+
 test('optional provider unload keeps Research and its tools alive; only the current stage waits', async (t) => {
   const f = await fixture(t);
   await f.define();

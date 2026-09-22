@@ -99,7 +99,7 @@ async function fixture(t: TestContext, plugin = false) {
             app.ctx.tasks,
             app.ctx.experiments,
             app.ctx.artifacts,
-            app.ctx.code,
+            app.ctx.codeResearch,
           ),
         );
   let research = await service();
@@ -687,10 +687,10 @@ test('automatic continuation waits for the selected Git consolidation and its ac
     worker.caller,
     'code.commit',
     commit,
-    async (caller) => await f.app.ctx.code.commit(caller, commit),
+    async (caller) => await f.app.ctx.codeResearch.commit(caller, commit),
   );
-  const command = (await f.app.ctx.code.nextCommand(f.owner, control))!;
-  await f.app.ctx.code.completeCommand(f.owner, {
+  const command = (await f.app.ctx.codeResearch.nextCommand(f.owner, control))!;
+  await f.app.ctx.codeResearch.completeCommand(f.owner, {
     ...control,
     commandId: command.id,
     receipt: {

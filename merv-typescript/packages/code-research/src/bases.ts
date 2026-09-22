@@ -22,10 +22,10 @@ import type {
 import type { SandboxChecks } from '@merv/sandboxes/types';
 import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
 import { z } from 'zod';
-import { parseCodeInput } from './input.js';
-import { verifyResolution } from './pending-merge.js';
-import { baseKey, members, planBase, type PlannedBase } from './base-plan.js';
-import { MERGE_ENGINE, mergeBases } from './base-merge.js';
+import { parseCodeInput } from '@merv/code/input';
+import { verifyResolution } from '@merv/code/pending-merge';
+import { baseKey, members, planBase, type PlannedBase } from '@merv/code/base-plan';
+import { MERGE_ENGINE, mergeBases } from '@merv/code/base-merge';
 import {
   archiveCommit,
   checkConflict,
@@ -34,7 +34,7 @@ import {
   checkSkipped,
   type CheckHandle,
 } from './base-check.js';
-import type { CodeRepositories } from './store/repository.js';
+import type { CodeRepositories } from '@merv/code/store/repository';
 
 /**
  * One record per distinct set of accepted commits in a project. However many units wait on
@@ -336,6 +336,14 @@ export class CodeBaseService {
     };
   }
 
+  private row(sql: Sql, projectId: string, key: string): Promise<BaseRow | undefined> {
+    return sql.get<BaseRow>(
+      `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
+      projectId,
+      key,
+    );
+  }
+
   /** A pure read: the record for a set, if anybody has asked for it yet. */
   async find(
     sql: Sql,
@@ -343,11 +351,7 @@ export class CodeBaseService {
     commits: Iterable<string>,
   ): Promise<CodeBaseRecord | null> {
     const wanted = members(commits);
-    const row = await sql.get<BaseRow>(
-      `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-      projectId,
-      baseKey(wanted),
-    );
+    const row = await this.row(sql, projectId, baseKey(wanted));
     if (!row) return null;
     // A key is a hash; the set it stands for is compared, never assumed.
     if (row.members_json !== JSON.stringify(wanted))
@@ -397,11 +401,7 @@ export class CodeBaseService {
     for (let key = queue.pop(); key; key = queue.pop()) {
       if (seen.has(key)) continue;
       seen.add(key);
-      const row = await sql.get<BaseRow>(
-        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-        projectId,
-        key,
-      );
+      const row = await this.row(sql, projectId, key);
       if (!row) continue;
       const record = this.record(row);
       result.push(record);
@@ -555,11 +555,7 @@ export class CodeBaseService {
   ): Promise<string | null> {
     const lone = of.find((commit) => baseKey([commit]) === key);
     if (lone) return lone;
-    const row = await sql.get<BaseRow>(
-      `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-      projectId,
-      key,
-    );
+    const row = await this.row(sql, projectId, key);
     return this.stands(row ? this.record(row) : null);
   }
 
@@ -821,11 +817,7 @@ export class CodeBaseService {
         }),
       ]);
       await this.state.transaction(async (tx) => {
-        const current = await tx.get<BaseRow>(
-          `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-          projectId,
-          base.key,
-        );
+        const current = await this.row(tx, projectId, base.key);
         if (
           !current ||
           current.state !== 'running' ||
@@ -1311,13 +1303,7 @@ export class CodeBaseService {
       );
     });
     if (replay) return null;
-    const row = await this.state.read((sql) =>
-      sql.get<BaseRow>(
-        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-        caller.projectId,
-        input.key,
-      ),
-    );
+    const row = await this.state.read((sql) => this.row(sql, caller.projectId, input.key));
     check(row, 'code_base_not_found', 'No such base in this project', 404);
     // The ref is dropped before the transaction that records the repair, so this has to refuse
     // everything that transaction refuses; otherwise a refused repair still destroys the ref and
@@ -1368,11 +1354,7 @@ export class CodeBaseService {
         );
         return JSON.parse(previous.result_json) as CodeBaseRecord;
       }
-      const row = await tx.get<BaseRow>(
-        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-        caller.projectId,
-        input.key,
-      );
+      const row = await this.row(tx, caller.projectId, input.key);
       check(row, 'code_base_not_found', 'No such base in this project', 404);
       const base = this.record(row);
       const action = input.action;

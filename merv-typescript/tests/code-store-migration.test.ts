@@ -9,8 +9,8 @@ import { createService, type SqlValue } from '@merv/contracts';
 import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
-import { CodeUnitService } from '@merv/code/units';
-import { CodeWriterService } from '@merv/code/writers';
+import { CodeUnitService } from '@merv/code-research/units';
+import { ResearchCodeWriters as CodeWriterService } from '@merv/code-research/writers';
 import { backends, optional, type Backend } from './fixtures/code-store.js';
 
 const postgresUrl = process.env.MERV_TEST_POSTGRES_URL;
@@ -43,7 +43,7 @@ async function fixture(t: TestContext, backend: Backend) {
       scope,
       workflows,
       { capture: async () => assert.fail('a migration reads no capture') },
-      new CodeWriterService(state, scope, workflows, 900),
+      new CodeWriterService(state, scope, 900),
       { contributors: async () => assert.fail('a migration reads no contributors') },
     ).initialize();
   const run = async (sql: string, ...params: SqlValue[]) =>

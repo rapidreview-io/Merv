@@ -17,9 +17,9 @@ import type {
   CodeReconciliation,
   CodeProposal,
 } from './types.js';
-import type { CodeRepositories } from './store/repository.js';
+import type { CodeRepositories } from '@merv/code/store/repository';
 import { unitContributors } from './provenance.js';
-import { bindsRepository } from './units.js';
+import { bindsRepository } from '@merv/code/units';
 import type { CodeBaseService } from './bases.js';
 
 interface Accepted {

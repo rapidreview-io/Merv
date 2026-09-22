@@ -17,6 +17,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller } from '@merv/contracts';
 import type { RunnerSnapshot } from '@merv/runner';
 import { createApp } from '../src/app.js';
+import { loadConfiguration } from '../src/config.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -45,11 +46,20 @@ function bounded<T>(operation: Promise<T>, message: string, milliseconds = 15_00
     );
   });
 }
-function launch(t: TestContext, args: string[], source?: string) {
-  const child = spawn(process.execPath, ['--import', 'tsx', cli, 'runner', ...args], {
+function launch(t: TestContext, args: string[], source?: string, noCode = false) {
+  // Fail on runtime plugin imports, including transitive imports. A blank PATH also removes Git.
+  const hook = `export async function resolve(specifier, context, next) {
+    if (specifier.startsWith('@merv/code')) throw Error('Code must remain unloaded');
+    const resolved = await next(specifier, context);
+    if (resolved.url.includes('/packages/code/')) throw Error('Code must remain unloaded');
+    return resolved;
+  }`;
+  const guard = `import { register } from 'node:module'; register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hook)}`)}, import.meta.url);`;
+  const preloads = noCode ? ['--import', `data:text/javascript,${encodeURIComponent(guard)}`] : [];
+  const child = spawn(process.execPath, ['--import', 'tsx', ...preloads, cli, 'runner', ...args], {
     cwd: root,
     env: {
-      PATH: process.env.PATH,
+      PATH: noCode ? '' : process.env.PATH,
       TMPDIR: process.env.TMPDIR,
       ...(source === undefined ? {} : { [credentialEnv]: source }),
     },
@@ -163,6 +173,8 @@ test('runner CLI rejects unsafe or missing configuration without disclosing inpu
   const invalid: unknown[] = [
     { ...configuration(directory), token: secret },
     { ...configuration(directory), credentialEnv: 'PATH' },
+    { ...configuration(directory), workspaceDrivers: ['untrusted'] },
+    { ...configuration(directory), workspaceDrivers: ['code', 'code'] },
     {
       ...configuration(directory),
       profiles: [{ ...configuration(directory).profiles[0], env: { TOKEN: secret } }],
@@ -187,12 +199,38 @@ test('runner CLI rejects unsafe or missing configuration without disclosing inpu
   assert.equal(existsSync(join(directory, 'machine')), false);
 });
 
+test('runner CLI retains the default Code driver and supports explicit opt-in', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-runner-cli-drivers-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const workspaceDrivers of [undefined, ['code']]) {
+    const machine = workspaceDrivers ? 'explicit' : 'default';
+    const path = join(directory, `${machine}.json`);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...configuration(directory),
+        directory: `./${machine}`,
+        workspaceDrivers,
+      }),
+    );
+    const child = launch(t, ['--config', path], 'synthetic-offline-source');
+    const ready = await bounded(child.ready, 'Code-enabled runner did not become ready');
+    assert.equal(existsSync(join(ready.directory, 'code-v2')), true);
+    assert.equal(await child.stop(), 0, child.stderr);
+  }
+});
+
 test(
-  'runner CLI composes only its machine provider and drains real MCP children on both signals',
+  'workspace-free CLI runs real MCP children without Code or Git and drains them on both signals',
   { timeout: 45_000 },
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'merv-runner-cli-live-'));
-    const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
+    const serverDirectory = join(directory, 'server');
+    const composition = loadConfiguration({ directory: serverDirectory, api: true, port: 0 });
+    const app = await createApp({
+      directory: serverDirectory,
+      config: { plugins: composition.entries.filter((entry) => !entry.id.startsWith('code')) },
+    });
     t.after(async () => {
       await app.stop();
       rmSync(directory, { recursive: true, force: true });
@@ -222,6 +260,7 @@ test(
         projectId: boot.project.id,
         requestTimeoutMs: 1000,
         capacity: 1,
+        workspaceDrivers: [],
         profiles: [
           {
             name: 'fixture',
@@ -236,12 +275,13 @@ test(
       const path = join(directory, `${signal}.json`);
       writeFileSync(path, JSON.stringify(config));
       await app.ctx.sessions.setDispatch(caller, { enabled: true });
-      const child = launch(t, ['--config', path], boot.token);
+      const child = launch(t, ['--config', path], boot.token, true);
       const ready = await bounded(child.ready, 'Runner-only Cordis provider did not become ready');
       assert.equal(ready.mode, 'runner');
       assert.equal(ready.directory, join(directory, machine));
       assert.deepEqual(ready.plugins, [{ id: 'runner', name: '@merv/runner', state: 'active' }]);
       assert.ok(ready.runner.runnerId);
+      assert.equal(existsSync(join(ready.directory, 'code-v2')), false);
       const deadline = Date.now() + 15_000;
       let outputs: string[] = [];
       while (
@@ -259,6 +299,11 @@ test(
         (session) => session.runnerId === ready.runner.runnerId,
       )!;
       assert.equal(active.status, 'active');
+      const presence = (await app.ctx.sessions.projectStatus(caller)).runners.find(
+        (runner) => runner.runnerId === ready.runner.runnerId,
+      );
+      assert.ok(presence);
+      assert.ok(!presence.capabilities?.includes('code.v2'));
       await app.ctx.sessions.setDispatch(caller, { enabled: false });
       assert.equal(await child.stop(signal), 0, child.stderr);
       const closed = await app.ctx.sessions.get(caller, active.id);

@@ -95,7 +95,7 @@ interface Held {
 /** Seed the Git model of one demo project, and report what a screenshot can now prove. */
 export async function seedGit(app: App, operator: Caller): Promise<Record<string, unknown>> {
   const ctx = app.ctx;
-  const code = ctx.code;
+  const code = ctx.codeResearch;
   const root = join(app.directory, 'git');
   mkdirSync(root, { recursive: true });
   let requests = 0;

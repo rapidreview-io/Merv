@@ -21,9 +21,10 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '@merv/code/service';
+import { CodeService } from '@merv/code-research/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code/src/bases.js';
+import type { CodeWriterService } from '@merv/code/writers';
+import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-research/src/bases.js';
 
 const oid = (char: string) => char.repeat(40);
 const repository = 'runner-repository';
@@ -725,13 +726,33 @@ for (const backend of backends)
         false,
       );
       for (const waiter of waiters) {
-        assert.deepEqual(await f.workflows.blockers(f.admin, waiter.id), []);
+        assert.deepEqual(
+          (await f.workflows.blockers(f.admin, waiter.id)).map((blocker) => blocker.code),
+          waiter.id === waiters[0]!.id ? ['code_recovery_required'] : [],
+        );
         assert.notEqual((await f.code.unit(f.admin, waiter.id)).baseStatus?.status, 'blocked');
       }
       const released = await f.state.transaction((tx) =>
         f.code.writerStatus(f.admin, waiters[0]!.id, tx),
       );
       assert.equal(released.state, 'recovery_required');
-      assert.notEqual(released.blocked?.code, 'code_quarantined');
+      assert.equal(released.blocked?.code, 'code_recovery_required');
+      const nextWriter = () =>
+        f.state.transaction((tx) =>
+          f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'after-release' }, tx),
+        );
+      await assert.rejects(nextWriter(), { code: 'code_recovery_required' });
+      // This fixture composes bases without a hosted transfer service; use its same durable
+      // writer capability for the operator fence, including the transaction's observer.
+      const writers = (f.code as unknown as { writerStore: CodeWriterService }).writerStore;
+      const fenced = await f.state.transaction((tx) =>
+        writers.fence(f.admin, { unitId: waiters[0]!.id, requestId: 'release-fence' }, tx),
+      );
+      assert.equal(fenced.state, 'closed');
+      assert.deepEqual(await f.workflows.blockers(f.admin, waiters[0]!.id), []);
+      const next = await nextWriter();
+      assert.equal(next.generation, released.generation + 1);
+      assert.equal(next.state, 'reserved');
+      assert.equal((await f.pin(waiters[0]!)).reference, pins[0]!.reference);
     },
   );

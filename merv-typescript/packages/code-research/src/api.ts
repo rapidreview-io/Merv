@@ -5,9 +5,9 @@ import type {} from './types.js';
 /** Optional machine HTTP controls; command authority stays with the Code provider. */
 export const codeApiPlugin = {
   name: 'merv-code-api',
-  inject: ['api', 'code'],
+  inject: ['api', 'codeResearch'],
   apply(ctx: Context) {
-    ctx.effect(() => ctx.api.registerCode(ctx.code));
+    ctx.effect(() => ctx.api.registerCode(ctx.codeResearch));
   },
 };
 export default codeApiPlugin;

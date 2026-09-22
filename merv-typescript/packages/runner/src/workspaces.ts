@@ -24,18 +24,19 @@ import {
   type WorkflowWorkspacePolicy,
   codeTransportGrantSchema,
   type CodeTransportGrant,
+  type WorkspaceHandle,
 } from '@merv/contracts';
 import type { Session, SessionWorkspace } from '@merv/sessions/types';
-import { LocalLedger, privateDirectory, terminalLaunch, type LaunchRecord } from './ledger.js';
+import {
+  LocalLedger,
+  privateDirectory,
+  syncPath,
+  terminalLaunch,
+  type LaunchRecord,
+} from './ledger.js';
 
 export type GitWorkspaceConfig = { repository: string; baseRef: string } | { github: true };
-export interface WorkspaceHandle {
-  path: string;
-  snapshot?: SessionWorkspace;
-  retain: boolean;
-  readOnly: boolean;
-  status: 'preparing' | 'ready' | 'capturing' | 'captured' | 'closing' | 'closed';
-}
+export type { WorkspaceHandle } from '@merv/contracts';
 type WorkspaceRow = {
   launch_id: string;
   slot_id: string;
@@ -108,14 +109,6 @@ const refSegment = (value: string): string =>
   value.startsWith('encoded-')
     ? `encoded-${Buffer.from(value).toString('base64url')}`
     : value;
-const syncDirectory = (path: string) => {
-  const fd = openSync(path, 'r');
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-};
 const marker = (path: string, value: unknown) => {
   const encoded = JSON.stringify(value);
   if (existsSync(path)) {
@@ -130,7 +123,7 @@ const marker = (path: string, value: unknown) => {
   } finally {
     closeSync(fd);
   }
-  syncDirectory(dirname(path));
+  syncPath(dirname(path));
 };
 
 /** Local checkout ownership and immutable per-launch captures, independent of server persistence. */
@@ -891,14 +884,9 @@ export class GitWorkspaceManager {
     const temporary = join(admin, `merv-index-${randomUUID()}`);
     // Synchronous copy + rename leaves no orphan Git child able to modify the normal index.
     copyFileSync(journal.index_path!, temporary);
-    const fd = openSync(temporary, 'r');
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
+    syncPath(temporary);
     renameSync(temporary, index);
-    syncDirectory(admin);
+    syncPath(admin);
   }
   private async finishCommitReceipt(
     row: WorkspaceRow,
@@ -1024,7 +1012,7 @@ export class GitWorkspaceManager {
       await this.git(['--git-dir', temporary, 'update-ref', 'refs/merv/central', row.initial_oid]);
       marker(join(temporary, 'merv-repository.json'), identity);
       renameSync(temporary, row.bare_path);
-      syncDirectory(this.root);
+      syncPath(this.root);
     }
     const identityFile = join(row.bare_path, 'merv-repository.json');
     if (
@@ -1090,7 +1078,7 @@ export class GitWorkspaceManager {
         await this.git(['init', '--bare', `--template=${this.emptyTemplate}`, temporary]);
         marker(join(temporary, 'merv-repository.json'), identity);
         renameSync(temporary, row.bare_path);
-        syncDirectory(this.root);
+        syncPath(this.root);
       }
       marker(join(row.bare_path, 'merv-repository.json'), identity);
       await this.validateRepository(row.bare_path);
