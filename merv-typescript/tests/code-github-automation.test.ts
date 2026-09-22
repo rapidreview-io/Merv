@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verify, createPublicKey } from 'node:crypto';
+import { createService } from '@merv/contracts';
 import { GitHubClient } from '../packages/code/src/github-client.js';
+import { CodeGitHubService } from '../packages/code/src/github.js';
 import { githubFixture, config, repository } from './github-fixture.js';
 
 test('automation is explicit, owner-bound and independent of ordinary token refresh', async (t) => {
@@ -126,6 +128,46 @@ test('App JWTs mint only the selected repository and permission; tokens are not 
   await assert.rejects(client.installationToken(repository, true), { code: 'github_response' });
   assert.equal(f.calls.at(-1)?.path, '/installation/token');
   assert.equal(f.calls.at(-1)?.method, 'DELETE');
+});
+
+test('a 401 for a server-minted credential keeps the human connection connected', async (t) => {
+  const f = await githubFixture(t);
+  await f.enable();
+  let unauthorized: string | undefined;
+  const fetcher: typeof fetch = async (url, init) =>
+    decodeURIComponent(new URL(String(url)).pathname) === unauthorized
+      ? new Response('{"message":"Bad credentials"}', { status: 401 })
+      : f.fetcher(url, init);
+  const github = await createService(new CodeGitHubService(f.state, f.scope, config, fetcher));
+  t.after(() => github.close());
+  const binding = await github.automation(f.caller, 'read', undefined, async (_c, _t, b) => b);
+  // A rotated App key or a host clock ahead of GitHub answers 401 to the App JWT that mints
+  // the installation token. The human's OAuth token was never presented.
+  unauthorized = '/app/installations/17/access_tokens';
+  await assert.rejects(
+    github.publicationAutomation(f.caller, 'write', binding, async () => true),
+    { code: 'github_app_unavailable' },
+  );
+  assert.equal((await github.status(f.caller)).status, 'connected');
+  // The same holds for every request the publication operation makes with the minted token.
+  unauthorized = '/repos/fixture/private/pulls';
+  await assert.rejects(
+    github.publicationAutomation(f.caller, 'write', binding, (client, token, current) =>
+      client.createPull(token, current.repository.fullName, {
+        title: 'fixture',
+        body: '',
+        head: 'main',
+        base: 'main',
+        draft: true,
+      }),
+    ),
+    { code: 'github_app_unavailable' },
+  );
+  assert.equal((await github.status(f.caller)).status, 'connected');
+  // A 401 for the human's own token still discards it, which is what reconnection means.
+  unauthorized = '/repos/fixture/private/branches';
+  await assert.rejects(github.branches(f.caller), { code: 'github_reconnect' });
+  assert.equal((await github.status(f.caller)).status, 'needs_reconnect');
 });
 
 test('token cleanup remains available when automation is disabled during issuance', async (t) => {
