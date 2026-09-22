@@ -316,7 +316,8 @@
         "domainEvents"
       ],
       "optional": [
-        "reviews"
+        "reviews",
+        "sandboxes"
       ],
       "kind": "service",
       "runtime": "server",
@@ -353,8 +354,28 @@
           "readOnly": true
         },
         {
+          "name": "code.publication.control",
+          "description": "Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.merge",
+          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree. A stale base returns the same consolidation for another round.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.release",
+          "description": "Let go of a publication that can no longer reach its repository, named by its proposalId from code.publication list. A publication keeps the repository, base branch and connection revision it was sealed with, so reconnecting GitHub, relinking the repository or turning write automation off leaves it unable to reach its repository for good, and the consolidation that is waiting for it has no action of its own; a publication that never managed to freeze a binding is stuck the same way. Releasing ends it and hands that consolidation straight back for another round against the connection the project has now, with its reviewed facts retained and code_publication_released recorded as its last error. Refused with code_publication_bound while the repository can still be reached, and refused once the publication has merged. Only a project administrator or operator key may call it, never a leased worker. Supply a reason and a stable requestId: the same request replays its result, a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.sync",
+          "description": "Reconcile the server publication journal: open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Requires project write authority and refuses leased workers.",
+          "readOnly": false
+        },
+        {
           "name": "code.repository.configure",
-          "description": "Set what this project’s repository refuses beyond the fixed limits. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. Only a project administrator may call it. Supply a stable requestId.",
+          "description": "Set what this project’s repository refuses beyond the fixed limits, and the one command that proves a merged base works. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. check is the project check and must be stated on every call: null turns verification off, and an object gives command, timeoutSeconds and image (provider, offerId and an optional snapshotId). The command runs against the merged tree in a machine this server rents for the occasion and never on this server; it is given no Merv credential and no environment, the machine has network access and a writable copy of the source, and every base record says so beside its verdict. A failing check is treated as a conflict and resolved by the one reviewed task a Git conflict is resolved by. Without a sandbox connection a configured command leaves each base unsealed and blocked with code_check_unavailable for an operator. Only a project administrator may call it. Supply a stable requestId.",
           "readOnly": false
         },
         {
@@ -364,7 +385,7 @@
         },
         {
           "name": "code.status",
-          "description": "Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; code.base.retry, code.base.suspend/resume, code.base.cancel and code.base.quarantine handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
+          "description": "Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
           "readOnly": true
         },
         {
@@ -442,8 +463,28 @@
           "readOnly": true
         },
         {
+          "name": "code.publication.control",
+          "description": "Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.merge",
+          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree. A stale base returns the same consolidation for another round.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.release",
+          "description": "Let go of a publication that can no longer reach its repository, named by its proposalId from code.publication list. A publication keeps the repository, base branch and connection revision it was sealed with, so reconnecting GitHub, relinking the repository or turning write automation off leaves it unable to reach its repository for good, and the consolidation that is waiting for it has no action of its own; a publication that never managed to freeze a binding is stuck the same way. Releasing ends it and hands that consolidation straight back for another round against the connection the project has now, with its reviewed facts retained and code_publication_released recorded as its last error. Refused with code_publication_bound while the repository can still be reached, and refused once the publication has merged. Only a project administrator or operator key may call it, never a leased worker. Supply a reason and a stable requestId: the same request replays its result, a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.sync",
+          "description": "Reconcile the server publication journal: open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Requires project write authority and refuses leased workers.",
+          "readOnly": false
+        },
+        {
           "name": "code.repository.configure",
-          "description": "Set what this project’s repository refuses beyond the fixed limits. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. Only a project administrator may call it. Supply a stable requestId.",
+          "description": "Set what this project’s repository refuses beyond the fixed limits, and the one command that proves a merged base works. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. check is the project check and must be stated on every call: null turns verification off, and an object gives command, timeoutSeconds and image (provider, offerId and an optional snapshotId). The command runs against the merged tree in a machine this server rents for the occasion and never on this server; it is given no Merv credential and no environment, the machine has network access and a writable copy of the source, and every base record says so beside its verdict. A failing check is treated as a conflict and resolved by the one reviewed task a Git conflict is resolved by. Without a sandbox connection a configured command leaves each base unsealed and blocked with code_check_unavailable for an operator. Only a project administrator may call it. Supply a stable requestId.",
           "readOnly": false
         },
         {
@@ -453,7 +494,7 @@
         },
         {
           "name": "code.status",
-          "description": "Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; code.base.retry, code.base.suspend/resume, code.base.cancel and code.base.quarantine handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
+          "description": "Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
           "readOnly": true
         },
         {
@@ -530,7 +571,7 @@
         },
         {
           "name": "consolidation.get",
-          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
+          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Versions 1–4 complete at review; version 5 completes only after Code verifies publication. Without GitHub linking and write automation version 5 waits in awaiting_publication.",
           "readOnly": true
         },
         {
@@ -580,7 +621,7 @@
         },
         {
           "name": "consolidation.get",
-          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Completion does not publish central Git.",
+          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Versions 1–4 complete at review; version 5 completes only after Code verifies publication. Without GitHub linking and write automation version 5 waits in awaiting_publication.",
           "readOnly": true
         },
         {
@@ -2316,6 +2357,11 @@
       "optional": true
     },
     {
+      "from": "code",
+      "to": "sandboxes",
+      "optional": true
+    },
+    {
       "from": "merv-code-api",
       "to": "api",
       "optional": false
@@ -3000,7 +3046,7 @@
     "plugins": 60,
     "providers": 26,
     "adapters": 34,
-    "dependencies": 159
+    "dependencies": 160
   },
   "network": [
     {

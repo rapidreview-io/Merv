@@ -404,7 +404,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
         tips: [],
         diskBytes: 0,
         quotaBytes: 10 * 1024 * 1024 * 1024,
-        limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+        limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
       },
       operations: [],
       // Nothing is published while no GitHub repository is linked, and that is quiet.

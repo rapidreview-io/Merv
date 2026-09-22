@@ -1,19 +1,39 @@
-import { canonical, check, digest, newId, MervError } from '@merv/contracts';
+import {
+  canonical,
+  check,
+  codeCheckSpecSchema,
+  digest,
+  newId,
+  CODE_CHECK_SLACK_SECONDS,
+  MervError,
+} from '@merv/contracts';
 import type {
+  CodeBaseCheck,
+  CodeBaseCheckState,
   CodeBaseRecord,
   CodeBaseState,
+  CodeCheckSpec,
   Caller,
   Scope,
   State,
   Sql,
   Transaction,
 } from '@merv/contracts';
+import type { SandboxChecks } from '@merv/sandboxes/types';
 import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
 import { z } from 'zod';
 import { parseCodeInput } from './input.js';
 import { verifyResolution } from './pending-merge.js';
 import { baseKey, members, planBase, type PlannedBase } from './base-plan.js';
 import { MERGE_ENGINE, mergeBases } from './base-merge.js';
+import {
+  archiveCommit,
+  checkConflict,
+  checkPlan,
+  checkReceipt,
+  checkSkipped,
+  type CheckHandle,
+} from './base-check.js';
 import type { CodeRepositories } from './store/repository.js';
 
 /**
@@ -45,11 +65,18 @@ interface BaseRow {
   blocker: string | null;
   operator_reason: string | null;
   resume_state: CodeBaseState | null;
+  check_state: CodeBaseCheckState;
+  check_job_json: string | null;
+  check_json: string | null;
   updated_at: string;
 }
 const columns =
-  'project_id,base_key,members_json,left_key,right_key,engine,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,updated_at';
+  'project_id,base_key,members_json,left_key,right_key,engine,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,check_state,check_job_json,check_json,updated_at';
 const RETRIES = 5;
+/** How many consecutive refusals to take a machine back before an operator is told about it. */
+const RECLAIM_ATTEMPTS = 5;
+/** Only these two say a machine may still be Merv's; anything else is a handle to give back. */
+const IN_FLIGHT = "check_state IN ('queued','running')";
 const now = () => new Date().toISOString();
 
 const sqlite = `
@@ -156,6 +183,43 @@ IF OLD.sponsors_json IS NOT NULL AND NEW.sponsors_json IS DISTINCT FROM OLD.spon
 RETURN NEW; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_bases_sponsors BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_sponsors_guard();`;
 
+/**
+ * The project check of a base. One guard says the three rules together, because SQLite
+ * cannot add a CHECK to an existing table and rebuilding `code_bases` would mean dropping
+ * and recreating seven triggers to say what one trigger says here. There is no insert
+ * guard: `ensure` is the only inserter and writes no check column, so the defaults already
+ * satisfy both pairings.
+ */
+const sqliteChecks = `
+ALTER TABLE code_bases ADD COLUMN check_state TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE code_bases ADD COLUMN check_job_json TEXT;
+ALTER TABLE code_bases ADD COLUMN check_json TEXT;
+CREATE TRIGGER code_bases_check BEFORE UPDATE ON code_bases
+BEGIN
+  SELECT CASE
+    WHEN NEW.check_state NOT IN ('none','queued','running','unavailable','passed','failed','skipped')
+      THEN RAISE(ABORT,'A base check state is one of the published words')
+    WHEN (NEW.check_json IS NOT NULL) <> (NEW.check_state IN ('passed','failed','skipped'))
+      THEN RAISE(ABORT,'A base check verdict and its receipt are recorded together')
+    WHEN NEW.state='resolved' AND NEW.check_state='failed' AND NEW.resolution_commit IS NULL
+      THEN RAISE(ABORT,'A base whose check failed is sealed only by an accepted resolution')
+    WHEN OLD.check_json IS NOT NULL AND NEW.check_json IS NOT OLD.check_json
+      THEN RAISE(ABORT,'The check of a base is recorded once')
+  END;
+END;
+`;
+const postgresChecks = `
+ALTER TABLE code_bases ADD COLUMN check_state TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE code_bases ADD COLUMN check_job_json TEXT;
+ALTER TABLE code_bases ADD COLUMN check_json TEXT;
+ALTER TABLE code_bases ADD CONSTRAINT code_bases_check_state CHECK (check_state IN ('none','queued','running','unavailable','passed','failed','skipped'));
+ALTER TABLE code_bases ADD CONSTRAINT code_bases_check_recorded CHECK ((check_json IS NOT NULL) = (check_state IN ('passed','failed','skipped')));
+ALTER TABLE code_bases ADD CONSTRAINT code_bases_check_seal CHECK (state<>'resolved' OR check_state<>'failed' OR resolution_commit IS NOT NULL);
+CREATE FUNCTION code_bases_check_guard() RETURNS trigger AS $$ BEGIN
+IF OLD.check_json IS NOT NULL AND NEW.check_json IS DISTINCT FROM OLD.check_json THEN RAISE EXCEPTION 'The check of a base is recorded once'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER code_bases_check BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_check_guard();`;
+
 interface CodeBaseHooks {
   /** A record reached an end, so the units that wait on it may have a base, or a new reason. */
   changed(tx: Transaction, projectId: string): Promise<void>;
@@ -183,6 +247,12 @@ interface Execution {
 }
 
 export class CodeBaseService {
+  /**
+   * The adapter that runs a project check, bound by the plugin when a sandboxes connection
+   * exists. Without it a configured command leaves its base unsealed and an operator is
+   * told why; a check never runs on this host.
+   */
+  checks?: SandboxChecks;
   private readonly busy = new Map<string, Promise<void>>();
   private closed = false;
   private readonly executions = new Map<string, AbortController>();
@@ -199,7 +269,13 @@ export class CodeBaseService {
   private timer?: NodeJS.Timeout;
 
   async initialize(): Promise<void> {
-    await this.state.migrate('code_bases', [{ version: 1, sql: sqlite, postgres }]);
+    await this.state.migrate('code_bases', [
+      { version: 1, sql: sqlite, postgres },
+      // No backfill: an already resolved base keeps check_state 'none', which both new
+      // constraints admit. Inventing a verdict for work nobody checked would be permanent,
+      // because the verdict of a base is recorded once.
+      { version: 2, sql: sqliteChecks, postgres: postgresChecks },
+    ]);
     if (this.hooks.resolved)
       await this.state.transaction(async (tx) => {
         for (const row of await tx.all<BaseRow>(
@@ -246,6 +322,8 @@ export class CodeBaseService {
       conflict: row.conflict_json
         ? (JSON.parse(row.conflict_json) as CodeBaseRecord['conflict'])
         : null,
+      checkState: row.check_state,
+      check: row.check_json ? (JSON.parse(row.check_json) as CodeBaseRecord['check']) : null,
       resolutionTaskId: row.resolution_task_id,
       resolutionError: row.resolution_error,
       attempts: Number(row.attempts),
@@ -512,6 +590,7 @@ export class CodeBaseService {
   }
 
   private async drain(projectId: string): Promise<void> {
+    await this.advanceChecks(projectId);
     const accepted = await this.state.read((sql) =>
       sql.all<BaseRow>(
         `SELECT ${columns} FROM code_bases WHERE project_id=? AND state='awaiting_resolution' AND health='healthy' AND resolution_commit IS NOT NULL AND resolution_error IS NULL ORDER BY base_key`,
@@ -555,7 +634,15 @@ export class CodeBaseService {
           if (!row) return null;
           const base = this.record(row);
           if (row.state === 'running' && base.deadline && this.hooks.serviceWork) {
-            await this.hooks.serviceWork.settle(tx, this.execution(projectId, base), 'expired');
+            await this.hooks.serviceWork.settle(
+              tx,
+              this.execution(
+                projectId,
+                base,
+                ['queued', 'running'].includes(row.check_state) ? 'code.check' : 'code',
+              ),
+              'expired',
+            );
             await this.failed(
               tx,
               projectId,
@@ -633,9 +720,18 @@ export class CodeBaseService {
     }
   }
 
-  private execution(projectId: string, base: CodeBaseRecord): ServiceWorkInput {
+  /**
+   * The reservation one phase of a base holds. The merge and its check share an operation and
+   * an epoch and differ only by provider, so settling the wrong one would leave a check's
+   * capacity held against the project while a no-op settle ran on the merge's closed row.
+   */
+  private execution(
+    projectId: string,
+    base: CodeBaseRecord,
+    provider: 'code' | 'code.check' = 'code',
+  ): ServiceWorkInput {
     return {
-      provider: 'code',
+      provider,
       projectId,
       operationId: `${projectId}:${base.key}`,
       executionEpoch: base.executionEpoch,
@@ -651,8 +747,10 @@ export class CodeBaseService {
     reason: string,
   ): Promise<void> {
     const exhausted = base.attempts >= RETRIES;
+    // A check that did not reach a verdict leaves nothing behind; one that did keeps it,
+    // because a recorded verdict is never replaced by the next attempt's state.
     const changed = await tx.run(
-      "UPDATE code_bases SET state=?,next_at=?,blocker=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+      `UPDATE code_bases SET state=?,next_at=?,blocker=?,check_state=CASE WHEN check_json IS NULL THEN 'none' ELSE check_state END,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'`,
       exhausted ? 'blocked_infra' : 'retry_wait',
       exhausted ? null : new Date(this.clock() + 1000 * 2 ** base.attempts).toISOString(),
       reason,
@@ -748,6 +846,10 @@ export class CodeBaseService {
           return;
         }
         await this.hooks.serviceWork!.settle(tx, input, 'completed');
+        // A merge that produced a new tree is handed to the project's check before it is
+        // sealed. A contained outcome names an already accepted commit, so there is no new
+        // tree and re-proving it would be a second logical check of the same content.
+        if (outcome.outcome === 'merged' && (await this.handOff(tx, projectId, base))) return;
         const result =
           outcome.outcome === 'conflict'
             ? null
@@ -757,13 +859,18 @@ export class CodeBaseService {
                 tree: outcome.outcome === 'merged' ? outcome.tree : null,
                 engine: MERGE_ENGINE,
               };
+        const skipped = result
+          ? checkSkipped(outcome.outcome === 'contained' ? 'contained' : 'no-command', now())
+          : null;
         const changed = await tx.run(
-          "UPDATE code_bases SET state=?,result_json=?,conflict_json=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+          "UPDATE code_bases SET state=?,result_json=?,conflict_json=?,check_state=?,check_json=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
           result ? 'resolved' : 'awaiting_resolution',
           result ? JSON.stringify(result) : null,
           outcome.outcome === 'conflict'
             ? JSON.stringify({ paths: outcome.paths, messages: outcome.messages })
             : null,
+          skipped ? 'skipped' : 'none',
+          skipped ? JSON.stringify(skipped) : null,
           now(),
           projectId,
           base.key,
@@ -805,6 +912,374 @@ export class CodeBaseService {
       abort.abort();
       this.executions.delete(executionKey);
     }
+  }
+
+  /**
+   * The project's check, read from the limits document the store already keeps. A project
+   * bound before checks existed reads as no command, which is what it meant. A command that
+   * is there and cannot be read is not the same thing: reading it as absent would switch
+   * verification off without anybody having asked, so it stops the base instead.
+   */
+  private async checkSpec(sql: Sql, projectId: string): Promise<CodeCheckSpec | null> {
+    const row = await sql.get<{ limits_json: string | null }>(
+      'SELECT limits_json FROM code_projects WHERE project_id=?',
+      projectId,
+    );
+    const stored = JSON.parse(row?.limits_json || '{}') as { check?: unknown };
+    if (stored.check === null || stored.check === undefined) return null;
+    const parsed = codeCheckSpecSchema.safeParse(stored.check);
+    check(
+      parsed.success,
+      'code_check_unavailable',
+      'this project configures a check command this server cannot read',
+      503,
+    );
+    return parsed.data;
+  }
+
+  /**
+   * Hand a merged base to its check instead of sealing it, and say whether that happened.
+   * The check takes a reservation of its own under the same operation and epoch: capacity is
+   * counted in unsettled rows, so holding the merge's slot through a rented machine's work
+   * would starve every other base, and a check's wall time is its own line against project
+   * caps and sponsoring-root budgets.
+   */
+  private async handOff(
+    tx: Transaction,
+    projectId: string,
+    base: CodeBaseRecord,
+  ): Promise<boolean> {
+    const spec = await this.checkSpec(tx, projectId);
+    if (!spec || !this.hooks.serviceWork) return false;
+    const held: ServiceWorkInput = {
+      provider: 'code.check',
+      projectId,
+      operationId: `${projectId}:${base.key}`,
+      executionEpoch: base.executionEpoch,
+      sponsors: base.sponsors,
+      deadline: new Date(
+        this.clock() + (spec.timeoutSeconds + CODE_CHECK_SLACK_SECONDS) * 1000,
+      ).toISOString(),
+    };
+    const admitted = await this.hooks.serviceWork.admit(tx, held);
+    const at = now();
+    if (!admitted.admitted) {
+      // The merge is deterministic and its ref is already written, so the retry re-merges to
+      // the identical commit and arrives back here: capacity is waited for, never gone round.
+      const waiting = await tx.run(
+        "UPDATE code_bases SET state='retry_wait',next_at=?,blocker=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+        new Date(this.clock() + 5000).toISOString(),
+        admitted.reason,
+        at,
+        projectId,
+        base.key,
+        base.executionEpoch,
+      );
+      if (waiting.changes) await this.hooks.changed(tx, projectId);
+      return true;
+    }
+    const queued = await tx.run(
+      "UPDATE code_bases SET check_state='queued',deadline=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+      held.deadline,
+      at,
+      projectId,
+      base.key,
+      base.executionEpoch,
+    );
+    if (!queued.changes) await this.hooks.serviceWork.settle(tx, held, 'cancelled');
+    return true;
+  }
+
+  /**
+   * One bounded step of every check this project has in flight, and the return of every
+   * machine a check no longer owns. A check is a stepped machine and never a poll loop:
+   * drain() merges one base at a time, so waiting here for a rented machine would stop every
+   * other base in the project for as long as the command runs, and close() with it.
+   */
+  private async advanceChecks(projectId: string): Promise<void> {
+    if (this.closed) return;
+    const rows = await this.state.read((sql) =>
+      sql.all<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? AND (${IN_FLIGHT} OR check_job_json IS NOT NULL) ORDER BY base_key`,
+        projectId,
+      ),
+    );
+    for (const row of rows) {
+      if (this.closed) return;
+      const base = this.record(row);
+      // Every row is its own failure. This loop is the first thing a drain does and a drain
+      // is the first thing every project does, so one unreadable row escaping here would
+      // stop every project ordered after it from merging, on this tick and on every tick.
+      try {
+        const handle = row.check_job_json ? (JSON.parse(row.check_job_json) as CheckHandle) : null;
+        const mine =
+          row.state === 'running' &&
+          row.health === 'healthy' &&
+          ['queued', 'running'].includes(row.check_state) &&
+          (!handle || handle.epoch === base.executionEpoch);
+        // A machine whose check lost its epoch to an operator or a deadline, or whose base
+        // stopped running, is nobody's: it goes back before anything else, because nothing
+        // will ever read its answer and it is still being paid for.
+        if (!mine) {
+          if (handle) await this.reclaim(projectId, base, handle);
+          continue;
+        }
+        await this.checkStep(projectId, base, handle);
+      } catch (error) {
+        await this.checkStopped(projectId, base, error).catch(() => undefined);
+      }
+    }
+  }
+
+  /** Cancel, delete and forget one machine. Every call is safe twice and safe after a crash. */
+  private async reclaim(
+    projectId: string,
+    base: CodeBaseRecord,
+    handle: CheckHandle,
+  ): Promise<void> {
+    // With no adapter there is nothing to give the machine back to, and forgetting the
+    // handle would leave a rented machine nobody can name. It waits for an adapter.
+    if (!this.checks) return;
+    let refused: string | null = null;
+    try {
+      await this.checks.release(projectId, handle);
+    } catch (error) {
+      const attempts = (handle.releaseAttempts ?? 0) + 1;
+      const reason = error instanceof Error ? error.message : 'the service refused';
+      // A machine the service will not take back now is tried again next pass. The handle
+      // stays until it is gone: losing it would leave a rented machine nobody can name.
+      // After enough identical refusals, retrying in silence is what hides it, so the
+      // machine is named in the blocker and the handle is let go in the same breath.
+      if (attempts < RECLAIM_ATTEMPTS) {
+        await this.state.transaction((tx) =>
+          tx.run(
+            'UPDATE code_bases SET check_job_json=?,updated_at=? WHERE project_id=? AND base_key=? AND check_job_json=?',
+            JSON.stringify({ ...handle, releaseAttempts: attempts }),
+            now(),
+            projectId,
+            base.key,
+            JSON.stringify(handle),
+          ),
+        );
+        return;
+      }
+      refused = `code_check_unreclaimed: sandbox ${handle.sandboxId ?? 'unnamed'} could not be given back (${reason})`;
+    }
+    await this.state.transaction(async (tx) => {
+      // The reservation of an epoch nobody will finish goes back with the machine. Without
+      // this an operator's suspend would hold the project's capacity until the check's own
+      // deadline ran out, and every other base would wait for a machine nobody is using.
+      // A reservation the expiry sweep already settled, or one that never existed, is no
+      // trouble here: what this undoes is capacity, and that is already given back.
+      await this.hooks.serviceWork
+        ?.settle(
+          tx,
+          {
+            ...this.execution(projectId, base, 'code.check'),
+            executionEpoch: handle.epoch,
+            deadline: base.deadline ?? new Date(this.clock()).toISOString(),
+          },
+          'cancelled',
+        )
+        .catch(() => undefined);
+      await tx.run(
+        `UPDATE code_bases SET check_job_json=NULL${refused ? ',blocker=?' : ''},updated_at=? WHERE project_id=? AND base_key=? AND check_job_json=?`,
+        ...(refused ? [refused] : []),
+        now(),
+        projectId,
+        base.key,
+        JSON.stringify(handle),
+      );
+    });
+  }
+
+  /**
+   * One step: ship the source and ask for a machine, advance the machine, or read the job.
+   * Each one is durable before the next begins, so a crash resumes from the handle instead
+   * of renting a second machine, and the same idempotency key finds the same object, machine
+   * and job. Git and the network run here, between the two transactions and inside neither.
+   */
+  private async checkStep(
+    projectId: string,
+    base: CodeBaseRecord,
+    handle: CheckHandle | null,
+  ): Promise<void> {
+    const checks = this.checks;
+    check(
+      checks,
+      'code_check_unavailable',
+      'this server has no sandbox adapter for project checks',
+      503,
+    );
+    const spec = await this.state.read((sql) => this.checkSpec(sql, projectId));
+    const env = this.repositories.environment(projectId);
+    const commit = await this.heldCommit(projectId, base);
+    check(commit, 'code_check_unavailable', 'the merged base holds no commit to check', 409);
+    // The operator withdrew the command while this check was in flight. Verification was not
+    // asked for any more, and the merge is already complete and sound, so the base seals the
+    // way a merge with no command seals rather than waiting at blocked_infra for a person.
+    if (!spec)
+      return await this.seal(
+        projectId,
+        base,
+        checkSkipped('no-command', now()),
+        commit,
+        env,
+        handle,
+      );
+    const plan = checkPlan(spec, base.key, base.executionEpoch);
+    if (!handle) {
+      const source = await archiveCommit(this.repositories.git, env, commit);
+      return await this.persist(projectId, base, {
+        ...(await checks.start(projectId, { ...plan, source })),
+        epoch: base.executionEpoch,
+      });
+    }
+    if (!handle.jobId)
+      return await this.persist(projectId, base, {
+        ...(await checks.step(projectId, plan, handle)),
+        epoch: handle.epoch,
+      });
+    const verdict = await checks.follow(projectId, handle);
+    if (verdict.state === 'running') return;
+    // A written result is a verdict, including the command's own timeout, which the adapter
+    // bounds and reports as one. A job that ended without writing a result ran no command
+    // anybody can judge — its setup did not finish — so it is infrastructure, and says
+    // which setup step failed when it knows.
+    check(
+      verdict.result,
+      'code_check_incomplete',
+      verdict.setup ?? `The check ended as ${verdict.state} without a result`,
+      502,
+    );
+    await this.seal(
+      projectId,
+      base,
+      checkReceipt(spec, handle, verdict, now()),
+      commit,
+      env,
+      handle,
+    );
+  }
+
+  private async heldCommit(projectId: string, base: CodeBaseRecord): Promise<string | null> {
+    const held = await this.repositories.git.run(
+      ['rev-parse', '--verify', '-q', `refs/merv/bases/${base.key}`],
+      { env: this.repositories.environment(projectId) },
+    );
+    return held.code === 0 ? held.stdout.toString('utf8').trim() : null;
+  }
+
+  /** What the machine has reached so far, under the epoch that owns it. */
+  private async persist(
+    projectId: string,
+    base: CodeBaseRecord,
+    handle: CheckHandle,
+  ): Promise<void> {
+    const written = await this.state.transaction((tx) =>
+      tx.run(
+        `UPDATE code_bases SET check_state='running',check_job_json=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy' AND ${IN_FLIGHT}`,
+        JSON.stringify(handle),
+        now(),
+        projectId,
+        base.key,
+        base.executionEpoch,
+      ),
+    );
+    // The disposition changed while the machine was being made, so nothing will ever read
+    // its answer and no row would name it. It goes back now rather than staying rented.
+    if (!written.changes) await this.reclaim(projectId, base, handle);
+  }
+
+  /**
+   * The verdict, recorded once. A pass seals the base as the merge would have; a failure is
+   * a conflict with no paths, resolved by the same one reviewed task a Git conflict is.
+   */
+  private async seal(
+    projectId: string,
+    base: CodeBaseRecord,
+    recorded: CodeBaseCheck,
+    commit: string,
+    env: Record<string, string>,
+    handle: CheckHandle | null,
+  ): Promise<void> {
+    const failed = recorded.state === 'failed';
+    // The auto-merge commit is dropped before a failure is sealed. acceptTask refuses a
+    // resolution whose commit is not the one the ref already holds, so a check-failed base
+    // has to be the shape a Git-conflicted one is. Nothing pins an unsealed base, and the
+    // merge is deterministic, so the dropped commit is recomputable from the same inputs.
+    if (failed)
+      await this.repositories.git.ok(['update-ref', '-d', `refs/merv/bases/${base.key}`, commit], {
+        env,
+      });
+    const tree = failed
+      ? null
+      : (await this.repositories.git.ok(['rev-parse', `${commit}^{tree}`], { env }))
+          .toString('utf8')
+          .trim();
+    const result = failed ? null : { method: 'auto', commit, tree, engine: MERGE_ENGINE };
+    await this.state.transaction(async (tx) => {
+      const input = this.execution(projectId, base, 'code.check');
+      const changed = await tx.run(
+        "UPDATE code_bases SET state=?,result_json=?,conflict_json=?,check_state=?,check_json=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+        failed ? 'awaiting_resolution' : 'resolved',
+        result ? JSON.stringify(result) : null,
+        failed ? JSON.stringify(checkConflict(recorded)) : null,
+        recorded.state,
+        JSON.stringify(recorded),
+        now(),
+        projectId,
+        base.key,
+        base.executionEpoch,
+      );
+      if (!changed.changes) return await this.hooks.serviceWork?.settle(tx, input, 'cancelled');
+      await this.hooks.serviceWork?.settle(tx, input, 'completed');
+      if (result) await this.hooks.resolved?.(tx, projectId, base.key, result.commit);
+      await this.promote(tx, projectId);
+      await this.hooks.changed(tx, projectId);
+    });
+    // The handle outlives the seal so that a crash here still finds the machine to return.
+    if (handle) await this.reclaim(projectId, base, handle);
+  }
+
+  /**
+   * A check that could not run. A configured command with no adapter, an unreadable command
+   * and a tree too large to ship are not conflicts — there is nothing for a worker to
+   * resolve — and none of them is mended by trying again, so the base stays unsealed at
+   * blocked_infra, where code.status already lists it and code.base.retry is already the
+   * remedy. Everything else is transient and walks the same retry ladder every other
+   * infrastructure fault does.
+   */
+  private async checkStopped(
+    projectId: string,
+    base: CodeBaseRecord,
+    error: unknown,
+  ): Promise<void> {
+    const structural =
+      error instanceof MervError &&
+      ['code_check_unavailable', 'sandbox_not_connected', 'code_check_source_too_large'].includes(
+        error.code,
+      );
+    const reason = error instanceof Error ? error.message : 'The project check could not run.';
+    await this.state.transaction(async (tx) => {
+      await this.hooks.serviceWork?.settle(
+        tx,
+        this.execution(projectId, base, 'code.check'),
+        'failed',
+      );
+      if (!structural) return await this.failed(tx, projectId, base, reason);
+      const changed = await tx.run(
+        "UPDATE code_bases SET state='blocked_infra',next_at=NULL,check_state='unavailable',blocker=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy'",
+        // The blocker names the code that stopped it, so an oversized tree is not read as a
+        // missing adapter and a retry is not spent on something a retry cannot mend.
+        `${error instanceof MervError ? error.code : 'code_check_unavailable'}: ${reason}`,
+        now(),
+        projectId,
+        base.key,
+        base.executionEpoch,
+      );
+      if (changed.changes) await this.hooks.changed(tx, projectId);
+    });
   }
 
   /**
@@ -960,7 +1435,10 @@ export class CodeBaseService {
                   ? 'suspended'
                   : 'cancelled';
       await tx.run(
-        'UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,updated_at=? WHERE project_id=? AND base_key=?',
+        // The handle stays: the check pass needs it to reclaim the machine this disposition
+        // just orphaned. Only a check that never reached a verdict is put back to none, or
+        // quarantining a resolved base would break the verdict-and-receipt pairing.
+        `UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,check_state=CASE WHEN check_json IS NULL THEN 'none' ELSE check_state END,updated_at=? WHERE project_id=? AND base_key=?`,
         state,
         action === 'quarantine' ? 'quarantined' : action === 'release' ? 'healthy' : row.health,
         action === 'suspend' ? resume : row.resume_state,
@@ -1023,13 +1501,18 @@ export class CodeBaseService {
         );
   }
 
-  /** Every project with work due: for a start after a crash, and for a retry whose time came. */
+  /**
+   * Every project with work due: for a start after a crash, and for a retry whose time came.
+   * A machine still named on a row nominates its project whatever that row's state and health
+   * are, because a crash between an operator's cancel, quarantine or suspend and the next
+   * drain leaves a rented machine that only a drain of that project can give back.
+   */
   async due(): Promise<string[]> {
     return (
       await this.state.read(
         async (sql) =>
           await sql.all<{ project_id: string }>(
-            "SELECT DISTINCT project_id FROM code_bases WHERE health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL)) ORDER BY project_id",
+            "SELECT DISTINCT project_id FROM code_bases WHERE check_job_json IS NOT NULL OR (health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL))) ORDER BY project_id",
             new Date(this.clock()).toISOString(),
           ),
       )

@@ -81,6 +81,9 @@ export function sandboxRoute(path: string, id?: string): string {
   return resolved;
 }
 
+/** The slowest link a part upload is still given time to finish on: one megabit a second. */
+const MIN_UPLOAD_BYTES_PER_SECOND = 131_072;
+
 /**
  * Authenticated, namespace-scoped transport to merv-sandboxes. Budget policy, accounting and
  * administration stay in the service; this reads published JSON and changes one named sandbox's
@@ -90,11 +93,71 @@ export function sandboxRoute(path: string, id?: string): string {
 export class SandboxClient {
   readonly #origin: string;
   readonly #timeoutMs: number;
+  readonly #storageOrigins: readonly string[];
   readonly #consumers = new Map<string, string>();
 
-  constructor(origin: string, timeoutMs = 15_000) {
+  constructor(origin: string, timeoutMs = 15_000, storageOrigins: readonly string[] = []) {
     this.#origin = sandboxOrigin(origin);
     this.#timeoutMs = timeoutMs;
+    this.#storageOrigins = storageOrigins.map((entry) => sandboxOrigin(entry));
+  }
+
+  /**
+   * PUT one part of a check's source to the bucket URL the service issued. This is the only
+   * request this plugin ever makes off the sandbox origin, so the origin must have been named
+   * in deployment configuration, and no Merv credential is attached: the signature in the URL
+   * is the whole authority. It cannot go through #send, whose contract is a JSON answer; a
+   * bucket answers an empty body with the headers that matter.
+   */
+  async upload(url: string, headers: Record<string, string>, bytes: Uint8Array): Promise<void> {
+    let target: URL | undefined;
+    try {
+      target = new URL(url);
+    } catch {
+      target = undefined;
+    }
+    check(
+      target?.protocol === 'https:' && this.#storageOrigins.includes(target.origin),
+      'sandbox_origin_refused',
+      'A check source is uploaded only to a configured storage origin over HTTPS',
+      403,
+    );
+    let response: Response;
+    try {
+      response = await fetch(target!, {
+        method: 'PUT',
+        redirect: 'manual',
+        headers,
+        // A blob of exactly this part's bytes. The copy is what detaches the part from the
+        // whole source: a view over a shared buffer is not a body type the platform accepts.
+        body: new Blob([new Uint8Array(bytes)]),
+        // A part carries tens of megabytes, and the configured timeout is the control
+        // plane's, written for small JSON answers. Giving the body the control-plane budget
+        // would abort every real repository on any ordinary link and read as a dead service.
+        signal: AbortSignal.timeout(
+          this.#timeoutMs + Math.ceil((bytes.byteLength / MIN_UPLOAD_BYTES_PER_SECOND) * 1000),
+        ),
+      });
+    } catch {
+      throw new MervError('sandbox_unavailable', 'The check source store is unreachable', 503);
+    }
+    try {
+      const status = response.status;
+      check(
+        !(status === 0 || (status >= 300 && status < 400)),
+        'sandbox_redirect_refused',
+        'The check source store answered a redirect',
+        502,
+      );
+      check(
+        status < 400,
+        'sandbox_unavailable',
+        `The check source store refused a part (HTTP ${status})`,
+        502,
+      );
+    } finally {
+      await response.body?.cancel().catch(() => {});
+    }
   }
 
   get origin(): string {

@@ -14,6 +14,7 @@ import {
 import { CodeService } from '@merv/code/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeCapture } from '@merv/code/types';
+import type { SandboxCheckHandle } from '@merv/sandboxes';
 import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
 import { CodeBaseService } from '../packages/code/src/bases.js';
 import type { CodeUnitService } from '../packages/code/src/units.js';
@@ -1666,6 +1667,85 @@ for (const backend of backends) {
         ))!.n,
         1,
       );
+    },
+  );
+  test(
+    `${backend}: a base that merged cleanly and failed its check is briefed as that, not as a conflict`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.state.transaction((tx) =>
+        tx.run(
+          'UPDATE code_projects SET limits_json=? WHERE project_id=?',
+          JSON.stringify({
+            format: 1,
+            denyGlobs: [],
+            secretExemptGlobs: [],
+            check: {
+              command: 'make test',
+              timeoutSeconds: 600,
+              image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
+            },
+          }),
+          f.admin.projectId,
+        ),
+      );
+      const isolation: SandboxCheckHandle['isolation'] = {
+        network: 'on',
+        sourceReadOnly: false,
+        imagePinned: 'offer',
+        facts: [],
+      };
+      const handle: SandboxCheckHandle = {
+        sandboxId: 'sbx_1',
+        jobId: null,
+        objectId: 'obj_1',
+        restoreJobId: null,
+        sha256: 'a'.repeat(64),
+        ready: false,
+        environment: null,
+        isolation,
+      };
+      f.bases.checks = {
+        start: async () => ({ ...handle }),
+        step: async (_projectId, plan, current) =>
+          current.ready
+            ? { ...current, jobId: 'job_1' }
+            : {
+                ...current,
+                ready: true,
+                environment: {
+                  provider: plan.provider,
+                  offerId: plan.offerId,
+                  snapshotId: plan.snapshotId,
+                },
+              },
+        follow: async () => ({
+          state: 'failed' as const,
+          result: { exit: 7, bytes: 13, head: 'FAIL test_one', tail: '' },
+          setup: null,
+          startedAt: null,
+          finishedAt: null,
+          usage: null,
+        }),
+        release: async () => {},
+      };
+      // The inputs of this base do not conflict: a is f.txt and d is g.txt.
+      await f.waiter([f.left, f.extra]);
+      for (let pass = 0; pass < 6; pass += 1) await f.bases.work(f.admin.projectId);
+      const base = (await f.state.read((sql) => f.bases.find(sql, f.admin.projectId, [f.a, f.d])))!;
+      assert.equal(base.state, 'awaiting_resolution');
+      assert.equal(base.checkState, 'failed');
+      const task = await f.tasks.get(f.admin, base.resolutionTaskId!);
+      // The first sentence a worker reads must not ask for conflicts this base does not have.
+      assert.match(task.title, /^Make the project check pass on /);
+      assert.match(task.goal, /^The merge of .+ is clean; its project check failed\./);
+      assert.ok(!task.goal.startsWith('Resolve conflicts between'));
+      assert.ok(
+        task.checks.includes('Leave no conflict markers.'),
+        'and no path is named as conflicting',
+      );
+      assert.ok(task.checks.some((entry: string) => /failed with exit 7/.test(entry)));
     },
   );
   test(

@@ -240,6 +240,8 @@ const base = (key: string, over: Partial<CodeBaseRecord>): CodeBaseRecord => ({
   quarantined: false,
   result: null,
   conflict: null,
+  checkState: 'none',
+  check: null,
   resolutionTaskId: null,
   resolutionError: null,
   attempts: 0,
@@ -449,9 +451,9 @@ const commands = () => [receipt('u1', 'a1', 1), receipt('u1', 'a2', 2), receipt(
 const project = () => gitModel(status(units(), bases()), commands(), [published()], names);
 
 /** That same project as the page reads it, with the lists that name its lanes. */
-const servedProject = (over: Partial<CodeProjectStatus> = {}) => {
+const servedProject = (over: Partial<CodeProjectStatus> = {}, records = bases()) => {
   serve('/tools/ui.read', {
-    body: { result: { commands: commands(), status: status(units(), bases(), over) } },
+    body: { result: { commands: commands(), status: status(units(), records, over) } },
   });
   serve('/tools/ui.home', {
     body: {
@@ -991,6 +993,64 @@ test('the base card names what was merged, what conflicted and who waits — nev
   assert.equal(waiting?.querySelector('button'), null, 'and never a control dressed as a value');
 });
 
+test('a base whose check failed shows the verdict beside what the machine could not isolate', async (t) => {
+  t.after(unmount);
+  const failed = base('b2', {
+    members: ['c1', 'm1'],
+    parents: ['c1', 'm1'],
+    state: 'awaiting_resolution',
+    conflict: { paths: [], messages: 'the project check `make test` exited 7.' },
+    checkState: 'failed',
+    check: {
+      state: 'failed',
+      spec: {
+        command: 'make test',
+        timeoutSeconds: 600,
+        image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
+      },
+      receipt: {
+        sandboxId: 'sbx_1',
+        jobId: 'job_1',
+        objectId: 'obj_1',
+        exitCode: 7,
+        timedOut: false,
+        startedAt: '2026-09-22T00:00:00.000Z',
+        finishedAt: '2026-09-22T00:02:00.000Z',
+        output: { head: 'FAIL loader', tail: 'one failure', bytes: 4000 },
+        environment: {
+          provider: 'thunder_compute',
+          offerId: 'a6000_x1:thunder',
+          snapshotId: null,
+        },
+        usage: { amount: '0.012', currency: 'USD' },
+        isolation: {
+          network: 'on',
+          sourceReadOnly: false,
+          imagePinned: 'offer',
+          facts: ['The check had outbound network access.'],
+        },
+      },
+      reason: null,
+      at: '2026-09-22T00:02:00.000Z',
+    },
+  });
+  servedProject({}, [bases()[0], failed]);
+  await mount(page([row], { at: '/code/merge/b2' }));
+  const said = document.querySelector('#code-props')?.textContent ?? '';
+  assert.ok(said.includes('make test'), said);
+  assert.ok(said.includes('exit 7'), said);
+  assert.ok(said.includes('120s'), `how long it ran: ${said}`);
+  assert.ok(said.includes('a6000_x1:thunder'), `what it ran in: ${said}`);
+  assert.ok(said.includes('0.012 USD'), `what it cost: ${said}`);
+  assert.ok(said.includes('FAIL loader') && said.includes('one failure'), said);
+  assert.ok(said.includes('bytes omitted'), `the gap in the output is named: ${said}`);
+  assert.ok(
+    said.includes('outbound network access'),
+    `what the machine could not isolate is on the same card: ${said}`,
+  );
+  assert.ok(!said.includes('Conflicting paths'), `a check failure conflicts over no path: ${said}`);
+});
+
 test('a merge made from an earlier merge says what it joined, by name', async (t) => {
   t.after(unmount);
   const model = gitModel(status(units(), bases()), commands(), [], names);
@@ -1179,7 +1239,7 @@ test('the Operations fold holds the machinery, and a blocked ref its one verb', 
       tips: [],
       diskBytes: 1_048_576,
       quotaBytes: 10_485_760,
-      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
     },
     operations: [
       {
@@ -1320,7 +1380,7 @@ test('publishing that is off says why, and a fold with no machinery does not ope
       tips: [],
       diskBytes: 0,
       quotaBytes: 0,
-      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [] },
+      limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
     },
     mirror: null,
   });

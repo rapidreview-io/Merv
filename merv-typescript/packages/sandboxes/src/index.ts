@@ -3,8 +3,14 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxClient, sandboxOrigin, sandboxRoute } from './client.js';
 import { parseManifest, type ManifestRow } from './manifest.js';
+import { SandboxCheckRunner } from './checks.js';
 import type {
   Sandboxes,
+  SandboxCheckHandle,
+  SandboxChecks,
+  SandboxCheckPlan,
+  SandboxCheckSpec,
+  SandboxCheckVerdict,
   SandboxConnection,
   SandboxesConfig,
   SandboxExtend,
@@ -15,6 +21,11 @@ import type {
 
 export type {
   Sandboxes,
+  SandboxCheckHandle,
+  SandboxChecks,
+  SandboxCheckPlan,
+  SandboxCheckSpec,
+  SandboxCheckVerdict,
   SandboxConnection,
   SandboxesConfig,
   SandboxExtend,
@@ -22,6 +33,7 @@ export type {
   SandboxRow,
   SandboxTarget,
 } from './types.js';
+export { checkScript } from './checks.js';
 
 /**
  * The tools this package ships. A control the manifest binds to anything else is dropped
@@ -53,6 +65,7 @@ const configuration = z
       ),
     refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
     timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
+    storageOrigins: z.array(z.string().min(1).max(512)).max(8).default([]),
   })
   .strict();
 
@@ -105,6 +118,11 @@ export class SandboxService implements Sandboxes {
   #closed = false;
   #closing?: Promise<void>;
   readonly #running = new Set<Promise<unknown>>();
+  /**
+   * Present only where the deployment named the bucket origins a check's source may be
+   * uploaded to, so a project check is opt-in per deployment rather than per request.
+   */
+  readonly checks?: SandboxChecks;
 
   /**
    * `registered` reports whether a tool exists in this process; the plugin answers for the two
@@ -119,7 +137,24 @@ export class SandboxService implements Sandboxes {
     this.#client = new SandboxClient(
       sandboxOrigin(process.env[parsed.data.urlEnv]),
       parsed.data.timeoutMs,
+      parsed.data.storageOrigins,
     );
+    if (parsed.data.storageOrigins.length) {
+      const runner = new SandboxCheckRunner(this.#client, (projectId) =>
+        this.#connectionFor(projectId),
+      );
+      // Every call joins the same drain as a tool's, so closing waits for a check's step
+      // instead of abandoning a half-created machine.
+      this.checks = {
+        start: (projectId, spec) => this.#run(spec, (spec) => runner.start(projectId, spec)),
+        step: (projectId, plan, handle) =>
+          this.#run(handle, (handle) => runner.step(projectId, plan, handle)),
+        follow: (projectId, handle) =>
+          this.#run(handle, (handle) => runner.follow(projectId, handle)),
+        release: (projectId, handle) =>
+          this.#run(handle, (handle) => runner.release(projectId, handle)),
+      };
+    }
   }
 
   /** Reads the manifest on a bounded cadence; disposal retires and drains this instance. */
@@ -223,7 +258,12 @@ export class SandboxService implements Sandboxes {
 
   /** The namespace follows the caller's own project; input never selects a connection. */
   #connectionOf(caller: Caller): SandboxConnection {
-    const entry = this.#connections.find((candidate) => candidate.projectId === caller.projectId);
+    return this.#connectionFor(caller.projectId);
+  }
+
+  /** Server-owned work has no caller, and still speaks only as the project it works for. */
+  #connectionFor(projectId: string): SandboxConnection {
+    const entry = this.#connections.find((candidate) => candidate.projectId === projectId);
     check(entry, 'sandbox_not_connected', 'This project has no sandbox connection', 403);
     return entry;
   }
