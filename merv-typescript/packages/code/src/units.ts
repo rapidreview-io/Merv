@@ -353,14 +353,19 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         // A quarantine is still never pointed at another base behind the record's back, but a
         // released one has to be able to go: without this no operator route could ever undo a
         // quarantine given by mistake, and every unit it reached would stay unusable forever.
-        // Publishing to main is declared once on the unit and its publication, once sealed,
-        // is immutable; the two columns arrive in the same unreleased version.
         sql: `
 DROP TRIGGER code_units_base_quarantine;
 CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
 WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key AND NEW.quarantine_base_key IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
-
+`,
+      },
+      {
+        // Publishing to main is declared once on the unit and, once sealed, its publication is
+        // immutable. Version 2 shipped on 2026-09-22 before these columns existed.
+        version: 3,
+        postgres: postgresMigrations[3],
+        sql: `
 ALTER TABLE code_units ADD COLUMN publishes_at TEXT;
 ALTER TABLE code_units ADD COLUMN publication_id TEXT;
 CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units

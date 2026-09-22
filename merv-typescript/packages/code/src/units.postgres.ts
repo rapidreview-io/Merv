@@ -225,8 +225,8 @@ CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units FOR EACH R
   2: `
 CREATE OR REPLACE FUNCTION code_units_base_quarantine_guard() RETURNS trigger AS $$ BEGIN
 IF OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS DISTINCT FROM OLD.quarantine_base_key AND NEW.quarantine_base_key IS NOT NULL THEN RAISE EXCEPTION 'Base quarantine is retained'; END IF;
-RETURN NEW; END $$ LANGUAGE plpgsql;
-ALTER TABLE code_units ADD COLUMN publishes_at TEXT;
+RETURN NEW; END $$ LANGUAGE plpgsql;`,
+  3: `ALTER TABLE code_units ADD COLUMN publishes_at TEXT;
 ALTER TABLE code_units ADD COLUMN publication_id TEXT;
 CREATE FUNCTION code_units_publish_guard() RETURNS trigger AS $$ BEGIN
 IF OLD.publishes_at IS NOT NULL AND NEW.publishes_at IS DISTINCT FROM OLD.publishes_at THEN RAISE EXCEPTION 'Publishing to main is declared once'; END IF;
