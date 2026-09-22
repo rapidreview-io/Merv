@@ -1,0 +1,473 @@
+{
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
+  "migrations": [
+    {
+      "component": "agents",
+      "version": 1,
+      "hash": "601ba68aab6a11ea015309419a060de4bab6f29597dc37b8e2daf99a2507343d",
+      "published": true
+    },
+    {
+      "component": "artifacts",
+      "version": 1,
+      "hash": "a65548dd8f14a98a04b7914403ce1390865d4077272eb31cffdd52742adde874",
+      "published": true
+    },
+    {
+      "component": "claims",
+      "version": 1,
+      "hash": "da705fe4a1574098d71f9a9674e7b09ce3d66216bf3c06d566d63dd23eb42a95",
+      "published": true
+    },
+    {
+      "component": "code_bases",
+      "version": 1,
+      "hash": "3fcc89867a68ba82b195e6c5dbe4a6c82631f0373c612f04694ff54f3ed3472b",
+      "published": true
+    },
+    {
+      "component": "code_bases",
+      "version": 2,
+      "hash": "82920c1d941976839cff26a9671980fb931142bbc84f9e4dc27a4b0334a0444b",
+      "published": true
+    },
+    {
+      "component": "code_commands",
+      "version": 1,
+      "hash": "c249658128e33f0a87c5b4169db5af49bd66e4e13c7e9b6eb07f2165555c1898",
+      "published": true
+    },
+    {
+      "component": "code_github",
+      "version": 1,
+      "hash": "c0850ecb0595bf8daf60039f0c8a0f4e66ab8a54d7869bbb8b8e6e863e9b41ba",
+      "published": true
+    },
+    {
+      "component": "code_github",
+      "version": 2,
+      "hash": "ee0fc0ec378fa8a6da71ff2d2136ac5fdd4ea52d4b55b8f489ad09e278b57af1",
+      "published": true
+    },
+    {
+      "component": "code_github_transport",
+      "version": 1,
+      "hash": "66ac21e0403bfbeb3e7f5241cb8e01ec3f323ee664edd01421656d80862e5b9b",
+      "published": true
+    },
+    {
+      "component": "code_pending_merges",
+      "version": 1,
+      "hash": "b15dc2078cee92c7b22d59d976128b43303a44128e6e08e78292dbbadf70e254",
+      "published": true
+    },
+    {
+      "component": "code_proposals",
+      "version": 1,
+      "hash": "5219eaab1374a70aefd067f09831e72037095d69486b9ecef96a4394fdf20e82",
+      "published": true
+    },
+    {
+      "component": "code_publications",
+      "version": 1,
+      "hash": "b938ea92e4b0951cccb9c13ff4e2b7f55dd67afae51553373b8f1a1b9db74f7b",
+      "published": true
+    },
+    {
+      "component": "code_publications",
+      "version": 2,
+      "hash": "b74108b332e4955a1cbb56923311eef51c582c1b31dd1155d432d24021a7677e",
+      "published": true
+    },
+    {
+      "component": "code_units",
+      "version": 1,
+      "hash": "9340fc8e25656f51e25e4c0762a9b256548e61b610d3bde8d4faeec43e489362",
+      "published": true
+    },
+    {
+      "component": "code_units",
+      "version": 2,
+      "hash": "abd4261c2fc22dacc56ca4c3fb89506f2aee0ce3e1f22483fe649464922ebf52",
+      "published": true
+    },
+    {
+      "component": "code_units",
+      "version": 3,
+      "hash": "2969d8eca28e3dd161859c8871e9ca00b8fdce249e02aa1347ec494954881b94",
+      "published": true
+    },
+    {
+      "component": "consolidation",
+      "version": 1,
+      "hash": "df6f6bd7e8b642b6635a658e73757c82e5a7ad62d91c4a61ef856b8bbe89d7ab",
+      "published": true
+    },
+    {
+      "component": "consolidation",
+      "version": 2,
+      "hash": "121469d3b3e59c0cdc9d4fcc0771a89e39f3d0f72b3037a92dfd2b2cc6a9174e",
+      "published": true
+    },
+    {
+      "component": "context_builder",
+      "version": 1,
+      "hash": "37a1685fc2867179a403de09cc5a6343a0f41f5316746a33e1dc6dd76406d772",
+      "published": true
+    },
+    {
+      "component": "domain_events",
+      "version": 1,
+      "hash": "7f511bc838bda2d9390eba767fa499e505dc18d0f09a741c1f32819ccd121a14",
+      "published": true
+    },
+    {
+      "component": "experiment_program",
+      "version": 1,
+      "hash": "852164b8947267979544fd0ee8b8584e90c88bc7cf2162daeecc355fde477684",
+      "published": true
+    },
+    {
+      "component": "experiment_program",
+      "version": 2,
+      "hash": "5dd87701e573659a30db8a85a7db008acd0aa687af0dcbffb3496b9e46ad70a4",
+      "published": true
+    },
+    {
+      "component": "experiments",
+      "version": 1,
+      "hash": "95d30b6d270f5b7c4384c988a1589aa9d3ff93ce6d79947519b7d9d8fe5afb4a",
+      "published": true
+    },
+    {
+      "component": "experiments",
+      "version": 2,
+      "hash": "aadc2be491561e7757f6b234ea3acf8c85156c103d51a4ef7948739cb27fb8e7",
+      "published": true
+    },
+    {
+      "component": "experiments",
+      "version": 3,
+      "hash": "4ba60bf3d2213929609f2fcc94e50f86c089654800a64fe1a8595b2e0d6a4d46",
+      "published": true
+    },
+    {
+      "component": "feed",
+      "version": 1,
+      "hash": "be756f5f55b0b6d38548d42c37cb5c1fa3a82aa08f743448a57edac434d95a23",
+      "published": true
+    },
+    {
+      "component": "knowledge",
+      "version": 1,
+      "hash": "23a21a42602d027c5f9c1330b96640380420fc21d799e70d3100f3ff3895108a",
+      "published": true
+    },
+    {
+      "component": "legacy-foundation-import",
+      "version": 1,
+      "hash": "3188be91510fbf0942db377ae9d7acc8c00ec12bcb76ef8e001f2d06eea3c72d",
+      "published": true
+    },
+    {
+      "component": "legacy-history",
+      "version": 1,
+      "hash": "cbb81d2d59e233d100c6c9b49a4bd1c558e07a97d9218b504a68a9906190fe0a",
+      "published": true
+    },
+    {
+      "component": "paper",
+      "version": 1,
+      "hash": "0138c55b5ed2879cd24fae1264739e1339cb4e7f8f0038c5c81dcc3db80b52b0",
+      "published": true
+    },
+    {
+      "component": "paper",
+      "version": 2,
+      "hash": "b91640a4aafac4a43339664d794f5f249923e6e8fb5558a4878b4ae0440675a8",
+      "published": true
+    },
+    {
+      "component": "reflections",
+      "version": 1,
+      "hash": "e35e7c0acea05319e28d6ce8e3d14149af70137214a7fc9a16cbc54b502f234b",
+      "published": true
+    },
+    {
+      "component": "research",
+      "version": 1,
+      "hash": "6ca275fbd4c4c3c92c15743a72a6ded424cf947fa15d9350387881b5dabd825a",
+      "published": true
+    },
+    {
+      "component": "research",
+      "version": 2,
+      "hash": "918c61e97530d21fd5c8e82015cf1135c920ed6e74df331e8b8f4b3890f9d17b",
+      "published": true
+    },
+    {
+      "component": "research",
+      "version": 3,
+      "hash": "af090ab2cb43ec51f12f047ba5c657472f8e6abd6747f2a693939db6af0bf04c",
+      "published": true
+    },
+    {
+      "component": "research",
+      "version": 4,
+      "hash": "987970b884e30d67a60a9f0e66e8ada9adf7e9e99fed8d994e397c7c0ab9c37a",
+      "published": true
+    },
+    {
+      "component": "research",
+      "version": 5,
+      "hash": "45ce946201d60a9a5d297597f800464ce6593e7ca0761ea8a9bf837a47d7dfa1",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 1,
+      "hash": "1c3c4873d3b3a2a78f79fa5f20fd566b38f35a17650118154b45926c9b46ff5c",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 2,
+      "hash": "072aa51fd31e4350bb21ff0c49401b195ac65b2b13f25cba8f41a7d2ddce9d09",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 3,
+      "hash": "abc149aef8d90820a3151c45d17e7fd8ccb29e5be525b21212097dd85a4d99ca",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 4,
+      "hash": "5063a78172a23fd8204414803650fd190958c52b617b0d46be313a789b133905",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 5,
+      "hash": "b1e23a68cbe1ea385682a725d8684f1a380dfea18ba915488768fd4eadcc68ea",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 6,
+      "hash": "ba9fe1513732e67f9aff1666a2515ef8caff61f1982fbc11f2ca7f5eea8963fa",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 7,
+      "hash": "d15feb2e9262b62da44870e0eac2d70a159108504fd802482b8bad5a47ec31ce",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 8,
+      "hash": "54afdbe502065d00163aa37c5fdd305cce4da84616fcb47f9bb57e655951e697",
+      "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 9,
+      "hash": "6569e391ee8d120bc5c982f0648d1b9f7c9a0d63b37a484666ce33db97142f03",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 1,
+      "hash": "65a9502fab93561cae7f780875db3561be701b2f5f0d21cf08f1acd7e0d2c95b",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 2,
+      "hash": "a42462f2fd237c8a7d8ede399685cc6c54a019fe1764c4b22f464f81762cac98",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 3,
+      "hash": "c5bed8b260d53a73635dcc2051d4bf7bc8ef550f3eb93b7af824b84d6015b506",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 4,
+      "hash": "d27ea61ac9ccf92b3bb8db32ae9c7662095323c777c2b140f9b5c886fa838f59",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 5,
+      "hash": "a5facd79a5515128c641c7f55567b367de184859e06ee07272c7c8bc33226df4",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 6,
+      "hash": "0baedd842d98987276af93b2fc0db7fae79ef6ffc5d128a34123e060d2d75143",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 7,
+      "hash": "0687ff01f8e6c302e09792d1c8206e0a09c91738bba255b844e065b8cc80ef6b",
+      "published": true
+    },
+    {
+      "component": "scope",
+      "version": 8,
+      "hash": "28e94ead45c4ee13962227ca4b7d057dd2b658cc4e2285084f746b0e36f5c1df",
+      "published": true
+    },
+    {
+      "component": "session_dispatch",
+      "version": 1,
+      "hash": "9a8881c18c9c4f190f946896c39332353d9d9bcf2911941687363d945ee33644",
+      "published": true
+    },
+    {
+      "component": "session_dispatch",
+      "version": 2,
+      "hash": "741c470697ff991b190447ab26ac31d5d2523cf6cc875ec90fd5b097cbb2b1ce",
+      "published": true
+    },
+    {
+      "component": "session_dispatch",
+      "version": 3,
+      "hash": "fbf9082d5c792d573634d31ab9e8ede647358e697463b5767c1a1c518f1c76dc",
+      "published": true
+    },
+    {
+      "component": "session_dispatch",
+      "version": 4,
+      "hash": "856df7d7e055a93d126f45629fd47779f5f00e13ef95000206e81279a1073f30",
+      "published": true
+    },
+    {
+      "component": "session_service_work",
+      "version": 1,
+      "hash": "3926794066e21646b403382a4a7e5da3e3745208cb6615f643c475c2d2a4f6e2",
+      "published": true
+    },
+    {
+      "component": "session_tool_calls",
+      "version": 1,
+      "hash": "b7ff4572dd18950f3d1fb4b62de665311238642d2174d557ccd3d8e608c71ab4",
+      "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 1,
+      "hash": "49920f9a53de8d7461134d607dc51ec7e004adcb9ddaa48728f718269d547177",
+      "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 2,
+      "hash": "1e1e264e8eb49cd419ea107201d55c32e2ff8c669e4bad92ece88ddb7d655824",
+      "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 3,
+      "hash": "8e9f864087e936bb9dd666dd390c2333319d1da730cff180c065f959534e82cf",
+      "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 4,
+      "hash": "a849c241b4b21571d4566bfb52c40f5ea77c6ee5bb42683bf94675ab385fb8c8",
+      "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 5,
+      "hash": "edab16fa4574bf34ec6b23bdc7bb21d6b4abe5b663e69a6036fa835d974dbc98",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 1,
+      "hash": "96ebbc88283b7983f739012caeda49eb6182f7afe38c174eaaff80a76d55c7cc",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 2,
+      "hash": "3d711de2926fc79189b982d09f5a9cfbce9cd3569fcde59b82b8813ca29e58fe",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 3,
+      "hash": "106e69f2d0cf1038a3ec9fa301f606547ce14f3c124d42634cc34bd7a5ea7429",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 4,
+      "hash": "fffa594b6f5802a9fe1031576b476a28a73dd119534d19e7519ec92cdb870a13",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 5,
+      "hash": "62c9917eef36425a08d7f469b0425e91eee35d502a017e836d11b12e513f95b6",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 6,
+      "hash": "1973952a846f5c21a1f4dbd46c9cc930c3f5c68f6f4ed2e18c63aa6177d42e7f",
+      "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 7,
+      "hash": "0191dec43978edf969e789e65be79eeb8d70b161d6fc4b2167e3245e2a476a60",
+      "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 1,
+      "hash": "311f69399d6b45e0d5b94117ce0d26f7d788d0c319390a7d0911dfd1d75fe97d",
+      "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 2,
+      "hash": "1e37c69d28cd5867efa005aa9a7b9baf6ec518d2b4bee6987a30761b71abf982",
+      "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 3,
+      "hash": "4ca74191c4965a865a52293891ecfb2ea65d9b2682093cb75244d58a34bd2dfa",
+      "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 4,
+      "hash": "f2df214244d64262da1efe612b70b083d411e2c95e72de7b70075a0d3c0c92f9",
+      "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 5,
+      "hash": "859ead522c25b603d00c1ba12b249569c1e9657a0d791316383f7b2011ab5a17",
+      "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 6,
+      "hash": "1a286c53c1c63c5525c68d3cb606ed479d13afe3a431ea0a956a2b203a554582",
+      "published": true
+    }
+  ]
+}
