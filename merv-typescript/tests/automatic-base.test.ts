@@ -1,4 +1,5 @@
 import {
+  canonical,
   createService,
   digest,
   type WorkflowDefinition,
@@ -22,7 +23,7 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { CodeBaseService } from '../packages/code/src/bases.js';
+import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code/src/bases.js';
 
 const oid = (char: string) => char.repeat(40);
 const repository = 'runner-repository';
@@ -455,6 +456,16 @@ for (const backend of backends) {
       assert.match(blocker!.next, /code-import/);
       await assert.rejects(f.pin(work), { code: 'code_base_pending', status: 409 });
 
+      // An import whose tip is a descendant delivers the accepted commit as history it
+      // contains. A tip is never an ancestor of itself, so waiting for one would wait forever.
+      await run(
+        "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_contains',?,'actor:fixture','contains','import','hash','{}','completed',?,'now','now','refs_applied')",
+        f.project.id,
+        canonical({ head: oid('d'), contained: [oid('c')] }),
+      );
+      await f.code.reconcileAll();
+      assert.deepEqual(await f.published(work), []);
+
       await run(
         "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_import',?,'actor:fixture','import','import','hash','{}','completed',?,'now','now','refs_applied')",
         f.project.id,
@@ -658,6 +669,18 @@ for (const backend of backends)
         f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' }, tx),
       );
       const merged = (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!;
+      // Release tells an inherited quarantine from an operator's own by the reason it was
+      // given, so an operator may not write a reason that would have their own quarantine
+      // retracted by the release of some unrelated base.
+      await assert.rejects(
+        bases.control(f.scope, f.admin, {
+          key: merged.key,
+          action: 'quarantine',
+          reason: `${INHERITED_QUARANTINE}${merged.key}`,
+          requestId: 'quarantine-reserved',
+        }),
+        { code: 'code_base_changed', status: 409 },
+      );
       await bases.control(f.scope, f.admin, {
         key: merged.key,
         action: 'quarantine',
@@ -687,5 +710,28 @@ for (const backend of backends)
         (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!.result!.commit,
         pins[0]!.reference,
       );
+
+      // A quarantine given by mistake is not a one-way door. Releasing the base an operator
+      // named retracts everything that inherited from it, so the work it reached is usable
+      // again; the generation it put into recovery still ends through code.unit.fence.
+      await bases.control(f.scope, f.admin, {
+        key: merged.key,
+        action: 'release',
+        reason: 'The combined result was verified correct',
+        requestId: 'release',
+      });
+      assert.equal(
+        (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!.quarantined,
+        false,
+      );
+      for (const waiter of waiters) {
+        assert.deepEqual(await f.workflows.blockers(f.admin, waiter.id), []);
+        assert.notEqual((await f.code.unit(f.admin, waiter.id)).baseStatus?.status, 'blocked');
+      }
+      const released = await f.state.transaction((tx) =>
+        f.code.writerStatus(f.admin, waiters[0]!.id, tx),
+      );
+      assert.equal(released.state, 'recovery_required');
+      assert.notEqual(released.blocked?.code, 'code_quarantined');
     },
   );

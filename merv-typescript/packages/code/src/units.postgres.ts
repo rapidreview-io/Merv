@@ -222,4 +222,8 @@ CREATE FUNCTION code_units_base_quarantine_guard() RETURNS trigger AS $$ BEGIN
 IF OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS DISTINCT FROM OLD.quarantine_base_key THEN RAISE EXCEPTION 'Base quarantine is retained'; END IF;
 RETURN NEW; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units FOR EACH ROW EXECUTE FUNCTION code_units_base_quarantine_guard();`,
+  2: `
+CREATE OR REPLACE FUNCTION code_units_base_quarantine_guard() RETURNS trigger AS $$ BEGIN
+IF OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS DISTINCT FROM OLD.quarantine_base_key AND NEW.quarantine_base_key IS NOT NULL THEN RAISE EXCEPTION 'Base quarantine is retained'; END IF;
+RETURN NEW; END $$ LANGUAGE plpgsql;`,
 };

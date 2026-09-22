@@ -35,7 +35,7 @@ import { parseCodeInput } from './input.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 import type { CodeWriterService } from './writers.js';
 import type { CodeBaseRecord } from '@merv/contracts';
-import type { CodeBaseService } from './bases.js';
+import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
 import { baseKey } from './base-plan.js';
 import { acceptedRef, workBranch } from './store/refs.js';
@@ -277,6 +277,19 @@ CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGI
 CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(acceptance_json,'$.code.commit')) WHERE acceptance_json IS NOT NULL;
 CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
 WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key
+BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
+`,
+      },
+      {
+        version: 2,
+        postgres: postgresMigrations[2],
+        // A quarantine is still never pointed at another base behind the record's back, but a
+        // released one has to be able to go: without this no operator route could ever undo a
+        // quarantine given by mistake, and every unit it reached would stay unusable forever.
+        sql: `
+DROP TRIGGER code_units_base_quarantine;
+CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
+WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key AND NEW.quarantine_base_key IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
 `,
       },
@@ -1100,10 +1113,14 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       }
       if (
         accepted.storage !== 'code' &&
+        // An import delivers this commit either as its tip or as history it contains; the
+        // commits each import was found to contain are recorded with it, outside any
+        // transaction, so this gate is a read. A tip matches both patterns, which is right.
         !(await tx.get(
-          "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND result_json LIKE ? LIMIT 1",
+          "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND (result_json LIKE ? OR result_json LIKE ?) LIMIT 1",
           projectId,
           `%"head":"${accepted.code.commit}"%`,
+          `%"contained":[%"${accepted.code.commit}"%`,
         ))
       ) {
         blockers.push(
@@ -1521,12 +1538,17 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       code: 'code_quarantined',
       status: 409,
       message: `This unit uses quarantined base ${key}. Its retained pin and acceptance cannot be reused.`,
-      next: 'An administrator creates corrective work and replans the waiters. Fencing a capture cannot clear base quarantine.',
+      next: 'An administrator creates corrective work and replans the waiters, or, for a quarantine verified to be a false alarm, uses code.base.release. Fencing a capture cannot clear base quarantine.',
       related: [],
     };
   }
 
-  /** Quarantine follows retained lineage, including pins and successes that already left the queue. */
+  /**
+   * Quarantine follows retained lineage, including pins and successes that already left the
+   * queue. The reach is derived here rather than accumulated, so releasing the base an
+   * operator quarantined retracts everything that only inherited from it, while a base an
+   * operator quarantined in its own right keeps its whole reach.
+   */
   private async propagateQuarantine(tx: Transaction, projectId: string): Promise<void> {
     if (!this.bases) return;
     const records = await this.bases.records(tx, projectId);
@@ -1535,6 +1557,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       projectId,
     );
     const tainted = new Map<string, string>();
+    const reached = new Map<string, string>();
     let changed = true;
     while (changed) {
       changed = false;
@@ -1544,7 +1567,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         if (!base.quarantined && cause) {
           await tx.run(
             "UPDATE code_bases SET health='quarantined',operator_reason=?,updated_at=? WHERE project_id=? AND base_key=?",
-            `Input inherits quarantine from ${cause}`,
+            `${INHERITED_QUARANTINE}${cause}`,
             now(),
             projectId,
             base.key,
@@ -1562,41 +1585,53 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         const cause =
           pin &&
           (tainted.get(pin.reference) ??
-            pin.sources
-              .map((source) => units.find((u) => u.unit_id === source.unitId)?.quarantine_base_key)
-              .find(Boolean));
+            pin.sources.map((source) => reached.get(source.unitId)).find(Boolean));
         const resolution = records.find(
           (b) => b.quarantined && b.resolutionTaskId === unit.unit_id,
         );
-        if (!unit.quarantine_base_key && (cause || resolution)) {
-          unit.quarantine_base_key = cause || resolution!.key;
-          await tx.run(
-            "UPDATE code_units SET quarantine_base_key=?,writer_state=CASE WHEN writer_state IN ('reserved','active','closing') THEN 'recovery_required' ELSE writer_state END WHERE project_id=? AND unit_id=?",
-            unit.quarantine_base_key,
-            projectId,
-            unit.unit_id,
-          );
+        if (!reached.has(unit.unit_id) && (cause || resolution)) {
+          reached.set(unit.unit_id, cause || resolution!.key);
           changed = true;
         }
         const accepted = unit.acceptance_json
           ? (JSON.parse(unit.acceptance_json) as AcceptanceBody)
           : null;
-        if (unit.quarantine_base_key && accepted?.code && !tainted.has(accepted.code.commit)) {
-          tainted.set(accepted.code.commit, unit.quarantine_base_key);
+        const key = reached.get(unit.unit_id);
+        if (key && accepted?.code && !tainted.has(accepted.code.commit)) {
+          tainted.set(accepted.code.commit, key);
           changed = true;
         }
       }
     }
-    for (const unit of units.filter((u) => u.quarantine_base_key))
-      await this.workflows.replaceBlockers(
-        {
-          projectId,
-          instanceId: unit.unit_id,
-          provider: PROVIDER,
-          blockers: [this.quarantineBlocker(unit.quarantine_base_key!)],
-        },
-        tx,
-      );
+    for (const unit of units) {
+      const key = reached.get(unit.unit_id) ?? null;
+      // Two statements rather than one with the key tested inside the CASE: a placeholder whose
+      // only use is `? IS NOT NULL` gives PostgreSQL nothing to infer a type from, and it
+      // rejects such a statement at parse time whatever the bound value is.
+      if (key !== unit.quarantine_base_key)
+        await (key
+          ? tx.run(
+              "UPDATE code_units SET quarantine_base_key=?,writer_state=CASE WHEN writer_state IN ('reserved','active','closing') THEN 'recovery_required' ELSE writer_state END WHERE project_id=? AND unit_id=?",
+              key,
+              projectId,
+              unit.unit_id,
+            )
+          : tx.run(
+              'UPDATE code_units SET quarantine_base_key=NULL WHERE project_id=? AND unit_id=?',
+              projectId,
+              unit.unit_id,
+            ));
+      if (key || unit.quarantine_base_key)
+        await this.workflows.replaceBlockers(
+          {
+            projectId,
+            instanceId: unit.unit_id,
+            provider: PROVIDER,
+            blockers: key ? [this.quarantineBlocker(key)] : [],
+          },
+          tx,
+        );
+    }
   }
 
   /** Every unpinned unit of a project: for a new main, and for a start after Code was away. */

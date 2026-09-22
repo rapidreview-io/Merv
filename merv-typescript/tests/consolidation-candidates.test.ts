@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import {
   createService,
   digest,
+  MervError,
   type Caller,
   type Data,
   type WorkflowSnapshot,
@@ -954,7 +955,7 @@ for (const backend of backends) {
         'A pre-main ancestor outside the candidate set still contributes',
       );
       assert.ok(manifest.contributors.excludedActorIds.includes(oldAuthor.actorId));
-      assert.equal(f.walks.length, 1);
+      assert.equal(f.walks.length, 2, 'One walk above main, one query for every accepted unit');
       assert.deepEqual(f.walks[0].commits.sort(), [f.ancestor, f.leaf, olderBranch].sort());
       assert.ok(String(f.walks[0].input).includes(`^${f.main}\n`));
       assert.ok(f.history.every((commit) => !f.walks[0].commits.includes(commit)));
@@ -965,7 +966,7 @@ for (const backend of backends) {
         decision(inherited.id, 'retain'),
       ]);
       assert.deepEqual(pastManifest.frontier, [onMain.id]);
-      assert.deepEqual(f.walks[1].commits, [], 'All-main candidates return no historical graph');
+      assert.deepEqual(f.walks[2].commits, [], 'All-main candidates return no historical graph');
 
       f.source.git('checkout', '--orphan', 'unrelated');
       const unrelated = f.source.commit({ 'unrelated.txt': 'foreign history' });
@@ -976,10 +977,59 @@ for (const backend of backends) {
       );
       const foreign = await f.unit('task', unrelated);
       const invalid = await f.create([], [foreign.id]);
+      const walked = f.walks.length;
       await assert.rejects(f.inspect(invalid, [decision(foreign.id, 'retain')]), {
         code: 'code_candidate_invalid',
       });
-      assert.equal(f.walks.length, 2, 'Unrelated history is refused before returning a graph');
+      assert.equal(
+        f.walks.length,
+        walked + 1,
+        'Unrelated history is refused from the one bounded walk, without a graph',
+      );
+    },
+  );
+
+  test(
+    `${backend}: an inspection costs the same few Git calls however many accepted units the project holds`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend, 12);
+      // Every accepted unit whose code already landed on main used to cost its own
+      // merge-base call, so a project's own age eventually spent the whole time budget.
+      for (const commit of f.history) await f.unit('task', commit);
+      const leaf = await f.unit('experiment', f.leaf);
+      const record = await f.create([leaf.id]);
+      const before = f.gitCalls();
+      const manifest = await f.inspect(record, [decision(leaf.id, 'retain')]);
+      assert.ok(
+        f.gitCalls() - before <= 4,
+        `An inspection made ${f.gitCalls() - before} Git calls for ${f.history.length + 1} accepted units`,
+      );
+      assert.deepEqual(manifest.frontier, [leaf.id]);
+      // The landed history still contributes: the bound is on Git calls, not on the answer.
+      assert.ok(f.history.every((commit) => manifest.contributors.references.includes(commit)));
+    },
+  );
+
+  test(
+    `${backend}: a walk that outruns its budget is the scope refusal, not an infrastructure error`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const leaf = await f.unit('experiment', f.leaf);
+      const record = await f.create([leaf.id]);
+      // One walk can now spend the whole budget, so Git reaches the limit before the check
+      // between calls does. The operator still has to be told what to do about it.
+      const gitRun = f.repositories.git.run.bind(f.repositories.git);
+      t.mock.method(f.repositories.git, 'run', async (...args: Parameters<typeof gitRun>) => {
+        if (args[0][0] === 'rev-list')
+          throw new MervError('code_git_timeout', 'A Git operation took too long', 503);
+        return await gitRun(...args);
+      });
+      await assert.rejects(f.inspect(record, [decision(leaf.id, 'retain')]), {
+        code: 'code_candidate_scope',
+        status: 409,
+      });
     },
   );
 

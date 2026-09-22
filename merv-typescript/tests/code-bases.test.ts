@@ -18,7 +18,7 @@ import { LeasedSessions } from '@merv/sessions';
 import { SqliteState, PostgresState } from '@merv/state';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeBaseService } from '../packages/code/src/bases.js';
-import { baseKey } from '../packages/code/src/base-plan.js';
+import { baseKey, members } from '../packages/code/src/base-plan.js';
 import { backends, optional, type Backend } from './fixtures/code-store.js';
 
 /** A project repository holding four accepted commits off one main: a and c collide, b and d do not. */
@@ -542,6 +542,127 @@ for (const backend of backends) {
         ),
       );
       assert.equal(count!.n, 3);
+    },
+  );
+}
+
+for (const backend of backends) {
+  test(
+    `${backend}: a base ref an interrupted execution left behind stops the base until an operator drops it`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { a, b, c } = f.commits;
+      const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+      // An execution can write the ref and then lose its epoch to a deadline or an operator,
+      // which leaves the ref behind with no result sealed. Under an engine that merges
+      // differently the next attempt then computes another commit and can never settle.
+      await f.repositories.git.ok(['update-ref', `refs/merv/bases/${base.key}`, c, ''], {
+        env: f.repositories.environment(f.projectId),
+      });
+      await f.bases.work(f.projectId);
+      const stuck = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+      assert.equal(stuck.blocker, 'A base ref names another commit');
+      assert.equal(stuck.result, null);
+      // Retrying recomputes the same commit and meets the same ref, however often it is asked.
+      await f.bases.control(f.scope, f.admin, {
+        key: base.key,
+        action: 'retry',
+        reason: 'Try the merge again',
+        requestId: 'retry',
+      });
+      await f.bases.work(f.projectId);
+      assert.equal(
+        (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!.result,
+        null,
+      );
+
+      const repaired = await f.bases.control(f.scope, f.admin, {
+        key: base.key,
+        action: 'repair',
+        reason: 'The ref is from an execution that lost its epoch',
+        requestId: 'repair',
+      });
+      assert.equal(repaired.state, 'queued');
+      await f.bases.work(f.projectId);
+      const settled = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+      assert.equal(settled.state, 'resolved');
+      assert.deepEqual(f.parents(settled.result!.commit).sort(), [a, b].sort());
+      const receipt = await f.state.read((sql) =>
+        sql.get<{ payload_json: string }>(
+          "SELECT payload_json FROM code_operations WHERE project_id=? AND request_id='repair'",
+          f.projectId,
+        ),
+      );
+      assert.equal((JSON.parse(receipt!.payload_json) as { discarded: string }).discarded, c);
+      // A settled base is what everything pinned to it names, so its ref is never dropped.
+      await assert.rejects(
+        f.bases.control(f.scope, f.admin, {
+          key: base.key,
+          action: 'repair',
+          reason: 'Drop the settled ref',
+          requestId: 'late',
+        }),
+        { code: 'code_base_changed' },
+      );
+
+      // The ref is dropped before the transaction that records the repair, so a base that
+      // transaction would refuse has to be refused first; otherwise the refusal still
+      // destroys the ref and writes no receipt to retry against.
+      const cancelled = await f.state.transaction((tx) =>
+        f.bases.ensure(tx, f.projectId, [c, f.commits.d]),
+      );
+      const ref = `refs/merv/bases/${cancelled.key}`;
+      await f.repositories.git.ok(['update-ref', ref, c, ''], {
+        env: f.repositories.environment(f.projectId),
+      });
+      await f.bases.control(f.scope, f.admin, {
+        key: cancelled.key,
+        action: 'cancel',
+        reason: 'This base is no longer wanted',
+        requestId: 'cancel',
+      });
+      await assert.rejects(
+        f.bases.control(f.scope, f.admin, {
+          key: cancelled.key,
+          action: 'repair',
+          reason: 'Drop the ref of a cancelled base',
+          requestId: 'repair-cancelled',
+        }),
+        { code: 'code_base_changed' },
+      );
+      const held = await f.repositories.git.run(['rev-parse', '--verify', ref], {
+        env: f.repositories.environment(f.projectId),
+      });
+      assert.equal(held.stdout.toString('utf8').trim(), c);
+    },
+  );
+
+  test(
+    `${backend}: a base planned with another merge engine is not merged again under this one`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      const { c, d } = f.commits;
+      const planned = members([c, d]);
+      const at = new Date(f.clock()).toISOString();
+      await f.state.transaction((tx) =>
+        tx.run(
+          "INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,sponsors_json) VALUES (?,?,?,?,?,'merge-tree@0','queued',?,?,'[]')",
+          f.projectId,
+          baseKey(planned),
+          JSON.stringify(planned),
+          baseKey([planned[0]!]),
+          baseKey([planned[1]!]),
+          at,
+          at,
+        ),
+      );
+      await f.bases.work(f.projectId);
+      const held = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [c, d])))!;
+      assert.equal(held.state, 'blocked_infra');
+      assert.match(held.blocker!, /merge-tree@0/);
+      assert.equal(held.result, null);
     },
   );
 }
