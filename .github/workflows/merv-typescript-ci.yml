@@ -63,6 +63,17 @@ jobs:
 
       # Each test creates its own schema, so the role owns the database; the suite
       # opens far more than the default 100 connections.
+      - name: Install the PostgreSQL 17 client
+        # pg_dump refuses a server newer than itself, and the runner ships client 16 while the
+        # tests dump a PostgreSQL 17 container. Production is 17 too.
+        if: matrix.backend == 'postgres'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
       - name: Start PostgreSQL
         if: matrix.backend == 'postgres'
         run: |
