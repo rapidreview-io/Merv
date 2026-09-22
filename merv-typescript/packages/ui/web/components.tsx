@@ -11,10 +11,10 @@ import {
 } from 'react';
 import { Link } from 'react-router-dom';
 import { useTool, type ApiError } from './api';
+import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
+import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
 import { shortId } from './markdown';
 import { useCommand } from './mutations';
-import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
-import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
 import { ArtifactBody, bytes, fileType, type Artifact } from './views/artifacts';
 
 export { term, words };
@@ -41,7 +41,6 @@ export const KIND: Record<string, { color: string; label: string }> = {
   work: { color: 'var(--kind-teal)', label: 'Work' },
   reviews: { color: 'var(--kind-red)', label: 'Review' },
   reflections: { color: 'var(--kind-red)', label: 'Reflection' },
-  consolidation: { color: 'var(--kind-amber)', label: 'Consolidation' },
   sessions: { color: 'var(--kind-slate)', label: 'Agent' },
   code: { color: 'var(--kind-slate)', label: 'Code' },
   connections: { color: 'var(--kind-slate)', label: 'Connection' },
@@ -123,7 +122,7 @@ const TONES: [Tone, string][] = [
     'degraded pending waiting requested started in_progress in-progress review reviewing ' +
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
       'attempting planning provisioning starting deleting cancelling needs_reconnect refreshing ' +
-      'in_review design_review experiment_review consolidation_review planned defining ' +
+      'in_review design_review experiment_review planned defining ' +
       'researching reflecting synthesizing consolidating weakened ' +
       'held waiting_inputs retry_wait awaiting_resolution',
   ],

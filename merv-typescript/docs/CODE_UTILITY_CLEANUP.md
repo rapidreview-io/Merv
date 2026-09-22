@@ -129,3 +129,20 @@ Release evidence is retained under
 manifests, acceptance results and `code-cleanup-final-verification.json`.
 
 Implementation and staging gates are complete. Production was not deployed.
+
+## Complete retirement of the dedicated Consolidation plugin
+
+The follow-up cleanup removes `@merv/consolidation` completely: its package, configuration,
+tools, UI, Research capability, candidate/decision API and dedicated Code publication owner.
+Consolidation continues through ordinary Tasks. Default composition now contains 50 plugins
+(51 with the retained historical-import UI), and there is no `consolidation.*` tool surface.
+
+Existing database and Git records stay untouched. Published Consolidation migration and
+workflow fingerprints are marked retired instead of rewritten. Old Research cycles retain
+readable records and committed command replay; unsupported consolidation handoffs report
+`research_consolidation_retired`. Retained dedicated publications remain readable but cannot
+be resumed or merged, and do not block the bounded polling of current unit publications.
+
+The preflight census found no dedicated Consolidation records or publications in production,
+and none in staging. Production holds three version-3 Research cycles in `defining`.
+Local/staging retirement verification and the authorized main/production release are pending.

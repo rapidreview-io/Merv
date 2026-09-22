@@ -1,14 +1,14 @@
-import { Link, useParams } from 'react-router-dom';
-import type { ResearchRecord } from '@merv/research/models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ResearchRecord } from '@merv/research/models';
+import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
 import { LoadState, RecordPage, StatusPill } from '../components';
-import { Gate, Relations } from '../process';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
+import { Gate, Relations } from '../process';
 import { useSession } from '../session';
-import { CycleMove, WorkList, needsDefinition } from './work';
 import type { ViewProps } from './index';
+import { CycleMove, WorkList, needsDefinition } from './work';
 
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
@@ -29,9 +29,6 @@ function CycleDetail({ row, shell }: ViewProps) {
   const unblocks = relations.filter((item) => item.direction === 'required_by');
   const phases = [
     ...(record.reflectionId ? [[`/reflections/${record.reflectionId}`, 'Reflection']] : []),
-    ...(record.consolidationId
-      ? [[`/consolidation/${record.consolidationId}`, 'Consolidation']]
-      : []),
     ...record.integrations.map((id) => [`/tasks/${id}`, 'Consolidation task']),
   ];
   return (

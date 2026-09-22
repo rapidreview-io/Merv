@@ -200,7 +200,7 @@ test('every state a record stands in has a tone, and a review gate never reads a
   for (const word of (
     'planned design_review running experiment_review complete abandoned failed ' +
     'in_progress in_review done reflecting synthesizing approved consolidating ' +
-    'consolidation_review defining researching requested started ' +
+    'defining researching requested started ' +
     'resolved missing unsupported unpublished draft active supported weakened contradicted'
   ).split(' '))
     assert.notEqual(toneOf(word), 'neutral', `${word} has no tone`);

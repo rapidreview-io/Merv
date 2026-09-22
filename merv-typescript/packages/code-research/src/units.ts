@@ -1,3 +1,7 @@
+import { baseKey } from '@merv/code/base-plan';
+import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
+import type { CodeWriterService } from '@merv/code/writers';
+import type { CodeBaseRecord } from '@merv/contracts';
 import {
   canonical,
   check,
@@ -6,15 +10,14 @@ import {
   MervError,
   newId,
   now,
-  recorded,
   type Caller,
   type CodeBasePin,
   type CodeBaseStatus,
-  type CodeUnitPublication,
   type CodeProjectStatus,
   type CodeUnit,
   type CodeUnitAcceptance,
   type CodeUnitAcceptInput,
+  type CodeUnitPublication,
   type Scope,
   type Sql,
   type State,
@@ -25,26 +28,21 @@ import {
   type WorkflowProviderRelations,
   type Workflows,
 } from '@merv/contracts';
-import { pinMerge, pendingMerge } from '@merv/code/pending-merge';
-import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
-import type { CodeWriterService } from '@merv/code/writers';
-import type { CodeBaseRecord } from '@merv/contracts';
+import { checkBriefSections, checkResolutionCheck } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
 import type { CodeUnitPublicationSeal } from './publications.js';
-import { baseKey } from '@merv/code/base-plan';
-import { checkBriefSections, checkResolutionCheck } from './base-check.js';
+import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 
 import {
-  CodeUnitStore,
   bindsRepository,
-  CODE_DRIVER,
-  unitColumns,
+  CodeUnitStore,
   oid,
-  type UnitRow,
-  type ProjectRow,
+  unitColumns,
   type AcceptanceBody,
   type BaseBody,
+  type ProjectRow,
+  type UnitRow,
 } from '@merv/code/units';
 export { bindsRepository, CODE_DRIVER } from '@merv/code/units';
 
@@ -228,38 +226,6 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     return this.baseState(await this.derive(tx, caller.projectId, unitId));
   }
 
-  /** A stale publication keeps the original pin and adds one frozen merge round on its branch. */
-  async pinPublication(caller: Caller, unitId: string, tx: Transaction) {
-    const row = await this.row(tx, caller.projectId, unitId);
-    if (row?.workflow !== 'consolidation' || row.version !== 5) return;
-    const stale = await tx.get<{ id: string; revision: number }>(
-      'SELECT s.id,s.revision FROM code_proposals s JOIN code_publications p ON p.proposal_id=s.id WHERE s.project_id=? AND s.instance_id=? AND p.stale=1 ORDER BY s.revision DESC LIMIT 1',
-      caller.projectId,
-      unitId,
-    );
-    if (!stale) return;
-    const plan = digest({ publication: stale.id });
-    const existing = await pendingMerge(tx, caller.projectId, unitId);
-    if (existing?.plan === plan) return;
-    const writer = await this.writers.row(tx, caller.projectId, unitId);
-    const project = await this.project(tx, caller.projectId);
-    check(
-      writer && project && row.base_json,
-      'code_base_pending',
-      'The publication round needs a retained base and writer',
-      409,
-    );
-    await pinMerge(
-      tx,
-      caller.projectId,
-      unitId,
-      plan,
-      writer.head_oid ?? JSON.parse(row.base_json).reference,
-      project.main.oid,
-      stale.revision,
-    );
-  }
-
   /**
    * Called only from the owner's lease acquisition, so the base is fixed in the transaction
    * that creates the lease and rolls back with a refused offer. The derivation is repeated
@@ -345,10 +311,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     const relations = await this.workflows.dependencyRelations(caller.projectId, input.unitId, tx);
     check(
       relations &&
-        (relations.instance.settled ||
-          (relations.instance.workflow === 'consolidation' &&
-            relations.instance.version === 5 &&
-            relations.instance.state === 'awaiting_publication')) &&
+        relations.instance.settled &&
         relations.instance.revision === input.terminalRevision,
       'code_acceptance_unverifiable',
       'Only a unit approved by its owner at the named revision can be accepted',
@@ -389,8 +352,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     const pending = await pendingMerge(tx, caller.projectId, input.unitId);
     if (pending) {
       check(
-        (relations.instance.workflow === 'consolidation' && relations.instance.version === 5) ||
-          (await this.resolutionReview(caller, tx, input)),
+        await this.resolutionReview(caller, tx, input),
         'code_provenance_unverifiable',
         'Resolution acceptance requires a passing review with the current retained contributor provenance.',
         409,
@@ -427,8 +389,6 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       storage: code === null ? 'none' : receipt ? 'code' : 'legacy-local',
       ...(receipt ? { receipt } : {}),
     };
-    if (body.workflow === 'consolidation' && body.version === 5)
-      return await this.retainReviewAcceptance(caller, body, tx);
     const existing = await this.row(tx, caller.projectId, input.unitId);
     const stored = await this.retainUnitAcceptance(caller, body, tx);
     if (!existing?.acceptance_hash && stored.publishes_at)
@@ -438,8 +398,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
   }
 
   /**
-   * Seals the publication of an accepted unit from its own facts and hands it to the journal
-   * a reviewed consolidation already uses: an immutable snapshot, a pull request against main
+   * Seals the publication of an accepted unit from its own facts: an immutable snapshot, a pull request against main
    * carrying the approval status on exactly this head, and a signed-in operator's merge. The
    * unit is done either way; what is left is a wait on a human, not more work.
    *

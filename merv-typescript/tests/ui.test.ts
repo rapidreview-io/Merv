@@ -1,15 +1,15 @@
-import test from 'node:test';
+import { MervError } from '@merv/contracts';
+import { UiRegistry } from '@merv/ui';
+import { SignJWT } from 'jose';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SignJWT } from 'jose';
-import { MervError } from '@merv/contracts';
-import { UiRegistry } from '@merv/ui';
-import { createApp } from '../src/app.js';
+import test from 'node:test';
 import { buildNavigation } from '../packages/ui/web/navigation.js';
 import type { Row } from '../packages/ui/web/shell-types.js';
+import { createApp } from '../src/app.js';
 import { RemoteFixture } from './fixtures/remote-server.js';
 
 const caller = { actorId: 'actor_test', projectId: 'project_test' };
@@ -355,7 +355,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'paper',
       'knowledge',
       'reviews',
-      'consolidation',
+
       'sessions',
       'code',
       'feed',
@@ -478,7 +478,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'paper',
     'knowledge',
     'reviews',
-    'consolidation',
+
     'sessions',
     'code',
     'artifacts',
@@ -498,7 +498,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'paper',
     'knowledge',
     'reviews',
-    'consolidation',
+
     'sessions',
     'code',
     'feed',
@@ -519,7 +519,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'research-ui',
     'paper-ui',
     'reflections-ui',
-    'consolidation-ui',
+
     'experiments-ui',
     'knowledge-ui',
     'tasks-ui',
@@ -541,7 +541,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'paper',
     'knowledge',
     'reviews',
-    'consolidation',
+
     'sessions',
     'code',
     'feed',

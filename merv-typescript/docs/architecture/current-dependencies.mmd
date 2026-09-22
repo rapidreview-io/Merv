@@ -13,9 +13,6 @@ flowchart BT
     codeResearch["codeResearch"]
     merv_code_tools["merv-code-tools"]
     merv_code_ui["merv-code-ui"]
-    consolidation["consolidation"]
-    merv_consolidation_tools["merv-consolidation-tools"]
-    merv_consolidation_ui["merv-consolidation-ui"]
     contextBuilder["contextBuilder"]
     domainEvents["domainEvents"]
     experiments["experiments"]
@@ -97,17 +94,6 @@ flowchart BT
   merv_code_tools --> tools
   merv_code_ui --> codeResearch
   merv_code_ui --> ui
-  consolidation --> state
-  consolidation --> scope
-  consolidation --> artifacts
-  consolidation --> workflows
-  consolidation --> reviews
-  consolidation --> contextBuilder
-  consolidation -. optional .-> codeResearch
-  merv_consolidation_tools --> consolidation
-  merv_consolidation_tools --> tools
-  merv_consolidation_ui --> consolidation
-  merv_consolidation_ui --> ui
   contextBuilder --> state
   contextBuilder --> scope
   contextBuilder --> artifacts
@@ -173,7 +159,6 @@ flowchart BT
   research -. optional .-> paper
   research -. optional .-> reflections
   research -. optional .-> knowledge
-  research -. optional .-> consolidation
   research -. optional .-> tasks
   research -. optional .-> experiments
   research -. optional .-> artifacts

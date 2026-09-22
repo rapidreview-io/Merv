@@ -40,21 +40,6 @@
       "name": "@merv/reflections"
     },
     {
-      "id": "consolidation-tools",
-      "name": "@merv/consolidation/tools",
-      "required": false
-    },
-    {
-      "id": "consolidation-ui",
-      "name": "@merv/consolidation/ui",
-      "required": false
-    },
-    {
-      "id": "consolidation",
-      "name": "@merv/consolidation",
-      "required": false
-    },
-    {
       "id": "knowledge-tools",
       "name": "@merv/knowledge/tools"
     },

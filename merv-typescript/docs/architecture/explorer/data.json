@@ -415,12 +415,7 @@
         },
         {
           "name": "code.publication.merge",
-          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree. A stale base returns the same consolidation for another round.",
-          "readOnly": false
-        },
-        {
-          "name": "code.publication.release",
-          "description": "Let go of a publication that can no longer reach its repository, named by its proposalId from code.publication list. A publication keeps the repository, base branch and connection revision it was sealed with, so reconnecting GitHub, relinking the repository or turning write automation off leaves it unable to reach its repository for good, and the consolidation that is waiting for it has no action of its own; a publication that never managed to freeze a binding is stuck the same way. Releasing ends it and hands that consolidation straight back for another round against the connection the project has now, with its reviewed facts retained and code_publication_released recorded as its last error. Refused with code_publication_bound while the repository can still be reached, and refused once the publication has merged. Only a project administrator or operator key may call it, never a leased worker. Supply a reason and a stable requestId: the same request replays its result, a changed one is refused.",
+          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.",
           "readOnly": false
         },
         {
@@ -445,7 +440,7 @@
         },
         {
           "name": "code.repository.rebind",
-          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including every reviewed consolidation round’s, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished, any publication is unsettled or any consolidation holds a frozen candidate set, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid, and work accepted under it can still be frozen into a later consolidation and published to main, because the binding retains every repository it has been bound to; a frozen candidate set never spans a rebind, because one that is still outstanding refuses it. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
+          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
           "readOnly": false
         },
         {
@@ -520,12 +515,7 @@
         },
         {
           "name": "code.publication.merge",
-          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree. A stale base returns the same consolidation for another round.",
-          "readOnly": false
-        },
-        {
-          "name": "code.publication.release",
-          "description": "Let go of a publication that can no longer reach its repository, named by its proposalId from code.publication list. A publication keeps the repository, base branch and connection revision it was sealed with, so reconnecting GitHub, relinking the repository or turning write automation off leaves it unable to reach its repository for good, and the consolidation that is waiting for it has no action of its own; a publication that never managed to freeze a binding is stuck the same way. Releasing ends it and hands that consolidation straight back for another round against the connection the project has now, with its reviewed facts retained and code_publication_released recorded as its last error. Refused with code_publication_bound while the repository can still be reached, and refused once the publication has merged. Only a project administrator or operator key may call it, never a leased worker. Supply a reason and a stable requestId: the same request replays its result, a changed one is refused.",
+          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.",
           "readOnly": false
         },
         {
@@ -550,7 +540,7 @@
         },
         {
           "name": "code.repository.rebind",
-          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including every reviewed consolidation round’s, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished, any publication is unsettled or any consolidation holds a frozen candidate set, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid, and work accepted under it can still be frozen into a later consolidation and published to main, because the binding retains every repository it has been bound to; a frozen candidate set never spans a rebind, because one that is still outstanding refuses it. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
+          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
           "readOnly": false
         },
         {
@@ -587,133 +577,6 @@
       "owner": "codeResearch",
       "label": "codeResearch · ui adapter",
       "purpose": "Connects codeResearch to the UI registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-consolidation",
-      "source": "packages/consolidation/src/index.ts",
-      "provides": [
-        "consolidation"
-      ],
-      "requires": [
-        "state",
-        "scope",
-        "artifacts",
-        "workflows",
-        "reviews",
-        "contextBuilder"
-      ],
-      "optional": [
-        "codeResearch"
-      ],
-      "kind": "service",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "consolidation",
-      "group": "research",
-      "owner": "consolidation",
-      "label": "Consolidation",
-      "purpose": "Implements and reviews code changes from pinned source artifacts and a selected experiment scope. Requires Code and does not depend on Reflections. Historical report-only cycles remain supported.",
-      "exposedTools": [
-        {
-          "name": "consolidation.create",
-          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Git creation automatically selects version 5 for hosted projects and version 4 otherwise.",
-          "readOnly": false
-        },
-        {
-          "name": "consolidation.decide",
-          "description": "Freeze version 5 candidate decisions and reconciliations before work begins. This prepares the retained frontier as the consolidation branch base; resolution prerequisites may block its checkout. Decisions cannot change after this call.",
-          "readOnly": false
-        },
-        {
-          "name": "consolidation.end",
-          "description": "Owner: end a consolidation that cannot continue, as abandoned when the work is no longer wanted or failed when it was attempted and cannot be completed. The usual cause is a prerequisite that ended without succeeding, which leaves submission refused. Requires a specific reason and the current revision. This is terminal.",
-          "readOnly": false
-        },
-        {
-          "name": "consolidation.get",
-          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Versions 1–4 complete at review; version 5 completes only after Code verifies publication. Without GitHub linking and write automation version 5 waits in awaiting_publication.",
-          "readOnly": true
-        },
-        {
-          "name": "consolidation.list",
-          "description": "List project consolidations and their exact reviewed outputs. Workflow guidance uses workflow.status_and_next.",
-          "readOnly": true
-        },
-        {
-          "name": "consolidation.submit",
-          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 repeats the exact decisions and reconciliations frozen by consolidation.decide. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
-          "readOnly": false
-        }
-      ]
-    },
-    {
-      "plugin": "merv-consolidation-tools",
-      "source": "packages/consolidation/src/tools.ts",
-      "provides": [],
-      "requires": [
-        "consolidation",
-        "tools"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-consolidation-tools",
-      "group": "front",
-      "owner": "consolidation",
-      "label": "Consolidation · tools adapter",
-      "purpose": "Connects Consolidation to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "consolidation.create",
-          "description": "Start consolidation from retained sourceArtifactIds and explicit experimentIds to decide on. Pins their exact metadata and hashes. The originating workflow is responsible for selecting approved inputs. Additional prerequisite workflow IDs block execution until successful. Use workspace git when retaining or adapting code. Explicit version 5 freezes accepted experiments, their declared dependency tasks and supplied taskIds; it requires Code-hosted history. Git creation automatically selects version 5 for hosted projects and version 4 otherwise.",
-          "readOnly": false
-        },
-        {
-          "name": "consolidation.decide",
-          "description": "Freeze version 5 candidate decisions and reconciliations before work begins. This prepares the retained frontier as the consolidation branch base; resolution prerequisites may block its checkout. Decisions cannot change after this call.",
-          "readOnly": false
-        },
-        {
-          "name": "consolidation.end",
-          "description": "Owner: end a consolidation that cannot continue, as abandoned when the work is no longer wanted or failed when it was attempted and cannot be completed. The usual cause is a prerequisite that ended without succeeding, which leaves submission refused. Requires a specific reason and the current revision. This is terminal.",
-          "readOnly": false
-        },
-        {
-          "name": "consolidation.get",
-          "description": "Read a consolidation and its pinned source artifacts, experiment or frozen-unit decisions, ancestry reconciliations, sealed proposals, review rounds and completion receipt. Versions 1–4 complete at review; version 5 completes only after Code verifies publication. Without GitHub linking and write automation version 5 waits in awaiting_publication.",
-          "readOnly": true
-        },
-        {
-          "name": "consolidation.list",
-          "description": "List project consolidations and their exact reviewed outputs. Workflow guidance uses workflow.status_and_next.",
-          "readOnly": true
-        },
-        {
-          "name": "consolidation.submit",
-          "description": "Seal this producer’s report, evidence and exactly one decision per frozen experiment (versions 1–4) or accepted candidate unitId (version 5) for independent review. Version 5 repeats the exact decisions and reconciliations frozen by consolidation.decide. Git mode requires the current worker’s successful code.commit commandId. Rejections return only to consolidation. Stop after successful submission.",
-          "readOnly": false
-        }
-      ]
-    },
-    {
-      "plugin": "merv-consolidation-ui",
-      "source": "packages/consolidation/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "consolidation",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-consolidation-ui",
-      "group": "front",
-      "owner": "consolidation",
-      "label": "Consolidation · ui adapter",
-      "purpose": "Connects Consolidation to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -1359,7 +1222,6 @@
         "paper",
         "reflections",
         "knowledge",
-        "consolidation",
         "tasks",
         "experiments",
         "artifacts",
@@ -2469,61 +2331,6 @@
       "optional": false
     },
     {
-      "from": "consolidation",
-      "to": "state",
-      "optional": false
-    },
-    {
-      "from": "consolidation",
-      "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "consolidation",
-      "to": "artifacts",
-      "optional": false
-    },
-    {
-      "from": "consolidation",
-      "to": "workflows",
-      "optional": false
-    },
-    {
-      "from": "consolidation",
-      "to": "reviews",
-      "optional": false
-    },
-    {
-      "from": "consolidation",
-      "to": "contextBuilder",
-      "optional": false
-    },
-    {
-      "from": "consolidation",
-      "to": "codeResearch",
-      "optional": true
-    },
-    {
-      "from": "merv-consolidation-tools",
-      "to": "consolidation",
-      "optional": false
-    },
-    {
-      "from": "merv-consolidation-tools",
-      "to": "tools",
-      "optional": false
-    },
-    {
-      "from": "merv-consolidation-ui",
-      "to": "consolidation",
-      "optional": false
-    },
-    {
-      "from": "merv-consolidation-ui",
-      "to": "ui",
-      "optional": false
-    },
-    {
       "from": "contextBuilder",
       "to": "state",
       "optional": false
@@ -2850,11 +2657,6 @@
     },
     {
       "from": "research",
-      "to": "consolidation",
-      "optional": true
-    },
-    {
-      "from": "research",
       "to": "tasks",
       "optional": true
     },
@@ -3125,10 +2927,10 @@
     }
   ],
   "counts": {
-    "plugins": 61,
-    "providers": 27,
-    "adapters": 34,
-    "dependencies": 164
+    "plugins": 58,
+    "providers": 26,
+    "adapters": 32,
+    "dependencies": 152
   },
   "network": [
     {

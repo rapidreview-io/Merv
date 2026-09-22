@@ -1,4 +1,18 @@
-import { test } from 'node:test';
+import { artifactsPlugin } from '@merv/artifacts';
+import { blobsPlugin } from '@merv/blobs';
+import { codePlugin } from '@merv/code';
+import { contextBuilderPlugin } from '@merv/context-builder';
+import { domainEventsPlugin } from '@merv/domain-events';
+import { feedPlugin } from '@merv/feed';
+import { identityPlugin } from '@merv/identity';
+import { reviewsPlugin } from '@merv/reviews';
+import { runnerPlugin } from '@merv/runner';
+import { scopePlugin } from '@merv/scope';
+import { sessionsPlugin } from '@merv/sessions';
+import { statePlugin } from '@merv/state';
+import { tasksPlugin } from '@merv/tasks';
+import { workflowsPlugin } from '@merv/workflows';
+import { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import {
   existsSync,
@@ -10,25 +24,11 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { Context } from 'cordis';
-import { contextBuilderPlugin } from '@merv/context-builder';
-import { domainEventsPlugin } from '@merv/domain-events';
-import { statePlugin } from '@merv/state';
-import { blobsPlugin } from '@merv/blobs';
-import { scopePlugin } from '@merv/scope';
-import { artifactsPlugin } from '@merv/artifacts';
-import { workflowsPlugin } from '@merv/workflows';
-import { reviewsPlugin } from '@merv/reviews';
-import { tasksPlugin } from '@merv/tasks';
-import { feedPlugin } from '@merv/feed';
-import { identityPlugin } from '@merv/identity';
-import { sessionsPlugin } from '@merv/sessions';
-import { runnerPlugin } from '@merv/runner';
-import { codePlugin } from '@merv/code';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packagesRoot = join(root, 'packages');
@@ -87,7 +87,6 @@ const capabilities: Record<string, readonly string[]> = {
   research: ['state', 'scope', 'workflows'],
   paper: ['state', 'scope', 'artifacts'],
   reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
-  consolidation: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder'],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
   tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder'],
@@ -108,14 +107,13 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeResearch: ['reviews', 'sandboxes'],
-  consolidation: ['codeResearch'],
   experiments: ['codeResearch'],
   research: [
     'domainEvents',
     'paper',
     'reflections',
     'knowledge',
-    'consolidation',
+
     'tasks',
     'experiments',
     'artifacts',
@@ -679,7 +677,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'artifacts',
       'claims',
       'code-research',
-      'consolidation',
+
       'experiments',
       'feed',
       'knowledge',
@@ -697,7 +695,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'artifacts',
       'claims',
       'code-research',
-      'consolidation',
+
       'experiments',
       'feed',
       'knowledge',

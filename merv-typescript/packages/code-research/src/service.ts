@@ -1,34 +1,7 @@
-import {
-  createService,
-  codeCommandCompletionSchema,
-  digest,
-  MervError,
-  check,
-} from '@merv/contracts';
-import type { Artifacts, Scope, State, Workflows } from '@merv/contracts';
-import type { Sessions } from '@merv/sessions/types';
-import type { Code } from './types.js';
-import { CodeCommandService } from './commands.js';
-import { CodeProposalService } from './proposals.js';
-import { CodeCaptureReader } from './captures.js';
-import { prepareRepository } from './repository-setup.js';
 import { CodeGitHubService, type GitHubBinding } from '@merv/code/github';
 import type { GitHubConfig } from '@merv/code/github-client';
-import { CodeTransportService } from './transport.js';
-import { CodePublicationService } from './publications.js';
-import { PublicationHost } from './publication-host.js';
-import { CODE_DRIVER, CodeUnitService } from './units.js';
-import { CodeConsolidation } from './consolidation.js';
-import { CodeBaseService } from './bases.js';
-import { ResearchCodeWriters as CodeWriterService } from './writers.js';
+import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility } from '@merv/code/service';
-import { CodeWorkspaceProtocol } from './protocol.js';
-import {
-  CodeStore,
-  type CodeImportRemote,
-  type CodeStoreConfig,
-  type FaultPoint,
-} from '@merv/code/store/operations';
 import { codeBackupRunSchema } from '@merv/code/store/backup';
 import {
   CodeMirrorService,
@@ -37,15 +10,43 @@ import {
   type CodeMirrorConfig,
   type MirrorTransport,
 } from '@merv/code/store/mirror';
+import {
+  CodeStore,
+  type CodeImportRemote,
+  type CodeStoreConfig,
+  type FaultPoint,
+} from '@merv/code/store/operations';
 import type {
+  Artifacts,
   Caller,
   CodeAcceptedSince,
   CodeCommandCompletion,
   CodeTransportInput,
+  Scope,
+  State,
   Transaction,
+  Workflows,
 } from '@merv/contracts';
-import { pendingMerge } from '@merv/code/pending-merge';
-import { parseCodeInput } from '@merv/code/input';
+import {
+  check,
+  codeCommandCompletionSchema,
+  createService,
+  digest,
+  MervError,
+} from '@merv/contracts';
+import type { Sessions } from '@merv/sessions/types';
+import { CodeBaseService } from './bases.js';
+import { CodeCaptureReader } from './captures.js';
+import { CodeCommandService } from './commands.js';
+import { CodeProposalService } from './proposals.js';
+import { CodeWorkspaceProtocol } from './protocol.js';
+import { PublicationHost } from './publication-host.js';
+import { CodePublicationService } from './publications.js';
+import { prepareRepository } from './repository-setup.js';
+import { CodeTransportService } from './transport.js';
+import type { Code } from './types.js';
+import { CODE_DRIVER, CodeUnitService } from './units.js';
+import { ResearchCodeWriters as CodeWriterService } from './writers.js';
 
 /** Where Code keeps repositories. Without it the server keeps none and nothing is hosted. */
 export interface CodeStoreOptions {
@@ -67,7 +68,6 @@ export class CodeService extends CodeCommandService implements Code {
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
-  private consolidationStore: CodeConsolidation;
   private writerStore!: CodeWriterService;
   private store?: CodeStore;
   private mirrorStore?: CodeMirrorService;
@@ -104,14 +104,6 @@ export class CodeService extends CodeCommandService implements Code {
     private readonly utility?: CodeUtility,
   ) {
     super(state, scope, sessions);
-    this.consolidationStore = new CodeConsolidation(
-      state,
-      scope,
-      workflows,
-      sessions,
-      () => (this.publicationClosed ? undefined : this.store?.repositories),
-      () => this.unitStore?.bases,
-    );
     this.storage = state;
     this.baseScope = scope;
     this.github = utility?.github ?? new CodeGitHubService(state, scope, github, fetcher);
@@ -139,10 +131,7 @@ export class CodeService extends CodeCommandService implements Code {
         );
       },
       (caller, tx) => this.github.publicationBinding(caller, tx),
-      (projectId, unitId, tx) => this.consolidationStore.provenance(projectId, unitId, tx),
       (projectId, tx) => this.unitStore.imported(tx, projectId),
-      (caller, unitId, reviewId, revision, tx) =>
-        this.unitStore.published(caller, unitId, reviewId, revision, tx),
     );
     this.publicationStore = new CodePublicationService(
       state,
@@ -178,10 +167,8 @@ export class CodeService extends CodeCommandService implements Code {
             repositories.config,
             {
               imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
-              // Sessions and consolidations keep their own records; Code asks each owner what
-              // it holds rather than reading a table that is not its own.
               workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
-              frozen: (projectId, tx) => this.publicationHost.frozen(projectId, tx),
+              frozen: async () => [],
               fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
               advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
               quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
@@ -272,28 +259,11 @@ export class CodeService extends CodeCommandService implements Code {
   ) {
     caller = structuredClone(caller);
     const proposal = await this.proposalStore.seal(caller, input, binding, tx);
-    if (!(proposal.workflow.name === 'consolidation' && proposal.workflow.version === 5))
-      await this.publicationStore.enqueue(caller, proposal, tx);
+    await this.publicationStore.enqueue(caller, proposal, tx);
     return proposal;
-  }
-  async publicationReferences(caller: Caller, unitId: string, tx: Transaction) {
-    await this.baseScope.require(caller, 'read', tx);
-    const row = await tx.get<{ main_json: string }>(
-      'SELECT main_json FROM code_projects WHERE project_id=?',
-      caller.projectId,
-    );
-    check(row, 'code_project_unbound', 'Bind and import the project before consolidating', 409);
-    const pending = await pendingMerge(tx, caller.projectId, unitId);
-    return { integrationBase: pending?.secondParent ?? (JSON.parse(row.main_json).oid as string) };
-  }
-  registerPublicationOwner(owner: import('./types.js').PublicationOwner) {
-    return this.publicationHost.register(owner);
   }
   controlPublication(caller: Caller, input: unknown): Promise<unknown> {
     return this.publicationHost.control(caller, input);
-  }
-  releasePublication(...args: Parameters<CodePublicationService['releasePublication']>) {
-    return this.publicationStore.releasePublication(...args);
   }
   recordPublicationReview(...args: Parameters<CodePublicationService['recordReview']>) {
     return this.publicationStore.recordReview(...args);
@@ -318,14 +288,8 @@ export class CodeService extends CodeCommandService implements Code {
       .register((projectId, subjectId, tx) =>
         this.unitStore.reviewProvenance(projectId, subjectId, tx),
       );
-    const releaseConsolidation = reviews
-      .provenance('code.consolidation')
-      .register((projectId, subjectId, tx) =>
-        this.consolidationStore.provenance(projectId, subjectId, tx),
-      );
     return () => {
       release();
-      releaseConsolidation();
       releasePublication();
       if (this.unitStore.reviews === reviews) this.unitStore.reviews = undefined;
     };
@@ -348,21 +312,6 @@ export class CodeService extends CodeCommandService implements Code {
     return () => {
       if (this.unitStore.resolutionTasks === provider) this.unitStore.resolutionTasks = undefined;
     };
-  }
-
-  async freezeCandidates(...args: Parameters<CodeConsolidation['freeze']>) {
-    if (this.publicationClosed) throw new MervError('code_unavailable', 'Code is unavailable', 503);
-    this.storage.assertTransaction(args[2]);
-    return await this.consolidationStore.freeze(...args);
-  }
-  async inspectCandidates(...args: Parameters<CodeConsolidation['inspect']>) {
-    if (this.publicationClosed) throw new MervError('code_unavailable', 'Code is unavailable', 503);
-    return await this.consolidationStore.inspect(...args);
-  }
-  async verifyCandidates(...args: Parameters<CodeConsolidation['verify']>) {
-    if (this.publicationClosed) throw new MervError('code_unavailable', 'Code is unavailable', 503);
-    this.storage.assertTransaction(args[5]);
-    return await this.consolidationStore.verify(...args);
   }
 
   async declareUnit(...args: Parameters<CodeUnitService['declareUnit']>) {
@@ -467,9 +416,7 @@ export class CodeService extends CodeCommandService implements Code {
     await this.writerStore.sessionChanged(...args);
   }
   async reserveWriter(...args: Parameters<CodeWriterService['reserveWriter']>) {
-    const writer = await this.writerStore.reserveWriter(...args);
-    await this.unitStore.pinPublication(args[0], args[1].unitId, args[2]);
-    return writer;
+    return await this.writerStore.reserveWriter(...args);
   }
   async writerStatus(...args: Parameters<CodeWriterService['writerStatus']>) {
     return await this.writerStore.writerStatus(...args);

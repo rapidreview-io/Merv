@@ -1,18 +1,18 @@
-import assert from 'node:assert/strict';
-import test, { type TestContext } from 'node:test';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { createService, type WorkflowSnapshot } from '@merv/contracts';
 import { CodeService } from '@merv/code-research/service';
+import type { CodeCapture } from '@merv/code-research/types';
+import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeUnitStore } from '@merv/code/units';
 import { CodeWriterService } from '@merv/code/writers';
-import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeCapture } from '@merv/code-research/types';
+import { createService, type WorkflowSnapshot } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 import type { CodeBaseService } from '../packages/code-research/src/bases.js';
-import { backends, optional, git, gitSource, type Backend } from './fixtures/code-store.js';
-import { resolutionFixture } from './fixtures/resolution.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { githubFixture, config as githubConfig } from './github-fixture.js';
+import { backends, git, gitSource, optional, type Backend } from './fixtures/code-store.js';
+import { resolutionFixture } from './fixtures/resolution.js';
+import { config as githubConfig, githubFixture } from './github-fixture.js';
 
 /**
  * A project Code hosts, with its own repositories and the GitHub App faked at its seam, where
@@ -672,7 +672,7 @@ for (const backend of backends) {
   );
 
   test(
-    `${backend}: an envelope sealed before units could publish is still read as a consolidation`,
+    `${backend}: a retained pre-unit publication is not reconciled by the current unit path`,
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend, true);
@@ -682,9 +682,7 @@ for (const backend of backends) {
       await f.pin(work);
       await f.accept(work, f.feature);
       const [sealed] = await f.code.publications(f.admin);
-      // Every consolidation publication already waiting on an operator at deploy time has an
-      // envelope with no `source`, and record_json is immutable, so it can never gain one.
-      // Absence must therefore read as the shape it was written for.
+      // Historical envelopes without a source remain stored but have no active owner.
       await f.state.transaction(async (tx) => {
         const row = (await tx.get<{
           record_json: string;
@@ -713,11 +711,10 @@ for (const backend of backends) {
           row.review_json,
         );
       });
-      // The consolidation branch asks its owner, the reviewed round and the recomputed
-      // certificate; this project loads no consolidation owner, so that is where it stops —
-      // rather than silently taking the unit branch and becoming unmergeable for good.
+      // A sync leaves that immutable row untouched and continues serving current units.
       const before = (await f.sync()).find((item) => item.proposalId === 'codeprop_before')!;
-      assert.equal(before.lastError, 'publication_owner_unavailable');
+      assert.equal(before.lastError, null);
+      assert.equal(before.approval?.source, undefined);
     },
   );
 

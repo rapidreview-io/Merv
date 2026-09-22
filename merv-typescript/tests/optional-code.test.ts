@@ -1,16 +1,15 @@
-import test, { type TestContext } from 'node:test';
+import type { Caller, TaskReview } from '@merv/contracts';
+import type { Reflection } from '@merv/reflections/types';
+import type { ResearchRecord } from '@merv/research/types';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Caller, TaskReview } from '@merv/contracts';
-import type { ResearchRecord } from '@merv/research/types';
-import type { Reflection } from '@merv/reflections/types';
+import test, { type TestContext } from 'node:test';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
-import { legacyCycle } from './fixtures/research.js';
 
 async function fixture(t: TestContext, enabled: boolean) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-optional-code-'));
@@ -53,24 +52,8 @@ async function fixture(t: TestContext, enabled: boolean) {
       workspace,
       requestId: name,
     });
-  const consolidation = async (name: string) =>
-    await app.ctx.consolidation.create(owner, {
-      name,
-      workspace: 'git',
-      sourceArtifactIds: [source.id],
-      experimentIds: [],
-      requestId: name,
-    });
   const active = () => {
-    for (const id of [
-      'experiments',
-      'knowledge',
-      'reflections',
-      'research',
-      'tasks',
-      'sessions',
-      'consolidation',
-    ])
+    for (const id of ['experiments', 'knowledge', 'reflections', 'research', 'tasks', 'sessions'])
       assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
   };
   let sequence = 0;
@@ -81,8 +64,7 @@ async function fixture(t: TestContext, enabled: boolean) {
       expectedRevision: record.workflow.revision,
       requestId: id(),
     });
-  /** A current cycle, or a retained version-5 one that chose Git consolidation. */
-  const cycle = async (consolidationWorkspace: 'none' | 'git' = 'none') => {
+  const cycle = async () => {
     await app.ctx.paper.patch(owner, {
       kind: 'problem',
       expectedRevision: (await app.ctx.paper.read(owner)).documents.problem.current.revision,
@@ -94,21 +76,10 @@ async function fixture(t: TestContext, enabled: boolean) {
         { id: 'constraints', content: 'Do not assert unsupported empirical conclusions.' },
       ],
     });
-    let record;
-    if (consolidationWorkspace === 'none')
-      record = await app.ctx.research.create(owner, {
-        name: 'Optional code research',
-        requestId: id(),
-      });
-    else {
-      await app.setEnabled('research', false);
-      const cycleId = await legacyCycle(app.ctx, owner, id(), {
-        version: 5,
-        consolidationWorkspace,
-      });
-      await app.setEnabled('research', true);
-      record = await app.ctx.research.get(owner, cycleId);
-    }
+    const record = await app.ctx.research.create(owner, {
+      name: 'Optional code research',
+      requestId: id(),
+    });
     return await advance(await advance(record));
   };
   const artifact = async (caller: Caller, title: string) =>
@@ -167,7 +138,6 @@ async function fixture(t: TestContext, enabled: boolean) {
     reviewer,
     source,
     experiment,
-    consolidation,
     active,
     cycle,
     reflect,
@@ -179,7 +149,6 @@ test('server boots without Code and completes no-code research after reflection 
   const f = await fixture(t, false);
   f.active();
   assert.equal(f.app.status().find((entry) => entry.id === 'code-tools')?.state, 'pending');
-  assert.equal(f.app.status().find((entry) => entry.id === 'consolidation-tools')?.state, 'active');
   assert.equal(
     (await f.app.ctx.tools.list()).filter((tool) => tool.name === 'reflection.create').length,
     1,
@@ -269,16 +238,8 @@ test('server boots without Code and completes no-code research after reflection 
   assert.equal(f.app.ctx.research, research);
   assert.equal(record.workflow.version, 6);
   assert.equal(record.workflow.state, 'complete');
-  assert.equal(record.consolidationId, null);
   assert.deepEqual(record.integrations, []);
-  assert.equal(
-    (await f.app.ctx.workflows.list(f.owner)).filter((work) => work.workflow === 'consolidation')
-      .length,
-    0,
-  );
-  assert.equal(f.app.status().find(({ id }) => id === 'consolidation')?.state, 'active');
   assert.equal((await f.experiment('Now-with-code', 'git')).workspace, 'git');
-  assert.equal((await f.consolidation('Now-with-code')).workspace, 'git');
   assert.equal(
     (await f.app.ctx.knowledge.resolve(f.owner, ['code-proposal:missing']))[0].status,
     'missing',
@@ -293,10 +254,8 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     sessions: f.app.ctx.sessions,
     reflections: f.app.ctx.reflections,
     research: f.app.ctx.research,
-    consolidation: f.app.ctx.consolidation,
   };
   const git = await f.experiment('Git-work', 'git');
-  const gitConsolidation = await f.consolidation('Git-consolidation');
   const scratch = await f.experiment('Scratch-work');
   const gitTask = await f.app.ctx.tasks.create(f.owner, {
     title: 'Harness',
@@ -328,8 +287,6 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     assert.deepEqual(await f.app.ctx.sessions.authenticate(secret), worker);
     assert.deepEqual(await f.app.ctx.workflows.assignment(worker, scratch.id), packet);
     assert.equal((await f.app.ctx.experiments.get(f.owner, git.id)).workspace, 'git');
-    assert.equal(f.app.status().find(({ id }) => id === 'consolidation')?.state, 'active');
-    assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'consolidation.create'));
     assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'reflection.create'));
     await assert.rejects(async () => await f.app.ctx.workflows.assignment(f.owner, git.id), {
       code: 'code_unavailable',
@@ -347,12 +304,6 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
         (item) => item.kind === 'work_blocked',
       ),
       [],
-    );
-    await assert.rejects(
-      async () => await f.app.ctx.workflows.assignment(f.owner, gitConsolidation.id),
-      {
-        code: 'code_unavailable',
-      },
     );
     assert.equal(
       (await f.app.ctx.knowledge.resolve(f.owner, ['code-proposal:missing']))[0].status,
@@ -376,65 +327,10 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
       'experiment.design',
     );
     assert.equal(
-      (await f.app.ctx.workflows.assignment(f.owner, gitConsolidation.id)).context?.type,
-      'consolidation.consolidating',
-    );
-    assert.equal(
       (await f.app.ctx.knowledge.resolve(f.owner, ['code-proposal:missing']))[0].status,
       'missing',
     );
     assert.equal(f.app.status().find(({ id }) => id === 'code-tools')?.state, 'active');
   }
   assert.equal(session.assignment.instanceId, scratch.id);
-});
-
-test('Git research creates its legacy consolidation without Code and resumes that child after Code loads', async (t) => {
-  const f = await fixture(t, false);
-  let record = await f.cycle('git');
-  await f.reflect(record);
-  const input = {
-    researchId: record.id,
-    expectedRevision: record.workflow.revision,
-    requestId: 'git-handoff',
-  };
-  const research = f.app.ctx.research;
-  const advance = async () => await f.app.ctx.research.advance(f.owner, input);
-  record = await advance();
-  const child = await f.app.ctx.consolidation.get(f.owner, record.consolidationId!);
-  assert.equal(child.workflow.version, 4);
-  assert.equal(child.workspace, 'git');
-  await assert.rejects(f.app.ctx.workflows.assignment(f.owner, child.id), {
-    code: 'code_unavailable',
-  });
-  await assert.rejects(
-    f.app.ctx.consolidation.create(f.owner, {
-      name: 'Frozen candidates',
-      workspace: 'git',
-      version: 5,
-      sourceArtifactIds: [f.source.id],
-      requestId: 'needs-code',
-    }),
-    { code: 'code_unavailable' },
-  );
-  assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 1);
-
-  await f.app.setEnabled('code', true);
-  assert.equal(f.app.ctx.research, research);
-  record = await advance();
-  assert.equal(record.workflow.state, 'consolidating');
-  assert.equal(
-    (await f.app.ctx.consolidation.get(f.owner, record.consolidationId!)).workspace,
-    'git',
-  );
-  assert.deepEqual(await advance(), record);
-  assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 1);
-  const childId = record.consolidationId;
-  await f.app.setEnabled('code', false);
-  assert.equal(f.app.ctx.research, research);
-  assert.deepEqual(await advance(), record, 'completed handoff can replay while Code is absent');
-  assert.equal((await f.app.ctx.research.get(f.owner, record.id)).consolidationId, childId);
-  await f.app.setEnabled('code', true);
-  assert.equal(f.app.ctx.research, research);
-  assert.deepEqual(await advance(), record);
-  assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 1);
 });

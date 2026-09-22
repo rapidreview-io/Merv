@@ -1,21 +1,16 @@
-# Consolidation from retained sources
+# Consolidation tasks
 
-Consolidation requires State, Scope, Artifacts, Workflows, Reviews and Context Builder; Code is an optional binding. It has no Reflections dependency or contract import.
+Research consolidates accepted code through an ordinary Task after independent reflection
+approval. The task depends on the accepted units missing from the project base and uses the
+normal task delivery, independent review and Code publication path. Research waits for its
+publication before completing the cycle. See [Research](RESEARCH.md).
 
-Consolidation is an optional stage of Research. New research cycles select it only for Git code changes; cycles with no code changes complete after approved reflection. Records, workflow registrations and tools remain available without Code. Git assignments and submissions refuse with `code_unavailable` until its commit and proposal service returns. Experiments and Knowledge retain their optional Code integrations independently.
+The dedicated `@merv/consolidation` plugin was retired on 2026-09-22. Its package, workflow
+registrations, tools, UI and special Code integration are removed. Remove its three entries
+(`consolidation`, `consolidation-tools`, `consolidation-ui`) from custom configurations.
 
-`consolidation.create` accepts `sourceArtifactIds` (required), `experimentIds` (the decision scope), `workspace`, optional cycle `taskIds`, optional `dependsOn`, name and requestId. It validates every source in the caller's project and freezes artifact metadata and hashes. The originating workflow selects and verifies approved inputs. Research performs that check through Reflections before calling Consolidation, and supplies the reflection as a durable prerequisite. Standalone callers may consolidate other retained sources; supplying an artifact does not itself assert independent approval.
-
-Versions 1–4 require exactly one retain/adapt/drop/no_code decision per selected experiment. Git mode seals the current worker's successful commit and evidence into an exact proposal. The retained report-only mode permits drop/no_code and remains supported for existing version-2 research cycles; their selected stage and saved records are not reinterpreted. Existing independent consolidation review returns only to consolidating, or completes the work. Completion does not publish central Git.
-
-Context and grants use pinned source artifacts and the current submission. Prerequisite success states are durable Workflows records, so completed reflection prerequisites continue to be satisfied after the Reflections plugin unloads. Historical records containing an embedded reflection are read as artifact sources directly from their retained bytes; no upstream service is called.
-
-Source selection, domain records, review requests, transitions, replay receipts and completion records preserve their existing transaction and immutability boundaries. Artifact content remains behind Artifacts/Blobs. The UI accepts source artifact IDs and shows retained sources without querying reflection.list; the Reflection page can prefill these sources for an approved wave.
-
-Unreleased version 5 is selected automatically for Code-hosted Git projects; explicit `version: 5` also requires hosted, imported history. It freezes accepted units from the selected experiments, supplied cycle `taskIds`, consolidation prerequisites and their declared dependency closure. Its decisions name candidate `unitId`; `adapt` also names a retained, accepted `replacementUnitId` already in the frozen set. `no_code` is only for acceptances without code. `consolidation.decide` refuses carried dropped ancestors without an explicit `reconciliations` entry naming `unitId`, `retainedUnitId` and rationale. Dropping code already on the frozen main records that its effects remain and removal requires a corrective change.
-
-The immutable record, write-once decisions field and submission carry the candidate set and decision manifest with their hashes. Review binds those inputs, frozen integration base, exact proposal head/tree and evidence, and rechecks contributor independence at claim and verdict, including every consolidation writer, base-resolution writer and their directing authorities. These criteria cannot be waived on a passing review. If later contributor provenance makes the certificate stale, the owner can use `consolidation.end` with `outcome: "abandoned"` and create a new consolidation; this slice adds no same-record review renewal action. See [the Git model](GIT_MODEL.md) for scope and ancestry rules.
-
-Version 5 registers `deciding → consolidating → consolidation_review → awaiting_publication → complete`, with review revision back to `consolidating` and publication staleness through `stale_base → consolidating`. Abandon/failure edges remain on deciding, consolidating and review. Publication states have no agent grants or workspace and refuse leases. The decision assignment has no workspace. `consolidation.decide` freezes its manifest once and declares the retained frontier as Code's derivation inputs. The existing planner prepares one base, attaching any resolution task as a visible system prerequisite. Work begins on that base with a persistent `code.v2` checkout, one retained unit branch and a writer generation per lease. Only this producer receives commit tools. Decisions cannot change in later review rounds; submission repeats the frozen decisions and reconciliations.
-
-Reviewers receive ephemeral, unretained `code.v2` checkouts of the exact submitted commit. A pass requires that checkout to be attached and atomically records an immutable reviewed acceptance with `storage: code`, sealing the publication envelope. Completion waits for Code to import and verify the human-requested merge. A moved main returns the same record and branch for integration of the new frozen main input through `code.merge`, resubmission and independent review. The next approval creates a successor proposal; the server comments on and closes the old PR while retaining its snapshot. The terminal unit acceptance is written only after publication verifies. Without a GitHub link and write automation the record waits visibly; no local publication exists. Unhosted Git projects and projects with Code unloaded still create version 4, preserving its published behavior.
+Existing database and Git records are retained without rewriting approvals or deleting
+history. The retired workflow has no execution or publication provider. A pre-version-6
+research cycle that requires that workflow reports `research_consolidation_retired`; start a
+new research cycle to use consolidation tasks. Previously committed Research command receipts
+still replay. Retained Git evidence continues to constrain repository integrity operations.

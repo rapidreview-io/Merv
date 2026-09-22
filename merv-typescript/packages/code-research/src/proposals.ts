@@ -1,12 +1,12 @@
-import { visible, recorded, mapAsync } from '@merv/contracts';
-import { postgresMigrations } from './proposals.postgres.js';
-import { createHash } from 'node:crypto';
-import { z } from 'zod';
+import { parseCodeInput } from '@merv/code/input';
 import {
   canonical,
   check,
+  mapAsync,
   newId,
   now,
+  recorded,
+  visible,
   type Artifact,
   type Artifacts,
   type Caller,
@@ -18,8 +18,10 @@ import {
   type WorkflowDispatchAdmission,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
+import { createHash } from 'node:crypto';
+import { z } from 'zod';
+import { postgresMigrations } from './proposals.postgres.js';
 import type { CodeCommands, CodeProposal, CodeProposalInput, CodeProposals } from './types.js';
-import { parseCodeInput } from '@merv/code/input';
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const data = z.record(z.unknown()).transform((value) => value as Data);
@@ -239,12 +241,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
       summary: input.summary,
       artifacts,
       pinnedInputIds: input.pinnedInputIds,
-      provenance: {
-        ...input.provenance,
-        ...(session.execution.workflow === 'consolidation' && session.execution.version === 5
-          ? { integrationBase: session.execution.references.integrationBase }
-          : {}),
-      },
+      provenance: input.provenance,
       admission,
     };
     const content = canonical(manifest);

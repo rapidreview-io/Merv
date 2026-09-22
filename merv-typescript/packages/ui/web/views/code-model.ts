@@ -1,5 +1,5 @@
-import type { CodeBaseRecord, CodeUnit } from '@merv/contracts/code-units';
 import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
+import type { CodeBaseRecord, CodeUnit } from '@merv/contracts/code-units';
 import type { CodePublication } from '@merv/contracts/types';
 import type { RecordNames } from '../markdown';
 import { status as publicationWord } from './github-publications';
@@ -90,7 +90,6 @@ const COLOUR: [string, string][] = [
   ['/tasks/', 'tasks'],
   ['/experiments/', 'experiments'],
   ['/reflections/', 'reflections'],
-  ['/consolidation/', 'consolidation'],
   ['/research/', 'research'],
   ['/reviews/', 'reviews'],
 ];
@@ -349,7 +348,7 @@ export function gitModel(
     nodes.push({
       id: published.proposalId,
       kind: 'publication',
-      colour: 'consolidation',
+      colour: 'code',
       name: published.title,
       hollow: !!published.incident,
       // Every ring sits just off the trunk; only one that merged is joined to it.

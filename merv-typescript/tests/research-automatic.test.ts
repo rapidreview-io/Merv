@@ -1,20 +1,18 @@
-import test, { type TestContext } from 'node:test';
+import { createService, MervError, type Caller, type ReviewApplication } from '@merv/contracts';
+import type { ChangeSpec, Reflection } from '@merv/reflections/types';
+import type { ResearchCreate } from '@merv/research/types';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import test, { type TestContext } from 'node:test';
 import { Pool } from 'pg';
-import type { Data, SessionWorkspace } from '@merv/contracts';
-import type { ConsolidationSubmit } from '@merv/consolidation/types';
-import { feasibilityStatement } from './feasibility-fixture.js';
-import { createService, MervError, type Caller, type ReviewApplication } from '@merv/contracts';
-import { createApp } from '../src/app.js';
 import { ResearchService } from '../packages/research/src/index.js';
-import type { ResearchCreate } from '@merv/research/types';
-import type { ChangeSpec, Reflection } from '@merv/reflections/types';
-import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { createApp } from '../src/app.js';
+import { feasibilityStatement } from './feasibility-fixture.js';
 import { hostedCode, legacyCycle, type Main } from './fixtures/research.js';
+import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const stop: ChangeSpec = {
   version: 2,
@@ -94,7 +92,6 @@ async function fixture(t: TestContext, plugin = false) {
             app.ctx.workflows,
             app.ctx.paper,
             app.ctx.reflections,
-            app.ctx.consolidation,
             app.ctx.knowledge,
             app.ctx.tasks,
             app.ctx.experiments,
@@ -628,144 +625,6 @@ test('an accepted negative experimental finding automatically opens reflection',
     'complete',
   );
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
-});
-
-test('automatic continuation waits for the selected Git consolidation and its actual independent review', async (t) => {
-  const f = await fixture(t);
-  await f.define();
-  await f.enable();
-  const work = await f.task();
-  const cycle = await f.git([work.id], 2);
-  await f.failTask(work.id);
-  await f.pump();
-  await f.approve(cycle.id, next('aftergit'));
-  const parent = await f.research.get(f.owner, cycle.id);
-  assert.equal(parent.workflow.state, 'consolidating');
-  assert.equal(parent.successorId, null);
-  const consolidation = await f.app.ctx.consolidation.get(f.owner, parent.consolidationId!);
-  const sessions = f.app.ctx.sessions;
-  const offer = async (instanceId: string, expectedRevision: number, source: Caller) => {
-    const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    const session = await sessions.offer(source, {
-      instanceId,
-      expectedRevision,
-      runnerId: 'automatic-test',
-      requestId: f.id(),
-      secret,
-    });
-    return { session, caller: await sessions.authenticate(secret) };
-  };
-  const run = async <T>(
-    caller: Caller,
-    tool: string,
-    input: Data,
-    action: (caller: Caller) => Promise<T>,
-  ) =>
-    await sessions.run(
-      await sessions.prepare(caller, tool, input),
-      async (caller) => await action(caller),
-    );
-  const worker = await offer(consolidation.id, consolidation.workflow.revision, f.owner);
-  const control = { sessionId: worker.session.id, runnerId: 'automatic-test', hostRef: 'launch' };
-  const oid = (digit: string) => digit.repeat(40);
-  const workspace: SessionWorkspace = {
-    repositoryId: 'repo',
-    workspaceId: 'workspace',
-    mode: 'persistent',
-    branch: 'codex/consolidation',
-    baseOid: oid('a'),
-    headOid: oid('a'),
-    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
-  };
-  await sessions.attach(f.owner, { ...control, workspace });
-  const commit = {
-    expectedHead: oid('a'),
-    message: 'Consolidate reviewed findings',
-    requestId: f.id(),
-  };
-  await run(
-    worker.caller,
-    'code.commit',
-    commit,
-    async (caller) => await f.app.ctx.codeResearch.commit(caller, commit),
-  );
-  const command = (await f.app.ctx.codeResearch.nextCommand(f.owner, control))!;
-  await f.app.ctx.codeResearch.completeCommand(f.owner, {
-    ...control,
-    commandId: command.id,
-    receipt: {
-      commandId: command.id,
-      repositoryId: 'repo',
-      workspaceId: 'workspace',
-      baseOid: oid('a'),
-      parentOid: oid('a'),
-      headOid: oid('b'),
-      treeOid: oid('c'),
-      stats: { commitCount: 1, filesChanged: 1, insertions: 2, deletions: 0 },
-    },
-  });
-  const report = await run(
-    worker.caller,
-    'artifact.create',
-    { title: 'Consolidation', content: 'Verified the proposed commit and retained tests.' },
-    async (caller) =>
-      await f.app.ctx.artifacts.create(caller, {
-        title: 'Consolidation',
-        content: 'Verified the proposed commit and retained tests.',
-      }),
-  );
-  const submission: ConsolidationSubmit = {
-    consolidationId: consolidation.id,
-    expectedRevision: consolidation.workflow.revision,
-    reportArtifactId: report.id,
-    commandId: command.id,
-    decisions: [],
-    requestId: f.id(),
-  };
-  const submitted = await run(
-    worker.caller,
-    'consolidation.submit',
-    JSON.parse(JSON.stringify(submission)) as Data,
-    async (caller) => await f.app.ctx.consolidation.submit(caller, submission),
-  );
-  await sessions.release(f.owner, { sessionId: worker.session.id, runnerId: 'automatic-test' });
-  await f.pump();
-  assert.equal((await f.research.get(f.owner, cycle.id)).successorId, null);
-  const reviewer = await offer(consolidation.id, submitted.workflow.revision, f.reviewer);
-  const claim = await f.app.ctx.reviews.get(f.owner, submitted.reviewId!);
-  const review: ReviewApplication = {
-    reviewId: claim.id,
-    claimId: claim.claimId!,
-    expectedRevision: submitted.workflow.revision,
-    verdict: 'pass',
-    notes: 'Verified the exact retained proposal.',
-    synopsis: 'The consolidation matches the approved reflection.',
-    findings: claim.criteria.map((_, index) => ({
-      criterionNumber: index + 1,
-      status: 'met',
-      evidenceIds: [report.id],
-      notes: 'Verified retained evidence.',
-    })),
-    requestId: f.id(),
-  };
-  await run(
-    reviewer.caller,
-    'review.submit',
-    { ...review },
-    async (caller) => await f.app.ctx.reviews.apply(caller, review),
-  );
-  await f.pump();
-  const completed = await f.research.get(f.owner, cycle.id);
-  assert.equal(completed.workflow.state, 'complete');
-  assert.ok(completed.successorId);
-  assert.equal(
-    (await f.research.get(f.owner, completed.successorId)).workflow.state,
-    'researching',
-  );
-  assert.equal(
-    (await f.app.ctx.consolidation.get(f.owner, consolidation.id)).completion!.centralGit,
-    'not-published',
-  );
 });
 
 test('an automatic cycle waits on its consolidation task and its publication as blockers, never as failures', async (t) => {

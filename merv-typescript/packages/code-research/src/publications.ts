@@ -1,34 +1,32 @@
-import { OperationJournal } from '@merv/code/operation-journal';
+import { CodeGitHubService } from '@merv/code/github';
+import { parseCodeInput } from '@merv/code/input';
+import { migratePublications } from '@merv/code/publications-schema';
 import {
-  clip,
   canonical,
-  digest,
   check,
+  clip,
   codePublicationIdSchema,
   codePublicationMergeSchema,
+  digest,
   MervError,
-  now,
   newId,
+  now,
   type Caller,
   type CodePublication,
-  type CodePublicationMerge,
   type CodePublicationApi,
+  type CodePublicationMerge,
   type GitHubPullRequest,
   type Scope,
   type State,
   type Transaction,
 } from '@merv/contracts';
-import { z } from 'zod';
-import type { CodeProposal } from './types.js';
-import { CodeGitHubService } from '@merv/code/github';
-import type { CodeTransportService } from './transport.js';
-import { parseCodeInput } from '@merv/code/input';
-import { migratePublications } from '@merv/code/publications-schema';
 import {
   publicationApproval,
   PublicationIncident,
   type PublicationHost,
 } from './publication-host.js';
+import type { CodeTransportService } from './transport.js';
+import type { CodeProposal } from './types.js';
 
 /** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
 export interface CodeUnitPublicationSeal {
@@ -43,26 +41,6 @@ export interface CodeUnitPublicationSeal {
   approval: NonNullable<CodePublication['approval']>;
 }
 
-export const publicationReleaseSchema = z
-  .object({
-    proposalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
-    reason: z.string().trim().min(1).max(4000),
-    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
-  })
-  .strict();
-/**
- * Every way a publication's repository stops being reachable: the frozen binding no longer
- * matches the connection, or the project has no connection left to bind to at all. Unlinking a
- * repository turns automation off in the same statement, so it arrives here as the disabled
- * refusal. None of these is about the caller's own authority, and none is a passing server-wide
- * condition, which is why a refusal outside this list is reported as it arrived.
- */
-const unreachable = [
-  'github_reconnect',
-  'github_conflict',
-  'github_owner',
-  'github_automation_disabled',
-];
 interface Row {
   proposal_id: string;
   project_id: string;
@@ -125,16 +103,13 @@ export class CodePublicationService implements CodePublicationApi {
     check(row, 'publication_not_found', 'GitHub publication not found in this project', 404);
     return row;
   }
-  async enqueue(caller: Caller, proposal: CodeProposal, tx: Transaction, reviewId?: string) {
+  async enqueue(caller: Caller, proposal: CodeProposal, tx: Transaction) {
     ({ caller, proposal } = structuredClone({ caller, proposal }));
     this.state.assertTransaction(tx);
-    const hosted = proposal.workflow?.name === 'consolidation' && proposal.workflow.version === 5;
-    if (!hosted && !proposal.receipt.repositoryId.startsWith('github:')) return;
-    const binding = hosted
-      ? null
-      : await this.transport.bindingForProposal(proposal.producer.sessionId, tx);
+    if (!proposal.receipt.repositoryId.startsWith('github:')) return;
+    const binding = await this.transport.bindingForProposal(proposal.producer.sessionId, tx);
     check(
-      hosted || (binding && proposal.receipt.repositoryId === `github:${binding.repository.id}`),
+      binding && proposal.receipt.repositoryId === `github:${binding.repository.id}`,
       'github_conflict',
       'Proposal repository binding is unavailable',
       409,
@@ -159,7 +134,6 @@ export class CodePublicationService implements CodePublicationApi {
       pull: null,
       merge: null,
       lastError: null,
-      ...(hosted ? { approval: await this.approval(caller, proposal, reviewId!, tx) } : {}),
     };
     await tx.run(
       'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json) VALUES(?,?,?,?) ON CONFLICT(proposal_id) DO NOTHING',
@@ -170,10 +144,7 @@ export class CodePublicationService implements CodePublicationApi {
     );
   }
   /**
-   * Opens the publication of a unit accepted to publish. It is the same record and the same
-   * journal a reviewed consolidation uses; what differs is only where the envelope came from,
-   * and that the review which accepted the unit is already the passing one, so its verdict is
-   * sealed here instead of arriving later.
+   * Opens the publication of an accepted unit with its passing review already sealed.
    */
   async openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction) {
     ({ caller, input } = structuredClone({ caller, input }));
@@ -223,16 +194,7 @@ export class CodePublicationService implements CodePublicationApi {
   ) {
     ({ caller, proposal } = structuredClone({ caller, proposal }));
     this.state.assertTransaction(tx);
-    if (proposal.workflow?.name === 'consolidation' && proposal.workflow.version === 5) {
-      if (verdict !== 'pass') return;
-      await this.enqueue(caller, proposal, tx, reviewId);
-      await tx.run(
-        "UPDATE code_publications SET successor=?,settled=0,synced_at='' WHERE project_id=? AND stale=1 AND successor IS NULL AND proposal_id IN (SELECT id FROM code_proposals WHERE instance_id=?)",
-        proposal.id,
-        caller.projectId,
-        proposal.instanceId,
-      );
-    } else if (!proposal.receipt.repositoryId.startsWith('github:')) return;
+    if (!proposal.receipt.repositoryId.startsWith('github:')) return;
     await this.scope.require(caller, 'review', tx);
     check(
       caller.actorId !== proposal.producer.actorId,
@@ -264,57 +226,6 @@ export class CodePublicationService implements CodePublicationApi {
       canonical({ id: reviewId, actorId: caller.actorId, verdict, recordedAt: now() }),
       proposal.id,
     );
-  }
-  private async approval(
-    caller: Caller,
-    proposal: CodeProposal,
-    reviewId: string,
-    tx: Transaction,
-  ) {
-    const round = await tx.get<{ acceptance_json: string; review_id: string }>(
-      'SELECT acceptance_json,review_id FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
-      caller.projectId,
-      proposal.instanceId,
-      reviewId,
-    );
-    check(
-      round,
-      'publication_review_required',
-      'A passing review acceptance must seal publication',
-      409,
-    );
-    const accepted = JSON.parse(round.acceptance_json);
-    check(
-      this.host,
-      'publication_owner_unavailable',
-      'Load the publication owner before publishing',
-      503,
-    );
-    const review = await this.host.review(caller, round.review_id, tx);
-    const certificate = review.provenance;
-    check(
-      review?.verdict === 'pass' &&
-        certificate?.reference === proposal.id &&
-        accepted.code?.commit === proposal.receipt.headOid,
-      'publication_review_required',
-      'The acceptance and independent certificate must name this exact proposal',
-      409,
-    );
-    const { candidates, manifest } = proposal.provenance as unknown as {
-      candidates: { hash: string; integrationBase: string };
-      manifest: { hash: string };
-    };
-    return {
-      source: 'consolidation' as const,
-      candidateSetHash: candidates.hash,
-      decisionManifestHash: manifest.hash,
-      // A later round integrates a newer main than the immutable pin did, and the sealed
-      // proposal is what names it.
-      integrationBase:
-        (proposal.provenance.integrationBase as string | undefined) ?? candidates.integrationBase,
-      certificateHash: certificate.hash,
-      acceptanceHash: digest(accepted),
-    };
   }
   async publications(caller: Caller) {
     caller = structuredClone(caller);
@@ -482,16 +393,20 @@ export class CodePublicationService implements CodePublicationApi {
     await this.scope.require(caller, 'write');
     const records = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
+      const active =
+        this.state.dialect === 'postgres'
+          ? "(record_json::jsonb->'approval' IS NULL OR record_json::jsonb->'approval' = 'null'::jsonb OR record_json::jsonb->'approval'->>'source' = 'unit')"
+          : "(json_extract(record_json,'$.approval') IS NULL OR json_extract(record_json,'$.approval.source') = 'unit')";
       return (
         await tx.all<Row>(
-          'SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? ORDER BY CASE WHEN successor IS NOT NULL THEN 0 ELSE 1 END,synced_at,proposal_id LIMIT 100',
+          `SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? AND ${active} ORDER BY synced_at,proposal_id LIMIT 1`,
           caller.projectId,
           new Date(Date.now() - 30_000).toISOString(),
         )
       ).map((row) => this.decode(row));
     });
     // One network reconciliation per poll keeps runner heartbeats bounded; each intent is restartable.
-    for (const record of records.slice(0, 1)) {
+    for (const record of records) {
       try {
         await this.locked(caller, record.proposalId, async (row, lock) => {
           if (row.binding_json === 'null') {
@@ -507,19 +422,6 @@ export class CodePublicationService implements CodePublicationApi {
             });
           }
           const hosted = !!this.decode(row).approval;
-          if (hosted && row.stale && !row.successor) {
-            await this.state.transaction(async (tx) => {
-              const current = await this.owned(caller, row.proposal_id, lock, tx);
-              if (!current.settled) {
-                await this.host!.apply(caller, this.decode(current), 'resume', tx);
-                await tx.run(
-                  'UPDATE code_publications SET settled=1 WHERE proposal_id=?',
-                  row.proposal_id,
-                );
-              }
-            });
-            return;
-          }
           await (
             hosted
               ? this.github.publicationAutomation.bind(this.github)
@@ -584,10 +486,9 @@ export class CodePublicationService implements CodePublicationApi {
                       // This body is what a signed-in operator reads before the one
                       // irreversible action in the design, so it names the kind of work it
                       // is publishing and what the hash it asks them to trust actually is.
-                      body:
-                        current.approval?.source === 'unit'
-                          ? `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`
-                          : `Merv consolidation proposal ${current.proposalId}\n\nExact commit: ${current.headOid}\nManifest SHA-256: ${current.manifestHash}\n\nMerv's independent verdict is tracked separately from GitHub reviews.`,
+                      body: current.approval
+                        ? `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`
+                        : `Merv proposal ${current.proposalId}\n\nExact commit: ${current.headOid}\nManifest SHA-256: ${current.manifestHash}\n\nMerv's independent verdict is tracked separately from GitHub reviews.`,
                     });
                   } catch (error) {
                     const recovered = await client.pulls(token, current.repository, {
@@ -605,17 +506,6 @@ export class CodePublicationService implements CodePublicationApi {
                 this.row(caller, current.proposalId, tx),
               );
               const review = this.decode(latest).review;
-              if (hosted && current.successor && pull.state === 'open') {
-                await client.commentOnce(
-                  token,
-                  current.repository,
-                  pull.number,
-                  `Superseded by Merv proposal ${current.successor}. Main moved; a new independent review is required.`,
-                );
-                pull = await client.updatePull(token, current.repository, pull.number, {
-                  state: 'closed',
-                });
-              }
               if (pull.state === 'open' && review) {
                 if (hosted && review.verdict === 'pass')
                   await client.appStatus(
@@ -667,93 +557,6 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return { publication: { ...publication, pull: details.pull }, details };
   }
-  /**
-   * The operator route out of a binding that can no longer be honoured. A publication keeps the
-   * repository, base branch and connection revision it was sealed with, so reconnecting GitHub,
-   * relinking the repository or turning write automation off fences it for good: every later
-   * reconciliation refuses, and a hosted consolidation waits in awaiting_publication with no
-   * action of its own. A publication that never got a binding at all is stuck the same way, so
-   * the release asks the project for a binding now and takes the same refusals as proof. The
-   * release is the whole ending: the consolidation is handed back here for another round against
-   * whatever GitHub connection the project now has, and the publication is finished where its
-   * failures were recorded. It is refused while the repository can still be reached, so nobody
-   * can walk a live publication past its review this way.
-   */
-  async releasePublication(caller: Caller, value: unknown) {
-    caller = structuredClone(caller);
-    const input = parseCodeInput(publicationReleaseSchema, value);
-    const { requestId, ...body } = input;
-    const principal = `actor:${caller.actorId}`;
-    return this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'admin', tx);
-      check(
-        !caller.session,
-        'session_forbidden',
-        'A leased worker cannot release a publication',
-        403,
-      );
-      const journal = new OperationJournal(
-        tx,
-        caller.projectId,
-        principal,
-        requestId,
-        digest(body),
-      );
-      const previous = await journal.previous();
-      if (previous) return JSON.parse(previous.result_json) as CodePublication;
-      const row = await this.row(caller, input.proposalId, tx);
-      check(
-        !row.lock_until || row.lock_until < now(),
-        'publication_busy',
-        'Publication is being reconciled; retry shortly',
-        409,
-      );
-      const record = this.decode(row);
-      check(
-        !row.settled && !row.verified && !record.merge?.commitSha,
-        'publication_conflict',
-        'A settled or merged publication is already finished',
-        409,
-      );
-      // Both probes refuse in JavaScript after their reads succeed, so catching one here leaves
-      // this transaction usable. Neither reaches GitHub or Git, and nothing below does either.
-      // A publication that never got a binding is the one nothing can move: no poll ever
-      // managed to freeze one, so ask the project for a binding now and let the same refusals
-      // say that it still cannot have one.
-      let bound = true;
-      try {
-        if (row.binding_json === 'null') await this.github.publicationBinding(caller, tx);
-        else await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-      } catch (error) {
-        if (!(error instanceof MervError) || !unreachable.includes(error.code)) throw error;
-        bound = false;
-      }
-      check(
-        !bound,
-        'code_publication_bound',
-        'This publication can still reach its repository; reconcile or merge it instead',
-        409,
-      );
-      // The two steps a moved main takes, minus everything that reaches GitHub, and both taken
-      // here rather than left for a later sync: a row left stale is adopted as the predecessor
-      // of the next round's approval, which would reopen this one into a reconciliation its
-      // frozen binding can never satisfy. The approved facts are retained, and the ending is
-      // recorded in the same column the failures were, so the publication list states it.
-      if (record.approval) {
-        await this.host!.apply(caller, record, 'stale', tx);
-        await this.host!.apply(caller, record, 'resume', tx);
-      }
-      const result = await tx.run(
-        "UPDATE code_publications SET settled=1,error='code_publication_released' WHERE proposal_id=? AND project_id=? AND settled=0",
-        input.proposalId,
-        caller.projectId,
-      );
-      check(result.changes === 1, 'publication_busy', 'Publication changed while releasing', 409);
-      const released = this.decode(await this.row(caller, input.proposalId, tx));
-      await journal.complete(newId('cop'), 'publication-release', body, released, now(), now());
-      return released;
-    });
-  }
   async mergePublication(caller: Caller, value: CodePublicationMerge) {
     caller = structuredClone(caller);
     const input = parseCodeInput(codePublicationMergeSchema, value);
@@ -766,6 +569,12 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return this.locked(caller, input.proposalId, async (row, lock) => {
       const record = this.decode(row);
+      check(
+        !record.approval || record.approval.source === 'unit',
+        'publication_retired',
+        'This publication belongs to a retired workflow',
+        409,
+      );
       await this.state.transaction(async (tx) => {
         await this.scope.require(caller, 'admin', tx);
         const old = await tx.get<{ input_hash: string }>(
@@ -841,12 +650,8 @@ export class CodePublicationService implements CodePublicationApi {
             const main = await client.branch(token, record.repository, record.baseBranch);
             await this.host!.import(caller, record, main.sha);
             if (!(await this.host!.ancestor(caller.projectId, main.sha, record.headOid))) {
-              // A unit publishes once: no successor round will ever revisit this row, so the
-              // pull request that would otherwise stay open and mergeable against main is
-              // closed here, the way a consolidation's successor closes its predecessor.
-              const unit = record.approval!.source === 'unit';
               const closed =
-                unit && pull.state === 'open'
+                pull.state === 'open'
                   ? await client.updatePull(token, record.repository, pull.number, {
                       state: 'closed',
                     })
@@ -857,11 +662,9 @@ export class CodePublicationService implements CodePublicationApi {
                 await this.owned(caller, record.proposalId, lock, tx);
                 await this.host!.check(caller, record, tx);
                 await this.host!.main(caller, main.sha, tx);
-                // A unit publishes once: there are no rounds on an accepted unit, so its stale
-                // row settles here and a successor carries the work to the newer main.
+                // An accepted unit publishes once. A stale row settles here.
                 await tx.run(
-                  "UPDATE code_publications SET stale=1,settled=?,synced_at='' WHERE proposal_id=?",
-                  Number(unit),
+                  "UPDATE code_publications SET stale=1,settled=1,synced_at='' WHERE proposal_id=?",
                   record.proposalId,
                 );
                 if (closed)

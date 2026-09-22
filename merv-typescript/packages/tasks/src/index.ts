@@ -1,79 +1,86 @@
-import { excludedFromReview, releasedLease, visible, recorded, mapAsync } from '@merv/contracts';
-import { clip, createService, plain, reviewHistory } from '@merv/contracts';
-import { postgresMigrations } from './index.postgres.js';
-import type { Context } from 'cordis';
-import { types as nodeTypes } from 'node:util';
-import { z } from 'zod';
 import {
   check,
+  clip,
+  createService,
   digest,
+  excludedFromReview,
   inTransaction,
+  mapAsync,
   MervError,
-  now,
   newId,
+  now,
+  plain,
+  recorded,
+  releasedLease,
+  reviewHistory,
+  visible,
   type Artifacts,
   type Caller,
   type CodeUnit,
+  type ContextBuild,
+  type ContextBuilder,
+  type ContextInput,
+  type ContextPackage,
+  type ContextRegistration,
+  type Data,
   type ProcessGraph,
+  type ReviewRequest,
   type Reviews,
+  type Role,
   type Scope,
+  type ServiceTaskCreator,
   type Sql,
   type State,
   type Task,
-  type TaskRecord,
-  type TaskCreate,
-  type TaskDelivery,
-  type TaskReview,
-  type TaskReissue,
-  type TaskMarkFailed,
-  type TaskFailure,
-  type TaskConfirmation,
-  type TaskDeliveryCode,
-  type Tasks,
-  type Transaction,
-  type WorkflowDefinition,
-  type Workflows,
-  type ContextBuilder,
-  type ContextRegistration,
-  type ContextInput,
-  type ContextPackage,
-  type ContextBuild,
-  type WorkflowSnapshot,
-  type WorkflowAssignmentContent,
-  type WorkflowExecutionReferences,
-  type TaskContext,
-  type TaskTypeDefinition,
   type TaskCheckpoint,
   type TaskCheckpointInput,
-  type ReviewRequest,
-  type WorkflowPolicy,
+  type TaskConfirmation,
+  type TaskContext,
+  type TaskCreate,
+  type TaskDelivery,
+  type TaskDeliveryCode,
+  type TaskFailure,
+  type TaskMarkFailed,
+  type TaskRecord,
+  type TaskReissue,
+  type TaskReview,
+  type Tasks,
+  type TaskTypeDefinition,
+  type Transaction,
+  type WorkflowAssignmentContent,
   type WorkflowCheckContext,
+  type WorkflowDefinition,
+  type WorkflowExecutionReferences,
   type WorkflowLease,
-  type Role,
-  type Data,
-  type ServiceTaskCreator,
+  type WorkflowPolicy,
+  type Workflows,
+  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { Context } from 'cordis';
+import { types as nodeTypes } from 'node:util';
+import { z } from 'zod';
+import { postgresMigrations } from './index.postgres.js';
 
 import type { Code, CodeCapture } from '@merv/code-research/types';
-import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
-import { TASK_TYPES, TYPE_REQUIRED_CHECKS, RESERVED_CONTEXT_INPUTS } from './definitions.js';
+import { RESERVED_CONTEXT_INPUTS, TASK_TYPES, TYPE_REQUIRED_CHECKS } from './definitions.js';
 import {
   acceptanceChecks,
-  renderBrief,
   renderAssessment,
+  renderBrief,
   renderDeliveredCommit,
   validateConfirmations,
 } from './evidence.js';
+import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
 
 export type {
   Task,
-  TaskRecord,
   TaskCreate,
   TaskDelivery,
-  TaskReview,
-  TaskReissue,
-  TaskMarkFailed,
   TaskFailure,
+  TaskMarkFailed,
+  TaskRecord,
+  TaskReissue,
+  TaskReview,
   Tasks,
 } from '@merv/contracts';
 
@@ -2164,8 +2171,8 @@ DROP TABLE task_leases_backup;`,
   }
 
   /**
-   * The commit a Git task delivers is this worker's own code.commit, as consolidation.submit
-   * takes it. Its receipt already exists when the worker submits, so a review is never requested
+   * The commit a Git task delivers is this worker's own code.commit. Its receipt already exists
+   * when the worker submits, so a review is never requested
    * on a commit no runner has recorded. Every condition is a separate defence: the session is
    * what stops a successor from delivering its predecessor's commit.
    */

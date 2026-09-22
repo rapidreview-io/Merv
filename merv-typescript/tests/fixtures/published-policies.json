@@ -1,17 +1,19 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint.",
   "definitions": [
     {
       "name": "consolidation",
       "version": 1,
       "fingerprint": "4f90ffce707af5a004cb61fb87b624c94bda62f8a9268a026c3a357cb21a55ad",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "consolidation",
       "version": 2,
       "fingerprint": "97f1a2bee981c7f52fdc97da3e73f62f2f7c3fbc9a2f6b8f5b7a09ee711e4fa3",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "experiment",
@@ -103,13 +105,15 @@
       "name": "consolidation",
       "version": 3,
       "fingerprint": "78f2ca469cc720dd72ccbb72c07ca0a4121ddd184c9d37bc830510cdd6120875",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "consolidation",
       "version": 4,
       "fingerprint": "1f6ae351f818e77a286ac3f20878584eb1db7bde6ec3efa7912b65bdf8b3e298",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "research",
@@ -175,7 +179,8 @@
       "name": "consolidation",
       "version": 5,
       "fingerprint": "5d38181dfaf34fc21c045410cce40779ebf57be2ea9fb43141c245b617868e9d",
-      "published": true
+      "published": true,
+      "retired": true
     }
   ],
   "policies": [
@@ -184,28 +189,32 @@
       "version": 1,
       "state": "consolidating",
       "fingerprint": "76d6766b18810df1c748f687cf65eea2bff7df65e757eba7d46b90307bb485c6",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 1,
       "state": "consolidation_review",
       "fingerprint": "cbe56dab966b5fdf2904eb8fc4730c3794bb8641dff1aff0f1692349c7f6260f",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 2,
       "state": "consolidating",
       "fingerprint": "80c72399a432cb9352d862f988fa73bc2ba06df23f0a620fa00acdd6e37f334d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 2,
       "state": "consolidation_review",
       "fingerprint": "02a8b001e3db56febe9db4e324db4356f05d2fb7ce0dd47bccab38ee819f7a19",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
@@ -496,28 +505,32 @@
       "version": 3,
       "state": "consolidating",
       "fingerprint": "5c2113d194f6d114d4eb04821c2b50bac5936d38e3f395af2b9021a1ec745697",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 3,
       "state": "consolidation_review",
       "fingerprint": "4077ba59723a18f0c35e1aa7d3896268540ff2d2bfc1a03e7ee915416b84cdf4",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 4,
       "state": "consolidating",
       "fingerprint": "352cf88d6b0d91732b3c9cb432fed490e31d52b3be964766e1e0f2cf4a132b13",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 4,
       "state": "consolidation_review",
       "fingerprint": "72a42eb3bed47b7a29b997322226f002a97e5c0e4f503185fc8c07ff6a0a65f6",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "research",
@@ -776,35 +789,40 @@
       "version": 5,
       "state": "consolidating",
       "fingerprint": "63d876c4c527410da90e7919363c9511fe03aebde1cc45ce7c3c2a42d69dd25c",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 5,
       "state": "consolidation_review",
       "fingerprint": "be479c41735fe107fbfee8534b0629489eccf1d695e7966255714a3f0f56207f",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 5,
       "state": "deciding",
       "fingerprint": "72260806c45e7f09e90cf111fec44ad33eb79ae7bf2edb018c534b219458a77e",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 5,
       "state": "awaiting_publication",
       "fingerprint": "da58b12310dc71799047a07bce39f4dbb7a06eedec59e9c175ca4cee6fbb1d48",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
       "version": 5,
       "state": "stale_base",
       "fingerprint": "da58b12310dc71799047a07bce39f4dbb7a06eedec59e9c175ca4cee6fbb1d48",
-      "published": true
+      "published": true,
+      "retired": true
     }
   ],
   "recipes": [
@@ -812,13 +830,15 @@
       "type": "consolidation.consolidating",
       "version": 2,
       "hash": "faab8e25ef068a34fd6e02c48937b2d6d5c809ef3257f64f8706027763f5e391",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "consolidation.consolidation_review",
       "version": 2,
       "hash": "533e66dcb903737669f981f4c80c5fc2ca90ac48f49ee64f6f45b8fd8d7184e5",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
@@ -1172,19 +1192,22 @@
       "type": "consolidation.consolidating",
       "version": 3,
       "hash": "ce2a5c00df1d1ae4268c2ad62dc02cbede286082f5b0a25a51c1961c4822f974",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "consolidation.consolidation_review",
       "version": 3,
       "hash": "ceb9c854e8618f3146c452c239842cea21adf122ab8f5f9c29276400e4755e7b",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "consolidation.deciding",
       "version": 1,
       "hash": "756824d3a5e0cc05af3b39149c6263471a6c6921c9a7eddedf93126bca62f6e3",
-      "published": true
+      "published": true,
+      "retired": true
     }
   ]
 }

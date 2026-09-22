@@ -1,5 +1,5 @@
+import type { AgentSummary, AgentObservation as Observation } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
-import type { AgentObservation as Observation, AgentSummary } from '@merv/contracts/types';
 import { accountRequest, scopeVersion } from '../api';
 import {
   Ago,
@@ -44,7 +44,6 @@ const KIND_OF: Record<string, string> = {
   experiment: 'experiments',
   research: 'research',
   reflection: 'reflections',
-  consolidation: 'consolidation',
 };
 
 function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: Clock }) {

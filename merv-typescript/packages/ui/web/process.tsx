@@ -1,6 +1,6 @@
+import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import { useId, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import { KindLabel, StatusPill, cx, kindStyle, words } from './components';
 import type { WorkflowShape } from './shell-types';
 
@@ -306,7 +306,6 @@ const PLACE: Record<string, string> = {
   experiment: 'experiments',
   research: 'research',
   reflection: 'reflections',
-  consolidation: 'consolidation',
 };
 
 /**

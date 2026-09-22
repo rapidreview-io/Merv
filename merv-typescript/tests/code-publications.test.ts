@@ -1,22 +1,22 @@
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
 import { createService, type State } from '@merv/contracts';
-import { PostgresState } from '@merv/state';
-import { Pool } from 'pg';
 import { ProjectScope } from '@merv/scope';
-import { CodeGitHubService } from '../packages/code/src/github.js';
+import { PostgresState } from '@merv/state';
+import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import test, { type TestContext } from 'node:test';
+import { Pool } from 'pg';
 import { CodePublicationService } from '../packages/code-research/src/publications.js';
 import type { CodeTransportService } from '../packages/code-research/src/transport.js';
 import type { CodeProposal } from '../packages/code-research/src/types.js';
+import { CodeGitHubService } from '../packages/code/src/github.js';
 import {
-  githubFixture,
-  repository,
   baseOid,
-  headOid,
-  treeOid,
-  mergeOid,
   config,
+  githubFixture,
+  headOid,
+  mergeOid,
+  repository,
+  treeOid,
 } from './github-fixture.js';
 
 async function setup(t: TestContext, storage?: State) {
@@ -47,6 +47,49 @@ async function setup(t: TestContext, storage?: State) {
   };
   return { ...f, publications, proposal, review, sync, transport };
 }
+
+/** Retained envelopes must not consume the reconciliation slot of live work. */
+async function retainedPublications(f: Awaited<ReturnType<typeof setup>>) {
+  await f.state.transaction(async (tx) => {
+    const original = await tx.get<{ record_json: string; binding_json: string }>(
+      'SELECT record_json,binding_json FROM code_publications WHERE proposal_id=?',
+      f.proposal.id,
+    );
+    for (let i = 0; i < 101; i++) {
+      const id = `aaa_retired_${String(i).padStart(3, '0')}`;
+      const record = {
+        ...JSON.parse(original!.record_json),
+        proposalId: id,
+        approval: {
+          ...(i % 2 ? { source: 'consolidation' } : {}),
+          integrationBase: baseOid,
+          certificateHash: 'retained',
+          acceptanceHash: 'retained',
+        },
+      };
+      await tx.run(
+        'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json) VALUES(?,?,?,?)',
+        id,
+        f.caller.projectId,
+        JSON.stringify(record),
+        original!.binding_json,
+      );
+    }
+  });
+}
+
+test('retired publications remain untouched and cannot starve current proposals', async (t) => {
+  const f = await setup(t);
+  await retainedPublications(f);
+  assert.equal((await f.sync()).pull?.draft, true);
+  assert.equal(f.pulls.length, 1);
+  const changed = await f.state.read((sql) =>
+    sql.all(
+      "SELECT proposal_id FROM code_publications WHERE proposal_id LIKE 'aaa_retired_%' AND (pull_json IS NOT NULL OR error IS NOT NULL OR synced_at <> '')",
+    ),
+  );
+  assert.deepEqual(changed, []);
+});
 
 test('draft PR creation recovers a lost response and independent approval readies exactly that proposal', async (t) => {
   const f = await setup(t);
@@ -377,6 +420,7 @@ test(
       }
     });
     const f = await setup(t, state);
+    await retainedPublications(f);
     f.control.loseCreateReply = true;
     assert.equal((await f.sync()).pull?.draft, true);
     await f.review();

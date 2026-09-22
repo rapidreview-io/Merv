@@ -102,9 +102,8 @@ export interface PublicationRow {
  * bound to now, or any it was bound to before a verified rebind. A pre-rebind acceptance that
  * passes here goes on to the storage gate below, which a project-keyed import receipt satisfies
  * — safe only because a rebind proves Code's own repository holds every commit the project
- * retained as authoritative before it writes the new binding. Derivation and consolidation's
- * candidate freeze ask the same question, so they ask it here: an acceptance a base may build
- * on is one a consolidation may carry to main.
+ * retained as authoritative before it writes the new binding. Base derivation and publication
+ * validate repository lineage through this shared check.
  */
 export function bindsRepository(
   bound: { repository_id: string; binding_json: string },

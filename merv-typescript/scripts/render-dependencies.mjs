@@ -48,7 +48,6 @@ const names = {
   knowledge: 'Knowledge',
   paper: 'Paper',
   reflections: 'Reflections',
-  consolidation: 'Consolidation',
   research: 'Research',
 };
 const nodes = new Set(),

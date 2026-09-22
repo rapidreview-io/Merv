@@ -1,5 +1,7 @@
 # Git model
 
+> 2026-09-22: The dedicated Consolidation plugin and its version-5 execution/publication path are retired. Historical design sections below describe that former implementation. Current research uses ordinary [consolidation tasks](CONSOLIDATION.md) and unit publication.
+
 Status: accepted design, 2026-09-21. Written by GPT-6 Astra across three rounds (an adversarial review of the first
 design, its own redesign, and a revision after the implementing engineer's objections), and reviewed by Claude Fable.
 It implements the owner's ten decisions recorded below and supersedes the first draft of this file. The implementation status below distinguishes this release from the remaining design.

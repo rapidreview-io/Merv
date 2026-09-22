@@ -1,5 +1,7 @@
 # GitHub transport and consolidation pull requests
 
+> 2026-09-22: The dedicated Consolidation plugin and its version-5 execution/publication path are retired. Historical design sections below describe that former implementation. Current research uses ordinary [consolidation tasks](CONSOLIDATION.md) and unit publication.
+
 Extend the existing Code feature; do not add a plugin or a dependency from
 Workflows/Reviews back to Code. Runner continues to execute Git. Consolidation
 continues to decide whether an immutable proposal passed independent review.

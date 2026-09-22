@@ -1,26 +1,23 @@
-import { mapAsync, type DomainEvents } from '@merv/contracts';
-import {
-  automaticBlocker,
-  automaticResearch,
-  automaticRequest,
-  automaticStatus,
-  recordBlocker,
-  type AutomaticRow,
-} from './automatic.js';
-import { clip, createService, ordered, recorded, replayed, visible } from '@merv/contracts';
-import { postgresMigrations } from './index.postgres.js';
-import type { Context } from 'cordis';
+import type { Code } from '@merv/code-research/types';
 import {
   check,
+  clip,
+  createService,
   digest,
   inTransaction,
+  mapAsync,
   MervError,
   now,
+  ordered,
+  recorded,
+  replayed,
+  visible,
   type Artifact,
   type Artifacts,
   type Caller,
   type CodeAcceptedSince,
   type Data,
+  type DomainEvents,
   type Scope,
   type ServiceTaskCreator,
   type State,
@@ -31,17 +28,35 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
-import type { Paper, PaperRevision } from '@merv/paper/types';
-import type { Knowledge } from '@merv/knowledge/types';
 import type { Experiments } from '@merv/experiments/types';
+import type { Knowledge } from '@merv/knowledge/types';
+import type { Paper, PaperRevision } from '@merv/paper/types';
 import type {
   ApprovedReflection,
   ChangeSpec,
   ReflectionCreate,
   Reflections,
 } from '@merv/reflections/types';
-import type { Consolidation } from '@merv/consolidation/types';
-import type { Code } from '@merv/code-research/types';
+import type { Context } from 'cordis';
+import {
+  automaticBlocker,
+  automaticRequest,
+  automaticResearch,
+  automaticStatus,
+  recordBlocker,
+  type AutomaticRow,
+} from './automatic.js';
+import { postgresMigrations } from './index.postgres.js';
+import {
+  advanceSchema,
+  createSchema,
+  endChoiceSchema,
+  endSchema,
+  getSchema,
+  nextWaveChoiceSchema,
+  parse,
+  replanSchema,
+} from './input.js';
 import type {
   Research,
   ResearchAdvance,
@@ -54,16 +69,6 @@ import type {
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
-import {
-  advanceSchema,
-  createSchema,
-  endChoiceSchema,
-  endSchema,
-  getSchema,
-  nextWaveChoiceSchema,
-  parse,
-  replanSchema,
-} from './input.js';
 export type * from './types.js';
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 type Stage = (typeof stages)[number];
@@ -72,7 +77,6 @@ type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance
 interface Capabilities {
   paper: Paper;
   reflections: Reflections;
-  consolidation: Consolidation;
   knowledge: Knowledge;
   tasks: Tasks;
   integrations: ServiceTaskCreator;
@@ -94,7 +98,6 @@ type BindingChecks = (() => void)[];
 const unavailable = {
   paper: 'This stage needs Paper; enable it to continue',
   reflections: 'This stage needs Reflections; enable it to continue',
-  consolidation: 'This cycle requires Consolidation and Code; enable them to continue',
   knowledge: 'This handoff needs live research evidence from Knowledge; enable it to continue',
   tasks:
     'Creating the approved plan\'s work needs Tasks; enable it, or complete this cycle with nextWave: "skip"',
@@ -189,7 +192,6 @@ export class ResearchService implements Research {
     private workflows: Workflows,
     paper?: Paper,
     reflections?: Reflections,
-    consolidation?: Consolidation,
     knowledge?: Knowledge,
     tasks?: Tasks,
     experiments?: Experiments,
@@ -295,7 +297,6 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         }
         if (paper) this.bindPaper(paper);
         if (reflections) this.bindReflections(reflections);
-        if (consolidation) this.bindConsolidation(consolidation);
         if (knowledge) this.bindKnowledge(knowledge);
         if (tasks) this.bindTasks(tasks);
         if (experiments) this.bindExperiments(experiments);
@@ -704,55 +705,6 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     return problem;
   }
   /**
-   * Exactly what this cycle would hand its consolidation. Built once, so the readiness check
-   * measures the thing the advance will actually create rather than an estimate of it.
-   */
-  private async consolidationSelection(
-    caller: Caller,
-    record: ResearchRecord,
-    checks: BindingChecks,
-    tx: Transaction,
-  ): Promise<{
-    sourceArtifactIds: string[];
-    experimentIds: string[];
-    taskIds: string[];
-    dependsOn: string[];
-  }> {
-    const reflection = await this.use('reflections', checks, (service) =>
-      service.approved(caller, record.reflectionId!, tx),
-    );
-    // Live research is selected at this handoff, not asserted to be part of the earlier
-    // reflection approval. Consolidation reviews it itself.
-    const sources = reflection.corpus
-      ? null
-      : await this.use('knowledge', checks, (service) => service.researchReferences(caller, tx));
-    return {
-      sourceArtifactIds: [
-        ...new Set([
-          reflection.report.id,
-          // Legacy waves approved before the 2026-09-16 ruling still pin an authored graph.
-          ...(reflection.graph ? [reflection.graph.id] : []),
-          reflection.changeSpec.id,
-          ...reflection.lenses.map((lens) => lens.artifact.id),
-          ...(sources?.artifacts ?? []),
-          ...(reflection.corpus?.selection.artifacts ?? []).flatMap((entry) =>
-            entry.status === 'retained' ? [entry.artifact.id] : [],
-          ),
-        ]),
-      ],
-      experimentIds:
-        sources?.experiments ??
-        reflection.experimentIds ??
-        reflection.corpus?.selection.experiments.map((e) => e.id) ??
-        [],
-      taskIds: (await this.workflows.dependencies(caller, record.id, tx)).dependencies
-        .filter((item) => item.workflow === 'task' && item.kind !== 'system')
-        .map((item) => item.id),
-      dependsOn: [record.reflectionId!, ...(record.consolidationDependencies ?? [])],
-    };
-  }
-
-  /**
    * Refuses what the stage cannot pass and answers with the move the advance makes. `since` is
    * what main lacks, which only an advance has asked; the guard reads the move it chose instead.
    */
@@ -788,11 +740,16 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         409,
       );
     }
-    if (
-      record.workflow.version < 6 &&
-      (stage === 'consolidating' || (stage === 'reflecting' && this.needsConsolidation(record)))
-    )
-      this.requireCapability('consolidation', checks);
+    check(
+      !(
+        record.workflow.version < 6 &&
+        (stage === 'consolidating' ||
+          (stage === 'reflecting' && this.usesRetiredConsolidation(record)))
+      ),
+      'research_consolidation_retired',
+      'This cycle uses the retired Consolidation workflow. Its records are retained; start a new research cycle to consolidate through a task.',
+      409,
+    );
     if (record.workflow.version < 5) {
       await this.workflows.checkDependencies(caller, record.id, tx);
     } else if (stage === 'researching') {
@@ -814,34 +771,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
         'The reflection workflow is missing',
         409,
       );
-      const reflection = await this.use('reflections', checks, (service) =>
+      await this.use('reflections', checks, (service) =>
         service.approved(caller, record.reflectionId!, tx),
-      );
-      if (this.needsConsolidation(record) && !reflection.corpus)
-        this.requireCapability('knowledge', checks);
-      // A cycle that cannot compose its consolidation must say so here. Reported ready and
-      // refused on every attempt, it is a dead end with no way out and nothing to read.
-      if (this.needsConsolidation(record)) {
-        const selection = await this.consolidationSelection(caller, record, checks, tx);
-        const limits = await this.use('consolidation', checks, async (service) => service.limits);
-        for (const [field, limit] of Object.entries(limits))
-          check(
-            selection[field as keyof typeof selection].length <= limit,
-            'consolidation_selection_too_large',
-            `This cycle would hand consolidation ${selection[field as keyof typeof selection].length} ${field}, and at most ${limit} are allowed. Reduce the cycle's selection with research.replan, or finish it without consolidation.`,
-            409,
-          );
-      }
-    }
-    if (stage === 'consolidating' && record.workflow.version < 6) {
-      check(
-        record.consolidationId,
-        'research_child_missing',
-        'The consolidation workflow is missing',
-        409,
-      );
-      await this.use('consolidation', checks, (service) =>
-        service.approved(caller, record.consolidationId!, tx),
       );
     }
     const move = await this.move(caller, record, tx, checks, since, choice);
@@ -876,7 +807,9 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     const stage = record.workflow.state as Stage;
     if (stage !== 'reflecting' && stage !== 'consolidating') return 'advance';
     if (record.workflow.version < 6)
-      return stage === 'reflecting' && !this.needsConsolidation(record) ? 'complete' : 'advance';
+      return stage === 'reflecting' && !this.usesRetiredConsolidation(record)
+        ? 'complete'
+        : 'advance';
     // A preflight that answers the completion question is read as completing, so a plan that
     // would refuse is reported before the advance, as it always was.
     const judged = (holds: Move, lacks: Move): Move => {
@@ -1620,40 +1553,6 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
             childIds.push(wave.id);
             break;
           }
-          case 'reflecting': {
-            if (injecting || !this.needsConsolidation(record)) break;
-            await this.use('reflections', checks, (service) =>
-              service.approved(caller, record.reflectionId!, tx),
-            );
-            // Live research is selected at this handoff, not asserted to be part
-            // of the earlier reflection approval. Consolidation reviews it itself.
-            const selection = await this.consolidationSelection(caller, record, checks, tx);
-            const work = await this.use('consolidation', checks, (service) =>
-              service.create(
-                caller,
-                {
-                  ...selection,
-                  name: `${clip(record.name, 185)}: consolidation`,
-                  workspace: record.consolidationWorkspace,
-                  requestId: this.request(caller, input.requestId, 'consolidation'),
-                },
-                tx,
-              ),
-            );
-            await tx.run(
-              'UPDATE research_cycles SET consolidation_id=? WHERE id=?',
-              work.id,
-              record.id,
-            );
-            childIds.push(work.id);
-            break;
-          }
-          case 'consolidating':
-            if (record.workflow.version < 6)
-              await this.use('consolidation', checks, (service) =>
-                service.approved(caller, record.consolidationId!, tx),
-              );
-            break;
         }
         // The guard inside the transition judges the same choices the preflight did, and the
         // move Git's answer decided, which it cannot ask for itself.
@@ -1974,9 +1873,6 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
   bindReflections(reflections: Reflections): () => void {
     return this.bind('reflections', reflections);
   }
-  bindConsolidation(consolidation: Consolidation): () => void {
-    return this.bind('consolidation', consolidation);
-  }
   bindTasks(tasks: Tasks): () => void {
     const releases = [
       this.bind('tasks', tasks),
@@ -2052,8 +1948,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
     checks.forEach((check) => check());
     return result;
   }
-  /** Cycles before version 6 chose a consolidation workflow; since then a task is injected. */
-  private needsConsolidation(record: ResearchRecord): boolean {
+  /** Only retained cycles can refer to the retired dedicated workflow. */
+  private usesRetiredConsolidation(record: ResearchRecord): boolean {
     const { version } = record.workflow;
     return version < 3 || (version < 6 && record.consolidationWorkspace === 'git');
   }
@@ -2110,12 +2006,6 @@ export const researchPlugin = {
       ctx.inject(['knowledge'], (ctx) => {
         ctx.effect(async function* () {
           yield service.bindKnowledge(ctx.knowledge);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['consolidation'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindConsolidation(ctx.consolidation);
           await service.wakeAutomatic();
         });
       });

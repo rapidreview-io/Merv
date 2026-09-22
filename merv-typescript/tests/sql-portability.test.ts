@@ -1,8 +1,16 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import ts from 'typescript';
 import { postgresMigrations as migrations0 } from '../packages/artifacts/src/index.postgres.js';
 import { postgresMigrations as migrations1 } from '../packages/claims/src/index.postgres.js';
 import { postgresMigrations as migrations2 } from '../packages/code-research/src/commands.postgres.js';
 import { postgresMigrations as migrations3 } from '../packages/code-research/src/proposals.postgres.js';
-import { postgresMigrations as migrations4 } from '../packages/consolidation/src/index.postgres.js';
+import { postgresMigrations as migrations25 } from '../packages/code/src/units.postgres.js';
 import { postgresMigrations as migrations5 } from '../packages/context-builder/src/index.postgres.js';
 import { postgresMigrations as migrations6 } from '../packages/domain-events/src/index.postgres.js';
 import { postgresMigrations as migrations7 } from '../packages/experiments/src/program.postgres.js';
@@ -23,15 +31,6 @@ import { postgresMigrations as migrations21 } from '../packages/sessions/src/ind
 import { postgresMigrations as migrations22 } from '../packages/sessions/src/observations.postgres.js';
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
-import { postgresMigrations as migrations25 } from '../packages/code/src/units.postgres.js';
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
-import ts from 'typescript';
-import pg from 'pg';
 
 type DomainMigration = { owner: string; version: number; sqlite: string; postgres: string };
 const nativeMigrations: Record<string, Record<number, string>> = {
@@ -39,7 +38,6 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/claims/src/index.ts': migrations1,
   'packages/code-research/src/commands.ts': migrations2,
   'packages/code-research/src/proposals.ts': migrations3,
-  'packages/consolidation/src/index.ts': migrations4,
   'packages/context-builder/src/index.ts': migrations5,
   'packages/domain-events/src/index.ts': migrations6,
   'packages/experiments/src/program.ts': migrations7,
@@ -121,24 +119,7 @@ async function migrations(): Promise<DomainMigration[]> {
 
 test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
   const all = await migrations();
-  assert.equal(all.length, 69);
-  const consolidation = all.filter(
-    (migration) => migration.owner === 'packages/consolidation/src/index.ts',
-  );
-  for (const dialect of ['sqlite', 'postgres'] as const) {
-    assert.deepEqual(
-      consolidation.flatMap((migration) =>
-        [...migration[dialect].matchAll(/CREATE TABLE (\w+)/g)].map((match) => match[1]),
-      ),
-      [
-        'consolidations',
-        'consolidation_submissions',
-        'consolidation_commands',
-        'consolidation_leases',
-      ],
-    );
-    assert.match(consolidation[1][dialect], /ALTER TABLE consolidations ADD COLUMN decisions TEXT/);
-  }
+  assert.equal(all.length, 67);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

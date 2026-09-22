@@ -1,24 +1,23 @@
+import type { GitHubBinding } from '@merv/code/github';
+import type { GitHubClient } from '@merv/code/github-client';
+import { parseCodeInput } from '@merv/code/input';
+import type { MirrorTransport } from '@merv/code/store/mirror';
+import type { CodeRepositories } from '@merv/code/store/repository';
 import {
   canonical,
   check,
   digest,
-  now,
   MervError,
+  now,
   type Caller,
-  type CodePublication,
   type CodeProjectStatus,
+  type CodePublication,
   type Reviews,
   type Scope,
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { PublicationOwner } from './types.js';
-import type { CodeRepositories } from '@merv/code/store/repository';
-import type { MirrorTransport } from '@merv/code/store/mirror';
-import type { GitHubBinding } from '@merv/code/github';
-import type { GitHubClient } from '@merv/code/github-client';
 import { z } from 'zod';
-import { parseCodeInput } from '@merv/code/input';
 
 export const publicationApproval = {
   context: 'merv/consolidation-approved',
@@ -48,7 +47,6 @@ type Controls = Omit<NonNullable<CodeProjectStatus['publication']>['controls'], 
 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
 export class PublicationHost {
-  private owner?: PublicationOwner;
   private reviews?: { service: Pick<Reviews, 'get'> };
   constructor(
     private state: State,
@@ -57,19 +55,7 @@ export class PublicationHost {
     private mirror: () => MirrorTransport,
     private imported: (caller: Caller, ref: string, oid: string) => Promise<void>,
     private binding: (caller: Caller, tx: Transaction) => Promise<GitHubBinding>,
-    private certificate: (
-      projectId: string,
-      unitId: string,
-      tx: Transaction,
-    ) => Promise<{ hash: string }>,
     private changed: (projectId: string, tx: Transaction) => Promise<void>,
-    private accepted: (
-      caller: Caller,
-      unitId: string,
-      reviewId: string,
-      revision: number,
-      tx: Transaction,
-    ) => Promise<void>,
   ) {}
   bindReviews(service: Pick<Reviews, 'get'>): () => void {
     const binding = { service };
@@ -84,25 +70,6 @@ export class PublicationHost {
     const review = await binding.service.get(caller, reviewId, tx);
     check(this.reviews === binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
     return review;
-  }
-  register(owner: PublicationOwner) {
-    this.owner = owner;
-    return () => {
-      if (this.owner === owner) this.owner = undefined;
-    };
-  }
-  /** No owner loaded means no consolidation can be holding anything, which is the honest answer. */
-  async frozen(projectId: string, tx: Transaction): Promise<string[]> {
-    return (await this.owner?.frozen(projectId, tx)) ?? [];
-  }
-  private requireOwner() {
-    check(
-      this.owner,
-      'publication_owner_unavailable',
-      'Load the publication owner before publishing',
-      503,
-    );
-    return this.owner;
   }
   async check(caller: Caller, record: CodePublication, tx: Transaction) {
     const controls = await this.controls(caller.projectId, tx);
@@ -126,25 +93,17 @@ export class PublicationHost {
       409,
     );
     const envelope = record.approval!;
-    // A consolidation's acceptance is one of its reviewed rounds; a unit's is the single
-    // immutable acceptance its own review recorded. Either way the seal names it by hash.
-    // Envelopes sealed before units could publish carry no source and record_json is
-    // immutable, so anything that is not explicitly a unit is a consolidation.
-    const consolidation = envelope.source !== 'unit';
-    if (consolidation)
-      await this.requireOwner().check(caller, record.instanceId, record.proposalId, tx);
-    const accepted = consolidation
-      ? await tx.get<{ acceptance_json: string }>(
-          'SELECT acceptance_json FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
-          caller.projectId,
-          record.instanceId,
-          record.review!.id,
-        )
-      : await tx.get<{ acceptance_json: string }>(
-          'SELECT acceptance_json FROM code_units WHERE project_id=? AND unit_id=?',
-          caller.projectId,
-          record.instanceId,
-        );
+    check(
+      envelope.source === 'unit',
+      'publication_retired',
+      'This publication belongs to a retired workflow',
+      409,
+    );
+    const accepted = await tx.get<{ acceptance_json: string }>(
+      'SELECT acceptance_json FROM code_units WHERE project_id=? AND unit_id=?',
+      caller.projectId,
+      record.instanceId,
+    );
     check(
       accepted && digest(JSON.parse(accepted.acceptance_json)) === envelope.acceptanceHash,
       'publication_conflict',
@@ -161,14 +120,6 @@ export class PublicationHost {
       'The exact independent review certificate is required',
       409,
     );
-    if (consolidation)
-      check(
-        (await this.certificate(caller.projectId, record.instanceId, tx)).hash ===
-          envelope.certificateHash,
-        'review_provenance_changed',
-        'Publication contributor provenance changed after approval',
-        409,
-      );
     const unit = await tx.get<{
       quarantine_base_key: string | null;
       quarantine_operation_id: string | null;
@@ -196,16 +147,13 @@ export class PublicationHost {
   ) {
     // A unit has no producing state to return to and is already accepted: what an outcome
     // changes for it is what its own publication row now says, which it reads back here.
-    if (record.approval!.source === 'unit') return await this.reconcile(caller, tx);
-    const revision = await this.requireOwner().apply(
-      caller,
-      record.instanceId,
-      record.proposalId,
-      outcome,
-      tx,
-    );
-    if (outcome === 'published')
-      await this.accepted(caller, record.instanceId, record.review!.id, revision, tx);
+    if (record.approval!.source !== 'unit')
+      throw new MervError(
+        'publication_retired',
+        'This publication belongs to a retired workflow',
+        409,
+      );
+    await this.reconcile(caller, tx);
   }
   async ancestor(projectId: string, base: string, head: string) {
     const repos = this.repositories();

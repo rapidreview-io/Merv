@@ -180,7 +180,7 @@ export interface CodeProjectBinding {
   durability: 'legacy-local' | 'code';
 }
 export interface CodeProjectStatus {
-  /** Publication affects only the approved consolidation waiting for its verified receipt. */
+  /** Publication tracks approved work waiting for its verified receipt. */
   publication?: {
     records: CodePublication[];
     controls: CodePublicationControls & { blockers: string[] };

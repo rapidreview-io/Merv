@@ -1,34 +1,32 @@
-import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import type {} from './types.js';
-import { publicationControlSchema } from './publication-host.js';
-import { repositoryPrepareSchema } from './repository-setup.js';
-import { publicationReleaseSchema } from './publications.js';
-import { baseControlSchema, type CodeBaseControl } from './bases.js';
 import { codeBackupRunSchema } from '@merv/code/store/backup';
-import type { CodeBaseControlInput } from '@merv/contracts';
-import { z } from 'zod';
 import {
   codeCommitInputSchema,
-  codePublicationMergeSchema,
-  type CodePublicationMerge,
-  codeMergeInputSchema,
-  type CodeMergeInput,
   codeLocalBindInputSchema,
-  codeRepositoryConfigureInputSchema,
+  codeMergeInputSchema,
   codeMirrorRetryInputSchema,
-  codeUnitFenceInputSchema,
+  codePublicationMergeSchema,
+  codeRepositoryConfigureInputSchema,
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
+  codeUnitFenceInputSchema,
   type Caller,
   type CodeCommitInput,
   type CodeLocalBindInput,
-  type CodeRepositoryConfigureInput,
+  type CodeMergeInput,
   type CodeMirrorRetryInput,
-  type CodeUnitFenceInput,
+  type CodePublicationMerge,
+  type CodeRepositoryConfigureInput,
   type CodeRepositoryImportInput,
   type CodeRepositoryRebindInput,
+  type CodeUnitFenceInput,
 } from '@merv/contracts';
+import type { Context } from 'cordis';
+import { z } from 'zod';
+import { baseControlSchema, type CodeBaseControl } from './bases.js';
+import { publicationControlSchema } from './publication-host.js';
+import { repositoryPrepareSchema } from './repository-setup.js';
+import type {} from './types.js';
 
 export const codeToolsPlugin = {
   name: 'merv-code-tools',
@@ -46,7 +44,7 @@ export const codeToolsPlugin = {
       {
         name: 'code.publication.merge',
         description:
-          'Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree. A stale base returns the same consolidation for another round.',
+          'Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.',
         inputSchema: codePublicationMergeSchema,
         handler: (caller: Caller, input: CodePublicationMerge) =>
           ctx.codeResearch.mergePublication(caller, input),
@@ -65,14 +63,6 @@ export const codeToolsPlugin = {
         inputSchema: publicationControlSchema,
         handler: (caller: Caller, input: unknown) =>
           ctx.codeResearch.controlPublication(caller, input),
-      },
-      {
-        name: 'code.publication.release',
-        description:
-          'Let go of a publication that can no longer reach its repository, named by its proposalId from code.publication list. A publication keeps the repository, base branch and connection revision it was sealed with, so reconnecting GitHub, relinking the repository or turning write automation off leaves it unable to reach its repository for good, and the consolidation that is waiting for it has no action of its own; a publication that never managed to freeze a binding is stuck the same way. Releasing ends it and hands that consolidation straight back for another round against the connection the project has now, with its reviewed facts retained and code_publication_released recorded as its last error. Refused with code_publication_bound while the repository can still be reached, and refused once the publication has merged. Only a project administrator or operator key may call it, never a leased worker. Supply a reason and a stable requestId: the same request replays its result, a changed one is refused.',
-        inputSchema: publicationReleaseSchema,
-        handler: (caller: Caller, input: unknown) =>
-          ctx.codeResearch.releasePublication(caller, input),
       },
       {
         name: 'code.commit',
@@ -180,7 +170,7 @@ export const codeToolsPlugin = {
       {
         name: 'code.repository.rebind',
         description:
-          'Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including every reviewed consolidation round’s, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished, any publication is unsettled or any consolidation holds a frozen candidate set, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid, and work accepted under it can still be frozen into a later consolidation and published to main, because the binding retains every repository it has been bound to; a frozen candidate set never spans a rebind, because one that is still outstanding refuses it. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.',
+          'Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.',
         inputSchema: codeRepositoryRebindInputSchema,
         handler: async (caller: Caller, input: CodeRepositoryRebindInput) =>
           await ctx.codeResearch.rebindRepository(caller, input),

@@ -4,16 +4,16 @@
  * name and a zero, and never a sentence about what is not there. With work in it,
  * the model is the one truth the drawing and the phone's list are both built from.
  */
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
 import type {
   CodeBasePin,
   CodeBaseRecord,
   CodeUnit,
   CodeUnitAcceptance,
 } from '@merv/contracts/code-units';
-import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
 import type { CodePublication, GitHubStatus } from '@merv/contracts/types';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
@@ -52,12 +52,6 @@ const row = {
   view: { kind: 'code' },
   status: {},
   readable: true,
-};
-const waves = {
-  ...row,
-  id: 'consolidation',
-  path: '/consolidation',
-  view: { kind: 'consolidation' },
 };
 /** Where the page thinks it is, which is the one thing that says a node is selected. */
 let where = '';
@@ -444,7 +438,7 @@ const names = new Map([
   ['u4', { name: 'Fold both sweeps', to: '/tasks/u4' }],
   ['u5', { name: 'Resolve loader', to: '/tasks/u5' }],
   ['u6', { name: 'Long-run grokking', to: '/experiments/u6' }],
-  ['u7', { name: 'Wave one', to: '/consolidation/u7' }],
+  ['u7', { name: 'Wave one', to: '/tasks/u7' }],
   ['u9', { name: 'Re-run the ablation grid', to: '/experiments/u9' }],
 ]);
 const commands = () => [receipt('u1', 'a1', 1), receipt('u1', 'a2', 2), receipt('u1', 'c1', 3)];
@@ -462,6 +456,7 @@ const servedProject = (over: Partial<CodeProjectStatus> = {}, records = bases())
           { id: 'u1', title: 'Pin the tokenizer' },
           { id: 'u4', title: 'Fold both sweeps' },
           { id: 'u5', title: 'Resolve loader' },
+          { id: 'u7', title: 'Wave one' },
         ],
         experiments: [
           { id: 'u2', name: 'Baseline p97' },
@@ -472,7 +467,6 @@ const servedProject = (over: Partial<CodeProjectStatus> = {}, records = bases())
       },
     },
   });
-  serve('/tools/consolidation.list', { body: { result: [{ id: 'u7', name: 'Wave one' }] } });
   serve('/code/publications', { body: { publications: [published()] } });
   serve('/code/github', connected());
 };
@@ -549,7 +543,7 @@ test('the model draws every kind of node and states every relation a record carr
   // A lane no list names is drawn as the branch it is, never dropped.
   assert.equal(model.nodes.find((node) => node.id === 'u8')?.name, 'merv/work/u8');
   assert.equal(model.nodes.find((node) => node.id === 'u2')?.colour, 'experiments');
-  assert.equal(model.nodes.find((node) => node.id === 'u7')?.colour, 'consolidation');
+  assert.equal(model.nodes.find((node) => node.id === 'u7')?.colour, 'tasks');
 
   // A base is placed where its last member arrives, under the merge it was made from,
   // and what it resolves comes under it.
@@ -816,12 +810,18 @@ test('the page builds its model from what it reads, and titles nothing twice', a
     },
   });
   serve('/tools/ui.home', {
-    body: { result: { tasks: [{ id: 'u1', title: 'Pin the tokenizer' }] } },
+    body: {
+      result: {
+        tasks: [
+          { id: 'u1', title: 'Pin the tokenizer' },
+          { id: 'u7', title: 'Wave one' },
+        ],
+      },
+    },
   });
-  serve('/tools/consolidation.list', { body: { result: [{ id: 'u7', name: 'Wave one' }] } });
   serve('/code/publications', { body: { publications: [published()] } });
   serve('/code/github', connected({ baseBranch: 'trunk' }));
-  await mount(page([row, waves]));
+  await mount(page([row]));
   // The shell titles the row and the page's own counts stand on that one line beside
   // its name, so the page draws no heading and no band of its own under it.
   const lede = document.querySelector('.page-lede');
@@ -1397,7 +1397,6 @@ test('a superseded publication names the wave that replaced it, and never its id
     body: { result: { commands: commands(), status: status(units(), bases()) } },
   });
   serve('/tools/ui.home', { body: { result: {} } });
-  serve('/tools/consolidation.list', { body: { result: [{ id: 'u7', name: 'Wave one' }] } });
   serve('/code/github', connected());
   await mount(page([row], { at: '/code/unit/p1' }));
   const card = document.querySelector('#code-props');

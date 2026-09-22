@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
   "migrations": [
     {
       "component": "agents",
@@ -107,13 +107,15 @@
       "component": "consolidation",
       "version": 1,
       "hash": "df6f6bd7e8b642b6635a658e73757c82e5a7ad62d91c4a61ef856b8bbe89d7ab",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "consolidation",
       "version": 2,
       "hash": "121469d3b3e59c0cdc9d4fcc0771a89e39f3d0f72b3037a92dfd2b2cc6a9174e",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "context_builder",

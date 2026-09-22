@@ -1,17 +1,17 @@
+import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
+import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { accountRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
 import { EmptyState, LoadState, StatusPill } from '../components';
-import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
-import type { GitHubStatus } from '@merv/contracts/types';
 import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
 import { usePageFacts } from '../shell';
-import type { ViewProps } from './index';
 import { BranchCanvas } from './code-canvas';
 import { CodeCard, CodeOperations, type Reader } from './code-card';
 import { MAIN, chipsOf, gitModel } from './code-model';
 import { GitHubPublications, usePublications } from './github-publications';
+import type { ViewProps } from './index';
 import { useActorNames } from './people';
 
 /**
@@ -74,9 +74,6 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   );
   // Names change rarely, so the lists that hold them are read once and never polled.
   const home = useTool<NamedHome>('ui.home');
-  const consolidations = useTool<{ id: string; name: string }[]>(
-    shell.rows.some((entry) => entry.view.kind === 'consolidation') ? 'consolidation.list' : null,
-  );
   const { connection: github, settled } = useGitHubStatus();
   const published = usePublications();
   const branch = github?.baseBranch ?? github?.repository?.defaultBranch ?? null;
@@ -84,15 +81,12 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   // poll costs a render and not a re-derivation of the whole project.
   const { model, names } = useMemo(() => {
     const names = new Map(recordNames(null, home.data));
-    // A consolidation is the one kind `ui.home` does not list, and it owns lanes here.
-    for (const record of consolidations.data ?? [])
-      names.set(record.id, { name: record.name, to: `/consolidation/${record.id}` });
     if (branch) names.set(MAIN, { name: branch });
     return {
       model: gitModel(read.data?.status, read.data?.commands ?? [], published.rows, names),
       names,
     };
-  }, [read.data, home.data, consolidations.data, published.rows, branch]);
+  }, [read.data, home.data, published.rows, branch]);
   const merges = model.nodes.filter((node) => node.kind === 'base').length;
   const unlinked = !!github && (github.status === 'disconnected' || !github.repository);
   // With no repository and nothing Merv made, the page has one thing to say and one

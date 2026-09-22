@@ -1,107 +1,31 @@
 import type {
-  Caller,
-  CodeCommitInput,
-  CodeCommandRecord,
-  CodeCommitCommand,
-  CodeCommandControl,
-  CodeCommandCompletion,
   Artifact,
-  Data,
-  DelegationSource,
-  Transaction,
-  WorkflowDispatchAdmission,
-  CodeCommitReceipt,
-  SessionWorkspace,
-  CodePublicationApi,
+  Caller,
   CodeAcceptedSince,
   CodeBasePin,
   CodeBaseStatus,
+  CodeCommandCompletion,
+  CodeCommandControl,
+  CodeCommandRecord,
+  CodeCommitCommand,
+  CodeCommitInput,
+  CodeCommitReceipt,
   CodeLocalBindInput,
   CodeProjectBinding,
   CodeProjectStatus,
+  CodePublicationApi,
   CodeUnit,
   CodeUnitAcceptance,
   CodeUnitAcceptInput,
+  Data,
+  DelegationSource,
+  SessionWorkspace,
+  Transaction,
+  WorkflowDispatchAdmission,
 } from '@merv/contracts';
-import type {} from 'cordis';
+import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
-
-/** Opaque, immutable inputs frozen before a consolidation chooses its retained frontier. */
-export interface CodeCandidateSet {
-  formatVersion: 1;
-  projectId: string;
-  repositoryId: string;
-  integrationBase: string;
-  candidates: { unitId: string; acceptanceHash: string; reference: string | null }[];
-  hash: string;
-}
-export interface CodeCandidateDecision {
-  unitId: string;
-  decision: 'retain' | 'adapt' | 'drop' | 'no_code';
-  replacementUnitId?: string;
-  rationale: string;
-}
-export interface CodeReconciliation {
-  unitId: string;
-  retainedUnitId: string;
-  rationale: string;
-}
-export interface CodeDecisionManifest {
-  formatVersion: 1;
-  candidateSetHash: string;
-  decisionsHash: string;
-  contributors: { references: string[]; sourceHash: string; excludedActorIds: string[] };
-  decisions: CodeCandidateDecision[];
-  reconciliations: CodeReconciliation[];
-  frontier: string[];
-  conflicts: (
-    | { kind: 'carried'; unitId: string; retainedUnitId: string; message: string }
-    | { kind: 'on_main'; unitId: string; message: string }
-  )[];
-  hash: string;
-}
-export interface PublicationOwner {
-  check(caller: Caller, instanceId: string, reference: string, tx: Transaction): Promise<void>;
-  /**
-   * The consolidations of this project that still hold a frozen candidate set. The set names
-   * the repository it froze under and is re-validated against that same frozen value, so only
-   * its owner can say whether one is outstanding.
-   */
-  frozen(projectId: string, tx: Transaction): Promise<string[]>;
-  apply(
-    caller: Caller,
-    instanceId: string,
-    reference: string,
-    outcome: 'stale' | 'resume' | 'published',
-    tx: Transaction,
-  ): Promise<number>;
-}
-export interface CodeConsolidations {
-  publicationReferences(
-    caller: Caller,
-    unitId: string,
-    tx: Transaction,
-  ): Promise<import('@merv/contracts').WorkflowExecutionReferences>;
-  registerPublicationOwner(owner: PublicationOwner): () => void;
-  controlPublication(caller: Caller, input: unknown): Promise<unknown>;
-  releasePublication(caller: Caller, input: unknown): Promise<unknown>;
-
-  freezeCandidates(caller: Caller, roots: string[], tx: Transaction): Promise<CodeCandidateSet>;
-  inspectCandidates(
-    caller: Caller,
-    frozen: CodeCandidateSet,
-    decisions: CodeCandidateDecision[],
-    reconciliations: CodeReconciliation[],
-  ): Promise<CodeDecisionManifest>;
-  verifyCandidates(
-    caller: Caller,
-    frozen: CodeCandidateSet,
-    decisions: CodeCandidateDecision[],
-    reconciliations: CodeReconciliation[],
-    manifest: CodeDecisionManifest | undefined,
-    tx: Transaction,
-  ): Promise<void>;
-}
+import type {} from 'cordis';
 
 export interface CodeCommands {
   merge(
@@ -162,7 +86,6 @@ export interface CodeProposals {
   proposal(caller: Caller, proposalId: string, tx?: Transaction): Promise<CodeProposal>;
   close(): void;
 }
-import type { CodeCaptureRef } from '@merv/contracts/types';
 export type { CodeCaptureRef } from '@merv/contracts/types';
 export interface CodeCapture {
   ref: CodeCaptureRef;
@@ -299,7 +222,6 @@ export interface CodeRepositoryControls {
 export interface Code
   extends
     CodeCommands,
-    CodeConsolidations,
     CodeProposals,
     CodeCaptures,
     CodeUnits,
@@ -307,6 +229,7 @@ export interface Code
     CodeRepositoryControls,
     CodePublicationApi {
   bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
+  controlPublication(caller: Caller, input: unknown): Promise<unknown>;
   readonly github: import('@merv/contracts').CodeGitHub;
   transportGrant(
     caller: Caller,

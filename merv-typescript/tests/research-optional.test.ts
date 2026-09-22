@@ -1,18 +1,17 @@
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
-import { backends, optional, type Backend } from './fixtures/code-store.js';
 import type { Caller } from '@merv/contracts';
 import type { Knowledge } from '@merv/knowledge/types';
 import type { ResearchRecord } from '@merv/research/types';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
+import { Pool } from 'pg';
 import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
-import { legacyCycle } from './fixtures/research.js';
+import { backends, optional, type Backend } from './fixtures/code-store.js';
 
 async function fixture(t: TestContext, backend: Backend, coreOnly = false, withoutCode = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-research-optional-'));
@@ -34,6 +33,8 @@ async function fixture(t: TestContext, backend: Backend, coreOnly = false, witho
         : !['api', 'identity', 'ui'].includes(id) && !/-(api|ui)$/.test(id)),
   );
   const app = await createApp({ directory, config });
+  if (!coreOnly && !withoutCode)
+    assert.ok(app.ctx.codeResearch, 'The full fixture must activate Code research');
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
@@ -59,16 +60,6 @@ async function fixture(t: TestContext, backend: Backend, coreOnly = false, witho
   const id = () => `optional-research-${++sequence}`;
   const research = () => app.ctx.research as ResearchService;
   const create = () => research().create(owner, { name: 'Cycle', requestId: id() });
-  /** A retained version-5 cycle that chose Git consolidation, seeded while the plugin is out. */
-  const git = async () => {
-    await app.setEnabled('research', false);
-    const cycleId = await legacyCycle(app.ctx, owner, id(), {
-      version: 5,
-      consolidationWorkspace: 'git',
-    });
-    await app.setEnabled('research', true);
-    return await research().get(owner, cycleId);
-  };
   const command = (record: ResearchRecord) => ({
     researchId: record.id,
     expectedRevision: record.workflow.revision,
@@ -144,7 +135,6 @@ async function fixture(t: TestContext, backend: Backend, coreOnly = false, witho
       return research();
     },
     create,
-    git,
     command,
     advance,
     define,
@@ -172,7 +162,6 @@ for (const backend of backends)
     const completed = await f.advance(reflected);
     assert.equal(completed.workflow.state, 'complete');
     assert.deepEqual(completed.integrations, []);
-    assert.equal(completed.consolidationId, null);
   });
 
 for (const backend of backends)
@@ -181,12 +170,20 @@ for (const backend of backends)
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
-      const code = f.app.ctx.codeResearch;
       const unbind = f.research.bindCode({
         hosted: async () => true,
-        acceptedSince: code.acceptedSince.bind(code),
-        publishOnAcceptance: code.publishOnAcceptance.bind(code),
-        unit: code.unit.bind(code),
+        acceptedSince: async () => ({
+          unitIds: [],
+          quarantined: [],
+          main: 'main',
+          hash: 'reading',
+        }),
+        publishOnAcceptance: async () => {
+          throw new Error('unexpected publication');
+        },
+        unit: async () => {
+          throw new Error('unexpected unit read');
+        },
       });
       await f.create();
       unbind();
@@ -253,12 +250,20 @@ for (const backend of backends)
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
-      const code = f.app.ctx.codeResearch;
       const unbind = f.research.bindCode({
         hosted: async () => true,
-        acceptedSince: code.acceptedSince.bind(code),
-        publishOnAcceptance: code.publishOnAcceptance.bind(code),
-        unit: code.unit.bind(code),
+        acceptedSince: async () => ({
+          unitIds: [],
+          quarantined: [],
+          main: 'main',
+          hash: 'reading',
+        }),
+        publishOnAcceptance: async () => {
+          throw new Error('unexpected publication');
+        },
+        unit: async () => {
+          throw new Error('unexpected unit read');
+        },
       });
       await f.define();
       let record = await f.advance(await f.advance(await f.create()));
@@ -281,7 +286,6 @@ for (const backend of backends)
       const f = await fixture(t, backend);
       await f.define();
       const record = await f.advance(await f.advance(await f.create()));
-      const code = f.app.ctx.codeResearch;
       const unbind = f.research.bindCode({
         hosted: async () => true,
         acceptedSince: async () => ({
@@ -290,8 +294,12 @@ for (const backend of backends)
           main: 'main',
           hash: 'reading',
         }),
-        publishOnAcceptance: code.publishOnAcceptance.bind(code),
-        unit: code.unit.bind(code),
+        publishOnAcceptance: async () => {
+          throw new Error('unexpected publication');
+        },
+        unit: async () => {
+          throw new Error('unexpected unit read');
+        },
       });
       await assert.rejects(f.advance(record), { code: 'reflection_not_approved' });
       unbind();
@@ -333,7 +341,6 @@ for (const backend of backends)
       });
       await f.app.setEnabled('reflections', true);
       await f.app.setEnabled('knowledge', false);
-      await f.app.setEnabled('consolidation', false);
       record = await f.research.advance(f.owner, reflectionInput);
       assert.equal(record.workflow.state, 'reflecting');
       assert.equal(f.app.ctx.research, f.research);
@@ -347,36 +354,8 @@ for (const backend of backends)
       await f.app.setEnabled('reflections', true);
       const completed = await f.research.advance(f.owner, finish);
       assert.equal(completed.workflow.state, 'complete');
-      assert.equal(completed.consolidationId, null);
       await f.app.setEnabled('paper', false);
       assert.deepEqual(await f.research.advance(f.owner, finish), completed);
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `reflection.create remains usable without Knowledge; live Git handoff waits for actual evidence access (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      let record = await f.advance(await f.git());
-      await f.app.setEnabled('knowledge', false);
-      record = await f.advance(record);
-      assert.equal(record.workflow.state, 'reflecting');
-      await f.approve(record);
-      const input = f.command(record);
-      assert.match(
-        JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
-        /knowledge_unavailable/,
-      );
-      await assert.rejects(f.research.advance(f.owner, input), { code: 'knowledge_unavailable' });
-      assert.equal((await f.research.get(f.owner, record.id)).consolidationId, null);
-      assert.deepEqual(await f.app.ctx.consolidation.list(f.owner), []);
-      await f.app.setEnabled('knowledge', true);
-      const result = await f.research.advance(f.owner, input);
-      assert.equal(result.workflow.state, 'consolidating');
-      assert.deepEqual(await f.research.advance(f.owner, input), result);
     },
   );
 
@@ -433,44 +412,6 @@ for (const backend of backends)
 
 for (const backend of backends)
   test(
-    `Knowledge withdrawal during live handoff rolls back children and same-request retry remains valid (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.git()));
-      await f.approve(record);
-      const input = f.command(record);
-      const knowledge = f.app.ctx.knowledge;
-      const entered = pending(),
-        release = pending();
-      const delayed: Knowledge = {
-        ...knowledge,
-        researchReferences: async (...args) => {
-          const refs = await knowledge.researchReferences(...args);
-          entered.resolve();
-          await release.promise;
-          return refs;
-        },
-      };
-      const unbind = f.research.bindKnowledge(delayed);
-      const operation = f.research.advance(f.owner, input);
-      const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
-      await entered.promise;
-      unbind();
-      f.research.bindKnowledge(knowledge);
-      release.resolve();
-      await rejected;
-      assert.equal((await f.research.get(f.owner, record.id)).consolidationId, null);
-      assert.deepEqual(await f.app.ctx.consolidation.list(f.owner), []);
-      const result = await f.research.advance(f.owner, input);
-      assert.equal(result.workflow.state, 'consolidating');
-      assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 1);
-    },
-  );
-
-for (const backend of backends)
-  test(
     `live read grants reject in-flight results from a replaced Knowledge registration (${backend})`,
     optional(backend),
     async (t) => {
@@ -512,12 +453,66 @@ for (const backend of backends)
 
 for (const backend of backends)
   test(
-    `a previously used Reflections binding replaced during Knowledge await invalidates the whole handoff (${backend})`,
+    `an approved current cycle completes while Knowledge is absent and retains its reflection (${backend})`,
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
       await f.define();
-      const record = await f.advance(await f.advance(await f.git()));
+      const record = await f.advance(await f.advance(await f.create()));
+      await f.approve(record);
+      await f.app.setEnabled('knowledge', false);
+      const completed = await f.advance(record);
+      assert.equal(completed.workflow.state, 'complete');
+      assert.equal(completed.reflectionId, record.reflectionId);
+      assert.equal(completed.digest, null);
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `Knowledge withdrawal during current cycle digest rolls back the completion and same-request retry works (${backend})`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.define();
+      const record = await f.advance(await f.advance(await f.create()));
+      await f.approve(record);
+      const input = f.command(record);
+      const knowledge = f.app.ctx.knowledge;
+      const entered = pending(),
+        release = pending();
+      const delayed: Knowledge = {
+        ...knowledge,
+        records: async (...args) => {
+          const records = await knowledge.records(...args);
+          entered.resolve();
+          await release.promise;
+          return records;
+        },
+      };
+      const unbind = f.research.bindKnowledge(delayed);
+      const operation = f.research.advance(f.owner, input);
+      const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
+      await entered.promise;
+      unbind();
+      f.research.bindKnowledge(knowledge);
+      release.resolve();
+      await rejected;
+      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+      const result = await f.research.advance(f.owner, input);
+      assert.equal(result.workflow.state, 'complete');
+      assert.ok(result.digest);
+    },
+  );
+
+for (const backend of backends)
+  test(
+    `replacing Reflections during Knowledge await invalidates current cycle completion (${backend})`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend);
+      await f.define();
+      const record = await f.advance(await f.advance(await f.create()));
       await f.approve(record);
       const input = f.command(record);
       const knowledge = f.app.ctx.knowledge;
@@ -525,11 +520,11 @@ for (const backend of backends)
         release = pending();
       f.research.bindKnowledge({
         ...knowledge,
-        researchReferences: async (...args) => {
-          const refs = await knowledge.researchReferences(...args);
+        records: async (...args) => {
+          const records = await knowledge.records(...args);
           entered.resolve();
           await release.promise;
-          return refs;
+          return records;
         },
       });
       const operation = f.research.advance(f.owner, input);
@@ -538,65 +533,20 @@ for (const backend of backends)
       f.research.bindReflections(f.app.ctx.reflections);
       release.resolve();
       await rejected;
-      assert.equal((await f.research.get(f.owner, record.id)).consolidationId, null);
-      assert.deepEqual(await f.app.ctx.consolidation.list(f.owner), []);
+      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
       f.research.bindKnowledge(knowledge);
-      const result = await f.research.advance(f.owner, input);
-      assert.equal(result.workflow.state, 'consolidating');
-      assert.equal((await f.app.ctx.consolidation.list(f.owner)).length, 1);
+      assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
     },
   );
 
 for (const backend of backends)
   test(
-    `historical approved corpus handoff uses only its retained sources without consulting live Knowledge (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      const oldSource = await f.app.ctx.artifacts.create(f.owner, {
-        title: 'Historical source',
-        content: 'Previously approved evidence.',
-      });
-      const laterSource = await f.app.ctx.artifacts.create(f.owner, {
-        title: 'Later source',
-        content: 'Unrelated later evidence.',
-      });
-      await f.define();
-      const record = await f.advance(await f.advance(await f.git()));
-      await f.approve(record);
-      const reflections = f.app.ctx.reflections;
-      const approved = await reflections.approved(f.owner, record.reflectionId!);
-      // A trusted domain-service fixture supplies the preserved historical contract;
-      // no immutable live row or workflow graph is relabelled.
-      f.research.bindReflections({
-        ...reflections,
-        approved: async () => ({
-          ...approved,
-          corpus: {
-            selection: {
-              artifacts: [{ id: oldSource.id, status: 'retained', artifact: oldSource }],
-              experiments: [],
-            },
-          },
-        }),
-      });
-      await f.app.setEnabled('knowledge', false);
-      const result = await f.advance(record);
-      const child = await f.app.ctx.consolidation.get(f.owner, result.consolidationId!);
-      assert.ok(child.sources.some(({ id }) => id === oldSource.id));
-      assert.ok(!child.sources.some(({ id }) => id === laterSource.id));
-      assert.deepEqual(child.experimentIds, []);
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `replacement between stage checks and provider use never invokes a second provider lifetime (${backend})`,
+    `replacement during approved reflection read cannot use a second provider lifetime (${backend})`,
     optional(backend),
     async (t) => {
       const f = await fixture(t, backend);
       await f.define();
-      const record = await f.advance(await f.advance(await f.git()));
+      const record = await f.advance(await f.advance(await f.create()));
       await f.approve(record);
       const input = f.command(record);
       const reflections = f.app.ctx.reflections;
@@ -619,6 +569,7 @@ for (const backend of backends)
       let calls = 0;
       f.research.bindReflections({
         ...reflections,
+        get: reflections.get.bind(reflections),
         approved: async (...args) => {
           calls++;
           return reflections.approved(...args);
@@ -628,8 +579,7 @@ for (const backend of backends)
       await rejected;
       waiting.mock.restore();
       assert.equal(calls, 0);
-      assert.equal((await f.research.get(f.owner, record.id)).consolidationId, null);
-      assert.deepEqual(await f.app.ctx.consolidation.list(f.owner), []);
-      assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'consolidating');
+      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+      assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
     },
   );

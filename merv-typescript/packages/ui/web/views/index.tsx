@@ -1,20 +1,20 @@
 import type { ComponentType } from 'react';
 import { Navigate } from 'react-router-dom';
-import type { Row, ShellData } from '../shell';
 import { EmptyState } from '../components';
-import { TasksView } from './tasks';
-import { ReviewsView } from './reviews';
+import type { Row, ShellData } from '../shell';
 import { ArtifactsView } from './artifacts';
-import { FeedView } from './feed';
-import { SessionsView } from './sessions';
 import { CodeView } from './code';
 import { ExperimentsView } from './experiments';
-import { SettingsView } from './settings';
-import { PaperView } from './paper';
-import { ResearchView } from './research';
-import { ReflectionsView, ConsolidationView } from './research-programs';
+import { FeedView } from './feed';
 import { LegacyHistoryView } from './legacy-history';
+import { PaperView } from './paper';
 import { CollectionView, RecordView } from './remote';
+import { ResearchView } from './research';
+import { ReflectionsView } from './research-programs';
+import { ReviewsView } from './reviews';
+import { SessionsView } from './sessions';
+import { SettingsView } from './settings';
+import { TasksView } from './tasks';
 
 export interface ViewProps {
   row: Row;
@@ -41,7 +41,6 @@ const views: Record<string, ComponentType<ViewProps>> = {
   paper: PaperView,
   research: ResearchView,
   reflections: ReflectionsView,
-  consolidation: ConsolidationView,
   'legacy-history': LegacyHistoryView,
   // Two generic kinds: a row a remote service describes through its manifest.
   collection: CollectionView,

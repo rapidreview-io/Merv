@@ -141,10 +141,9 @@ export interface CodeStoreHooks {
   imported(tx: Transaction, projectId: string): Promise<void>;
   /**
    * Sessions of the project that hold a workspace in Code's repository right now, read-only
-   * ones included, and consolidations that hold a frozen candidate set. Neither lives in a
-   * Code table, and a rebind is the one thing that must refuse while either is in flight.
-   * Both are asked by project on the rebind's own transaction: who is asking for the rebind
-   * must not narrow what it is refused for.
+   * ones included, and holds supplied by optional integrations. Rebinding refuses while
+   * either is in flight. Both are asked by project on the rebind's own transaction:
+   * who is asking for the rebind must not narrow what it is refused for.
    */
   workspaces(projectId: string, tx: Transaction): Promise<string[]>;
   frozen(projectId: string, tx: Transaction): Promise<string[]>;

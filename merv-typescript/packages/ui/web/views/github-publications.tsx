@@ -1,8 +1,8 @@
+import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import { Ago, KV, Short, StatusPill, Summary, kindStyle, words } from '../components';
 import { ExternalIcon } from '../icons';
-import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
 
 /**
  * A sealed proposal, published: one row per pull request, in the grammar GitHub
@@ -139,7 +139,7 @@ export function GitHubPublications({
     return (
       <article className="row pr-row" key={p.proposalId}>
         <div className="row-name">
-          <span className="kind" style={kindStyle('consolidation')}>
+          <span className="kind" style={kindStyle('code')}>
             Proposal
           </span>
           <strong>{p.title}</strong>
