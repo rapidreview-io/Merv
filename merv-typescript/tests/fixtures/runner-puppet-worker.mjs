@@ -29,9 +29,11 @@ publish('ready.json', { cwd: process.cwd(), assignment });
 for (let step = 1; ; step++) {
   const file = join(directory, `step-${step}.json`);
   while (!existsSync(file)) await delay(20);
-  const { kind, ...input } = JSON.parse(readFileSync(file, 'utf8'));
   let result;
+  // Reading the step belongs inside the guard: a step this worker cannot read is one failed
+  // step to report, never a reason to die on the test mid-conversation.
   try {
+    const { kind, ...input } = JSON.parse(readFileSync(file, 'utf8'));
     if (kind === 'tool') {
       const answer = await client.callTool({ name: input.name, arguments: input.input });
       const text = answer.content.find((item) => item.type === 'text').text;

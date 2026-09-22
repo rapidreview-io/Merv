@@ -1,6 +1,14 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +24,16 @@ import { git, gitSource } from './fixtures/code-store.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
+/** What the server makes a runner wait after a close it counted; sessions' dispatch backoff. */
+const dispatchBackoffMs = 30_000;
+/** What one control call costs when it has to be abandoned; the runner client's own timeout. */
+const controlTimeoutMs = 10_000;
+/**
+ * How long one wait of this test may take. It must outlast a backoff and an abandoned call,
+ * or a single counted close reads here as a mute timeout instead of the outcome this test
+ * asserts a few lines further down.
+ */
+const waitMs = dispatchBackoffMs + controlTimeoutMs + 5_000;
 interface Worker {
   cwd: string;
   assignment: Data;
@@ -83,7 +101,7 @@ function machine(
   });
   const seen = new Set<string>();
   const until = async <T>(what: string, found: () => T | undefined | Promise<T | undefined>) => {
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + waitMs;
     for (;;) {
       await runner.tick();
       const value = await found();
@@ -124,7 +142,13 @@ function machine(
       let steps = 0;
       const step = async <T>(input: Data): Promise<T> => {
         const number = ++steps;
-        writeFileSync(join(directory, `step-${number}.json`), JSON.stringify(input));
+        // The worker polls for this file and reads it whole. A plain write is visible from the
+        // moment it is created, so under load its reader beats its bytes; the step arrives as
+        // an empty file and the worker dies on it. Hand it over the way the worker hands its
+        // answers back: written aside, then named in one step.
+        const handover = join(directory, `step-${number}.json`);
+        writeFileSync(`${handover}.part`, JSON.stringify(input));
+        renameSync(`${handover}.part`, handover);
         const result = await until(`step ${JSON.stringify(input).slice(0, 120)}`, () => {
           const file = join(directory, `step-${number}.result.json`);
           return existsSync(file)
@@ -169,7 +193,7 @@ function machine(
 
 test(
   'a task in Code’s repository is worked on one machine, reviewed at exactly its delivered commit on another, resumed there with what the first left, and accepted with a receipt',
-  { timeout: 120_000 },
+  { timeout: 3 * waitMs },
   async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'merv-v2-'));
     const operator = gitSource(t);
