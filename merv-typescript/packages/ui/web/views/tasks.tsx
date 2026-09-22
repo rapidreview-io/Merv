@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import type { CodeUnit } from '@merv/contracts/code-units';
 import { call, refreshTools, scopeVersion, useTool, type Loaded } from '../api';
 import { UploadIcon } from '../icons';
 import { splitRoutes } from '../list-filters';
@@ -20,6 +21,7 @@ import {
   useArtifacts,
 } from '../components';
 import { Gate, Relations } from '../process';
+import { UnitCode } from './code-section';
 import { useActorNames } from './people';
 import { DELIVER } from './overview';
 import {
@@ -423,7 +425,7 @@ export function useDelivery(
 /** The record and the gate it stands at arrive together, from the row that owns them. */
 function TaskDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
-  const record = useTool<{ task: Task; process: ProcessGraph }>(
+  const record = useTool<{ task: Task; process: ProcessGraph; codeUnit: CodeUnit | null }>(
     'ui.read',
     { rowId: row.id, params: { id } },
     { every: 8000 },
@@ -469,6 +471,7 @@ function TaskDetail({ row }: ViewProps) {
           </>
         ) : undefined
       }
+      code={record.data?.codeUnit && <UnitCode unit={record.data.codeUnit} named={nameOf} />}
       related={
         t.dependencies?.length || t.dependents?.length ? (
           <>

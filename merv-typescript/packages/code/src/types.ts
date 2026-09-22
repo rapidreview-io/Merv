@@ -152,8 +152,6 @@ export interface CodeProposals {
     tx: Transaction,
   ): Promise<CodeProposal>;
   proposal(caller: Caller, proposalId: string, tx?: Transaction): Promise<CodeProposal>;
-  /** Most recent 100 proposals in this project, optionally restricted to an instance. */
-  proposals(caller: Caller, instanceId?: string, tx?: Transaction): Promise<CodeProposal[]>;
   close(): void;
 }
 import type { CodeCaptureRef } from '@merv/contracts/types';

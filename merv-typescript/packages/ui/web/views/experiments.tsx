@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
+import type { CodeUnit } from '@merv/contracts/code-units';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { splitRoutes } from '../list-filters';
@@ -20,6 +21,7 @@ import {
 } from '../components';
 import { Markdown, RecordText, useRecordNames } from '../markdown';
 import { Gate } from '../process';
+import { UnitCode } from './code-section';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
@@ -141,12 +143,14 @@ function ExperimentRecord({
   process,
   reviews,
   exhibit,
+  unit,
   nameOf,
 }: {
   experiment: Experiment;
   process?: ProcessGraph;
   reviews?: Review[];
   exhibit?: ExperimentExhibit;
+  unit?: CodeUnit | null;
   nameOf(id: string | null | undefined): string | undefined;
 }) {
   // One list names every claim this experiment says it tests.
@@ -215,6 +219,7 @@ function ExperimentRecord({
         ) : undefined
       }
       description={e.details ? <Markdown source={e.details} /> : undefined}
+      code={unit && <UnitCode unit={unit} named={nameOf} />}
       details={
         <KV rows={[['Owner', nameOf(e.ownerId)], ...timeRows(e.createdAt, e.workflow.updatedAt)]} />
       }
@@ -228,11 +233,11 @@ function ExperimentDetail({ row }: ViewProps) {
   // Whether the record can still change arrives with the record itself, so the
   // first read polls and every read stops once a settled state has come back.
   const settled = useRef(false);
-  const record = useTool<{ experiment: Experiment; process: ProcessGraph }>(
-    'ui.read',
-    { rowId: row.id, params: { id } },
-    { every: settled.current ? undefined : 8000 },
-  );
+  const record = useTool<{
+    experiment: Experiment;
+    process: ProcessGraph;
+    codeUnit: CodeUnit | null;
+  }>('ui.read', { rowId: row.id, params: { id } }, { every: settled.current ? undefined : 8000 });
   const state = record.data?.experiment.workflow.state;
   settled.current = !!state && ['complete', 'abandoned', 'failed'].includes(state);
   const live = settled.current ? undefined : 8000;
@@ -259,6 +264,7 @@ function ExperimentDetail({ row }: ViewProps) {
       process={record.data.process}
       reviews={reviews.data}
       exhibit={exhibit.data}
+      unit={record.data.codeUnit}
       nameOf={nameOf}
     />
   );

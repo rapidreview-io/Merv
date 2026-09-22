@@ -66,15 +66,22 @@ export interface CodeBasePin {
  */
 export type CodeBaseStatus =
   | { status: 'pinned'; pin: CodeBasePin }
-  | { status: 'ready'; kind: CodeBasePin['kind']; sources: string[] }
+  /**
+   * `merge` names the accepted commits the base was made from, so a reader can join this
+   * unit to that base by its member set without asking the server for a second name.
+   */
+  | { status: 'ready'; kind: CodeBasePin['kind']; sources: string[]; merge?: string[] }
   /** A declared dependency has not settled; Workflows already says so, and Code adds nothing. */
   | { status: 'waiting' }
-  | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[] };
+  /** `merge` names the accepted commits a base has still to be made from. */
+  | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[]; merge?: string[] };
 export interface CodeUnit {
   unitId: string;
   workflow: string;
   version: number;
   declaredAt: string;
+  /** The branch a writer stands on, which is the name the mirror publishes it under. */
+  branch: string;
   base: CodeBasePin | null;
   /** Null once the unit has ended or been accepted without ever taking a base. */
   baseStatus: CodeBaseStatus | null;
@@ -106,6 +113,13 @@ export interface CodeBaseRecord {
   members: string[];
   left: string;
   right: string;
+  /**
+   * The two commits `left` and `right` stand for, in that order: a lone member is itself, an
+   * earlier base is the result it reached. A null is an input that has no usable result, and
+   * a base nobody may build on again is left unresolved rather than read for. Present only
+   * where a whole project was in hand: one row on its own is not worth two more reads.
+   */
+  parents?: [string | null, string | null];
   state: CodeBaseState;
   quarantined: boolean;
   /** How the result was made: by this server's merge, or by the one task that resolved it. */

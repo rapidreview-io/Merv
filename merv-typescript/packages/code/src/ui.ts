@@ -15,10 +15,11 @@ export const codeUiPlugin = {
         order: 25,
         path: '/code',
         view: { kind: 'code' },
+        // `commands` are the commit receipts; the store transfers of the same name are
+        // inside status. A sealed proposal is read on the record that made it, not here.
         read: async (caller) =>
           ({
-            operations: await ctx.code.list(caller),
-            proposals: await ctx.code.proposals(caller),
+            commands: await ctx.code.list(caller),
             status: await ctx.code.status(caller),
           }) as unknown as Json,
       }),

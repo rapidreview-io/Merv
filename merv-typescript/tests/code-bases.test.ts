@@ -223,6 +223,14 @@ for (const backend of backends)
       ))!;
       assert.equal(made.state, 'resolved');
       assert.deepEqual(f.parents(made.result!.commit).sort(), [pair.result!.commit, d].sort());
+      // What the two inputs stand for is answered where the whole project is in hand, and
+      // nowhere else: one row on its own is not worth the two reads it would take.
+      assert.equal(made.parents, undefined);
+      const all = await f.state.read(async (sql) => await f.bases.records(sql, f.projectId));
+      assert.deepEqual(
+        [...all.find((record) => record.key === made.key)!.parents!].sort(),
+        [pair.result!.commit, d].sort(),
+      );
     },
   );
 
@@ -236,6 +244,12 @@ for (const backend of backends)
       await f.state.transaction(async (tx) => await f.bases.ensure(tx, f.projectId, [a, b, d]));
       const written = await f.rows();
       assert.deepEqual(written.map((row) => row.state).sort(), ['queued', 'waiting_inputs']);
+      // An input that has no usable result yet is a null, which is a different answer from
+      // a record that was never asked what its inputs stand for.
+      const waiting = (
+        await f.state.read(async (sql) => await f.bases.records(sql, f.projectId))
+      ).find((record) => record.state === 'waiting_inputs')!;
+      assert.equal(waiting.parents!.filter((commit) => commit === null).length, 1);
       await f.bases.work(f.projectId);
       assert.deepEqual(
         (await f.rows()).map((row) => row.state),

@@ -38,7 +38,7 @@ import type { CodeBaseRecord } from '@merv/contracts';
 import type { CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
 import { baseKey } from './base-plan.js';
-import { acceptedRef } from './store/refs.js';
+import { acceptedRef, workBranch } from './store/refs.js';
 
 interface ProjectRow {
   project_id: string;
@@ -917,6 +917,10 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      // The whole window is read at once and nothing in it can change while it is, so each
+      // unit is asked of Workflows once: a project of open unpinned units otherwise asks for
+      // the same unit three times over and for a shared dependency once per waiter.
+      this.asked.set(tx, new Map());
       const warnings = await tx.get<{ warnings_json: string }>(
         'SELECT warnings_json FROM code_projects WHERE project_id=?',
         caller.projectId,
@@ -941,12 +945,34 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     });
   }
 
+  /**
+   * What a unit depends on. A read that has said it is taking the whole project in one
+   * transaction gets each answer once; every writing path asks Workflows again, because a
+   * transaction that moves an instance must see what it moved.
+   */
+  private readonly asked = new WeakMap<
+    Transaction,
+    Map<string, Promise<WorkflowProviderRelations | null>>
+  >();
+  private async dependencies(
+    tx: Transaction,
+    projectId: string,
+    unitId: string,
+  ): Promise<WorkflowProviderRelations | null> {
+    const held = this.asked.get(tx);
+    if (!held) return await this.workflows.dependencyRelations(projectId, unitId, tx);
+    const key = `${projectId}:${unitId}`;
+    const known = held.get(key) ?? this.workflows.dependencyRelations(projectId, unitId, tx);
+    held.set(key, known);
+    return await known;
+  }
+
   private async relations(
     tx: Transaction,
     projectId: string,
     unitId: string,
   ): Promise<WorkflowProviderRelations> {
-    const relations = await this.workflows.dependencyRelations(projectId, unitId, tx);
+    const relations = await this.dependencies(tx, projectId, unitId);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
     const frontier = await tx.get<{ inputs_json: string }>(
       'SELECT inputs_json FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
@@ -956,7 +982,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     if (frontier) {
       // Scheduling prerequisites still gate the owner; only the frozen frontier contributes code.
       const inputs = await mapAsync(JSON.parse(frontier.inputs_json) as string[], async (id) => {
-        const input = await this.workflows.dependencyRelations(projectId, id, tx);
+        const input = await this.dependencies(tx, projectId, id);
         check(input, 'code_unit_not_found', 'A declared frontier unit is missing', 409);
         return input.instance;
       });
@@ -1043,7 +1069,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       }
       const intact = !accepted || digest(accepted) === unit!.acceptance_hash;
       if (intact && (accepted ? accepted.code === null : !node.declaresWorkspace)) {
-        const below = await this.workflows.dependencyRelations(projectId, node.id, tx);
+        const below = await this.dependencies(tx, projectId, node.id);
         for (const child of (below?.dependencies ?? []).filter((item) => item.kind !== 'system'))
           if (child.settled) queue.push(child);
           else
@@ -1175,11 +1201,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
           : [];
       const resolutionBlockers: WorkflowProvidedBlockerInput[] = [];
       for (const record of resolutions) {
-        const task = await this.workflows.dependencyRelations(
-          projectId,
-          record.resolutionTaskId!,
-          tx,
-        );
+        const task = await this.dependencies(tx, projectId, record.resolutionTaskId!);
         resolutionBlockers.push({
           key: `resolution:${record.key}`,
           code: 'code_merge_conflict',
@@ -1287,6 +1309,9 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
           status: 'ready',
           kind: derived.body.kind,
           sources: derived.body.sources.map((item) => item.unitId),
+          // A merged base is ready at one commit the server made; the accepted commits it
+          // was made from are what join this unit to that base record.
+          ...(derived.merge ? { merge: derived.merge } : {}),
         }
       : derived;
   }
@@ -1793,13 +1818,14 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     // Only a unit that may still take a base is derived: one accepted or ended never will.
     const open =
       !base && row.acceptance_json === null
-        ? await this.workflows.dependencyRelations(row.project_id, row.unit_id, tx)
+        ? await this.dependencies(tx, row.project_id, row.unit_id)
         : null;
     return {
       unitId: row.unit_id,
       workflow: row.workflow,
       version: Number(row.version),
       declaredAt: row.declared_at,
+      branch: workBranch(row.unit_id),
       base,
       baseStatus: row.quarantine_base_key
         ? { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] }

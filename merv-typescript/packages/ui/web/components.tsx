@@ -116,7 +116,7 @@ const TONES: [Tone, string][] = [
     'ok',
     'ready done complete completed approved passed pass success succeeded active live online ' +
       'running healthy verified published accepted merged enabled connected open supported ' +
-      'resolved',
+      'resolved working',
   ],
   [
     'warn',
@@ -124,19 +124,21 @@ const TONES: [Tone, string][] = [
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
       'attempting planning provisioning starting deleting cancelling needs_reconnect refreshing ' +
       'in_review design_review experiment_review consolidation_review planned defining ' +
-      'researching reflecting synthesizing consolidating weakened',
+      'researching reflecting synthesizing consolidating weakened ' +
+      'held waiting_inputs retry_wait awaiting_resolution',
   ],
   [
     'bad',
     'unavailable unreachable failed failure fail error rejected blocked denied dead offline disconnected ' +
-      'timed_out timeout invalid broken abandoned refuted contradicted missing unsupported',
+      'timed_out timeout invalid broken abandoned refuted contradicted missing unsupported ' +
+      'quarantined conflicted blocked_infra',
   ],
   [
     'dim',
     'archived inactive disabled skipped ignored observer reader retired unassigned paused idle ' +
       'stopped ' +
       'draft none unpublished unverified cancelled closed expired not-published not-applicable ' +
-      'metadata-only',
+      'metadata-only ended suspended',
   ],
 ];
 const TONE_OF = new Map(
@@ -350,12 +352,14 @@ export function RecordPage({
   state?: ReactNode;
   title?: string;
 } & Partial<
-  Record<'act' | 'description' | 'content' | 'history' | 'related' | 'details', ReactNode>
+  Record<'act' | 'description' | 'content' | 'history' | 'code' | 'related' | 'details', ReactNode>
 >) {
   const order: [string, ReactNode][] = [
     ['Description', slots.description],
     [title, slots.content],
     ['History', slots.history],
+    // What Git holds for this record is a section of it, never a second record page.
+    ['Code', slots.code],
     ['Related', slots.related],
     ['Details', slots.details],
   ];

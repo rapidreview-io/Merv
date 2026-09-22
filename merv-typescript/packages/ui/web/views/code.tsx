@@ -1,21 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { accountRequest, useScopeVersion, useTool } from '../api';
 import { EmptyState, LoadState, StatusPill } from '../components';
-import type { CodeCommandRecord } from '@merv/contracts/code';
+import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
 import type { GitHubStatus } from '@merv/contracts/types';
+import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
-import { BranchGraph, lanes, type GraphInput, type GraphProposal } from './code-graph';
-import { GitHubPublications, status, usePublications } from './github-publications';
-import type { MapExperiment } from './map-data';
+import { BranchCanvas } from './code-canvas';
+import { MAIN, gitModel } from './code-model';
+import { GitHubPublications, usePublications } from './github-publications';
 import { useActorNames } from './people';
 
 /**
- * Code: the branches Merv made, and the pull requests they became. Nothing
- * else — the connection and its automation are settings, and the diff, the
- * conversation and the commit list belong to GitHub. Lanes are named by the
- * records that own them, which is why this page reads the experiments too.
+ * Code: the branches Merv made drawn as one picture, and the pull requests they
+ * became listed under it. Nothing else — the connection and its automation are
+ * settings, and the diff, the conversation and the commit list belong to GitHub.
+ * Lanes are named by the records that own them, from the lists the app already
+ * reads, so a task, a resolution task and a consolidation are as visible as an
+ * experiment and no generated ref reaches the page.
  */
 
 /**
@@ -52,37 +55,30 @@ const connect = (label: string, primary = false) => (
 type Reader = Pick<Parameters<typeof GitHubPublications>[0], 'operator' | 'named'>;
 
 export function CodePage({ row, shell, ...reader }: ViewProps & Reader) {
-  const read = useTool<{ operations: CodeCommandRecord[]; proposals: GraphProposal[] }>(
+  const read = useTool<{ commands: CodeCommandRecord[]; status?: CodeProjectStatus }>(
     'ui.read',
     { rowId: row.id },
     { every: 10_000 },
   );
-  const experiments = useTool<MapExperiment[]>(
-    shell.rows.some((entry) => entry.view.kind === 'experiments') ? 'experiment.list' : null,
-    {},
-    { every: 30_000 },
+  // Names change rarely, so the lists that hold them are read once and never polled.
+  const home = useTool<NamedHome>('ui.home');
+  const consolidations = useTool<{ id: string; name: string }[]>(
+    shell.rows.some((entry) => entry.view.kind === 'consolidation') ? 'consolidation.list' : null,
   );
   const { connection: github, settled } = useGitHubStatus();
   const published = usePublications();
-  const names = new Map(
-    (experiments.data ?? []).map((item) => [
-      item.id,
-      { name: item.name, state: item.workflow.state },
-    ]),
-  );
-  const graph: GraphInput = {
-    commands: read.data?.operations ?? [],
-    proposals: read.data?.proposals ?? [],
-    publications: published.rows,
-    nameOf: (id) => names.get(id),
-    stateOf: (id) => {
-      const found = published.rows.find((entry) => entry.proposalId === id);
-      return found ? status(found) : 'sealed';
-    },
-    baseBranch: github?.baseBranch ?? github?.repository?.defaultBranch ?? null,
-  };
-  // The heading counts what the graph draws, and a branch no record names is not drawn.
-  const branches = lanes(graph, 1000)?.lanes.length ?? 0;
+  const branch = github?.baseBranch ?? github?.repository?.defaultBranch ?? null;
+  // The model is rebuilt only when something it is made of answers again, so the ten-second
+  // poll costs a render and not a re-derivation of the whole project.
+  const model = useMemo(() => {
+    const names = new Map(recordNames(null, home.data));
+    // A consolidation is the one kind `ui.home` does not list, and it owns lanes here.
+    for (const record of consolidations.data ?? [])
+      names.set(record.id, { name: record.name, to: `/consolidation/${record.id}` });
+    if (branch) names.set(MAIN, { name: branch });
+    return gitModel(read.data?.status, read.data?.commands ?? [], published.rows, names);
+  }, [read.data, home.data, consolidations.data, published.rows, branch]);
+  const merges = model.nodes.filter((node) => node.kind === 'base').length;
   const unlinked = !!github && (github.status === 'disconnected' || !github.repository);
   const label = github?.status === 'disconnected' ? 'Connect GitHub' : 'Select repository';
   // The way to Integrations is offered to whoever can do something there, as on Home:
@@ -97,7 +93,7 @@ export function CodePage({ row, shell, ...reader }: ViewProps & Reader) {
     );
   // With no repository and nothing Merv made, the page has one thing to say and
   // one thing to offer; two empty sections under it would say it twice more.
-  if (unlinked && !read.error && !branches && !published.rows.length)
+  if (unlinked && !read.error && !model.lanes.length && !published.rows.length)
     return (
       <div className="page-stage">
         <EmptyState
@@ -109,6 +105,17 @@ export function CodePage({ row, shell, ...reader }: ViewProps & Reader) {
     );
   return (
     <div className="page-stage stack stack--lg">
+      {/* The shell titles this row, so the page says only what the drawing counts: a count
+          of zero is a fact about the project and is drawn, and a count not yet read is the
+          em dash the console uses. The pull requests are counted by their own section. */}
+      <p className="code-counts">
+        <span>
+          Branches <b>{read.data ? model.lanes.length : '—'}</b>
+        </span>
+        <span>
+          Merges <b>{read.data ? merges : '—'}</b>
+        </span>
+      </p>
       {/* What Merv made outlives the connection it was made over, so it stays on the
           page; the connection's own state is a pill and the way to mend it. */}
       {unlinked && (
@@ -117,13 +124,8 @@ export function CodePage({ row, shell, ...reader }: ViewProps & Reader) {
           {mends && connect(label)}
         </p>
       )}
-      <section className="stack">
-        <h2 className="section-title">
-          Branches <span className="section-n">{read.data ? branches : '—'}</span>
-        </h2>
-        <LoadState loading={read.loading} error={read.error} data={read.data} />
-        {branches > 0 && <BranchGraph {...graph} />}
-      </section>
+      <LoadState loading={read.loading} error={read.error} data={read.data} />
+      {model.lanes.length > 0 && <BranchCanvas model={model} />}
       <GitHubPublications
         rows={published.rows}
         error={published.error}
