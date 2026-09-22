@@ -895,6 +895,23 @@ for (const backend of backends) {
       const worker = await f.worker(decided, commit);
       assert.equal(worker.base, commit);
       assert.equal((await f.code.unit(f.producer, record.id)).base?.reference, commit);
+      // Another record can end at the same result commit: a task-resolved base's commit is an
+      // accepted commit like any other, and a later unit may depend on that resolution task.
+      // The consolidation's base is the one its pinned acceptances name, not whichever row
+      // happens to share the commit and sort first.
+      await f.state.transaction((tx) =>
+        tx.run(
+          "INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,health,result_json,created_at,updated_at) VALUES (?,?,?,?,?,'merge-tree@1','resolved','quarantined',?,?,?)",
+          f.admin.projectId,
+          '0'.repeat(64),
+          JSON.stringify([commits[0], commit].sort()),
+          '1'.repeat(64),
+          '2'.repeat(64),
+          JSON.stringify({ method: 'auto', commit, tree: null, engine: 'merge-tree@1' }),
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ),
+      );
       const submitted = await worker.submit(decided.manifest!.decisions);
       const review = await f.reviews.get(f.reviewer, submitted.reviewId!);
       assert.ok(review.provenance?.excludedActorIds.includes(resolver.actorId));
@@ -1505,6 +1522,30 @@ for (const backend of backends) {
         }),
         { code: 'code_publication_rules_required' },
       );
+      // Rules nobody can read are not rules that are satisfied: the ruleset listing carries
+      // the bypass lists only, so the effective rules still refuse; and when those cannot be
+      // read either, the merge waits rather than landing on a main nothing is known about.
+      f.remote!.control.refuse = (path) => path.endsWith('/rulesets');
+      await assert.rejects(
+        f.code.mergePublication(f.admin, {
+          proposalId: old.proposalId,
+          expectedHead: old.headOid,
+          expectedBase: f.main,
+          requestId: 'rulesets-unreadable',
+        }),
+        { code: 'code_publication_rules_required' },
+      );
+      f.remote!.control.refuse = (path) => path.includes('/rules/branches/');
+      await assert.rejects(
+        f.code.mergePublication(f.admin, {
+          proposalId: old.proposalId,
+          expectedHead: old.headOid,
+          expectedBase: f.main,
+          requestId: 'branch-rules-unreadable',
+        }),
+        { code: 'code_publication_rules_required' },
+      );
+      f.remote!.control.refuse = undefined;
       await f.code.controlPublication(f.admin, {
         action: 'acknowledge_rules',
         reason: 'Inherited bypass lists require a separate owner audit.',

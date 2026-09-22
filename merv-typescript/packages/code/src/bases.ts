@@ -380,7 +380,7 @@ export class CodeBaseService {
     }
     await this.state.transaction(async (tx) => {
       const updated = await tx.run(
-        "UPDATE code_bases SET state=?,result_json=?,resolution_error=?,updated_at=? WHERE project_id=? AND base_key=? AND state='awaiting_resolution' AND health='healthy' AND resolution_task_id=? AND resolution_commit=? AND resolution_error IS NULL",
+        "UPDATE code_bases SET state=?,result_json=?,resolution_error=?,blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND state='awaiting_resolution' AND health='healthy' AND resolution_task_id=? AND resolution_commit=? AND resolution_error IS NULL",
         result ? 'resolved' : 'awaiting_resolution',
         result ? JSON.stringify(result) : null,
         error,
@@ -496,7 +496,26 @@ export class CodeBaseService {
     );
     for (const row of accepted) {
       if (this.closed) return;
-      await this.acceptTask(projectId, this.record(row), row.resolution_commit!);
+      try {
+        await this.acceptTask(projectId, this.record(row), row.resolution_commit!);
+      } catch (error) {
+        // Sealing an acceptance can fail for reasons outside the work it judges. The
+        // acceptance stands and the next drain tries again, but the reason is recorded so an
+        // operator sees the stuck base instead of a project whose merges quietly stopped,
+        // and so one base cannot hold up the rest of this project's work.
+        const reason = error instanceof Error ? error.message : 'The acceptance is unsealed.';
+        await this.state.transaction((tx) =>
+          tx.run(
+            "UPDATE code_bases SET blocker=?,updated_at=? WHERE project_id=? AND base_key=? AND state='awaiting_resolution' AND resolution_commit=? AND (blocker IS NULL OR blocker<>?)",
+            reason,
+            now(),
+            projectId,
+            row.base_key,
+            row.resolution_commit,
+            reason,
+          ),
+        );
+      }
     }
     for (;;) {
       const execution = await this.state.transaction(

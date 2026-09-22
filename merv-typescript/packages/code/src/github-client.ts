@@ -620,12 +620,20 @@ export class GitHubClient {
       token,
       `${repositoryPath(repository)}/rules/branches/${encodeURIComponent(branch)}`,
     );
-    const sets = await this.collection(
-      token,
-      `${repositoryPath(repository)}/rulesets?includes_parents=true`,
-    );
     const details: unknown[] = [];
     let incomplete = false;
+    let sets: unknown[] = [];
+    try {
+      sets = await this.collection(
+        token,
+        `${repositoryPath(repository)}/rulesets?includes_parents=true`,
+      );
+    } catch (error) {
+      // Not being able to list the rulesets hides the bypass lists, and says nothing about the
+      // effective rules just read: those are what the merge gate turns on, and they stand.
+      if (!(error instanceof MervError)) throw error;
+      incomplete = true;
+    }
     for (const value of sets) {
       const set = githubResponse(z.object({ id, source_type: z.string() }), value);
       if (set.source_type !== 'Repository') {

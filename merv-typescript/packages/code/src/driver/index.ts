@@ -110,6 +110,9 @@ const identity = {
 class UploadRefused extends WorkspaceError {}
 /** Refusals that end an upload for good; everything else is tried again. */
 const terminal = [
+  // Every replay sends the identical request, so a refusal of its shape — a bundle larger
+  // than one transfer may be, above all — is the same refusal however often it is sent.
+  'invalid_code_input',
   'code_generation_stale',
   'code_writer_closed',
   'code_head_conflict',

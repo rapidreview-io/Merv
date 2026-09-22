@@ -62,6 +62,8 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
     rulesIncomplete: false,
     strict: true,
     before: undefined as ((path: string) => Promise<void>) | undefined,
+    /** Paths GitHub answers with 403, as it does for a resource the App may not read. */
+    refuse: undefined as ((path: string) => boolean) | undefined,
   };
   const statuses = new Map<string, unknown[]>();
   const comments: { body: string }[] = [];
@@ -91,6 +93,8 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
     });
     assert.equal(init?.redirect, 'error');
     await control.before?.(path);
+    if (control.refuse?.(path))
+      return new Response('{"message":"Resource not accessible by integration"}', { status: 403 });
     let result: unknown;
     if (method === 'DELETE') return new Response(null, { status: 204 });
     if (path === '/login/oauth/access_token')

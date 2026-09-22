@@ -60,6 +60,17 @@ test('SQLite keeps explicit transactions, migration checksums and event delivery
   await assert.rejects(state.migrate('test', [{ version: 1, sql: 'SELECT 1;' }]), {
     code: 'migration_changed',
   });
+  // A server rolled back under a database a newer one already migrated would read that schema
+  // on terms that no longer hold: it refuses to start on it instead.
+  await state.migrate('test', [
+    ...migration,
+    { version: 2, sql: 'CREATE INDEX values_test_value ON values_test(value);' },
+  ]);
+  await assert.rejects(state.migrate('test', migration), { code: 'migration_ahead' });
+  await state.migrate('test', [
+    ...migration,
+    { version: 2, sql: 'CREATE INDEX values_test_value ON values_test(value);' },
+  ]);
   let captured!: Transaction;
   let wakeups = 0;
   state.onEventsCommitted(() => {

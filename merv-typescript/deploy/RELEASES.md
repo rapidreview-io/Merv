@@ -10,6 +10,16 @@ Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.
 ssh ResearchSuite_Control 'sudo bash -c "cd /opt/merv-typescript/releases/<previous-id>/source/deploy && MERV_TS_IMAGE=merv-typescript:<previous-id> docker compose -f compose.yml up -d"'
 ```
 
+Putting the previous image back is enough only while the release being undone ran no migration.
+Each plugin migrates in its own transaction as it initializes, so a release that crash-looped
+later on may already have committed schema the older image has never seen — and `deploy/release.mjs`
+puts that image back by itself when the new one does not become healthy. The older server refuses
+to start on such a database with `migration_ahead` naming the component and version: that refusal
+is the rollback saying the database must come back too. Restore the database to before the
+release (the VM keeps no automatic backup, so take one before any release that migrates), or fix
+forward on the new image. Never delete rows from `component_migrations` to quiet the refusal: the
+schema they name is still there, and the older code reads it on terms that no longer hold.
+
 **Before the release that carries the shared Code repository and automatic bases (Git model S1–S3 together).** The server
 must be deployed before any machine built from it: a runner that advertises `capabilities` is
 refused by an older server's closed heartbeat schema, so deploy here first and update the

@@ -104,6 +104,12 @@ test('a failing command is a result, a missing or slow one is a refusal, and old
   stop.abort();
   await assert.rejects(stopped, { code: 'code_git_aborted' });
 
+  // A child somebody else kills is a refusal, never an exit code Git did not report.
+  await assert.rejects(
+    new ServerGit(directory, script('killed', 'kill -9 $$')).run(['merge-tree']),
+    { code: 'code_git_failed', message: /ended by SIGKILL/ },
+  );
+
   // Unloading ends what runs and refuses what is asked next.
   const closing = new ServerGit(directory, script('running', 'sleep 30'));
   const running = closing.run([]);

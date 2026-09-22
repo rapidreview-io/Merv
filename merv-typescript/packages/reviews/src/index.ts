@@ -678,6 +678,7 @@ export class ReviewService implements Reviews {
           requestId: input.requestId,
         },
         tx,
+        row.excluded_actor_ids == null ? [] : (JSON.parse(row.excluded_actor_ids) as string[]),
       );
     });
   }
@@ -702,6 +703,12 @@ export class ReviewService implements Reviews {
     caller: Caller,
     input: ReviewInput,
     tx: Transaction,
+    /**
+     * Exclusions a stored request already admitted. A reissue replays them exactly as they
+     * were pinned, and the authority that directed the worker then is rarely the one asking
+     * for the new claim now, so they are not judged again against this caller.
+     */
+    admitted: string[] = [],
   ): Promise<ReviewRequest> {
     const excludedActorIds = contributorExclusions(input);
     if (excludedActorIds !== undefined) input = { ...input, excludedActorIds };
@@ -772,6 +779,7 @@ export class ReviewService implements Reviews {
             (actorId) =>
               actorId === (input.administrativeActorId ?? input.producerId) ||
               actorId === directing ||
+              admitted.includes(actorId) ||
               manifest.some((artifact) => artifact.createdBy === actorId),
           ),
         'invalid_review_exclusions',

@@ -102,8 +102,9 @@ export async function verifyResolution(
   const listed = await git.run(['rev-list', '--first-parent', '--parents', `${left}..${head}`], {
     env,
   });
-  if (listed.code !== 0)
-    return { firstMerge: null, error: 'The resolution lineage could not be read.' };
+  // Only what Git answers may judge a resolution. Git failing to run says nothing about the
+  // work, and the verdict is recorded once, so a failure is raised for the caller to retry.
+  check(listed.code === 0, 'code_git_failed', 'The resolution lineage could not be read.', 503);
   const lines = listed.stdout.toString('utf8').trim().split('\n').filter(Boolean).reverse();
   let previous = left;
   let firstMerge: string | null = null;
@@ -127,10 +128,12 @@ export async function verifyResolution(
   }
   if (previous !== head)
     return { firstMerge, error: 'The resolution is not on the planned first-parent lineage.' };
-  if (
-    firstMerge &&
-    (await git.run(['merge-base', '--is-ancestor', right, head], { env })).code !== 0
-  )
-    return { firstMerge, error: 'The resolution does not contain the frozen right input.' };
+  if (firstMerge) {
+    const contains = await git.run(['merge-base', '--is-ancestor', right, head], { env });
+    // Exit 1 is Git's answer that it is not an ancestor; anything else is Git not answering.
+    check(contains.code < 2, 'code_git_failed', 'The resolution lineage could not be read.', 503);
+    if (contains.code === 1)
+      return { firstMerge, error: 'The resolution does not contain the frozen right input.' };
+  }
   return { firstMerge, error: null };
 }
