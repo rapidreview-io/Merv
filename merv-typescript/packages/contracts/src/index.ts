@@ -106,8 +106,10 @@ export {
 } from './code.js';
 import type { CodeUnit } from './code-units.js';
 export type {
+  CodeAcceptedSince,
   CodeUnitAcceptInput,
   CodeUnitAcceptance,
+  CodeUnitPublication,
   CodeBasePin,
   CodeBaseRecord,
   CodeBaseControlInput,

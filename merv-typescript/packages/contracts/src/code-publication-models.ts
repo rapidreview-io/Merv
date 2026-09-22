@@ -22,12 +22,25 @@ export interface CodePublication {
   } | null;
   pull: GitHubPullRequest | null;
   lastError: string | null;
+  /**
+   * The sealed publication envelope. A reviewed consolidation and a unit accepted to publish
+   * fill the same fields, so the pull request, the approval status and the human-only merge
+   * have one thing to check whichever opened the publication. The reviewed head and tree are
+   * not repeated here: this row already carries them, and it is immutable.
+   */
   approval?: {
-    candidateSetHash: string;
-    decisionManifestHash: string;
+    /**
+     * Absent on every envelope sealed before units could publish, which record_json makes
+     * immutable: no source means a consolidation, and that is how a reader must take it.
+     */
+    source?: 'consolidation' | 'unit';
     integrationBase: string;
-    certificateHash: string;
+    /** The review's pinned provenance; null where the passing review carried none. */
+    certificateHash: string | null;
     acceptanceHash: string;
+    /** A consolidation's own frozen inputs. */
+    candidateSetHash?: string;
+    decisionManifestHash?: string;
   };
   stale?: boolean;
   successor?: string | null;

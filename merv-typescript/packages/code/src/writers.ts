@@ -478,6 +478,15 @@ export class CodeWriterService {
     row: WriterRow,
     blockers: WorkflowProvidedBlockerInput[],
   ): Promise<void> {
+    // A writer opinion is about work still to be done. Work that has ended lost its rows at
+    // that transition and nothing here runs again to withdraw one, so a row written onto it
+    // afterwards — the grace sweep reaches units that ended while closing — would be a
+    // blocker nobody could ever clear. Clearing is always allowed.
+    if (
+      blockers.length &&
+      (await this.workflows.dependencyRelations(row.project_id, row.unit_id, tx))?.instance.terminal
+    )
+      return;
     await this.workflows.replaceBlockers(
       { projectId: row.project_id, instanceId: row.unit_id, provider: PROVIDER, blockers },
       tx,

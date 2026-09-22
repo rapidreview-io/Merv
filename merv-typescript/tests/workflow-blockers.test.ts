@@ -228,10 +228,16 @@ for (const backend of backends) {
         expectedRevision: work.revision,
       });
       assert.deepEqual(await f.workflows.blockers(f.owner), []);
-      // A late opinion about ended work is dropped rather than stored.
+      // Ending clears what was said while the work was open; a provider may still say what
+      // ended work is waiting on afterwards, and ending it again never leaves that behind.
       await f.publish(work.id, [merge]);
-      assert.deepEqual(await f.workflows.blockers(f.owner), []);
+      assert.deepEqual(
+        (await f.workflows.blockers(f.owner)).map((item) => item.key),
+        [merge.key],
+      );
       assert.equal((await f.workflows.evaluate(f.owner, work.id)).currentGate, 'terminal');
+      await f.publish(work.id, []);
+      assert.deepEqual(await f.workflows.blockers(f.owner), []);
 
       await assert.rejects(
         f.publish(free.id, [{ ...merge, status: 200 }]),

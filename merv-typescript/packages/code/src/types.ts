@@ -13,6 +13,7 @@ import type {
   CodeCommitReceipt,
   SessionWorkspace,
   CodePublicationApi,
+  CodeAcceptedSince,
   CodeBasePin,
   CodeBaseStatus,
   CodeLocalBindInput,
@@ -196,6 +197,15 @@ export interface CodeUnits {
     input: CodeUnitAcceptInput,
     tx: Transaction,
   ): Promise<CodeUnitAcceptance>;
+  /**
+   * Records, once, that this unit's accepted code goes to main. It is declared before the
+   * first lease, because main joins the unit's base at derivation and a pin is immutable.
+   */
+  publishOnAcceptance(
+    caller: Caller,
+    input: { unitId: string },
+    tx: Transaction,
+  ): Promise<CodeUnit>;
   /** What a lease would find now; a pure read, safe under every admission and candidate scan. */
   baseStatus(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBaseStatus>;
   /** Only an owner's lease acquisition calls this: the base is fixed with the lease it serves. */
@@ -235,6 +245,12 @@ export interface CodeWriters {
 }
 /** The project's repository on the server's disk; refused where the server keeps none. */
 export interface CodeRepositoryControls {
+  /**
+   * The accepted units of this project whose code the current main does not contain yet.
+   * It asks Git, so it lives with the repository rather than with the units, and takes no
+   * transaction: Git never runs inside one, and the candidate scan is a read of its own.
+   */
+  acceptedSince(caller: Caller): Promise<CodeAcceptedSince>;
   controlBase(
     caller: Caller,
     input: Omit<import('@merv/contracts').CodeBaseControlInput, 'action'> & {

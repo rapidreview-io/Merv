@@ -18,6 +18,35 @@ export interface CodeUnitAcceptInput {
   /** The leased review session, when there was one, so Code can record where it attached. */
   reviewSessionId: string | null;
 }
+/**
+ * Accepted units of a project whose code the project's main does not yet contain, as one
+ * answer: a reader that wants to know what is still unpublished asks once rather than
+ * comparing commits it is not allowed to interpret.
+ */
+export interface CodeAcceptedSince {
+  unitIds: string[];
+  /**
+   * The unpublished units whose acceptance is quarantined. They are unpublished code like the
+   * rest, and are named rather than hidden, because nothing may be built on them.
+   */
+  quarantined: string[];
+  /** The main those units were compared against. */
+  main: string;
+  /** The answer's identity, so a caller can tell one reading from another. */
+  hash: string;
+}
+/**
+ * Where a unit that publishes its accepted code to main stands. Null for every unit that
+ * does not publish, and for one that is marked but not accepted yet: publication begins at
+ * acceptance. `pending` is a wait on a signed-in operator, never a failure of the work, and
+ * `unsealed` is the accepted unit whose facts could not open a publication at all.
+ */
+export interface CodeUnitPublication {
+  state: 'pending' | 'stale' | 'disabled' | 'closed' | 'unsealed' | 'incident' | 'published';
+  pull?: { number: number; url: string };
+  /** The verified merge commit on main; present only once `published`. */
+  mergeCommit?: string;
+}
 export interface CodeUnitAcceptance {
   unitId: string;
   hash: string;
@@ -86,6 +115,8 @@ export interface CodeUnit {
   /** Null once the unit has ended or been accepted without ever taking a base. */
   baseStatus: CodeBaseStatus | null;
   acceptance: CodeUnitAcceptance | null;
+  /** Where this unit's publication to main stands; null unless it publishes and was accepted. */
+  publication: CodeUnitPublication | null;
   /** Zero until a session first writes to Code's repository for this unit. */
   generation: number;
   writerState: CodeWriterState;
