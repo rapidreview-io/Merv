@@ -99,6 +99,7 @@ export class GitHubClient {
   #appKey?: KeyObject;
   #stop = new AbortController();
   #authorization = new AsyncLocalStorage<(() => Promise<void>) | undefined>();
+  #installation = new AsyncLocalStorage<true>();
   constructor(
     config: GitHubConfig,
     private fetcher: typeof fetch = fetch,
@@ -152,6 +153,16 @@ export class GitHubClient {
   }
   authorized<T>(authorize: () => Promise<void>, operation: () => Promise<T>): Promise<T> {
     return this.#authorization.run(authorize, operation);
+  }
+  /**
+   * Every request inside this scope carries a credential the server minted for itself: the App
+   * JWT or an installation token. GitHub refuses those with 401 for reasons that have nothing
+   * to do with the human who connected the project — a rotated App key, a clock that puts iat
+   * in the future, an App removed after the token was minted — so the refusal must never be
+   * reported as "reconnect", which is what discards the human's stored OAuth credentials.
+   */
+  installed<T>(operation: () => Promise<T>): Promise<T> {
+    return this.#installation.run(true, operation);
   }
   get automationConfigured() {
     return !!this.#appKey;
@@ -212,10 +223,12 @@ export class GitHubClient {
         permissions: z.record(z.string()),
         repositories: z.array(z.object({ id })),
       }),
-      await this.request(
-        `https://api.github.com/app/installations/${repository.installationId}/access_tokens`,
-        jwt,
-        { repository_ids: [repository.id], permissions },
+      await this.installed(() =>
+        this.request(
+          `https://api.github.com/app/installations/${repository.installationId}/access_tokens`,
+          jwt,
+          { repository_ids: [repository.id], permissions },
+        ),
       ),
     );
     const valid =
@@ -233,7 +246,9 @@ export class GitHubClient {
   async revokeInstallationToken(token: string) {
     // Revoking a token is cleanup and must still work after the grant loses authority.
     await this.#authorization.run(undefined, () =>
-      this.request('https://api.github.com/installation/token', token, undefined, 'DELETE'),
+      this.installed(() =>
+        this.request('https://api.github.com/installation/token', token, undefined, 'DELETE'),
+      ),
     );
   }
   async ensureBranch(token: string, repository: string, branch: string, sha: string) {
@@ -355,6 +370,12 @@ export class GitHubClient {
             'github_conflict',
             'GitHub refused this change; refresh the repository or pull request before retrying',
             409,
+          );
+        if (response.status === 401 && this.#installation.getStore())
+          throw new MervError(
+            'github_app_unavailable',
+            'GitHub refused the Merv App credential for this repository; check the App installation and its server key',
+            502,
           );
         throw new MervError(
           response.status === 401 ? 'github_reconnect' : 'github_unavailable',

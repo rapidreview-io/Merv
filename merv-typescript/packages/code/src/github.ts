@@ -745,7 +745,8 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
           checks: 'read',
         });
         try {
-          return await fn(client, grant.token, current);
+          // Everything fn does carries the installation token, never the human's OAuth token.
+          return await client.installed(() => fn(client, grant.token, current));
         } finally {
           await client.revokeInstallationToken(grant.token).catch(() => {});
         }

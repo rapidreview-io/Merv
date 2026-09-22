@@ -1767,4 +1767,128 @@ for (const backend of backends) {
       assert.ok(!(await host.status(f.admin)).blockers.includes('code_publication_disabled'));
     },
   );
+
+  test(
+    `${backend}: a publication whose binding cannot be reached is released back to its consolidation`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend, 0, true);
+      const candidate = await f.unit('task', f.leaf);
+      const record = await f.create([], [candidate.id]);
+      const decisions: CodeCandidateDecision[] = [
+        { unitId: candidate.id, decision: 'retain', rationale: 'Keep the accepted work.' },
+      ];
+      const decided = await f.decide(record, decisions);
+      await f.approve(decided, f.leaf, decisions);
+      await f.code.controlPublication(f.admin, {
+        action: 'record_canary',
+        staleMerged: false,
+        reason: 'Release check passed.',
+        requestId: 'canary',
+      });
+      const sync = async () => {
+        await f.state.transaction((tx) => tx.run("UPDATE code_publications SET synced_at=''"));
+        return f.code.syncPublications(f.admin);
+      };
+      const [publication] = await sync();
+      assert.equal(publication.lastError, null);
+      const release = {
+        proposalId: publication.proposalId,
+        reason: 'The GitHub connection was rebuilt; this frozen binding cannot be reached again.',
+        requestId: 'release',
+      };
+      await assert.rejects(f.code.releasePublication(f.admin, release), {
+        code: 'code_publication_bound',
+      });
+      // Relinking fences every publication frozen at the old connection revision, and the
+      // consolidation waiting for it has no action of its own in awaiting_publication.
+      await f.remote!.github.link(f.admin, {
+        expectedRevision: (await f.remote!.github.status(f.admin)).revision,
+        repositoryId: 101,
+        installationId: 17,
+      });
+      await f.remote!.enable();
+      assert.equal((await sync())[0].lastError, 'github_conflict');
+      assert.equal(
+        (await f.consolidation.get(f.admin, record.id)).workflow.state,
+        'awaiting_publication',
+      );
+      const released = await f.code.releasePublication(f.admin, release);
+      // The release is the whole ending: the consolidation is back without another sync, and
+      // the list says the publication was released rather than still failing against GitHub.
+      assert.equal((await f.consolidation.get(f.admin, record.id)).workflow.state, 'consolidating');
+      assert.equal(released.lastError, 'code_publication_released');
+      assert.equal(released.review?.verdict, 'pass');
+      assert.deepEqual(await f.code.releasePublication(f.admin, release), released);
+      await assert.rejects(
+        f.code.releasePublication(f.admin, { ...release, reason: 'A different reason.' }),
+        { code: 'request_conflict' },
+      );
+      const receipt = await f.state.read((sql) =>
+        sql.get<{ kind: string; payload_json: string }>(
+          'SELECT kind,payload_json FROM code_operations WHERE project_id=? AND request_id=?',
+          f.admin.projectId,
+          release.requestId,
+        ),
+      );
+      assert.equal(receipt?.kind, 'publication-release');
+      assert.equal(JSON.parse(receipt!.payload_json).reason, release.reason);
+      // Settled and not stale: the next round's approval adopts a stale predecessor that has no
+      // successor yet, which would reopen this row into a sync its binding can never satisfy.
+      const ended = await f.state.read((sql) =>
+        sql.get<{ settled: number; stale: number }>(
+          'SELECT settled,stale FROM code_publications WHERE proposal_id=?',
+          publication.proposalId,
+        ),
+      );
+      assert.equal(Number(ended!.settled), 1);
+      assert.equal(Number(ended!.stale), 0);
+      assert.equal((await sync())[0].lastError, 'code_publication_released');
+      await assert.rejects(
+        f.code.mergePublication(f.admin, {
+          proposalId: publication.proposalId,
+          expectedHead: publication.headOid,
+          expectedBase: f.main,
+          requestId: 'merge-released',
+        }),
+        { code: 'publication_conflict' },
+      );
+    },
+  );
+
+  test(
+    `${backend}: a publication that never froze a binding is released back to its consolidation`,
+    optional(backend),
+    async (t) => {
+      const f = await fixture(t, backend, 0, true);
+      const candidate = await f.unit('task', f.leaf);
+      const record = await f.create([], [candidate.id]);
+      const decisions: CodeCandidateDecision[] = [
+        { unitId: candidate.id, decision: 'retain', rationale: 'Keep the accepted work.' },
+      ];
+      const decided = await f.decide(record, decisions);
+      await f.approve(decided, f.leaf, decisions);
+      // A hosted publication takes its binding on its first successful sync. Write automation
+      // off before that sync means no poll can ever freeze one, and nobody has to turn it on.
+      await f.remote!.github.configureAutomation(f.admin, {
+        expectedRevision: (await f.remote!.github.status(f.admin)).revision,
+        mode: 'off',
+        baseBranch: null,
+      });
+      const [unbound] = await f.code.syncPublications(f.admin);
+      assert.equal(unbound.lastError, 'github_automation_disabled');
+      assert.equal(unbound.repository, '');
+      assert.equal(
+        (await f.consolidation.get(f.admin, record.id)).workflow.state,
+        'awaiting_publication',
+      );
+      const released = await f.code.releasePublication(f.admin, {
+        proposalId: unbound.proposalId,
+        reason: 'This project has no GitHub connection to publish with any more.',
+        requestId: 'release',
+      });
+      assert.equal(released.lastError, 'code_publication_released');
+      assert.equal((await f.consolidation.get(f.admin, record.id)).workflow.state, 'consolidating');
+    },
+  );
 }

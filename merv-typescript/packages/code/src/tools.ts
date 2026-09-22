@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
 import { publicationControlSchema } from './publication-host.js';
+import { publicationReleaseSchema } from './publications.js';
 import { baseControlSchema } from './bases.js';
 import type { CodeBaseControlInput } from '@merv/contracts';
 import { z } from 'zod';
@@ -55,6 +56,15 @@ export const codeToolsPlugin = {
           'Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
         inputSchema: publicationControlSchema,
         handler: (caller: Caller, input: unknown) => ctx.code.controlPublication(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'code.publication.release',
+        description:
+          'Let go of a publication that can no longer reach its repository, named by its proposalId from code.publication list. A publication keeps the repository, base branch and connection revision it was sealed with, so reconnecting GitHub, relinking the repository or turning write automation off leaves it unable to reach its repository for good, and the consolidation that is waiting for it has no action of its own; a publication that never managed to freeze a binding is stuck the same way. Releasing ends it and hands that consolidation straight back for another round against the connection the project has now, with its reviewed facts retained and code_publication_released recorded as its last error. Refused with code_publication_bound while the repository can still be reached, and refused once the publication has merged. Only a project administrator or operator key may call it, never a leased worker. Supply a reason and a stable requestId: the same request replays its result, a changed one is refused.',
+        inputSchema: publicationReleaseSchema,
+        handler: (caller: Caller, input: unknown) => ctx.code.releasePublication(caller, input),
       }),
     );
     ctx.effect(() =>

@@ -275,6 +275,9 @@ export class CodeService extends CodeCommandService implements Code {
   controlPublication(caller: Caller, input: unknown): Promise<unknown> {
     return this.publicationHost.control(caller, input);
   }
+  releasePublication(...args: Parameters<CodePublicationService['releasePublication']>) {
+    return this.publicationStore.releasePublication(...args);
+  }
   recordPublicationReview(...args: Parameters<CodePublicationService['recordReview']>) {
     return this.publicationStore.recordReview(...args);
   }

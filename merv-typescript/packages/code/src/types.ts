@@ -77,6 +77,7 @@ export interface CodeConsolidations {
   ): Promise<import('@merv/contracts').WorkflowExecutionReferences>;
   registerPublicationOwner(owner: PublicationOwner): () => void;
   controlPublication(caller: Caller, input: unknown): Promise<unknown>;
+  releasePublication(caller: Caller, input: unknown): Promise<unknown>;
 
   freezeCandidates(caller: Caller, roots: string[], tx: Transaction): Promise<CodeCandidateSet>;
   inspectCandidates(

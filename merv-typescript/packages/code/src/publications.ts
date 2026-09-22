@@ -17,6 +17,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
+import { z } from 'zod';
 import type { CodeProposal } from './types.js';
 import { CodeGitHubService } from './github.js';
 import type { CodeTransportService } from './transport.js';
@@ -29,6 +30,26 @@ const schema = `CREATE TABLE code_publications (
   review_json TEXT,pull_json TEXT,merge_json TEXT,error TEXT,lock_id TEXT,lock_until TEXT,synced_at TEXT NOT NULL DEFAULT '',settled INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX code_publications_project ON code_publications(project_id);`;
+export const publicationReleaseSchema = z
+  .object({
+    proposalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    reason: z.string().trim().min(1).max(4000),
+    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+  })
+  .strict();
+/**
+ * Every way a publication's repository stops being reachable: the frozen binding no longer
+ * matches the connection, or the project has no connection left to bind to at all. Unlinking a
+ * repository turns automation off in the same statement, so it arrives here as the disabled
+ * refusal. None of these is about the caller's own authority, and none is a passing server-wide
+ * condition, which is why a refusal outside this list is reported as it arrived.
+ */
+const unreachable = [
+  'github_reconnect',
+  'github_conflict',
+  'github_owner',
+  'github_automation_disabled',
+];
 interface Row {
   proposal_id: string;
   project_id: string;
@@ -573,6 +594,112 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return { publication: { ...publication, pull: details.pull }, details };
   }
+  /**
+   * The operator route out of a binding that can no longer be honoured. A publication keeps the
+   * repository, base branch and connection revision it was sealed with, so reconnecting GitHub,
+   * relinking the repository or turning write automation off fences it for good: every later
+   * reconciliation refuses, and a hosted consolidation waits in awaiting_publication with no
+   * action of its own. A publication that never got a binding at all is stuck the same way, so
+   * the release asks the project for a binding now and takes the same refusals as proof. The
+   * release is the whole ending: the consolidation is handed back here for another round against
+   * whatever GitHub connection the project now has, and the publication is finished where its
+   * failures were recorded. It is refused while the repository can still be reached, so nobody
+   * can walk a live publication past its review this way.
+   */
+  async releasePublication(caller: Caller, value: unknown) {
+    caller = structuredClone(caller);
+    const input = parseCodeInput(publicationReleaseSchema, value);
+    const { requestId, ...body } = input;
+    const principal = `actor:${caller.actorId}`;
+    return this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'admin', tx);
+      check(
+        !caller.session,
+        'session_forbidden',
+        'A leased worker cannot release a publication',
+        403,
+      );
+      const previous = await tx.get<{ input_hash: string; result_json: string }>(
+        'SELECT input_hash,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+        caller.projectId,
+        principal,
+        requestId,
+      );
+      if (previous) {
+        check(
+          previous.input_hash === digest(body),
+          'request_conflict',
+          'This request id was used with different input',
+          409,
+        );
+        return JSON.parse(previous.result_json) as CodePublication;
+      }
+      const row = await this.row(caller, input.proposalId, tx);
+      check(
+        !row.lock_until || row.lock_until < now(),
+        'publication_busy',
+        'Publication is being reconciled; retry shortly',
+        409,
+      );
+      const record = this.decode(row);
+      check(
+        !row.settled && !row.verified && !record.merge?.commitSha,
+        'publication_conflict',
+        'A settled or merged publication is already finished',
+        409,
+      );
+      // Both probes refuse in JavaScript after their reads succeed, so catching one here leaves
+      // this transaction usable. Neither reaches GitHub or Git, and nothing below does either.
+      // A publication that never got a binding is the one nothing can move: no poll ever
+      // managed to freeze one, so ask the project for a binding now and let the same refusals
+      // say that it still cannot have one.
+      let bound = true;
+      try {
+        if (row.binding_json === 'null') await this.github.publicationBinding(caller, tx);
+        else await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
+      } catch (error) {
+        if (!(error instanceof MervError) || !unreachable.includes(error.code)) throw error;
+        bound = false;
+      }
+      check(
+        !bound,
+        'code_publication_bound',
+        'This publication can still reach its repository; reconcile or merge it instead',
+        409,
+      );
+      // The two steps a moved main takes, minus everything that reaches GitHub, and both taken
+      // here rather than left for a later sync: a row left stale is adopted as the predecessor
+      // of the next round's approval, which would reopen this one into a reconciliation its
+      // frozen binding can never satisfy. The approved facts are retained, and the ending is
+      // recorded in the same column the failures were, so the publication list states it.
+      if (record.approval) {
+        await this.host!.apply(caller, record, 'stale', tx);
+        await this.host!.apply(caller, record, 'resume', tx);
+      }
+      const result = await tx.run(
+        "UPDATE code_publications SET settled=1,error='code_publication_released' WHERE proposal_id=? AND project_id=? AND settled=0",
+        input.proposalId,
+        caller.projectId,
+      );
+      check(result.changes === 1, 'publication_busy', 'Publication changed while releasing', 409);
+      const released = this.decode(await this.row(caller, input.proposalId, tx));
+      await tx.run(
+        'INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        newId('cop'),
+        caller.projectId,
+        principal,
+        requestId,
+        'publication-release',
+        digest(body),
+        canonical(body),
+        'completed',
+        canonical(released),
+        now(),
+        now(),
+      );
+      return released;
+    });
+  }
   async mergePublication(caller: Caller, value: CodePublicationMerge) {
     caller = structuredClone(caller);
     const input = parseCodeInput(codePublicationMergeSchema, value);
@@ -631,6 +758,15 @@ export class CodePublicationService implements CodePublicationApi {
         record.headOid === input.expectedHead,
         'github_head_changed',
         'The selected commit differs from the reviewed proposal',
+        409,
+      );
+      // A released publication keeps a passing review and an open pull request, so only its
+      // ending refuses it here. This comes last because a closed, incident or stale publication
+      // is already refused above with the reason that fits it.
+      check(
+        !row.settled,
+        'publication_conflict',
+        'This publication is finished; it can no longer be merged',
         409,
       );
       return (
