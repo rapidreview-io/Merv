@@ -1,6 +1,6 @@
 # Scope
 
-Scope owns project membership, actors, local credentials, delegation and permissions. Its `toolPolicy` module also owns exact remote-tool grants and the registration point for session tool enforcement. Scope injects only State; it does not depend on Sessions, Tools, API or Mounts.
+Scope owns project membership, actors, local credentials, delegation and permissions. Its `toolPolicy` module also owns exact remote-tool grants; session tool enforcement registers with the tool registry instead. Scope injects only State; it does not depend on Sessions, Tools, API or Mounts.
 
 ## Tool policy
 
@@ -29,11 +29,9 @@ Grants default to an empty list. Each exact project/actor/mount/tool combination
 
 Trusted application code can call `scope.toolPolicy.replace(grants)`. Replacement validates and copies the full input before publishing it, so malformed or subsequently mutated inputs cannot change the active grants. Grants remain configuration-backed in memory; reinstalling Scope restores its configured grants rather than runtime replacements.
 
-Sessions registers its tool policy through `scope.toolPolicy.registerSessions()`. Registration returns a disposer, permits one provider, and does not add a Scope-to-Sessions dependency. Session tool checks fail closed when the provider is absent. Sessions retains ownership of invocation reservations, validation, fencing and execution.
+Session tool calls are admitted by the Sessions provider through the tool registry (`ctx.tools.registerSessionPolicy()`), not through `toolPolicy`. Scope keeps only its session authority slot (`registerSessionAuthority()`), which lets worker actors resolve without a Scope-to-Sessions dependency.
 
-Pending policy decisions and prepared invocations belong to the registration that admitted them. Withdrawing or replacing that registration prevents later dispatch, including when the same provider object is registered again. Cleanup still goes to the original provider. A handler already admitted may finish; withdrawal does not discard its committed mutation result.
-
-`ToolPolicy`, `ToolGrant`, `SessionToolPolicy` and `SessionToolInvocation` are public types in `@merv/contracts`. The implementation stays in `src/tool-policy.ts` alongside Scope's other internal modules.
+`ToolPolicy` and `ToolGrant` are public types in `@merv/contracts`. The implementation stays in `src/tool-policy.ts` alongside Scope's other internal modules.
 
 ## Migration from the Access plugin
 

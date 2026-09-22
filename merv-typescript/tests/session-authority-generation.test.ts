@@ -45,10 +45,8 @@ for (const operation of ['require', 'authority', 'delegation'] as const) {
       const authority: SessionAuthority = {
         require: async () => {
           calls++;
-          if (
-            (operation === 'require' && calls === 1) ||
-            (operation === 'authority' && calls === 2)
-          ) {
+          // authorityActor asks the session authority once and verifies the source it returns.
+          if (operation !== 'delegation' && calls === 1) {
             enter();
             await waiting;
           }

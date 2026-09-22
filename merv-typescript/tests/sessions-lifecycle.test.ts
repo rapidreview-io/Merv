@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createService } from '@merv/contracts';
-
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createService, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { AgentObservations } from '../packages/sessions/src/observations.js';
+import { createApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
 
 function barrier() {
@@ -49,18 +52,6 @@ for (const fails of [false, true])
           if (fails) throw failure;
         };
       });
-      const registerPolicy = scope.toolPolicy.registerSessions.bind(scope.toolPolicy);
-      t.mock.method(
-        scope.toolPolicy,
-        'registerSessions',
-        (...args: Parameters<typeof registerPolicy>) => {
-          const dispose = registerPolicy(...args);
-          return () => {
-            cleanup.push('policy');
-            dispose();
-          };
-        },
-      );
       const registerAuthority = scope.registerSessionAuthority.bind(scope);
       t.mock.method(
         scope,
@@ -121,7 +112,7 @@ for (const fails of [false, true])
       assert.deepEqual(cleanup, ['events']);
       unsubscribe.release();
       await interrupt.entered;
-      assert.deepEqual(cleanup, ['events', 'policy', 'authority', 'observations']);
+      assert.deepEqual(cleanup, ['events', 'authority', 'observations']);
       assert.equal(firstDone, false, 'A cleanup error must not end shutdown before later cleanup');
       assert.equal(secondDone, false);
       interrupt.release();
@@ -131,6 +122,45 @@ for (const fails of [false, true])
         for (const result of results)
           assert.equal((result as PromiseRejectedResult).reason, failure);
       await sessions.close().catch((error) => assert.equal(error, failure));
-      assert.equal(cleanup.length, 4, 'Repeated close must not repeat resource cleanup');
+      assert.equal(cleanup.length, 3, 'Repeated close must not repeat resource cleanup');
     },
   );
+
+test('Sessions registers its tool policy with the current registry and withdraws it before closing', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-sessions-lifecycle-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const app = await createApp({ directory, api: true, port: 0 });
+  const worker: Caller = { projectId: 'project', actorId: 'worker', session: { id: 'session' } };
+  const registered = () =>
+    (app.ctx.tools as unknown as { sessions?: { provider: unknown } }).sessions?.provider;
+  try {
+    assert.equal(registered(), app.ctx.sessions);
+    const sessions = app.ctx.sessions as LeasedSessions;
+    const close = sessions.close.bind(sessions);
+    let atClose: unknown = 'close not called';
+    sessions.close = async () => {
+      atClose = registered();
+      await close();
+    };
+    await app.setEnabled('sessions', false);
+    assert.equal(atClose, undefined, 'The policy is withdrawn before Sessions closes');
+    assert.equal(registered(), undefined);
+    await assert.rejects(app.ctx.tools.validateSession(worker, 'task.get', {}), {
+      code: 'session_unavailable',
+    });
+    await app.setEnabled('sessions', true);
+    assert.notEqual(app.ctx.sessions, sessions);
+    assert.equal(registered(), app.ctx.sessions);
+    const tools = app.ctx.tools;
+    await app.setEnabled('tools', false);
+    await app.setEnabled('tools', true);
+    assert.notEqual(app.ctx.tools, tools);
+    assert.equal(
+      registered(),
+      app.ctx.sessions,
+      'A reloaded registry receives a fresh registration',
+    );
+  } finally {
+    await app.stop();
+  }
+});

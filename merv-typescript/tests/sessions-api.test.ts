@@ -294,6 +294,37 @@ test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and 
   await assert.rejects(selected.listTools({ _meta: { 'merv/projectId': 'foreign' } }));
 });
 
+test('a session tool call admits its lease a fixed number of times', async (t) => {
+  const f = await fixture(t);
+  f.app.ctx.tools.register({
+    name: 'checked.echo',
+    description: 'Bound echo',
+    inputSchema: z.object({ tenant: z.string() }).strict(),
+    handler: (_caller, input) => input,
+  });
+  const issued = await f.offer();
+  const client = await f.connect(issued.secret);
+  const workflows = f.app.ctx.workflows;
+  const authorize = workflows.authorizeLeaseDispatch.bind(workflows);
+  const admissions = t.mock.method(
+    workflows,
+    'authorizeLeaseDispatch',
+    async (...args: Parameters<typeof authorize>) => await authorize(...args),
+  );
+  // Preparation, the check after parsing, and the check after the observation is stored;
+  // a read is admitted once more after its handler releases the read snapshot. Each extra
+  // layer that re-admits would show here.
+  for (const [name, expected] of [
+    ['checked.echo', 3],
+    ['artifact.list', 4],
+  ] as const) {
+    admissions.mock.resetCalls();
+    const result = await client.callTool({ name, arguments: {} });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(admissions.mock.callCount(), expected, name);
+  }
+});
+
 test('session route and credential namespaces stay reserved when the optional HTTP adapter is unloaded', async (t) => {
   const f = await fixture(t);
   assert.throws(() => f.app.ctx.api.mount('/sessions', () => {}), { code: 'invalid_mount' });
@@ -385,9 +416,12 @@ test('leased mounted calls require source grants and keep upstream project argum
       headers: { 'x-sandbox-namespace': 'ns', 'x-sandbox-subject': 'subject' },
     },
   ]);
-  const pool = new ScopedRemoteClients(credentials, f.app.ctx.scope.toolPolicy, {
-    mounts: { sandbox: { url: upstream.url } },
-  });
+  const pool = new ScopedRemoteClients(
+    credentials,
+    f.app.ctx.scope.toolPolicy,
+    { mounts: { sandbox: { url: upstream.url } } },
+    f.app.ctx.tools,
+  );
   f.cleanup.push(async () => {
     await upstream.close();
     await pool.close();

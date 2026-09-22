@@ -13,7 +13,8 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
+import { z } from 'zod';
+import { ToolRegistry } from '../packages/api/src/registry.js';
 import { openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -665,28 +666,41 @@ test('tool policy replacement fences real session invocations and cleanup releas
   const f = await fixture(t),
     { token } = await f.offer();
   const caller = await f.sessions.authenticate(token);
-  const access = new ExactToolPolicy(f.scope);
-  const dispose = access.registerSessions(f.sessions);
-  const prepared = await access.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
-  await access.validate(prepared.caller, prepared.tool, prepared.input);
-  dispose();
-  access.registerSessions(f.sessions);
+  const tools = new ToolRegistry(f.scope);
+  t.after(() => tools.close());
   let calls = 0;
-  await assert.rejects(
-    access.run(prepared, () => ++calls),
-    { code: 'session_unavailable' },
-  );
+  tools.register({
+    name: 'artifact.read',
+    description: 'Policy-bound read',
+    inputSchema: z.object({ artifactId: z.string() }).strict(),
+    handler: () => ++calls,
+  });
+  let dispose = tools.registerSessionPolicy(f.sessions);
+  const prepare = f.sessions.prepare.bind(f.sessions);
+  const prepared: Awaited<ReturnType<typeof prepare>>[] = [];
+  t.mock.method(f.sessions, 'prepare', async (...args: Parameters<typeof prepare>) => {
+    prepared.push(await prepare(...args));
+    return prepared.at(-1)!;
+  });
+  // Sessions.run validates again after storing its observation; replace the provider there.
+  const validate = f.sessions.validate.bind(f.sessions);
+  let validations = 0;
+  t.mock.method(f.sessions, 'validate', async (...args: Parameters<typeof validate>) => {
+    await validate(...args);
+    if (++validations === 2) {
+      dispose();
+      dispose = tools.registerSessionPolicy(f.sessions);
+    }
+  });
+  await assert.rejects(tools.call('artifact.read', caller, { artifactId: 'frozen-artifact' }), {
+    code: 'session_unavailable',
+  });
   assert.equal(calls, 0);
-  await access.cancel(prepared);
-  await assert.rejects(f.sessions.validate(prepared.caller, prepared.tool, prepared.input), {
+  const [original] = prepared;
+  await assert.rejects(f.sessions.validate(original.caller, original.tool, original.input), {
     code: 'session_invocation',
   });
-  const fresh = await access.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
-  try {
-    assert.equal(await access.run(fresh, () => ++calls), 1);
-  } finally {
-    await access.cancel(fresh);
-  }
+  assert.equal(await tools.call('artifact.read', caller, { artifactId: 'frozen-artifact' }), 1);
 });
 
 test('failed packet construction rolls back worker creation and domain reservation', async (t) => {

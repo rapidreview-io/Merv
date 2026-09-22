@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
+import type {} from '@merv/api/types';
 import {
   canonical,
   check,
@@ -269,7 +270,6 @@ export class LeasedSessions implements Sessions {
             require: async (caller, tx) => await this.guard(caller, tx),
           }),
         );
-        this.disposers.push(scope.toolPolicy.registerSessions(this));
         await this.observations.interrupt();
         this.disposers.push(
           await events.subscribe({
@@ -1733,7 +1733,10 @@ export class LeasedSessions implements Sessions {
     // Claim once before yielding so concurrent callers cannot execute one preparation twice.
     state.running = true;
     try {
-      await this.validate(invocation.caller, invocation.tool, state.input);
+      // Authorize before recording an observation, so an unauthorized call records none. A
+      // caller that just validated (the tool registry does, right before run) is not admitted
+      // twice; the check after observation storage still runs.
+      if (!state.validated) await this.validate(invocation.caller, invocation.tool, state.input);
       await this.observations.start(
         invocation.caller.session!.invocationId!,
         state.sessionId,
@@ -1917,6 +1920,10 @@ export const sessionsPlugin = {
         new LeasedSessions(ctx.state, ctx.scope, ctx.workflows, ctx.domainEvents, config),
       );
       yield async () => await sessions.close();
+      // Without this registration the tool registry refuses every session call.
+      ctx.inject(['tools'], (ctx) => {
+        ctx.effect(() => ctx.tools.registerSessionPolicy(sessions));
+      });
       yield ctx.provide('sessions', sessions);
     });
   },

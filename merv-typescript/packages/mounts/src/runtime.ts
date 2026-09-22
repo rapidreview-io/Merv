@@ -82,10 +82,12 @@ export class MountRuntime {
       state: 'connecting',
       toolCount: 0,
     };
-    this.pool = new ScopedRemoteClients(credentials, access, {
-      mounts: { [config.id]: { url: config.url } },
-      timeoutMs: this.timeoutMs,
-    });
+    this.pool = new ScopedRemoteClients(
+      credentials,
+      access,
+      { mounts: { [config.id]: { url: config.url } }, timeoutMs: this.timeoutMs },
+      tools,
+    );
     this.catalog = tools.createCatalog(config.id);
   }
 

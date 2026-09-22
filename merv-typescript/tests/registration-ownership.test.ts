@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createService, type SessionAuthority } from '@merv/contracts';
-
+import { createService, type SessionAuthority, type SessionToolPolicy } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { SessionApiProvider } from '../packages/api/src/types.js';
-import { fixtureAccess } from './fixtures/access.js';
 import { openState } from './fixtures/state.js';
 
 test('a used event-listener disposer cannot remove a later subscription of the same callback', async (t) => {
@@ -61,12 +59,13 @@ for (const kind of ['authority', 'policy', 'http-sessions', 'http-mount'] as con
     };
     // Registration owns an opaque provider identity; this test does not dispatch routes.
     const sessions = {} as SessionApiProvider;
+    const policy = {} as SessionToolPolicy;
     const handler = async () => {};
     const register = () =>
       kind === 'authority'
         ? scope.registerSessionAuthority(authority)
         : kind === 'policy'
-          ? scope.toolPolicy.registerSessions(fixtureAccess)
+          ? tools.registerSessionPolicy(policy)
           : kind === 'http-sessions'
             ? api.registerSessions(sessions)
             : api.mount('/fixture', handler);

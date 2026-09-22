@@ -15,7 +15,7 @@ export interface SessionToolInvocation {
   readonly input: Data;
 }
 /**
- * Consumer contract; Scope has no dependency on the Sessions implementation. `read` marks
+ * Consumer contract; the tool registry has no dependency on the Sessions implementation. `read` marks
  * a tool that only reads: a session may call any such tool with any arguments, because a
  * session reads whatever its project holds (founder, 2026-09-17: no read constraints).
  */
@@ -34,8 +34,7 @@ export interface SessionToolPolicy {
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T>;
 }
-export interface ToolPolicy extends SessionToolPolicy {
-  registerSessions(provider: SessionToolPolicy): () => void;
+export interface ToolPolicy {
   allows(caller: Caller, mountId: string, toolName: string): Promise<boolean>;
   require(caller: Caller, mountId: string, toolName: string): Promise<void>;
   /** Trusted in-process administration. Invalid replacements leave the current policy intact. */

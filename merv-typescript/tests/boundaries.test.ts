@@ -111,6 +111,9 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'codeResearch',
   ],
   knowledge: ['codeResearch'],
+  // Sessions admits session callers in whichever tool registry is loaded; with none there
+  // is no tool call to admit, and the registry refuses session callers until it registers.
+  sessions: ['tools'],
   tasks: ['codeResearch'],
 };
 

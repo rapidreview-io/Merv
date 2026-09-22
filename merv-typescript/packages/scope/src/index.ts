@@ -442,21 +442,13 @@ export class ProjectScope implements Scope {
   }
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
     caller = structuredClone(caller);
+    if (!caller.session) return await this.require(caller, 'read', tx);
     const registration = this.sessionAuthorityRegistration;
-    const value = await this.require(caller, 'read', tx);
-    if (!value.sessionId) return value;
     const lookup = async (sql: Sql): Promise<Actor> => {
-      if (!('transactionId' in sql))
-        return await this.state.transaction(
-          async (inner) => await this.authorityActor(caller, inner),
-        );
-      const authority = this.sessionAuthority;
-      check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
-      return await this.requireDelegation(
-        await authority.require(caller, sql as Transaction),
-        'read',
-        sql as Transaction,
-      );
+      if (!('transactionId' in sql)) return await this.state.transaction(lookup);
+      // The session guard and the source it vouched for are read in one transaction.
+      const { source } = await this.authorize(caller, 'read', sql as Transaction);
+      return await this.requireDelegation(source!, 'read', sql as Transaction);
     };
     const result = tx ? await lookup(tx) : await this.state.read(lookup);
     this.requireAuthorityRegistration(registration);
@@ -630,10 +622,18 @@ export class ProjectScope implements Scope {
     );
   }
   async require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor> {
+    return (await this.authorize(caller, permission, tx)).actor;
+  }
+  /** require(), also returning the delegation source that a worker's session authority vouched for. */
+  private async authorize(
+    caller: Caller,
+    permission: Permission,
+    tx?: Transaction,
+  ): Promise<{ actor: Actor; source?: DelegationSource }> {
     caller = structuredClone(caller);
     const registration = this.sessionAuthorityRegistration;
     if (tx) this.state.assertTransaction(tx);
-    const lookup = async (sql: Sql) => {
+    const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
       const row = await sql.get<ActorRow>(
         `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
          LEFT JOIN member_actors m ON m.actor_id=a.id
@@ -655,6 +655,7 @@ export class ProjectScope implements Scope {
         'A caller cannot combine human, actor-credential and user-key authority',
         403,
       );
+      let source: DelegationSource | undefined;
       if (row.session_id) {
         const own = (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id;
         // A session halted while this call was in flight has already retired its actor. Tell
@@ -666,11 +667,13 @@ export class ProjectScope implements Scope {
         // it is read on a snapshot: outside any scope that takes no writer lock.
         if (!('transactionId' in sql))
           return await this.state.snapshot(() =>
-            this.state.transaction(async (inner) => await this.require(caller, permission, inner)),
+            this.state.transaction(
+              async (inner) => await this.authorize(caller, permission, inner),
+            ),
           );
         const authority = this.sessionAuthority;
         check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
-        await authority.require(caller, sql as Transaction);
+        source = await authority.require(caller, sql as Transaction);
       } else if (caller.session) {
         check(false, 'forbidden', 'Session authority cannot select another actor', 403);
       } else if (row.user_issuer && caller.key !== undefined) {
@@ -720,13 +723,13 @@ export class ProjectScope implements Scope {
         );
         check(bound, 'forbidden', 'Credential cannot authorize this actor in this project', 403);
       }
-      return actor(row);
+      return { actor: actor(row), source };
     };
     const value = tx ? await lookup(tx) : await this.state.read(lookup);
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
-    if (value.sessionId) this.requireAuthorityRegistration(registration);
-    const allowed = permits(value.role, permission);
+    if (value.actor.sessionId) this.requireAuthorityRegistration(registration);
+    const allowed = permits(value.actor.role, permission);
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;
   }

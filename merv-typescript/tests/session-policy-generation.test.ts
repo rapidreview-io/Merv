@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { z } from 'zod';
 import {
   check,
   type Actor,
@@ -7,7 +8,7 @@ import {
   type SessionToolInvocation,
   type SessionToolPolicy,
 } from '@merv/contracts';
-import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
+import { ToolRegistry } from '../packages/api/src/registry.js';
 
 const caller: Caller = { projectId: 'project', actorId: 'worker', session: { id: 'session' } };
 function gate() {
@@ -30,7 +31,8 @@ function gate() {
 function fixture(hold?: { phase: string; wait: () => Promise<void> }) {
   const live = new Set<SessionToolInvocation>();
   let cancellations = 0,
-    runs = 0;
+    runs = 0,
+    writes = 0;
   const wait = async (phase: string) => {
     if (hold?.phase === phase) await hold.wait();
   };
@@ -61,21 +63,43 @@ function fixture(hold?: { phase: string; wait: () => Promise<void> }) {
   };
   // Scope freshness has separate real-database coverage. This fixture isolates the
   // registration boundary and models a provider owning opaque invocation reservations.
-  const policy = new ExactToolPolicy({ require: async () => ({}) as Actor });
-  const dispose = policy.registerSessions(provider);
-  return { policy, provider, dispose, live, cancellations: () => cancellations, runs: () => runs };
+  const tools = new ToolRegistry({ require: async () => ({}) as Actor });
+  tools.register({
+    name: 'write',
+    description: 'A mutation',
+    inputSchema: z.object({}).strict(),
+    handler: () => {
+      writes++;
+      return 'committed';
+    },
+  });
+  const dispose = tools.registerSessionPolicy(provider);
+  return {
+    tools,
+    provider,
+    dispose,
+    live,
+    cancellations: () => cancellations,
+    runs: () => runs,
+    writes: () => writes,
+  };
 }
 
 for (const replacement of ['absent', 'same', 'different'] as const) {
-  test(`cancel releases the original reservation when its provider is ${replacement}`, async () => {
-    const f = fixture(),
+  test(`cancel releases the original reservation when its provider is ${replacement}`, async (t) => {
+    const held = gate();
+    t.after(held.release);
+    const f = fixture({ phase: 'validate', wait: held.hold }),
       other = fixture();
-    const invocation = await f.policy.prepare(caller, 'write', {});
+    const rejected = assert.rejects(f.tools.call('write', caller, {}), {
+      code: 'session_unavailable',
+    });
+    await held.entered;
     f.dispose();
     if (replacement !== 'absent')
-      f.policy.registerSessions(replacement === 'same' ? f.provider : other.provider);
-    await f.policy.cancel(invocation);
-    await f.policy.cancel(invocation);
+      f.tools.registerSessionPolicy(replacement === 'same' ? f.provider : other.provider);
+    held.release();
+    await rejected;
     assert.equal(f.live.size, 0, 'the original provider must release its reservation');
     assert.equal(f.cancellations(), 1, 'cleanup is owned once by the preparing registration');
     assert.equal(other.cancellations(), 0, 'replacement must not receive a foreign invocation');
@@ -89,84 +113,72 @@ for (const phase of ['allows', 'prepare', 'validate'] as const) {
       t.after(held.release);
       const f = fixture({ phase, wait: held.hold });
       const pending =
-        phase === 'allows'
-          ? f.policy.allowsTool(caller, 'read', true)
-          : phase === 'prepare'
-            ? f.policy.prepare(caller, 'write', {})
-            : f.policy.validate(caller, 'write', {});
+        phase === 'allows' ? f.tools.describe(caller) : f.tools.call('write', caller, {});
       const rejected = assert.rejects(pending, { code: 'session_unavailable' });
       await held.entered;
       f.dispose();
-      if (replace) f.policy.registerSessions(f.provider);
+      if (replace) f.tools.registerSessionPolicy(f.provider);
       held.release();
       await rejected;
       assert.equal(f.live.size, 0, 'a failed preparation must release any allocated reservation');
-      if (replace) assert.equal(await f.policy.allowsTool(caller, 'read', true), true);
+      assert.equal(f.runs(), 0, 'a retired decision is refused before provider dispatch');
+      assert.equal(f.writes(), 0);
+      if (replace) {
+        assert.deepEqual(
+          (await f.tools.describe(caller)).map((tool) => tool.name),
+          ['write'],
+        );
+        assert.equal(await f.tools.call('write', caller, {}), 'committed');
+      }
     });
   }
 }
-
-test('run refuses a preparation from an earlier registration of the same provider', async () => {
-  const f = fixture();
-  const invocation = await f.policy.prepare(caller, 'write', {});
-  f.dispose();
-  f.policy.registerSessions(f.provider);
-  let writes = 0;
-  try {
-    await assert.rejects(
-      f.policy.run(invocation, () => {
-        writes++;
-      }),
-      { code: 'session_unavailable' },
-    );
-    assert.equal(writes, 0);
-    assert.equal(f.runs(), 0, 'a retired preparation is refused before provider dispatch');
-  } finally {
-    await f.policy.cancel(invocation);
-  }
-  const current = await f.policy.prepare(caller, 'write', {});
-  try {
-    assert.equal(await f.policy.run(current, () => ++writes), 1);
-  } finally {
-    await f.policy.cancel(current);
-  }
-});
 
 test('withdrawal while provider run awaits prevents handler dispatch', async (t) => {
   const held = gate();
   t.after(held.release);
   const f = fixture({ phase: 'run', wait: held.hold });
-  const invocation = await f.policy.prepare(caller, 'write', {});
-  let writes = 0;
-  const pending = f.policy.run(invocation, () => {
-    writes++;
+  const rejected = assert.rejects(f.tools.call('write', caller, {}), {
+    code: 'session_unavailable',
   });
-  const rejected = assert.rejects(pending, { code: 'session_unavailable' });
   await held.entered;
   f.dispose();
-  f.policy.registerSessions(f.provider);
+  f.tools.registerSessionPolicy(f.provider);
   held.release();
-  try {
-    await rejected;
-    assert.equal(writes, 0);
-  } finally {
-    await f.policy.cancel(invocation);
-  }
+  await rejected;
+  assert.equal(f.writes(), 0);
+  assert.equal(f.live.size, 0);
 });
 
 test('withdrawal after handler admission preserves a completed mutation result', async () => {
   const f = fixture();
-  const invocation = await f.policy.prepare(caller, 'write', {});
-  try {
-    assert.equal(
-      await f.policy.run(invocation, () => {
-        f.dispose();
-        return 'committed';
-      }),
-      'committed',
-    );
-  } finally {
-    await f.policy.cancel(invocation);
-  }
+  f.tools.register({
+    name: 'commit',
+    description: 'A mutation that outlives its provider',
+    inputSchema: z.object({}).strict(),
+    handler: () => {
+      f.dispose();
+      return 'committed';
+    },
+  });
+  assert.equal(await f.tools.call('commit', caller, {}), 'committed');
   assert.equal(f.live.size, 0);
+});
+
+test('mounted tools re-validate a session through the current registration only', async (t) => {
+  const held = gate();
+  t.after(held.release);
+  const f = fixture({ phase: 'validate', wait: held.hold });
+  const rejected = assert.rejects(f.tools.validateSession(caller, '_mount.tool', {}), {
+    code: 'session_unavailable',
+  });
+  await held.entered;
+  f.dispose();
+  const current = f.tools.registerSessionPolicy(f.provider);
+  held.release();
+  await rejected;
+  current();
+  await assert.rejects(f.tools.validateSession(caller, '_mount.tool', {}), {
+    code: 'session_unavailable',
+  });
 });

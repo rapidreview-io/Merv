@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { MervError, type Caller, type Data } from '@merv/contracts';
+import type { Tools } from '@merv/api/types';
 import type { CredentialProvider, ResolvedCredential } from './types.js';
 import type { ToolPolicy } from '@merv/contracts';
 
@@ -84,8 +85,10 @@ export class ScopedRemoteClients {
 
   constructor(
     private readonly credentials: CredentialProvider,
-    private readonly access: ToolPolicy,
+    private readonly access: Pick<ToolPolicy, 'require'>,
     private readonly options: ScopedRemoteClientOptions,
+    /** Re-admits a session's bound arguments; without it every session caller is refused. */
+    private readonly sessions?: Pick<Tools, 'validateSession'>,
   ) {
     this.timeoutMs = options.timeoutMs ?? 5000;
     if (
@@ -129,9 +132,7 @@ export class ScopedRemoteClients {
         if (!url)
           throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
         lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
-        await this.access.require(caller, mountId, rawToolName);
-        if (caller.session)
-          await this.access.validate(caller, `_${mountId}.${rawToolName}`, args as Data);
+        await this.admit(caller, mountId, rawToolName, args);
         const credential = await this.credentials.resolve(caller, mountId);
         const key = JSON.stringify([
           mountId,
@@ -156,6 +157,19 @@ export class ScopedRemoteClients {
     } finally {
       this.running.delete(operation);
     }
+  }
+
+  private async admit(
+    caller: Caller,
+    mountId: string,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<void> {
+    await this.access.require(caller, mountId, name);
+    if (!caller.session) return;
+    if (!this.sessions)
+      throw new MervError('session_unavailable', 'Session policy is unavailable', 503);
+    await this.sessions.validateSession(caller, `_${mountId}.${name}`, args as Data);
   }
 
   private createConnection(
@@ -231,8 +245,7 @@ export class ScopedRemoteClients {
       await connection.ready;
       // Connection setup can yield. Revocation or rotation during that wait must
       // be observed before an operation crosses the upstream boundary.
-      await this.access.require(caller, mountId, name);
-      if (caller.session) await this.access.validate(caller, `_${mountId}.${name}`, args as Data);
+      await this.admit(caller, mountId, name, args);
       const currentCredential = await this.credentials.resolve(caller, mountId);
       if (currentCredential.identityKey !== connection.identityKey)
         throw new MervError(
@@ -241,8 +254,7 @@ export class ScopedRemoteClients {
           409,
         );
       // Credential resolution can also yield after the connection is ready.
-      await this.access.require(caller, mountId, name);
-      if (caller.session) await this.access.validate(caller, `_${mountId}.${name}`, args as Data);
+      await this.admit(caller, mountId, name, args);
       currentCredential.assertCurrent?.();
       return await deadline(
         connection.client.request(

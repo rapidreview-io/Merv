@@ -12,7 +12,7 @@ import type {
   Tools,
 } from './types.js';
 import { cloneJson, compileSchema } from './schema.js';
-import type { ToolPolicy } from '@merv/contracts';
+import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 
 export class ApiError extends MervError {
   constructor(
@@ -78,6 +78,8 @@ const namePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 const publishedNamePattern = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
 const mountPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const namespace = '_';
+/** Identity, not provider: re-registering the same provider still retires calls it began. */
+type SessionRegistration = { provider: SessionToolPolicy };
 
 /** Reserved even while a catalog is absent, so remote arguments keep their meaning. */
 export const isMountedToolName = (name: string): boolean => name.startsWith(namespace);
@@ -87,12 +89,12 @@ export class ToolRegistry implements Tools {
   private readonly entries = new Map<string, Entry>();
   private readonly running = new Set<Promise<ToolInvocation>>();
   private readonly catalogs = new Map<string, CatalogState>();
+  private sessions?: SessionRegistration;
   private stopping = false;
 
   constructor(
     private readonly scope: Pick<Scope, 'require'>,
-    private readonly access?: Pick<ToolPolicy, 'allows' | 'require'> &
-      Partial<Pick<ToolPolicy, 'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'>>,
+    private readonly access?: Pick<ToolPolicy, 'allows' | 'require'>,
     /** Runs a read-only tool's handler in a snapshot scope: no writer lock, writes refused. */
     private readonly readScope?: <T>(fn: () => Promise<T>) => Promise<T>,
   ) {}
@@ -299,14 +301,41 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  private sessionAccess(): Pick<
-    ToolPolicy,
-    'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'
-  > {
-    const access = this.access;
-    if (!access?.allowsTool || !access.prepare || !access.validate || !access.run || !access.cancel)
+  registerSessionPolicy(provider: SessionToolPolicy): () => void {
+    if (this.sessions)
+      throw new ApiError('session_provider_conflict', 'Session policy is already registered', 409);
+    const registration = { provider };
+    this.sessions = registration;
+    return () => {
+      if (this.sessions === registration) this.sessions = undefined;
+    };
+  }
+
+  private sessionPolicy(): SessionRegistration {
+    if (!this.sessions)
       throw new ApiError('session_unavailable', 'Session policy is unavailable', 503);
-    return access as Pick<ToolPolicy, 'allowsTool' | 'prepare' | 'validate' | 'run' | 'cancel'>;
+    return this.sessions;
+  }
+
+  /** Checked after every provider await: a withdrawn or replaced provider cannot finish a decision. */
+  private fence(registration: SessionRegistration): void {
+    if (this.sessions !== registration)
+      throw new ApiError(
+        'session_unavailable',
+        'Session policy changed during authorization; retry with the current provider',
+        503,
+      );
+  }
+
+  private async fenced<T>(registration: SessionRegistration, decision: Promise<T>): Promise<T> {
+    const value = await decision;
+    this.fence(registration);
+    return value;
+  }
+
+  async validateSession(caller: Caller, name: string, input: Data): Promise<void> {
+    const session = this.sessionPolicy();
+    await this.fenced(session, session.provider.validate(caller, name, input));
   }
 
   /** A native tool that only reads; a session may call every one of them. */
@@ -319,11 +348,16 @@ export class ToolRegistry implements Tools {
   private async visible(caller?: Caller): Promise<Entry[]> {
     if (caller) caller = structuredClone(caller);
     if (caller) await this.scope.require(caller, 'read');
-    const policy = caller?.session ? this.sessionAccess() : undefined;
+    const session = caller?.session ? this.sessionPolicy() : undefined;
     return await filterAsync(
       [...this.entries.values()],
       async (entry) =>
-        (!caller || !policy || (await policy.allowsTool(caller, entry.name, this.reads(entry)))) &&
+        (!caller ||
+          !session ||
+          (await this.fenced(
+            session,
+            session.provider.allowsTool(caller, entry.name, this.reads(entry)),
+          ))) &&
         (!caller ||
           !entry.remote ||
           (await this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName)) ===
@@ -355,7 +389,8 @@ export class ToolRegistry implements Tools {
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
-      await this.scope.require(caller, 'read');
+      // A session caller is authorized by its admission in prepare, below.
+      if (!caller.session) await this.scope.require(caller, 'read');
       if (entry.remote) {
         if (!this.access)
           throw new ApiError(
@@ -365,16 +400,28 @@ export class ToolRegistry implements Tools {
           );
         await this.access.require(caller, entry.remote.mountId, entry.remote.toolName);
       }
-      const policy = caller.session ? this.sessionAccess() : undefined;
-      const prepared = await policy?.prepare(caller, name, input as Data, this.reads(entry));
+      const session = caller.session ? this.sessionPolicy() : undefined;
+      const prepared = await session?.provider.prepare(
+        caller,
+        name,
+        input as Data,
+        this.reads(entry),
+      );
+      // Preparation may allocate a reservation. Its original provider releases it in finally,
+      // even when a replacement now owns the slot.
       try {
+        if (session) this.fence(session);
         const dispatchCaller = prepared?.caller ?? caller;
         const parsed = await entry.parse(prepared ? prepared.input : input);
-        await policy?.validate(dispatchCaller, name, parsed as Data);
+        const validate = async (caller: Caller) => {
+          if (session)
+            await this.fenced(session, session.provider.validate(caller, name, parsed as Data));
+        };
+        await validate(dispatchCaller);
         let completed: ToolInvocation | undefined;
         const dispatch = async (activeCaller: Caller) => {
-          await this.scope.require(activeCaller, 'read');
-          await policy?.validate(activeCaller, name, parsed as Data);
+          // The provider's run validates a session again right before this handler.
+          if (!prepared) await this.scope.require(activeCaller, 'read');
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
           const run = async () => await entry.definition.handler(activeCaller, parsed);
@@ -386,17 +433,23 @@ export class ToolRegistry implements Tools {
           // transactional authorization and may legitimately end their worker session.
           if (this.reads(entry)) {
             await this.scope.require(activeCaller, 'read');
-            await policy?.validate(activeCaller, name, parsed as Data);
+            await validate(activeCaller);
           }
           completed = entry.complete(result);
           return result;
         };
-        const result = prepared
-          ? await policy!.run(prepared, (activeCaller) => dispatch(activeCaller))
-          : await dispatch(caller);
+        const result =
+          session && prepared
+            ? await session.provider.run(prepared, (activeCaller) => {
+                // Provider admission may itself await storage. Check once more at dispatch,
+                // but do not turn an already committed mutation into an error afterward.
+                this.fence(session);
+                return dispatch(activeCaller);
+              })
+            : await dispatch(caller);
         return completed ?? entry.complete(result);
       } finally {
-        if (prepared) await policy!.cancel(prepared);
+        if (session && prepared) await session.provider.cancel(prepared);
       }
     });
     entry.running.add(operation);
