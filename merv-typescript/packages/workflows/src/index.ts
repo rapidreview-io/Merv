@@ -1467,18 +1467,8 @@ export class WorkflowsService implements Workflows {
     tx: Transaction,
   ): Promise<void> {
     this.assertOpen();
-    const snapshot = await this.readSnapshot(tx, input.projectId, input.instanceId);
-    const stored = await tx.get<{ definition_json: string }>(
-      'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
-      snapshot.workflow,
-      snapshot.version,
-    );
-    check(stored, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
-    await replaceBlockers(
-      tx,
-      input,
-      (JSON.parse(stored.definition_json) as WorkflowDefinition).terminal.includes(snapshot.state),
-    );
+    await this.readSnapshot(tx, input.projectId, input.instanceId);
+    await replaceBlockers(tx, input);
   }
 
   async blockers(

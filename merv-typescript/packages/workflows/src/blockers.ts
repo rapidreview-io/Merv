@@ -52,8 +52,10 @@ function related(value: unknown): WorkflowReference[] {
 
 /**
  * The rows are a projection of what a provider thinks now, which is why this table alone may
- * be rewritten and cleared: a provider that is unloaded cannot withdraw its opinion, so an
- * instance that ends loses its rows here rather than waiting for it.
+ * be rewritten and cleared: a provider that is unloaded cannot withdraw its opinion, so work
+ * that ends loses its rows at that transition rather than waiting for it. A provider may
+ * still speak about work that has ended, and one does: a unit whose accepted code is waiting
+ * to reach main is done, and where that wait stands is a fact about it, not work to take.
  */
 export async function replaceBlockers(
   tx: Transaction,
@@ -63,10 +65,9 @@ export async function replaceBlockers(
     provider: string;
     blockers: WorkflowProvidedBlockerInput[];
   },
-  ended: boolean,
 ): Promise<void> {
   check(text(input.provider, 100), 'invalid_blocker', 'A blocker names its provider', 500);
-  const blockers = ended ? [] : input.blockers;
+  const blockers = input.blockers;
   check(
     blockers.every(
       (item) =>

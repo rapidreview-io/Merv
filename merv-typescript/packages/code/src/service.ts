@@ -1,4 +1,10 @@
-import { createService, codeCommandCompletionSchema, MervError, check } from '@merv/contracts';
+import {
+  createService,
+  codeCommandCompletionSchema,
+  digest,
+  MervError,
+  check,
+} from '@merv/contracts';
 import type { Artifacts, Scope, State, Workflows } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { Code } from './types.js';
@@ -30,6 +36,7 @@ import {
 } from './store/mirror.js';
 import type {
   Caller,
+  CodeAcceptedSince,
   CodeCommandCompletion,
   CodeTransportInput,
   Transaction,
@@ -158,6 +165,7 @@ export class CodeService extends CodeCommandService implements Code {
         this.unitStore = await createService(
           new CodeUnitService(state, scope, workflows, this, this.writerStore, sessions),
         );
+        this.unitStore.publications = this.publicationStore;
         if (repositories) {
           // Published only once it holds the writer lock and has finished what a crash left.
           const store = new CodeStore(
@@ -336,6 +344,51 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async acceptUnit(...args: Parameters<CodeUnitService['acceptUnit']>) {
     return await this.unitStore.acceptUnit(...args);
+  }
+  async publishOnAcceptance(...args: Parameters<CodeUnitService['publishOnAcceptance']>) {
+    return await this.unitStore.publishOnAcceptance(...args);
+  }
+  /**
+   * The accepted units whose code the project's main does not contain yet. It takes no
+   * transaction, because the house rule is that Git never runs inside one: the candidates are
+   * read on their own and Git is asked afterwards. `rev-list` of every accepted commit
+   * `--not main` walks only the history beyond main, so the reading costs what is actually
+   * unpublished rather than the project's whole past.
+   */
+  async acceptedSince(caller: Caller): Promise<CodeAcceptedSince> {
+    caller = structuredClone(caller);
+    const { main, candidates } = await this.unitStore.acceptedCandidates(caller);
+    const repositories = this.requireStore().repositories;
+    const commits = [...new Set(candidates.map((item) => item.commit))];
+    const beyond = new Set<string>();
+    if (commits.length) {
+      const walk = await repositories.git.run(['rev-list', ...commits, '--not', main], {
+        env: repositories.environment(caller.projectId),
+      });
+      check(
+        walk.code === 0,
+        'code_candidate_unavailable',
+        'Code must hold main and every accepted commit; import the missing history',
+        409,
+      );
+      for (const line of walk.stdout.toString('utf8').split('\n'))
+        if (line) beyond.add(line.trim());
+    }
+    const missing = candidates.filter((item) => beyond.has(item.commit));
+    const unitIds = missing
+      .filter((item) => !item.quarantined)
+      .map((item) => item.unitId)
+      .sort();
+    const quarantined = missing
+      .filter((item) => item.quarantined)
+      .map((item) => item.unitId)
+      .sort();
+    return {
+      unitIds,
+      quarantined,
+      main,
+      hash: digest({ formatVersion: 1, main, unitIds, quarantined }),
+    };
   }
   async baseStatus(...args: Parameters<CodeUnitService['baseStatus']>) {
     return await this.unitStore.baseStatus(...args);

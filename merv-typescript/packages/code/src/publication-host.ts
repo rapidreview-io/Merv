@@ -100,20 +100,37 @@ export class PublicationHost {
       'Run the release matrix with this App and rules, then record the successful canary before enabling publication.',
       409,
     );
-    await this.requireOwner().check(caller, record.instanceId, record.proposalId, tx);
-    const approval = await tx.get<{ acceptance_json: string }>(
-      'SELECT acceptance_json FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
-      caller.projectId,
-      record.instanceId,
-      record.review!.id,
-    );
+    const envelope = record.approval!;
+    // A consolidation's acceptance is one of its reviewed rounds; a unit's is the single
+    // immutable acceptance its own review recorded. Either way the seal names it by hash.
+    // Envelopes sealed before units could publish carry no source and record_json is
+    // immutable, so anything that is not explicitly a unit is a consolidation.
+    const consolidation = envelope.source !== 'unit';
+    if (consolidation)
+      await this.requireOwner().check(caller, record.instanceId, record.proposalId, tx);
+    const accepted = consolidation
+      ? await tx.get<{ acceptance_json: string }>(
+          'SELECT acceptance_json FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
+          caller.projectId,
+          record.instanceId,
+          record.review!.id,
+        )
+      : await tx.get<{ acceptance_json: string }>(
+          'SELECT acceptance_json FROM code_units WHERE project_id=? AND unit_id=?',
+          caller.projectId,
+          record.instanceId,
+        );
     check(
-      approval && digest(JSON.parse(approval.acceptance_json)) === record.approval!.acceptanceHash,
+      accepted && digest(JSON.parse(accepted.acceptance_json)) === envelope.acceptanceHash,
       'publication_conflict',
       'The publication no longer matches its accepted review',
       409,
     );
-    const review = await tx.get<{ verdict: string; reviewer_id: string; provenance_json: string }>(
+    const review = await tx.get<{
+      verdict: string;
+      reviewer_id: string;
+      provenance_json: string | null;
+    }>(
       'SELECT verdict,reviewer_id,provenance_json FROM reviews WHERE id=? AND project_id=?',
       record.review!.id,
       caller.projectId,
@@ -121,18 +138,22 @@ export class PublicationHost {
     check(
       review?.verdict === 'pass' &&
         review.reviewer_id === record.review!.actorId &&
-        JSON.parse(review.provenance_json).hash === record.approval!.certificateHash,
+        // An ordinary unit review carries no certificate; one that does is bound exactly.
+        (envelope.certificateHash === null ||
+          (!!review.provenance_json &&
+            JSON.parse(review.provenance_json).hash === envelope.certificateHash)),
       'publication_review_required',
       'The exact independent review certificate is required',
       409,
     );
-    check(
-      (await this.certificate(caller.projectId, record.instanceId, tx)).hash ===
-        record.approval!.certificateHash,
-      'review_provenance_changed',
-      'Publication contributor provenance changed after approval',
-      409,
-    );
+    if (consolidation)
+      check(
+        (await this.certificate(caller.projectId, record.instanceId, tx)).hash ===
+          envelope.certificateHash,
+        'review_provenance_changed',
+        'Publication contributor provenance changed after approval',
+        409,
+      );
     const unit = await tx.get<{
       quarantine_base_key: string | null;
       quarantine_operation_id: string | null;
@@ -148,12 +169,19 @@ export class PublicationHost {
       409,
     );
   }
+  /** Where a publication stands is Code's own row; the unit's blockers are read back from it. */
+  async reconcile(caller: Caller, tx: Transaction) {
+    await this.changed(caller.projectId, tx);
+  }
   async apply(
     caller: Caller,
     record: CodePublication,
     outcome: 'stale' | 'resume' | 'published',
     tx: Transaction,
   ) {
+    // A unit has no producing state to return to and is already accepted: what an outcome
+    // changes for it is what its own publication row now says, which it reads back here.
+    if (record.approval!.source === 'unit') return await this.reconcile(caller, tx);
     const revision = await this.requireOwner().apply(
       caller,
       record.instanceId,
@@ -392,6 +420,9 @@ export class PublicationHost {
         controls.disabled = false;
       }
       await this.saveControls(caller.projectId, controls, tx);
+      // Turning publication off or on again changes what every unit waiting on one is waiting
+      // for, so what they publish is refreshed here rather than at the next poll.
+      await this.reconcile(caller, tx);
       await tx.run(
         'INSERT INTO code_publication_requests VALUES(?,?,?,?,?)',
         caller.projectId,

@@ -22,6 +22,8 @@ This release deploys the automatic-base, shared-repository and merge work togeth
 - **Mirroring.** Work, accepted and resolved-base refs publish asynchronously through the same journal. Work refs fast-forward; accepted/base refs are create-only. Only the server receives a per-operation installation token, revoked after use. Mirroring needs a linked repository and enabled write automation; divergence is visible in `code.status` and requires operator acknowledgment. Mirror lag never gates a lease, acceptance or base. `code_projects.mode` remains `local`; main is named through `code.local.bind`, without a `refs/merv/main` ref.
 - **Storage.** Both dialects create `code_units@1` (project/unit/edge/operation/input tables), `code_bases@1`, `code_pending_merges@1` and `session_service_work@1` directly from their unreleased definitions. Existing scopes receive only new migrations: workflow blockers/system prerequisites, service actors, review provenance and contributor lookup. The runtime image installs Git; startup refuses an unsupported version.
 
+Publication has two sources. A unit of work whose owner declared publication before its first lease takes its base from the current main as well as its dependencies, and its acceptance seals the same envelope into the same journal: one pull request against main, the approval status on exactly the reviewed head, and a signed-in operator's merge. A leased worker cannot make that declaration. A unit publishes once: main moving under an approved head closes that pull request and leaves the work to a successor task, because an accepted unit has no rounds.
+
 S4-3 publishes through the existing PR journal. Unreleased `consolidation@5` freezes accepted candidates, fixes decisions before preparing its Code branch and retains one immutable reviewed acceptance per approved round. The terminal unit acceptance is recorded only after the merge is imported and verified; the approved head stays distinct from the publication commit. No local or direct-push publication path exists. Consolidation selects version 5 for hosted Git projects and version 4 for unhosted projects or when Code is unloaded. Executable checks and their sandbox, separate Apps and repository rebinding remain S5. The legacy Git manager, push-grant route and runner ledger still serve `task@3/4`, `experiment@6/7` and older live versions. New `reflection@3` waves use synthesis/review recipe 8 to request `change-spec@2`, whose items explicitly choose no workspace or Code. Research passes Git declarations atomically to Tasks/Experiments, which retain their hosted-versus-legacy routing. Version-1 specs remain workspace-free and unchanged.
 
 ### Deploying
@@ -36,8 +38,8 @@ No automated test uses a real GitHub. Before release, verify read-only import to
 
 ## The owner's decisions
 
-1. One branch per unit of work. `main` is consolidated, reviewed research: it moves only at consolidation, and no
-   agent or runner can move it.
+1. One branch per unit of work. `main` is reviewed work: it moves at consolidation, and at the publication of a
+   unit whose owner declared before its first lease that it publishes, and no agent or runner can move it.
 2. A unit gets its code by branching from its dependencies' accepted commits, derived automatically.
 3. Several code-bearing dependencies are auto-merged; when that fails the server creates one reviewed merge task,
    which slots in as a dependency of every unit waiting on it.
@@ -687,7 +689,7 @@ Repository rebinding remains unavailable before S5; changing repository identity
 13. Review targets immutable submissions, never moving branches.
 14. Contributors and their directing authorities cannot approve retained work.
 15. Runners receive no GitHub credentials.
-16. Main changes only through human-authorized consolidation; connected publication preserves the reviewed tree.
+16. Main changes only through human-authorized publication of reviewed work — a consolidation or a declared unit; connected publication preserves the reviewed tree.
 17. Transient preparation waits consume neither launch-failure limits nor review rounds.
 18. Quarantine blocks ordinary acceptance/use/publication and propagates to dependent results.
 19. Same request ID and fingerprint replays; changed input conflicts.

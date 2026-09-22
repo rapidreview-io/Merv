@@ -24,6 +24,19 @@ import { parseCodeInput } from './input.js';
 import { publicationMigration } from './publications-schema.js';
 import { PublicationIncident, type PublicationHost } from './publication-host.js';
 
+/** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
+export interface CodeUnitPublicationSeal {
+  publicationId: string;
+  unitId: string;
+  title: string;
+  reviewId: string;
+  /** The commit its work was prepared from, which is what the pull request is opened against. */
+  baseOid: string;
+  headOid: string;
+  treeOid: string;
+  approval: NonNullable<CodePublication['approval']>;
+}
+
 const schema = `CREATE TABLE code_publications (
   proposal_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record_json TEXT NOT NULL,binding_json TEXT NOT NULL,
   review_json TEXT,pull_json TEXT,merge_json TEXT,error TEXT,lock_id TEXT,lock_until TEXT,synced_at TEXT NOT NULL DEFAULT '',settled INTEGER NOT NULL DEFAULT 0
@@ -138,6 +151,50 @@ export class CodePublicationService implements CodePublicationApi {
       canonical(binding),
     );
   }
+  /**
+   * Opens the publication of a unit accepted to publish. It is the same record and the same
+   * journal a reviewed consolidation uses; what differs is only where the envelope came from,
+   * and that the review which accepted the unit is already the passing one, so its verdict is
+   * sealed here instead of arriving later.
+   */
+  async openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction) {
+    ({ caller, input } = structuredClone({ caller, input }));
+    this.state.assertTransaction(tx);
+    const at = now();
+    const record: CodePublication = {
+      proposalId: input.publicationId,
+      instanceId: input.unitId,
+      manifestHash: input.approval.acceptanceHash,
+      repository: '',
+      repositoryId: 0,
+      connectionRevision: 0,
+      branch: `merv/proposals/${input.publicationId}`,
+      baseBranch: 'main',
+      baseOid: input.baseOid,
+      headOid: input.headOid,
+      treeOid: input.treeOid,
+      title: clip(input.title, 240),
+      createdAt: at,
+      review: null,
+      pull: null,
+      merge: null,
+      lastError: null,
+      approval: input.approval,
+    };
+    await tx.run(
+      'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json,review_json) VALUES(?,?,?,?,?) ON CONFLICT(proposal_id) DO NOTHING',
+      input.publicationId,
+      caller.projectId,
+      canonical(record),
+      'null',
+      canonical({
+        id: input.reviewId,
+        actorId: caller.actorId,
+        verdict: 'pass',
+        recordedAt: at,
+      }),
+    );
+  }
   /** Trusted domain hook only: invoked in the same transaction that commits its independent verdict. */
   async recordReview(
     caller: Caller,
@@ -228,8 +285,11 @@ export class CodePublicationService implements CodePublicationApi {
       manifest: { hash: string };
     };
     return {
+      source: 'consolidation' as const,
       candidateSetHash: candidates.hash,
       decisionManifestHash: manifest.hash,
+      // A later round integrates a newer main than the immutable pin did, and the sealed
+      // proposal is what names it.
       integrationBase:
         (proposal.provenance.integrationBase as string | undefined) ?? candidates.integrationBase,
       certificateHash: certificate.hash,
@@ -350,6 +410,7 @@ export class CodePublicationService implements CodePublicationApi {
               canonical(pull),
               row.proposal_id,
             );
+            await this.host!.reconcile(caller, tx);
           });
         throw error;
       }
@@ -365,11 +426,8 @@ export class CodePublicationService implements CodePublicationApi {
         Number(pull.merged || pull.state === 'closed'),
         row.proposal_id,
       );
-      if (pull.merged && record.approval && !record.verified) {
-        await this.host!.check(caller, record, tx);
-        await this.host!.apply(caller, record, 'published', tx);
-        await this.host!.main(caller, pull.mergeCommitSha!, tx);
-      }
+      // The merge commit is written before the row is sealed as verified, because a verified
+      // row's merge is immutable, and because what the host tells the unit next reads both.
       if (pull.merged && record.merge && pull.mergeCommitSha) {
         await tx.run(
           'UPDATE code_publications SET merge_json=? WHERE proposal_id=?',
@@ -381,11 +439,15 @@ export class CodePublicationService implements CodePublicationApi {
           row.proposal_id,
         );
       }
-      if (pull.merged && record.approval && !record.verified)
+      if (pull.merged && record.approval && !record.verified) {
+        await this.host!.check(caller, record, tx);
         await tx.run(
           'UPDATE code_publications SET verified=1 WHERE proposal_id=?',
           record.proposalId,
         );
+        await this.host!.apply(caller, record, 'published', tx);
+        await this.host!.main(caller, pull.mergeCommitSha!, tx);
+      }
       return this.decode(await this.row(caller, row.proposal_id, tx));
     });
   }
@@ -499,7 +561,13 @@ export class CodePublicationService implements CodePublicationApi {
                       head: current.branch,
                       base: current.baseBranch,
                       draft: true,
-                      body: `Merv consolidation proposal ${current.proposalId}\n\nExact commit: ${current.headOid}\nManifest SHA-256: ${current.manifestHash}\n\nMerv's independent verdict is tracked separately from GitHub reviews.`,
+                      // This body is what a signed-in operator reads before the one
+                      // irreversible action in the design, so it names the kind of work it
+                      // is publishing and what the hash it asks them to trust actually is.
+                      body:
+                        current.approval?.source === 'unit'
+                          ? `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`
+                          : `Merv consolidation proposal ${current.proposalId}\n\nExact commit: ${current.headOid}\nManifest SHA-256: ${current.manifestHash}\n\nMerv's independent verdict is tracked separately from GitHub reviews.`,
                     });
                   } catch (error) {
                     const recovered = await client.pulls(token, current.repository, {
@@ -651,17 +719,36 @@ export class CodePublicationService implements CodePublicationApi {
             const main = await client.branch(token, record.repository, record.baseBranch);
             await this.host!.import(caller, record, main.sha);
             if (!(await this.host!.ancestor(caller.projectId, main.sha, record.headOid))) {
+              // A unit publishes once: no successor round will ever revisit this row, so the
+              // pull request that would otherwise stay open and mergeable against main is
+              // closed here, the way a consolidation's successor closes its predecessor.
+              const unit = record.approval!.source === 'unit';
+              const closed =
+                unit && pull.state === 'open'
+                  ? await client.updatePull(token, record.repository, pull.number, {
+                      state: 'closed',
+                    })
+                  : null;
               await this.state.transaction(async (tx) => {
                 await this.scope.require(caller, 'admin', tx);
                 await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
                 await this.owned(caller, record.proposalId, lock, tx);
                 await this.host!.check(caller, record, tx);
                 await this.host!.main(caller, main.sha, tx);
-                await this.host!.apply(caller, record, 'stale', tx);
+                // A unit publishes once: there are no rounds on an accepted unit, so its stale
+                // row settles here and a successor carries the work to the newer main.
                 await tx.run(
-                  "UPDATE code_publications SET stale=1,synced_at='' WHERE proposal_id=?",
+                  "UPDATE code_publications SET stale=1,settled=?,synced_at='' WHERE proposal_id=?",
+                  Number(unit),
                   record.proposalId,
                 );
+                if (closed)
+                  await tx.run(
+                    'UPDATE code_publications SET pull_json=? WHERE proposal_id=?',
+                    canonical(closed),
+                    record.proposalId,
+                  );
+                await this.host!.apply(caller, record, 'stale', tx);
               });
               return this.decode(
                 await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),

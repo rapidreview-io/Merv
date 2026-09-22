@@ -12,6 +12,8 @@ import {
   type Caller,
   type CodeBasePin,
   type CodeBaseStatus,
+  type CodeUnitPublication,
+  type GitHubPullRequest,
   type CodeLocalBindInput,
   type CodeProjectBinding,
   type CodeProjectStatus,
@@ -37,6 +39,7 @@ import type { CodeWriterService } from './writers.js';
 import type { CodeBaseRecord } from '@merv/contracts';
 import type { CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
+import type { CodeUnitPublicationSeal } from './publications.js';
 import { baseKey } from './base-plan.js';
 import { acceptedRef, workBranch } from './store/refs.js';
 
@@ -61,6 +64,8 @@ interface UnitRow {
   acceptance_hash: string | null;
   accepted_at: string | null;
   quarantine_base_key: string | null;
+  publishes_at: string | null;
+  publication_id: string | null;
 }
 /** The hashed body of an acceptance. It carries no time, so a repeated acceptance is byte-equal. */
 interface AcceptanceBody {
@@ -94,6 +99,63 @@ interface BaseBody {
   sources: { unitId: string; acceptanceHash: string; terminalRevision: number }[];
   main: { oid: string; operationId: string } | null;
 }
+/** The publication facts of one unit, read by the id its acceptance sealed. */
+interface PublicationRow {
+  pull_json: string | null;
+  merge_json: string | null;
+  incident_json: string | null;
+  stale: number;
+  verified: number;
+}
+/**
+ * What an open publication means for the unit that is waiting on it. A done unit carrying one
+ * of these is not failing and is not work anybody can take: it is a fact about where its
+ * accepted code stands, and every one of them names who ends the wait.
+ */
+function publicationBlockers(publication: CodeUnitPublication): WorkflowProvidedBlockerInput[] {
+  if (publication.state === 'published') return [];
+  const pull = publication.pull;
+  const named = pull ? ` (pull request #${pull.number})` : '';
+  const related = pull ? [{ kind: 'pull-request', id: pull.url, label: `#${pull.number}` }] : [];
+  const said = {
+    pending: {
+      code: 'code_publication_pending',
+      message: 'waiting on publication: a signed-in operator merges the pull request',
+      next: pull
+        ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
+        : 'Nothing: the publication journal opens the pull request, and a signed-in operator merges it.',
+    },
+    stale: {
+      code: 'code_publication_stale',
+      message: `main moved; a successor task integrates it${named}`,
+      next: 'Create the successor work that takes this accepted commit and the newer main; this unit stays as it is.',
+    },
+    disabled: {
+      code: 'code_publication_disabled',
+      message: `publication is not enabled for this project${named}`,
+      next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.publication.control.',
+    },
+    closed: {
+      code: 'code_publication_closed',
+      message: `the pull request was closed without merging${named}`,
+      next: pull
+        ? `A signed-in project operator reopens pull request #${pull.number} on GitHub, or creates the successor work that carries this accepted commit to main.`
+        : 'Create the successor work that carries this accepted commit to main.',
+    },
+    unsealed: {
+      code: 'code_publish_unverifiable',
+      message:
+        'this unit was declared to publish to main, but its acceptance could not open a publication',
+      next: 'An administrator reads code.status for this unit and creates the successor work that carries its accepted code to main; this unit stays as it is.',
+    },
+    incident: {
+      code: 'code_publication_incident',
+      message: `a publication incident is retained for this unit${named}`,
+      next: 'An administrator investigates the observed merge commit in code.status.publication; a retry never clears it.',
+    },
+  }[publication.state];
+  return [{ key: 'publication', status: 409, related, ...said }];
+}
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
 type Derived =
   | { status: 'waiting' }
@@ -104,7 +166,7 @@ const PROVIDER = 'code';
 const EXPLICIT_BASE =
   'Recreate this work with baseTaskId naming one accepted Git task, which is the explicit form of a base';
 const unitColumns =
-  'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key';
+  'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id';
 const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** The workspace driver whose units live in Code's own repository. */
 export const CODE_DRIVER = 'code.v2';
@@ -119,6 +181,10 @@ export class CodeUnitService implements CodeUnits {
   private closed = false;
   /** Set once the project repositories exist; without it several commits are never merged. */
   bases?: CodeBaseService;
+  /** The journal that carries an accepted unit to main; without it nothing publishes. */
+  publications?: {
+    openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction): Promise<void>;
+  };
   reviews?: import('@merv/contracts').Reviews;
   resolutionTasks?: import('@merv/contracts').ServiceTaskCreator;
   constructor(
@@ -278,6 +344,17 @@ CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(ac
 CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
 WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key
 BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
+`,
+      },
+      {
+        version: 2,
+        postgres: postgresMigrations[2],
+        sql: `
+ALTER TABLE code_units ADD COLUMN publishes_at TEXT;
+ALTER TABLE code_units ADD COLUMN publication_id TEXT;
+CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units
+WHEN (OLD.publishes_at IS NOT NULL AND NEW.publishes_at IS NOT OLD.publishes_at) OR (OLD.publication_id IS NOT NULL AND NEW.publication_id IS NOT OLD.publication_id)
+BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publication is immutable'); END;
 `,
       },
     ]);
@@ -539,9 +616,10 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     );
     const stored = (await this.row(tx, caller.projectId, unitId))!;
     if (stored.base_lease_id === leaseId)
-      for (const target of derived.body.main
-        ? [`main:${derived.body.main.oid}`]
-        : derived.body.sources.map((item) => `acceptance:${item.unitId}@${item.acceptanceHash}`))
+      for (const target of [
+        ...derived.body.sources.map((item) => `acceptance:${item.unitId}@${item.acceptanceHash}`),
+        ...(derived.body.main ? [`main:${derived.body.main.oid}`] : []),
+      ])
         await tx.run(
           'INSERT INTO code_edges (project_id,source_ref,relation,target_ref,created_at) VALUES (?,?,?,?,?)',
           caller.projectId,
@@ -730,8 +808,190 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         at,
       );
     await this.retainAcceptance(caller, input.unitId, body, at, tx);
+    const stored = (await this.row(tx, caller.projectId, input.unitId))!;
+    if (stored.publishes_at)
+      await this.sealPublication(caller, relations.instance.name, stored, body, hash, tx);
     this.bases?.soon(caller.projectId);
-    return this.acceptance((await this.row(tx, caller.projectId, input.unitId))!)!;
+    return this.acceptance(stored)!;
+  }
+
+  /**
+   * Seals the publication of an accepted unit from its own facts and hands it to the journal
+   * a reviewed consolidation already uses: an immutable snapshot, a pull request against main
+   * carrying the approval status on exactly this head, and a signed-in operator's merge. The
+   * unit is done either way; what is left is a wait on a human, not more work.
+   *
+   * A unit whose facts cannot open a publication is still accepted. Acceptance is the record
+   * of work that was done and reviewed, and `publishes_at` is write-once, so refusing here
+   * would refuse the review itself and leave work that could never be accepted by anyone.
+   * The unit ends with a retained blocker naming the operator recovery instead.
+   */
+  private async sealPublication(
+    caller: Caller,
+    title: string,
+    row: UnitRow,
+    body: AcceptanceBody,
+    acceptanceHash: string,
+    tx: Transaction,
+  ): Promise<void> {
+    check(this.publications, 'code_unavailable', 'The publication journal is unavailable', 503);
+    const base = row.base_json ? (JSON.parse(row.base_json) as BaseBody) : null;
+    if (!(body.storage === 'code' && body.code?.tree) || !base?.main) {
+      await this.reconcileUnit(tx, caller.projectId, row.unit_id);
+      return;
+    }
+    const review = await tx.get<{ provenance_json: string | null }>(
+      'SELECT provenance_json FROM reviews WHERE id=? AND project_id=?',
+      body.reviewRef,
+      caller.projectId,
+    );
+    const publicationId = newId('codeprop');
+    await tx.run(
+      'UPDATE code_units SET publication_id=? WHERE project_id=? AND unit_id=? AND publication_id IS NULL',
+      publicationId,
+      caller.projectId,
+      row.unit_id,
+    );
+    await this.publications!.openUnit(
+      caller,
+      {
+        publicationId,
+        unitId: row.unit_id,
+        title,
+        reviewId: body.reviewRef,
+        baseOid: base.reference,
+        headOid: body.code.commit,
+        treeOid: body.code.tree,
+        approval: {
+          source: 'unit',
+          integrationBase: base.main.oid,
+          certificateHash: review?.provenance_json
+            ? (JSON.parse(review.provenance_json) as { hash: string }).hash
+            : null,
+          acceptanceHash,
+        },
+      },
+      tx,
+    );
+    await this.reconcileUnit(tx, caller.projectId, row.unit_id);
+  }
+
+  /**
+   * Records, once, that this unit's accepted code goes to main. It is a declaration and not a
+   * power: the merge itself still waits for a signed-in operator, and the declaration is the
+   * operator's or the directing agent's, never the worker's own. It has to come before the
+   * first lease, because main joins the base at derivation and a pin is immutable.
+   */
+  async publishOnAcceptance(
+    caller: Caller,
+    { unitId }: { unitId: string },
+    tx: Transaction,
+  ): Promise<CodeUnit> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    caller = structuredClone(caller);
+    // A leased worker holds `write`, which is how acceptance reaches Code from a reviewer
+    // session, so the refusal is named here rather than left to the scope: nothing a worker
+    // does may put its own branch on the road to main.
+    check(
+      !caller.session,
+      'session_forbidden',
+      'A leased worker cannot declare that its own work publishes to main',
+      403,
+    );
+    await this.scope.require(caller, 'write', tx);
+    const row = await this.row(tx, caller.projectId, unitId);
+    check(row, 'code_unit_not_found', 'This unit of work has not been declared to Code', 404);
+    if (!row.publishes_at) {
+      const project = await this.project(tx, caller.projectId);
+      check(
+        project?.durability === 'code' && project.main.stored,
+        'code_publish_unhosted',
+        'Publishing to main needs Code to host this project and hold the commit that is main',
+        409,
+      );
+      check(
+        !row.acceptance_json,
+        'code_publish_accepted',
+        'This unit is already accepted; a successor publishes what it left',
+        409,
+      );
+      check(
+        !row.base_json &&
+          !(await tx.get(
+            'SELECT 1 FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
+            caller.projectId,
+            unitId,
+          )),
+        'code_publish_based',
+        'This unit already stands on a base that does not include main; a successor publishes what it left',
+        409,
+      );
+      // The reads above name what is wrong in the ordinary case; the write repeats them, so a
+      // lease or an acceptance committing between them cannot leave a unit marked to publish
+      // while standing on a base that never took main — a state nothing could recover from.
+      const marked = await tx.run(
+        'UPDATE code_units SET publishes_at=? WHERE project_id=? AND unit_id=? AND publishes_at IS NULL AND base_json IS NULL AND acceptance_json IS NULL',
+        now(),
+        caller.projectId,
+        unitId,
+      );
+      check(
+        marked.changes === 1,
+        'code_publish_based',
+        'This unit took a base or an acceptance while publication was being declared; a successor publishes what it left',
+        409,
+      );
+      await this.reconcileUnit(tx, caller.projectId, unitId);
+    }
+    return await this.record(tx, (await this.row(tx, caller.projectId, unitId))!);
+  }
+
+  /**
+   * Every accepted commit this repository holds, with the unit it belongs to and the main to
+   * compare them against. Whether main already contains one is a question for Git, which is
+   * asked once, outside every transaction, by whoever holds the repository.
+   */
+  async acceptedCandidates(
+    caller: Caller,
+    tx?: Transaction,
+  ): Promise<{
+    main: string;
+    candidates: { unitId: string; commit: string; quarantined: boolean }[];
+  }> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, tx, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const project = await this.project(tx, caller.projectId);
+      check(project, 'code_project_unbound', 'This project has no Code binding', 409);
+      const candidates: { unitId: string; commit: string; quarantined: boolean }[] = [];
+      for (const row of await tx.all<UnitRow>(
+        `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
+        caller.projectId,
+      )) {
+        const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
+        // A code-less success is nothing main could be missing. A legacy acceptance is code
+        // this repository holds as soon as it was imported, which is the same question
+        // derive() asks before it will build on one; only what was never imported is unasked.
+        if (!accepted.code) continue;
+        if (
+          accepted.storage !== 'code' &&
+          !(await tx.get(
+            "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND result_json LIKE ? LIMIT 1",
+            caller.projectId,
+            `%"head":"${accepted.code.commit}"%`,
+          ))
+        )
+          continue;
+        candidates.push({
+          unitId: row.unit_id,
+          commit: accepted.code.commit,
+          quarantined: !!row.quarantine_base_key,
+        });
+      }
+      return { main: project.main.oid, candidates };
+    });
   }
 
   private async reviewedCode(
@@ -1031,6 +1291,12 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       'SELECT repository_id,main_json FROM code_projects WHERE project_id=?',
       projectId,
     ))!;
+    const main = JSON.parse(bound.main_json) as {
+      oid: string;
+      operationId: string;
+      stored?: boolean;
+    };
+    const publishing = !!(await this.row(tx, projectId, relations.instance.id))?.publishes_at;
     const fixed = await tx.get<{ reference: string }>(
       'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
       projectId,
@@ -1125,6 +1391,21 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
       entry.units.push(node);
       commits.set(accepted.code.commit, entry);
     }
+    // A unit that publishes to main is prepared from main as well: the integration everyone
+    // would otherwise do after the review happens once, before the work starts, and a clash
+    // with main becomes an ordinary resolution task instead of a stale publication. A unit
+    // with no code-bearing dependency already starts from main, below.
+    if (publishing && commits.size) {
+      if (main.stored !== true)
+        blockers.push(
+          pending(
+            'main',
+            'Code’s repository does not hold the commit that is main, which this unit publishes to',
+            `${IMPORT}, or names an imported commit as main with code.local.bind.`,
+          ),
+        );
+      else if (!commits.has(main.oid)) commits.set(main.oid, { sources: [], units: [] });
+    }
     const blocked = blockers.filter(
       (item, index) => blockers.findIndex((other) => other.key === item.key) === index,
     );
@@ -1190,7 +1471,9 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
             sources: [...commits.values()]
               .flatMap((entry) => entry.sources)
               .sort((left, right) => left.unitId.localeCompare(right.unitId)),
-            main: null,
+            // Main is not an acceptance, so it is never a source; the pin names it here, which
+            // is also what the publication envelope reads back as its integration base.
+            main: publishing ? { oid: main.oid, operationId: main.operationId } : null,
           },
         };
       const resolutions =
@@ -1270,11 +1553,6 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
           },
         ],
       };
-    const main = JSON.parse(bound.main_json) as {
-      oid: string;
-      operationId: string;
-      stored?: boolean;
-    };
     const [accepted] = [...commits];
     if (!accepted && main.stored !== true)
       return {
@@ -1298,7 +1576,9 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         sources: (accepted?.[1].sources ?? []).sort((left, right) =>
           left.unitId.localeCompare(right.unitId),
         ),
-        main: accepted ? null : { oid: main.oid, operationId: main.operationId },
+        // A publishing unit whose one accepted commit is main itself still records it: the
+        // envelope it seals later reads its integration base from here.
+        main: accepted && !publishing ? null : { oid: main.oid, operationId: main.operationId },
       },
     };
   }
@@ -1319,21 +1599,43 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
   /**
    * Publishes what a derivation finds for one unit that has neither a base nor an acceptance.
    * A blocked unit is refused at lease admission and so never becomes a dispatch candidate;
-   * this row is the only place anyone would see why. A unit that has ended is left alone:
-   * Workflows already cleared it and would drop the write.
+   * this row is the only place anyone would see why.
+   *
+   * A publication wait is the one opinion Code keeps about work that has already ended: it
+   * names a human who can still end it, so it is a fact about done work rather than work
+   * nobody may take. Every other opinion here is about work still to do, and work that has
+   * ended lost its rows at that transition with nothing left to run again and withdraw one,
+   * so those are never written onto an instance that has ended.
    */
   private async reconcileUnit(tx: Transaction, projectId: string, unitId: string): Promise<void> {
     const row = await this.row(tx, projectId, unitId);
-    if (row?.quarantine_base_key) {
+    if (
+      (row?.publication_id || (row?.publishes_at && row.acceptance_json)) &&
+      !row.quarantine_base_key
+    ) {
+      const publication = await this.publicationOf(tx, projectId, row);
       await this.workflows.replaceBlockers(
         {
           projectId,
           instanceId: unitId,
           provider: PROVIDER,
-          blockers: [this.quarantineBlocker(row.quarantine_base_key)],
+          blockers: publication ? publicationBlockers(publication) : [],
         },
         tx,
       );
+      return;
+    }
+    if (row?.quarantine_base_key) {
+      if (!(await this.workflows.dependencyRelations(projectId, unitId, tx))?.instance.terminal)
+        await this.workflows.replaceBlockers(
+          {
+            projectId,
+            instanceId: unitId,
+            provider: PROVIDER,
+            blockers: [this.quarantineBlocker(row.quarantine_base_key)],
+          },
+          tx,
+        );
       return;
     }
     if (!row || row.base_json !== null || row.acceptance_json !== null) return;
@@ -1587,7 +1889,12 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         }
       }
     }
-    for (const unit of units.filter((u) => u.quarantine_base_key))
+    for (const unit of units.filter((u) => u.quarantine_base_key)) {
+      // As in reconcileUnit: a quarantine is a refusal to let more work start on this base,
+      // and work that has ended cleared its rows when it ended with nothing left to withdraw
+      // one afterwards, so a row written here would block it for good.
+      const relations = await this.workflows.dependencyRelations(projectId, unit.unit_id, tx);
+      if (relations?.instance.terminal) continue;
       await this.workflows.replaceBlockers(
         {
           projectId,
@@ -1597,6 +1904,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         },
         tx,
       );
+    }
   }
 
   /** Every unpinned unit of a project: for a new main, and for a start after Code was away. */
@@ -1618,7 +1926,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
         );
     }
     for (const { unit_id } of await tx.all<{ unit_id: string }>(
-      'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL ORDER BY unit_id',
+      'SELECT unit_id FROM code_units WHERE project_id=? AND ((base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL) ORDER BY unit_id',
       projectId,
     ))
       await this.reconcileUnit(tx, projectId, unit_id);
@@ -1629,7 +1937,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     const projects = await this.state.read(
       async (sql) =>
         await sql.all<{ project_id: string }>(
-          'SELECT DISTINCT project_id FROM code_units WHERE base_json IS NULL AND acceptance_json IS NULL ORDER BY project_id',
+          'SELECT DISTINCT project_id FROM code_units WHERE (base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL ORDER BY project_id',
         ),
     );
     for (const { project_id } of projects)
@@ -1782,6 +2090,62 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
     await this.retainAcceptance(caller, unitId, body, round.accepted_at, tx);
   }
 
+  /** What the sealed publication of this unit says now; null while nothing declared one. */
+  private async publicationOf(
+    sql: Sql,
+    projectId: string,
+    row: UnitRow,
+  ): Promise<CodeUnitPublication | null> {
+    if (!row.publication_id)
+      // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
+      return row.publishes_at && row.acceptance_json ? { state: 'unsealed' } : null;
+    const publication = await sql.get<PublicationRow>(
+      'SELECT pull_json,merge_json,incident_json,stale,verified FROM code_publications WHERE proposal_id=? AND project_id=?',
+      row.publication_id,
+      projectId,
+    );
+    if (!publication) return null;
+    const pull = publication.pull_json
+      ? (JSON.parse(publication.pull_json) as GitHubPullRequest)
+      : null;
+    const merge = publication.merge_json
+      ? (JSON.parse(publication.merge_json) as { commitSha: string | null })
+      : null;
+    const controls = await sql.get<{ record_json: string }>(
+      'SELECT record_json FROM code_publication_controls WHERE project_id=?',
+      projectId,
+    );
+    const enforcement = controls
+      ? (JSON.parse(controls.record_json) as {
+          disabled?: boolean;
+          canary?: unknown;
+          visibility?: { incomplete?: boolean };
+        })
+      : {};
+    // Every project condition PublicationHost.check and rules() refuse a merge on reads the
+    // same way to a unit waiting on one: until an administrator repairs it, no merge of this
+    // pull request can succeed, so the wait must not name a merge as the thing that ends it.
+    const disabled =
+      !!enforcement.disabled || !enforcement.canary || !!enforcement.visibility?.incomplete;
+    const mergeCommit = merge?.commitSha ?? pull?.mergeCommitSha ?? null;
+    const state = publication.incident_json
+      ? 'incident'
+      : Number(publication.verified)
+        ? 'published'
+        : Number(publication.stale)
+          ? 'stale'
+          : pull && pull.state === 'closed' && !pull.merged
+            ? 'closed'
+            : disabled
+              ? 'disabled'
+              : 'pending';
+    return {
+      state,
+      ...(pull ? { pull: { number: pull.number, url: pull.url } } : {}),
+      ...(state === 'published' && mergeCommit ? { mergeCommit } : {}),
+    };
+  }
+
   private acceptance(row: UnitRow): CodeUnitAcceptance | null {
     if (row.acceptance_json === null) return null;
     const body = JSON.parse(row.acceptance_json) as AcceptanceBody;
@@ -1835,6 +2199,7 @@ BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
             ? this.baseState(await this.derive(tx, row.project_id, row.unit_id))
             : null,
       acceptance: this.acceptance(row),
+      publication: await this.publicationOf(tx, row.project_id, row),
       ...(await this.writers.facts(tx, row.project_id, row.unit_id)),
     };
   }
