@@ -2,7 +2,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { z } from 'zod';
 import { ListToolsResultSchema, type ListToolsResult } from '@modelcontextprotocol/sdk/types.js';
 import { check, MervError } from '@merv/contracts';
-import type { RemoteToolDescription } from '@merv/api/types';
+import type { ToolDescription } from '@merv/api/types';
 
 // Validate protocol structure while retaining the original JSON, including extension metadata
 // that the SDK's ordinary object parsing can strip from nested content blocks.
@@ -28,7 +28,7 @@ export interface RemoteCatalogOptions {
 export async function collectRemoteCatalog(
   client: RemoteCatalogClient,
   options: RemoteCatalogOptions = {},
-): Promise<RemoteToolDescription[]> {
+): Promise<ToolDescription[]> {
   const maxPages = options.maxPages ?? 20,
     maxTools = options.maxTools ?? 1000,
     timeoutMs = options.timeoutMs ?? 5000;
@@ -44,7 +44,7 @@ export async function collectRemoteCatalog(
   );
   const deadline = AbortSignal.timeout(timeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
-  const result: RemoteToolDescription[] = [],
+  const result: ToolDescription[] = [],
     names = new Set<string>(),
     cursors = new Set<string>();
   let cursor: string | undefined;

@@ -1,5 +1,5 @@
 import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
-import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
+import { mapAsync, someAsync } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -733,10 +733,7 @@ export class ReflectionService implements Reflections {
         const inputs = await this.inputs({ ...context, caller: context.source });
         if (review) inputs.assessment = { text: JSON.stringify(review) };
         const ids = this.inputIds(inputs);
-        await forEachAsync(
-          ids,
-          async (id) => await this.artifacts.get(context.source, id, context.tx),
-        );
+        for (const id of ids) await this.artifacts.get(context.source, id, context.tx);
         const receipt = {
           leaseId: context.leaseId,
           instanceId: context.snapshot.id,

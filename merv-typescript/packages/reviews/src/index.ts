@@ -27,16 +27,6 @@ import {
 } from '@merv/contracts';
 import { validateAssessment, evidenceFrom } from './findings.js';
 
-export type {
-  ReviewInput,
-  ReviewRequest,
-  ReviewSubmit,
-  ReviewApplication,
-  ReviewSubmitOwner,
-  Reviews,
-  Verdict,
-} from '@merv/contracts';
-
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     for (const child of Object.values(value)) freeze(child);

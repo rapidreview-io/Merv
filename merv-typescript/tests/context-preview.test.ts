@@ -16,7 +16,7 @@ import {
   type TaskTypeDefinition,
   type Transaction,
 } from '@merv/contracts';
-import { countWrites, openState } from './fixtures/state.js';
+import { countWrites, openState, storedContext } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
   name: 'test.preview',
@@ -113,7 +113,7 @@ test('preview renders the exact future package without creating IDs, timestamps,
   preview.omitted.push('evidence');
   preview.prompt = 'Modified outside the builder';
   input.subject.revision = 7;
-  assert.deepEqual(await builder.get(operator, id), built);
+  assert.deepEqual(await storedContext(state, id), built);
   assert.equal((await artifacts.get(operator, evidence.id)).title, 'Proof');
   assert.equal(
     (await registration.preview(operator, { ...input, subject: built.subject })).hash,
@@ -161,15 +161,6 @@ test('context requests retain their caller and assignment across authorization',
       }
     });
   }
-  const foreign = await registration.build(other, original);
-  const caller = { ...operator };
-  scope.require = async (...args) => {
-    const actor = await authorize(...args);
-    caller.projectId = other.projectId;
-    return actor;
-  };
-  await assert.rejects(builder.get(caller, foreign.id), { code: 'not_found' });
-  scope.require = authorize;
   const small = await artifacts.create(operator, { title: 'Small', content: 'x' });
   const large = await artifacts.create(operator, { title: 'Large', content: 'x'.repeat(100) });
   const ids = [small.id, large.id];

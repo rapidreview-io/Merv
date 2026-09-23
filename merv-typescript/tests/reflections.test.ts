@@ -1,4 +1,4 @@
-import { forEachAsync, mapAsync } from '@merv/contracts';
+import { mapAsync } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -60,7 +60,7 @@ async function fixture(t: TestContext, reflections?: object) {
       content: `# Summary\n${label}: source-linked observation.\n# Evidence\nNo completed experiments in the pinned corpus; no empirical conclusion is claimed.`,
     });
   const lenses = async (wave: Reflection) => {
-    await forEachAsync(wave.lenses, async (lens, i) => {
+    for (const [i, lens] of wave.lenses.entries()) {
       const caller = await actor(`Lens ${wave.attempt}-${i}`);
       const artifact = await create(caller, lens.perspective);
       await app.ctx.reflections.submitLens(caller, {
@@ -69,7 +69,7 @@ async function fixture(t: TestContext, reflections?: object) {
         expectedRevision: 0,
         requestId: `lens-${lens.id}`,
       });
-    });
+    }
     return await app.ctx.reflections.get(owner, wave.id);
   };
   const synthesize = async (wave: Reflection) => {

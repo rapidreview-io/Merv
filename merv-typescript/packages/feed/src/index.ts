@@ -18,8 +18,6 @@ import {
 
 import type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
 
-export type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
-
 interface PostRow {
   id: string;
   sequence: number;

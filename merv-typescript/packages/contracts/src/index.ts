@@ -2,7 +2,7 @@ export {
   patchSchema as paperPatchSchema,
   changesSchema as paperChangesSchema,
 } from './paper-edit.js';
-export { mapAsync, filterAsync, someAsync, everyAsync, findAsync, forEachAsync } from './async.js';
+export { mapAsync, filterAsync, someAsync, everyAsync } from './async.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
   ToolPolicy,
@@ -1601,7 +1601,6 @@ export interface ContextRegistration {
 }
 export interface ContextBuilder {
   register(definition: TaskTypeDefinition): Promise<ContextRegistration>;
-  get(caller: Caller, contextId: string): Promise<ContextPackage>;
   /** Text documents are embedded while they leave the recipe `room` for the rest of the
    *  context; past that they are listed and the reader opens them itself. */
   mode(
