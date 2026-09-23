@@ -196,9 +196,11 @@ async function fixture(t: TestContext, store = false) {
 }
 
 test('Research requests retain their admitted caller and reflection inputs', async (t) => {
+  // One application for every case: each makes its own record, and t.mock restores per case.
+  const f = await fixture(t);
+  await f.definition();
   for (const method of ['get', 'list'] as const) {
     await t.test(method, async (t) => {
-      const f = await fixture(t);
       const record = await f.create();
       const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
       const caller = { projectId: other.project.id, actorId: other.actor.id };
@@ -215,8 +217,6 @@ test('Research requests retain their admitted caller and reflection inputs', asy
   }
   for (const method of ['advance', 'replan', 'end'] as const) {
     await t.test(method, async (t) => {
-      const f = await fixture(t);
-      await f.definition();
       const record = await f.create();
       const caller = await f.issue('producer');
       const get = f.research.get.bind(f.research);
@@ -241,7 +241,6 @@ test('Research requests retain their admitted caller and reflection inputs', asy
     });
   }
   await t.test('creation', async (t) => {
-    const f = await fixture(t);
     const producer = await f.issue('producer');
     const caller = { ...f.owner };
     const creating = f.research.create(caller, { name: 'Original', requestId: f.id() });
@@ -249,7 +248,6 @@ test('Research requests retain their admitted caller and reflection inputs', asy
     assert.equal((await creating).ownerId, f.owner.actorId);
   });
   await t.test('reflection creation', async (t) => {
-    const f = await fixture(t);
     const producer = await f.issue('producer');
     const caller = { ...f.owner };
     const input = { title: 'Original reflection', requestId: f.id() };
