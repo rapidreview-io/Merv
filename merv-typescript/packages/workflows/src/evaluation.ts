@@ -5,6 +5,7 @@ import type {
   WorkflowActionStatus,
   WorkflowCheckContext,
   WorkflowDecision,
+  WorkflowDependency,
   WorkflowDefinition,
   WorkflowEvaluationInput,
   WorkflowLimitStatus,
@@ -232,14 +233,17 @@ export function validatePolicy(
 }
 
 /** Never hand a callback the engine's mutable state or the caller's argument object. */
-export function readContext(context: WorkflowCheckContext): WorkflowCheckContext {
+/** The engine always supplies the dependencies it has read; programs see them as optional. */
+export type EngineContext = WorkflowCheckContext & { dependencies: WorkflowDependency[] };
+
+export function readContext<C extends WorkflowCheckContext>(context: C): C {
   const { tx, ...data } = context;
-  return Object.freeze({ ...freezeData(structuredClone(data)), tx });
+  return Object.freeze({ ...freezeData(structuredClone(data)), tx }) as unknown as C;
 }
 
 export async function evaluateAction(
   rule: WorkflowActionRule,
-  context: WorkflowCheckContext,
+  context: EngineContext,
 ): Promise<WorkflowActionStatus> {
   const result: WorkflowActionStatus = {
     action: rule.name,
@@ -268,15 +272,7 @@ export async function evaluateAction(
         ? { ...context, input: { ...context.input, ...(result.arguments as object) } }
         : context,
     );
-    if (rule.requiresDependencies) {
-      check(
-        context.dependencies !== undefined,
-        'invalid_workflow_policy',
-        'Dependency checks require an engine context',
-        500,
-      );
-      requireDependencies(context.dependencies);
-    }
+    if (rule.requiresDependencies) requireDependencies(context.dependencies);
     const requiredInput =
       typeof rule.requiredInput === 'function'
         ? await rule.requiredInput(context)
@@ -303,7 +299,7 @@ export async function evaluateAction(
 
 export async function enforceAction(
   rule: WorkflowActionRule,
-  context: WorkflowCheckContext,
+  context: EngineContext,
 ): Promise<void> {
   const result = await evaluateAction(rule, context);
   const blocker = result.blockers[0];
@@ -313,18 +309,10 @@ export async function enforceAction(
 /** Node admission is independent of whether its completion action has enough evidence. */
 export async function checkAssignment(
   rule: WorkflowAssignmentRule,
-  context: WorkflowCheckContext,
+  context: EngineContext,
 ): Promise<void> {
   await rule.check(context);
-  if (rule.requiresDependencies) {
-    check(
-      context.dependencies !== undefined,
-      'invalid_workflow_policy',
-      'Dependency checks require an engine context',
-      500,
-    );
-    requireDependencies(context.dependencies);
-  }
+  if (rule.requiresDependencies) requireDependencies(context.dependencies);
 }
 
 /**
@@ -337,7 +325,7 @@ export async function checkAssignment(
 export async function decision(
   definition: WorkflowDefinition,
   policy: WorkflowPolicy | undefined,
-  context: WorkflowCheckContext,
+  context: EngineContext,
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null = null,
   limits: WorkflowLimitStatus[] = [],
@@ -366,7 +354,7 @@ export async function decision(
 async function ownDecision(
   definition: WorkflowDefinition,
   policy: WorkflowPolicy | undefined,
-  context: WorkflowCheckContext,
+  context: EngineContext,
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null,
   limits: WorkflowLimitStatus[],
@@ -389,7 +377,7 @@ async function ownDecision(
     blockers: [],
     providerBlockers: [],
     references: [],
-    dependencies: structuredClone(context.dependencies ?? []),
+    dependencies: structuredClone(context.dependencies),
     limits: [],
     workStart: workStart === null ? null : structuredClone(workStart),
   };
@@ -508,7 +496,7 @@ async function ownDecision(
     )
   ) {
     try {
-      requireDependencies(context.dependencies ?? []);
+      requireDependencies(context.dependencies);
     } catch (error) {
       if (!(error instanceof MervError)) throw error;
       dependencyBlocker = { code: error.code, message: error.message, status: error.status };

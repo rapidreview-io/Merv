@@ -216,8 +216,8 @@ export function admitDispatch(
 ): WorkflowDispatchAdmission {
   const grant = execution.policy.tools.find((grant) => grant.name === tool);
   check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
-  // A worker's tool input is bounded like anyone's request body, not like policy metadata.
-  const original = dispatchInput(input);
+  // Detached and bounded by dispatchInput() where the request entered.
+  const original = input;
   check(
     original && typeof original === 'object' && !Array.isArray(original),
     'invalid_input',

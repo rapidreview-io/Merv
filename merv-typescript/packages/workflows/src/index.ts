@@ -284,24 +284,23 @@ export class WorkflowsService implements Workflows {
       .sort((a, b) => a.name.localeCompare(b.name) || a.version - b.version);
   }
 
-  /** Computed from records on every read; a stored copy could only drift from them. */
+  /** Computed from records on every read, in one snapshot; a stored copy could only drift. */
   async process(caller: Caller, instanceId: string): Promise<ProcessGraph> {
     this.assertOpen();
     caller = structuredClone(caller);
-    const decision = await this.evaluate(caller, instanceId);
-    const definition = this.catalog().find(
-      (item) => item.name === decision.workflow && item.version === decision.version,
-    );
-    check(definition, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
-    const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
-    const { dependencies, dependents } = await this.dependencies(caller, instanceId);
-    return processGraph({
-      definition,
-      rules: registration?.policy?.actions ?? [],
-      history: await this.history(caller, instanceId),
-      decision,
-      dependencies,
-      dependents,
+    return await this.state.transaction(async (tx) => {
+      const decision = await this.evaluate(caller, instanceId, {}, tx);
+      const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
+      check(registration, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+      const { dependencies, dependents } = await this.dependencies(caller, instanceId, tx);
+      return processGraph({
+        definition: registration.definition,
+        rules: registration.policy?.actions ?? [],
+        history: await this.history(caller, instanceId, tx),
+        decision,
+        dependencies,
+        dependents,
+      });
     });
   }
 
@@ -1483,10 +1482,14 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  async history(caller: Caller, instanceId: string): Promise<WorkflowHistoryEntry[]> {
+  async history(
+    caller: Caller,
+    instanceId: string,
+    transaction?: Transaction,
+  ): Promise<WorkflowHistoryEntry[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return (
