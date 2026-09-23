@@ -12,7 +12,7 @@ export type {
 } from './tool-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { types } from 'node:util';
-import type { z } from 'zod';
+import { z } from 'zod';
 import 'cordis';
 
 export type { Json, Data } from './data.js';
@@ -215,6 +215,18 @@ export function check(
   status = 400,
 ): asserts condition {
   if (!condition) throw new MervError(code, message, status);
+}
+/** The name of an environment variable that holds a secret or setting a plugin config refers to. */
+export const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
+/** The nonblank value of environment variable `name`; the refusal names the variable, never its value. */
+export function requiredEnv(
+  name: string,
+  code: string,
+  message = `Required environment variable ${name} is missing`,
+): string {
+  const value = process.env[name];
+  check(value !== undefined && value.trim(), code, message);
+  return value;
 }
 export const newId = (prefix: string) => `${prefix}_${randomUUID().replaceAll('-', '')}`;
 export const now = () => new Date().toISOString();

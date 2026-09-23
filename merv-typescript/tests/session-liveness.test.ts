@@ -741,6 +741,8 @@ test('the idle, quiet-ready and refusal thresholds are bounded', async (t) => {
     { quietReadySeconds: 59 },
     { refusalSeconds: 29 },
     { refusalSeconds: 1.5 },
+    // Operator config cannot replace the test clock.
+    { clock: 1 },
   ])
     await assert.rejects(async () => await fixture(t, { config }), {
       code: 'invalid_sessions_config',

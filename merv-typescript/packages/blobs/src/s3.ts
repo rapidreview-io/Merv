@@ -32,6 +32,9 @@ export interface S3BlobOptions {
   allowHttpLoopbackForTests?: boolean;
 }
 
+/** Also the plugin Config defaults, which bound both values; direct callers may omit them. */
+export const S3_DEFAULTS = { timeoutMs: 30_000, maxAttempts: 3 } as const;
+
 /** Offline migration and direct downloads only; ordinary get/put remain limited to 2 MB. */
 export const MAX_TRANSFER_BYTES = 512 * 1024 * 1024;
 const transferSize = (size: number) =>
@@ -92,19 +95,8 @@ export class S3Blobs implements Blobs {
       'invalid_blob_config',
       'Invalid blob prefix',
     );
-    this.timeoutMs = options.timeoutMs ?? 30_000;
-    const maxAttempts = options.maxAttempts ?? 3;
-    check(
-      Number.isSafeInteger(this.timeoutMs) && this.timeoutMs >= 1 && this.timeoutMs <= 120_000,
-      'invalid_blob_config',
-      'Blob timeout must be between 1 and 120000 milliseconds',
-    );
-    check(
-      Number.isSafeInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= 5,
-      'invalid_blob_config',
-      'Blob attempts must be between 1 and 5',
-    );
-    this.maxAttempts = maxAttempts;
+    this.timeoutMs = options.timeoutMs ?? S3_DEFAULTS.timeoutMs;
+    this.maxAttempts = options.maxAttempts ?? S3_DEFAULTS.maxAttempts;
     this.bucket = options.bucket;
     this.endpoint = endpoint.origin;
     this.client = new S3Client({

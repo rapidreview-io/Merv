@@ -311,19 +311,6 @@ export interface SessionBudgetInput {
   maxCostUsd?: number | null;
   maxTokens?: number | null;
 }
-export interface SessionsConfig {
-  /** Maximum simultaneous server executions in one project, across every provider. */
-  serviceConcurrency?: number;
-  sweepIntervalMs?: number;
-  /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
-  maxLaunchFailures?: number;
-  /** Seconds without a tool call before an active session is reported as quiet; nothing is closed for it. */
-  idleNoticeSeconds?: number;
-  /** Seconds a dispatchable target may wait on one revision before it is reported as quiet. */
-  quietReadySeconds?: number;
-  /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
-  refusalSeconds?: number;
-}
 declare module 'cordis' {
   interface Context {
     sessions: Sessions;

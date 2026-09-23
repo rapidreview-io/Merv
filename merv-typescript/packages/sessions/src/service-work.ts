@@ -53,11 +53,6 @@ export class SessionServiceWork implements ServiceWork {
   ) {}
 
   async initialize(): Promise<void> {
-    check(
-      Number.isSafeInteger(this.concurrency) && this.concurrency > 0 && this.concurrency <= 256,
-      'invalid_sessions_config',
-      'Session serviceConcurrency must be 1–256',
-    );
     await this.state.migrate('session_service_work', [
       {
         version: 1,

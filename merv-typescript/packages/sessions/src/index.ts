@@ -12,6 +12,7 @@ import {
   effectiveWorkspace,
   MervError,
   newId,
+  parsed,
   plain,
   sessionSecretPattern,
   sessionUsageReportSchema,
@@ -39,7 +40,6 @@ import type {
   SessionInvocation,
   SessionOffer,
   Sessions,
-  SessionsConfig,
   AutomaticLease,
   DispatchHold,
   DispatchState,
@@ -61,21 +61,36 @@ import type {
 } from './types.js';
 export type * from './types.js';
 
+/** An integer bound; null, like absence, means the default. */
+const between = (least: number, most: number, fallback: number) =>
+  z
+    .number()
+    .int()
+    .min(least)
+    .max(most)
+    .nullish()
+    .transform((value) => value ?? fallback);
 /**
  * Closing for idleness is off unless a deployment asks for it: a tool call is the only
  * progress the server sees, and honest work can be hours of local computing with none.
+ * Any other key is refused.
  */
-const secondsDefaults = {
-  idleNoticeSeconds: 1800,
-  quietReadySeconds: 21_600,
-  refusalSeconds: 300,
-};
-const configKeys = new Set([
-  'sweepIntervalMs',
-  'maxLaunchFailures',
-  'serviceConcurrency',
-  ...Object.keys(secondsDefaults),
-]);
+const configSchema = z
+  .object({
+    /** Maximum simultaneous server executions in one project, across every provider. */
+    serviceConcurrency: between(1, 256, 1),
+    sweepIntervalMs: between(100, 60_000, 1000),
+    /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
+    maxLaunchFailures: between(1, 100, 5),
+    /** Seconds without a tool call before an active session is reported as quiet; nothing is closed for it. */
+    idleNoticeSeconds: between(60, 604_800, 1800),
+    /** Seconds a dispatchable target may wait on one revision before it is reported as quiet. */
+    quietReadySeconds: between(60, 2_592_000, 21_600),
+    /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
+    refusalSeconds: between(30, 86_400, 300),
+  })
+  .strict();
+export type SessionsConfig = z.input<typeof configSchema>;
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 /** Trimmed text with something to read, as it is stored and compared. */
@@ -276,35 +291,19 @@ export class LeasedSessions implements Sessions {
     private readonly events: DomainEvents,
     options: SessionsConfig & { clock?: () => number } = {},
   ) {
+    // A clock function is a test hook, not configuration; JSON config can never supply one.
+    const config = parsed(
+      configSchema,
+      typeof options?.clock === 'function' ? { ...options, clock: undefined } : options,
+      'invalid_sessions_config',
+    );
     this.initialize = async () => {
       this.clock = options.clock ?? Date.now;
-      const interval = options.sweepIntervalMs ?? 1000;
-      check(
-        Number.isInteger(interval) && interval >= 100 && interval <= 60_000,
-        'invalid_sessions_config',
-        'Session sweep interval must be 100–60000 milliseconds',
-      );
-      const maxLaunchFailures = options.maxLaunchFailures ?? 5;
-      check(
-        Number.isInteger(maxLaunchFailures) && maxLaunchFailures >= 1 && maxLaunchFailures <= 100,
-        'invalid_sessions_config',
-        'Session maxLaunchFailures must be 1–100',
-      );
-      const seconds = (key: keyof typeof secondsDefaults, least: number, most: number) => {
-        const value = options[key] ?? secondsDefaults[key];
-        check(
-          Number.isInteger(value) && value >= least && value <= most,
-          'invalid_sessions_config',
-          `Session ${key} must be ${least}–${most} seconds`,
-        );
-        return value;
-      };
-      const idleNoticeSeconds = seconds('idleNoticeSeconds', 60, 604_800);
       this.thresholds = {
-        idleNoticeSeconds,
-        maxLaunchFailures,
-        quietReadySeconds: seconds('quietReadySeconds', 60, 2_592_000),
-        refusalSeconds: seconds('refusalSeconds', 30, 86_400),
+        idleNoticeSeconds: config.idleNoticeSeconds,
+        maxLaunchFailures: config.maxLaunchFailures,
+        quietReadySeconds: config.quietReadySeconds,
+        refusalSeconds: config.refusalSeconds,
       };
       await state.migrate('sessions', [
         {
@@ -359,7 +358,7 @@ export class LeasedSessions implements Sessions {
         scope,
         workflows,
         this.clock,
-        options.serviceConcurrency ?? 1,
+        config.serviceConcurrency,
       );
       await this.serviceWork.initialize();
       try {
@@ -401,7 +400,7 @@ export class LeasedSessions implements Sessions {
           } catch {
             /* Durable events and the next sweep retry; no secret-bearing errors are logged. */
           }
-        }, interval);
+        }, config.sweepIntervalMs);
         this.timer.unref();
       } catch (error) {
         await this.close();
@@ -1966,13 +1965,6 @@ export const sessionsPlugin = {
   name: 'merv-sessions',
   inject: ['state', 'scope', 'workflows', 'domainEvents'],
   async apply(ctx: Context, config: SessionsConfig = {}) {
-    check(
-      config &&
-        typeof config === 'object' &&
-        Object.keys(config).every((key) => configKeys.has(key)),
-      'invalid_sessions_config',
-      `Sessions only supports ${[...configKeys].join(', ')} configuration`,
-    );
     await ctx.effect(async function* () {
       const sessions = await createService(
         new LeasedSessions(ctx.state, ctx.scope, ctx.workflows, ctx.domainEvents, config),

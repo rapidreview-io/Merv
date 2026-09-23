@@ -1,13 +1,12 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check } from '@merv/contracts';
+import { envName, requiredEnv } from '@merv/contracts';
 import { DiskBlobs } from './disk.js';
-import { S3Blobs } from './s3.js';
+import { S3_DEFAULTS, S3Blobs } from './s3.js';
 
 export { DiskBlobs } from './disk.js';
 export { S3Blobs, MAX_TRANSFER_BYTES, type S3BlobOptions } from './s3.js';
 
-const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const configuration = z.union([
   z
     .object({
@@ -24,8 +23,8 @@ const configuration = z.union([
       secretAccessKeyEnv: envName.default('MERV_BLOB_SECRET_ACCESS_KEY'),
       regionEnv: envName.default('MERV_BLOB_REGION'),
       prefixEnv: envName.default('MERV_BLOB_PREFIX'),
-      timeoutMs: z.number().int().min(1).max(120_000).default(30_000),
-      maxAttempts: z.number().int().min(1).max(5).default(3),
+      timeoutMs: z.number().int().min(1).max(120_000).default(S3_DEFAULTS.timeoutMs),
+      maxAttempts: z.number().int().min(1).max(5).default(S3_DEFAULTS.maxAttempts),
     })
     .strict(),
 ]);
@@ -34,15 +33,12 @@ export const blobsPlugin = {
   name: 'merv-blobs',
   Config: configuration,
   apply(ctx: Context, config: z.infer<typeof configuration>) {
-    const required = (name: string) => {
-      const value = process.env[name];
-      check(
-        !!value?.trim(),
+    const required = (name: string) =>
+      requiredEnv(
+        name,
         'invalid_blob_config',
         `Missing blob configuration environment variable: ${name}`,
       );
-      return value!;
-    };
     const service =
       config.backend === 's3'
         ? new S3Blobs({

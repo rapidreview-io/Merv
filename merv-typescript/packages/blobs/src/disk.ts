@@ -17,11 +17,6 @@ export class DiskBlobs implements Blobs {
   private operations = new BlobOperations();
 
   constructor(root: string) {
-    check(
-      typeof root === 'string' && !!root.trim(),
-      'invalid_blob_root',
-      'Blob root must be nonblank',
-    );
     this.root = resolve(root);
   }
 

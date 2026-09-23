@@ -15,6 +15,17 @@ export interface PostgresConfig {
   ssl?: { rejectUnauthorized: true; ca?: string };
 }
 
+/** Checked again where the schema is interpolated into SQL, for callers that skip the plugin Config. */
+export const POSTGRES_SCHEMA = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
+export const POSTGRES_DEFAULTS = {
+  schema: 'merv',
+  maxConnections: 10,
+  readConnections: 6,
+  connectionTimeoutMs: 10_000,
+  statementTimeoutMs: 30_000,
+  lockTimeoutMs: 5000,
+} as const;
+
 function safeInteger(value: string): number {
   const number = Number(value);
   check(
@@ -54,29 +65,8 @@ export class PostgresState extends StateStore {
 
   private constructor(config: PostgresConfig) {
     super();
-    check(
-      config.connectionString.trim(),
-      'invalid_config',
-      'PostgreSQL connection string is required',
-    );
-    this.schema = config.schema ?? 'merv';
-    check(
-      /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(this.schema),
-      'invalid_config',
-      'Invalid PostgreSQL schema',
-    );
-    for (const value of [
-      config.maxConnections,
-      config.readConnections,
-      config.connectionTimeoutMs,
-      config.statementTimeoutMs,
-      config.lockTimeoutMs,
-    ])
-      check(
-        value === undefined || (Number.isSafeInteger(value) && value > 0),
-        'invalid_config',
-        'Database limits must be positive integers',
-      );
+    this.schema = config.schema ?? POSTGRES_DEFAULTS.schema;
+    check(POSTGRES_SCHEMA.test(this.schema), 'invalid_config', 'Invalid PostgreSQL schema');
     // URI TLS parameters override pg's ssl object. Keep TLS exclusively in the explicit config.
     let url: URL;
     try {
@@ -98,9 +88,10 @@ export class PostgresState extends StateStore {
       const created = new Pool({
         connectionString: config.connectionString,
         max,
-        connectionTimeoutMillis: config.connectionTimeoutMs ?? 10000,
-        statement_timeout: config.statementTimeoutMs ?? 30000,
-        lock_timeout: config.lockTimeoutMs ?? 5000,
+        connectionTimeoutMillis:
+          config.connectionTimeoutMs ?? POSTGRES_DEFAULTS.connectionTimeoutMs,
+        statement_timeout: config.statementTimeoutMs ?? POSTGRES_DEFAULTS.statementTimeoutMs,
+        lock_timeout: config.lockTimeoutMs ?? POSTGRES_DEFAULTS.lockTimeoutMs,
         ssl: config.ssl ?? false,
         // An idle pool never keeps a process alive on its own; close() still ends it.
         allowExitOnIdle: true,
@@ -114,8 +105,8 @@ export class PostgresState extends StateStore {
       return created;
     };
     // Writers queue on the state lock holding their connection; reads answer from their own pool.
-    this.pool = pool(config.maxConnections ?? 10);
-    this.readers = pool(config.readConnections ?? 6);
+    this.pool = pool(config.maxConnections ?? POSTGRES_DEFAULTS.maxConnections);
+    this.readers = pool(config.readConnections ?? POSTGRES_DEFAULTS.readConnections);
   }
 
   static async open(config: PostgresConfig): Promise<PostgresState> {
