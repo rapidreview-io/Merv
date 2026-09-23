@@ -42,6 +42,8 @@ import type {
   SessionOffer,
   Sessions,
   AutomaticLease,
+  DispatchDemand,
+  DispatchDemandInput,
   DispatchHold,
   DispatchState,
   RunnerHeartbeat,
@@ -1197,6 +1199,10 @@ export class LeasedSessions implements Sessions {
   ): Promise<{ session: Session | null; reason: string }> {
     this.ensureOpen();
     return await this.dispatcher.lease(caller, input);
+  }
+  async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
+    this.ensureOpen();
+    return await this.dispatcher.dispatchDemand(caller, input);
   }
 
   async workspaceObservation(

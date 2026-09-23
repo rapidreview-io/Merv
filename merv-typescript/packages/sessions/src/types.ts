@@ -7,6 +7,7 @@ import type {
   DispatchHold,
   DispatchState,
   RunnerHeartbeat,
+  RunnerPlatform,
   RunnerPresence,
   RunnerSettings,
   SessionDeferral,
@@ -246,6 +247,8 @@ export interface Sessions {
     caller: Caller,
     input: AutomaticLease,
   ): Promise<{ session: Session | null; reason: string }>;
+  /** Advisory, source-scoped automatic work for a prospective profile; no runner is required. */
+  dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand>;
   heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence>;
   setRunnerSettings(
     caller: Caller,
@@ -323,4 +326,11 @@ export interface AutomaticLease {
   secret: string;
   platform: SessionPlatform;
   hardDeadlineSeconds?: number;
+}
+export interface DispatchDemandInput {
+  platform: RunnerPlatform;
+  capabilities?: string[];
+}
+export interface DispatchDemand {
+  candidates: { instanceId: string; expectedRevision: number }[];
 }

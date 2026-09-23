@@ -20,6 +20,7 @@ import {
   type Transaction,
   type WorkflowProvidedBlocker,
   type Workflows,
+  type WorkflowDispatchCandidate,
 } from '@merv/contracts';
 import type {
   AutomaticLease,
@@ -34,6 +35,8 @@ import type {
   SessionOffer,
   SessionSummary,
   SessionBudgetInput,
+  DispatchDemand,
+  DispatchDemandInput,
   SessionsProjectStatus,
   BudgetStatus,
   StuckItem,
@@ -87,6 +90,9 @@ const heartbeatSchema = z
       .refine((items) => new Set(items).size === items.length)
       .optional(),
   })
+  .strict();
+const demandSchema = z
+  .object({ platform: platformSchema, capabilities: heartbeatSchema.shape.capabilities })
   .strict();
 const leaseSchema = z
   .object({
@@ -866,6 +872,88 @@ export class SessionDispatch {
       unaccounted,
     };
   }
+  /** The same source-scoped candidate selection used by automatic leasing and prospective demand. */
+  private async eligibleCandidates(
+    caller: Caller,
+    tx: Transaction,
+    capabilities: ReadonlySet<string>,
+    failures: readonly Session[] = [],
+    skipped: ReadonlySet<string> = new Set(),
+  ): Promise<{ candidates: WorkflowDispatchCandidate[]; reason: DispatchDecision | null }> {
+    if (!(await this.dispatch(caller.projectId, tx)).enabled)
+      return { candidates: [], reason: 'dispatch_disabled' };
+    const admissible = await this.candidates(caller, tx);
+    // Project-wide withholding applies to all candidate targets, including targets outside
+    // the budget's dependency closure. It has priority over a runner's local backoff.
+    const project = admissible.budgets.find(
+      (budget) => budget.kind === 'project' && withholds(budget),
+    );
+    if (project)
+      return {
+        candidates: [],
+        reason: project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable',
+      };
+    const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+    const compatible = open.filter(
+      (item) =>
+        item.workspace.mode === 'none' ||
+        item.workspace.driver === undefined ||
+        capabilities.has(item.workspace.driver),
+    );
+    const candidates = compatible.filter(
+      (item) =>
+        !admissible.backoff.has(targetKey(item)) &&
+        !failures.some(
+          (session) =>
+            session.instanceId === item.instanceId &&
+            session.expectedRevision === item.expectedRevision &&
+            (failureReasons.has(session.outcome ?? '') ||
+              deferredReasons.has(session.outcome ?? '')) &&
+            session.closedAt &&
+            Date.parse(session.closedAt) + backoffMs > this.clock(),
+        ),
+    );
+    return {
+      candidates,
+      reason: candidates.length
+        ? null
+        : compatible.length
+          ? 'retry_backoff'
+          : open.length
+            ? 'runner_incompatible'
+            : admissible.overBudget
+              ? admissible.unaccountedOnly
+                ? 'usage_unavailable'
+                : 'budget_exceeded'
+              : admissible.retriesExhausted
+                ? 'retries_exhausted'
+                : 'no_candidates',
+    };
+  }
+  /** A read-only hint for a configured source and a prospective runner profile. */
+  async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
+    caller = structuredClone(caller);
+    const parsed = demandSchema.safeParse(input);
+    check(parsed.success, 'invalid_dispatch_demand', 'Demand requires a valid runner profile');
+    input = parsed.data;
+    return await this.state.snapshot(() =>
+      this.state.transaction(async (tx) => {
+        await this.ordinary(caller, 'read', tx);
+        if (!input.platform.enabled) return { candidates: [] };
+        const selected = await this.eligibleCandidates(
+          caller,
+          tx,
+          new Set(input.capabilities ?? []),
+        );
+        return {
+          candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
+            instanceId,
+            expectedRevision,
+          })),
+        };
+      }),
+    );
+  }
   /** The most recently seen runners, which is where every live one is. */
   private async runners(projectId: string, tx: Transaction): Promise<RunnerPresence[]> {
     return await mapAsync(
@@ -1380,60 +1468,17 @@ export class SessionDispatch {
           new Date(this.clock() - backoffMs).toISOString(),
         )
       ).map((row) => JSON.parse(row.session_json) as Session);
-      const admissible = await this.candidates(caller, tx);
-      // A budget only stops new automatic offers. What is running keeps running, and a human
-      // may still begin work by hand; raising or clearing the budget resumes this on the next poll.
-      const project = admissible.budgets.find(
-        (budget) => budget.kind === 'project' && withholds(budget),
-      );
-      if (project)
-        return {
-          session: null,
-          reason: await decided(project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable'),
-        };
       // A checkout some driver must prepare goes only to a machine that says it has that
       // driver; everything else in the queue is still this runner's to take.
       const capabilities = new Set(
         (JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? [],
       );
-      const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
-      const candidates = open.filter(
-        (item) =>
-          item.workspace.mode === 'none' ||
-          item.workspace.driver === undefined ||
-          capabilities.has(item.workspace.driver),
-      );
-      const candidate = candidates.find(
-        (item) =>
-          !admissible.backoff.has(targetKey(item)) &&
-          !failures.some(
-            (session) =>
-              session.instanceId === item.instanceId &&
-              session.expectedRevision === item.expectedRevision &&
-              (failureReasons.has(session.outcome ?? '') ||
-                deferredReasons.has(session.outcome ?? '')) &&
-              session.closedAt &&
-              Date.parse(session.closedAt) + backoffMs > this.clock(),
-          ),
-      );
+      const selected = await this.eligibleCandidates(caller, tx, capabilities, failures, skipped);
+      const candidate = selected.candidates[0];
       if (!candidate)
         return {
           session: null,
-          // Work that will be tried again outranks work that is withheld: the withheld
-          // causes are named only when they are all that is left of the queue.
-          reason: await decided(
-            candidates.length
-              ? 'retry_backoff'
-              : open.length
-                ? 'runner_incompatible'
-                : admissible.overBudget
-                  ? admissible.unaccountedOnly
-                    ? 'usage_unavailable'
-                    : 'budget_exceeded'
-                  : admissible.retriesExhausted
-                    ? 'retries_exhausted'
-                    : 'no_candidates',
-          ),
+          reason: await decided(selected.reason ?? 'no_candidates'),
         };
       // Admission callbacks cannot disable dispatch or change source permission and
       // then still create an automatic lease within this transaction.
