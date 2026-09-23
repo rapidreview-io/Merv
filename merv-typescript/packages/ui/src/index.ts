@@ -1,21 +1,15 @@
-import { clip, pluginState, visible, mapAsync } from '@merv/contracts';
+import { clip, visible, mapAsync } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { check, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type {} from '@cordisjs/plugin-loader';
 import type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
 import { homeRead, identityOf } from './home.js';
 import { serveBundle } from './static.js';
 
 export type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
 
-export interface PluginState {
-  id: string;
-  name: string;
-  state: 'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
-}
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 
 /** Sidebar rows registered by feature adapters; a disposed registration disappears immediately. */
@@ -91,20 +85,9 @@ export const uiPlugin = {
   apply(ctx: Context, config: { assets?: string } = {}) {
     const ui = new UiRegistry();
     const assets = config.assets ?? fileURLToPath(new URL('../dist/', import.meta.url));
-    // The loader is optional at type and runtime: an embedded composition without it reports no plugins.
-    const plugins = (): PluginState[] => {
-      const loader = ctx.get('loader');
-      if (!loader) return [];
-      return [...loader.entries()].map((entry) => ({
-        id: entry.id,
-        name: entry.options.name,
-        state: entry.disabled
-          ? 'disabled'
-          : entry.fiber
-            ? pluginState(entry.fiber.state)
-            : 'failed',
-      }));
-    };
+    // The composition root's own report; composed without createApp, the table is empty.
+    const plugins = () =>
+      (ctx.get('composition')?.status() ?? []).map(({ id, name, state }) => ({ id, name, state }));
     ctx.effect(() => ctx.api.mount('/ui', serveBundle(assets)));
     ctx.effect(() =>
       ctx.tools.register({

@@ -13,7 +13,7 @@ export type {
 import { createHash, randomUUID } from 'node:crypto';
 import { types } from 'node:util';
 import type { z } from 'zod';
-import { FiberState } from 'cordis';
+import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
@@ -647,18 +647,20 @@ export async function releasedLease(
     row.id,
   );
 }
-/** Cordis fiber states as a composition reports them; an unknown state reads as failed. */
+/** A plugin entry's lifecycle state as the composition root reports it. */
 export type PluginRunState =
   'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
-const runStates: Record<number, PluginRunState> = {
-  [FiberState.PENDING]: 'pending',
-  [FiberState.LOADING]: 'loading',
-  [FiberState.ACTIVE]: 'active',
-  [FiberState.FAILED]: 'failed',
-  [FiberState.DISPOSED]: 'disposed',
-  [FiberState.UNLOADING]: 'unloading',
-};
-export const pluginState = (state: number): PluginRunState => runStates[state] ?? 'failed';
+export interface PluginStatus {
+  id: string;
+  name: string;
+  state: PluginRunState;
+  required: boolean;
+  missingDependencies: string[];
+}
+/** The composition root's plugin lifecycle report; every reader of plugin state shares it. */
+export interface Composition {
+  status(): PluginStatus[];
+}
 export function eventSource(caller: Caller): Data {
   return caller.session
     ? { source: { kind: 'session', sessionId: caller.session.id } }
@@ -1681,6 +1683,7 @@ declare module 'cordis' {
     workflows: Workflows;
     reviews: Reviews;
     tasks: Tasks;
+    composition: Composition;
   }
 }
 

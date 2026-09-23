@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { validateRunnerConfig } from '@merv/runner';
 import { createApp } from './fixtures/app.js';
 
+test('the no-Code example is the default composition without its Code entries', () => {
+  const read = (name: string) =>
+    JSON.parse(readFileSync(new URL(`../config/${name}`, import.meta.url), 'utf8')) as {
+      plugins: { id: string }[];
+    };
+  const code = (id: string) => id === 'code' || id.startsWith('code-');
+  assert.deepEqual(read('no-code.example.json'), {
+    plugins: read('default.json').plugins.filter((entry) => !code(entry.id)),
+  });
+});
+
 test('documented no-Code server and runner compose usable research without Git plugins', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-no-code-config-'));
   const app = await createApp({

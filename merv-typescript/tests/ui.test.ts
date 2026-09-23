@@ -564,6 +564,40 @@ test('an unbuilt bundle reports itself instead of a blank page', async (t) => {
   assert.equal(JSON.parse(response.body).error.code, 'ui_not_built');
 });
 
+test('ui.shell reports a rejected optional configuration as failed, as readiness does', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-ui-plugins-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const app = await createApp({
+    directory: join(directory, 'data'),
+    config: {
+      plugins: plugins(join(directory, 'nowhere'), [
+        {
+          id: 'rejected',
+          name: './tests/fixtures/loader-marker.ts',
+          required: false,
+          config: { value: 1 },
+        },
+      ]),
+    },
+  });
+  t.after(() => app.stop());
+  const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
+  const response = await fetch(`${app.ctx.api.url}/tools/ui.shell`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${credentials.token}`, 'content-type': 'application/json' },
+    body: '{}',
+  });
+  const shell = ((await response.json()) as any).result as {
+    plugins: { id: string; name: string; state: string }[];
+  };
+  // Cordis can leave this fiber pending; the table shows createApp's verdict instead.
+  assert.equal(shell.plugins.find((entry) => entry.id === 'rejected')?.state, 'failed');
+  assert.deepEqual(
+    shell.plugins,
+    app.status().map(({ id, name, state }) => ({ id, name, state })),
+  );
+});
+
 test('the Connections row reports mount health and serves mount status through ui.read', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-mounts-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

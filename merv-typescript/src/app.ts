@@ -2,21 +2,20 @@ import { Context, FiberState, type Fiber } from 'cordis';
 import Loader from '@cordisjs/plugin-loader';
 import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { check, pluginState } from '@merv/contracts';
+import { check, type PluginStatus } from '@merv/contracts';
 import type {} from '@merv/api';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
 
 export type AppOptions = ConfigurationOptions;
-/** Compatibility alias: new plugin IDs are configuration data, not a bootstrap union. */
-export type Component = string;
 
-export interface PluginStatus {
-  id: string;
-  name: string;
-  state: 'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
-  required: boolean;
-  missingDependencies: string[];
-}
+const states: Record<FiberState, PluginStatus['state']> = {
+  [FiberState.PENDING]: 'pending',
+  [FiberState.LOADING]: 'loading',
+  [FiberState.ACTIVE]: 'active',
+  [FiberState.FAILED]: 'failed',
+  [FiberState.DISPOSED]: 'disposed',
+  [FiberState.UNLOADING]: 'unloading',
+};
 
 /** Composition and readiness policy only. Cordis owns the dependency graph and its lifecycle. */
 export async function createApp(options: AppOptions) {
@@ -59,7 +58,7 @@ export async function createApp(options: AppOptions) {
               : fiber && failed.has(fiber)
                 ? 'failed'
                 : fiber
-                  ? pluginState(fiber.state)
+                  ? (states[fiber.state] ?? 'failed')
                   : 'failed';
         return {
           id: entry.id,
@@ -88,6 +87,8 @@ export async function createApp(options: AppOptions) {
         503,
       );
     };
+    // Plugins read lifecycle state from this report, never by recomputing it from the loader.
+    ctx.provide('composition', { status });
     // A required flag is Merv readiness policy; do not pass it as a loader/plugin option.
     await loader.root.update(
       configuration.entries.map(({ required: _required, ...entry }) => entry),
@@ -117,21 +118,6 @@ export async function createApp(options: AppOptions) {
       status,
       getFiber,
       setEnabled,
-      // Compatibility views are rebuilt from current entries; replacement fibers are not cached.
-      get components(): ReadonlyMap<string, Fiber> {
-        return new Map(
-          [...loader.entries()]
-            .filter((entry) => !/-(tools|ui|api)$/.test(entry.id) && entry.fiber)
-            .map((entry) => [entry.id, entry.fiber!]),
-        );
-      },
-      get adapters(): ReadonlyMap<string, Fiber> {
-        return new Map(
-          [...loader.entries()]
-            .filter((entry) => /-(tools|ui|api)$/.test(entry.id) && entry.fiber)
-            .map((entry) => [entry.id.replace(/-tools$/, ''), entry.fiber!]),
-        );
-      },
       stop: () =>
         (stopping ??= (async () => {
           const errors: unknown[] = [];

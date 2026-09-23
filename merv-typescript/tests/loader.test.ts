@@ -43,7 +43,6 @@ test('loader waits for an asynchronous configured dependency graph and tracks re
       assert.equal(app.getFiber('consumer'), originalConsumer);
       assert.equal(app.getFiber('marker')?.state, FiberState.ACTIVE);
       assert.notEqual(app.getFiber('marker'), old);
-      assert.equal(app.components.get('marker'), app.getFiber('marker'));
       assert.equal(app.status().length, 2);
     }
     assert.equal(marker.closed, true);
@@ -119,6 +118,8 @@ test('configuration validation failures are reported as failed even when Cordis 
   });
   try {
     assert.equal(app.status()[0].state, 'failed');
+    // Plugins reach createApp's own report through the composition service.
+    assert.equal(app.ctx.get('composition')?.status, app.status);
     assert.equal(app.ctx.get('state'), undefined);
   } finally {
     await app.stop();

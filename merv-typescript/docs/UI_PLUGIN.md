@@ -46,7 +46,7 @@ Domain plugins never import the UI. Adapters import only the public `@merv/ui/ty
 
 ## Tools
 
-- `ui.shell` (read-only): the registered rows with live status, plus the plugin lifecycle table from the loader when one is present.
+- `ui.shell` (read-only): the registered rows with live status, plus the plugin lifecycle table the composition root publishes (`createApp`'s own status), or none when the UI plugin is composed without `createApp`.
 - `ui.read` (read-only): `{ rowId }` returns the data a row owns when it declares `read`; otherwise `row_unreadable`.
 
 Both are ordinary catalog tools, visible to agents as well as the browser.
