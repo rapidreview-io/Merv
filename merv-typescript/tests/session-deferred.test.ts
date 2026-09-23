@@ -145,7 +145,18 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
   assert.deepEqual([unit.generation, unit.writerState, unit.canonicalHead], [1, 'closed', null]);
 
   // The machine is not held either: once Code answers, the next lease is generation two.
+  // Dispatch spaces a deferred target's next lease by 30 s from the close it reads in the
+  // session row; closing it that long ago takes the place of waiting out the window.
   away = false;
+  await state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE worker_sessions DISABLE TRIGGER worker_sessions_immutable');
+    await tx.run(
+      "UPDATE worker_sessions SET session_json=jsonb_set(session_json::jsonb,'{closedAt}',to_jsonb(?::text))::text WHERE id=?",
+      new Date(Date.parse(closed.closedAt!) - 31_000).toISOString(),
+      closed.id,
+    );
+    await tx.run('ALTER TABLE worker_sessions ENABLE TRIGGER worker_sessions_immutable');
+  });
   const resumed = await (async () => {
     const deadline = Date.now() + 90_000;
     for (;;) {
