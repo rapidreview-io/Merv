@@ -9,7 +9,7 @@ Design only. Rechecked against fetched main `f17acd4a`. The original proposal is
 | Milestone | Deliverable | Exit gate |
 |---|---|---|
 | 0: Sandboxes prerequisite | Protected fixed-runtime launch and supervisor credential isolation | Both security gates in the prerequisite document pass on the actual Cloudflare runtime |
-| 1: Workflow Fleet v1 | One configured profile/source per project, fixed caps, one-assignment Runner, minimal Fleet status/control row | Three independent code.v2 assignments on separate machines, one injected failure, external runner coexistence, retained results and confirmed cleanup |
+| 1: Workflow Fleet v1 | Codex as the default harness; one configured profile/source per project, fixed caps, one-assignment Runner, minimal Fleet status/control row | Three independent code.v2 assignments on separate machines, one injected failure, external runner coexistence, retained results and confirmed cleanup |
 | 2: Read-only Pi pilot | Agent sidebar, conversations, transient streaming, checkpoint/restore | No fake tasks; authority/reconnect/cancellation tests; token volume does not drive State writes |
 | Later, separately scoped | Conversational writes and Pi assignment execution | Transactional authorization proven for every enabled mutation |
 
