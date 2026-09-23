@@ -138,6 +138,7 @@ const marker = (path: string, value: unknown) => {
 export class GitWorkspaceManager {
   private readonly db: DatabaseSync;
   private readonly root: string;
+  private readonly assignmentWorkspaceDirectory?: string;
   private readonly emptyTemplate: string;
   private serial: Promise<unknown> = Promise.resolve();
   private disposed = false;
@@ -146,9 +147,27 @@ export class GitWorkspaceManager {
   constructor(
     private readonly ledger: LocalLedger,
     private readonly config?: GitWorkspaceConfig,
+    assignmentWorkspaceDirectory?: string,
   ) {
     privateDirectory(join(ledger.directory, 'workspaces'));
     this.root = realpathSync(join(ledger.directory, 'workspaces'));
+    if (assignmentWorkspaceDirectory) {
+      if (
+        !isAbsolute(assignmentWorkspaceDirectory) ||
+        resolve(assignmentWorkspaceDirectory) !== assignmentWorkspaceDirectory
+      )
+        throw new WorkspaceError('workspace_assignment_root_invalid');
+      const info = lstatSync(assignmentWorkspaceDirectory);
+      if (
+        !info.isDirectory() ||
+        info.isSymbolicLink() ||
+        info.uid !== process.getuid?.() ||
+        (info.mode & 0o022) !== 0 ||
+        realpathSync(assignmentWorkspaceDirectory) !== assignmentWorkspaceDirectory
+      )
+        throw new WorkspaceError('workspace_assignment_root_invalid');
+    }
+    this.assignmentWorkspaceDirectory = assignmentWorkspaceDirectory;
     this.emptyTemplate = join(this.root, 'empty-template');
     this.safeDirectory(this.emptyTemplate);
     this.db = new DatabaseSync(ledger.path);
@@ -244,7 +263,9 @@ export class GitWorkspaceManager {
         path: string,
         slotId: string;
       if (policy.mode === 'none') {
-        path = join(realpathSync(record.runDirectory), 'workspace');
+        path = this.assignmentWorkspaceDirectory
+          ? join(this.assignmentWorkspaceDirectory, hash(record.id))
+          : join(realpathSync(record.runDirectory), 'workspace');
         slotId = `scratch:${record.id}`;
       } else {
         repository = await this.repository();
@@ -1175,7 +1196,9 @@ export class GitWorkspaceManager {
     this.requireOwnership(row);
     const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
     if (policy.mode === 'none') {
-      const parent = realpathSync(this.ledger.get(row.launch_id)!.runDirectory);
+      const parent =
+        this.assignmentWorkspaceDirectory ??
+        realpathSync(this.ledger.get(row.launch_id)!.runDirectory);
       this.within(parent, row.path);
       privateDirectory(row.path);
       marker(join(row.path, '.merv-workspace-owner.json'), {
@@ -1252,7 +1275,11 @@ export class GitWorkspaceManager {
   private async validateCheckout(row: WorkspaceRow): Promise<void> {
     const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
     if (policy.mode === 'none') {
-      this.within(realpathSync(this.ledger.get(row.launch_id)!.runDirectory), row.path);
+      this.within(
+        this.assignmentWorkspaceDirectory ??
+          realpathSync(this.ledger.get(row.launch_id)!.runDirectory),
+        row.path,
+      );
       const file = join(row.path, '.merv-workspace-owner.json');
       if (
         !existsSync(file) ||

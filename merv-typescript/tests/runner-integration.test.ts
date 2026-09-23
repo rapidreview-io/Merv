@@ -1,7 +1,15 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { join } from 'node:path';
@@ -206,6 +214,65 @@ test(
         false,
         `Source credential absent from ${path}`,
       );
+  },
+);
+
+test(
+  'one-assignment runner never requests a successor after completion or restart',
+  { timeout: 35_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const assignmentRoot = join(f.runnerDirectory, '..', 'assignments');
+    mkdirSync(assignmentRoot, { mode: 0o700 });
+    f.config.assignmentWorkspaceDirectory = realpathSync(assignmentRoot);
+    f.config.oneAssignment = true;
+    f.config.profiles = [
+      {
+        name: 'test-worker',
+        harness: 'codex',
+        executable,
+        isolatedLauncher: process.execPath,
+        enabled: true,
+        parallelism: 1,
+      },
+    ];
+    let leases = 0;
+    const capacities: number[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname === '/sessions/lease') leases++;
+      if (url.pathname === '/sessions/runners/heartbeat' && init?.body)
+        capacities.push((JSON.parse(String(init.body)) as { capacity: number }).capacity);
+      return fetch(input, init);
+    };
+    const runner = f.make(fetcher);
+    await runner.start();
+    await f.enabled(true);
+    await until(
+      async () => (await f.sessions())[0]?.status === 'released',
+      runner,
+      'first isolated assignment',
+    );
+    assert.equal(runner.snapshot().launches.length, 1);
+    assert.equal(runner.snapshot().launches[0].exitCode, 0);
+    assert.equal(childResults(assignmentRoot).length, 1);
+    const firstLeaseCount = leases;
+    await f.app.ctx.tasks.create(f.source, {
+      title: 'Second task',
+      goal: 'Must wait for another machine',
+      checks: ['No second launch on the original machine'],
+      requestId: 'second-one-assignment',
+    });
+    for (let i = 0; i < 3; i++) await runner.tick();
+    assert.equal(leases, firstLeaseCount);
+    assert.ok(capacities.includes(0));
+    await runner.stop();
+    const restarted = f.make(fetcher);
+    await restarted.start();
+    for (let i = 0; i < 3; i++) await restarted.tick();
+    assert.equal(leases, firstLeaseCount);
+    assert.equal(restarted.snapshot().launches.length, 1);
+    assert.equal((await f.sessions()).length, 1);
   },
 );
 

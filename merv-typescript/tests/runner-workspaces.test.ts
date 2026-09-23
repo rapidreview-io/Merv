@@ -1,12 +1,15 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
@@ -19,8 +22,14 @@ import type { Session } from '@merv/sessions/types';
 import { LocalLedger } from '../packages/runner/src/ledger.js';
 import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
 
-function setup(t: TestContext, options: { largeTrackedFile?: boolean } = {}) {
+function setup(
+  t: TestContext,
+  options: { largeTrackedFile?: boolean; assignmentScratch?: boolean } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-workspaces-'));
+  const assignmentPath = options.assignmentScratch ? join(directory, 'assignments') : undefined;
+  if (assignmentPath) mkdirSync(assignmentPath, { mode: 0o700 });
+  const assignmentWorkspaceDirectory = assignmentPath ? realpathSync(assignmentPath) : undefined;
   const repository = join(directory, 'source');
   mkdirSync(repository);
   const git = (cwd: string, ...args: string[]) =>
@@ -73,7 +82,7 @@ function setup(t: TestContext, options: { largeTrackedFile?: boolean } = {}) {
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: 'project', sourceId: 'source-digest' },
   });
   const config = { repository, baseRef: 'refs/heads/main' };
-  let manager = new GitWorkspaceManager(ledger, config);
+  let manager = new GitWorkspaceManager(ledger, config, assignmentWorkspaceDirectory);
   const reserve = (id: string) =>
     ledger.reserve({
       id,
@@ -112,7 +121,7 @@ function setup(t: TestContext, options: { largeTrackedFile?: boolean } = {}) {
   const stop = (id: string) => ledger.cancelReservation(id);
   const reopen = () => {
     manager.dispose();
-    manager = new GitWorkspaceManager(ledger, config);
+    manager = new GitWorkspaceManager(ledger, config, assignmentWorkspaceDirectory);
     return manager;
   };
   t.after(() => {
@@ -131,6 +140,7 @@ function setup(t: TestContext, options: { largeTrackedFile?: boolean } = {}) {
   });
   return {
     directory,
+    assignmentWorkspaceDirectory,
     repository,
     ledger,
     get manager() {
@@ -148,6 +158,28 @@ function setup(t: TestContext, options: { largeTrackedFile?: boolean } = {}) {
     bare: join(ledger.directory, 'workspaces/repository.git'),
   };
 }
+
+test('isolated scratch cwd is outside the private ledger while Git storage stays private', async (t) => {
+  const f = setup(t, { assignmentScratch: true });
+  const scratch = f.reserve('isolated-scratch');
+  const handle = await f.manager.prepare(scratch, f.session(scratch.id, { mode: 'none' }));
+  assert.equal(
+    handle.path,
+    join(f.assignmentWorkspaceDirectory!, createHash('sha256').update(scratch.id).digest('hex')),
+  );
+  assert.equal(statSync(handle.path).mode & 0o777, 0o700);
+  assert.equal(handle.path.startsWith(f.ledger.directory), false);
+  assert.equal(existsSync(f.bare), false);
+  assert.deepEqual(
+    await f.reopen().prepare(scratch, f.session(scratch.id, { mode: 'none' })),
+    handle,
+  );
+  writeFileSync(join(handle.path, 'result.txt'), 'assignment output\n');
+  f.stop(scratch.id);
+  assert.equal(await f.manager.capture(scratch), undefined);
+  await f.manager.close(scratch);
+  assert.equal(readFileSync(join(handle.path, 'result.txt'), 'utf8'), 'assignment output\n');
+});
 
 test('private clone, idempotent prepare, bounded WIP capture and persistent resume preserve per-launch history', async (t) => {
   const f = setup(t),

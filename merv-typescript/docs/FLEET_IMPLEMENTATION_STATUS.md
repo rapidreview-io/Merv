@@ -1,121 +1,66 @@
 # Fleet implementation status
 
-The user authorized staged implementation after approving the reduced
-[Fleet/Pi proposal](FLEET_PI_PROPOSAL.md). Earlier design-only statements describe
-the proposal-writing phase, not the current authorization. The full goal remains
-active; none of the release milestones is complete yet.
+The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
+implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
+adapter asks it for capacity, and chat uses independent taskless requests.
+Neither Fleet nor chat depends on the research workflow. Hosted execution is
+disabled; no release milestone or provider acceptance gate has passed.
 
-## Current stage: milestone 0, security foundations
+## Implemented locally
 
-Sandbox source checkout: `output/fleet-sandboxes`, branch
-`codex/fleet-runtime-bootstrap`, based on sandbox commit `c7b9582`.
-Implementation commits: `2eaab0e` (foundations), `4bb4771` (protected access and
-local transport/sudo acceptance), `7e4142a` (pinned release catalog and executable
-verification).
-An incremental backup bundle is at `output/fleet-runtime-bootstrap.bundle`.
-The original sibling sandbox checkout has unrelated edits and was not modified.
-This isolated clone's origin points to that sibling; nothing was pushed/deployed.
+- The sandbox control plane has encrypted, expiring bootstrap envelopes; immutable
+  launch bindings and tombstones; protected-runtime creation mode; and denial of
+  generic SSH, jobs, workflows, snapshots, restores and terminals on that mode.
+- An operator-owned fixed-release catalog and launch/inspect/stop API exist. The
+  release catalog and explicit grant IDs default to empty. Admission checks the
+  authenticated namespace, protected sandbox, provider and release. Launch
+  receipts persist delivery state and support retry without claiming enrollment
+  or readiness. Stop revokes the bootstrap and requests sandbox deletion; actual
+  provider termination still needs confirmation.
+- Launch-bound SSH certificates force a fixed receiver. Bounded transport pins
+  the gateway host key; the receiver stores a private tmpfs bootstrap and a
+  durable local launch claim before detached supervisor dispatch. This path
+  avoids ordinary job scripts and their retained command/environment fields.
+  A production provider image, release manifest and trusted supervisor are not
+  wired together or attested yet.
+- The TypeScript Runner has an isolated Codex scratch adapter, including a
+  dedicated assignment launcher, scoped process environment and repository
+  skill controls. Its local `oneAssignment` setting fences the runner to one
+  durable assignment across completion and restart. This is not managed Fleet
+  enrollment or server-side allocation.
 
-Implemented:
+## Evidence and limits
 
-- Encrypted expiring bootstrap envelopes using existing AES-GCM vault primitives.
-  Immutable operation/launch/job bindings, replay, revoke/consume/purge, safe
-  metadata and retained idempotency tombstones; migration 0025.
-- Linux enrollment-file and assignment-identity primitives. Private tmpfs files,
-  UID/GID/group/capability reduction, no privilege gain, cleared environment/FDs.
-- Cloudflare entrypoint writes private bootstrap files and removes bootstrap
-  variables before spawning child commands/services.
-- Immutable protected-runtime creation mode denies generic SSH certificates,
-  namespace-certificate connections, jobs, workflow attachment/provisioning,
-  snapshots/restores and terminals. The infrastructure reverse tunnel remains
-  available; this is not a public runtime-launch bypass.
-- Container initializes the encrypted store and sweeps expired ciphertext.
-- Operator-owned runtime release allowlist, disabled by default. Release IDs bind
-  provider/image digest, executable path/digest, fixed argv and timeout. The
-  enrollment launcher checks the installed executable digest before execution.
-  This does not yet verify the actual provider image or expose a launch API.
+An integrated sandbox bootstrap store, launch service, receiver, transport,
+release and protected-boundary run passed 74 tests with one macOS skip for a
+Linux-only test. One-assignment Runner integration, Ruff and TypeScript
+typecheck passed again.
+Earlier separate focused runs passed: sandbox service/store 26 tests, Runner
+profiles 15 and Runner workspaces 15. These counts are
+not a distinct-test total or a full suite result. Earlier Linux and gateway
+fixture tests also exercised
+receiver isolation, forced-command delivery and synthetic recording canaries;
+they do not prove the final provider image or Cloudflare gates.
 
-Verification:
+A real-model local acceptance harness exists. Its latest attempt timed out while
+reading the saved macOS Keychain key, before creating the synthetic task or
+container. It has not demonstrated a real Codex assignment. No deployment or
+cloud allocation occurred.
 
-- 20 bootstrap-store PostgreSQL tests passed.
-- Combined store, entrypoint, existing vault and bootstrap run: 27 passed.
-- Five real Linux launcher tests passed independently in local Docker.
-- Ruff and whitespace checks passed.
-- Latest protected-boundary/access/jobs/store run: 68 passed. Registry/snapshot/
-  workflow regression run: 59 passed. Following independent review, fixes for
-  legacy workflow replay, immutable mode and terminal denial passed a 41-test
-  focused run; protected reverse-tunnel registration passed separately.
-  These suites overlap; their counts are not a distinct-test total.
-- Real gateway certificate/SFTP test: exact synthetic payload delivered, no
-  canary in raw/decoded asciicast recordings or gateway/sshd logs, positive
-  shell-recording control. Five e2e subtests passed with networking disabled.
-- Actual sudo-capable Cloudflare-image fixture: seven Linux tests passed.
-  Positive controls proved unrestricted sudo, setuid and file-capability
-  escalation works, then proved the launcher blocks those same attacks.
-- Release catalog tests: 17 passed. Rebuilt Cloudflare-image Linux fixture: eight
-  tests passed, including disabled/incorrect release rejection and successful
-  pinned executable launch. Independent read-only review found no concrete defect
-  within this scope; coordinator cleanup on rejected launches remains pending.
+## Remaining work
 
-PostgreSQL tests used an isolated local container, `merv-fleet-bootstrap-postgres`,
-at `127.0.0.1:51529`; no production database was accessed. Docker Desktop was
-started for tests. These tests do not prove the real Cloudflare provider gate.
-The later sudo fixture uses cached Cloudflare image
-`sha256:5b9fde5b4a58be30712cf747dabe23baed5749ae6df4a44cb4ee69a9f9121939`.
-Live provider acceptance and final-image ACL/cgroup guarantees remain open.
-No cloud resources or model credentials were used for this work.
+1. Complete the trusted provider image, release installation, managed enrollment,
+   current-authority checks at exchange, provider termination evidence and the
+   Cloudflare security/acceptance gates.
+2. Implement the actual Fleet allocator/package: PostgreSQL admission and
+   lifecycle, shared Sessions selection, managed principal and Runner, status UI,
+   hosted Git checkout, and three-machine real-work acceptance with external
+   runners coexisting.
+3. Pilot Pi only after Fleet acceptance, within the separate read-only and
+   conversational-write gates in the proposal.
 
-The local sibling Python environment crashes importing readline through pytest's
-capture plugin. Tests ran with `-p no:capture`; this is a local test-tool issue.
-
-## Next implementation work, in order
-
-1. Protected transport and fixed-release launch coordinator. Do not reuse ordinary
-   job scripts or their retained command/env fields. SFTP recording exclusion
-   and generic privileged-surface denial now have local evidence. Implement
-   actual private-file delivery with receipt/retry behavior and no diagnostic
-   secret leakage, preserving the protected-runtime boundary.
-2. API authorization, wire the immutable release allowlist, durable launch receipts,
-   enrollment retry/revocation fencing. Envelope expiry cleanup is now wired.
-   The store/launcher are intentionally not public routes or job resolvers.
-   Transport audit calls for an internal runtime certificate checked against the
-   durable binding at issuance and gateway authorization, plus a fixed receiver
-   command instead of an unrestricted upstream shell. Certificate expiry alone
-   does not close active connections. A new receiver protocol needs its own
-   recording canary test; prior SFTP evidence cannot be generalized to it.
-3. Dedicated image and Runner assignment adapter, including scoped environment
-   and output channels. Prove actual UID/GID/sudo/process protections, provider
-   termination and both milestone-0 go/no-go gates on the configured provider.
-4. Workflow Fleet v1: optional package, PostgreSQL admission/lifecycle, shared
-   Sessions selection helper, one-assignment managed principal/Runner, status UI.
-   Three-machine real-work acceptance with failure and external-runner coexistence.
-5. Pi read-only pilot after Fleet acceptance: independent conversations, same
-   capacity channel, bounded transient streaming, durable canonical outcomes and
-   checkpoint/restore. Conversational writes stay behind the separate gate in
-   the Pi proposal; do not silently replace that scope with broad credentials.
-
-Keep hosted execution disabled until milestone 0 passes. In particular, the
-store's resolved plaintext can race a later revoke: enrollment must revalidate
-current authority. Process-group cleanup does not prove descendant termination;
-cgroup/provider shutdown owns that fact. The primitives document these limits.
-
-## Reproduction
-
-From `output/fleet-sandboxes`, using the sibling control virtualenv:
-
-```sh
-SANDBOXES_TEST_DATABASE_URL=postgresql://sandboxes:sandboxes@127.0.0.1:51529/postgres \
-SANDBOXES_TEST_DOCKER=1 PYTHONPATH=control/src \
-../../../merv-sandboxes/control/.venv/bin/python -m pytest -p no:capture \
-  control/tests/test_runtime_bootstraps.py control/tests/test_runtime_entrypoint.py \
-  control/tests/test_vault.py control/tests/test_bootstrap.py -q
-```
-
-The local test DB uses disposable fixture credentials only. For Linux tests,
-mount this clone's `control` read-only at `/control`, the sibling virtualenv's
-pure-Python pytest dependencies at `/testdeps`, and run `python:3.11-slim` with
-network disabled, `PYTHONPATH=/control/src:/testdeps`,
-`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, and private tmpfs
-`/run/merv-runtime:rw,nosuid,nodev,noexec,mode=0700`.
-Copy `test_runtime_launcher.py` to `/tmp` before running pytest there to avoid
-loading macOS-compiled dependencies through the repository conftest.
+Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
+cloned from sandbox commit `c7b9582`. Earlier foundation commits are `2eaab0e`,
+`4bb4771` and `7e4142a`; the incremental backup is
+`output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
+untouched, and nothing was pushed or deployed.

@@ -1,7 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { inspect } from 'node:util';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
@@ -151,11 +160,77 @@ test('profiles admit supported local launch shapes and reject unsupported or exe
     { ...codex, name: '../escape' },
     { ...command, args: ['nul\0arg'] },
     { ...codex, executable: '/bin/codex\nextra' },
+    { ...codex, isolatedLauncher: 'relative/launcher' },
+    { ...codex, isolatedLauncher: '/bin/launcher\nextra' },
+    { ...codex, executable: 'codex', isolatedLauncher: '/bin/launcher' },
+    { ...claude, isolatedLauncher: '/bin/launcher' },
+    { ...command, isolatedLauncher: '/bin/launcher' },
   ])
     assert.throws(() => validateProfile(bad), { code: 'invalid_runner_profile' });
   assert.throws(() => buildLaunch({ ...codex, enabled: false }, request(), safeEnv), {
     code: 'runner_profile_disabled',
   });
+});
+
+test('isolated Codex launcher receives the scoped command, environment, stdin and output streams', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-isolated-launch-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const launcher = join(directory, 'launcher');
+  writeFileSync(
+    launcher,
+    `#!${process.execPath}\n` +
+      `let stdin='';process.stdin.setEncoding('utf8');process.stdin.on('data',part=>stdin+=part);` +
+      `process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({args:process.argv.slice(2),env:process.env,stdin}));process.stderr.write('launcher stderr');});\n`,
+  );
+  chmodSync(launcher, 0o700);
+  const profile = validateProfile({
+    ...codex,
+    executable: process.execPath,
+    isolatedLauncher: launcher,
+  });
+  const spec = buildLaunch(profile, request(), {
+    ...safeEnv,
+    SOURCE_AUTH: 'source-bearer-must-stay-with-runner',
+    OPENAI_API_KEY: 'provider-credential-must-not-be-forwarded',
+  });
+  assert.equal(spec.executable, launcher);
+  assert.deepEqual(spec.args.slice(0, 3), ['--', process.execPath, 'exec']);
+  const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
+    (resolve, reject) => {
+      const child = spawn(spec.executable, spec.args, {
+        cwd: directory,
+        env: spec.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '',
+        stderr = '';
+      child.stdout.setEncoding('utf8').on('data', (part) => (stdout += part));
+      child.stderr.setEncoding('utf8').on('data', (part) => (stderr += part));
+      child.once('error', reject);
+      child.once('close', (code) => resolve({ stdout, stderr, code }));
+      child.stdin.end(spec.stdin);
+    },
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, 'launcher stderr');
+  const observed = JSON.parse(result.stdout) as {
+    args: string[];
+    env: Record<string, string>;
+    stdin: string;
+  };
+  assert.deepEqual(observed.args, spec.args);
+  assert.equal(observed.stdin, spec.stdin);
+  assert.equal(observed.env[sessionTokenVariable], secret);
+  assert.equal(observed.env[mcpUrlVariable], request().mcpUrl);
+  assert.equal(observed.env.HOME, '/home/assignment');
+  assert.equal(observed.env.CODEX_HOME, '/home/assignment/.codex');
+  assert.equal(observed.env.USER, 'assignment');
+  assert.equal(observed.env.PATH, '/usr/bin:/bin');
+  assert.equal(observed.env.SOURCE_AUTH, undefined);
+  assert.equal(observed.env.OPENAI_API_KEY, undefined);
+  assert.equal(observed.stdin.includes('source-bearer-must-stay-with-runner'), false);
+  assert.match(config(observed.args)['shell_environment_policy.set'], /\/home\/assignment/);
+  assert.doesNotMatch(config(observed.args)['shell_environment_policy.set'], /\/home\/worker/);
 });
 
 test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no implicit model override', () => {

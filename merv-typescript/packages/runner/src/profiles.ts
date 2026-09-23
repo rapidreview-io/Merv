@@ -27,6 +27,13 @@ const profileSchema = z.discriminatedUnion('harness', [
       harness: z.literal('codex'),
       model: text.optional(),
       effort: text.optional(),
+      /** Image-owned executable that drops to the assignment identity before starting Codex. */
+      isolatedLauncher: z
+        .string()
+        .min(1)
+        .max(4096)
+        .refine((value) => isAbsolute(value) && !/[\0\r\n]/.test(value))
+        .optional(),
     })
     .strict(),
   z
@@ -217,7 +224,12 @@ const runtimeVariables = [
 
 export function validateProfile(input: unknown): RunnerProfile {
   const parsed = profileSchema.safeParse(input);
-  if (!parsed.success) {
+  if (
+    !parsed.success ||
+    (parsed.data.harness === 'codex' &&
+      parsed.data.isolatedLauncher !== undefined &&
+      !isAbsolute(parsed.data.executable))
+  ) {
     // Do not echo local configuration values: a mistaken argument may contain a secret.
     throw new MervError('invalid_runner_profile', 'Invalid or unsupported runner profile');
   }
@@ -502,7 +514,17 @@ export function buildLaunch(
     'Command profiles have no filesystem sandbox and cannot execute read-only leases',
   );
   const url = endpoint(request.mcpUrl);
-  const safeEnvironment = runtimeEnvironment(environment);
+  const safeEnvironment =
+    profile.harness === 'codex' && profile.isolatedLauncher
+      ? {
+          PATH: '/usr/bin:/bin',
+          HOME: '/home/assignment',
+          CODEX_HOME: '/home/assignment/.codex',
+          USER: 'assignment',
+          TMPDIR: '/tmp',
+          LANG: 'C.UTF-8',
+        }
+      : runtimeEnvironment(environment);
   const args =
     profile.harness === 'codex'
       ? codexArgs(profile, request, url, safeEnvironment)
@@ -546,8 +568,14 @@ export function buildLaunch(
       bearers[server.bearerEnv] = value;
     }
   return protectLogging({
-    executable: profile.executable,
-    args,
+    executable:
+      profile.harness === 'codex' && profile.isolatedLauncher
+        ? profile.isolatedLauncher
+        : profile.executable,
+    args:
+      profile.harness === 'codex' && profile.isolatedLauncher
+        ? ['--', profile.executable, ...args]
+        : args,
     cwd: request.cwd,
     stdin,
     env: {

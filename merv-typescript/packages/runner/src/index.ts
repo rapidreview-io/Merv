@@ -100,6 +100,15 @@ const configSchema = z
           .strict(),
       ])
       .optional(),
+    /** Existing image-provisioned scratch root outside the private ledger, for isolated Codex. */
+    assignmentWorkspaceDirectory: z
+      .string()
+      .min(1)
+      .max(4096)
+      .refine((value) => !/[\0\r\n]/.test(value) && resolve(value) === value)
+      .optional(),
+    /** A managed machine admits at most one durable assignment during its lifetime. */
+    oneAssignment: z.boolean().optional(),
     capacity: z.number().int().min(0).max(256).optional(),
     pollIntervalMs: z.number().int().min(100).max(30_000).optional(),
     requestTimeoutMs: z.number().int().min(100).max(30_000).optional(),
@@ -121,6 +130,17 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
     'invalid_runner_config',
     'Runner profile names must be distinct',
   );
+  if (parsed.data.assignmentWorkspaceDirectory || parsed.data.oneAssignment)
+    check(
+      profiles.length === 1 &&
+        profiles[0].harness === 'codex' &&
+        !!profiles[0].isolatedLauncher &&
+        profiles[0].parallelism === 1 &&
+        parsed.data.capacity === 1 &&
+        (!parsed.data.assignmentWorkspaceDirectory || parsed.data.oneAssignment === true),
+      'invalid_runner_config',
+      'One assignment requires one isolated Codex profile and capacity one',
+    );
   return { ...parsed.data, profiles };
 }
 const liveSession = (session: Session) =>
@@ -230,7 +250,11 @@ export class MachineRunner implements Runner {
     });
     this.host = new ProcessHost(this.ledger);
     try {
-      this.workspaces = new GitWorkspaceManager(this.ledger, this.config.workspace);
+      this.workspaces = new GitWorkspaceManager(
+        this.ledger,
+        this.config.workspace,
+        this.config.assignmentWorkspaceDirectory,
+      );
       for (const factory of options.drivers ?? [])
         try {
           this.drivers.set(
@@ -322,7 +346,7 @@ export class MachineRunner implements Runner {
         runnerId: this.ledger.runnerId,
         machine: { hostname: hostname(), system: process.platform, architecture: process.arch },
         platforms: this.profiles.map(platformOf),
-        capacity: this.capacity(),
+        capacity: this.config.oneAssignment && this.ledger.list().length > 0 ? 0 : this.capacity(),
         appliedVersion: this.appliedVersion,
         ...(this.drivers.size ? { capabilities: [...this.drivers.keys()].sort() } : {}),
       });
@@ -376,10 +400,16 @@ export class MachineRunner implements Runner {
     // Existing uncertain requests are retried first, preserving their original platform and secret.
     for (const pending of this.ledger.pendingRequests()) {
       if (this.stopping) break;
+      if (
+        this.config.oneAssignment &&
+        this.ledger.list().length > 0 &&
+        !this.ledger.list().some((record) => record.metadata.requestId === pending.requestId)
+      )
+        continue;
       await this.acquire(pending);
     }
     for (const profile of this.profiles) {
-      if (this.stopping) break;
+      if (this.stopping || (this.config.oneAssignment && this.ledger.list().length > 0)) break;
       const live = this.ledger.list().filter((record) => this.occupied(record));
       if (
         !profile.enabled ||
@@ -431,6 +461,12 @@ export class MachineRunner implements Runner {
       return;
     }
     this.lastDeclined = undefined;
+    check(
+      !this.config.oneAssignment ||
+        this.ledger.list().every((record) => record.sessionId === session.id),
+      'invalid_control_response',
+      'One-assignment runner received a second session',
+    );
     check(
       session.runnerId === this.ledger.runnerId,
       'invalid_control_response',
