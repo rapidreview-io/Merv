@@ -3,10 +3,10 @@
 The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
-Neither Fleet nor chat depends on the research workflow. Hosted execution is
-disabled. Local managed Codex acceptance and the first Cloudflare platform
-canary have passed; full protected Cloudflare launch and three-VM acceptance
-remain pending.
+Neither Fleet nor chat depends on the research workflow. Fleet is deployed for
+one disposable project, with dispatch paused after a protected-image startup
+failure. Local managed Codex acceptance and the first Cloudflare platform
+canary have passed; full protected launch and three-VM acceptance remain pending.
 
 ## Implemented locally
 
@@ -186,14 +186,36 @@ the existing `dev` account was rejected by its spending suspension; that account
 and its safeguards were left unchanged. The dedicated Fleet account uses its
 own newly created bridge credential and spending controls.
 
-The next deployment needs an operator-owned `cloudflare-fleet` provider and a
-dedicated Cloudflare native API credential. The local Wrangler OAuth login can
-verify instances but receives HTTP 403 from account-token management endpoints;
-the available browser is signed out. Dashboard sign-in has been requested while
-deployment and protected acceptance scripts are prepared. No further approval
-is pending. The developer OAuth credential will not be installed on the server.
-The provided OpenAI key is not the blocker. See
-`output/fleet-cloudflare-canary/report.md` for the retained evidence.
+The operator-owned `cloudflare-fleet` provider and dedicated native verification
+credential are installed. Workers Containers **Read** permission was verified
+against application and instance GET endpoints, restricted to the control host's
+egress IP and expiring on 2026-09-30. The developer Wrangler OAuth credential
+remains local. The user explicitly approved transferring the supplied OpenAI key
+to root-private host configuration for `gpt-6-luna` tests. Acceptance collectors
+execute on the host; project and sandbox bearers remain there.
+
+The first protected test failed before enrollment: four sequential allocations
+failed before tunnel readiness; no Runner session or model call occurred. Fleet
+confirmed all four stopped and independent Cloudflare inventory showed zero
+instances. Dispatch was disabled on detecting the replacement loop. Retained
+Cloudflare logs distinguish two protected-bootstrap failures from two subsequent
+capacity failures. The ordinary canary's log identifies missing `/run/sshd` at
+bootstrap validation: Cloudflare does not preserve that build-time directory,
+and the entrypoint creates it only after bootstrap. Protected startup correctly
+fails closed at that step. An empty-`/run` regression and boot-directory fix are
+in progress.
+Evidence: `output/fleet-cloudflare-canary/protected-startup-failure.json`.
+Retained log excerpts: `protected-startup-log-evidence.json` in that directory.
+This is a failed acceptance, not a successful protected launch.
+
+Commit `2c867f97` bounds replacement attempts for an unchanged task revision:
+at most two created-but-unclaimed allocations, with a 60-second cooldown before
+the second. Existing allocation history preserves this across adapter restart;
+queued allocations cancelled before creation do not consume the budget. A new
+task revision remains eligible. Six focused workflow tests and typecheck passed.
+An exhausted revision currently needs a new revision/task; no new retry control
+or scheduling table was added. Deployment of this fix was explicitly approved
+and completed with healthy public/internal checks.
 
 Enrollment is deliberately short-lived (15 minutes, bounded by the allocation
 deadline). A prolonged uncertain launch can exhaust that window; it must retire
@@ -202,23 +224,27 @@ currently bounds that recovery by the allocation deadline.
 
 Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
 cloned from sandbox commit `c7b9582`, now merged with deployed sandbox commit
-`0d64e2f8`. The latest checkpoint is `33109ff`, following `e17907f`, `4369915`, `07b25e0` and merge
+`0d64e2f8`. The latest checkpoint is `e28e401` (documentation), following
+`33109ff`, `e17907f`, `4369915`, `07b25e0` and merge
 `e14b89d`; the incremental backup is
 `output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
-untouched. The dedicated Cloudflare image and bridge were deployed. The shared
-sandbox control services remain unchanged; their additive deployment is staged
-separately and requires the native Cloudflare credential.
+untouched. The dedicated Cloudflare image and bridge were deployed. Sandbox
+control and pipelines-worker now use the additive deployment; the gateway,
+database and Hatchet services were untouched.
 The replacement control image `merv-sandboxes-control:33109ff-fleet` was built
 on the control host from the clean, checksummed source archive and passed an
 import smoke. Its image ID is
 `sha256:2d1c085e1a230c38eff3454580397038c901e30a8fda8229ec6b12d8df5728bc`.
 The additive Compose helper has four passing tests and preserves the existing
-providers and service settings. It has not been applied. Build evidence is in
+providers and service settings. Its rollout passed health, namespace/grant,
+release-catalog and native image checks. Six workload drain counts were zero
+before and after replacement. Build evidence is in
 `output/fleet-control-build-33109ff.json`.
 
-Production Merv now runs committed `737bb4aa`, release
-`20260923T060044Z-737bb4aa-0d618b370fbb`, with Fleet disabled and no sandbox
-connection configured. Its compiled CLI, container health, all 50 configured
+Production Merv now runs committed `2c867f97`, release
+`20260923T064442Z-2c867f97-714a965267ff`, configured for one disposable Fleet project,
+fixed Cloudflare provider/release, 600-second lease, and all caps one. Dispatch
+is currently off. Its compiled CLI, container health, all 57 configured
 plugins, public UI/assets, anonymous denial and origin restrictions passed the
 existing release checks. Only committed source was packaged; unrelated local
 workflow/Lean changes were excluded. The deployment record and rollback image
