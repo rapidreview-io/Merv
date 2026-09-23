@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import type { Caller, TaskReview } from '@merv/contracts';
+import { childRequest, type Caller, type TaskReview } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
@@ -228,7 +228,7 @@ test(
             'SELECT COUNT(*) AS count FROM review_commands WHERE project_id=? AND actor_id=? AND request_id=?',
             operator.projectId,
             reviewer.actorId,
-            `${reviewer.actorId}:task:review:${verdict.requestId}`,
+            childRequest(reviewer, 'task', 'review', verdict.requestId),
           ))!.count,
       ),
       0,

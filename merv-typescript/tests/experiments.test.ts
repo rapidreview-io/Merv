@@ -516,6 +516,18 @@ test('Command receipts replay exact results across reload and rollback all compo
     { code: 'state_constraint' },
   );
 });
+test('The longest requestId the tools accept still names the requests an experiment makes', async (t) => {
+  const f = await fixture(t);
+  const long = (tag: string) => tag.padEnd(200, 'x');
+  let e = await f.create('Long', { requestId: long('create') });
+  await f.attach(e, 'plan', plan);
+  e = await f.transition(e, 'submit_design', { requestId: long('design') });
+  assert.equal(e.workflow.state, 'design_review');
+  const application = { ...(await f.reviewInput(e)), requestId: long('review') };
+  e = (await f.reviews.apply(f.reviewer, application)) as Experiment;
+  assert.equal(e.workflow.state, 'running');
+  assert.deepEqual(await f.reviews.apply(f.reviewer, application), e);
+});
 test('Active cap, name uniqueness and same-project dependencies fail atomically', async (t) => {
   const f = await fixture(t);
   const initial = await f.create('Case-name');

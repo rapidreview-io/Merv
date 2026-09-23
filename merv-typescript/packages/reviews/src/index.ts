@@ -1,5 +1,5 @@
 import { excludedFromReview, canonical, visible, recorded, mapAsync } from '@merv/contracts';
-import { createService, plain } from '@merv/contracts';
+import { createService, plain, receipted } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -502,41 +502,19 @@ export class ReviewService implements Reviews {
       'invalid_request',
       'requestId is required',
     );
-    const hash = digest(input);
-    const old = await tx.get<{ operation: string; input_hash: string; result: string }>(
-      'SELECT operation, input_hash, result FROM review_commands WHERE project_id = ? AND actor_id = ? AND request_id = ?',
-      caller.projectId,
-      caller.actorId,
-      requestId,
-    );
-    if (old) {
-      check(
-        old.operation === operation && old.input_hash === hash,
-        'request_conflict',
-        'requestId was already used with different input',
-        409,
-      );
-      const result = JSON.parse(old.result) as ReviewRequest;
-      return {
+    return await receipted(tx, caller, requestId, digest(input), fn, {
+      table: 'review_commands',
+      operation,
+      // Answers recorded before these fields existed replay with their defaults.
+      replay: (result) => ({
         ...result,
         administrativeActorId: result.administrativeActorId ?? result.producerId,
         pinnedInputIds: result.pinnedInputIds ?? [],
         synopsis: result.synopsis ?? null,
         findings: result.findings ?? [],
         evidence: result.evidence ?? {},
-      };
-    }
-    const result = await fn();
-    await tx.run(
-      'INSERT INTO review_commands VALUES (?, ?, ?, ?, ?, ?)',
-      caller.projectId,
-      caller.actorId,
-      requestId,
-      operation,
-      hash,
-      JSON.stringify(result),
-    );
-    return result;
+      }),
+    });
   }
 
   async request(

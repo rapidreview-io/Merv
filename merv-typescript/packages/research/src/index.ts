@@ -3,13 +3,13 @@ import {
   check,
   clip,
   createService,
-  digest,
   inTransaction,
   mapAsync,
   MervError,
   now,
   ordered,
   recorded,
+  childRequest,
   replayed,
   visible,
   type Artifact,
@@ -543,7 +543,7 @@ export class ResearchService implements Research {
       {
         workflow: 'research',
         version: 6,
-        requestId: this.request(caller, input.requestId, step),
+        requestId: childRequest(caller, 'research', step, input.requestId),
         dependsOn: input.dependsOn,
         data: { name: input.name },
       },
@@ -885,7 +885,7 @@ export class ResearchService implements Research {
       // this line is what lets a reader of the record trace it back to the reviewed plan.
       const provenance = `\n\nWhy: ${item.rationale}${origin(approved, pinned('change specification', approved.changeSpec), `item ${item.key}`)}`;
       const dependsOn = item.dependsOn.map((key) => created.get(key)!);
-      const itemRequestId = this.request(caller, requestId, `item:${item.key}`);
+      const itemRequestId = childRequest(caller, 'research', `item:${item.key}`, requestId);
       const workspace = item.workspace.provider === 'code' ? ('git' as const) : undefined;
       const work =
         item.kind === 'task'
@@ -966,7 +966,7 @@ export class ResearchService implements Research {
       service.create(
         {
           projectId: caller.projectId,
-          requestId: this.request(caller, requestId, step),
+          requestId: childRequest(caller, 'research', step, requestId),
           title: `${clip(record.name, 180)}: consolidation`,
           goal: `${integrationGoal}${origin(approved, pinned('report', approved.report), pinned('change specification', approved.changeSpec))}`,
           checks: integrationChecks,
@@ -1301,7 +1301,7 @@ export class ResearchService implements Research {
             expectedRevision: input.expectedRevision,
             dependsOn: input.dependsOn.filter((id) => !current.includes(id)),
             drop: current.filter((id) => !input.dependsOn.includes(id)),
-            requestId: this.request(caller, input.requestId, 'replan'),
+            requestId: childRequest(caller, 'research', 'replan', input.requestId),
           },
           tx,
         );
@@ -1338,7 +1338,7 @@ export class ResearchService implements Research {
             input: { outcome: input.outcome, reason: input.reason },
             // Kept on the cycle, clipped, so a digest composed later can still say why it ended.
             data: { reason: clip(input.reason, ENDING_REASON_CHARS) },
-            requestId: this.request(caller, input.requestId, 'end'),
+            requestId: childRequest(caller, 'research', 'end', input.requestId),
           },
           tx,
         );
@@ -1429,7 +1429,7 @@ export class ResearchService implements Research {
                   ...(record.automation ? { requirePlan: true } : {}),
                   // Absent rather than null, so a cycle that follows nothing replays as before.
                   ...(carried ? { previousCycleDigestId: carried.id } : {}),
-                  requestId: this.request(caller, input.requestId, 'reflection'),
+                  requestId: childRequest(caller, 'research', 'reflection', input.requestId),
                 },
                 tx,
               ),
@@ -1457,7 +1457,7 @@ export class ResearchService implements Research {
             expectedRevision: input.expectedRevision,
             action: move === 'inject' ? 'advance' : move,
             input: choice,
-            requestId: this.request(caller, input.requestId, 'advance'),
+            requestId: childRequest(caller, 'research', 'advance', input.requestId),
           },
           tx,
         );
@@ -1479,7 +1479,7 @@ export class ResearchService implements Research {
               instanceId: record.id,
               expectedRevision: moved.revision,
               dependsOn: childIds,
-              requestId: this.request(caller, input.requestId, 'children'),
+              requestId: childRequest(caller, 'research', 'children', input.requestId),
             },
             tx,
           );
@@ -1802,9 +1802,6 @@ export class ResearchService implements Research {
   }
   private children(record: ResearchRecord): string[] {
     return [record.reflectionId, ...record.integrations].filter((id): id is string => !!id);
-  }
-  private request(caller: Caller, requestId: string, step: string) {
-    return `research:${step}:${digest({ actorId: caller.actorId, requestId })}`;
   }
   private async command<T>(
     caller: Caller,

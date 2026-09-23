@@ -1,5 +1,5 @@
 import { visible, mapAsync, filterAsync } from '@merv/contracts';
-import { createService, plain, recorded, replayed } from '@merv/contracts';
+import { childRequest, createService, plain, recorded, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -383,7 +383,7 @@ export class ExperimentService implements Experiments {
           caller,
           {
             workflow: 'experiment',
-            requestId: `experiment:create:${caller.actorId}:${input.requestId}`,
+            requestId: childRequest(caller, 'experiment', 'create', input.requestId),
             dependsOn: input.dependsOn,
             // What waits on this experiment names it, so the instance carries the name.
             data: {
@@ -693,7 +693,7 @@ export class ExperimentService implements Experiments {
             expectedRevision: input.expectedRevision,
             action: input.transition,
             input: { ...input },
-            requestId: `experiment:transition:${caller.actorId}:${input.requestId}`,
+            requestId: childRequest(caller, 'experiment', 'transition', input.requestId),
             data: { reason: input.evidence?.reason ?? null },
           },
           tx,
@@ -903,7 +903,7 @@ export class ExperimentService implements Experiments {
         expectedRevision: input.expectedRevision,
         action: input.transition,
         input: { ...input },
-        requestId: `experiment:transition:${caller.actorId}:${input.requestId}`,
+        requestId: childRequest(caller, 'experiment', 'transition', input.requestId),
       },
       tx,
     );
@@ -927,7 +927,7 @@ export class ExperimentService implements Experiments {
         criteria: [...(stage === 'design' ? designCriteria : resultsCriteria)],
         ...(stage === 'design' ? { requiredCriteria: [feasibilityCriterion] } : {}),
         formatVersion: 2,
-        requestId: `experiment:submission:${caller.actorId}:${input.requestId}`,
+        requestId: childRequest(caller, 'experiment', 'submission', input.requestId),
       },
       tx,
     );
@@ -1068,7 +1068,7 @@ export class ExperimentService implements Experiments {
             expectedRevision: input.expectedRevision,
             action,
             input: { ...input },
-            requestId: `experiment:review:${caller.actorId}:${input.requestId}`,
+            requestId: childRequest(caller, 'experiment', 'review', input.requestId),
             data: { verdict: input.verdict, reviewId: review.id, returnTo: input.returnTo ?? null },
           },
           tx,
@@ -1076,7 +1076,7 @@ export class ExperimentService implements Experiments {
         const { expectedRevision: _revision, ...verdict } = input;
         await this.reviews.submit(
           caller,
-          { ...verdict, requestId: `experiment:review:${caller.actorId}:${input.requestId}` },
+          { ...verdict, requestId: childRequest(caller, 'experiment', 'review', input.requestId) },
           tx,
         );
         if (input.paperChanges !== undefined)

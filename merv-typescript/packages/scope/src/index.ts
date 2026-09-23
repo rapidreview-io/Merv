@@ -1,5 +1,5 @@
 import { expiry } from './expiry.js';
-import { visible, createService } from '@merv/contracts';
+import { visible, createService, receipted } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
@@ -785,76 +785,68 @@ export class ProjectScope implements Scope {
         );
       };
       await authorize();
-      const hash = digest(input);
-      const previous = await tx.get<{ input_hash: string; result_json: string }>(
-        'SELECT input_hash,result_json FROM project_context_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-        caller.projectId,
-        caller.actorId,
+      return await receipted(
+        tx,
+        caller,
         input.requestId,
-      );
-      if (previous) {
-        check(
-          previous.input_hash === hash,
-          'request_conflict',
-          'requestId already updated project context with different input',
-          409,
-        );
-        await authorize();
-        return JSON.parse(previous.result_json) as Project;
-      }
-      const before = project(
-        (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
-      );
-      await authorize();
-      const changed = await tx.run(
-        'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND summary=? AND context_revision<9007199254740991',
-        input.summary,
-        caller.projectId,
-        input.expectedSummary,
-      );
-      check(
-        changed.changes === 1,
-        'project_context_conflict',
-        'Project Introduction changed; reread it before retrying with its exact text',
-        409,
-      );
-      const result = project(
-        (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
-      );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'project.context.updated',
-        subjectId: caller.projectId,
-        data: {
-          previousSummary: before.summary!,
-          summary: result.summary!,
-          previousContextRevision: before.contextRevision!,
-          contextRevision: result.contextRevision!,
-          ...(caller.human
-            ? {
-                source: {
-                  kind: 'human',
-                  issuer: caller.human.issuer,
-                  subject: caller.human.subject,
-                  membershipId: caller.human.membershipId,
-                },
-              }
-            : caller.credentialId
-              ? { source: { kind: 'actor', credentialId: caller.credentialId } }
-              : eventSource(caller)),
+        digest(input),
+        async () => {
+          const before = project(
+            (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
+          );
+          await authorize();
+          const changed = await tx.run(
+            'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND summary=? AND context_revision<9007199254740991',
+            input.summary,
+            caller.projectId,
+            input.expectedSummary,
+          );
+          check(
+            changed.changes === 1,
+            'project_context_conflict',
+            'Project Introduction changed; reread it before retrying with its exact text',
+            409,
+          );
+          const result = project(
+            (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
+          );
+          await this.state.appendEvent(tx, {
+            projectId: caller.projectId,
+            actorId: caller.actorId,
+            type: 'project.context.updated',
+            subjectId: caller.projectId,
+            data: {
+              previousSummary: before.summary!,
+              summary: result.summary!,
+              previousContextRevision: before.contextRevision!,
+              contextRevision: result.contextRevision!,
+              ...(caller.human
+                ? {
+                    source: {
+                      kind: 'human',
+                      issuer: caller.human.issuer,
+                      subject: caller.human.subject,
+                      membershipId: caller.human.membershipId,
+                    },
+                  }
+                : caller.credentialId
+                  ? { source: { kind: 'actor', credentialId: caller.credentialId } }
+                  : eventSource(caller)),
+            },
+          });
+          return result;
         },
-      });
-      await authorize();
-      await tx.run(
-        'INSERT INTO project_context_commands(project_id,actor_id,request_id,input_hash,result_json) VALUES(?,?,?,?,?)',
-        caller.projectId,
-        caller.actorId,
-        input.requestId,
-        hash,
-        JSON.stringify(result),
+        {
+          table: 'project_context_commands',
+          result: 'result_json',
+          conflict: 'requestId already updated project context with different input',
+          after: authorize,
+          replay: async (result) => {
+            await authorize();
+            return result;
+          },
+        },
       );
-      return result;
     });
   }
   async issueActor(caller: Caller, input: { name: string; role: Role; expiresAt?: string | null }) {

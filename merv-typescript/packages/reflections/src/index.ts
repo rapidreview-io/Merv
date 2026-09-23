@@ -1,6 +1,6 @@
 import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
-import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
+import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -98,8 +98,6 @@ interface LeaseRow {
   claim_id: string | null;
   released_at: string | null;
 }
-const requestKey = (caller: Caller, operation: string, requestId: string) =>
-  `reflection:${digest({ actorId: caller.actorId, operation, requestId })}`;
 const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
   kind: 'target',
   field,
@@ -320,7 +318,7 @@ export class ReflectionService implements Reflections {
           {
             workflow: 'reflection',
             version: REFLECTION_WORKFLOW.version,
-            requestId: requestKey(caller, 'wave', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'wave', input.requestId),
             // Later transitions pass no such key, so the wave keeps the digest it started with.
             data: {
               title,
@@ -1097,7 +1095,7 @@ export class ReflectionService implements Reflections {
             expectedRevision: input.expectedRevision,
             action: 'submit',
             input: { ...input },
-            requestId: requestKey(caller, 'lens-submit', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'lens-submit', input.requestId),
           },
           tx,
         );
@@ -1188,7 +1186,7 @@ export class ReflectionService implements Reflections {
             expectedRevision: input.expectedRevision,
             action: 'submit',
             input: { ...input },
-            requestId: requestKey(caller, 'submit', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'submit', input.requestId),
           },
           tx,
         );
@@ -1225,7 +1223,7 @@ export class ReflectionService implements Reflections {
             ],
             criteria: [...REFLECTION_CRITERIA, ...(submission.plan ? [CHANGE_SPEC_CRITERION] : [])],
             formatVersion: 2,
-            requestId: requestKey(caller, 'review-request', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'review-request', input.requestId),
           },
           tx,
         );
@@ -1292,7 +1290,7 @@ export class ReflectionService implements Reflections {
           expectedRevision: input.expectedRevision,
           action,
           input: { ...input },
-          requestId: requestKey(caller, 'review', input.requestId),
+          requestId: childRequest(caller, 'reflection', 'review', input.requestId),
         },
         tx,
       );

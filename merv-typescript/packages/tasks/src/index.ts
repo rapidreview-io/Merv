@@ -1,5 +1,6 @@
 import {
   check,
+  childRequest,
   clip,
   createService,
   digest,
@@ -10,6 +11,7 @@ import {
   newId,
   now,
   plain,
+  receipted,
   recorded,
   releasedLease,
   reviewHistory,
@@ -1136,33 +1138,10 @@ export class TaskService implements Tasks {
       'invalid_request',
       'requestId is required',
     );
-    const hash = digest(input);
-    const old = await tx.get<{ operation: string; input_hash: string; result: string }>(
-      'SELECT operation, input_hash, result FROM task_commands WHERE project_id = ? AND actor_id = ? AND request_id = ?',
-      caller.projectId,
-      caller.actorId,
-      requestId,
-    );
-    if (old) {
-      check(
-        old.operation === operation && old.input_hash === hash,
-        'request_conflict',
-        'requestId was already used with different input',
-        409,
-      );
-      return JSON.parse(old.result) as T;
-    }
-    const result = await fn();
-    await tx.run(
-      'INSERT INTO task_commands VALUES (?, ?, ?, ?, ?, ?)',
-      caller.projectId,
-      caller.actorId,
-      requestId,
+    return await receipted(tx, caller, requestId, digest(input), fn, {
+      table: 'task_commands',
       operation,
-      hash,
-      JSON.stringify(result),
-    );
-    return result;
+    });
   }
 
   /** The binding captures its provider; a public create can never select this version. */
@@ -1357,7 +1336,7 @@ export class TaskService implements Tasks {
           {
             workflow: 'task',
             version,
-            requestId: `${caller.actorId}:task:create:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'create', input.requestId),
             ...(input.dependsOn === undefined ? {} : { dependsOn: input.dependsOn }),
             data: {
               title: input.title,
@@ -2247,7 +2226,7 @@ export class TaskService implements Tasks {
             expectedRevision: current.revision,
             action: 'mark_failed',
             input: { ...input, expectedRevision: current.revision },
-            requestId: `${caller.actorId}:task:failure:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'failure', input.requestId),
             data: {
               outcome: input.reason,
               failure: { ...failure },
@@ -2339,7 +2318,7 @@ export class TaskService implements Tasks {
             expectedRevision: input.expectedRevision,
             action: 'submit_delivery',
             input: { ...input },
-            requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'delivery', input.requestId),
             data: {
               deliveryIds,
               deliveryConfirmations: confirmations.map((item) => ({ ...item })),
@@ -2391,7 +2370,7 @@ export class TaskService implements Tasks {
             criteria: checks,
             formatVersion: 2,
             ...(requiredCriteria.length ? { requiredCriteria } : {}),
-            requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'delivery', input.requestId),
           },
           tx,
         );
@@ -2436,7 +2415,7 @@ export class TaskService implements Tasks {
             expectedRevision: current.revision,
             action: 'reissue_review',
             input: { ...input },
-            requestId: `${caller.actorId}:task:reissue:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'reissue', input.requestId),
             data: { reviewReissueReason: input.reason },
           },
           tx,
@@ -2447,7 +2426,7 @@ export class TaskService implements Tasks {
           {
             reviewId: previous.id,
             subjectRevision: moved.revision,
-            requestId: `${caller.actorId}:task:reissue:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'reissue', input.requestId),
           },
           tx,
         );
@@ -2518,7 +2497,7 @@ export class TaskService implements Tasks {
             expectedRevision: current.revision,
             action,
             input: { ...input },
-            requestId: `${caller.actorId}:task:review:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'review', input.requestId),
             data: {
               verdict: input.verdict,
               reviewId: input.reviewId,
@@ -2568,7 +2547,7 @@ export class TaskService implements Tasks {
             ...(input.synopsis === undefined ? {} : { synopsis: input.synopsis }),
             ...(input.findings === undefined ? {} : { findings: input.findings }),
             ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
-            requestId: `${caller.actorId}:task:review:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'review', input.requestId),
           },
           tx,
         );
