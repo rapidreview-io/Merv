@@ -38,10 +38,13 @@ async function fixture(
     readOnly?: boolean;
     reference?: string | string[];
     http?: boolean;
+    /** Another fixture's application: this one then adds only its own project and workflow. */
+    app?: Awaited<ReturnType<typeof createApp>>;
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-session-workspace-'));
-  let app = await createApp({ directory, api: options.http ?? false, port: 0 });
+  const owned = !options.app;
+  let app = options.app ?? (await createApp({ directory, api: options.http ?? false, port: 0 }));
   const boot = await app.ctx.scope.bootstrap({
     projectName: 'Git metadata',
     actorName: 'Controller owner',
@@ -127,7 +130,7 @@ async function fixture(
   // A release names its session and runner only; the host belongs to attachment and capture.
   const { hostRef: _hostRef, ...release } = control;
   t.after(async () => {
-    await app.stop();
+    if (owned) await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
   const events = async (type: string) =>
@@ -150,6 +153,7 @@ async function fixture(
       poisoned = true;
     },
     async restart() {
+      assert.ok(owned, 'Only a fixture that owns its application restarts it');
       await app.stop();
       app = await createApp({ directory, api: options.http ?? false, port: 0 });
       program = await register();
@@ -377,8 +381,9 @@ test('workspace mode and exact reference base are pinned; read-only capture cann
     { code: 'workspace_base_conflict' },
   );
   assert.equal((await f.app.ctx.sessions.get(f.source, f.session.id)).hostRef, null);
+  // The other cases are further workflows of the same application, each in its own project.
   for (const reference of ['', 'main', ['a'.repeat(40)]]) {
-    const absent = await fixture(t, { reference });
+    const absent = await fixture(t, { reference, app: f.app });
     await assert.rejects(
       async () =>
         await absent.app.ctx.sessions.attach(absent.source, {
@@ -388,7 +393,7 @@ test('workspace mode and exact reference base are pinned; read-only capture cann
       { code: 'workspace_reference_unavailable' },
     );
   }
-  const scratch = await fixture(t, { policy: { mode: 'none' } });
+  const scratch = await fixture(t, { policy: { mode: 'none' }, app: f.app });
   await assert.rejects(
     async () =>
       await scratch.app.ctx.sessions.attach(scratch.source, {
@@ -404,6 +409,7 @@ test('workspace mode and exact reference base are pinned; read-only capture cann
   const readonly = await fixture(t, {
     readOnly: true,
     policy: { mode: 'ephemeral', namespace: 'review', base: 'central', retain: false },
+    app: f.app,
   });
   const initial = workspace({
     mode: 'ephemeral',
@@ -543,8 +549,10 @@ test('HTTP summary preserves declared workspace mode before attachment and after
     { mode: 'ephemeral', namespace: 'pending', base: 'central', retain: false },
     persistent,
   ];
+  let app: Awaited<ReturnType<typeof createApp>> | undefined;
   for (const policy of policies) {
-    const f = await fixture(t, { http: true, policy });
+    const f = await fixture(t, { http: true, policy, ...(app ? { app } : {}) });
+    app = f.app;
     const summary = async () => {
       const response = await fetch(`${f.app.ctx.api.url}/sessions/status`, {
         headers: { authorization: `Bearer ${f.boot.token}` },
