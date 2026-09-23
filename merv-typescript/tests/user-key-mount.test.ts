@@ -8,14 +8,7 @@ import { ProjectScope } from '@merv/scope';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { openState } from './fixtures/state.js';
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from './fixtures/deferred.js';
 
 for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
   test(

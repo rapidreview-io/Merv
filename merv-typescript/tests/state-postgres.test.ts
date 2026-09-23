@@ -7,6 +7,7 @@ import { PostgresState, statePlugin } from '@merv/state';
 import { postgresParameters } from '@merv/state/parameters';
 import { MervError, type Migration, type Transaction } from '@merv/contracts';
 import { postgresUrl, schemaFor } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
 const connectionString = postgresUrl;
 const event = {
@@ -16,13 +17,6 @@ const event = {
   subjectId: 'subject',
   data: { value: 1 },
 };
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 async function fixture(
   t: TestContext,
   config: { lockTimeoutMs?: number; maxConnections?: number } = {},

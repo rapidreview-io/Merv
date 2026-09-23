@@ -2,14 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 const migration = [
   { version: 1, sql: 'CREATE TABLE values_test(id INTEGER PRIMARY KEY, value TEXT NOT NULL);' },
 ];

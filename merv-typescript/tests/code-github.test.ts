@@ -17,6 +17,7 @@ import {
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { openState, schemaFor } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
 const config: GitHubConfig = {
   origin: 'http://127.0.0.1:4317',
@@ -33,13 +34,6 @@ const privateRepo = {
   default_branch: 'main',
 };
 const issuer = 'https://identity.example/auth/v1';
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
 function fakeGitHub() {
   const calls: { url: string; token?: string; body?: Record<string, string> }[] = [];
   const control = {
@@ -47,11 +41,11 @@ function fakeGitHub() {
     failRefresh: false,
     revoked: false,
     hidden: false,
-    pauseRefresh: undefined as ReturnType<typeof deferred> | undefined,
+    pauseRefresh: undefined as ReturnType<typeof deferred<void>> | undefined,
     refreshEntered: deferred(),
-    pauseList: undefined as ReturnType<typeof deferred> | undefined,
+    pauseList: undefined as ReturnType<typeof deferred<void>> | undefined,
     listEntered: deferred(),
-    pauseExchange: undefined as ReturnType<typeof deferred> | undefined,
+    pauseExchange: undefined as ReturnType<typeof deferred<void>> | undefined,
     exchangeEntered: deferred(),
   };
   const fetcher: typeof fetch = async (input, init) => {
