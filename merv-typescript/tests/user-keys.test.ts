@@ -5,16 +5,15 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Worker } from 'node:worker_threads';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
-import type { Caller, Principal, Role, UserKey } from '@merv/contracts';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import type { Principal } from '@merv/contracts';
+import { openState, schemaFor } from './fixtures/state.js';
+import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 import { assessment } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -647,135 +646,42 @@ for (const [firstAction, secondAction] of [
   ['rotate', 'revoke'],
   ['revoke', 'rotate'],
 ] as const) {
-  test(
-    `concurrent key ${firstAction}/${secondAction} operations serialize without a live revoked descendant`,
-    { timeout: 15_000 },
-    async (t) => {
-      const directory = mkdtempSync(join(tmpdir(), 'merv-key-race-'));
-      const path = directory;
-      const f = await fixture(path);
-      const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
-      const barrier = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT);
-      const control = new Int32Array(barrier);
-      const code = `
-      const { parentPort, workerData } = require('node:worker_threads');
-      (async () => {
-        const { register } = await import(workerData.loader); register();
-        const [{ PostgresState }, { ProjectScope }] = await Promise.all([import(workerData.stateModule), import(workerData.scopeModule)]);
-        const state = await PostgresState.open({ connectionString: workerData.url, schema: workerData.schema, maxConnections: 2, readConnections: 1, lockTimeoutMs: 30000 });
-        const scope = new ProjectScope(state, () => workerData.time);
-        await scope.initialize();
-        const control = new Int32Array(workerData.barrier), append = state.appendEvent.bind(state);
-        state.appendEvent = async (tx,event) => {
-          const result = await append(tx,event);
-          if (workerData.first) {
-            Atomics.store(control,0,1); parentPort.postMessage({type:'held'});
-            if (Atomics.wait(control,1,0,5000) === 'timed-out') throw new Error('Unreleased transaction');
-            Atomics.store(control,0,0);
-          }
-          return result;
-        };
-        const transaction = state.transaction.bind(state);
-        state.transaction = fn => transaction(tx => { if (!workerData.first) Atomics.store(control,2,1); return fn(tx); });
-        parentPort.on('message', async () => {
-          parentPort.postMessage({type:'attempt'});
-          try {
-            const result = workerData.action === 'rotate'
-              ? (await scope.rotateKey(workerData.owner,{keyId:workerData.keyId})).key
-              : await scope.revokeKey(workerData.owner,workerData.keyId);
-            parentPort.postMessage({type:'result',ok:true,key:result});
-          } catch(error) { parentPort.postMessage({type:'result',ok:false,code:error.code,status:error.status}); }
-          finally { await state.close(); parentPort.close(); }
-        });
-        parentPort.postMessage({type:'ready'});
-      })().catch(error => { throw error; });`;
-      const spawn = (action: string, first: boolean) =>
-        new Worker(code, {
-          eval: true,
-          execArgv: [],
-          workerData: {
-            action,
-            first,
-            owner: f.owner,
-            url: postgresUrl,
-            schema: schemaFor(path),
-            barrier,
-            time: initialTime,
-            keyId: issued.key.id,
-            loader: import.meta.resolve('tsx/esm/api'),
-            stateModule: new URL('../packages/state/src/index.ts', import.meta.url).href,
-            scopeModule: new URL('../packages/scope/src/index.ts', import.meta.url).href,
-          },
-        });
-      const first = spawn(firstAction, true),
-        second = spawn(secondAction, false);
-      t.after(async () => {
-        Atomics.store(control, 1, 1);
-        Atomics.notify(control, 1);
-        await Promise.all([first.terminate(), second.terminate()]);
-        await f.state.close();
-        rmSync(directory, { recursive: true, force: true });
-      });
-      const message = (worker: Worker, type: string) =>
-        new Promise<{ type: string; ok?: boolean; key?: UserKey; code?: string; status?: number }>(
-          (resolve, reject) => {
-            const cleanup = () => {
-              worker.off('message', receive);
-              worker.off('error', fail);
-              worker.off('exit', exited);
-            };
-            const receive = (value: { type: string }) => {
-              if (value.type === type) {
-                cleanup();
-                resolve(value);
-              }
-            };
-            const fail = (error: Error) => {
-              cleanup();
-              reject(error);
-            };
-            const exited = (code: number) =>
-              fail(new Error('Worker exited ' + code + ' before ' + type));
-            worker.on('message', receive);
-            worker.once('error', fail);
-            worker.once('exit', exited);
-          },
-        );
-      await Promise.all([message(first, 'ready'), message(second, 'ready')]);
-      const held = message(first, 'held');
-      first.postMessage('go');
-      await held;
-      const attempted = message(second, 'attempt');
-      second.postMessage('go');
-      await attempted;
-      await delay(75);
-      assert.equal(
-        Atomics.load(control, 0),
-        1,
-        'First operation holds the database writer transaction',
-      );
-      assert.equal(Atomics.load(control, 2), 0, 'Second operation cannot enter its callback yet');
-      const results = Promise.all([message(first, 'result'), message(second, 'result')]);
-      Atomics.store(control, 1, 1);
-      Atomics.notify(control, 1);
-      const [one, two] = await results;
-      assert.equal(one.ok, true);
-      const history = await f.scope.keys(f.owner);
-      if (secondAction === 'rotate')
-        assert.deepEqual(two, { type: 'result', ok: false, code: 'key_revoked', status: 409 });
-      else assert.equal(two.ok, true);
-      assert.equal(history.length, firstAction === 'rotate' ? 2 : 1);
-      assert.equal(
-        history.filter((key) => key.revokedAt === null).length,
-        firstAction === 'rotate' && secondAction === 'rotate' ? 1 : 0,
-      );
-      assert.equal(
-        history.filter((key) => key.previousId === issued.key.id).length,
-        firstAction === 'rotate' ? 1 : 0,
-      );
-      await assert.rejects(async () => await f.scope.authenticateKey(issued.token), {
-        code: 'unauthorized',
-      });
-    },
-  );
+  test(`concurrent key ${firstAction}/${secondAction} operations serialize without a live revoked descendant`, async (t) => {
+    const key = `key-race-${firstAction}-${secondAction}`;
+    const f = await fixture(key);
+    t.after(async () => await f.state.close());
+    const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
+    const act = (action: 'rotate' | 'revoke') => async (scope: ProjectScope) =>
+      action === 'rotate'
+        ? (await scope.rotateKey(f.owner, { keyId: issued.key.id })).key
+        : await scope.revokeKey(f.owner, issued.key.id);
+    const race = await raceWriters({
+      schema: schemaFor(key),
+      service: scopeWriter(() => initialTime),
+      first: act(firstAction),
+      second: act(secondAction),
+    });
+    assert.equal(
+      race.secondEnteredWhileHeld,
+      false,
+      'Second operation cannot enter its callback yet',
+    );
+    assert.equal(race.first.ok, true);
+    const history = await f.scope.keys(f.owner);
+    if (secondAction === 'rotate')
+      assert.deepEqual(race.second, { ok: false, code: 'key_revoked', status: 409 });
+    else assert.equal(race.second.ok, true);
+    assert.equal(history.length, firstAction === 'rotate' ? 2 : 1);
+    assert.equal(
+      history.filter((key) => key.revokedAt === null).length,
+      firstAction === 'rotate' && secondAction === 'rotate' ? 1 : 0,
+    );
+    assert.equal(
+      history.filter((key) => key.previousId === issued.key.id).length,
+      firstAction === 'rotate' ? 1 : 0,
+    );
+    await assert.rejects(async () => await f.scope.authenticateKey(issued.token), {
+      code: 'unauthorized',
+    });
+  });
 }

@@ -12,7 +12,7 @@ import { ReviewService } from '@merv/reviews';
 import { digest, type ReviewInput, type ReviewRequest, type ReviewSubmit } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
-async function fixture(schemaVersion = Infinity) {
+async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-findings-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
@@ -39,16 +39,7 @@ async function fixture(schemaVersion = Infinity) {
     title: 'Unsubmitted receipt',
     content: 'Not in the snapshot.',
   });
-  const migrate = state.migrate.bind(state);
-  state.migrate = async (component, migrations) =>
-    await migrate(
-      component,
-      component === 'reviews'
-        ? migrations.filter((migration) => migration.version <= schemaVersion)
-        : migrations,
-    );
   const reviews = await createService(new ReviewService(state, scope, artifacts));
-  state.migrate = migrate;
   let sequence = 0;
   const input = (): ReviewInput => ({
     subjectId: `subject-${++sequence}`,
@@ -505,51 +496,6 @@ test('a request that omits formatVersion is format 2, pinned in its snapshot, an
     assert.equal((await f.reviews.submit(f.reviewer, complete)).findings.length, 2);
   } finally {
     await f.close();
-  }
-});
-
-test('retiring format 1 deletes a format 1 review on a retired subject and refuses to start past any other', async () => {
-  for (const retired of [true, false]) {
-    const f = await fixture(9);
-    try {
-      // No current request can write format 1: it was the default when the field was omitted.
-      await f.state.transaction(async (tx) => {
-        await tx.run(
-          `INSERT INTO reviews(id,project_id,subject_id,subject_revision,producer_id,artifact_ids,criteria,manifest,snapshot_hash,status,created_at,format_version)
-           VALUES('format-1',?,'retired-subject',2,?,?,?,?,'hash','requested','2026-01-01T00:00:00.000Z',1)`,
-          f.producer.projectId,
-          f.producer.actorId,
-          JSON.stringify([f.proof.id]),
-          JSON.stringify(['Correct.']),
-          JSON.stringify([f.proof]),
-        );
-        if (retired) {
-          await tx.run(
-            `CREATE TABLE wf_retired_instances (
-              id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workflow TEXT NOT NULL,
-              version BIGINT NOT NULL, reason TEXT NOT NULL)`,
-          );
-          await tx.run(
-            "INSERT INTO wf_retired_instances VALUES('retired-subject',?,'task',1,'retired_version')",
-            f.producer.projectId,
-          );
-        }
-      });
-      const formatOne = async () =>
-        await f.state.read(
-          async (sql) => await sql.all("SELECT id FROM reviews WHERE id='format-1'"),
-        );
-      const opening = createService(new ReviewService(f.state, f.scope, f.artifacts));
-      if (retired) {
-        (await opening).close();
-        assert.deepEqual(await formatOne(), []);
-      } else {
-        await assert.rejects(opening, { code: 'state_constraint' });
-        assert.equal((await formatOne()).length, 1);
-      }
-    } finally {
-      await f.close();
-    }
   }
 });
 

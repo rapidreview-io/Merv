@@ -1,10 +1,12 @@
-import { createService, type Caller } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import { createService, type Caller, type CodeStoreOperation } from '@merv/contracts';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -49,13 +51,23 @@ export interface Bundle {
   content: Buffer;
 }
 
-/** An operator's repository in a temporary directory, and bundles cut from it. */
-export function gitSource(t: TestContext, format: 'sha1' | 'sha256' = 'sha1') {
+/**
+ * An operator's repository in a temporary directory, and bundles cut from it. `from` starts it
+ * as a copy of another source repository instead of an empty one.
+ */
+export function gitSource(
+  t: { after(clean: () => void): void },
+  format: 'sha1' | 'sha256' = 'sha1',
+  from?: string,
+) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-src-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repository = join(directory, 'source');
-  mkdirSync(repository);
-  git(repository, ['init', '--quiet', `--object-format=${format}`, '--initial-branch=main']);
+  if (from) cpSync(from, repository, { recursive: true });
+  else {
+    mkdirSync(repository);
+    git(repository, ['init', '--quiet', `--object-format=${format}`, '--initial-branch=main']);
+  }
   let bundles = 0;
   const source = {
     directory,
@@ -90,6 +102,56 @@ export function gitSource(t: TestContext, format: 'sha1' | 'sha256' = 'sha1') {
     },
   };
   return source;
+}
+
+const seeds = new Map<string, { repository: string; value: unknown }>();
+/**
+ * A source repository whose history `build` makes once per test process: every call gets its own
+ * copy of that repository, and what `build` returned. Fixture commits have fixed dates, so the
+ * copy holds exactly the commits a fresh build would make.
+ */
+export function seededSource<T>(
+  t: TestContext,
+  key: string,
+  build: (source: ReturnType<typeof gitSource>) => T,
+): { source: ReturnType<typeof gitSource>; value: T } {
+  let seed = seeds.get(key);
+  if (!seed) {
+    const source = gitSource({ after: (clean) => void process.once('exit', clean) });
+    seed = { value: build(source), repository: source.repository };
+    seeds.set(key, seed);
+  }
+  return { source: gitSource(t, 'sha1', seed.repository), value: seed.value as T };
+}
+
+/**
+ * Imports `bundle` as the project's history through Code's upload protocol, as an operator's
+ * client does, and waits for the admission to complete.
+ */
+export async function importBundle(
+  code: unknown,
+  caller: Caller,
+  bundle: Bundle,
+  requestId = 'import',
+): Promise<CodeStoreOperation> {
+  const service = code as CodeService;
+  const v2 = service.v2!;
+  const begun = await service.importRepository(caller, {
+    source: 'bundle',
+    tip: bundle.tip,
+    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
+    requestId,
+  });
+  await v2.putPart(caller, begun.id, 0, bundle.content);
+  let operation = begun;
+  for (let tries = 0; operation.status === 'prepared' && tries < 200; tries++) {
+    ({ operation } = (await v2.call(caller, `uploads/${begun.id}/complete`, {})) as {
+      operation: CodeStoreOperation;
+    });
+    if (operation.status === 'prepared') await delay(25);
+  }
+  assert.equal(operation.status, 'completed', JSON.stringify(operation));
+  return operation;
 }
 
 export function described(file: string, tip: string): Bundle {

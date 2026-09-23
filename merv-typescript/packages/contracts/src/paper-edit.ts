@@ -1,6 +1,6 @@
 import { z } from 'zod';
+import { idSchema as id } from './schemas.js';
 import { visible } from './text.js';
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const requestId = z.string().trim().min(1).max(200).refine(visible);
 const kind = z.enum(['problem', 'literature', 'methods', 'results']);

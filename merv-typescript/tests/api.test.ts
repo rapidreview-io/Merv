@@ -577,6 +577,90 @@ test('MCP shutdown drains a handler even after its client disconnects', async ()
   await tools.close();
 });
 
+test('an MCP client that disconnects before its reply cannot hold API shutdown', async (t) => {
+  const { scope, tools } = fixture();
+  let entered!: () => void, release!: () => void, closed!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const disconnected = new Promise<void>((resolve) => {
+    closed = resolve;
+  });
+  tools.register({
+    name: 'slow',
+    description: 'Finishes only after its client has gone',
+    inputSchema: z.object({}).strict(),
+    handler: async () => {
+      entered();
+      await wait;
+      return 'finished';
+    },
+  });
+  const api = new ApiServer(scope, tools);
+  const url = await api.start();
+  // The server must see the connection close while the call is pending: that closes the
+  // stateless MCP transport, which then never settles the reply it was holding.
+  (api as unknown as { server: HttpServer }).server.on('request', (_request, response) => {
+    response.once('close', closed);
+  });
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'slow', arguments: {} },
+  });
+  const request = httpRequest(`${url}/mcp`, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer alice-token',
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      'content-length': String(Buffer.byteLength(body)),
+    },
+  });
+  request.on('error', () => {});
+  let stopping: Promise<void> | undefined;
+  t.after(async () => {
+    request.destroy();
+    release();
+    // A failing regression must not hang the whole runner on the very promise under test.
+    stopping ??= api.stop();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        stopping,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    await tools.close();
+  });
+  request.end(body);
+  await started;
+  request.destroy();
+  await disconnected;
+  release();
+  stopping = api.stop();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      stopping.then(() => 'stopped'),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve('hung'), 2000);
+      }),
+    ]);
+    assert.equal(result, 'stopped', 'an MCP reply with no connection must not block shutdown');
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 test('disconnect during authentication cannot strand the later body reader or shutdown', async (t) => {
   const { scope, tools } = fixture();
   let entered!: () => void, release!: () => void, aborted!: () => void;

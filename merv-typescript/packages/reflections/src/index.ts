@@ -1,12 +1,11 @@
 import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
-import { mapAsync, someAsync, forEachAsync } from '@merv/contracts';
-import { createService, markdownSection, recorded, replayed } from '@merv/contracts';
+import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
+import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
   check,
-  digest,
   inTransaction,
   MervError,
   now,
@@ -24,9 +23,7 @@ import {
   type State,
   type Transaction,
   type WorkflowCheckContext,
-  type WorkflowExecutionBinding,
   type WorkflowExecutionPolicy,
-  type WorkflowLease,
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
@@ -98,17 +95,6 @@ interface LeaseRow {
   claim_id: string | null;
   released_at: string | null;
 }
-const requestKey = (caller: Caller, operation: string, requestId: string) =>
-  `reflection:${digest({ actorId: caller.actorId, operation, requestId })}`;
-const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
-  kind: 'target',
-  field,
-});
-const ref = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
-const grant = (name: string, ...alternatives: Record<string, WorkflowExecutionBinding>[]) => ({
-  name,
-  alternatives,
-});
 
 /**
  * How often a review may send a reflection back, to its synthesis or to its lenses. Restarting
@@ -320,7 +306,7 @@ export class ReflectionService implements Reflections {
           {
             workflow: 'reflection',
             version: REFLECTION_WORKFLOW.version,
-            requestId: requestKey(caller, 'wave', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'wave', input.requestId),
             // Later transitions pass no such key, so the wave keeps the digest it started with.
             data: {
               title,
@@ -670,13 +656,13 @@ export class ReflectionService implements Reflections {
           ? [
               grant(
                 'review.get',
-                { reviewId: ref('reviewId') },
+                { reviewId: reference('reviewId') },
                 { reviewId: { kind: 'oneOf' as const, name: 'researchReviews' } },
               ),
-              grant('review.start', { reviewId: ref('reviewId') }),
+              grant('review.start', { reviewId: reference('reviewId') }),
               grant('review.submit', {
-                reviewId: ref('reviewId'),
-                claimId: ref('claimId'),
+                reviewId: reference('reviewId'),
+                claimId: reference('claimId'),
                 expectedRevision: target('revision'),
               }),
             ]
@@ -735,10 +721,7 @@ export class ReflectionService implements Reflections {
         const inputs = await this.inputs({ ...context, caller: context.source });
         if (review) inputs.assessment = { text: JSON.stringify(review) };
         const ids = this.inputIds(inputs);
-        await forEachAsync(
-          ids,
-          async (id) => await this.artifacts.get(context.source, id, context.tx),
-        );
+        for (const id of ids) await this.artifacts.get(context.source, id, context.tx);
         const receipt = {
           leaseId: context.leaseId,
           instanceId: context.snapshot.id,
@@ -766,12 +749,7 @@ export class ReflectionService implements Reflections {
       },
       check: async (context, receipt) => {
         const lease = await this.lease(context);
-        check(
-          digest(receipt) === digest(JSON.parse(lease.receipt)),
-          'stale_lease',
-          'Reflection lease receipt changed',
-          409,
-        );
+        checkReceipt(lease, receipt, 'Reflection lease receipt changed');
         if (lease.review_id) {
           await this.independent(context.caller, (await this.current(context)).wave, context.tx);
           const review = await this.reviews.checkSubmit(
@@ -789,13 +767,11 @@ export class ReflectionService implements Reflections {
           artifacts: (await this.artifacts.authored(context.caller, context.tx)).map((a) => a.id),
         };
       },
-      release: async ({ lease, reason, tx }) => await this.release(lease, reason, tx),
+      release: async ({ lease, reason, tx }) =>
+        await releasedLease(tx, this.reviews, 'reflection_leases', lease, reason, {
+          instance_id: lease.instanceId,
+        }),
     };
-  }
-  private async release(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
-    await releasedLease(tx, this.reviews, 'reflection_leases', lease, reason, {
-      instance_id: lease.instanceId,
-    });
   }
   private policy(lens: boolean): WorkflowPolicy {
     const assignments = (lens ? ['reflecting'] : ['synthesizing', 'in_review']).map((state) => ({
@@ -1097,7 +1073,7 @@ export class ReflectionService implements Reflections {
             expectedRevision: input.expectedRevision,
             action: 'submit',
             input: { ...input },
-            requestId: requestKey(caller, 'lens-submit', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'lens-submit', input.requestId),
           },
           tx,
         );
@@ -1188,7 +1164,7 @@ export class ReflectionService implements Reflections {
             expectedRevision: input.expectedRevision,
             action: 'submit',
             input: { ...input },
-            requestId: requestKey(caller, 'submit', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'submit', input.requestId),
           },
           tx,
         );
@@ -1225,7 +1201,7 @@ export class ReflectionService implements Reflections {
             ],
             criteria: [...REFLECTION_CRITERIA, ...(submission.plan ? [CHANGE_SPEC_CRITERION] : [])],
             formatVersion: 2,
-            requestId: requestKey(caller, 'review-request', input.requestId),
+            requestId: childRequest(caller, 'reflection', 'review-request', input.requestId),
           },
           tx,
         );
@@ -1292,7 +1268,7 @@ export class ReflectionService implements Reflections {
           expectedRevision: input.expectedRevision,
           action,
           input: { ...input },
-          requestId: requestKey(caller, 'review', input.requestId),
+          requestId: childRequest(caller, 'reflection', 'review', input.requestId),
         },
         tx,
       );
@@ -1356,15 +1332,17 @@ export class ReflectionService implements Reflections {
       return await this.get(caller, wave.id, tx);
     });
   }
-  async open(caller: Caller, tx: Transaction): Promise<string | undefined> {
+  async open(caller: Caller, transaction?: Transaction): Promise<string | undefined> {
     caller = structuredClone(caller);
-    await this.read(caller, tx);
-    return (
-      await tx.get<{ id: string }>(
-        'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
-        caller.projectId,
-      )
-    )?.id;
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.read(caller, tx);
+      return (
+        await tx.get<{ id: string }>(
+          'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
+          caller.projectId,
+        )
+      )?.id;
+    });
   }
   async approved(
     caller: Caller,

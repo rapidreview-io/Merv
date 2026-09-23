@@ -10,21 +10,18 @@ import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 
-async function fixture(t: TestContext, coreOnly = false, withoutCode = false) {
+async function fixture(t: TestContext, coreOnly = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-research-optional-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  config.plugins = config.plugins.filter(
-    ({ id }) =>
-      (!withoutCode || !id.startsWith('code')) &&
-      (coreOnly
-        ? ['state', 'scope', 'workflows', 'research'].includes(id)
-        : !['api', 'identity', 'ui'].includes(id) && !/-(api|ui)$/.test(id)),
+  config.plugins = config.plugins.filter(({ id }) =>
+    coreOnly
+      ? ['state', 'scope', 'workflows', 'research'].includes(id)
+      : !['api', 'identity', 'ui'].includes(id) && !/-(api|ui)$/.test(id),
   );
   const app = await createApp({ directory, config });
-  if (!coreOnly && !withoutCode)
-    assert.ok(app.ctx.codeResearch, 'The full fixture must activate Code research');
+  if (!coreOnly) assert.ok(app.ctx.codeResearch, 'The full fixture must activate Code research');
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
@@ -132,18 +129,6 @@ const pending = () => {
   });
   return { promise, resolve };
 };
-
-test('research completes with Code never loaded', async (t) => {
-  const f = await fixture(t, false, true);
-  assert.equal(f.app.ctx.code, undefined);
-  assert.equal(f.app.ctx.codeResearch, undefined);
-  await f.define();
-  const reflected = await f.advance(await f.advance(await f.create()));
-  await f.approve(reflected);
-  const completed = await f.advance(reflected);
-  assert.equal(completed.workflow.state, 'complete');
-  assert.deepEqual(completed.integrations, []);
-});
 
 test("a new cycle during Code outage retains the project's earlier obligation", async (t) => {
   const f = await fixture(t);

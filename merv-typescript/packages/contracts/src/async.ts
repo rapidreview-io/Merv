@@ -32,16 +32,3 @@ export async function everyAsync<T>(
     if (!(await fn(values[index], index))) return false;
   return true;
 }
-export async function findAsync<T>(
-  values: readonly T[],
-  fn: (value: T, index: number) => unknown | Promise<unknown>,
-): Promise<T | undefined> {
-  for (let index = 0; index < values.length; index++)
-    if (await fn(values[index], index)) return values[index];
-}
-export async function forEachAsync<T>(
-  values: readonly T[],
-  fn: (value: T, index: number) => unknown | Promise<unknown>,
-): Promise<void> {
-  for (let index = 0; index < values.length; index++) await fn(values[index], index);
-}

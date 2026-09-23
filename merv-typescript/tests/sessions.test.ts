@@ -1651,12 +1651,19 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
   const caller = await f.sessions.authenticate(offered.token);
   const reader = await f.scope.issueActor(f.owner, { name: 'Observer', role: 'reader' });
   const viewer: Caller = { actorId: reader.actor.id, projectId: f.owner.projectId };
-  for (let index = 0; index < 105; index++) {
-    const invocation = await f.sessions.prepare(caller, 'artifact.read', {
-      artifactId: 'frozen-artifact',
-    });
-    await f.sessions.run(invocation, () => ({ content: 'test' }));
-  }
+  const invocation = await f.sessions.prepare(caller, 'artifact.read', {
+    artifactId: 'frozen-artifact',
+  });
+  await f.sessions.run(invocation, () => ({ content: 'test' }));
+  // 104 more calls as the one real call stored itself: the window and totals are read in SQL.
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO session_tool_calls(id,execution_id,tool,status,started_at,finished_at,duration_ms,input_tokens,output_tokens)
+       SELECT id||'-'||n,execution_id,tool,status,started_at,finished_at,duration_ms,input_tokens,output_tokens
+       FROM session_tool_calls, generate_series(2,105) AS n WHERE execution_id=?`,
+      offered.session.id,
+    ),
+  );
   const before = await f.state.read(
     async (sql) => await sql.get('SELECT COUNT(*) AS n FROM events'),
   );

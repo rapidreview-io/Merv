@@ -1,4 +1,4 @@
-import { visible, recorded, createService, plain } from '@merv/contracts';
+import { visible, recorded, createService, plain, receipted } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -17,8 +17,6 @@ import {
 } from '@merv/contracts';
 
 import type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
-
-export type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
 
 interface PostRow {
   id: string;
@@ -87,74 +85,67 @@ export class FeedService implements Feed {
       // it would take anyway — are one request. Hash the post that gets written, not the words
       // used to ask for it, and still honour a receipt written under the older hash.
       const hash = digest({ ...input, artifactIds: input.artifactIds ?? [] });
-      const old = await tx.get<{ input_hash: string; response_json: string }>(
-        'SELECT input_hash, response_json FROM feed_requests WHERE project_id = ? AND author_id = ? AND request_id = ?',
-        caller.projectId,
-        caller.actorId,
-        input.requestId,
-      );
-      if (old) {
-        check(
-          old.input_hash === hash || old.input_hash === digest(input),
-          'request_conflict',
-          'requestId was already used with different input',
-          409,
-        );
-        return JSON.parse(old.response_json) as FeedPost;
-      }
-      check(
-        typeof input.body === 'string' && visible(input.body) && input.body.length <= 8000,
-        'invalid_body',
-        'Post body must be nonblank and at most 8000 characters',
-      );
-      const artifactIds = input.artifactIds === undefined ? [] : input.artifactIds;
-      check(
-        Array.isArray(artifactIds) &&
-          artifactIds.every((id) => typeof id === 'string' && visible(id)),
-        'invalid_attachments',
-        'Attachments are artifact IDs',
-      );
-      check(
-        artifactIds.length <= 10 && new Set(artifactIds).size === artifactIds.length,
-        'invalid_attachments',
-        'Attach at most 10 distinct artifact IDs',
-      );
-      // Attachments may be authored by anyone in this project; access comes from Artifacts.
-      for (const id of artifactIds) await this.artifacts.get(caller, id, tx);
-      const id = newId('post'),
-        createdAt = now();
-      const inserted = await tx.get<{ sequence: number }>(
-        'INSERT INTO feed_posts (id, project_id, author_id, body, artifact_ids, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING sequence',
-        id,
-        caller.projectId,
-        caller.actorId,
-        input.body,
-        JSON.stringify(artifactIds),
-        createdAt,
-      );
-      const post: FeedPost = {
-        id,
-        sequence: Number(inserted!.sequence),
-        projectId: caller.projectId,
-        authorId: caller.actorId,
-        body: input.body,
-        artifactIds: [...artifactIds],
-        createdAt,
-      };
-      await recorded(this.state, tx, caller, 'feed.posted', id, {
-        sequence: post.sequence,
-        artifactIds: post.artifactIds,
-      });
-      await tx.run(
-        'INSERT INTO feed_requests (project_id, author_id, request_id, input_hash, response_json) VALUES (?, ?, ?, ?, ?)',
-        caller.projectId,
-        caller.actorId,
+      return await receipted(
+        tx,
+        caller,
         input.requestId,
         hash,
-        JSON.stringify(post),
+        () => this.write(caller, input, tx),
+        {
+          table: 'feed_requests',
+          actor: 'author_id',
+          result: 'response_json',
+          legacyHash: digest(input),
+        },
       );
-      return post;
     });
+  }
+
+  private async write(caller: Caller, input: FeedInput, tx: Transaction): Promise<FeedPost> {
+    check(
+      typeof input.body === 'string' && visible(input.body) && input.body.length <= 8000,
+      'invalid_body',
+      'Post body must be nonblank and at most 8000 characters',
+    );
+    const artifactIds = input.artifactIds === undefined ? [] : input.artifactIds;
+    check(
+      Array.isArray(artifactIds) &&
+        artifactIds.every((id) => typeof id === 'string' && visible(id)),
+      'invalid_attachments',
+      'Attachments are artifact IDs',
+    );
+    check(
+      artifactIds.length <= 10 && new Set(artifactIds).size === artifactIds.length,
+      'invalid_attachments',
+      'Attach at most 10 distinct artifact IDs',
+    );
+    // Attachments may be authored by anyone in this project; access comes from Artifacts.
+    for (const id of artifactIds) await this.artifacts.get(caller, id, tx);
+    const id = newId('post'),
+      createdAt = now();
+    const inserted = await tx.get<{ sequence: number }>(
+      'INSERT INTO feed_posts (id, project_id, author_id, body, artifact_ids, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING sequence',
+      id,
+      caller.projectId,
+      caller.actorId,
+      input.body,
+      JSON.stringify(artifactIds),
+      createdAt,
+    );
+    const post: FeedPost = {
+      id,
+      sequence: Number(inserted!.sequence),
+      projectId: caller.projectId,
+      authorId: caller.actorId,
+      body: input.body,
+      artifactIds: [...artifactIds],
+      createdAt,
+    };
+    await recorded(this.state, tx, caller, 'feed.posted', id, {
+      sequence: post.sequence,
+      artifactIds: post.artifactIds,
+    });
+    return post;
   }
 
   async get(caller: Caller, postId: string): Promise<FeedPost> {

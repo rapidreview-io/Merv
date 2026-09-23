@@ -5,13 +5,12 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Worker } from 'node:worker_threads';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { ProjectScope } from '@merv/scope';
 import type { Caller, IssuedActorCredential } from '@merv/contracts';
 import { postgresMigrations as scopeMigrations } from '../packages/scope/src/index.postgres.js';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { openState, schemaFor } from './fixtures/state.js';
+import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 
 const start = Date.parse('2026-09-16T10:00:00.000Z');
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -859,164 +858,36 @@ test('a lost other-actor rotation response is discoverable through predecessor m
   assert.deepEqual(recovered.actor, issued.actor);
 });
 
-test(
-  'concurrent credential rotations serialize and issue exactly one successor',
-  { timeout: 15_000 },
-  async (t) => {
-    const directory = mkdtempSync(join(tmpdir(), 'merv-actor-credential-race-'));
-    const path = directory;
-    const f = await fixture(path);
-    const operator2 = await f.scope.issueActor(f.operator, {
-      name: 'Other operator',
-      role: 'operator',
-    });
-    const target = await f.scope.issueActor(f.operator, { name: 'Worker', role: 'producer' });
-    const barrier = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT);
-    const control = new Int32Array(barrier);
-    const source = `
-      const { parentPort, workerData } = require('node:worker_threads');
-      (async () => {
-        const { register } = await import(workerData.loader);
-        register();
-        const [{ PostgresState }, { ProjectScope }] = await Promise.all([
-          import(workerData.stateModule), import(workerData.scopeModule),
-        ]);
-        const state = await PostgresState.open({
-          connectionString: workerData.url,
-          schema: workerData.schema,
-          maxConnections: 2,
-          readConnections: 1,
-          lockTimeoutMs: 30000,
-        });
-        const scope = new ProjectScope(state, () => workerData.time);
-        await scope.initialize();
-        const control = new Int32Array(workerData.barrier);
-        const append = state.appendEvent.bind(state);
-        state.appendEvent = async (tx, event) => {
-          const written = await append(tx, event);
-          if (workerData.first && event.type === 'actor.credential_rotated') {
-            Atomics.store(control, 0, 1);
-            parentPort.postMessage({ type: 'held' });
-            if (Atomics.wait(control, 1, 0, 5000) === 'timed-out')
-              throw new Error('Parent did not release rotation transaction');
-            Atomics.store(control, 0, 0);
-          }
-          return written;
-        };
-        const transaction = state.transaction.bind(state);
-        state.transaction = (fn) => transaction((tx) => {
-          if (!workerData.first) Atomics.store(control, 2, 1);
-          return fn(tx);
-        });
-        parentPort.on('message', async () => {
-          parentPort.postMessage({ type: 'attempt' });
-          try {
-            const issued = await scope.rotateCredential(workerData.caller, {
-              credentialId: workerData.credentialId,
-            });
-            parentPort.postMessage({ type: 'result', ok: true, credential: issued.credential });
-          } catch (error) {
-            parentPort.postMessage({ type: 'result', ok: false, code: error.code, status: error.status });
-          } finally {
-            await state.close();
-            parentPort.close();
-          }
-        });
-        parentPort.postMessage({ type: 'ready' });
-      })().catch((error) => { throw error; });
-    `;
-    const spawn = (caller: Caller, first: boolean) =>
-      new Worker(source, {
-        eval: true,
-        execArgv: [],
-        workerData: {
-          url: postgresUrl,
-          schema: schemaFor(path),
-          caller,
-          first,
-          barrier,
-          time: start,
-          credentialId: target.credential.id,
-          loader: import.meta.resolve('tsx/esm/api'),
-          stateModule: new URL('../packages/state/src/index.ts', import.meta.url).href,
-          scopeModule: new URL('../packages/scope/src/index.ts', import.meta.url).href,
-        },
-      });
-    const first = spawn(f.operator, true);
-    const second = spawn(asCaller(operator2), false);
-    const errors: Error[] = [];
-    for (const worker of [first, second]) worker.on('error', (error) => errors.push(error));
-    t.after(async () => {
-      Atomics.store(control, 1, 1);
-      Atomics.notify(control, 1);
-      await Promise.all([first.terminate(), second.terminate()]);
-      await f.state.close();
-      rmSync(directory, { recursive: true, force: true });
-    });
-    const message = (worker: Worker, type: string) =>
-      new Promise<{
-        type: string;
-        ok?: boolean;
-        credential?: IssuedActorCredential['credential'];
-        code?: string;
-        status?: number;
-      }>((resolve, reject) => {
-        const cleanup = () => {
-          worker.off('message', receive);
-          worker.off('error', fail);
-          worker.off('exit', exited);
-        };
-        const receive = (value: any) => {
-          if (value.type !== type) return;
-          cleanup();
-          resolve(value);
-        };
-        const fail = (error: Error) => {
-          cleanup();
-          reject(error);
-        };
-        const exited = (code: number) => fail(new Error(`Worker exited ${code} before ${type}`));
-        worker.on('message', receive);
-        worker.once('error', fail);
-        worker.once('exit', exited);
-      });
-    await Promise.all([message(first, 'ready'), message(second, 'ready')]);
-    const held = message(first, 'held');
-    first.postMessage('rotate');
-    await held;
-    const attempted = message(second, 'attempt');
-    second.postMessage('rotate');
-    await attempted;
-    await delay(100);
-    assert.equal(
-      Atomics.load(control, 0),
-      1,
-      'First rotation still holds the database write transaction',
-    );
-    assert.equal(
-      Atomics.load(control, 2),
-      0,
-      'Second rotation must wait before its transaction callback',
-    );
-    const results = Promise.all([message(first, 'result'), message(second, 'result')]);
-    Atomics.store(control, 1, 1);
-    Atomics.notify(control, 1);
-    const [one, two] = await results;
-    assert.deepEqual(errors, []);
-    assert.equal(one.ok, true);
-    assert.equal(one.credential?.previousId, target.credential.id);
-    assert.deepEqual(two, { type: 'result', ok: false, code: 'credential_revoked', status: 409 });
-    const history = await f.scope.actorCredentials(f.operator, target.actor.id);
-    assert.equal(history.length, 2);
-    assert.equal(history.filter((value) => value.previousId === target.credential.id).length, 1);
-    assert.equal(
-      (await f.state.events(f.operator.projectId)).filter(
-        (value) => value.type === 'actor.credential_rotated',
-      ).length,
-      1,
-    );
-    await assert.rejects(async () => await f.scope.authenticate(target.token), {
-      code: 'unauthorized',
-    });
-  },
-);
+test('concurrent credential rotations serialize and issue exactly one successor', async (t) => {
+  const f = await fixture('actor-credential-race');
+  t.after(async () => await f.state.close());
+  const operator2 = await f.scope.issueActor(f.operator, {
+    name: 'Other operator',
+    role: 'operator',
+  });
+  const target = await f.scope.issueActor(f.operator, { name: 'Worker', role: 'producer' });
+  const rotate = (caller: Caller) => async (scope: ProjectScope) =>
+    (await scope.rotateCredential(caller, { credentialId: target.credential.id })).credential;
+  const race = await raceWriters({
+    schema: schemaFor('actor-credential-race'),
+    service: scopeWriter(() => start, 'actor.credential_rotated'),
+    first: rotate(f.operator),
+    second: rotate(asCaller(operator2)),
+  });
+  assert.equal(race.secondEnteredWhileHeld, false, 'Second rotation waits for the first to commit');
+  assert.ok(race.first.ok);
+  assert.equal(race.first.value.previousId, target.credential.id);
+  assert.deepEqual(race.second, { ok: false, code: 'credential_revoked', status: 409 });
+  const history = await f.scope.actorCredentials(f.operator, target.actor.id);
+  assert.equal(history.length, 2);
+  assert.equal(history.filter((value) => value.previousId === target.credential.id).length, 1);
+  assert.equal(
+    (await f.state.events(f.operator.projectId)).filter(
+      (value) => value.type === 'actor.credential_rotated',
+    ).length,
+    1,
+  );
+  await assert.rejects(async () => await f.scope.authenticate(target.token), {
+    code: 'unauthorized',
+  });
+});

@@ -4,8 +4,8 @@ import {
 } from '@merv/contracts';
 export { patchSchema, changesSchema };
 import { z } from 'zod';
-import { visible, parsed } from '@merv/contracts';
-export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
+import { idSchema, visible, parsed } from '@merv/contracts';
+export const id = idSchema;
 const requestId = z.string().trim().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const kind = z.enum(['problem', 'literature', 'methods', 'results']);

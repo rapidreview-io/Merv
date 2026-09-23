@@ -103,11 +103,15 @@ export class PaperService implements Paper {
             documentKind,
           );
           const publication = row ? (JSON.parse(row.record) as PaperPublication) : null;
-          const document = publication
-            ? (await this.history(caller, documentKind, tx)).find(
-                (r) => r.revision === publication.revision,
-              )!
-            : null;
+          const published =
+            publication &&
+            (await tx.get<{ record: string }>(
+              'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
+              caller.projectId,
+              documentKind,
+              publication.revision,
+            ));
+          const document = published ? (JSON.parse(published.record) as PaperRevision) : null;
           return [
             documentKind,
             { current, published: publication && document ? { publication, document } : null },
@@ -380,9 +384,11 @@ export class PaperService implements Paper {
     });
   }
   async checkReview(caller: Caller, input: PaperReview, tx: Transaction) {
-    caller = this.capture(caller);
+    return await this.reviewed(this.capture(caller), parse(reviewSchema, input), tx);
+  }
+  /** The documents a parsed review would publish, before and after its edits. */
+  private async reviewed(caller: Caller, changes: PaperReview, tx: Transaction) {
     this.state.assertTransaction(tx);
-    const changes = parse(reviewSchema, input);
     await this.scope.require(caller, 'review', tx);
     check(
       new Set(changes.documents.map((d) => d.kind)).size === changes.documents.length,
@@ -402,7 +408,7 @@ export class PaperService implements Paper {
   ): Promise<PaperPublication[]> {
     caller = this.capture(caller);
     input = parse(reviewSchema, input);
-    const documents = await this.checkReview(caller, input, tx);
+    const documents = await this.reviewed(caller, input, tx);
     const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
       const artifact = await this.artifacts.get(caller, id, tx);
       return { id, hash: artifact.hash };

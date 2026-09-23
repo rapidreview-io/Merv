@@ -5,15 +5,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { Worker } from 'node:worker_threads';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
-import type { Caller, HumanPrincipal, Principal, Role } from '@merv/contracts';
+import type { HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { openState, schemaFor } from './fixtures/state.js';
+import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
@@ -488,162 +487,51 @@ test('the last verified human operator is protected until another invited operat
   });
 });
 
-test(
-  'simultaneous self-demotions leave one verified human operator after serialized checks',
-  { timeout: 15_000 },
-  async (t) => {
-    const directory = mkdtempSync(join(tmpdir(), 'merv-member-operator-race-'));
-    const path = directory;
-    const f = await fixture(path);
-    const alice = await f.login('alice'),
-      bob = await f.login('bob');
-    const project = await f.scope.createProject(alice, {
-      name: 'Operator race',
-      requestId: 'create',
-    });
-    await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
-    const barrier = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT);
-    const control = new Int32Array(barrier);
-    const code = `
-      const { parentPort, workerData } = require('node:worker_threads');
-      (async () => {
-        const { register } = await import(workerData.loader);
-        register();
-        const [{ PostgresState }, { ProjectScope }] = await Promise.all([
-          import(workerData.stateModule), import(workerData.scopeModule),
-        ]);
-        const state = await PostgresState.open({
-          connectionString: workerData.url,
-          schema: workerData.schema,
-          maxConnections: 2,
-          readConnections: 1,
-          lockTimeoutMs: 30000,
-        });
-        const scope = new ProjectScope(state, () => workerData.time);
-        await scope.initialize();
-        const control = new Int32Array(workerData.barrier);
-        const append = state.appendEvent.bind(state);
-        state.appendEvent = async (tx, event) => {
-          const result = await append(tx, event);
-          if (workerData.first && event.type === 'actor.permissions_changed') {
-            Atomics.store(control, 0, 1);
-            parentPort.postMessage({ type: 'held' });
-            if (Atomics.wait(control, 1, 0, 5000) === 'timed-out')
-              throw new Error('Parent did not release membership transaction');
-            Atomics.store(control, 0, 0);
-          }
-          return result;
-        };
-        const transaction = state.transaction.bind(state);
-        state.transaction = (fn) => transaction((tx) => {
-          if (!workerData.first) Atomics.store(control, 2, 1);
-          return fn(tx);
-        });
-        parentPort.on('message', async () => {
-          parentPort.postMessage({ type: 'attempt' });
-          try {
-            const result = await scope.changeMemberRole(workerData.principal, workerData.projectId,
-              { subject: workerData.principal.user.subject, role: 'reader' });
-            parentPort.postMessage({ type: 'result', role: result.role });
-          } catch (error) { parentPort.postMessage({ type: 'result', code: error.code, status: error.status }); }
-          finally { await state.close(); parentPort.close(); }
-        });
-        parentPort.postMessage({ type: 'ready' });
-      })().catch((error) => { throw error; });
-    `;
-    const spawn = (principal: HumanPrincipal, first: boolean) =>
-      new Worker(code, {
-        eval: true,
-        execArgv: [],
-        workerData: {
-          principal,
-          first,
-          url: postgresUrl,
-          schema: schemaFor(path),
-          barrier,
-          projectId: project.id,
-          time: initialTime,
-          loader: import.meta.resolve('tsx/esm/api'),
-          stateModule: new URL('../packages/state/src/index.ts', import.meta.url).href,
-          scopeModule: new URL('../packages/scope/src/index.ts', import.meta.url).href,
-        },
-      });
-    const first = spawn(alice, true),
-      second = spawn(bob, false);
-    const errors: Error[] = [];
-    for (const worker of [first, second]) worker.on('error', (error) => errors.push(error));
-    t.after(async () => {
-      Atomics.store(control, 1, 1);
-      Atomics.notify(control, 1);
-      await Promise.all([first.terminate(), second.terminate()]);
-      await f.state.close();
-      rmSync(directory, { recursive: true, force: true });
-    });
-    const message = (worker: Worker, type: string) =>
-      new Promise<{
-        type: string;
-        role?: string;
-        code?: string;
-        status?: number;
-      }>((resolve, reject) => {
-        const cleanup = () => {
-          worker.off('message', receive);
-          worker.off('error', fail);
-          worker.off('exit', exited);
-        };
-        const receive = (value: any) => {
-          if (value.type === type) {
-            cleanup();
-            resolve(value);
-          }
-        };
-        const fail = (error: Error) => {
-          cleanup();
-          reject(error);
-        };
-        const exited = (code: number) =>
-          fail(new Error('Worker exited ' + code + ' before ' + type));
-        worker.on('message', receive);
-        worker.once('error', fail);
-        worker.once('exit', exited);
-      });
-    await Promise.all([message(first, 'ready'), message(second, 'ready')]);
-    const held = message(first, 'held');
-    first.postMessage('demote');
-    await held;
-    const attempted = message(second, 'attempt');
-    second.postMessage('demote');
-    await attempted;
-    await delay(100);
-    assert.equal(Atomics.load(control, 0), 1);
-    assert.equal(
-      Atomics.load(control, 2),
-      0,
-      'Second operator check waits for the first transaction',
-    );
-    const results = Promise.all([message(first, 'result'), message(second, 'result')]);
-    Atomics.store(control, 1, 1);
-    Atomics.notify(control, 1);
-    const [one, two] = await results;
-    assert.deepEqual(errors, []);
-    assert.deepEqual(one, { type: 'result', role: 'reader' });
-    assert.deepEqual(two, { type: 'result', code: 'last_operator', status: 409 });
-    assert.equal(
-      (await f.scope.require(await f.scope.caller(alice, project.id), 'read')).role,
-      'reader',
-    );
-    assert.equal(
-      (await f.scope.require(await f.scope.caller(bob, project.id), 'admin')).role,
-      'operator',
-    );
-    assert.equal(
-      (await f.scope.memberships(bob, project.id)).filter(
-        (value) => value.active && value.role === 'operator',
-      ).length,
-      1,
-    );
-  },
-);
+test('simultaneous self-demotions leave one verified human operator after serialized checks', async (t) => {
+  const f = await fixture('member-operator-race');
+  t.after(async () => await f.state.close());
+  const alice = await f.login('alice'),
+    bob = await f.login('bob');
+  const project = await f.scope.createProject(alice, {
+    name: 'Operator race',
+    requestId: 'create',
+  });
+  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  const demote = (principal: HumanPrincipal) => async (scope: ProjectScope) =>
+    (
+      await scope.changeMemberRole(principal, project.id, {
+        subject: principal.user.subject,
+        role: 'reader',
+      })
+    ).role;
+  const race = await raceWriters({
+    schema: schemaFor('member-operator-race'),
+    service: scopeWriter(() => initialTime, 'actor.permissions_changed'),
+    first: demote(alice),
+    second: demote(bob),
+  });
+  assert.equal(
+    race.secondEnteredWhileHeld,
+    false,
+    'Second operator check waits for the first transaction',
+  );
+  assert.deepEqual(race.first, { ok: true, value: 'reader' });
+  assert.deepEqual(race.second, { ok: false, code: 'last_operator', status: 409 });
+  assert.equal(
+    (await f.scope.require(await f.scope.caller(alice, project.id), 'read')).role,
+    'reader',
+  );
+  assert.equal(
+    (await f.scope.require(await f.scope.caller(bob, project.id), 'admin')).role,
+    'operator',
+  );
+  assert.equal(
+    (await f.scope.memberships(bob, project.id)).filter(
+      (value) => value.active && value.role === 'operator',
+    ).length,
+    1,
+  );
+});
 
 test('membership mutations, actor state and project receipts roll back with failed audit events', async (t) => {
   const f = await fixture();

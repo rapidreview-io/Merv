@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data, Task, TaskMarkFailed } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
+import { storedContext } from './fixtures/state.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 
@@ -251,7 +252,7 @@ test('producer withdrawal is terminal, attributed and exactly replayable while p
         }),
       { code: 'invalid_transition' },
     );
-    assert.deepEqual(await f.app.ctx.contextBuilder.get(f.producer.caller, context.id), context);
+    assert.deepEqual(await storedContext(f.app.ctx.state, context.id), context);
     const stored = await f.app.ctx.state.read(
       async (sql) =>
         await sql.get<{ checkpoint: string }>(

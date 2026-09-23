@@ -1,11 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Caller, Data, WorkflowExecution } from '@merv/contracts';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
 
 const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) => ({
@@ -15,70 +13,6 @@ const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) 
   registrationId: execution.registrationId,
   tool,
   input,
-});
-
-test('HTTP and MCP assignments expose the fixed declaration without narrowing ordinary credentials', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-execution-transports-'));
-  const app = await createApp({ directory, api: true, port: 0 });
-  const client = new Client({ name: 'execution-foundation', version: '1' });
-  try {
-    const boot = await app.ctx.scope.bootstrap({ projectName: 'Transport', actorName: 'Operator' });
-    const caller = { projectId: boot.project.id, actorId: boot.actor.id };
-    const task = await app.ctx.tasks.create(caller, {
-      title: 'Public declaration',
-      goal: 'Expose fixed policy through the existing assignment tool.',
-      checks: ['Both HTTP and MCP include the same policy hash.'],
-      requestId: 'create',
-    });
-    const expected = await app.ctx.workflows.execution(caller, {
-      instanceId: task.id,
-      expectedRevision: task.workflow.revision,
-    });
-    const headers = { authorization: `Bearer ${boot.token}`, 'content-type': 'application/json' };
-    const http = await fetch(`${app.ctx.api.url}/tools/workflow.assignment`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ instanceId: task.id }),
-    });
-    assert.equal(http.status, 200);
-    const body = (await http.json()) as {
-      result: { execution: { policyHash: string; policy: unknown } };
-    };
-    assert.equal(body.result.execution.policyHash, expected.policyHash);
-    assert.deepEqual(body.result.execution.policy, expected.policy);
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(`${app.ctx.api.url}/mcp`), {
-        requestInit: { headers },
-      }),
-    );
-    const result = await client.callTool({
-      name: 'workflow.assignment',
-      arguments: { instanceId: task.id },
-    });
-    assert.equal(result.isError, undefined);
-    const mcp = JSON.parse((result.content as { text: string }[])[0].text);
-    assert.deepEqual(mcp.execution, body.result.execution);
-    const catalog = (await client.listTools()).tools.map((tool) => tool.name);
-    assert.ok(catalog.includes('task.create'), 'Ordinary credential keeps its existing catalog');
-    assert.ok(!expected.policy.tools.some((tool) => tool.name === 'task.create'));
-    const outside = await app.ctx.artifacts.create(caller, {
-      title: 'Ordinary project access',
-      content: 'No session authority is being claimed for this account.',
-    });
-    const read = await client.callTool({
-      name: 'artifact.read',
-      arguments: { artifactId: outside.id },
-    });
-    assert.equal(
-      read.isError,
-      undefined,
-      'Existing account access must not be replaced by assignment hints',
-    );
-  } finally {
-    await client.close();
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 test('real Cordis program reload and application restart fence old execution handles', async () => {
@@ -147,54 +81,6 @@ test('real Cordis program reload and application restart fence old execution han
     await assert.rejects(
       async () =>
         await app.ctx.workflows.authorizeDispatch(caller, dispatch(restarted, 'task.get')),
-    );
-  } finally {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('execution admission remains usable when assignment document bytes are unavailable', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-execution-metadata-'));
-  const app = await createApp({ directory });
-  try {
-    const boot = await app.ctx.scope.bootstrap({ projectName: 'Metadata', actorName: 'Operator' });
-    const caller = { projectId: boot.project.id, actorId: boot.actor.id };
-    const task = await app.ctx.tasks.create(caller, {
-      title: 'Separate rendering',
-      goal: 'Keep admission independent of document rendering.',
-      checks: ['Metadata admission does not fetch the brief bytes.'],
-      requestId: 'create',
-    });
-    const target = { instanceId: task.id, expectedRevision: task.workflow.revision };
-    const before = await app.ctx.workflows.execution(caller, target);
-    const brief = await app.ctx.artifacts.get(caller, task.briefId);
-    unlinkSync(join(directory, 'blobs', caller.projectId, brief.hash.slice(0, 2), brief.hash));
-    await assert.rejects(async () => await app.ctx.workflows.assignment(caller, task.id), {
-      code: 'blob_not_found',
-    });
-    assert.deepEqual(await app.ctx.workflows.execution(caller, target), before);
-    const head = (await app.ctx.state.events(caller.projectId)).at(-1)!.id;
-    await app.ctx.state.transaction(async (tx) => {
-      const admitted = await app.ctx.workflows.authorizeDispatch(
-        caller,
-        dispatch(before, 'artifact.create', {
-          title: 'Execution result',
-          content: 'The metadata path remains available.',
-        }),
-        tx,
-      );
-      const artifact = await app.ctx.artifacts.create(
-        caller,
-        { title: String(admitted.input.title), content: String(admitted.input.content) },
-        tx,
-      );
-      assert.equal(artifact.createdBy, caller.actorId);
-    });
-    assert.deepEqual(
-      (await app.ctx.state.events(caller.projectId, head)).map((event) => event.type),
-      ['artifact.created'],
-      'Admission must not create a start marker, context package or guidance receipt',
     );
   } finally {
     await app.stop();

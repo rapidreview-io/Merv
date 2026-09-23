@@ -4,14 +4,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Caller, CodeStoreOperation } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
-import type { CodeService } from '@merv/code-research/service';
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, importBundle } from './fixtures/code-store.js';
 
 /**
  * A machine that is ready and willing and cannot reach what keeps the project's history.
@@ -36,23 +35,7 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
   const { codeResearch: code, tasks, sessions, state } = app.ctx;
 
   await boundProject(state, owner.projectId, main, 'fixture-repository');
-  const v2 = (code as unknown as CodeService).v2!;
-  const bundle = operator.bundle(main);
-  const begun = await code.importRepository(owner, {
-    source: 'bundle',
-    tip: main,
-    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-    requestId: 'import',
-  });
-  await v2.putPart(owner, begun.id, 0, bundle.content);
-  let imported = begun;
-  for (let tries = 0; imported.status === 'prepared' && tries < 200; tries++) {
-    ({ operation: imported } = (await v2.call(owner, `uploads/${begun.id}/complete`, {})) as {
-      operation: CodeStoreOperation;
-    });
-    await delay(25);
-  }
-  assert.equal(imported.status, 'completed');
+  await importBundle(code, owner, operator.bundle(main));
 
   const task = await tasks.create(owner, {
     title: 'Harness',
@@ -145,7 +128,18 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
   assert.deepEqual([unit.generation, unit.writerState, unit.canonicalHead], [1, 'closed', null]);
 
   // The machine is not held either: once Code answers, the next lease is generation two.
+  // Dispatch spaces a deferred target's next lease by 30 s from the close it reads in the
+  // session row; closing it that long ago takes the place of waiting out the window.
   away = false;
+  await state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE worker_sessions DISABLE TRIGGER worker_sessions_immutable');
+    await tx.run(
+      "UPDATE worker_sessions SET session_json=jsonb_set(session_json::jsonb,'{closedAt}',to_jsonb(?::text))::text WHERE id=?",
+      new Date(Date.parse(closed.closedAt!) - 31_000).toISOString(),
+      closed.id,
+    );
+    await tx.run('ALTER TABLE worker_sessions ENABLE TRIGGER worker_sessions_immutable');
+  });
   const resumed = await (async () => {
     const deadline = Date.now() + 90_000;
     for (;;) {

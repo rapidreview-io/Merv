@@ -10,14 +10,7 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource } from './fixtures/code-store.js';
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from './fixtures/deferred.js';
 
 test(
   'hosted bridge unload joins the mirror journal and reload preserves the independent repository owner',

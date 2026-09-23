@@ -15,7 +15,7 @@ import { TASK_WORKFLOW } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, TaskTypeDefinition } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
-import { openState } from './fixtures/state.js';
+import { openState, storedContext } from './fixtures/state.js';
 
 const recipe: TaskTypeDefinition = {
   name: 'test.reference-context',
@@ -326,7 +326,7 @@ test('historical task context replays unchanged after deployment and restart, wi
     await assert.rejects(async () => await app.ctx.tasks.context(producer, input), {
       code: 'forbidden',
     });
-    assert.deepEqual(await app.ctx.contextBuilder.get(operator, historical.id), historical);
+    assert.deepEqual(await storedContext(app.ctx.state, historical.id), historical);
   } finally {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

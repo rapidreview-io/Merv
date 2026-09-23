@@ -163,12 +163,34 @@ test(
     let runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
     t.after(async () => {
       unavailable = false;
-      await runner.stop();
-      program.dispose();
-      await app.stop();
-      if (previous === undefined) delete process.env[credentialEnv];
-      else process.env[credentialEnv] = previous;
-      rmSync(directory, { recursive: true, force: true });
+      // Cleanup is bounded: a stop that never settles (a controller tick or API request left
+      // pending) fails this test instead of holding the file, and CI, until the job limit.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          (async () => {
+            await runner.stop();
+            program.dispose();
+            await app.stop();
+          })(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('Runner or application shutdown did not settle in 30 s')),
+              30_000,
+            );
+          }),
+        ]);
+      } catch (error) {
+        // What never stopped still holds database connections and timers. This unref'd timer
+        // fires only if they keep the process alive after the failure has been reported.
+        setTimeout(() => process.exit(1), 5_000).unref();
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        if (previous === undefined) delete process.env[credentialEnv];
+        else process.env[credentialEnv] = previous;
+        rmSync(directory, { recursive: true, force: true });
+      }
     });
     await runner.start();
     await app.ctx.sessions.setDispatch(source, { enabled: true });

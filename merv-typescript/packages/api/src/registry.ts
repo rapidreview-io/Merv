@@ -5,7 +5,6 @@ import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
 import type {
   AnyToolDefinition,
   RemoteToolDefinition,
-  RemoteToolDescription,
   ToolCatalog,
   ToolDescription,
   ToolInvocation,
@@ -125,7 +124,7 @@ export class ToolRegistry implements Tools {
 
   private prepareRemote(input: RemoteToolDefinition, remote: NonNullable<Entry['remote']>): Entry {
     const { kind: _kind, handler, ...metadata } = input;
-    let description: RemoteToolDescription;
+    let description: ToolDescription;
     try {
       description = cloneJson(metadata);
     } catch {

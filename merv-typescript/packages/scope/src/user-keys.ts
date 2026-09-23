@@ -1,10 +1,11 @@
 import { expiry } from './expiry.js';
 import { postgresMigrations } from './user-keys.postgres.js';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
   visible,
   check,
   newId,
+  sha256Hex,
   type Actor,
   type Caller,
   type IssuedUserKey,
@@ -49,7 +50,6 @@ const hydrate = (row: KeyRow): UserKey => ({
   revokedAt: row.revoked_at,
   previousId: row.previous_id,
 });
-const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const validToken = (token: unknown): token is string =>
   typeof token === 'string' && /^mk_[A-Za-z0-9_-]{43}$/.test(token);
 
@@ -71,7 +71,7 @@ export class UserKeys {
     return await this.state.read(async (sql) => {
       const row = await sql.get<KeyRow>(
         'SELECT * FROM user_keys WHERE token_hash=?',
-        tokenHash(token),
+        sha256Hex(token),
       );
       this.live(row, 401);
       return hydrate(row);
@@ -82,7 +82,7 @@ export class UserKeys {
     if (!validToken(token)) return false;
     return await this.state.read(
       async (sql) =>
-        !!(await sql.get('SELECT id FROM user_keys WHERE token_hash=?', tokenHash(token))),
+        !!(await sql.get('SELECT id FROM user_keys WHERE token_hash=?', sha256Hex(token))),
     );
   }
 
@@ -232,7 +232,7 @@ export class UserKeys {
       key.projectId,
       key.grantScope,
       key.label,
-      tokenHash(token),
+      sha256Hex(token),
       key.createdAt,
       key.expiresAt,
       key.previousId,

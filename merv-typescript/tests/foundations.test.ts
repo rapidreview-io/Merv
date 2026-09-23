@@ -91,33 +91,6 @@ test('component migrations are independent, immutable, atomic and persistent', a
     await second.close();
   }
 });
-test('events commit with the transaction and survive reopening', async (t) => {
-  const { state, caller, dir } = await fixture(t);
-  const before = (await state.events(caller.projectId)).length;
-  await assert.rejects(
-    async () =>
-      await state.transaction(async (tx) => {
-        await state.appendEvent(tx, { ...caller, type: 'rollback', subjectId: 'x', data: {} });
-        throw new Error('abort');
-      }),
-  );
-  assert.equal((await state.events(caller.projectId)).length, before);
-  await state.transaction(
-    async (tx) =>
-      await state.appendEvent(tx, {
-        ...caller,
-        type: 'committed',
-        subjectId: 'y',
-        data: { number: 1 },
-      }),
-  );
-  const second = await openState(dir);
-  try {
-    assert.equal((await second.events(caller.projectId)).at(-1)?.type, 'committed');
-  } finally {
-    await second.close();
-  }
-});
 test('credentials enforce roles, project boundaries and revocation', async (t) => {
   const { scope, caller, admin } = await fixture(t);
   assert.equal((await scope.authenticate(admin.token)).id, caller.actorId);

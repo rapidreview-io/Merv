@@ -442,7 +442,6 @@ npm test
 | `tests/credentials.test.ts`        | Binding isolation, rotation, secret references, private snapshots, sanitized errors                                                                                    |
 | `tests/credential-client.test.ts`  | Scoped connections, authority rechecks, timeout/failure cleanup and draining                                                                                           |
 | `tests/remote-permissions.test.ts` | HTTP/MCP caller-filtered discovery, direct calls to hidden tools, current grants and native roles                                                                      |
-| `tests/credential-http.test.ts`    | Two-project HTTP/MCP credential isolation, connection reuse, revocation, rotation and secret exclusion                                                                 |
 | `tests/config.test.ts`             | Validated plugin declarations, substitutions, explicit module bases, default selections, optional feed                                                                 |
 | `tests/plugin-config.test.ts`      | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
 | `tests/loader.test.ts`             | Config-only extension, asynchronous dependencies, current entry handles, failure readiness, optional absence                                                           |

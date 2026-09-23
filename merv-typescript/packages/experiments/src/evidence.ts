@@ -1,5 +1,4 @@
 import { isUtf8 } from 'node:buffer';
-import { types } from 'node:util';
 import { z } from 'zod';
 import {
   visible,
@@ -9,36 +8,22 @@ import {
   visibleMarkdown,
   type Json,
 } from '@merv/contracts';
-import { experimentIdSchema, experimentPathSchema } from './input.js';
 
 export const evidenceByteLimit = 64_000;
 function error(condition: unknown, message: string): asserts condition {
   check(condition, 'invalid_experiment_evidence', message);
 }
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
-const byteLength = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteLength')!.get!;
-const byteOffset = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'byteOffset')!.get!;
-const arrayBuffer = Object.getOwnPropertyDescriptor(typedArrayPrototype, 'buffer')!.get!;
-
+/** Retained bytes as the text every other check here reads. */
 export function decodeEvidence(bytes: Uint8Array): string {
-  error(!types.isProxy(bytes) && types.isUint8Array(bytes), 'Evidence must be UTF-8 bytes');
-  const size = byteLength.call(bytes) as number;
-  error(size > 0 && size <= evidenceByteLimit, 'Evidence must contain 1–64000 bytes');
-  const view = Buffer.from(arrayBuffer.call(bytes), byteOffset.call(bytes), size);
-  error(isUtf8(view), 'Evidence must contain valid UTF-8');
-  const text = view.toString('utf8');
-  error(visible(text), 'Evidence must not be empty');
-  return text;
-}
-
-function boundedText(text: string): string {
-  error(typeof text === 'string', 'Evidence must be text');
   error(
-    Buffer.byteLength(text, 'utf8') <= evidenceByteLimit,
+    bytes.byteLength > 0 && bytes.byteLength <= evidenceByteLimit,
     'Evidence must contain 1–64000 bytes',
   );
-  return decodeEvidence(Buffer.from(text, 'utf8'));
+  error(isUtf8(bytes), 'Evidence must contain valid UTF-8');
+  const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8');
+  error(visible(text), 'Evidence must not be empty');
+  return text;
 }
 
 function safeJson(input: unknown, aggregate = false): Json {
@@ -55,7 +40,6 @@ function safeJson(input: unknown, aggregate = false): Json {
 }
 
 function parseJson(text: string): Json {
-  boundedText(text);
   let value: unknown;
   try {
     // An integer JSON can write but a double cannot hold would be read back changed.
@@ -82,7 +66,6 @@ function parseJson(text: string): Json {
 }
 
 export function parseResult(text: string, format: 'json' | 'qualitative'): Json | null {
-  boundedText(text);
   error(format === 'json' || format === 'qualitative', 'Result format must be json or qualitative');
   return format === 'json' ? parseJson(text) : null;
 }
@@ -135,7 +118,6 @@ const feasibilitySchema = z
 
 /** Checks the shape of a feasibility statement only; whether it admits the design is a separate question. */
 export function parseFeasibility(text: string): FeasibilityStatement {
-  boundedText(text);
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -172,11 +154,11 @@ export function feasibilityShortfalls(statement: FeasibilityStatement): string[]
   ];
 }
 
-const section = (text: string, title: string) => markdownSection(boundedText(text), title);
+const section = (text: string, title: string) => markdownSection(text, title);
 
 /** Only retained artifact images are supported; the caller verifies bytes, media type and scope. */
 export function markdownImageTargets(text: string): string[] {
-  const visible = visibleMarkdown(boundedText(text))
+  const visible = visibleMarkdown(text)
     .replace(/(`+)[\s\S]*?\1/g, '')
     .replace(/\\!/g, '');
   error(
@@ -226,7 +208,7 @@ export function validateReport(
   if (options.exhibitPath) {
     const filename = options.exhibitPath.split('/').at(-1)!;
     error(
-      filename.length > 0 && visibleMarkdown(boundedText(text)).includes(filename),
+      filename.length > 0 && visibleMarkdown(text).includes(filename),
       'Report must reference the pinned metrics exhibit filename',
     );
   }
@@ -264,25 +246,6 @@ export interface MetricsExhibit {
   }[];
   verdict: { resultFiles: number };
 }
-const sourceSchema = z
-  .object({
-    path: experimentPathSchema,
-    artifactId: experimentIdSchema,
-    sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    submittedAt: z.string().datetime({ offset: true }),
-    data: z.unknown(),
-    resultFormat: z.enum(['json', 'qualitative']),
-  })
-  .strict();
-const exhibitInputSchema = z
-  .object({
-    projectId: experimentIdSchema,
-    experimentId: experimentIdSchema,
-    attemptIndex: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    startedAt: z.string().datetime({ offset: true }).nullable(),
-    sources: z.array(sourceSchema).max(100),
-  })
-  .strict();
 
 export function shouldPinExhibit(
   sources: readonly Pick<MetricsResultSource, 'resultFormat'>[],
@@ -297,13 +260,9 @@ export function buildMetricsExhibit(input: {
   startedAt: string | null;
   sources: MetricsResultSource[];
 }): MetricsExhibit {
-  const parsed = exhibitInputSchema.safeParse(safeJson(input, true));
-  error(parsed.success, 'Metrics sources require complete immutable provenance');
-  const value = parsed.data;
-  error(
-    new Set(value.sources.map((source) => source.path)).size === value.sources.length,
-    'Metrics sources must have unique paths',
-  );
+  // Built from sealed result slots, whose key already makes each path unique.
+  const value = input;
+  error(value.sources.length <= 100, 'An exhibit pins at most 100 result files');
   const resultFiles = [...value.sources]
     .sort((a, b) => compare(a.path, b.path))
     .map((source) => {

@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { parsed } from '@merv/contracts';
+import { idSchema, parsed } from '@merv/contracts';
 
-export const knowledgeIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
+export const knowledgeIdSchema = idSchema;
 export const knowledgeReferencesSchema = z
   .object({
     refs: z.array(knowledgeIdSchema).max(200),

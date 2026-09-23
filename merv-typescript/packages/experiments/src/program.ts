@@ -1,8 +1,8 @@
 import { excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
+import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
-  digest,
   MervError,
   reviewHistory,
   type Artifact,
@@ -22,7 +22,6 @@ import {
   type WorkflowAssignmentRule,
   type WorkflowCheckContext,
   type WorkflowDefinition,
-  type WorkflowExecutionBinding,
   type WorkflowExecutionPolicy,
   type WorkflowExecutionReferences,
   type WorkflowLease,
@@ -31,12 +30,13 @@ import {
 } from '@merv/contracts';
 import type { Paper, PaperRevision, PaperWorkspace } from '@merv/paper/types';
 import type { Code, CodeCapture } from '@merv/code-research/types';
-import type { Experiment, ExperimentEvidence } from './types.js';
+import type { Experiment, ExperimentEvidence, ExperimentSubmission } from './types.js';
 import type { FeasibilityStatement } from './evidence.js';
 
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
 type ActiveState = (typeof activeStates)[number];
-const reviewing = (state: string) => state === 'design_review' || state === 'experiment_review';
+export const reviewing = (state: string) =>
+  state === 'design_review' || state === 'experiment_review';
 const producing = (state: string) => state === 'planned' || state === 'running';
 
 /**
@@ -67,14 +67,54 @@ export const programVersion = (workspace?: string, baseTaskId?: string, hosted =
  * waive the feasibility criterion.
  */
 export const designRoles: readonly string[] = ['plan', 'feasibility'];
+/** The evidence roles a producer attaches in a state: its design, then its results. */
+export const rolesFor = (state: string): readonly string[] =>
+  state === 'planned' ? designRoles : ['result', 'report'];
+/** This attempt's current evidence in the given roles. */
+export const currentEvidence = (experiment: Experiment, roles: readonly string[]) =>
+  experiment.evidence.filter(
+    (e) => e.current && e.attemptIndex === experiment.attempt.index && roles.includes(e.role),
+  );
+/** The design submission this attempt was approved on, exactly as its review approved it. */
+export function approvedSubmission(
+  experiment: Experiment,
+  message = 'The current attempt requires an exact approved plan',
+): ExperimentSubmission {
+  const submission = experiment.submissions.find(
+    (s) => s.id === experiment.attempt.approvedSubmissionId,
+  );
+  check(
+    submission &&
+      submission.stage === 'design' &&
+      submission.attemptIndex === experiment.attempt.index &&
+      submission.reviewId === experiment.attempt.approvedReviewId,
+    'approved_plan_required',
+    message,
+    409,
+  );
+  return submission;
+}
+/** The submission a review assesses, if it is this attempt's and of the stage under review. */
+export function reviewedSubmission(
+  experiment: Experiment,
+  reviewId: string,
+): ExperimentSubmission | undefined {
+  const submission = experiment.submissions.find((s) => s.reviewId === reviewId);
+  const stage = experiment.workflow.state === 'design_review' ? 'design' : 'results';
+  return submission?.attemptIndex === experiment.attempt.index && submission.stage === stage
+    ? submission
+    : undefined;
+}
 
+/** An experiment in one of these states is over: complete, abandoned or failed. */
+export const TERMINAL = ['complete', 'abandoned', 'failed'] as const;
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
   name: 'experiment',
   version: 1,
   managed: true,
   initial: 'planned',
-  states: [...activeStates, 'complete', 'abandoned', 'failed'],
-  terminal: ['complete', 'abandoned', 'failed'],
+  states: [...activeStates, ...TERMINAL],
+  terminal: [...TERMINAL],
   edges: [
     { from: 'planned', action: 'submit_design', to: 'design_review' },
     { from: 'design_review', action: 'approve_design', to: 'running' },
@@ -277,14 +317,6 @@ interface LeaseRow {
   inputs: string;
   released_at: string | null;
 }
-const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
-  kind: 'target',
-  field,
-});
-const ref = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
-const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal', value });
-type Bindings = Record<string, WorkflowExecutionBinding>;
-const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
 /**
  * What the rounds of every attempt may add to the optional feedback section. The section is
@@ -451,17 +483,9 @@ export class ExperimentProgram {
   }
 
   private approvedPlan(experiment: Experiment): string[] {
-    const submission = experiment.submissions.find(
-      (submission) => submission.id === experiment.attempt.approvedSubmissionId,
-    );
-    check(
-      submission &&
-        submission.stage === 'design' &&
-        submission.attemptIndex === experiment.attempt.index &&
-        experiment.attempt.approvedReviewId === submission.reviewId,
-      'approved_plan_required',
+    const submission = approvedSubmission(
+      experiment,
       'Execution requires this attempt’s exact approved design submission',
-      409,
     );
     const plans = submission.evidence
       .filter((evidence) => evidence.role === 'plan')
@@ -493,12 +517,10 @@ export class ExperimentProgram {
       409,
     );
     const review = await this.host.reviews.get(caller, experiment.reviewId, tx);
-    const submission = experiment.submissions.find((entry) => entry.reviewId === review.id);
     check(
       review.subjectId === experiment.id &&
         review.subjectRevision === experiment.workflow.revision &&
-        submission?.attemptIndex === experiment.attempt.index &&
-        submission.stage === (experiment.workflow.state === 'design_review' ? 'design' : 'results'),
+        reviewedSubmission(experiment, review.id),
       'stale_review',
       'This review must pin the exact current submission and attempt',
       409,
@@ -601,13 +623,7 @@ export class ExperimentProgram {
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
-    const roles = experiment.workflow.state === 'planned' ? designRoles : ['result', 'report'];
-    return experiment.evidence.filter(
-      (evidence) =>
-        evidence.current &&
-        evidence.attemptIndex === experiment.attempt.index &&
-        roles.includes(evidence.role),
-    );
+    return currentEvidence(experiment, rolesFor(experiment.workflow.state));
   }
 
   /** Only associations selected before this worker's offer can exempt old output authorship. */
@@ -972,10 +988,10 @@ export class ExperimentProgram {
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
         ...(reviewing(state)
           ? [
-              grant('review.start', { reviewId: ref('reviewId') }),
+              grant('review.start', { reviewId: reference('reviewId') }),
               grant('review.submit', {
-                reviewId: ref('reviewId'),
-                claimId: ref('claimId'),
+                reviewId: reference('reviewId'),
+                claimId: reference('claimId'),
                 ...revision,
               }),
             ]
@@ -1112,12 +1128,7 @@ export class ExperimentProgram {
       check: async (context, receipt) => {
         const experiment = await this.admit(context);
         const lease = await this.lease(context.caller, experiment, context.tx);
-        check(
-          digest(receipt) === digest(JSON.parse(lease.receipt)),
-          'stale_lease',
-          'The exact experiment lease receipt is required',
-          409,
-        );
+        checkReceipt(lease, receipt, 'The exact experiment lease receipt is required');
       },
       outputs: async (context) => {
         await this.lease(context.caller, await this.admit(context), context.tx);

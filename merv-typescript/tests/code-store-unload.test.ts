@@ -6,14 +6,7 @@ import { ServerGit, type GitOptions } from '@merv/code/git';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeStore, type CodeStoreHooks } from '@merv/code/store/operations';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
-
-function deferred<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from './fixtures/deferred.js';
 
 /** A real Git child waits for stdin until its owning client is unloaded. */
 class HeldGit extends ServerGit {

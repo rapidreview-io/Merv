@@ -525,17 +525,21 @@ test('Feed hides local membership repair reasons from nonoperator project partic
 test('Feed activity advances past full hidden pages to reach later visible events', async (t) => {
   const f = await fixture(t);
   const after = (await f.state.events(f.operator.projectId)).at(-1)!.id;
-  await f.state.transaction(async (tx) => {
-    for (let index = 0; index < 2000; index++) {
-      await f.state.appendEvent(tx, {
-        projectId: f.operator.projectId,
-        actorId: f.operator.actorId,
-        type: 'actor.created',
-        subjectId: `private-${index}`,
-        data: { name: `Hidden actor ${index}`, role: 'reader' },
-      });
-    }
-  });
+  /** 2000 private events in one statement, as 2000 appendEvent calls would store them. */
+  const hidden = (prefix: string) =>
+    f.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO events(project_id,actor_id,type,subject_id,data_json,created_at)
+         SELECT ?, ?, 'actor.created', ? || n,
+           json_build_object('name', 'Hidden actor ' || n, 'role', 'reader')::text, ?
+         FROM generate_series(0, 1999) AS n ORDER BY n`,
+        f.operator.projectId,
+        f.operator.actorId,
+        prefix,
+        new Date().toISOString(),
+      ),
+    );
+  await hidden('private-');
   // Even a multiple of the page size must eventually report a real end.
   assert.deepEqual(await f.feed.activity(f.reader, after), []);
   const post = await f.feed.post(f.reviewer, {
@@ -556,16 +560,6 @@ test('Feed activity advances past full hidden pages to reach later visible event
   assert.equal(latest.at(-1)!.subjectId, post.id);
   assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
   // A burst of private events after the last visible one does not blank a reader's newest page.
-  await f.state.transaction(async (tx) => {
-    for (let index = 0; index < 2000; index++) {
-      await f.state.appendEvent(tx, {
-        projectId: f.operator.projectId,
-        actorId: f.operator.actorId,
-        type: 'actor.created',
-        subjectId: `later-${index}`,
-        data: { name: `Hidden actor ${index}`, role: 'reader' },
-      });
-    }
-  });
+  await hidden('later-');
   assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
 });

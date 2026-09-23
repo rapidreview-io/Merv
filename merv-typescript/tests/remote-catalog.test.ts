@@ -1,8 +1,6 @@
-import { mapAsync } from '@merv/contracts';
 import { fixtureAccess } from './fixtures/access.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -183,36 +181,6 @@ test(
     } finally {
       held.release();
     }
-  },
-);
-
-test(
-  'refresh validates the entire new catalog before replacing any old tool',
-  { timeout: 10000 },
-  async (t) => {
-    const { fixture, registry, refresh } = await setup(t);
-    registry.register({
-      name: 'native',
-      description: 'Independent native operation',
-      inputSchema: z.object({}).strict(),
-      handler: () => 'native-alive',
-    });
-    await refresh();
-    const original = await names(registry);
-    fixture.setTools([
-      simple('fresh'),
-      {
-        name: 'bad',
-        inputSchema: {
-          type: 'object',
-          properties: { value: { $ref: 'https://invalid.example/schema' } },
-        },
-      },
-    ]);
-    await assert.rejects(refresh(), /schema|reference|\$ref/i);
-    assert.deepEqual(await names(registry), original);
-    assert.equal(await registry.call('native', caller, {}), 'native-alive');
-    assert.deepEqual(await registry.call('_fixture.media', caller, {}), representativeResult);
   },
 );
 

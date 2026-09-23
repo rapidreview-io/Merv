@@ -1,5 +1,4 @@
 import { postgresMigrations } from './agents.postgres.js';
-import { createHash } from 'node:crypto';
 import { ownerOf } from './common.js';
 import {
   visible,
@@ -7,6 +6,7 @@ import {
   digest,
   newId,
   sessionSecretPattern,
+  sha256Hex,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -15,7 +15,7 @@ import {
 } from '@merv/contracts';
 import type { Agent, AgentRegistration } from './types.js';
 
-export const tokenDigest = (secret: string) => createHash('sha256').update(secret).digest('hex');
+export const tokenDigest = sha256Hex;
 export function sourceCaller(source: DelegationSource): Caller {
   const base = { actorId: source.actorId, projectId: source.projectId };
   if (source.kind === 'actor') return { ...base, credentialId: source.credentialId };

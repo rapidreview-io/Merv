@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { digest } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
 interface Row {
@@ -43,16 +44,29 @@ test('registered workflow definitions and execution policies match every version
     recipes: await sql.all<{ type: string; version: number; hash: string }>(
       'SELECT type,version,hash FROM context_recipes',
     ),
-    definitions: await sql.all<{ name: string; version: number; fingerprint: string }>(
-      'SELECT name,version,fingerprint FROM wf_definitions',
-    ),
+    definitions: await sql.all<{
+      name: string;
+      version: number;
+      fingerprint: string;
+      definition_json: string;
+    }>('SELECT name,version,fingerprint,definition_json FROM wf_definitions'),
     policies: await sql.all<{
       workflow: string;
       version: number;
       state: string;
       fingerprint: string;
-    }>('SELECT workflow,version,state,fingerprint FROM wf_execution_policies'),
+      manifest_json: string;
+    }>('SELECT workflow,version,state,fingerprint,manifest_json FROM wf_execution_policies'),
   }));
+  // What is stored re-hashes to its fingerprint: one canonical encoding writes and checks both.
+  for (const row of definitions)
+    assert.equal(digest(JSON.parse(row.definition_json)), row.fingerprint, row.name);
+  for (const row of policies)
+    assert.equal(
+      digest({ formatVersion: 1, policy: JSON.parse(row.manifest_json) }),
+      row.fingerprint,
+      `${row.workflow}/${row.state}`,
+    );
   const registeredDefinitions = new Map(
     definitions.map((row) => [`${row.name}@${row.version}`, row.fingerprint]),
   );

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
+import { storedContext } from './fixtures/state.js';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -220,8 +221,8 @@ test('assembled Cordis application completes MCP task review across two full res
     await app.stop();
     app = await createApp({ directory, api: true, port: 0 });
     assert.equal((await app.ctx.tasks.get(caller, task.id)).workflow.revision, 2);
-    assert.deepEqual(await app.ctx.contextBuilder.get(caller, workContext.id), workContext);
-    assert.deepEqual(await app.ctx.contextBuilder.get(caller, reviewContext.id), reviewContext);
+    assert.deepEqual(await storedContext(app.ctx.state, workContext.id), workContext);
+    assert.deepEqual(await storedContext(app.ctx.state, reviewContext.id), reviewContext);
     assert.equal((await app.ctx.reviews.get(caller, pin.id)).reviewerId, r.actor.id);
     assert.equal(
       (await app.ctx.state.events(caller.projectId)).filter((e) => e.type === 'task.review_applied')

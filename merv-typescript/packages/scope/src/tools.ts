@@ -1,16 +1,17 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
+import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { projectContextUpdateSchema } from './project-context.js';
 export const scopeToolsPlugin = {
   name: 'merv-scope-tools',
   inject: ['scope', 'tools'],
   apply(ctx: Context) {
-    const register = (
+    const register = <S extends z.ZodTypeAny>(
       name: string,
       description: string,
-      inputSchema: z.ZodTypeAny,
-      handler: any,
+      inputSchema: S,
+      handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
     ) =>
       ctx.effect(() => ctx.tools.register({ name, description, inputSchema, handler, readOnly }));
@@ -18,27 +19,27 @@ export const scopeToolsPlugin = {
       'project.get',
       'Read the current project.',
       z.object({}).strict(),
-      async (c: any) => await ctx.scope.project(c),
+      async (c) => await ctx.scope.project(c),
       true,
     );
     register(
       'project.context.update',
       'Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.',
       projectContextUpdateSchema,
-      async (c: any, i: any) => await ctx.scope.updateProjectContext(c, i),
+      async (c, i) => await ctx.scope.updateProjectContext(c, i),
     );
     register(
       'actor.whoami',
       'Read your authenticated actor identity and role.',
       z.object({}).strict(),
-      async (c: any) => await ctx.scope.require(c, 'read'),
+      async (c) => await ctx.scope.require(c, 'read'),
       true,
     );
     register(
       'actor.list',
       'Operator: list actors in this project.',
       z.object({}).strict(),
-      async (c: any) => await ctx.scope.actors(c),
+      async (c) => await ctx.scope.actors(c),
       true,
     );
     register(
@@ -56,13 +57,13 @@ export const scopeToolsPlugin = {
             .optional(),
         })
         .strict(),
-      async (c: any, i: any) => await ctx.scope.issueActor(c, i),
+      async (c, i) => await ctx.scope.issueActor(c, i),
     );
     register(
       'actor.credentials',
       'Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.',
       z.object({ actorId: z.string().min(1).optional() }).strict(),
-      async (c: any, i: any) => await ctx.scope.actorCredentials(c, i.actorId),
+      async (c, i) => await ctx.scope.actorCredentials(c, i.actorId),
       true,
     );
     register(
@@ -79,7 +80,7 @@ export const scopeToolsPlugin = {
             .optional(),
         })
         .strict(),
-      async (c: any, i: any) => await ctx.scope.issueActorCredential(c, i),
+      async (c, i) => await ctx.scope.issueActorCredential(c, i),
     );
     register(
       'actor.rotate_token',
@@ -95,13 +96,13 @@ export const scopeToolsPlugin = {
             .optional(),
         })
         .strict(),
-      async (c: any, i: any) => await ctx.scope.rotateCredential(c, i),
+      async (c, i) => await ctx.scope.rotateCredential(c, i),
     );
     register(
       'actor.revoke_token',
       'Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.',
       z.object({ credentialId: z.string().min(1) }).strict(),
-      async (c: any, i: any) => {
+      async (c, i) => {
         await ctx.scope.revokeCredential(c, i.credentialId);
         return { revoked: true };
       },
@@ -110,7 +111,7 @@ export const scopeToolsPlugin = {
       'actor.revoke',
       'Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.',
       z.object({ actorId: z.string().min(1) }).strict(),
-      async (c: any, i: any) => {
+      async (c, i) => {
         await ctx.scope.revokeActor(c, i.actorId);
         return { revoked: true };
       },

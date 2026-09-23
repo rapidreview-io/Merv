@@ -13,7 +13,7 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { createApp } from './fixtures/app.js';
 import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 import type { TaskTypeDefinition } from '@merv/contracts';
-import { openState } from './fixtures/state.js';
+import { openState, storedContext } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
   name: 'test.context',
@@ -100,7 +100,6 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
       async () => await registration.build(other, { ...input, requestId: 'cross-project' }),
       /not found/i,
     );
-    await assert.rejects(async () => await builder.get(other, context.id), /not found/i);
     await assert.rejects(
       async () =>
         await state.transaction(
@@ -114,7 +113,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
       async () => await registration.build(caller, { ...input, requestId: 'disposed' }),
       /not active/,
     );
-    assert.deepEqual(await builder.get(caller, context.id), context);
+    assert.deepEqual(await storedContext(state, context.id), context);
     await assert.rejects(
       async () =>
         await builder.register({
@@ -130,7 +129,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
     });
     const updated = await version2.build(caller, { ...input, requestId: 'v2' });
     assert.notEqual(updated.recipeHash, context.recipeHash);
-    assert.equal((await builder.get(caller, context.id)).typeVersion, 1);
+    assert.equal((await storedContext(state, context.id)).typeVersion, 1);
     const before = await state.eventHead();
     await assert.rejects(
       async () =>
@@ -299,7 +298,7 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       /explicitly selected experiment corpus/,
     );
     await app.setEnabled('tasks', false);
-    assert.deepEqual(await app.ctx.contextBuilder.get(operator, reviewContext.id), reviewContext);
+    assert.deepEqual(await storedContext(app.ctx.state, reviewContext.id), reviewContext);
     await app.setEnabled('tasks', true);
     const reloaded = await app.ctx.tasks.context(replacement, {
       taskId: task.id,
@@ -311,7 +310,7 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
     assert.deepEqual(reloaded, reviewContext);
     await app.stop();
     app = await createApp({ directory, api: false });
-    assert.deepEqual(await app.ctx.contextBuilder.get(operator, reviewContext.id), reviewContext);
+    assert.deepEqual(await storedContext(app.ctx.state, reviewContext.id), reviewContext);
     const done = await app.ctx.tasks.submitReview(replacement, {
       ...reviewedFindings(claim),
       reviewId: claim.id,
@@ -385,7 +384,7 @@ test('additional task types register recipes directly and retire without retaini
         await app.ctx.tasks.context(caller, { ...packageInput, requestId: 'after-dispose' }),
       /unavailable/,
     );
-    assert.deepEqual(await app.ctx.contextBuilder.get(caller, context.id), context);
+    assert.deepEqual(await storedContext(app.ctx.state, context.id), context);
     await app.ctx.tasks.registerType(definition);
     assert.deepEqual(await app.ctx.tasks.context(caller, packageInput), context);
   } finally {

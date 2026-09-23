@@ -1,4 +1,4 @@
-import { visible, recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService, canonical, digest } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -50,7 +50,7 @@ import type {
 import { processGraph } from './process.js';
 import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
 import { workflowJson } from './json.js';
-import { canonical, fingerprint, validateDefinition } from './definition.js';
+import { validateDefinition } from './definition.js';
 import {
   checkAssignment,
   decision,
@@ -135,6 +135,20 @@ interface Registration {
 export type { WorkflowHistoryEntry } from '@merv/contracts';
 
 /** Durable graph engine. Domain programs enforce their own guards through managed handles. */
+/** The instance and revision a command names, checked the same way wherever one is named. */
+const checkInstance = (id: unknown) =>
+  check(
+    typeof id === 'string' && id.length > 0,
+    'invalid_instance',
+    'Workflow instance id is required',
+  );
+const checkRevision = (revision: unknown) =>
+  check(
+    Number.isSafeInteger(revision) && (revision as number) >= 0,
+    'invalid_revision',
+    'Expected revision must be a nonnegative integer',
+  );
+
 export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
   private closed = false;
@@ -208,7 +222,7 @@ export class WorkflowsService implements Workflows {
       `${key} is already registered`,
       409,
     );
-    const hash = fingerprint(definition);
+    const hash = digest(definition);
     await this.state.transaction(async (tx) => {
       const existing = await tx.get<{ fingerprint: string }>(
         'SELECT fingerprint FROM wf_definitions WHERE name = ? AND version = ?',
@@ -284,24 +298,23 @@ export class WorkflowsService implements Workflows {
       .sort((a, b) => a.name.localeCompare(b.name) || a.version - b.version);
   }
 
-  /** Computed from records on every read; a stored copy could only drift from them. */
+  /** Computed from records on every read, in one snapshot; a stored copy could only drift. */
   async process(caller: Caller, instanceId: string): Promise<ProcessGraph> {
     this.assertOpen();
     caller = structuredClone(caller);
-    const decision = await this.evaluate(caller, instanceId);
-    const definition = this.catalog().find(
-      (item) => item.name === decision.workflow && item.version === decision.version,
-    );
-    check(definition, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
-    const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
-    const { dependencies, dependents } = await this.dependencies(caller, instanceId);
-    return processGraph({
-      definition,
-      rules: registration?.policy?.actions ?? [],
-      history: await this.history(caller, instanceId),
-      decision,
-      dependencies,
-      dependents,
+    return await this.state.transaction(async (tx) => {
+      const decision = await this.evaluate(caller, instanceId, {}, tx);
+      const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
+      check(registration, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+      const { dependencies, dependents } = await this.dependencies(caller, instanceId, tx);
+      return processGraph({
+        definition: registration.definition,
+        rules: registration.policy?.actions ?? [],
+        history: await this.history(caller, instanceId, tx),
+        decision,
+        dependencies,
+        dependents,
+      });
     });
   }
 
@@ -834,16 +847,8 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowExecution> {
     caller = structuredClone(caller);
     this.assertOpen();
-    check(
-      typeof target.instanceId === 'string' && target.instanceId.length > 0,
-      'invalid_instance',
-      'Workflow instance id is required',
-    );
-    check(
-      Number.isSafeInteger(target.expectedRevision) && target.expectedRevision >= 0,
-      'invalid_revision',
-      'Expected revision must be a nonnegative integer',
-    );
+    checkInstance(target.instanceId);
+    checkRevision(target.expectedRevision);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const snapshot = await this.readSnapshot(tx, caller.projectId, target.instanceId);
@@ -925,11 +930,7 @@ export class WorkflowsService implements Workflows {
   }
 
   async begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment> {
-    check(
-      Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
-      'invalid_revision',
-      'Expected revision must be a nonnegative integer',
-    );
+    checkRevision(input.expectedRevision);
     return await this.assignmentInternal(caller, input.instanceId, input.expectedRevision, tx);
   }
 
@@ -997,11 +998,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowAssignment> {
     this.assertOpen();
     caller = structuredClone(caller);
-    check(
-      typeof instanceId === 'string' && instanceId.length > 0,
-      'invalid_instance',
-      'Workflow instance id is required',
-    );
+    checkInstance(instanceId);
     return await inTransaction(this.state, transaction, async (tx) => {
       // Domain policy owns write/review admission; the engine always fences tenancy.
       await this.scope.require(caller, 'read', tx);
@@ -1141,11 +1138,7 @@ export class WorkflowsService implements Workflows {
     this.assertOpen();
     caller = structuredClone(caller);
     this.requestId(input.requestId);
-    check(
-      typeof input.instanceId === 'string' && input.instanceId.length > 0,
-      'invalid_instance',
-      'Workflow instance id is required',
-    );
+    checkInstance(input.instanceId);
     check(
       typeof input.limit === 'string' && input.limit.length > 0,
       'invalid_input',
@@ -1162,7 +1155,7 @@ export class WorkflowsService implements Workflows {
       'invalid_input',
       'A reason of 1–500 characters is required',
     );
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'extend_limit',
       actorId: caller.actorId,
       instanceId: input.instanceId,
@@ -1483,10 +1476,14 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  async history(caller: Caller, instanceId: string): Promise<WorkflowHistoryEntry[]> {
+  async history(
+    caller: Caller,
+    instanceId: string,
+    transaction?: Transaction,
+  ): Promise<WorkflowHistoryEntry[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return (
@@ -1540,7 +1537,7 @@ export class WorkflowsService implements Workflows {
     );
     const data = this.data(input.data);
     const dependsOn = normalizeDependencies(input.dependsOn);
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'start',
       actorId: caller.actorId,
       workflow: input.workflow,
@@ -1625,24 +1622,16 @@ export class WorkflowsService implements Workflows {
     this.assertOpen();
     caller = structuredClone(caller);
     this.requestId(input.requestId);
-    check(
-      typeof input.instanceId === 'string' && input.instanceId.length > 0,
-      'invalid_instance',
-      'Workflow instance id is required',
-    );
+    checkInstance(input.instanceId);
     check(
       typeof input.action === 'string' && input.action.length > 0,
       'invalid_action',
       'Workflow action is required',
     );
-    check(
-      Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
-      'invalid_revision',
-      'Expected revision must be a nonnegative integer',
-    );
+    checkRevision(input.expectedRevision);
     const data = this.data(input.data);
     const proposed = input.input === undefined ? undefined : this.data(input.input);
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'transition',
       actorId: caller.actorId,
       instanceId: input.instanceId,
@@ -1772,19 +1761,11 @@ export class WorkflowsService implements Workflows {
     this.assertOpen();
     caller = structuredClone(caller);
     this.requestId(input.requestId);
-    check(
-      typeof input.instanceId === 'string' && input.instanceId.length > 0,
-      'invalid_instance',
-      'Workflow instance id is required',
-    );
-    check(
-      Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
-      'invalid_revision',
-      'Expected revision must be a nonnegative integer',
-    );
+    checkInstance(input.instanceId);
+    checkRevision(input.expectedRevision);
     const dependsOn = normalizeDependencies(input.dependsOn);
     const drop = normalizeDependencies(input.drop ?? null).filter((id) => !dependsOn.includes(id));
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'add_dependencies',
       actorId: caller.actorId,
       instanceId: input.instanceId,

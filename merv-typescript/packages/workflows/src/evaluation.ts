@@ -5,15 +5,16 @@ import type {
   WorkflowActionStatus,
   WorkflowCheckContext,
   WorkflowDecision,
+  WorkflowDependency,
   WorkflowDefinition,
   WorkflowEvaluationInput,
   WorkflowLimitStatus,
-  WorkflowLoopLimit,
   WorkflowPolicy,
   WorkflowProvidedBlocker,
   WorkflowAssignmentRule,
   WorkflowWorkStart,
 } from '@merv/contracts';
+import { identifier, toolName } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './dependencies.js';
 import { validateExecution } from './execution.js';
@@ -27,10 +28,6 @@ const descriptionSchema = z.object({
     z.object({ kind: z.string(), id: z.string(), label: z.string() }).passthrough(),
   ),
 });
-
-const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
-// Match the public Tools naming contract, including reserved mounted namespaces.
-const toolName = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
 
 function callback(value: unknown): void {
   check(
@@ -126,15 +123,12 @@ export function validatePolicy(
     }
     callback(action.check);
     if (action.arguments) callback(action.arguments);
-    return Object.freeze({
+    return {
       ...action,
-      states: Object.freeze([...action.states]) as unknown as string[],
-      transitions: Object.freeze([...transitions]) as unknown as string[],
-      requiredInput:
-        typeof requiredInput === 'function'
-          ? requiredInput
-          : (Object.freeze([...requiredInput]) as unknown as string[]),
-    });
+      states: [...action.states],
+      transitions: [...transitions],
+      requiredInput: typeof requiredInput === 'function' ? requiredInput : [...requiredInput],
+    };
   });
   check(
     definition.edges.every((edge) => guarded.has(`${edge.from}:${edge.action}`)),
@@ -204,11 +198,11 @@ export function validatePolicy(
       'invalid_workflow_policy',
       'Named execution bindings require a metadata reference resolver',
     );
-    return Object.freeze({
+    return {
       ...assignment,
       ...(execution === undefined ? {} : { execution }),
-      ...(assignment.lease ? { lease: Object.freeze({ ...assignment.lease }) } : {}),
-    });
+      ...(assignment.lease ? { lease: { ...assignment.lease } } : {}),
+    };
   });
   check(
     !assignments?.length || !names.has('begin'),
@@ -222,35 +216,34 @@ export function validatePolicy(
   );
   const limits =
     policy.limits === undefined ? undefined : validateLimits(definition, policy.limits);
-  return Object.freeze({
-    actions: Object.freeze(actions) as unknown as WorkflowActionRule[],
+  return {
+    actions,
     describe: policy.describe,
     ...(policy.children === undefined ? {} : { children: policy.children }),
-    ...(limits === undefined
-      ? {}
-      : { limits: Object.freeze(limits) as unknown as WorkflowLoopLimit[] }),
-    ...(assignments === undefined
-      ? {}
-      : { assignments: Object.freeze(assignments) as unknown as WorkflowAssignmentRule[] }),
+    ...(limits === undefined ? {} : { limits }),
+    ...(assignments === undefined ? {} : { assignments }),
     ...(policy.successStates === undefined
       ? {}
-      : { successStates: Object.freeze([...policy.successStates].sort()) as unknown as string[] }),
+      : { successStates: [...policy.successStates].sort() }),
     ...(policy.limitExtended ? { limitExtended: policy.limitExtended } : {}),
     ...(policy.dependencyFailureAction === undefined
       ? {}
       : { dependencyFailureAction: policy.dependencyFailureAction }),
-  });
+  };
 }
 
 /** Never hand a callback the engine's mutable state or the caller's argument object. */
-export function readContext(context: WorkflowCheckContext): WorkflowCheckContext {
+/** The engine always supplies the dependencies it has read; programs see them as optional. */
+export type EngineContext = WorkflowCheckContext & { dependencies: WorkflowDependency[] };
+
+export function readContext<C extends WorkflowCheckContext>(context: C): C {
   const { tx, ...data } = context;
-  return Object.freeze({ ...freezeData(structuredClone(data)), tx });
+  return Object.freeze({ ...freezeData(structuredClone(data)), tx }) as unknown as C;
 }
 
 export async function evaluateAction(
   rule: WorkflowActionRule,
-  context: WorkflowCheckContext,
+  context: EngineContext,
 ): Promise<WorkflowActionStatus> {
   const result: WorkflowActionStatus = {
     action: rule.name,
@@ -279,15 +272,7 @@ export async function evaluateAction(
         ? { ...context, input: { ...context.input, ...(result.arguments as object) } }
         : context,
     );
-    if (rule.requiresDependencies) {
-      check(
-        context.dependencies !== undefined,
-        'invalid_workflow_policy',
-        'Dependency checks require an engine context',
-        500,
-      );
-      requireDependencies(context.dependencies);
-    }
+    if (rule.requiresDependencies) requireDependencies(context.dependencies);
     const requiredInput =
       typeof rule.requiredInput === 'function'
         ? await rule.requiredInput(context)
@@ -314,7 +299,7 @@ export async function evaluateAction(
 
 export async function enforceAction(
   rule: WorkflowActionRule,
-  context: WorkflowCheckContext,
+  context: EngineContext,
 ): Promise<void> {
   const result = await evaluateAction(rule, context);
   const blocker = result.blockers[0];
@@ -324,18 +309,10 @@ export async function enforceAction(
 /** Node admission is independent of whether its completion action has enough evidence. */
 export async function checkAssignment(
   rule: WorkflowAssignmentRule,
-  context: WorkflowCheckContext,
+  context: EngineContext,
 ): Promise<void> {
   await rule.check(context);
-  if (rule.requiresDependencies) {
-    check(
-      context.dependencies !== undefined,
-      'invalid_workflow_policy',
-      'Dependency checks require an engine context',
-      500,
-    );
-    requireDependencies(context.dependencies);
-  }
+  if (rule.requiresDependencies) requireDependencies(context.dependencies);
 }
 
 /**
@@ -348,7 +325,7 @@ export async function checkAssignment(
 export async function decision(
   definition: WorkflowDefinition,
   policy: WorkflowPolicy | undefined,
-  context: WorkflowCheckContext,
+  context: EngineContext,
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null = null,
   limits: WorkflowLimitStatus[] = [],
@@ -377,7 +354,7 @@ export async function decision(
 async function ownDecision(
   definition: WorkflowDefinition,
   policy: WorkflowPolicy | undefined,
-  context: WorkflowCheckContext,
+  context: EngineContext,
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null,
   limits: WorkflowLimitStatus[],
@@ -400,7 +377,7 @@ async function ownDecision(
     blockers: [],
     providerBlockers: [],
     references: [],
-    dependencies: structuredClone(context.dependencies ?? []),
+    dependencies: structuredClone(context.dependencies),
     limits: [],
     workStart: workStart === null ? null : structuredClone(workStart),
   };
@@ -519,7 +496,7 @@ async function ownDecision(
     )
   ) {
     try {
-      requireDependencies(context.dependencies ?? []);
+      requireDependencies(context.dependencies);
     } catch (error) {
       if (!(error instanceof MervError)) throw error;
       dependencyBlocker = { code: error.code, message: error.message, status: error.status };
