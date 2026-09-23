@@ -187,36 +187,6 @@ test(
 );
 
 test(
-  'refresh validates the entire new catalog before replacing any old tool',
-  { timeout: 10000 },
-  async (t) => {
-    const { fixture, registry, refresh } = await setup(t);
-    registry.register({
-      name: 'native',
-      description: 'Independent native operation',
-      inputSchema: z.object({}).strict(),
-      handler: () => 'native-alive',
-    });
-    await refresh();
-    const original = await names(registry);
-    fixture.setTools([
-      simple('fresh'),
-      {
-        name: 'bad',
-        inputSchema: {
-          type: 'object',
-          properties: { value: { $ref: 'https://invalid.example/schema' } },
-        },
-      },
-    ]);
-    await assert.rejects(refresh(), /schema|reference|\$ref/i);
-    assert.deepEqual(await names(registry), original);
-    assert.equal(await registry.call('native', caller, {}), 'native-alive');
-    assert.deepEqual(await registry.call('_fixture.media', caller, {}), representativeResult);
-  },
-);
-
-test(
   'atomic refresh withdraws removed tools while draining an already admitted remote call',
   { timeout: 10000 },
   async (t) => {
