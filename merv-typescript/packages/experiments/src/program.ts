@@ -1,8 +1,8 @@
 import { excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
+import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
-  digest,
   MervError,
   reviewHistory,
   type Artifact,
@@ -22,7 +22,6 @@ import {
   type WorkflowAssignmentRule,
   type WorkflowCheckContext,
   type WorkflowDefinition,
-  type WorkflowExecutionBinding,
   type WorkflowExecutionPolicy,
   type WorkflowExecutionReferences,
   type WorkflowLease,
@@ -277,14 +276,6 @@ interface LeaseRow {
   inputs: string;
   released_at: string | null;
 }
-const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
-  kind: 'target',
-  field,
-});
-const ref = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
-const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal', value });
-type Bindings = Record<string, WorkflowExecutionBinding>;
-const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
 /**
  * What the rounds of every attempt may add to the optional feedback section. The section is
@@ -972,10 +963,10 @@ export class ExperimentProgram {
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
         ...(reviewing(state)
           ? [
-              grant('review.start', { reviewId: ref('reviewId') }),
+              grant('review.start', { reviewId: reference('reviewId') }),
               grant('review.submit', {
-                reviewId: ref('reviewId'),
-                claimId: ref('claimId'),
+                reviewId: reference('reviewId'),
+                claimId: reference('claimId'),
                 ...revision,
               }),
             ]
@@ -1112,12 +1103,7 @@ export class ExperimentProgram {
       check: async (context, receipt) => {
         const experiment = await this.admit(context);
         const lease = await this.lease(context.caller, experiment, context.tx);
-        check(
-          digest(receipt) === digest(JSON.parse(lease.receipt)),
-          'stale_lease',
-          'The exact experiment lease receipt is required',
-          409,
-        );
+        checkReceipt(lease, receipt, 'The exact experiment lease receipt is required');
       },
       outputs: async (context) => {
         await this.lease(context.caller, await this.admit(context), context.tx);

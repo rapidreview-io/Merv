@@ -1,5 +1,6 @@
 import {
   check,
+  checkReceipt,
   childRequest,
   clip,
   createService,
@@ -53,7 +54,6 @@ import {
   type WorkflowCheckContext,
   type WorkflowDefinition,
   type WorkflowExecutionReferences,
-  type WorkflowLease,
   type WorkflowPolicy,
   type Workflows,
   type WorkflowSnapshot,
@@ -394,12 +394,7 @@ export class TaskService implements Tasks {
       acquire: async (context) => await this.acquireLease(context),
       check: async ({ caller, snapshot, tx }, receipt) => {
         const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
-        check(
-          digest(receipt) === digest(JSON.parse(lease.receipt)),
-          'stale_lease',
-          'Lease ownership receipt no longer matches',
-          409,
-        );
+        checkReceipt(lease, receipt, 'Lease ownership receipt no longer matches');
         if (lease.purpose === 'review') {
           const review = await this.reviews.checkSubmit(caller, lease.review_id!, undefined, tx);
           check(
@@ -416,7 +411,10 @@ export class TaskService implements Tasks {
           artifacts: (await this.artifacts.authored(caller, tx)).map((artifact) => artifact.id),
         };
       },
-      release: async ({ lease, reason, tx }) => await this.releaseLease(lease, reason, tx),
+      release: async ({ lease, reason, tx }) =>
+        await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
+          task_id: lease.instanceId,
+        }),
     };
   }
 
@@ -563,12 +561,6 @@ export class TaskService implements Tasks {
       JSON.stringify(checkpoints),
     );
     return receipt;
-  }
-
-  private async releaseLease(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
-    await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
-      task_id: lease.instanceId,
-    });
   }
 
   private async leaseArtifactIds(

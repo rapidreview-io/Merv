@@ -656,6 +656,19 @@ export const recorded = async (
  * Release a domain's lease row by its exact ownership receipt: the worker's review claim goes
  * back with it, and a row already released is left alone. `where` adds the domain's columns.
  */
+/** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
+export function checkReceipt<T extends { receipt: string }>(
+  lease: T | undefined,
+  receipt: unknown,
+  message: string,
+): asserts lease is T {
+  check(
+    !!lease && digest(JSON.parse(lease.receipt)) === digest(receipt),
+    'stale_lease',
+    message,
+    409,
+  );
+}
 export async function releasedLease(
   tx: Transaction,
   reviews: Pick<Reviews, 'releaseClaim'>,
@@ -685,12 +698,7 @@ export async function releasedLease(
       .join(' AND ')}`,
     ...Object.values(match),
   );
-  check(
-    row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
-    'stale_lease',
-    'Release must name the exact ownership receipt',
-    409,
-  );
+  checkReceipt(row, lease.receipt, 'Release must name the exact ownership receipt');
   if (row.released_at) return;
   if (row.review_id && row.claim_id)
     await reviews.releaseClaim(
@@ -1111,6 +1119,20 @@ export type WorkflowExecutionBinding =
   | { kind: 'oneOf'; name: string }
   | { kind: 'subset'; name: string };
 export type WorkflowExecutionReferences = Record<string, string | string[]>;
+/** The argument bindings an execution policy grants a tool with. */
+export const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
+  kind: 'target',
+  field,
+});
+export const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
+export const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal', value });
+export const grant = (
+  name: string,
+  ...alternatives: Record<string, WorkflowExecutionBinding>[]
+) => ({
+  name,
+  alternatives,
+});
 /** JSON declarations, separate from guidance and deployed callback implementations. */
 export interface WorkflowExecutionPolicy {
   /** Describes the work environment; explicit protocol/checkpoint writes remain permitted. */
