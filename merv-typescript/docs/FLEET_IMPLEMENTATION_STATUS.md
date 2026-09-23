@@ -4,12 +4,29 @@ The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
 Neither Fleet nor chat depends on the research workflow. Fleet is deployed for
-one disposable project. Local managed Codex acceptance and the first Cloudflare
-platform canary passed. A protected Cloudflare worker activated with a managed
-session and completed its task with a verified isolation probe, but its Runner
-did not acknowledge local release. The VM was stopped through `fleet.halt` and
-native deletion was confirmed. Automatic cleanup and three-VM acceptance remain
-pending; the task intentionally had no Git workspace.
+one disposable project. Local managed Codex acceptance, the Cloudflare platform
+canary, and protected single-worker execution with automatic cleanup passed.
+The final `gpt-6-luna` producer delivered a verified isolation probe, acknowledged
+local release, and Fleet stopped its VM without intervention. Independent native
+inventory confirmed zero VMs. Dispatch is off. Three-VM Git acceptance remains
+pending; the completed task intentionally had no Git workspace. Pi has not started.
+
+Merv now runs setup release `20260923T080026Z-da77907a-5a96a7bf1b4e`.
+The completed pilot's workflow adapter is disabled and its source credential is
+revoked, so later expiry cannot break startup. Fleet and its optional sidebar
+remain available. The signed-in operator Keys page can issue a finite project
+credential using the existing `actor.create` API; five UI tests and UI typecheck
+passed, including a late response after a project switch. The deployment also
+exposes the existing allocation deadline, configured to 1800 seconds. All limits
+remain one. Public/container health and served assets passed after deployment;
+public health passed again after putting the pilot into this idle state.
+
+GitHub is connected to the human-created `Fleet Git acceptance 2026-09-23`
+project and its isolated `rapidreview-io/merv-github-smoke` repository. Agent
+repository access is still off, and no Fleet credential has been issued there.
+Read-only repository access and a four-hour test-project operator credential
+are awaiting explicit approval. Repository preparation and multi-VM execution
+have not started.
 
 ## Implemented locally
 
@@ -30,8 +47,8 @@ pending; the task intentionally had no Git workspace.
   native image verification before each delivery attempt. Cloudflare checks the
   pinned application image, exact native instance and running version, including
   all inventory pages, then rechecks for deployment drift. A protected worker
-  has activated on the pinned image and completed work, while its final release
-  acknowledgement is still under repair.
+  has activated on the pinned image, completed work, acknowledged local release,
+  and been removed automatically.
 - The TypeScript Runner has an isolated Codex adapter, including a
   dedicated assignment launcher, scoped process environment and repository
   skill controls. Its local `oneAssignment` setting fences the runner to one
@@ -105,11 +122,19 @@ The `/run/sshd` startup fix at sandbox commit `a7334969` was then built into a
 replacement complete image without changing the Runner bundle or executable
 hash. The tested OCI image descriptor and published registry index both have
 digest `sha256:da01a5581ef10fb06cb0665e831dc5dd9889b95c755ce77cd8b39d962768bf93`.
-The dedicated Cloudflare application reports version 2 with that exact image,
+The dedicated Cloudflare application reported version 2 with that exact image,
 one-instance cap, and a healthy rollout. Its release is
 `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`.
 The old catalog entry and image pin were retained for rollback. Build and
 publication evidence is in `output/fleet-image-20260923-rundir-fix/`.
+The current version 3 adds Runner acknowledgement fix `f103ecd0`, pinned to
+`sha256:ebb7c789a29d72d925312ae4bdbb904cd299a9c12af39b858b50431763bcc48d`.
+Its fixed release is
+`rt1_6027fb1375124384291717b6376198a2e8bc674ae5203aad4de19ffc23c20ab6`.
+The complete image passed the fresh-`/run` protected bootstrap smoke before
+publication; source, build and publication evidence is in
+`output/fleet-image-20260923-release-ack/`. All earlier catalog entries remain
+available. The dedicated application is still capped at one instance.
 
 On 2026-09-23, Merv Sandboxes created `sbx_ngnfd4ak` in the independent
 `fleet-cloudflare-canary` account with a one-VM limit, a ten-minute lease and a
@@ -126,7 +151,8 @@ credential was delivered to this VM. Evidence is in
 
 This ordinary-mode probe establishes platform capability and image provenance.
 It does not establish protected startup, assignment UID 12001 isolation, managed
-enrollment or real work execution on Cloudflare. Those remain acceptance gates.
+enrollment or real work execution on Cloudflare. The later protected acceptance
+below supplies that evidence separately.
 The image now fails protected startup if its trusted bootstrap fails or private
 tmpfs cannot be established; five local entrypoint tests and the ordinary image
 smoke passed, alongside 27 focused provider/launch tests.
@@ -185,11 +211,10 @@ passed 53 tests. These runs overlap and are not an aggregate suite count.
 
 ## Remaining work
 
-1. Fix and verify managed remote-close acknowledgement and workspace capture,
-   then repeat the single-worker protected cleanup gate, including
-   provider-confirmed termination. After that, run three-machine real-work
-   acceptance with external runners coexisting. Local tests do not replace
-   that acceptance.
+1. Prepare the isolated Git test project through normal human administration,
+   then run three-machine real-work acceptance, including workspace capture,
+   injected failure and external-runner coexistence. The single-worker
+   protected execution/cleanup gate is complete; it did not exercise Git.
 2. Pilot Pi only after Fleet acceptance, within the separate read-only and
    conversational-write gates in the proposal.
 
@@ -259,7 +284,7 @@ operator catalog without removing the previous one. Their image remains
 `merv-sandboxes-control:33109ff-fleet`; the gateway, database and Hatchet
 services were not recreated.
 
-Production Merv now runs committed `2c867f97`, release
+The protected tests ran on committed `2c867f97`, release
 `20260923T064442Z-2c867f97-714a965267ff`, configured for one disposable Fleet project,
 fixed Cloudflare provider/release, 600-second lease, and all caps one. Dispatch
 is currently off. Its compiled CLI, container health, all 57 configured
@@ -268,11 +293,13 @@ existing release checks. Only committed source was packaged; unrelated local
 workflow/Lean changes were excluded. The deployment record and rollback image
 are retained in `deploy/RELEASES.md` and the remote release directory.
 The same immutable Merv image was recreated with only its private Fleet release
-ID changed to `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`.
+ID changed first to `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`
+and then to current release
+`rt1_6027fb1375124384291717b6376198a2e8bc674ae5203aad4de19ffc23c20ab6`.
 The candidate rendered with the expected provider, offer, 600-second lease,
 one-worker limits and disposable project; the app and public health checks passed.
 The earlier canary environment and pre-Fleet baseline remain in root-private
-backups. In the current protected run, task
+backups. In the earlier protected run, task
 `wf_566f694393fb49f9a69ab4cc25af2da0` reached an activated managed session
 `session_7210fbde21614a129d3443d2bfa27013` on native application version 2.
 Dispatch was fenced off after activation. The task delivered artifact
@@ -298,5 +325,32 @@ there is no usage report, and keeps release pending through transient network
 failure. Its real managed handoff regression injects the first failed
 acknowledgement, verifies pending state, then verifies retry and server receipt;
 ordinary Runner behavior stays unchanged. All 13 Runner integration tests and
-typecheck passed. A replacement hosted overlay and repeat acceptance are in
-progress; the running control-server image does not need this Runner-only fix.
+typecheck passed. The replacement hosted overlay is deployed; the running
+control-server image does not need this Runner-only fix.
+
+The repeat producer task `wf_c7e253751027433bac7923ac71ddc631` passed on version 3.
+Its first attempt was released before enrollment after Cloudflare reported no
+available container capacity. Resuming the same task preserved its existing
+two-attempt budget and cooldown. The second attempt bootstrapped successfully;
+native inventory initially reported `stopped` before reporting `running` at
+07:48:50Z. Protected delivery waited for native verification to succeed.
+Allocation `flt_0265bcb6824c43fc9a4c174eb09566b0` activated managed session
+`session_8b549f079bd04823acc204f48ffbd6d0` at 07:49:01Z. The task delivered the
+literal isolation probe, reached `in_review`, and completed its producer session
+at 07:49:22Z. A read-only database check confirmed `runner_released_at` at
+07:49:23.401Z. Fleet released the allocation at 07:49:33Z; native inventory
+confirmed no active deployment for `cfc-op_x5n2jdj0afd7vapm` and zero VMs at
+07:49:39Z, independently reconfirmed at 07:53:51Z. No manual stop was needed.
+
+The probe independently verified UID/GID 12001, zero effective and bounding
+capabilities, no-new-privileges, seccomp mode 2, denial of all four private paths,
+and arithmetic 42. Dispatch was fenced immediately after activation. An earlier
+reviewer on the same image also acknowledged release and was removed
+automatically. Evidence: `output/fleet-cloudflare-canary/protected-third-result.json`,
+`protected-third-probe.txt`, `protected-native-producer-summary-20260923.json`
+and `protected-native-producer-independent-audit-20260923.json`.
+This establishes protected execution and automatic cleanup, not an approved
+Git delivery: the task remains in review and had no workspace. The 600-second
+sandbox lease is renewable; the separate allocation deadline in that test was
+one hour. Cleanup occurred well before both limits. The later setup release
+exposes the deadline setting and the idle deployment now sets it to 1800 seconds.

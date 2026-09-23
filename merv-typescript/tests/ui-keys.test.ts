@@ -12,6 +12,7 @@ sessionStorage.setItem('merv:token', 'fixture-token');
 const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { KeysPanel } = await import('../packages/ui/web/views/keys.js');
+const { setProject } = await import('../packages/ui/web/api.js');
 
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
 const account = {
@@ -36,6 +37,17 @@ const open = async (keys: unknown[], onClose?: () => void) => {
   await mount(createElement(KeysPanel, { account, initialProjectId: project.id, onClose }));
   await settle(10);
 };
+
+const fleetShell = (role: string, rows = [{ id: 'fleet' }]) => ({
+  body: {
+    result: {
+      actor: { id: 'actor_1', projectId: project.id, name: 'Member', role, active: true },
+      project,
+      rows,
+      plugins: [],
+    },
+  },
+});
 
 test('with no key yet the empty state offers the first one, and the form is headed once', async (t) => {
   t.after(async () => await unmount());
@@ -81,4 +93,119 @@ test('a key is a row: its name, how it stands, and times that are times', async 
   assert.equal(document.querySelector('.action-row button')!.textContent, 'New key');
   await click('Close');
   assert.ok(closed);
+});
+
+test('Fleet source creation is operator-only, finite, and reveals its secret only until scope changes', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  serve('/tools/ui.shell', fleetShell('operator'));
+  serve('/tools/actor.create', (_call, sent) => {
+    assert.equal(sent.role, 'operator');
+    assert.equal(sent.name, 'Fleet source');
+    assert.ok(
+      typeof sent.expiresAt === 'string' &&
+        Date.parse(sent.expiresAt as string) > Date.now() &&
+        Date.parse(sent.expiresAt as string) <= Date.now() + 7 * 24 * 60 * 60_000,
+    );
+    return { body: { result: { token: 'one-time-fleet-secret' } } };
+  });
+  await open([]);
+  await click('New Fleet source credential');
+  const field = document.querySelector<HTMLInputElement>('input[type="datetime-local"][required]')!;
+  const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!;
+  const write = async (value: string) =>
+    await act(async () => {
+      set.call(field, value);
+      field.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+  await write(new Date(Date.now() + 8 * 24 * 60 * 60_000).toISOString().slice(0, 16));
+  await act(async () => {
+    field
+      .closest('form')!
+      .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  assert.ok(text().includes('within the next seven days'));
+  assert.equal(document.querySelector('[aria-label="Fleet source credential secret"]'), null);
+  await write(new Date(Date.now() + 4 * 60 * 60_000).toISOString().slice(0, 16));
+  await act(async () => {
+    field
+      .closest('form')!
+      .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  await settle(0);
+  assert.equal(
+    document.querySelector<HTMLTextAreaElement>('[aria-label="Fleet source credential secret"]')
+      ?.value,
+    'one-time-fleet-secret',
+  );
+  await act(async () => setProject('project_elsewhere'));
+  assert.equal(document.querySelector('[aria-label="Fleet source credential secret"]'), null);
+});
+
+test('Fleet credential control is hidden from non-operators and projects without Fleet', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  serve('/tools/ui.shell', fleetShell('producer'));
+  await open([]);
+  assert.ok(!text().includes('Fleet source credential'));
+  await unmount();
+  setProject(null);
+  setProject(project.id);
+  serve('/tools/ui.shell', fleetShell('operator', []));
+  await open([]);
+  assert.ok(!text().includes('Fleet source credential'));
+});
+
+test('an actor creation reply after switching projects never reveals its credential', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  serve('/tools/ui.shell', fleetShell('operator'));
+  await open([]);
+  let reply!: (response: Response) => void;
+  let requested = false;
+  const pending = new Promise<Response>((resolve) => {
+    reply = resolve;
+  });
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === '/tools/actor.create') {
+      requested = true;
+      return pending;
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  await click('New Fleet source credential');
+  const field = document.querySelector<HTMLInputElement>('input[type="datetime-local"][required]')!;
+  const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!;
+  await act(async () => {
+    set.call(field, new Date(Date.now() + 4 * 60 * 60_000).toISOString().slice(0, 16));
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => {
+    field
+      .closest('form')!
+      .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  assert.ok(requested);
+  await act(async () => setProject('project_elsewhere'));
+  await act(async () =>
+    reply({
+      status: 200,
+      ok: true,
+      json: async () => ({ result: { token: 'late-secret' } }),
+    } as Response),
+  );
+  await settle(0);
+  assert.ok(!text().includes('late-secret'));
+  assert.equal(document.querySelector('[aria-label="Fleet source credential secret"]'), null);
 });
