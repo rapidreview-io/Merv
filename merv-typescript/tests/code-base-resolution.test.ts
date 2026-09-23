@@ -18,7 +18,7 @@ import type { SandboxCheckHandle } from '@merv/sandboxes';
 import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
 import { CodeBaseService } from '../packages/code-research/src/bases.js';
 import type { CodeUnitService } from '../packages/code-research/src/units.js';
-import { gitSource, git } from './fixtures/code-store.js';
+import { git, seededSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { assessment as reviewAssessment } from './fixtures/review-verdict.js';
@@ -107,16 +107,24 @@ async function fixture(t: TestContext, human = false) {
     from: 'now',
     handle: (event, tx) => code.transitioned(event, tx),
   });
-  const source = gitSource(t);
-  const main = source.commit({ 'f.txt': 'base\n', 'g.txt': 'base\n' });
-  const a = source.commit({ 'f.txt': 'A\n' });
-  source.git('checkout', '--detach', main);
-  const c = source.commit({ 'f.txt': 'C\n' });
-  source.git('checkout', '--detach', main);
-  const d = source.commit({ 'g.txt': 'D\n' });
+  const {
+    source,
+    value: { main, a, c, d },
+  } = seededSource(t, 'code-base-resolution', (source) => {
+    const main = source.commit({ 'f.txt': 'base\n', 'g.txt': 'base\n' });
+    const a = source.commit({ 'f.txt': 'A\n' });
+    source.git('checkout', '--detach', main);
+    const c = source.commit({ 'f.txt': 'C\n' });
+    source.git('checkout', '--detach', main);
+    const d = source.commit({ 'g.txt': 'D\n' });
+    return { main, a, c, d };
+  });
   const bare = repositories.paths(f.admin.projectId).repository;
-  for (const [name, commit] of Object.entries({ main, a, c, d }))
-    source.git('push', bare, `${commit}:refs/heads/${name}`);
+  source.git(
+    'push',
+    bare,
+    ...Object.entries({ main, a, c, d }).map(([name, commit]) => `${commit}:refs/heads/${name}`),
+  );
   await boundProject(f.state, f.admin.projectId, main, 'repository');
   await f.state.transaction(async (tx) => {
     await tx.run(

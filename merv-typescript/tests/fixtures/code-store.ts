@@ -1,7 +1,7 @@
 import { createService, type Caller } from '@merv/contracts';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
@@ -49,13 +49,23 @@ export interface Bundle {
   content: Buffer;
 }
 
-/** An operator's repository in a temporary directory, and bundles cut from it. */
-export function gitSource(t: TestContext, format: 'sha1' | 'sha256' = 'sha1') {
+/**
+ * An operator's repository in a temporary directory, and bundles cut from it. `from` starts it
+ * as a copy of another source repository instead of an empty one.
+ */
+export function gitSource(
+  t: { after(clean: () => void): void },
+  format: 'sha1' | 'sha256' = 'sha1',
+  from?: string,
+) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-src-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repository = join(directory, 'source');
-  mkdirSync(repository);
-  git(repository, ['init', '--quiet', `--object-format=${format}`, '--initial-branch=main']);
+  if (from) cpSync(from, repository, { recursive: true });
+  else {
+    mkdirSync(repository);
+    git(repository, ['init', '--quiet', `--object-format=${format}`, '--initial-branch=main']);
+  }
   let bundles = 0;
   const source = {
     directory,
@@ -90,6 +100,26 @@ export function gitSource(t: TestContext, format: 'sha1' | 'sha256' = 'sha1') {
     },
   };
   return source;
+}
+
+const seeds = new Map<string, { repository: string; value: unknown }>();
+/**
+ * A source repository whose history `build` makes once per test process: every call gets its own
+ * copy of that repository, and what `build` returned. Fixture commits have fixed dates, so the
+ * copy holds exactly the commits a fresh build would make.
+ */
+export function seededSource<T>(
+  t: TestContext,
+  key: string,
+  build: (source: ReturnType<typeof gitSource>) => T,
+): { source: ReturnType<typeof gitSource>; value: T } {
+  let seed = seeds.get(key);
+  if (!seed) {
+    const source = gitSource({ after: (clean) => void process.once('exit', clean) });
+    seed = { value: build(source), repository: source.repository };
+    seeds.set(key, seed);
+  }
+  return { source: gitSource(t, 'sha1', seed.repository), value: seed.value as T };
 }
 
 export function described(file: string, tip: string): Bundle {
