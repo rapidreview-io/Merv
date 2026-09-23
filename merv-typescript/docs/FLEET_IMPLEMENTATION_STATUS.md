@@ -202,8 +202,17 @@ currently bounds that recovery by the allocation deadline.
 
 Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
 cloned from sandbox commit `c7b9582`, now merged with deployed sandbox commit
-`0d64e2f8`. The latest checkpoint is `e17907f`, following `4369915`, `07b25e0` and merge
+`0d64e2f8`. The latest checkpoint is `33109ff`, following `e17907f`, `4369915`, `07b25e0` and merge
 `e14b89d`; the incremental backup is
 `output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
-untouched. The dedicated Cloudflare image and bridge were deployed; the shared
-sandbox control services and production Merv deployment have not been changed.
+untouched. The dedicated Cloudflare image and bridge were deployed. The shared
+sandbox control services remain unchanged; their additive deployment is staged
+separately and requires the native Cloudflare credential.
+
+Production Merv now runs committed `737bb4aa`, release
+`20260923T060044Z-737bb4aa-0d618b370fbb`, with Fleet disabled and no sandbox
+connection configured. Its compiled CLI, container health, all 50 configured
+plugins, public UI/assets, anonymous denial and origin restrictions passed the
+existing release checks. Only committed source was packaged; unrelated local
+workflow/Lean changes were excluded. The deployment record and rollback image
+are retained in `deploy/RELEASES.md` and the remote release directory.
