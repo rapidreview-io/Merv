@@ -10,7 +10,8 @@ active; none of the release milestones is complete yet.
 Sandbox source checkout: `output/fleet-sandboxes`, branch
 `codex/fleet-runtime-bootstrap`, based on sandbox commit `c7b9582`.
 Implementation commits: `2eaab0e` (foundations), `4bb4771` (protected access and
-local transport/sudo acceptance).
+local transport/sudo acceptance), `7e4142a` (pinned release catalog and executable
+verification).
 An incremental backup bundle is at `output/fleet-runtime-bootstrap.bundle`.
 The original sibling sandbox checkout has unrelated edits and was not modified.
 This isolated clone's origin points to that sibling; nothing was pushed/deployed.
@@ -29,6 +30,10 @@ Implemented:
   snapshots/restores and terminals. The infrastructure reverse tunnel remains
   available; this is not a public runtime-launch bypass.
 - Container initializes the encrypted store and sweeps expired ciphertext.
+- Operator-owned runtime release allowlist, disabled by default. Release IDs bind
+  provider/image digest, executable path/digest, fixed argv and timeout. The
+  enrollment launcher checks the installed executable digest before execution.
+  This does not yet verify the actual provider image or expose a launch API.
 
 Verification:
 
@@ -47,6 +52,10 @@ Verification:
 - Actual sudo-capable Cloudflare-image fixture: seven Linux tests passed.
   Positive controls proved unrestricted sudo, setuid and file-capability
   escalation works, then proved the launcher blocks those same attacks.
+- Release catalog tests: 17 passed. Rebuilt Cloudflare-image Linux fixture: eight
+  tests passed, including disabled/incorrect release rejection and successful
+  pinned executable launch. Independent read-only review found no concrete defect
+  within this scope; coordinator cleanup on rejected launches remains pending.
 
 PostgreSQL tests used an isolated local container, `merv-fleet-bootstrap-postgres`,
 at `127.0.0.1:51529`; no production database was accessed. Docker Desktop was
@@ -66,9 +75,14 @@ capture plugin. Tests ran with `-p no:capture`; this is a local test-tool issue.
    and generic privileged-surface denial now have local evidence. Implement
    actual private-file delivery with receipt/retry behavior and no diagnostic
    secret leakage, preserving the protected-runtime boundary.
-2. API authorization, immutable release allowlist, durable launch receipts,
+2. API authorization, wire the immutable release allowlist, durable launch receipts,
    enrollment retry/revocation fencing. Envelope expiry cleanup is now wired.
    The store/launcher are intentionally not public routes or job resolvers.
+   Transport audit calls for an internal runtime certificate checked against the
+   durable binding at issuance and gateway authorization, plus a fixed receiver
+   command instead of an unrestricted upstream shell. Certificate expiry alone
+   does not close active connections. A new receiver protocol needs its own
+   recording canary test; prior SFTP evidence cannot be generalized to it.
 3. Dedicated image and Runner assignment adapter, including scoped environment
    and output channels. Prove actual UID/GID/sudo/process protections, provider
    termination and both milestone-0 go/no-go gates on the configured provider.
