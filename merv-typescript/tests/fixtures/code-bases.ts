@@ -1,7 +1,7 @@
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createService } from '@merv/contracts';
@@ -15,6 +15,45 @@ import { LeasedSessions } from '@merv/sessions';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeBaseService } from '@merv/code-research/bases';
 import { openState } from './state.js';
+
+/**
+ * The four branches off one main, committed once per test process: each fixture copies their
+ * objects into its own project repository and names them, as pushing them there did.
+ */
+let SEED: { work: string; commits: { a: string; b: string; c: string; d: string } } | undefined;
+function seeded() {
+  if (SEED) return SEED;
+  const work = join(mkdtempSync(join(tmpdir(), 'merv-bases-seed-')), 'work');
+  process.once('exit', () => rmSync(join(work, '..'), { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: work,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+    }).trim();
+  execFileSync('git', ['init', '-q', '-b', 'main', work]);
+  git('config', 'user.email', 'test@localhost');
+  git('config', 'user.name', 'Test');
+  for (const file of ['f', 'g', 'h']) writeFileSync(join(work, `${file}.txt`), 'base\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const commit = (branch: string, file: string, text: string) => {
+    git('checkout', '-q', '-B', branch, 'main');
+    writeFileSync(join(work, file), text);
+    git('commit', '-q', '-am', branch);
+    return git('rev-parse', 'HEAD');
+  };
+  SEED = {
+    work,
+    commits: {
+      a: commit('a', 'f.txt', 'base\nA\n'),
+      b: commit('b', 'g.txt', 'base\nB\n'),
+      c: commit('c', 'f.txt', 'base\nC\n'),
+      d: commit('d', 'h.txt', 'base\nD\n'),
+    },
+  };
+  return SEED;
+}
 
 /** A project repository holding four accepted commits off one main: a and c collide, b and d do not. */
 export async function baseFixture(t: TestContext, enabled = true) {
@@ -44,32 +83,11 @@ export async function baseFixture(t: TestContext, enabled = true) {
   mkdirSync(join(root, 'code', 'empty-template'));
   await repositories.ensure(PROJECT, 'repository-bases', 'sha1');
   const bare = repositories.paths(PROJECT).repository;
-  const work = join(root, 'work');
-  const git = (...args: string[]) =>
-    execFileSync('git', args, {
-      cwd: work,
-      encoding: 'utf8',
-      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
-    }).trim();
-  execFileSync('git', ['init', '-q', '-b', 'main', work]);
-  git('config', 'user.email', 'test@localhost');
-  git('config', 'user.name', 'Test');
-  for (const file of ['f', 'g', 'h']) writeFileSync(join(work, `${file}.txt`), 'base\n');
-  git('add', '.');
-  git('commit', '-q', '-m', 'base');
-  const commit = (branch: string, file: string, text: string) => {
-    git('checkout', '-q', '-B', branch, 'main');
-    writeFileSync(join(work, file), text);
-    git('commit', '-q', '-am', branch);
-    git('push', '-q', bare, `${branch}:refs/heads/${branch}`);
-    return git('rev-parse', 'HEAD');
-  };
-  const commits = {
-    a: commit('a', 'f.txt', 'base\nA\n'),
-    b: commit('b', 'g.txt', 'base\nB\n'),
-    c: commit('c', 'f.txt', 'base\nC\n'),
-    d: commit('d', 'h.txt', 'base\nD\n'),
-  };
+  const seed = seeded();
+  cpSync(join(seed.work, '.git', 'objects'), join(bare, 'objects'), { recursive: true });
+  for (const [branch, oid] of Object.entries(seed.commits))
+    writeFileSync(join(bare, 'refs', 'heads', branch), `${oid}\n`);
+  const commits = seed.commits;
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(root, 'blobs'))),
   );
