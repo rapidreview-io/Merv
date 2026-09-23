@@ -120,28 +120,61 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   tasks: ['codeResearch'],
 };
 
-/** Child injections may use their dependencies only inside their own callback. */
-function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optional: Set<string>) {
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === 'ctx' &&
-    node.expression.name.text === 'inject'
-  ) {
+/**
+ * Child injections may use their dependencies only inside their own callback. A plugin may also
+ * inject from an inline table, `for (const [name, bind] of [['cap', (ctx) => ...], ...]) ctx.inject([name], cb)`:
+ * each row's callback may use only its own capability, and the loop body must be that one child
+ * injection, so a row's callback can run nowhere else.
+ */
+function checkCapabilityAccess(
+  node: ts.Node,
+  declared: readonly string[],
+  optional: Set<string>,
+  tableName?: string,
+) {
+  const table = childInjectionTable(node);
+  if (table) {
+    for (const row of table.rows) {
+      assert.ok(
+        ts.isArrayLiteralExpression(row) && row.elements.length === 2,
+        'Child injection table rows must be [capability, callback] pairs',
+      );
+      const [capability, callback] = row.elements;
+      assert.ok(
+        ts.isStringLiteral(capability) && capability.text in capabilities,
+        'Unknown child capability',
+      );
+      assert.ok(ts.isArrowFunction(callback), 'Child injection table rows need an inline callback');
+      optional.add(capability.text);
+      checkCapabilityAccess(callback, [...declared, capability.text], optional);
+    }
+    const body =
+      ts.isBlock(table.body) && table.body.statements.length === 1
+        ? table.body.statements[0]
+        : table.body;
+    assert.ok(
+      ts.isExpressionStatement(body) && isChildInjection(body.expression),
+      'A child injection table loop must contain only its child injection',
+    );
+    checkCapabilityAccess(body.expression, declared, optional, table.name);
+    return;
+  }
+  if (isChildInjection(node)) {
     const [deps, callback] = node.arguments;
     assert.ok(deps && ts.isArrayLiteralExpression(deps), 'Child injection must be a static list');
     assert.ok(
       callback && ts.isArrowFunction(callback),
       'Child injection must have an inline callback',
     );
-    const childDeps = deps.elements.map((element) => {
+    const childDeps = deps.elements.flatMap((element) => {
+      // A table's row name was declared and checked with that row's own callback.
+      if (tableName && ts.isIdentifier(element) && element.text === tableName) return [];
       assert.ok(
         ts.isStringLiteral(element) && element.text in capabilities,
         'Unknown child capability',
       );
       optional.add(element.text);
-      return element.text;
+      return [element.text];
     });
     checkCapabilityAccess(callback, [...declared, ...childDeps], optional);
     return;
@@ -157,6 +190,27 @@ function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optio
     assert.notEqual(accessed, 'root', 'Root-context access bypasses declared dependencies');
   }
   ts.forEachChild(node, (child) => checkCapabilityAccess(child, declared, optional));
+}
+function isChildInjection(node: ts.Node): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'ctx' &&
+    node.expression.name.text === 'inject'
+  );
+}
+/** `for (const [name, ...] of [...rows] as const) body`, with the rows written inline. */
+function childInjectionTable(node: ts.Node) {
+  if (!ts.isForOfStatement(node) || !ts.isVariableDeclarationList(node.initializer)) return;
+  const [declaration] = node.initializer.declarations;
+  if (!declaration || !ts.isArrayBindingPattern(declaration.name)) return;
+  const [name] = declaration.name.elements;
+  let rows = node.expression;
+  while (ts.isAsExpression(rows) || ts.isSatisfiesExpression(rows)) rows = rows.expression;
+  if (!name || !ts.isBindingElement(name) || !ts.isIdentifier(name.name)) return;
+  if (!ts.isArrayLiteralExpression(rows)) return;
+  return { name: name.name.text, rows: rows.elements, body: node.statement };
 }
 /** Feature adapters publish to a transport or UI registry without owning domain state. */
 const adapterKinds = { tools: 'tools', ui: 'ui', api: 'api' } as const;
@@ -609,6 +663,23 @@ test('optional capabilities cannot escape their Cordis child injection', () => {
   assert.throws(
     () => verify("ctx.inject(['codeResearch'], (ctx) => ctx.sessions);"),
     /undeclared dependency/,
+  );
+  const table = (row: string, body = 'ctx.inject([name], (ctx) => bind(ctx));') =>
+    verify(`for (const [name, bind] of [['paper', (ctx) => ctx.paper], ${row}] as const) ${body}`);
+  assert.doesNotThrow(() => table("['tasks', (ctx) => ctx.tasks]"));
+  assert.throws(() => table("['tasks', (ctx) => ctx.paper]"), /undeclared dependency/);
+  assert.throws(() => table("['nothing', (ctx) => ctx.nothing]"), /Unknown child capability/);
+  assert.throws(
+    () => table("['tasks', (ctx) => ctx.tasks]", 'bind(ctx);'),
+    /only its child injection/,
+  );
+  assert.throws(
+    () => table("['tasks', (ctx) => ctx.tasks]", 'ctx.inject([name], (ctx) => ctx.paper);'),
+    /undeclared dependency/,
+  );
+  assert.throws(
+    () => table("['tasks', (ctx) => ctx.tasks]", 'ctx.inject([other], (ctx) => bind(ctx));'),
+    /Unknown child capability/,
   );
 });
 

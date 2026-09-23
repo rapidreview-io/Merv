@@ -1811,48 +1811,21 @@ export const researchPlugin = {
         ctx.effect(async () => await service.bindAutomatic(ctx.domainEvents));
       });
       // Each provider is optional: bound while it is loaded, and a bound one may unblock a cycle.
-      ctx.inject(['paper'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindPaper(ctx.paper);
-          await service.wakeAutomatic();
+      for (const [name, bind] of [
+        ['paper', (ctx: Context) => service.bindPaper(ctx.paper)],
+        ['reflections', (ctx: Context) => service.bindReflections(ctx.reflections)],
+        ['knowledge', (ctx: Context) => service.bindKnowledge(ctx.knowledge)],
+        ['tasks', (ctx: Context) => service.bindTasks(ctx.tasks)],
+        ['experiments', (ctx: Context) => service.bindExperiments(ctx.experiments)],
+        ['artifacts', (ctx: Context) => service.bindArtifacts(ctx.artifacts)],
+        ['codeResearch', (ctx: Context) => service.bindCode(ctx.codeResearch)],
+      ] as const)
+        ctx.inject([name], (ctx) => {
+          ctx.effect(async function* () {
+            yield bind(ctx);
+            await service.wakeAutomatic();
+          });
         });
-      });
-      ctx.inject(['reflections'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindReflections(ctx.reflections);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['knowledge'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindKnowledge(ctx.knowledge);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['tasks'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindTasks(ctx.tasks);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['experiments'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindExperiments(ctx.experiments);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['artifacts'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindArtifacts(ctx.artifacts);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['codeResearch'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindCode(ctx.codeResearch);
-          await service.wakeAutomatic();
-        });
-      });
       yield ctx.provide('research', service);
     });
   },
