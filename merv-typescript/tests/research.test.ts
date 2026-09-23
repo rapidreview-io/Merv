@@ -370,17 +370,6 @@ const work = async (f: Awaited<ReturnType<typeof fixture>>) => {
   return task;
 };
 
-test('a version-6 cycle whose accepted code is all on main completes at reflection approval', async (t) => {
-  const f = await fixture(t);
-  const { published, advance } = await hosted(f, { unitIds: [] });
-  const done = await advance();
-  assert.equal(done.workflow.version, 6);
-  assert.equal(done.workflow.state, 'complete');
-  assert.deepEqual(done.integrations, []);
-  assert.deepEqual(published, []);
-  assert.equal((await digestOf(f, done)).digest.integration, null);
-});
-
 /**
  * Accepted Git work of an instance the 2026-09-22 retirement deleted: Code keeps the acceptance,
  * and only the retirement ledger still names the instance.
@@ -417,9 +406,11 @@ test('accepted code of a retired instance is history no cycle integrates', async
   const g = await fixture(t);
   const only = await hosted(g, { unitIds: [await retired(g)] });
   const done = await only.advance();
+  assert.equal(done.workflow.version, 6);
   assert.equal(done.workflow.state, 'complete');
   assert.deepEqual(done.integrations, []);
   assert.deepEqual(only.published, []);
+  assert.equal((await digestOf(g, done)).digest.integration, null);
 });
 
 test('accepted code main lacks injects one consolidation task marked to publish, and the cycle waits on it', async (t) => {
@@ -1327,24 +1318,6 @@ test('a plan that cannot be created rolls the whole advance back, and skip compl
   });
 });
 
-test('materialised work rolls back with the caller transaction', async (t) => {
-  const f = await fixture(t);
-  const { record, command } = await reflected(f, planned());
-  const before = await counts(f);
-  const input = command('create');
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.state.transaction(async (tx) => {
-        await f.research.advance(f.owner, input, tx);
-        throw new Error('caller rollback');
-      }),
-    /caller rollback/,
-  );
-  assert.deepEqual(await counts(f), before);
-  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-  assert.ok((await f.research.advance(f.owner, input)).successorId);
-});
-
 test('a stop plan and a text change specification complete as before and ignore nextWave', async (t) => {
   const f = await fixture(t);
   const stop = planned({
@@ -1561,7 +1534,9 @@ test('a mixed workspace plan is atomic, replayable and uses legacy Git until hos
     /caller rollback/,
   );
   assert.deepEqual(await counts(f), before);
-  assert.equal((await f.research.get(f.owner, record.id)).successorId, null);
+  const rolledBack = await f.research.get(f.owner, record.id);
+  assert.equal(rolledBack.successorId, null);
+  assert.equal(rolledBack.workflow.state, 'reflecting');
   const done = await f.research.advance(f.owner, input);
   const successor = await f.research.get(f.owner, done.successorId!);
   const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
