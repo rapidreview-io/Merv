@@ -8,12 +8,12 @@ import type {
   WorkflowDefinition,
   WorkflowEvaluationInput,
   WorkflowLimitStatus,
-  WorkflowLoopLimit,
   WorkflowPolicy,
   WorkflowProvidedBlocker,
   WorkflowAssignmentRule,
   WorkflowWorkStart,
 } from '@merv/contracts';
+import { identifier, toolName } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './dependencies.js';
 import { validateExecution } from './execution.js';
@@ -27,10 +27,6 @@ const descriptionSchema = z.object({
     z.object({ kind: z.string(), id: z.string(), label: z.string() }).passthrough(),
   ),
 });
-
-const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
-// Match the public Tools naming contract, including reserved mounted namespaces.
-const toolName = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
 
 function callback(value: unknown): void {
   check(
@@ -126,15 +122,12 @@ export function validatePolicy(
     }
     callback(action.check);
     if (action.arguments) callback(action.arguments);
-    return Object.freeze({
+    return {
       ...action,
-      states: Object.freeze([...action.states]) as unknown as string[],
-      transitions: Object.freeze([...transitions]) as unknown as string[],
-      requiredInput:
-        typeof requiredInput === 'function'
-          ? requiredInput
-          : (Object.freeze([...requiredInput]) as unknown as string[]),
-    });
+      states: [...action.states],
+      transitions: [...transitions],
+      requiredInput: typeof requiredInput === 'function' ? requiredInput : [...requiredInput],
+    };
   });
   check(
     definition.edges.every((edge) => guarded.has(`${edge.from}:${edge.action}`)),
@@ -204,11 +197,11 @@ export function validatePolicy(
       'invalid_workflow_policy',
       'Named execution bindings require a metadata reference resolver',
     );
-    return Object.freeze({
+    return {
       ...assignment,
       ...(execution === undefined ? {} : { execution }),
-      ...(assignment.lease ? { lease: Object.freeze({ ...assignment.lease }) } : {}),
-    });
+      ...(assignment.lease ? { lease: { ...assignment.lease } } : {}),
+    };
   });
   check(
     !assignments?.length || !names.has('begin'),
@@ -222,24 +215,20 @@ export function validatePolicy(
   );
   const limits =
     policy.limits === undefined ? undefined : validateLimits(definition, policy.limits);
-  return Object.freeze({
-    actions: Object.freeze(actions) as unknown as WorkflowActionRule[],
+  return {
+    actions,
     describe: policy.describe,
     ...(policy.children === undefined ? {} : { children: policy.children }),
-    ...(limits === undefined
-      ? {}
-      : { limits: Object.freeze(limits) as unknown as WorkflowLoopLimit[] }),
-    ...(assignments === undefined
-      ? {}
-      : { assignments: Object.freeze(assignments) as unknown as WorkflowAssignmentRule[] }),
+    ...(limits === undefined ? {} : { limits }),
+    ...(assignments === undefined ? {} : { assignments }),
     ...(policy.successStates === undefined
       ? {}
-      : { successStates: Object.freeze([...policy.successStates].sort()) as unknown as string[] }),
+      : { successStates: [...policy.successStates].sort() }),
     ...(policy.limitExtended ? { limitExtended: policy.limitExtended } : {}),
     ...(policy.dependencyFailureAction === undefined
       ? {}
       : { dependencyFailureAction: policy.dependencyFailureAction }),
-  });
+  };
 }
 
 /** Never hand a callback the engine's mutable state or the caller's argument object. */

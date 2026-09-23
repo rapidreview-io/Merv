@@ -1,4 +1,4 @@
-import { visible, recorded, createService } from '@merv/contracts';
+import { visible, recorded, createService, canonical, digest } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -50,7 +50,7 @@ import type {
 import { processGraph } from './process.js';
 import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
 import { workflowJson } from './json.js';
-import { canonical, fingerprint, validateDefinition } from './definition.js';
+import { validateDefinition } from './definition.js';
 import {
   checkAssignment,
   decision,
@@ -208,7 +208,7 @@ export class WorkflowsService implements Workflows {
       `${key} is already registered`,
       409,
     );
-    const hash = fingerprint(definition);
+    const hash = digest(definition);
     await this.state.transaction(async (tx) => {
       const existing = await tx.get<{ fingerprint: string }>(
         'SELECT fingerprint FROM wf_definitions WHERE name = ? AND version = ?',
@@ -1162,7 +1162,7 @@ export class WorkflowsService implements Workflows {
       'invalid_input',
       'A reason of 1–500 characters is required',
     );
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'extend_limit',
       actorId: caller.actorId,
       instanceId: input.instanceId,
@@ -1540,7 +1540,7 @@ export class WorkflowsService implements Workflows {
     );
     const data = this.data(input.data);
     const dependsOn = normalizeDependencies(input.dependsOn);
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'start',
       actorId: caller.actorId,
       workflow: input.workflow,
@@ -1642,7 +1642,7 @@ export class WorkflowsService implements Workflows {
     );
     const data = this.data(input.data);
     const proposed = input.input === undefined ? undefined : this.data(input.input);
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'transition',
       actorId: caller.actorId,
       instanceId: input.instanceId,
@@ -1784,7 +1784,7 @@ export class WorkflowsService implements Workflows {
     );
     const dependsOn = normalizeDependencies(input.dependsOn);
     const drop = normalizeDependencies(input.drop ?? null).filter((id) => !dependsOn.includes(id));
-    const hash = fingerprint({
+    const hash = digest({
       operation: 'add_dependencies',
       actorId: caller.actorId,
       instanceId: input.instanceId,

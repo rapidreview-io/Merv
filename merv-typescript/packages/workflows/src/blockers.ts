@@ -1,4 +1,4 @@
-import { check, mapAsync, now, visible } from '@merv/contracts';
+import { canonical, check, mapAsync, now, visible } from '@merv/contracts';
 import type {
   Sql,
   Transaction,
@@ -10,8 +10,7 @@ import type {
   WorkflowProviderRelations,
   WorkflowReference,
 } from '@merv/contracts';
-import { canonical } from './definition.js';
-import { relations } from './dependencies.js';
+import { instanceName, relations } from './dependencies.js';
 
 interface BlockerRow {
   instance_id: string;
@@ -263,9 +262,7 @@ export async function providerRelations(
     id: row.id,
     workflow: row.workflow,
     version: Number(row.version),
-    name:
-      [data.title, data.name].find((item): item is string => typeof item === 'string') ??
-      row.workflow,
+    name: instanceName(data, row.workflow),
     state: row.state,
     settled,
     failed: false,

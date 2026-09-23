@@ -1,5 +1,4 @@
-import { check, MervError, plain, type Limits } from '@merv/contracts';
-import { canonical } from './definition.js';
+import { canonical, check, MervError, plain, type Limits } from '@merv/contracts';
 
 /** Reject accessors, cycles and values JSON would silently erase at this provider boundary. */
 export function workflowJson<T>(

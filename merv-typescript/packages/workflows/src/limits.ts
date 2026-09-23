@@ -1,4 +1,5 @@
 import { check } from '@merv/contracts';
+import { identifier } from './definition.js';
 import type {
   Sql,
   WorkflowDefinition,
@@ -7,8 +8,6 @@ import type {
   WorkflowPolicy,
   WorkflowSnapshot,
 } from '@merv/contracts';
-
-const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
 
 /**
  * The engine writes these into wf_history beside the state it found, and a limit is counted

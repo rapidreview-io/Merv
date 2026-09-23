@@ -7,11 +7,12 @@ import type {
   WorkflowCheckContext,
   WorkflowWorkStart,
 } from '@merv/contracts';
+import { identifier as identifierPattern, toolName } from './definition.js';
 import { workflowJson } from './json.js';
 
 const text = z.string().min(1);
-const identifier = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/);
-const tool = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/);
+const identifier = z.string().regex(identifierPattern);
+const tool = z.string().regex(toolName);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 const reference = z.object({ kind: text, id: text, label: text }).strict();
 const preview = z
