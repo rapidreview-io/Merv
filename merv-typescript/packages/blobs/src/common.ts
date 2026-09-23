@@ -1,8 +1,7 @@
-import { createHash } from 'node:crypto';
-import { check } from '@merv/contracts';
+import { check, sha256Hex } from '@merv/contracts';
 
 export const MAX_BLOB_BYTES = 2_000_000;
-export const hashBytes = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+export const hashBytes = (bytes: Uint8Array) => sha256Hex(bytes);
 
 export function validateNamespace(namespace: string): void {
   check(

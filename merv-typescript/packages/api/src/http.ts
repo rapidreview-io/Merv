@@ -135,7 +135,10 @@ async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(['operator', 'producer', 'reviewer', 'reader']);
-const createProjectInput = z.object({ name: nonblank, requestId: nonblank }).strict();
+// Scope keys a project request by its trimmed requestId and holds it to 256 characters.
+const createProjectInput = z
+  .object({ name: nonblank, requestId: z.string().trim().min(1).max(256) })
+  .strict();
 const addMemberInput = z.object({ subject: nonblank, role }).strict();
 const changeMemberInput = z.object({ role }).strict();
 const keyExpiry = z.string().datetime({ precision: 3 }).nullable().optional();

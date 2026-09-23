@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { visible, parsed } from '@merv/contracts';
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
+import { idSchema, visible, parsed } from '@merv/contracts';
+const id = idSchema;
 export const createSchema = z
   .object({
     name: z.string().trim().min(1).max(200).refine(visible),

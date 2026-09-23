@@ -1,9 +1,17 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { MAX_TRANSFER_BYTES } from '@merv/blobs';
-import { check, digest, now, type Blobs, type State, type Transaction } from '@merv/contracts';
+import {
+  check,
+  digest,
+  idSchema,
+  now,
+  type Blobs,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
 
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
+const id = idSchema;
 const timestamp = z.string().refine((value) => Number.isFinite(Date.parse(value)));
 const row = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict();
 const snapshotSchema = row({

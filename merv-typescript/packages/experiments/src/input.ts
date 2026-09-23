@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { visible, parsed } from '@merv/contracts';
+import { idSchema, visible, parsed } from '@merv/contracts';
 import type { ExperimentTransition } from './types.js';
 
-export const experimentIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
+export const experimentIdSchema = idSchema;
 const requestId = z.string().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const attempt = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);

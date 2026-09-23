@@ -1,7 +1,6 @@
 import { visible, mapAsync, filterAsync } from '@merv/contracts';
-import { childRequest, createService, plain, recorded, replayed } from '@merv/contracts';
+import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import type { Context } from 'cordis';
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   check,
@@ -102,7 +101,6 @@ function reasoned(input: Data | undefined, message: string): void {
       message,
     );
 }
-const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 /**
  * Feasibility is its own design criterion, the last, so the review can be asked never to waive it;
  * the statement's arithmetic is its author's, which is why the reviewer is told to look for what it
@@ -586,7 +584,7 @@ export class ExperimentService implements Experiments {
       result.artifact.id === artifact.id &&
         result.artifact.hash === artifact.hash &&
         bytes.length === artifact.size &&
-        sha256(bytes) === artifact.hash,
+        sha256Hex(bytes) === artifact.hash,
       'artifact_hash_mismatch',
       'Retained artifact bytes do not match their immutable metadata',
       409,
@@ -655,7 +653,7 @@ export class ExperimentService implements Experiments {
       attemptIndex: experiment.attempt.index,
       path: `experiments/${experiment.name}/metrics_exhibit.json`,
       content: bytes.toString('utf8'),
-      hash: sha256(bytes),
+      hash: sha256Hex(bytes),
       willPin: shouldPinExhibit(inputs),
       sources,
       startedAt: experiment.attempt.startedAt,

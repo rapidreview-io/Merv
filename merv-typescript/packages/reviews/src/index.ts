@@ -1,5 +1,5 @@
 import { excludedFromReview, canonical, visible, recorded, mapAsync } from '@merv/contracts';
-import { createService, plain, receipted } from '@merv/contracts';
+import { createService, idPattern, plain, receipted } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -108,7 +108,7 @@ function contributorExclusions(input: ReviewInput): string[] | undefined {
         Object.hasOwn(item, 'value') &&
         item.enumerable &&
         typeof item.value === 'string' &&
-        /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(item.value),
+        idPattern.test(item.value),
       'invalid_review_exclusions',
       'Contributor exclusions must be actor identifiers',
     );
@@ -386,7 +386,7 @@ export class ReviewService implements Reviews {
     );
     check(
       typeof owner.id === 'string' &&
-        /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(owner.id) &&
+        idPattern.test(owner.id) &&
         typeof owner.owns === 'function' &&
         typeof owner.submit === 'function',
       'invalid_review_owner',

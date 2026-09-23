@@ -5,6 +5,7 @@ import {
   clip,
   createService,
   digest,
+  folded,
   excludedFromReview,
   inTransaction,
   mapAsync,
@@ -231,7 +232,6 @@ const GIT_REVIEW =
  */
 const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it. Claim it only as that worker. A claim made without a lease can return or fail the task but never pass it, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
-const normalized = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
@@ -1260,7 +1260,7 @@ export class TaskService implements Tasks {
           'Task requires at least one nonempty single-line Done-when check',
         );
         check(
-          new Set(input.checks.map(normalized)).size === input.checks.length,
+          new Set(input.checks.map(folded)).size === input.checks.length,
           'invalid_checks',
           'Done-when checks must be distinct',
         );
@@ -1268,9 +1268,7 @@ export class TaskService implements Tasks {
         // caller already wrote is kept where they put it.
         const checks = [
           ...input.checks,
-          ...required.filter(
-            (item) => !input.checks.some((own) => normalized(own) === normalized(item)),
-          ),
+          ...required.filter((item) => !input.checks.some((own) => folded(own) === folded(item))),
         ];
         const brief =
           input.briefId === undefined
@@ -1306,10 +1304,9 @@ export class TaskService implements Tasks {
           'invalid_brief',
           'The brief (goal and checks) must fit 32,000 characters',
         );
-        const text = normalized(document.content);
+        const text = folded(document.content);
         check(
-          text.includes(normalized(input.goal)) &&
-            checks.every((item) => text.includes(normalized(item))),
+          text.includes(folded(input.goal)) && checks.every((item) => text.includes(folded(item))),
           'invalid_brief',
           'The pinned brief must contain the task goal and every Done-when check',
         );
@@ -2337,7 +2334,7 @@ export class TaskService implements Tasks {
         // The checks a task type requires are the ones its review may not waive. They are found
         // by their text, because the caller may have written one of them anywhere in the list.
         const requiredCriteria = (TYPE_REQUIRED_CHECKS[row.type_name] ?? [])
-          .map((item) => checks.findIndex((own) => normalized(own) === normalized(item)) + 1)
+          .map((item) => checks.findIndex((own) => folded(own) === folded(item)) + 1)
           .filter((number) => number > 0);
         const review = await this.reviews.request(
           caller,

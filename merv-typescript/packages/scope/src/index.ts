@@ -1,10 +1,10 @@
 import { expiry } from './expiry.js';
-import { visible, createService, receipted } from '@merv/contracts';
+import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
 import type { ToolGrant, ToolPolicy } from '@merv/contracts';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { Context } from 'cordis';
 import {
   check,
@@ -41,7 +41,6 @@ import {
   type ProjectRow,
 } from './project-context.js';
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 interface ActorRow {
   id: string;
   project_id: string;
@@ -513,7 +512,7 @@ export class ProjectScope implements Scope {
       value.id,
       value.projectId,
       issued.kind,
-      hashToken(token),
+      sha256Hex(token),
       time,
       expiresAt,
       previousId,
@@ -569,7 +568,7 @@ export class ProjectScope implements Scope {
            AND a.session_id IS NULL
            AND NOT EXISTS(SELECT 1 FROM member_actors m WHERE m.actor_id=a.id)
            AND (c.expires_at IS NULL OR c.expires_at>?)`,
-          hashToken(token),
+          sha256Hex(token),
           this.time(),
         ),
     );
@@ -582,7 +581,7 @@ export class ProjectScope implements Scope {
     if (await this.userKeys.recognizes(token)) return true;
     return await this.state.read(
       async (sql) =>
-        !!(await sql.get('SELECT id FROM actor_credentials WHERE token_hash=?', hashToken(token))),
+        !!(await sql.get('SELECT id FROM actor_credentials WHERE token_hash=?', sha256Hex(token))),
     );
   }
   /** Shared membership predicate for verified JWT callers and durable human delegations. */
