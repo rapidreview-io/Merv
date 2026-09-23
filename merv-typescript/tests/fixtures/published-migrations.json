@@ -455,6 +455,12 @@
       "published": true
     },
     {
+      "component": "sessions",
+      "version": 7,
+      "hash": "2aa873bc008d62d6459416873d0832904b03cfbb4ca35746f31bca4d6c6a5eab",
+      "published": true
+    },
+    {
       "component": "tasks",
       "version": 1,
       "hash": "96ebbc88283b7983f739012caeda49eb6182f7afe38c174eaaff80a76d55c7cc",

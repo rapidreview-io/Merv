@@ -1,5 +1,5 @@
 import type { Caller, DelegationSource, Transaction } from '@merv/contracts';
-import type { SandboxRuntimeHandle } from '@merv/sandboxes';
+import type { SandboxRuntimeHandle } from '@merv/sandboxes/types';
 
 export type FleetPhase =
   | 'queued'
