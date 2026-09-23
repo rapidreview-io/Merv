@@ -9,15 +9,16 @@ import type {
   CodeCommitCommand,
 } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodTypeAny } from 'zod';
+import type { z, ZodTypeAny } from 'zod';
 import type {} from 'cordis';
 
-export interface ToolDefinition {
+/** A tool whose handler receives the input its schema parsed. */
+export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
   description: string;
-  inputSchema: ZodTypeAny;
+  inputSchema: S;
   readOnly?: boolean;
-  handler(caller: Caller, input: any): unknown | Promise<unknown>;
+  handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
 }
 /** Public tool metadata, including the native project-selection envelope. */
 export type ToolDescription = Tool;

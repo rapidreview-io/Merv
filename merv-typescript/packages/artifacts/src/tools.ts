@@ -1,15 +1,16 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
+import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 export const artifactToolsPlugin = {
   name: 'merv-artifact-tools',
   inject: ['artifacts', 'tools'],
   apply(ctx: Context) {
-    const register = (
+    const register = <S extends z.ZodTypeAny>(
       name: string,
       description: string,
-      inputSchema: z.ZodTypeAny,
-      handler: any,
+      inputSchema: S,
+      handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
     ) =>
       ctx.effect(() => ctx.tools.register({ name, description, inputSchema, handler, readOnly }));
@@ -24,13 +25,13 @@ export const artifactToolsPlugin = {
           encoding: z.enum(['utf8', 'base64']).optional(),
         })
         .strict(),
-      async (c: any, i: any) => await ctx.artifacts.create(c, i),
+      async (c, i) => await ctx.artifacts.create(c, i),
     );
     register(
       'artifact.get',
       'Read immutable artifact metadata.',
       z.object({ artifactId: z.string().min(1) }).strict(),
-      async (c: any, i: any) => ({
+      async (c, i) => ({
         ...(await ctx.artifacts.get(c, i.artifactId)),
         downloadAvailable: ctx.artifacts.downloadSupported,
       }),
@@ -40,7 +41,7 @@ export const artifactToolsPlugin = {
       'artifact.read',
       'Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.',
       z.object({ artifactId: z.string().min(1), mode: z.literal('download').optional() }).strict(),
-      async (c: any, i: any) =>
+      async (c, i) =>
         i.mode === 'download'
           ? await ctx.artifacts.download(c, i.artifactId)
           : await ctx.artifacts.read(c, i.artifactId),
@@ -50,7 +51,7 @@ export const artifactToolsPlugin = {
       'artifact.list',
       'List this project’s immutable artifacts, newest first (at most 1,000).',
       z.object({}).strict(),
-      async (c: any) => await ctx.artifacts.list(c),
+      async (c) => await ctx.artifacts.list(c),
       true,
     );
   },
