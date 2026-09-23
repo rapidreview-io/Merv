@@ -163,6 +163,7 @@ if (fleetEnabled) {
         enabled: true,
         globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 3, 1, 32),
         projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 1, 1, 32),
+        allocationTimeoutSeconds: integer('MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS', 3600, 60, 86_400),
       },
     },
   );

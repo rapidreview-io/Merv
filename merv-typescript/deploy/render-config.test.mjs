@@ -112,6 +112,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       enabled: true,
       globalLimit: 3,
       projectLimit: 1,
+      allocationTimeoutSeconds: 3600,
     });
     assert.deepEqual(config.plugins.find((p) => p.id === 'sessions').config, {
       managedSecretEnv: 'MANAGED_SECRET',
@@ -140,7 +141,11 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       enabled: true,
       globalLimit: 2,
       projectLimit: 2,
+      allocationTimeoutSeconds: 3600,
     });
+    assert.equal(run({ ...workflow, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '1800' }).status, 0);
+    config = JSON.parse(readFileSync(output));
+    assert.equal(config.plugins.find((p) => p.id === 'fleet').config.allocationTimeoutSeconds, 1800);
     assert.deepEqual(config.plugins.find((p) => p.id === 'fleet-workflow').config, {
       enabled: true,
       projectId: 'project_1',
@@ -159,6 +164,9 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },
       { ...fleet, MERV_FLEET_RUNTIME_LEASE_SECONDS: '0' },
       { ...fleet, MERV_FLEET_GLOBAL_LIMIT: '33' },
+      { ...fleet, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '59' },
+      { ...fleet, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '86401' },
+      { ...fleet, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '1.5' },
       { ...fleet, MERV_FLEET_MANAGED_SECRET_ENV: 'bad-name' },
       { ...fleet, MANAGED_SECRET: 'short' },
       { ...fleet, MERV_FLEET_WORKFLOW_ENABLED: 'true' },

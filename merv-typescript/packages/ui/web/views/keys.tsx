@@ -1,9 +1,14 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   accountRequest,
+  call,
   keyClient,
+  projectSelection,
   scopeVersion,
+  useScopeVersion,
+  useTool,
   type Account,
+  type Actor,
   type IssuedUserKey,
   type Project,
   type UserKey,
@@ -30,6 +35,148 @@ const expiration = (value: string): string | null => {
     throw new Error('Choose an expiration in the future, or leave it empty for no expiration.');
   return date.toISOString();
 };
+
+/** Fleet needs an independent actor credential; account keys cannot serve as its source. */
+function FleetSourceCredential({ projectId }: { projectId: string }) {
+  const epoch = useScopeVersion();
+  const shell = useTool<{ actor?: Actor; project?: Project; rows: { id: string }[] }>('ui.shell');
+  const [creating, setCreating] = useState(false);
+  const [expiresAt, setExpiresAt] = useState('');
+  const [secret, setSecret] = useState<string>();
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    setSecret(undefined);
+    setCopied(false);
+    setCreating(false);
+    setError(undefined);
+    setBusy(false);
+    return () => {
+      mounted.current = false;
+    };
+  }, [epoch, projectId]);
+  const available =
+    projectSelection() === projectId &&
+    shell.data?.project?.id === projectId &&
+    shell.data.actor?.role === 'operator' &&
+    shell.data.rows.some((row) => row.id === 'fleet');
+  if (!available) return null;
+
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    setError(undefined);
+    let expiry: string;
+    try {
+      const when = new Date(expiresAt).getTime();
+      if (!Number.isFinite(when) || when <= Date.now() || when > Date.now() + 7 * 24 * 60 * 60_000)
+        throw new Error('Choose an expiration within the next seven days.');
+      expiry = new Date(when).toISOString();
+    } catch (failure) {
+      setError(message(failure));
+      return;
+    }
+    setBusy(true);
+    try {
+      const issued = await call<{ token: string }>('actor.create', {
+        name: 'Fleet source',
+        role: 'operator',
+        expiresAt: expiry,
+      });
+      if (mounted.current && scopeVersion() === epoch && projectSelection() === projectId) {
+        setSecret(issued.token);
+        setCopied(false);
+        setCreating(false);
+        setExpiresAt('');
+      }
+    } catch (failure) {
+      if (mounted.current && scopeVersion() === epoch) setError(message(failure));
+    } finally {
+      if (mounted.current && scopeVersion() === epoch) setBusy(false);
+    }
+  };
+  const copy = async () => {
+    if (!secret) return;
+    try {
+      await navigator.clipboard.writeText(secret);
+      if (mounted.current && scopeVersion() === epoch) setCopied(true);
+    } catch {
+      if (mounted.current && scopeVersion() === epoch)
+        setError('Clipboard access failed. Select the credential and copy it manually.');
+    }
+  };
+  return (
+    <section className="stack" aria-label="Fleet source credential">
+      <h2>Fleet source credential</h2>
+      <p className="muted">
+        Create a temporary operator identity for this project’s Fleet workflow.
+      </p>
+      {secret && (
+        <section className="card stack creation" aria-label="New Fleet source credential">
+          <h3>Copy this credential now</h3>
+          <textarea
+            className="textarea mono"
+            aria-label="Fleet source credential secret"
+            value={secret}
+            rows={3}
+            readOnly
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <div className="cluster">
+            <button className="btn" onClick={() => void copy()}>
+              {copied ? 'Copied' : 'Copy credential'}
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                setSecret(undefined);
+                setCopied(false);
+              }}
+            >
+              Hide and forget credential
+            </button>
+          </div>
+        </section>
+      )}
+      {!secret && !creating && (
+        <button className="btn" onClick={() => setCreating(true)}>
+          New Fleet source credential
+        </button>
+      )}
+      {!secret && creating && (
+        <form className="identity-form card" onSubmit={(event) => void create(event)}>
+          <label>
+            Expires (within seven days)
+            <input
+              className="input"
+              type="datetime-local"
+              required
+              value={expiresAt}
+              disabled={busy}
+              onChange={(event) => setExpiresAt(event.target.value)}
+            />
+          </label>
+          <div className="cluster">
+            <Submit busy={busy} />
+            <button
+              className="btn"
+              type="button"
+              disabled={busy}
+              onClick={() => setCreating(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+      <Failure message={error} />
+    </section>
+  );
+}
 
 /**
  * Keys are a setting, and open as one under Settings › Keys. The same panel still
@@ -195,6 +342,7 @@ export function KeysPanel({
           }
         />
       )}
+      {initialProjectId && <FleetSourceCredential projectId={initialProjectId} />}
       {secret && (
         <section className="card stack creation" aria-label="New machine key">
           <h2 className="section-title">Copy this key now</h2>
