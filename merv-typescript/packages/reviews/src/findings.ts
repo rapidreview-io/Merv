@@ -4,10 +4,19 @@ import {
   check,
   plain,
   type Data,
+  type Limits,
   type ReviewFinding,
   type ReviewRequest,
   type ReviewSubmit,
 } from '@merv/contracts';
+
+/** Evidence bounds; refusing nested undefined keeps `{ value: undefined }` from reading as `{}`. */
+export const evidenceLimits = {
+  depth: 32,
+  nodes: 64000,
+  bytes: 64000,
+  undefined: 'reject',
+} as const satisfies Limits;
 
 /** Keep structured observations finite and portable before command hashing or persistence. */
 export function validateEvidence(value: unknown): Data {
@@ -17,16 +26,7 @@ export function validateEvidence(value: unknown): Data {
     'invalid_evidence',
     'Review evidence must be a JSON object',
   );
-  const encoded = JSON.stringify(
-    plain(value, 'invalid_evidence', {
-      depth: 32,
-      nodes: 64000,
-      bytes: 64000,
-      keys: 'any',
-      strings: 'json',
-      undefined: 'reject',
-    }),
-  );
+  const encoded = JSON.stringify(plain(value, 'invalid_evidence', evidenceLimits));
   check(
     Buffer.byteLength(encoded, 'utf8') <= 64000,
     'invalid_evidence',
@@ -42,34 +42,12 @@ export function validateEvidence(value: unknown): Data {
   return evidence;
 }
 
-/** Read the optional evidence field without invoking a getter on the submission itself. */
-export function evidenceFrom(input: { evidence?: unknown }): Data {
-  check(
-    input && typeof input === 'object' && !nodeTypes.isProxy(input),
-    'invalid_evidence',
-    'Review evidence must be an ordinary data field',
-  );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_evidence',
-    'Review evidence must be an ordinary data field',
-  );
-  const field = Object.getOwnPropertyDescriptor(input, 'evidence');
-  check(
-    !field || (Object.hasOwn(field, 'value') && field.enumerable),
-    'invalid_evidence',
-    'Review evidence must be an ordinary data field',
-  );
-  return validateEvidence(field?.value);
-}
-
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */
 export function validateAssessment(
   review: Pick<ReviewRequest, 'criteria' | 'artifactIds' | 'requiredCriteria'>,
   input: Pick<ReviewSubmit, 'verdict' | 'synopsis' | 'findings' | 'evidence'>,
 ): { synopsis: string; findings: ReviewFinding[]; evidence: Data } {
-  const evidence = evidenceFrom(input);
+  const evidence = validateEvidence(input.evidence);
   check(
     typeof input.synopsis === 'string' &&
       visible(input.synopsis) &&

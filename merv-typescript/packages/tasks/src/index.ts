@@ -60,7 +60,6 @@ import {
   type WorkflowSnapshot,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
-import { types as nodeTypes } from 'node:util';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
@@ -95,22 +94,19 @@ const REJECTED_REVIEWS_KEPT = 50;
  */
 const REVIEW_HISTORY_CHARS = 4000;
 
-/** Tasks have fixed routes; inspect only an ordinary optional data property. */
-function rejectReviewReturn(input: object): void {
-  const message = 'Task reviews have fixed return routes and do not accept returnTo';
+/** Tasks have fixed routes: detach the review input, keeping the route's own refusal code. */
+function withoutReviewReturn<T>(input: unknown): T {
+  const code = 'invalid_review_return';
+  const copy = plain<T & { returnTo?: unknown }>(input, 'invalid_input', {
+    object: code,
+    fields: { returnTo: code },
+  });
   check(
-    input && typeof input === 'object' && !nodeTypes.isProxy(input),
-    'invalid_review_return',
-    message,
+    copy.returnTo === undefined,
+    code,
+    'Task reviews have fixed return routes and do not accept returnTo',
   );
-  const prototype = Object.getPrototypeOf(input);
-  check(prototype === Object.prototype || prototype === null, 'invalid_review_return', message);
-  const descriptor = Object.getOwnPropertyDescriptor(input, 'returnTo');
-  check(
-    !descriptor || ('value' in descriptor && descriptor.value === undefined),
-    'invalid_review_return',
-    message,
-  );
+  return copy;
 }
 
 /** The published scratch-task graph. Edge order is part of its fingerprint; never reorder it. */
@@ -912,14 +908,10 @@ export class TaskService implements Tasks {
 
   private async checkTaskReview(context: WorkflowCheckContext): Promise<void> {
     await this.scope.require(context.caller, 'review', context.tx);
-    if (context.input) rejectReviewReturn(context.input);
+    const input =
+      context.input && withoutReviewReturn<Omit<TaskReview, 'requestId'>>(context.input);
     const review = await this.currentReview(context);
-    await this.reviews.checkSubmit(
-      context.caller,
-      review.id,
-      context.input as unknown as Omit<TaskReview, 'requestId'> | undefined,
-      context.tx,
-    );
+    await this.reviews.checkSubmit(context.caller, review.id, input, context.tx);
     // Only a proposed verdict asks Code: the committing transition always carries its input, so
     // this is re-checked there, while guidance read with Code unloaded still answers.
     if (context.input && taskWorkspace(context.snapshot.version) !== 'none') {
@@ -2444,8 +2436,7 @@ export class TaskService implements Tasks {
 
   async submitReview(caller: Caller, input: TaskReview, transaction?: Transaction): Promise<Task> {
     caller = structuredClone(caller);
-    rejectReviewReturn(input);
-    input = plain<TaskReview>(input);
+    input = withoutReviewReturn<TaskReview>(input);
     check(
       input.paperChanges === undefined,
       'paper_edits_unavailable',

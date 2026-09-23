@@ -42,6 +42,46 @@ test('plain() detaches bounded JSON and refuses what JSON cannot carry', () => {
   assert.equal(Object.getPrototypeOf(reserved), Object.prototype);
 });
 
+test('plain() keeps a field-specific code for a hostile shape inside that field', () => {
+  let reads = 0;
+  const getter = {
+    enumerable: true,
+    get() {
+      reads++;
+      return 'x';
+    },
+  };
+  const limits = {
+    object: 'bad_root',
+    fields: { route: 'bad_route', data: { code: 'bad_data', undefined: 'reject' as const } },
+  };
+  const refused = (value: unknown, code: string) =>
+    assert.throws(() => plain(value, 'bad_input', limits), { code });
+  for (const root of [
+    null,
+    'text',
+    1,
+    [],
+    new Proxy({}, {}),
+    Object.create({ route: 'a' }),
+    undefined,
+  ])
+    refused(root, 'bad_root');
+  refused(Object.defineProperty({}, 'route', getter), 'bad_route');
+  refused({ route: new String('a') }, 'bad_route');
+  refused({ data: { value: undefined } }, 'bad_data');
+  refused({ other: new Proxy({}, {}) }, 'bad_input');
+  refused(Object.defineProperty({}, 'other', getter), 'bad_input');
+  assert.equal(reads, 0);
+  assert.deepEqual(
+    plain({ route: 'a', data: { value: 1 }, other: undefined }, 'bad_input', limits),
+    {
+      route: 'a',
+      data: { value: 1 },
+    },
+  );
+});
+
 test('markdownSection() reads CommonMark headings in linear time', () => {
   const summary = (text: string) => markdownSection(text, 'Summary');
   assert.equal(summary('## Summary\n\n## Summary\nreal body'), 'real body');

@@ -1,8 +1,7 @@
 import { excludedFromReview, canonical, visible, recorded, mapAsync } from '@merv/contracts';
-import { createService, idPattern, plain, receipted } from '@merv/contracts';
+import { createService, idPattern, plain, receipted, type Limits } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
-import { types as nodeTypes } from 'node:util';
 import {
   check,
   digest,
@@ -25,7 +24,12 @@ import {
   type Transaction,
   type StoredEvent,
 } from '@merv/contracts';
-import { validateAssessment, evidenceFrom } from './findings.js';
+import { validateAssessment, validateEvidence, evidenceLimits } from './findings.js';
+
+const submitFields = {
+  returnTo: 'invalid_return_to',
+  evidence: { code: 'invalid_evidence', ...evidenceLimits },
+};
 
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -35,135 +39,61 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+/**
+ * Review input is detached with plain() once; a hostile shape inside a field keeps that field's
+ * code, and a root that is not an ordinary object is refused with `object`.
+ */
+const detached = <T>(input: unknown, object: string, fields: Limits['fields']): T =>
+  plain<T>(input, 'invalid_input', { object, fields });
+
 /** Route shape is generic; allowed destinations and verdict rules belong to the owner. */
 function validateReturnTo(input: { returnTo?: unknown }): string | undefined {
+  const value = input.returnTo;
   check(
-    input && typeof input === 'object' && !nodeTypes.isProxy(input) && !Array.isArray(input),
-    'invalid_return_to',
-    'Review return input must be an ordinary object',
-  );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_return_to',
-    'Review return input must be an ordinary object',
-  );
-  const descriptor = Object.getOwnPropertyDescriptor(input, 'returnTo');
-  check(
-    !('returnTo' in input) || (!!descriptor && 'value' in descriptor),
-    'invalid_return_to',
-    'returnTo must be an ordinary data property',
-  );
-  const value = descriptor?.value;
-  if (value === undefined) return undefined;
-  check(
-    descriptor?.enumerable &&
-      typeof value === 'string' &&
-      /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(value),
+    value === undefined ||
+      (typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(value)),
     'invalid_return_to',
     'returnTo must be an identifier of 1–128 characters, starting with a letter',
   );
   return value;
 }
 
-/** Contributor identity is set-like; normalize before hashing, without invoking accessors. */
+/** Contributor identity is set-like; normalized so the snapshot hash ignores order. */
 function contributorExclusions(input: ReviewInput): string[] | undefined {
+  const ids: unknown = input.excludedActorIds;
+  if (ids === undefined) return undefined;
   check(
-    input && typeof input === 'object' && !Array.isArray(input) && !nodeTypes.isProxy(input),
+    Array.isArray(ids) &&
+      ids.length <= 200 &&
+      ids.every((id) => typeof id === 'string' && idPattern.test(id)),
     'invalid_review_exclusions',
-    'Review input must be an ordinary object',
+    'Contributor exclusions must be at most 200 actor identifiers',
   );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_review_exclusions',
-    'Review input must be a plain object',
-  );
-  const field = Object.getOwnPropertyDescriptor(input, 'excludedActorIds');
-  check(
-    !('excludedActorIds' in input) || (field && Object.hasOwn(field, 'value')),
-    'invalid_review_exclusions',
-    'Contributor exclusions must be an ordinary data field',
-  );
-  if (!field || field.value === undefined) return undefined;
-  const value: unknown = field.value;
-  check(
-    field.enumerable &&
-      Array.isArray(value) &&
-      !nodeTypes.isProxy(value) &&
-      Object.getPrototypeOf(value) === Array.prototype,
-    'invalid_review_exclusions',
-    'Contributor exclusions must be an ordinary array',
-  );
-  const length = Object.getOwnPropertyDescriptor(value, 'length')!.value as number;
-  check(
-    length <= 200 && Reflect.ownKeys(value).length === length + 1,
-    'invalid_review_exclusions',
-    'Contributor exclusions must be a bounded dense array',
-  );
-  const ids = Array.from({ length }, (_, index) => {
-    const item = Object.getOwnPropertyDescriptor(value, String(index));
-    check(
-      item &&
-        Object.hasOwn(item, 'value') &&
-        item.enumerable &&
-        typeof item.value === 'string' &&
-        idPattern.test(item.value),
-      'invalid_review_exclusions',
-      'Contributor exclusions must be actor identifiers',
-    );
-    return item.value as string;
-  });
-  return [...new Set(ids)].sort();
+  return [...new Set(ids as string[])].sort();
 }
 
 /**
- * The criteria a pass can never waive, read without invoking accessors and sorted so that
- * [4,2] and [2,4] pin the same review. Whether each number names one of this review's
- * criteria is checked where the criteria themselves are.
+ * The criteria a pass can never waive, sorted so that [4,2] and [2,4] pin the same review.
+ * Whether each number names one of this review's criteria is checked where the criteria
+ * themselves are.
  */
 function requiredCriteria(input: ReviewInput): number[] | undefined {
-  const field = Object.getOwnPropertyDescriptor(input, 'requiredCriteria');
+  const numbers: unknown = input.requiredCriteria;
+  if (numbers === undefined) return undefined;
   check(
-    !('requiredCriteria' in input) || (field && Object.hasOwn(field, 'value')),
+    Array.isArray(numbers) &&
+      numbers.length >= 1 &&
+      numbers.length <= 200 &&
+      numbers.every((number) => Number.isSafeInteger(number) && number >= 1),
     'invalid_required_criteria',
-    'Required criteria must be an ordinary data field',
+    'Required criteria must be 1 to 200 criterion numbers',
   );
-  if (!field || field.value === undefined) return undefined;
-  const value: unknown = field.value;
   check(
-    field.enumerable &&
-      Array.isArray(value) &&
-      !nodeTypes.isProxy(value) &&
-      Object.getPrototypeOf(value) === Array.prototype,
-    'invalid_required_criteria',
-    'Required criteria must be an ordinary array',
-  );
-  const length = Object.getOwnPropertyDescriptor(value, 'length')!.value as number;
-  check(
-    length >= 1 && length <= 200 && Reflect.ownKeys(value).length === length + 1,
-    'invalid_required_criteria',
-    'Required criteria must be a nonempty bounded dense array',
-  );
-  const numbers = Array.from({ length }, (_, index) => {
-    const item = Object.getOwnPropertyDescriptor(value, String(index));
-    check(
-      item &&
-        Object.hasOwn(item, 'value') &&
-        item.enumerable &&
-        Number.isSafeInteger(item.value) &&
-        item.value >= 1,
-      'invalid_required_criteria',
-      'Required criteria must be criterion numbers',
-    );
-    return item.value as number;
-  });
-  check(
-    new Set(numbers).size === length,
+    new Set(numbers).size === numbers.length,
     'invalid_required_criteria',
     'Required criteria must be distinct',
   );
-  return numbers.sort((a, b) => a - b);
+  return [...(numbers as number[])].sort((a, b) => a - b);
 }
 
 interface ReviewRow {
@@ -414,9 +344,10 @@ export class ReviewService implements Reviews {
     transaction?: Transaction,
   ): Promise<unknown> {
     caller = structuredClone(caller);
-    // Preserve route-specific validation before detaching input from its caller.
+    input = detached<ReviewApplication>(input, 'invalid_return_to', {
+      returnTo: 'invalid_return_to',
+    });
     validateReturnTo(input);
-    input = plain<ReviewApplication>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
       await this.scope.require(caller, 'review', tx);
@@ -513,11 +444,13 @@ export class ReviewService implements Reviews {
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
     caller = structuredClone(caller);
-    // Check descriptor-sensitive exclusions before copying; later awaits must use
-    // the same evidence and ownership input that command hashing will retain.
+    // Later awaits must use the same evidence and ownership input that command hashing retains.
+    input = detached<ReviewInput>(input, 'invalid_review_exclusions', {
+      excludedActorIds: 'invalid_review_exclusions',
+      requiredCriteria: 'invalid_required_criteria',
+    });
     contributorExclusions(input);
     requiredCriteria(input);
-    input = plain<ReviewInput>(input);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const authority = await this.scope.authorityActor(caller, tx);
@@ -879,9 +812,9 @@ export class ReviewService implements Reviews {
   ): Promise<ReviewRequest> {
     caller = structuredClone(caller);
     if (input) {
+      input = detached<Omit<ReviewSubmit, 'requestId'>>(input, 'invalid_return_to', submitFields);
       validateReturnTo(input);
-      evidenceFrom(input);
-      input = plain(input);
+      validateEvidence(input.evidence);
     }
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
@@ -929,9 +862,9 @@ export class ReviewService implements Reviews {
     transaction?: Transaction,
   ): Promise<ReviewRequest> {
     caller = structuredClone(caller);
+    input = detached<ReviewSubmit>(input, 'invalid_return_to', submitFields);
     const returnTo = validateReturnTo(input);
-    evidenceFrom(input);
-    input = plain<ReviewSubmit>(input);
+    validateEvidence(input.evidence);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
       return await this.command(tx, caller, input.requestId, 'submit', input, async () => {

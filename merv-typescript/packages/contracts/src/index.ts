@@ -239,6 +239,13 @@ export type Limits = {
   strings?: 'unicode' | 'json';
   undefined?: 'omit' | 'reject' | 'omit-root';
   nullPrototype?: boolean;
+  /**
+   * The code for a refusal inside each named root field, so one copy keeps field-specific codes.
+   * A field given as `{ code, ...limits }` is copied under those limits instead.
+   */
+  fields?: Record<string, string | ({ code: string } & Omit<Limits, 'fields' | 'object'>)>;
+  /** Require an ordinary non-array object at the root; refusing the root itself uses this code. */
+  object?: string;
 };
 /**
  * A detached plain-JSON copy of an input, made without calling accessors: no proxies, foreign
@@ -254,41 +261,54 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
   let nodes = 0,
     bytes = 0;
   const active = new Set<object>();
-  const refuse = (message: string): never => check(false, code, message) as never;
-  const text = (item: string) => {
+  const refuse = (message: string, at: string): never => check(false, at, message) as never;
+  const field = (key: string) => limits.fields?.[key];
+  /** Inside the root, each field's own code, or `code` for a field without one. */
+  const fieldCode = (key: string, depth: number, at: string) => {
+    if (depth > 0) return at;
+    const rule = field(key);
+    return rule === undefined ? code : typeof rule === 'string' ? rule : rule.code;
+  };
+  const text = (item: string, at: string) => {
     if (limits.strings !== 'json') {
-      check(!item.includes('\0'), code, 'Text cannot contain NUL');
-      check(!/\p{Surrogate}/u.test(item), code, 'Text must be well-formed Unicode');
+      check(!item.includes('\0'), at, 'Text cannot contain NUL');
+      check(!/\p{Surrogate}/u.test(item), at, 'Text must be well-formed Unicode');
     }
     bytes += Buffer.byteLength(item, 'utf8');
-    if (bytes > maxBytes) refuse('Input is too large');
+    if (bytes > maxBytes) refuse('Input is too large', at);
     return item;
   };
-  const copy = (item: unknown, depth: number): Json => {
-    if (++nodes > maxNodes || depth > maxDepth) refuse('Input is too large or nests too deeply');
+  const copy = (item: unknown, depth: number, at: string): Json => {
+    const root = depth === 0 && limits.object !== undefined;
+    if (root) at = limits.object!;
+    if (++nodes > maxNodes || depth > maxDepth)
+      refuse('Input is too large or nests too deeply', at);
+    if (root && (item === null || typeof item !== 'object'))
+      refuse('Input must be an ordinary object', at);
     if (item === null || typeof item === 'boolean') return item;
-    if (typeof item === 'string') return text(item);
+    if (typeof item === 'string') return text(item, at);
     if (typeof item === 'number' && Number.isFinite(item)) return item;
     if (typeof item !== 'object' || types.isProxy(item) || active.has(item))
-      return refuse('Input must be finite, acyclic plain JSON');
+      return refuse('Input must be finite, acyclic plain JSON', at);
     const array = Array.isArray(item);
+    if (root && array) refuse('Input must be an ordinary object', at);
     const prototype = Object.getPrototypeOf(item);
     if (
       array
         ? prototype !== Array.prototype
         : prototype !== Object.prototype && (prototype !== null || limits.nullPrototype === false)
     )
-      refuse('Input must contain plain objects and arrays');
+      refuse('Input must contain plain objects and arrays', at);
     const keys = Reflect.ownKeys(item);
     const descriptors = Object.getOwnPropertyDescriptors(item);
-    if (
-      keys.some((key) => typeof key !== 'string') ||
-      Object.entries(descriptors).some(
-        ([key, field]) =>
-          !Object.hasOwn(field, 'value') || !(field.enumerable || (array && key === 'length')),
+    if (keys.some((key) => typeof key !== 'string'))
+      refuse('Input fields must be ordinary data', at);
+    for (const [key, descriptor] of Object.entries(descriptors))
+      if (
+        !Object.hasOwn(descriptor, 'value') ||
+        !(descriptor.enumerable || (array && key === 'length'))
       )
-    )
-      refuse('Input fields must be ordinary data');
+        refuse('Input fields must be ordinary data', fieldCode(key, depth, at));
     active.add(item);
     let result: Json;
     if (array) {
@@ -300,23 +320,28 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
           Object.hasOwn(descriptors, key),
         )
       )
-        refuse('Arrays must be dense without extra fields');
+        refuse('Arrays must be dense without extra fields', at);
       result = Array.from({ length }, (_, index) =>
-        copy(descriptors[String(index)].value, depth + 1),
+        copy(descriptors[String(index)].value, depth + 1, at),
       );
     } else {
       const record: Data = {};
-      for (const [key, field] of Object.entries(descriptors)) {
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        const keyCode = fieldCode(key, depth, at);
         if (limits.keys !== 'any' && ['__proto__', 'prototype', 'constructor'].includes(key))
-          refuse('Input contains a reserved field name');
-        text(key);
+          refuse('Input contains a reserved field name', keyCode);
+        text(key, keyCode);
+        const rule = depth === 0 ? field(key) : undefined;
         if (
-          field.value !== undefined ||
+          descriptor.value !== undefined ||
           limits.undefined === 'reject' ||
           (limits.undefined === 'omit-root' && depth > 0)
         )
           Object.defineProperty(record, key, {
-            value: copy(field.value, depth + 1),
+            value:
+              rule !== undefined && typeof rule !== 'string'
+                ? plain<Json>(descriptor.value, rule.code, rule)
+                : copy(descriptor.value, depth + 1, keyCode),
             enumerable: true,
             writable: true,
             configurable: true,
@@ -327,9 +352,16 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
     active.delete(item);
     return result;
   };
-  return (value === undefined && limits.undefined !== 'reject' ? undefined : copy(value, 0)) as T;
+  return (
+    value === undefined && limits.undefined !== 'reject' && limits.object === undefined
+      ? undefined
+      : copy(value, 0, code)
+  ) as T;
 }
-/** Parse a detached copy of `value`; refusals carry `code` and name the failing fields. */
+/**
+ * Parse a detached copy of `value`; refusals carry `code`, or the code `limits.fields` gives the
+ * first failing root field, and name the failing fields.
+ */
 export function parsed<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   value: unknown,
@@ -337,16 +369,16 @@ export function parsed<T>(
   limits?: Limits,
 ): T {
   const result = schema.safeParse(plain(value, code, limits));
+  if (result.success) return result.data;
+  const [first] = result.error.issues;
+  const rule = typeof first?.path[0] === 'string' ? limits?.fields?.[first.path[0]] : undefined;
   check(
-    result.success,
-    code,
-    result.success
-      ? ''
-      : result.error.issues
-          .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`)
-          .join('; '),
+    false,
+    rule === undefined ? code : typeof rule === 'string' ? rule : rule.code,
+    result.error.issues
+      .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`)
+      .join('; '),
   );
-  return result.data;
 }
 /** Where a domain keeps its receipts and how it compares and replays them; see receipted(). */
 export interface Receipt<T> {
