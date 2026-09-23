@@ -93,8 +93,6 @@ export class PostgresState extends StateStore {
         statement_timeout: config.statementTimeoutMs ?? POSTGRES_DEFAULTS.statementTimeoutMs,
         lock_timeout: config.lockTimeoutMs ?? POSTGRES_DEFAULTS.lockTimeoutMs,
         ssl: config.ssl ?? false,
-        // An idle pool never keeps a process alive on its own; close() still ends it.
-        allowExitOnIdle: true,
         types: {
           getTypeParser: (oid, format) =>
             oid === 20 && format !== 'binary' ? safeInteger : types.getTypeParser(oid, format),
