@@ -6,6 +6,24 @@ Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.
 
 ## Fleet pilot image and release pin, 2026-09-23
 
+Current Merv control runs `20260923T080026Z-da77907a-5a96a7bf1b4e`, image
+`sha256:89cb4998714b4e8810dad1e4d73819e9f5eaaf8d8a99e03b9346bf9d83c9df4e`.
+This adds the operator-only Fleet credential form and configurable allocation
+deadline, without database or authentication changes. Five focused UI tests,
+UI typecheck and the deployment-render regression passed. Deployment passed
+container/public health, UI/assets, anonymous denial and origin checks. The
+form was verified in the signed-in test project; no credential was issued.
+
+After confirming zero active pilot work, its automatic workflow adapter was
+disabled and its completed source credential revoked. Fleet/UI remain enabled,
+all caps remain one, and the allocation deadline is now 1800 seconds. The
+candidate passed a networkless render check before app recreation; app and
+public health passed afterward. The private environment backup is
+`/var/lib/merv-fleet-pilot/merv-env-stage/typescript.env.before-idle`.
+Its old source is revoked: keep workflow dispatch disabled during an image
+rollback, or restore the original pre-Fleet environment. Do not reactivate an
+earlier pilot environment without issuing a fresh source credential.
+
 The current dedicated Cloudflare application is version 3, pinned to
 `sha256:ebb7c789a29d72d925312ae4bdbb904cd299a9c12af39b858b50431763bcc48d`,
 release `rt1_6027fb1375124384291717b6376198a2e8bc674ae5203aad4de19ffc23c20ab6`.
@@ -32,7 +50,7 @@ native producer audit beside it.
 The preceding version 2 rollout and cleanup regression are retained below as
 historical evidence.
 
-The running Merv image remains release
+During the protected tests the Merv image remained release
 `20260923T064442Z-2c867f97-714a965267ff` (`sha256:540a7f890eb3b150a290dec05a747f861db410220f12596abf0461c9b8ecc5d0`).
 Its root-private Fleet environment changed only the fixed runtime release ID
 from `rt1_dacd281d1dcc736415a1bf7bcce531d1c2b597ce8c931a72a256c3d9c89d956d`
@@ -219,3 +237,4 @@ repository is linked and write automation is turned on.
 | 2026-09-23T02:30Z | `20260923T022834Z-99c392f0-13937dc55496` | `84f765143e9e` | 50/50                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CStmhJW_.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260923T021647Z-1ce9f9cc-72daa99ac859`                  |
 | 2026-09-23T06:02Z | `20260923T060044Z-737bb4aa-0d618b370fbb` | `f8040d2f3770` | 50/50                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CStmhJW_.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260923T022834Z-99c392f0-13937dc55496`                  |
 | 2026-09-23T06:46Z | `20260923T064442Z-2c867f97-714a965267ff` | `540a7f890eb3` | 57/57                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CStmhJW_.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `sha256:f8040d2f377051de1330a87a414485c6d0f1b8d81b8f6906537dc7b5665ec594` |
+| 2026-09-23T08:01Z | `20260923T080026Z-da77907a-5a96a7bf1b4e` | `89cb4998714b` | 57/57                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CuZKWTfW.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `sha256:540a7f890eb3b150a290dec05a747f861db410220f12596abf0461c9b8ecc5d0` |

@@ -11,6 +11,23 @@ local release, and Fleet stopped its VM without intervention. Independent native
 inventory confirmed zero VMs. Dispatch is off. Three-VM Git acceptance remains
 pending; the completed task intentionally had no Git workspace. Pi has not started.
 
+Merv now runs setup release `20260923T080026Z-da77907a-5a96a7bf1b4e`.
+The completed pilot's workflow adapter is disabled and its source credential is
+revoked, so later expiry cannot break startup. Fleet and its optional sidebar
+remain available. The signed-in operator Keys page can issue a finite project
+credential using the existing `actor.create` API; five UI tests and UI typecheck
+passed, including a late response after a project switch. The deployment also
+exposes the existing allocation deadline, configured to 1800 seconds. All limits
+remain one. Public/container health and served assets passed after deployment;
+public health passed again after putting the pilot into this idle state.
+
+GitHub is connected to the human-created `Fleet Git acceptance 2026-09-23`
+project and its isolated `rapidreview-io/merv-github-smoke` repository. Agent
+repository access is still off, and no Fleet credential has been issued there.
+Read-only repository access and a four-hour test-project operator credential
+are awaiting explicit approval. Repository preparation and multi-VM execution
+have not started.
+
 ## Implemented locally
 
 - The sandbox control plane has encrypted, expiring bootstrap envelopes; immutable
@@ -267,7 +284,7 @@ operator catalog without removing the previous one. Their image remains
 `merv-sandboxes-control:33109ff-fleet`; the gateway, database and Hatchet
 services were not recreated.
 
-Production Merv now runs committed `2c867f97`, release
+The protected tests ran on committed `2c867f97`, release
 `20260923T064442Z-2c867f97-714a965267ff`, configured for one disposable Fleet project,
 fixed Cloudflare provider/release, 600-second lease, and all caps one. Dispatch
 is currently off. Its compiled CLI, container health, all 57 configured
@@ -334,6 +351,6 @@ automatically. Evidence: `output/fleet-cloudflare-canary/protected-third-result.
 and `protected-native-producer-independent-audit-20260923.json`.
 This establishes protected execution and automatic cleanup, not an approved
 Git delivery: the task remains in review and had no workspace. The 600-second
-sandbox lease is renewable; the separate allocation deadline currently defaults
-to one hour. Cleanup occurred well before both limits. The multi-VM pilot must
-set an explicit bounded allocation lifetime.
+sandbox lease is renewable; the separate allocation deadline in that test was
+one hour. Cleanup occurred well before both limits. The later setup release
+exposes the deadline setting and the idle deployment now sets it to 1800 seconds.
