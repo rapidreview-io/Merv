@@ -25,7 +25,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     writeFileSync(
       join(directory, 'dist/config/default.json'),
       JSON.stringify({
-        plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui', 'code', 'code-research'].map(
+        plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui', 'code', 'code-research', 'sessions'].map(
           (id) => ({
             id,
             name: id,
@@ -54,7 +54,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       });
     assert.equal(run().status, 0);
     let config = JSON.parse(readFileSync(output));
-    assert.equal(config.plugins.length, 8);
+    assert.equal(config.plugins.length, 9);
     assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
       repositories: { root: '/var/lib/merv-ts/code' },
     });
@@ -66,7 +66,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       0,
     );
     config = JSON.parse(readFileSync(output));
-    assert.equal(config.plugins.length, 9);
+    assert.equal(config.plugins.length, 10);
     assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
     const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
     assert.deepEqual(history.config, { sourceId: 'source-v2' });
@@ -76,6 +76,93 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     );
     assert.notEqual(run({ MERV_TS_DB_SCHEMA: 'public' }).status, 0);
     assert.notEqual(run({ MERV_TS_LEGACY_SOURCE_ID: '../source' }).status, 0);
+
+    const connected = {
+      MERV_SANDBOXES_URL: 'https://sandboxes.example',
+      MERV_SANDBOXES_CONNECTIONS: JSON.stringify([
+        { projectId: 'project_1', namespace: 'research', tokenEnv: 'SANDBOX_GRANT' },
+      ]),
+    };
+    assert.equal(run(connected).status, 0);
+    config = JSON.parse(readFileSync(output));
+    assert.equal(config.plugins.length, 12);
+    assert.equal(config.plugins.find((p) => p.id === 'sandboxes').config.runtime, undefined);
+    assert.equal(config.plugins.find((p) => p.id === 'fleet'), undefined);
+
+    const fleet = {
+      ...connected,
+      MERV_FLEET_ENABLED: 'true',
+      MERV_FLEET_RUNTIME_PROVIDER: 'cloudflare',
+      MERV_FLEET_RUNTIME_OFFER_ID: 'standard-1:cloudflare',
+      MERV_FLEET_RUNTIME_RELEASE_ID: `rt1_${'a'.repeat(64)}`,
+      MERV_FLEET_RUNTIME_LEASE_SECONDS: '900',
+      MERV_FLEET_MANAGED_SECRET_ENV: 'MANAGED_SECRET',
+      MANAGED_SECRET: 's'.repeat(32),
+      SANDBOX_GRANT: 'sbxt_fixture',
+    };
+    assert.equal(run(fleet).status, 0);
+    config = JSON.parse(readFileSync(output));
+    assert.deepEqual(config.plugins.find((p) => p.id === 'sandboxes').config.runtime, {
+      provider: 'cloudflare',
+      offerId: 'standard-1:cloudflare',
+      releaseId: fleet.MERV_FLEET_RUNTIME_RELEASE_ID,
+      leaseSeconds: 900,
+    });
+    assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
+      enabled: true,
+      globalLimit: 3,
+      projectLimit: 1,
+    });
+    assert.deepEqual(config.plugins.find((p) => p.id === 'sessions').config, {
+      managedSecretEnv: 'MANAGED_SECRET',
+    });
+    assert.ok(config.plugins.some((p) => p.id === 'fleet-ui'));
+    assert.ok(config.plugins.some((p) => p.id === 'fleet-tools'));
+    assert.equal(config.plugins.find((p) => p.id === 'fleet-workflow'), undefined);
+    assert.ok(!readFileSync(output, 'utf8').includes(fleet.MANAGED_SECRET));
+    assert.ok(!readFileSync(output, 'utf8').includes(fleet.SANDBOX_GRANT));
+
+    const workflow = {
+      ...fleet,
+      MERV_FLEET_GLOBAL_LIMIT: '2',
+      MERV_FLEET_PROJECT_LIMIT: '2',
+      MERV_FLEET_WORKFLOW_ENABLED: 'true',
+      MERV_FLEET_WORKFLOW_PROJECT_ID: 'project_1',
+      MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV: 'WORKFLOW_SOURCE',
+      MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV: 'MODEL_KEY',
+      MERV_FLEET_WORKFLOW_BASE_URL: 'https://merv.example',
+      WORKFLOW_SOURCE: 'source-secret',
+      MODEL_KEY: 'model-secret',
+    };
+    assert.equal(run(workflow).status, 0);
+    config = JSON.parse(readFileSync(output));
+    assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
+      enabled: true,
+      globalLimit: 2,
+      projectLimit: 2,
+    });
+    assert.deepEqual(config.plugins.find((p) => p.id === 'fleet-workflow').config, {
+      enabled: true,
+      projectId: 'project_1',
+      sourceCredentialEnv: 'WORKFLOW_SOURCE',
+      modelApiKeyEnv: 'MODEL_KEY',
+      baseUrl: 'https://merv.example',
+    });
+    assert.ok(!readFileSync(output, 'utf8').includes(workflow.WORKFLOW_SOURCE));
+    assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
+    for (const broken of [
+      { MERV_FLEET_ENABLED: 'true' },
+      { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },
+      { ...fleet, MERV_FLEET_RUNTIME_LEASE_SECONDS: '0' },
+      { ...fleet, MERV_FLEET_GLOBAL_LIMIT: '33' },
+      { ...fleet, MERV_FLEET_MANAGED_SECRET_ENV: 'bad-name' },
+      { ...fleet, MANAGED_SECRET: 'short' },
+      { ...fleet, MERV_FLEET_WORKFLOW_ENABLED: 'true' },
+      { ...workflow, MERV_FLEET_WORKFLOW_PROJECT_ID: 'other_project' },
+      { ...workflow, MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV: 'missing_secret' },
+    ]) {
+      assert.notEqual(run(broken).status, 0);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

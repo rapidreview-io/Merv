@@ -17,6 +17,30 @@ const httpsOrigin = (name) => {
   if (url.protocol !== 'https:' || url.origin !== value) throw new Error(`Invalid ${name}`);
   return value;
 };
+const envName = (name) => {
+  const value = required(name);
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`Invalid ${name}`);
+  return value;
+};
+const integer = (name, fallback, min, max) => {
+  if (process.env[name] === undefined) return fallback;
+  const value = required(name);
+  if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new Error(`Invalid ${name}`);
+  }
+  const number = Number(value);
+  if (number < min || number > max) throw new Error(`Invalid ${name}`);
+  return number;
+};
+const optIn = (name) => {
+  const value = process.env[name];
+  if (value === undefined || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new Error(`Invalid ${name}`);
+};
+const fleetEnabled = optIn('MERV_FLEET_ENABLED');
+const workflowEnabled = optIn('MERV_FLEET_WORKFLOW_ENABLED');
+if (workflowEnabled && !fleetEnabled) throw new Error('Fleet workflow requires MERV_FLEET_ENABLED');
 const mode = required('MERV_TS_AUTH_MODE');
 if (!['hs256', 'jwks'].includes(mode)) throw new Error('Invalid MERV_TS_AUTH_MODE');
 // Refuse to silently place new objects among the legacy Python objects.
@@ -87,6 +111,28 @@ set('code-research', {});
 if (process.env.MERV_SANDBOXES_URL !== undefined) {
   httpsOrigin('MERV_SANDBOXES_URL');
   const connections = sandboxConnections();
+  let runtime;
+  if (fleetEnabled) {
+    const provider = required('MERV_FLEET_RUNTIME_PROVIDER');
+    const offerId = required('MERV_FLEET_RUNTIME_OFFER_ID');
+    const releaseId = required('MERV_FLEET_RUNTIME_RELEASE_ID');
+    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(provider)) {
+      throw new Error('Invalid MERV_FLEET_RUNTIME_PROVIDER');
+    }
+    if (offerId.length > 256) throw new Error('Invalid MERV_FLEET_RUNTIME_OFFER_ID');
+    if (!/^rt1_[0-9a-f]{64}$/.test(releaseId)) {
+      throw new Error('Invalid MERV_FLEET_RUNTIME_RELEASE_ID');
+    }
+    runtime = {
+      provider,
+      offerId,
+      releaseId,
+      leaseSeconds: integer('MERV_FLEET_RUNTIME_LEASE_SECONDS', undefined, 60, 86_400),
+    };
+    if (runtime.leaseSeconds === undefined) {
+      throw new Error('Missing MERV_FLEET_RUNTIME_LEASE_SECONDS');
+    }
+  }
   config.plugins.push(
     { id: 'sandboxes-tools', name: '@merv/sandboxes/tools' },
     { id: 'sandboxes-ui', name: '@merv/sandboxes/ui', required: false },
@@ -94,9 +140,58 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
       id: 'sandboxes',
       name: '@merv/sandboxes',
       // Only names: the origin and each project's consumer grant stay in the environment.
-      config: { urlEnv: 'MERV_SANDBOXES_URL', connections },
+      config: { urlEnv: 'MERV_SANDBOXES_URL', connections, ...(runtime ? { runtime } : {}) },
     },
   );
+}
+if (fleetEnabled) {
+  if (process.env.MERV_SANDBOXES_URL === undefined) {
+    throw new Error('Fleet requires MERV_SANDBOXES_URL');
+  }
+  const managedSecretEnv = envName('MERV_FLEET_MANAGED_SECRET_ENV');
+  if (Buffer.byteLength(process.env[managedSecretEnv] ?? '') < 32) {
+    throw new Error('Fleet managed secret is unavailable');
+  }
+  set('sessions', { managedSecretEnv });
+  config.plugins.push(
+    { id: 'fleet-tools', name: '@merv/fleet/tools' },
+    { id: 'fleet-ui', name: '@merv/fleet/ui', required: false },
+    {
+      id: 'fleet',
+      name: '@merv/fleet',
+      config: {
+        enabled: true,
+        globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 3, 1, 32),
+        projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 1, 1, 32),
+      },
+    },
+  );
+  if (workflowEnabled) {
+    const projectId = required('MERV_FLEET_WORKFLOW_PROJECT_ID');
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(projectId)) {
+      throw new Error('Invalid MERV_FLEET_WORKFLOW_PROJECT_ID');
+    }
+    const connections = config.plugins.find((entry) => entry.id === 'sandboxes').config.connections;
+    if (!connections.some((entry) => entry.projectId === projectId)) {
+      throw new Error('Fleet workflow project has no sandbox connection');
+    }
+    const sourceCredentialEnv = envName('MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV');
+    const modelApiKeyEnv = envName('MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV');
+    for (const name of [sourceCredentialEnv, modelApiKeyEnv]) {
+      if (!process.env[name]) throw new Error('Fleet workflow credential is unavailable');
+    }
+    config.plugins.push({
+      id: 'fleet-workflow',
+      name: '@merv/fleet/workflow',
+      config: {
+        enabled: true,
+        projectId,
+        sourceCredentialEnv,
+        modelApiKeyEnv,
+        baseUrl: httpsOrigin('MERV_FLEET_WORKFLOW_BASE_URL'),
+      },
+    });
+  }
 }
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {
