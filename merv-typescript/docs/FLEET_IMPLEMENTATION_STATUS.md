@@ -4,9 +4,12 @@ The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
 Neither Fleet nor chat depends on the research workflow. Fleet is deployed for
-one disposable project, with dispatch paused after a protected-image startup
-failure. Local managed Codex acceptance and the first Cloudflare platform
-canary have passed; full protected launch and three-VM acceptance remain pending.
+one disposable project. Local managed Codex acceptance and the first Cloudflare
+platform canary passed. A protected Cloudflare worker activated with a managed
+session and completed its task with a verified isolation probe, but its Runner
+did not acknowledge local release. The VM was stopped through `fleet.halt` and
+native deletion was confirmed. Automatic cleanup and three-VM acceptance remain
+pending; the task intentionally had no Git workspace.
 
 ## Implemented locally
 
@@ -26,8 +29,9 @@ canary have passed; full protected launch and three-VM acceptance remain pending
   The control plane now requires an operator-owned provider and independent
   native image verification before each delivery attempt. Cloudflare checks the
   pinned application image, exact native instance and running version, including
-  all inventory pages, then rechecks for deployment drift. Actual hosted-image
-  acceptance is still pending.
+  all inventory pages, then rechecks for deployment drift. A protected worker
+  has activated on the pinned image and completed work, while its final release
+  acknowledgement is still under repair.
 - The TypeScript Runner has an isolated Codex adapter, including a
   dedicated assignment launcher, scoped process environment and repository
   skill controls. Its local `oneAssignment` setting fences the runner to one
@@ -93,11 +97,19 @@ startup, root-owned protected workspace parents, and UID 12001 Git handoff.
 A read-only live Cloudflare API check verified the application response and the
 terminal pagination shape; it did not verify a running protected instance.
 
-The complete amd64 hosted Codex image was subsequently built and pushed to a
-dedicated Cloudflare application, leaving the existing bridge unchanged. Its
-registry manifest identifies the exact locally built image. The application is
+The first complete amd64 hosted Codex image was built and pushed to a dedicated
+Cloudflare application, leaving the existing bridge unchanged. That image was
 pinned to digest
 `sha256:5e95a293042768d070bb59684179f95703bd06e6e951cd8331dd84c4c04a30d5`.
+The `/run/sshd` startup fix at sandbox commit `a7334969` was then built into a
+replacement complete image without changing the Runner bundle or executable
+hash. The tested OCI image descriptor and published registry index both have
+digest `sha256:da01a5581ef10fb06cb0665e831dc5dd9889b95c755ce77cd8b39d962768bf93`.
+The dedicated Cloudflare application reports version 2 with that exact image,
+one-instance cap, and a healthy rollout. Its release is
+`rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`.
+The old catalog entry and image pin were retained for rollback. Build and
+publication evidence is in `output/fleet-image-20260923-rundir-fix/`.
 
 On 2026-09-23, Merv Sandboxes created `sbx_ngnfd4ak` in the independent
 `fleet-cloudflare-canary` account with a one-VM limit, a ten-minute lease and a
@@ -173,10 +185,11 @@ passed 53 tests. These runs overlap and are not an aggregate suite count.
 
 ## Remaining work
 
-1. Complete trusted provider image/release wiring;
-   verify current-authority checks, provider termination and the Cloudflare
-   security gates. Then run three-machine real-work acceptance with external
-   runners coexisting. Local tests do not replace that acceptance.
+1. Fix and verify managed remote-close acknowledgement and workspace capture,
+   then repeat the single-worker protected cleanup gate, including
+   provider-confirmed termination. After that, run three-machine real-work
+   acceptance with external runners coexisting. Local tests do not replace
+   that acceptance.
 2. Pilot Pi only after Fleet acceptance, within the separate read-only and
    conversational-write gates in the proposal.
 
@@ -199,11 +212,12 @@ failed before tunnel readiness; no Runner session or model call occurred. Fleet
 confirmed all four stopped and independent Cloudflare inventory showed zero
 instances. Dispatch was disabled on detecting the replacement loop. Retained
 Cloudflare logs distinguish two protected-bootstrap failures from two subsequent
-capacity failures. The ordinary canary's log identifies missing `/run/sshd` at
+capacity failures. The ordinary canary's log identified missing `/run/sshd` at
 bootstrap validation: Cloudflare does not preserve that build-time directory,
-and the entrypoint creates it only after bootstrap. Protected startup correctly
-fails closed at that step. An empty-`/run` regression and boot-directory fix are
-in progress.
+and the previous entrypoint created it only after bootstrap. Protected startup
+correctly failed closed at that step. Commit `a7334969` initializes runtime
+directories before bootstrap; a fresh-`/run` protected AgentBootstrap regression
+passed remotely, and the previous entrypoint failed the same fixture.
 Evidence: `output/fleet-cloudflare-canary/protected-startup-failure.json`.
 Retained log excerpts: `protected-startup-log-evidence.json` in that directory.
 This is a failed acceptance, not a successful protected launch.
@@ -224,8 +238,8 @@ currently bounds that recovery by the allocation deadline.
 
 Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
 cloned from sandbox commit `c7b9582`, now merged with deployed sandbox commit
-`0d64e2f8`. The latest checkpoint is `e28e401` (documentation), following
-`33109ff`, `e17907f`, `4369915`, `07b25e0` and merge
+`0d64e2f8`. The startup-fix checkpoint is `a7334969`, following `e28e401`
+(documentation), `33109ff`, `e17907f`, `4369915`, `07b25e0` and merge
 `e14b89d`; the incremental backup is
 `output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
 untouched. The dedicated Cloudflare image and bridge were deployed. Sandbox
@@ -240,6 +254,10 @@ providers and service settings. Its rollout passed health, namespace/grant,
 release-catalog and native image checks. Six workload drain counts were zero
 before and after replacement. Build evidence is in
 `output/fleet-control-build-33109ff.json`.
+The control and pipelines services have since loaded the new release into the
+operator catalog without removing the previous one. Their image remains
+`merv-sandboxes-control:33109ff-fleet`; the gateway, database and Hatchet
+services were not recreated.
 
 Production Merv now runs committed `2c867f97`, release
 `20260923T064442Z-2c867f97-714a965267ff`, configured for one disposable Fleet project,
@@ -249,3 +267,36 @@ plugins, public UI/assets, anonymous denial and origin restrictions passed the
 existing release checks. Only committed source was packaged; unrelated local
 workflow/Lean changes were excluded. The deployment record and rollback image
 are retained in `deploy/RELEASES.md` and the remote release directory.
+The same immutable Merv image was recreated with only its private Fleet release
+ID changed to `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`.
+The candidate rendered with the expected provider, offer, 600-second lease,
+one-worker limits and disposable project; the app and public health checks passed.
+The earlier canary environment and pre-Fleet baseline remain in root-private
+backups. In the current protected run, task
+`wf_566f694393fb49f9a69ab4cc25af2da0` reached an activated managed session
+`session_7210fbde21614a129d3443d2bfa27013` on native application version 2.
+Dispatch was fenced off after activation. The task delivered artifact
+`art_47f738c13097441387fcbc7b979af241` and reached review
+`review_eed2e930af1b44d6a068f2a385a923b2`; Sessions reached `released` with
+outcome `completed`. Its literal probe independently passed UID/GID 12001,
+zero effective/bounding capabilities, no-new-privileges, the four private-path
+access checks and arithmetic 42. There was intentionally no Git workspace.
+
+`runner_released_at` nevertheless remained null: a remotely completed Runner
+without a usage file skipped the release acknowledgement. Fleet correctly
+waited for that acknowledgement. The operator requested `fleet.halt` at
+07:18:23Z; Cloudflare independently confirmed zero active instances and no active
+deployment for native `cfc-op_c9wbwfn0jjr8opm3` at 07:18:36Z. This is a failed
+automatic-cleanup gate, despite successful protected task execution. Sanitized
+evidence is in `output/fleet-cloudflare-canary/protected-second-result.json`,
+`protected-second-probe.txt` and `protected-native-second-summary-20260923.json`.
+The collector's `localChecksPassed` covers only its listed linkage/probe checks;
+`acceptancePassed` is explicitly false.
+
+Runner fix `f103ecd0` always acknowledges managed remote closure, including when
+there is no usage report, and keeps release pending through transient network
+failure. Its real managed handoff regression injects the first failed
+acknowledgement, verifies pending state, then verifies retry and server receipt;
+ordinary Runner behavior stays unchanged. All 13 Runner integration tests and
+typecheck passed. A replacement hosted overlay and repeat acceptance are in
+progress; the running control-server image does not need this Runner-only fix.

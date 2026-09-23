@@ -4,6 +4,45 @@ Each row is one immutable image built on the VM by `node deploy/release.mjs` fro
 
 Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.shell` (401), approved-origin `/auth/config` (200), unapproved-origin tool call (403); then public HTTPS `/health` and `/ui/`; then each served asset.
 
+## Fleet pilot image and release pin, 2026-09-23
+
+The running Merv image remains release
+`20260923T064442Z-2c867f97-714a965267ff` (`sha256:540a7f890eb3b150a290dec05a747f861db410220f12596abf0461c9b8ecc5d0`).
+Its root-private Fleet environment changed only the fixed runtime release ID
+from `rt1_dacd281d1dcc736415a1bf7bcce531d1c2b597ce8c931a72a256c3d9c89d956d`
+to `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`.
+The networkless render check verified `cloudflare-fleet`, offer
+`standard-1:cloudflare`, a 600-second lease, one-worker limits and the disposable
+project before recreating only the Merv control service. Container and public
+health checks passed. The exact prior canary environment is backed up at
+`/var/lib/merv-fleet-pilot/merv-env-stage/typescript.env.before-rundir-release`;
+the pre-Fleet environment remains at `typescript.env.before-fleet` in the same
+root-private directory.
+
+The new release contains the sandbox entrypoint fix at `a7334969` for the
+Cloudflare fresh-`/run` startup failure. Its complete hosted image is pinned to
+`sha256:da01a5581ef10fb06cb0665e831dc5dd9889b95c755ce77cd8b39d962768bf93`.
+Cloudflare's dedicated app reports version 2 with that image, max one instance
+and healthy rollout. Sandboxes control and pipelines loaded an additive catalog
+entry while retaining the previous release; their deployed image remains
+`merv-sandboxes-control:33109ff-fleet`. The gateway, database and Hatchet services
+were not recreated. The old catalog entry and original image reference remain
+available for rollback. The temporary registry push credential was removed.
+
+A protected worker on this new pin activated task
+`wf_566f694393fb49f9a69ab4cc25af2da0` and managed session
+`session_7210fbde21614a129d3443d2bfa27013`; dispatch was fenced off after
+activation. The task completed, delivered a verified isolation-probe artifact
+and reached review; Sessions reached `released` with outcome `completed`.
+Its `runner_released_at` stayed null, leaving Fleet waiting for managed close.
+This task intentionally had no Git workspace. An operator `fleet.halt` stopped
+the VM, and native inventory confirmed deletion at 07:18:36Z. Protected task
+execution passed, but automatic cleanup failed. A focused Runner acknowledgement
+fix is committed as `f103ecd0` with 13 passing Runner integration tests; its
+replacement runtime overlay and repeat acceptance are pending. Secret-free
+build/publication evidence is in
+`output/fleet-image-20260923-rundir-fix/`.
+
 **Rollback** to the previous row's image:
 
 ```sh
