@@ -101,7 +101,7 @@ Turning it on is one block on the `code` plugin, beside `repositories.root`:
 
 What is written, what it costs, `code.backup.run`, and the `code-restore` drill are in [Code operations](CODE_OPERATIONS.md#the-code-repository). At published R2 rates a 1 GB repository kept 30 days is about $0.45 a month; an unchanged project writes only its pointer.
 
-The existing-project migration is a separate, explicit operation described in [Legacy import](LEGACY_IMPORT.md). The Azure staging deployment uses [its deployment renderer](../deploy/README.md) to configure shared authentication and the exact public origin. The generic storage example alone is not the complete Azure release configuration.
+The one-time existing-project migration ran at cutover and its importer is retired; see [Legacy import](LEGACY_IMPORT.md). The Azure staging deployment uses [its deployment renderer](../deploy/README.md) to configure shared authentication and the exact public origin. The generic storage example alone is not the complete Azure release configuration.
 
 The opt-in integration test uses `MERV_TEST_POSTGRES_URL` and unique disposable schemas. It exercises the assembled application with PostgreSQL plus Disk, and with PostgreSQL plus the real AWS SDK against a local S3 protocol fixture. It covers operator authentication, artifact/context reads, task creation, independent review, rollback of verdict/transition/events/replay receipts together, successful retry, two application restarts, authenticated HTTP reads and Blobs unload during an admitted download. Failed S3 uploads publish no artifact metadata or event. The fixture has fake credentials and an explicit constructor-only HTTP-loopback allowance; production plugin configuration still requires HTTPS.
 

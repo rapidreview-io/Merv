@@ -5,7 +5,7 @@ import { DiskBlobs } from './disk.js';
 import { S3_DEFAULTS, S3Blobs } from './s3.js';
 
 export { DiskBlobs } from './disk.js';
-export { S3Blobs, MAX_TRANSFER_BYTES, type S3BlobOptions } from './s3.js';
+export { S3Blobs, type S3BlobOptions } from './s3.js';
 
 const configuration = z.union([
   z

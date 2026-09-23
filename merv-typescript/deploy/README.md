@@ -2,7 +2,7 @@
 
 > **Production switched on 2026-09-16.** Read [the execution record](CUTOVER_2026-09-16.md) for the actual image, final schema, import, public routing and rollback state; [client reconnection](CLIENT_CUTOVER.md) replaces the legacy plugin setup. Older staging/planning instructions below are historical.
 
-These files prepare the TypeScript backend and its `/ui/` application for the existing Azure VM. They do not deploy anything by themselves. Stage independently, finish the authenticated checks below, then change routing. The user selected preservation through import. The importer and isolated rehearsal are described in `LEGACY_REHEARSAL.md`; unfinished legacy work is retained as history until a separate continuity decision is made.
+These files prepare the TypeScript backend and its `/ui/` application for the existing Azure VM. They do not deploy anything by themselves. Stage independently, finish the authenticated checks below, then change routing. The user selected preservation through import, which ran once at cutover; the offline importer has since been removed (see [legacy import](../docs/LEGACY_IMPORT.md)), and unfinished legacy work is retained as history.
 
 ## Observed production layout — September 16, 2026
 

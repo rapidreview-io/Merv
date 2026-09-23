@@ -5,10 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { S3Blobs } from '@merv/blobs';
 import type { Artifact, Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
-import { importLegacyFoundation } from '../src/legacy-import.js';
 import { s3Server } from './fixtures/s3-server.js';
 import { stateConfig } from './fixtures/state.js';
 
@@ -52,76 +50,37 @@ export default { name: 'merv-blobs', apply(ctx) {
   return { app, server };
 }
 
-async function imported(t: TestContext) {
+/** A retained artifact over the inline limit, seeded straight into storage and metadata. */
+async function retained(t: TestContext) {
   const f = await fixture(t);
   const bytes = Buffer.alloc(2_000_001, 97);
   const hash = createHash('sha256').update(bytes).digest('hex');
-  const source = new S3Blobs({
-    bucket: 'merv-artifacts',
-    endpoint: f.server!.endpoint,
-    accessKeyId: 'fixture-access-key',
-    secretAccessKey: 'fixture-secret-key',
-    prefix: 'old',
-    allowHttpLoopbackForTests: true,
+  const identity = await f.app.ctx.scope.bootstrap({
+    projectName: 'Retained',
+    actorName: 'Operator',
   });
-  t.after(() => source.close());
-  f.server!.objects.set(`old/project_retained/${hash}`, bytes);
-  const snapshot = {
-    sourceId: 'large-download-rehearsal',
-    schemaVersion: 81,
-    issuer: 'https://shared.example/auth/v1',
-    projects: [
-      {
-        id: 'project_retained',
-        name: 'Retained',
-        summary: '',
-        status: 'active',
-        created_at: '2026-08-01T00:00:00Z',
-      },
-    ],
-    memberships: [
-      { project_id: 'project_retained', user_id: 'shared-user', added_at: '2026-08-01T00:00:00Z' },
-    ],
-    artifacts: [
-      {
-        id: 'artifact_retained',
-        project_id: 'project_retained',
-        title: 'Large evidence',
-        path: 'evidence.bin',
-        created_by: 'old-agent',
-        created_at: '2026-08-01T00:00:00Z',
-        status: 'complete',
-        content_type: 'application/octet-stream',
-        content_sha256: hash,
-        size_bytes: bytes.length,
-      },
-    ],
-    claims: [],
-  };
-  const services = {
-    state: f.app.ctx.state,
-    sourceBlobs: source,
-    destinationBlobs: f.app.ctx.blobs,
-    copyArtifact: (projectId: string, key: string, size: number) =>
-      (f.app.ctx.blobs as S3Blobs).copyVerifiedFrom(source, projectId, key, size),
-  };
-  const receipt = await importLegacyFoundation(services, snapshot);
-  const count = f.server!.requests.length;
-  assert.deepEqual(await importLegacyFoundation(services, snapshot), receipt);
-  assert.equal(f.server!.requests.length, count, 'Exact replay does not copy or download again');
-  const principal = await f.app.ctx.scope.acceptVerifiedIdentity({
-    issuer: snapshot.issuer,
-    subject: 'shared-user',
-    expiresAt: '2099-01-01T00:00:00.000Z',
-  });
-  const operator = await f.app.ctx.scope.caller(principal, 'project_retained');
+  const operator: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
+  f.server!.objects.set(`new/${operator.projectId}/${hash}`, bytes);
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES(?,?,?,?,?,?,?,?)',
+      'artifact_retained',
+      operator.projectId,
+      'old-agent',
+      'Large evidence',
+      'application/octet-stream',
+      hash,
+      bytes.length,
+      '2026-08-01T00:00:00Z',
+    ),
+  );
   const worker = await f.app.ctx.scope.issueActor(operator, { name: 'Reader', role: 'producer' });
   const caller: Caller = { actorId: worker.actor.id, projectId: operator.projectId };
   return { ...f, operator, caller, bytes, hash };
 }
 
-test('imported large artifacts remain accessible through the existing tool while inline reads stay bounded', async (t) => {
-  const f = await imported(t);
+test('large retained artifacts remain accessible through the existing tool while inline reads stay bounded', async (t) => {
+  const f = await retained(t);
   const metadata = (await f.app.ctx.tools.call('artifact.get', f.caller, {
     artifactId: 'artifact_retained',
   })) as Artifact & { downloadAvailable: boolean };
@@ -137,15 +96,10 @@ test('imported large artifacts remain accessible through the existing tool while
     mode: 'download',
   })) as { download: { url: string } };
   assert.deepEqual(Buffer.from(await (await fetch(link.download.url)).arrayBuffer()), f.bytes);
-  assert.deepEqual(
-    f.server!.objects.get(`old/project_retained/${f.hash}`),
-    f.bytes,
-    'Source stays untouched',
-  );
 });
 
 test('artifact downloads reject other projects and arbitrary keys before storage access', async (t) => {
-  const f = await imported(t);
+  const f = await retained(t);
   const outsider = await f.app.ctx.scope.bootstrap({
     projectName: 'Other',
     actorName: 'Other operator',
@@ -172,7 +126,7 @@ test('artifact downloads reject other projects and arbitrary keys before storage
 });
 
 test('revocation during download preparation prevents URL issuance and later requests', async (t) => {
-  const f = await imported(t);
+  const f = await retained(t);
   const held = f.server!.holdNext('HEAD');
   const pending = f.app.ctx.tools.call('artifact.read', f.caller, {
     artifactId: 'artifact_retained',
