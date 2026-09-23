@@ -12,6 +12,7 @@ import {
   MervError,
   newId,
   now,
+  parsed,
   plain,
   receipted,
   recorded,
@@ -59,6 +60,7 @@ import {
   type Workflows,
   type WorkflowSnapshot,
 } from '@merv/contracts';
+import { taskCreateFields, taskCreateSchema } from './input.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
@@ -1232,24 +1234,8 @@ export class TaskService implements Tasks {
           );
           for (const id of ids) await this.artifacts.get(caller, id, tx);
         }
-        // The brief renders the title and each check on its own numbered line.
-        const line = (value: unknown) =>
-          typeof value === 'string' && visible(value) && !/[\r\n]/.test(value);
-        check(
-          line(input.title) && typeof input.goal === 'string' && visible(input.goal),
-          'invalid_brief',
-          'Task title must be one nonempty line and the goal nonempty',
-        );
-        check(
-          Array.isArray(input.checks) && input.checks.length > 0 && input.checks.every(line),
-          'invalid_checks',
-          'Task requires at least one nonempty single-line Done-when check',
-        );
-        check(
-          new Set(input.checks.map(folded)).size === input.checks.length,
-          'invalid_checks',
-          'Done-when checks must be distinct',
-        );
+        // Service tasks pass here too; a stored receipt still replays before this parse.
+        input = parsed(taskCreateSchema, input, 'invalid_input', { fields: taskCreateFields });
         // The type's required checks are the server's, so a caller cannot leave them out; one the
         // caller already wrote is kept where they put it.
         const checks = [

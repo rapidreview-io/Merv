@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clip, markdownSection, plain } from '@merv/contracts';
+import { clip, markdownSection, parsed, plain } from '@merv/contracts';
+import { z } from 'zod';
 
 test('plain() detaches bounded JSON and refuses what JSON cannot carry', () => {
   const refused = (value: unknown, limits = {}) =>
@@ -80,6 +81,20 @@ test('plain() keeps a field-specific code for a hostile shape inside that field'
       data: { value: 1 },
     },
   );
+});
+
+test('parsed() gives the first failing root field its own code', () => {
+  const schema = z.object({ body: z.string().min(1), limit: z.number().max(10).optional() });
+  const fields = { body: 'bad_body', limit: 'bad_limit' };
+  const refused = (value: unknown, code: string) =>
+    assert.throws(() => parsed(schema, value, 'bad_input', { fields }), { code });
+  refused({ body: '' }, 'bad_body');
+  refused({ body: 'ok', limit: 11 }, 'bad_limit');
+  refused({ body: '', limit: 11 }, 'bad_body');
+  refused(null, 'bad_input');
+  assert.deepEqual(parsed(schema, { body: 'ok', extra: 1 }, 'bad_input', { fields }), {
+    body: 'ok',
+  });
 });
 
 test('markdownSection() reads CommonMark headings in linear time', () => {

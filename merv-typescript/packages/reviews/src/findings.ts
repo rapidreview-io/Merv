@@ -9,6 +9,7 @@ import {
   type ReviewRequest,
   type ReviewSubmit,
 } from '@merv/contracts';
+import { synopsisSchema } from './input.js';
 
 /** Evidence bounds; refusing nested undefined keeps `{ value: undefined }` from reading as `{}`. */
 export const evidenceLimits = {
@@ -49,19 +50,11 @@ export function validateAssessment(
 ): { synopsis: string; findings: ReviewFinding[]; evidence: Data } {
   const evidence = validateEvidence(input.evidence);
   check(
-    typeof input.synopsis === 'string' &&
-      visible(input.synopsis) &&
-      input.synopsis.trim().length >= 40 &&
-      input.synopsis.trim().length <= 420 &&
-      !/[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(input.synopsis) &&
-      !/^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(input.synopsis) &&
-      !/\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
-        input.synopsis,
-      ),
+    synopsisSchema.safeParse(input.synopsis).success,
     'invalid_synopsis',
     'Supply a plain single-paragraph synopsis of 40–420 characters, without entity IDs or Markdown, explaining the overall verdict',
   );
-  const synopsis = input.synopsis.trim();
+  const synopsis = input.synopsis!.trim();
   const value: unknown = input.findings;
   check(
     Array.isArray(value),

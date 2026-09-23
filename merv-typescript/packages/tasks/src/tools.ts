@@ -2,6 +2,7 @@ import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
+import { taskCreateToolSchema } from './input.js';
 import type {
   Caller,
   TaskCreate,
@@ -57,37 +58,7 @@ export const taskToolsPlugin = {
         name: 'task.create',
         description:
           'Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace "git" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.',
-        inputSchema: z
-          .object({
-            title: z
-              .string()
-              .min(1)
-              .max(300)
-              .regex(/^[^\r\n]*$/, 'A title is one line'),
-            goal: z.string().min(1).max(16000),
-            checks: z
-              .array(
-                z
-                  .string()
-                  .min(1)
-                  .max(2000)
-                  .regex(/^[^\r\n]*$/, 'A check is one line'),
-              )
-              .min(1)
-              .max(20),
-            briefId: id.optional(),
-            type: z.string().min(1).optional(),
-            typeVersion: z.number().int().positive().optional(),
-            contextInputs: z.record(z.array(id)).optional(),
-            dependsOn: z
-              .union([z.array(z.string()), z.string()])
-              .nullable()
-              .optional(),
-            workspace: z.enum(['none', 'git']).optional(),
-            baseTaskId: id.optional(),
-            requestId,
-          })
-          .strict(),
+        inputSchema: taskCreateToolSchema,
         handler: async (caller: Caller, input: TaskCreate) => await ctx.tasks.create(caller, input),
       },
       {

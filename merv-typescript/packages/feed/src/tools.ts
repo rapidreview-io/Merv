@@ -1,9 +1,9 @@
-import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type { ToolDefinition } from '@merv/api/types';
 import type { FeedInput, FeedListInput } from './types.js';
+import { activitySchema, listSchema, postSchema } from './input.js';
 
 export const feedToolsPlugin = {
   name: 'merv-feed-tools',
@@ -16,17 +16,7 @@ export const feedToolsPlugin = {
         name: 'feed.post',
         description:
           'Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.',
-        inputSchema: z
-          .object({
-            body: z
-              .string()
-              .min(1)
-              .max(8000)
-              .refine((body) => visible(body), 'Post body must be nonblank'),
-            artifactIds: z.array(z.string().min(1)).max(10).optional(),
-            requestId: z.string().min(1).max(200),
-          })
-          .strict(),
+        inputSchema: postSchema.strict(),
         handler: async (caller: Caller, input: FeedInput) => await feed.post(caller, input),
       },
       {
@@ -41,12 +31,7 @@ export const feedToolsPlugin = {
         name: 'feed.list',
         description:
           'Read project posts in ascending sequence order: the newest page without a cursor, or the page after the exclusive post sequence cursor `after`. limit defaults to 50 and is capped at 100.',
-        inputSchema: z
-          .object({
-            after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-            limit: z.number().int().min(1).max(100).optional(),
-          })
-          .strict(),
+        inputSchema: listSchema.strict(),
         readOnly: true,
         handler: async (caller: Caller, input: FeedListInput) => await feed.list(caller, input),
       },
@@ -54,9 +39,7 @@ export const feedToolsPlugin = {
         name: 'feed.activity',
         description:
           'Read durable activity events for the current project: the newest 1,000 without a cursor, or the 1,000 after the exclusive event ID cursor `after`, which is independent of the feed post sequence.',
-        inputSchema: z
-          .object({ after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() })
-          .strict(),
+        inputSchema: activitySchema.strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { after?: number }) =>
           await feed.activity(caller, input.after),

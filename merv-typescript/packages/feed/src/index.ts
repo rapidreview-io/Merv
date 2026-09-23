@@ -1,4 +1,6 @@
-import { visible, recorded, createService, plain, receipted } from '@merv/contracts';
+import { visible, recorded, createService, parsed, plain, receipted } from '@merv/contracts';
+import { activitySchema, listFields, listSchema, postFields, postSchema } from './input.js';
+import { requestIdSchema } from './input.js';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -74,10 +76,9 @@ export class FeedService implements Feed {
         'invalid_input',
         'Feed input must be an object',
       );
+      // Only the requestId is checked before a stored receipt replays; the post is checked below.
       check(
-        typeof input.requestId === 'string' &&
-          visible(input.requestId) &&
-          input.requestId.length <= 200,
+        requestIdSchema.safeParse(input.requestId).success,
         'invalid_request',
         'requestId must contain 1–200 characters with visible text',
       );
@@ -102,23 +103,8 @@ export class FeedService implements Feed {
   }
 
   private async write(caller: Caller, input: FeedInput, tx: Transaction): Promise<FeedPost> {
-    check(
-      typeof input.body === 'string' && visible(input.body) && input.body.length <= 8000,
-      'invalid_body',
-      'Post body must be nonblank and at most 8000 characters',
-    );
-    const artifactIds = input.artifactIds === undefined ? [] : input.artifactIds;
-    check(
-      Array.isArray(artifactIds) &&
-        artifactIds.every((id) => typeof id === 'string' && visible(id)),
-      'invalid_attachments',
-      'Attachments are artifact IDs',
-    );
-    check(
-      artifactIds.length <= 10 && new Set(artifactIds).size === artifactIds.length,
-      'invalid_attachments',
-      'Attach at most 10 distinct artifact IDs',
-    );
+    input = parsed(postSchema, input, 'invalid_input', { fields: postFields });
+    const artifactIds = input.artifactIds ?? [];
     // Attachments may be authored by anyone in this project; access comes from Artifacts.
     for (const id of artifactIds) await this.artifacts.get(caller, id, tx);
     const id = newId('post'),
@@ -168,22 +154,11 @@ export class FeedService implements Feed {
     caller = structuredClone(caller);
     input = structuredClone(input);
     await this.scope.require(caller, 'read');
-    check(
-      input && typeof input === 'object' && !Array.isArray(input),
-      'invalid_input',
-      'List input must be an object',
-    );
+    input = parsed(listSchema, input, 'invalid_input', {
+      object: 'invalid_input',
+      fields: listFields,
+    });
     const { after = 0, limit = 50 } = input;
-    check(
-      Number.isSafeInteger(after) && after >= 0,
-      'invalid_cursor',
-      'after must be a nonnegative integer at most 2^53-1',
-    );
-    check(
-      Number.isSafeInteger(limit) && limit >= 1 && limit <= 100,
-      'invalid_limit',
-      'limit must be an integer from 1 to 100',
-    );
     // Without a cursor the newest page answers, oldest first within it; a cursor pages forward.
     return await this.state.read(async (sql) =>
       (input.after === undefined
@@ -208,7 +183,7 @@ export class FeedService implements Feed {
     caller = structuredClone(caller);
     const actor = await this.scope.require(caller, 'read');
     check(
-      after === undefined || (Number.isSafeInteger(after) && after >= 0),
+      activitySchema.shape.after.safeParse(after).success,
       'invalid_cursor',
       'after must be a nonnegative event ID at most 2^53-1',
     );

@@ -1,4 +1,5 @@
-import { visible, recorded, createService, canonical, digest } from '@merv/contracts';
+import { visible, recorded, createService, canonical, digest, parsed } from '@merv/contracts';
+import { extendLimitFields, extendLimitSchema } from './input.js';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -1151,24 +1152,10 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowLimitStatus> {
     this.assertOpen();
     caller = structuredClone(caller);
+    // The requestId is judged first, as every workflow command judges it.
     this.requestId(input.requestId);
-    checkInstance(input.instanceId);
-    check(
-      typeof input.limit === 'string' && input.limit.length > 0,
-      'invalid_input',
-      'A limit name is required',
-    );
-    check(
-      Number.isSafeInteger(input.additional) && input.additional >= 1 && input.additional <= 100,
-      'invalid_input',
-      'additional must be an integer between 1 and 100',
-    );
-    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
-    check(
-      reason.length > 0 && reason.length <= 500,
-      'invalid_input',
-      'A reason of 1–500 characters is required',
-    );
+    input = parsed(extendLimitSchema, input, 'invalid_input', { fields: extendLimitFields });
+    const { reason } = input;
     const hash = digest({
       operation: 'extend_limit',
       actorId: caller.actorId,

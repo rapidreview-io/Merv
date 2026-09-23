@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
+import { synopsisToolSchema } from './input.js';
 import { paperChangesSchema } from '@merv/contracts';
 import type { Caller, ReviewApplication } from '@merv/contracts';
 
@@ -59,7 +60,7 @@ export const reviewToolsPlugin = {
               .regex(/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/)
               .optional(),
             notes: z.string().min(1).max(16000),
-            synopsis: z.string().min(1).max(420).optional(),
+            synopsis: synopsisToolSchema.optional(),
             findings: z
               .array(
                 z
