@@ -318,7 +318,11 @@ test('HTTP uses bearer identity, validates caller project, input, request size a
   assert.deepEqual(await success.json(), { result: { message: 'hi', caller } });
   assert.equal((await post({ message: 'hi', projectId: 'project-b' })).status, 403);
   assert.equal((await post({ message: 'hi', actorId: 'bob' })).status, 400);
-  assert.equal((await post({ message: 3 })).status, 400);
+  const invalid = await post({ message: 3 });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(((await invalid.json()) as { error: { details: unknown } }).error.details, [
+    { path: ['message'], message: 'Expected string, received number' },
+  ]);
   assert.equal((await post({ message: 'x'.repeat(600) })).status, 413);
   const malformed = await fetch(`${url}/tools/echo`, {
     method: 'POST',

@@ -9,8 +9,16 @@ import { ToolRegistry } from './registry.js';
 
 export { ApiServer, describeTool } from './http.js';
 export type { HttpOptions } from './http.js';
-export { ApiError, ToolRegistry } from './registry.js';
+export { ToolRegistry } from './registry.js';
 export type { ToolDescription } from './registry.js';
+
+/** Runs `fn` in a snapshot scope when a state store is present: no writer lock, writes refused. */
+const snapshotIn =
+  (ctx: Context) =>
+  <T>(fn: () => Promise<T>): Promise<T> => {
+    const state = ctx.get('state');
+    return state ? state.snapshot(fn) : fn();
+  };
 
 export const toolsPlugin = {
   name: 'merv-tools',
@@ -19,10 +27,7 @@ export const toolsPlugin = {
   apply(ctx: Context) {
     ctx.effect(function* () {
       // Read-only tools run in a snapshot scope when a state store is present.
-      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, (fn) => {
-        const state = ctx.get('state');
-        return state ? state.snapshot(fn) : fn();
-      });
+      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, snapshotIn(ctx));
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.
       yield ctx.provide('tools', tools);
@@ -65,13 +70,7 @@ export const apiPlugin = {
       const api = new ApiServer(
         ctx.scope,
         ctx.tools,
-        {
-          ...config,
-          snapshot: (fn) => {
-            const state = ctx.get('state');
-            return state ? state.snapshot(fn) : fn();
-          },
-        },
+        { ...config, snapshot: snapshotIn(ctx) },
         ctx.identity,
       );
       yield () => api.stop();

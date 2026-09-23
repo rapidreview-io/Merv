@@ -14,18 +14,6 @@ import type {
 import { cloneJson, compileSchema } from './schema.js';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 
-export class ApiError extends MervError {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status = 400,
-    readonly details?: unknown,
-  ) {
-    super(code, message, status);
-    this.name = 'ApiError';
-  }
-}
-
 export type { ToolDescription } from './types.js';
 export function isRemoteTool(tool: AnyToolDefinition): tool is RemoteToolDefinition {
   return !!tool && typeof tool === 'object' && 'kind' in tool && tool.kind === 'mcp';
@@ -39,7 +27,7 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
   }
   const schema = zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
   if (!('type' in schema) || schema.type !== 'object')
-    throw new ApiError('invalid_tool', 'Tool input must be an object');
+    throw new MervError('invalid_tool', 'Tool input must be an object');
   return {
     name: tool.name,
     description: tool.description,
@@ -100,17 +88,17 @@ export class ToolRegistry implements Tools {
   ) {}
 
   private open(): void {
-    if (this.stopping) throw new ApiError('unavailable', 'Tool registry is stopping', 503);
+    if (this.stopping) throw new MervError('unavailable', 'Tool registry is stopping', 503);
   }
 
   private prepare(definition: AnyToolDefinition, remote?: Entry['remote']): Entry {
     if (!publishedNamePattern.test(definition.name))
-      throw new ApiError('invalid_tool', 'Invalid tool name');
+      throw new MervError('invalid_tool', 'Invalid tool name');
     if (typeof definition.handler !== 'function')
-      throw new ApiError('invalid_tool', 'Tool handler is required');
+      throw new MervError('invalid_tool', 'Tool handler is required');
     if (isRemoteTool(definition)) {
       if (!remote)
-        throw new ApiError('catalog_required', 'Remote tools require a catalog identity');
+        throw new MervError('catalog_required', 'Remote tools require a catalog identity');
       return this.prepareRemote(definition, remote);
     }
     // Schema changes require a new registration, keeping validation paired with its catalog.
@@ -122,7 +110,7 @@ export class ToolRegistry implements Tools {
       async parse(input) {
         const parsed = await inputSchema.safeParseAsync(input);
         if (!parsed.success)
-          throw new ApiError(
+          throw new MervError(
             'invalid_input',
             'Tool input failed validation',
             400,
@@ -141,12 +129,12 @@ export class ToolRegistry implements Tools {
     try {
       description = cloneJson(metadata);
     } catch {
-      throw new ApiError('invalid_tool', 'Remote tool metadata must be JSON');
+      throw new MervError('invalid_tool', 'Remote tool metadata must be JSON');
     }
     if (!ToolSchema.safeParse(description).success)
-      throw new ApiError('invalid_tool', 'Remote tool description is not valid MCP');
+      throw new MervError('invalid_tool', 'Remote tool description is not valid MCP');
     if (description.execution?.taskSupport && description.execution.taskSupport !== 'forbidden') {
-      throw new ApiError(
+      throw new MervError(
         'unsupported_execution',
         'Remote MCP tasks are not supported; taskSupport must be absent or forbidden',
       );
@@ -166,10 +154,10 @@ export class ToolRegistry implements Tools {
         try {
           data = cloneJson(input);
         } catch {
-          throw new ApiError('invalid_input', 'Remote tool input must be JSON');
+          throw new MervError('invalid_input', 'Remote tool input must be JSON');
         }
         if (!validate(data))
-          throw new ApiError(
+          throw new MervError(
             'invalid_input',
             'Tool input failed JSON Schema validation',
             400,
@@ -186,11 +174,11 @@ export class ToolRegistry implements Tools {
         try {
           result = cloneJson(value);
         } catch {
-          throw new ApiError('invalid_remote_result', 'Remote tool result must be JSON', 502);
+          throw new MervError('invalid_remote_result', 'Remote tool result must be JSON', 502);
         }
         const parsed = CallToolResultSchema.safeParse(result);
         if (!parsed.success)
-          throw new ApiError(
+          throw new MervError(
             'invalid_remote_result',
             'Remote tool returned an invalid MCP result',
             502,
@@ -200,7 +188,7 @@ export class ToolRegistry implements Tools {
           validateOutput &&
           !validateOutput(parsed.data.structuredContent)
         ) {
-          throw new ApiError(
+          throw new MervError(
             'invalid_remote_result',
             'Remote structured content failed its declared output schema',
             502,
@@ -215,16 +203,16 @@ export class ToolRegistry implements Tools {
   register(definition: AnyToolDefinition): () => Promise<void> {
     this.open();
     if (isRemoteTool(definition))
-      throw new ApiError(
+      throw new MervError(
         'catalog_required',
         'Remote MCP tools must be registered through createCatalog',
       );
     if (!definition || typeof definition.name !== 'string')
-      throw new ApiError('invalid_tool', 'Tool name is required');
+      throw new MervError('invalid_tool', 'Tool name is required');
     if (isMountedToolName(definition.name))
-      throw new ApiError('reserved_namespace', 'Mounted tool namespaces are owned by catalogs');
+      throw new MervError('reserved_namespace', 'Mounted tool namespaces are owned by catalogs');
     if (this.entries.has(definition.name))
-      throw new ApiError('duplicate_tool', `Tool already registered: ${definition.name}`, 409);
+      throw new MervError('duplicate_tool', `Tool already registered: ${definition.name}`, 409);
     const entry = this.prepare(definition);
     this.entries.set(entry.name, entry);
     return async () => {
@@ -236,12 +224,12 @@ export class ToolRegistry implements Tools {
   createCatalog(mountId: string): ToolCatalog {
     this.open();
     if (typeof mountId !== 'string' || !mountPattern.test(mountId))
-      throw new ApiError(
+      throw new MervError(
         'invalid_mount',
         'Mount ID must contain 1–64 lowercase letters, digits or hyphens, beginning with a letter or digit',
       );
     if (this.catalogs.has(mountId))
-      throw new ApiError('duplicate_mount', `Mount already registered: ${mountId}`, 409);
+      throw new MervError('duplicate_mount', `Mount already registered: ${mountId}`, 409);
     const catalog: CatalogState = { active: true, current: new Set(), owned: new Set() };
     this.catalogs.set(mountId, catalog);
     let disposing: Promise<void> | undefined;
@@ -249,9 +237,9 @@ export class ToolRegistry implements Tools {
       replace: async (definitions) => {
         this.open();
         if (!catalog.active)
-          throw new ApiError('catalog_closed', 'Remote catalog is disposed', 409);
+          throw new MervError('catalog_closed', 'Remote catalog is disposed', 409);
         if (!Array.isArray(definitions))
-          throw new ApiError('invalid_tool', 'Catalog definitions must be an array');
+          throw new MervError('invalid_tool', 'Catalog definitions must be an array');
         const candidate = new Map<string, Entry>();
         for (const definition of definitions) {
           if (
@@ -260,13 +248,13 @@ export class ToolRegistry implements Tools {
             typeof definition.name !== 'string' ||
             !namePattern.test(definition.name)
           )
-            throw new ApiError('invalid_tool', 'Catalog entries must be named MCP tools');
+            throw new MervError('invalid_tool', 'Catalog entries must be named MCP tools');
           const name = `${namespace}${mountId}.${definition.name}`;
           if (candidate.has(name))
-            throw new ApiError('duplicate_tool', `Duplicate remote tool: ${definition.name}`, 409);
+            throw new MervError('duplicate_tool', `Duplicate remote tool: ${definition.name}`, 409);
           const current = this.entries.get(name);
           if (current && !catalog.current.has(current))
-            throw new ApiError('duplicate_tool', `Tool already registered: ${name}`, 409);
+            throw new MervError('duplicate_tool', `Tool already registered: ${name}`, 409);
           candidate.set(
             name,
             this.prepare({ ...definition, name }, { mountId, toolName: definition.name }),
@@ -274,7 +262,7 @@ export class ToolRegistry implements Tools {
         }
         this.open();
         if (!catalog.active)
-          throw new ApiError('catalog_closed', 'Remote catalog is disposed', 409);
+          throw new MervError('catalog_closed', 'Remote catalog is disposed', 409);
         const previous = [...catalog.current];
         // No awaits between withdrawing the old generation and publishing the complete new one.
         for (const entry of previous)
@@ -303,7 +291,7 @@ export class ToolRegistry implements Tools {
 
   registerSessionPolicy(provider: SessionToolPolicy): () => void {
     if (this.sessions)
-      throw new ApiError('session_provider_conflict', 'Session policy is already registered', 409);
+      throw new MervError('session_provider_conflict', 'Session policy is already registered', 409);
     const registration = { provider };
     this.sessions = registration;
     return () => {
@@ -313,14 +301,14 @@ export class ToolRegistry implements Tools {
 
   private sessionPolicy(): SessionRegistration {
     if (!this.sessions)
-      throw new ApiError('session_unavailable', 'Session policy is unavailable', 503);
+      throw new MervError('session_unavailable', 'Session policy is unavailable', 503);
     return this.sessions;
   }
 
   /** Checked after every provider await: a withdrawn or replaced provider cannot finish a decision. */
   private fence(registration: SessionRegistration): void {
     if (this.sessions !== registration)
-      throw new ApiError(
+      throw new MervError(
         'session_unavailable',
         'Session policy changed during authorization; retry with the current provider',
         503,
@@ -385,7 +373,7 @@ export class ToolRegistry implements Tools {
     this.open();
     caller = structuredClone(caller);
     const entry = this.entries.get(name);
-    if (!entry) throw new ApiError('unknown_tool', `Unknown tool: ${name}`, 404);
+    if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
@@ -393,7 +381,7 @@ export class ToolRegistry implements Tools {
       if (!caller.session) await this.scope.require(caller, 'read');
       if (entry.remote) {
         if (!this.access)
-          throw new ApiError(
+          throw new MervError(
             'tool_forbidden',
             'Remote tools require an explicit access policy',
             403,

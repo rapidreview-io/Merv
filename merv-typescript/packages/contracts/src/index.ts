@@ -201,6 +201,8 @@ export class MervError extends Error {
     public code: string,
     message: string,
     public status = 400,
+    /** Structured detail a transport returns with the refusal, such as per-field issues. */
+    public details?: unknown,
   ) {
     super(message);
     this.name = 'MervError';

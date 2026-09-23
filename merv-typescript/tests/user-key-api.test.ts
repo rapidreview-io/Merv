@@ -189,11 +189,14 @@ test('only the verified owner manages key metadata, rotation lineage and strict 
     [`/account/keys/${issued.key.id}`, 'DELETE', undefined],
   ] as const)
     assert.ok([403, 404].includes((await f.request(path, { token: f.bob, method, body })).status));
-  assert.equal(
-    (await f.request(`/account/keys/${issued.key.id}/rotate`, { body: { grantScope: 'account' } }))
-      .status,
-    400,
+  const widened = await f.request<{ error: { details: unknown } }>(
+    `/account/keys/${issued.key.id}/rotate`,
+    { body: { grantScope: 'account' } },
   );
+  assert.equal(widened.status, 400);
+  assert.deepEqual(widened.body.error.details, [
+    { path: [], message: "Unrecognized key(s) in object: 'grantScope'" },
+  ]);
   const rotated = await f.request<IssuedUserKey>(`/account/keys/${issued.key.id}/rotate`, {
     body: {},
   });
