@@ -16,12 +16,17 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import { createApp } from './fixtures/app.js';
+import { loadConfiguration } from '../src/config.js';
 
 const executable = fileURLToPath(new URL('./fixtures/runner-worker.mjs', import.meta.url));
+const handoffExecutable = fileURLToPath(
+  new URL('./fixtures/runner-managed-handoff.mjs', import.meta.url),
+);
 const terminal = (status: string) => status === 'exited' || status === 'stopped';
 const diagnostics = new WeakMap<MachineRunner, () => string>();
 function files(directory: string): string[] {
@@ -83,9 +88,24 @@ async function until(
     await delay(50);
   }
 }
-async function fixture(t: TestContext, args: string[] = []) {
+async function fixture(t: TestContext, args: string[] = [], managed = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-runner-integration-'));
-  const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
+  const managedSecretEnv = `MERV_RUNNER_MANAGED_${randomUUID().replaceAll('-', '')}`;
+  if (managed) process.env[managedSecretEnv] = randomUUID().repeat(3);
+  const serverDirectory = join(directory, 'server');
+  const entries = managed
+    ? loadConfiguration({ directory: serverDirectory, api: true, port: 0 }).entries.map((entry) =>
+        entry.id === 'sessions'
+          ? { ...entry, config: { ...entry.config, managedSecretEnv } }
+          : entry,
+      )
+    : undefined;
+  const app = await createApp({
+    directory: serverDirectory,
+    ...(managed ? {} : { api: true }),
+    port: 0,
+    ...(entries ? { config: { plugins: entries } } : {}),
+  });
   const boot = await app.ctx.scope.bootstrap({ projectName: 'Machine runner', actorName: 'Owner' });
   const source: Caller = {
     actorId: boot.actor.id,
@@ -125,6 +145,7 @@ async function fixture(t: TestContext, args: string[] = []) {
     for (const runner of runners) await runner.stop();
     await app.stop();
     delete process.env[credentialEnv];
+    if (managed) delete process.env[managedSecretEnv];
     rmSync(directory, { recursive: true, force: true });
   });
   const make = (fetcher?: typeof fetch) => {
@@ -413,6 +434,189 @@ test(
     );
     assert.equal(read.totals.costMicros, 250_000);
     assert.ok(read.totals.toolCalls >= 3, 'The worker’s own MCP calls are counted beside it');
+  },
+);
+
+test(
+  'managed one-assignment runner acknowledges completed handoff without a usage file',
+  { timeout: 35_000 },
+  async (t) => {
+    const f = await fixture(t, [], true);
+    await f.app.ctx.tasks.markFailed(f.source, {
+      taskId: f.task.id,
+      expectedRevision: 0,
+      reason: 'Use the dedicated managed handoff workflow for this Runner test.',
+      requestId: 'retire-fixture-task',
+    });
+    const program = await f.app.ctx.workflows.register(
+      {
+        name: 'runner-managed-handoff',
+        version: 1,
+        managed: true,
+        initial: 'working',
+        states: ['working', 'done'],
+        terminal: ['done'],
+        edges: [{ from: 'working', action: 'finish', to: 'done' }],
+      },
+      {
+        successStates: ['done'],
+        actions: [
+          {
+            name: 'finish',
+            states: ['working'],
+            transitions: ['finish'],
+            tool: 'step.finish',
+            instruction: 'Finish this assignment.',
+            check: async () => {},
+          },
+        ],
+        assignments: [
+          {
+            state: 'working',
+            check: async () => {},
+            execution: {
+              readOnly: false,
+              tools: [{ name: 'step.finish', alternatives: [{}] }],
+            },
+            build: () => ({
+              role: 'producer',
+              label: 'Managed handoff',
+              brief: 'Complete the handoff and hold until Runner stops this process.',
+              references: [],
+              handoff: { instruction: 'Call step.finish.', tools: ['step.finish'] },
+              execution: {
+                readOnly: false,
+                tools: [{ name: 'step.finish', arguments: {} }],
+              },
+              context: null,
+            }),
+            lease: {
+              role: () => 'producer' as const,
+              acquire: () => ({}),
+              check: () => {},
+              release: () => {},
+            },
+          },
+        ],
+      },
+    );
+    t.after(program.dispose);
+    const target = await program.start(f.source, {
+      workflow: 'runner-managed-handoff',
+      requestId: 'managed-handoff-start',
+    });
+    const unregisterTool = f.app.ctx.tools.register({
+      name: 'step.finish',
+      description: 'Complete the managed handoff.',
+      inputSchema: z.object({}).strict(),
+      handler: async (caller) =>
+        await program.transition(caller, {
+          instanceId: target.id,
+          expectedRevision: 0,
+          action: 'finish',
+          requestId: 'managed-handoff-finish',
+        }),
+    });
+    t.after(unregisterTool);
+    f.config.oneAssignment = true;
+    f.config.profiles = [
+      {
+        name: 'test-worker',
+        harness: 'codex',
+        executable: handoffExecutable,
+        isolatedLauncher: process.execPath,
+        enabled: true,
+        parallelism: 1,
+      },
+    ];
+    const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
+    const profile = { name: 'test-worker', harness: 'codex' as const, enabled: true, parallelism: 1 };
+    const unregister = f.app.ctx.sessions.registerManagedValidator({
+      current: async (binding) => binding.allocationId === allocationId,
+      admits: async () => true,
+    });
+    t.after(unregister);
+    const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
+      allocationId,
+      epoch: 1,
+      source: await f.app.ctx.scope.delegationSource(f.source),
+      runtimeProfileId: 'test-profile',
+      platform: profile,
+      capabilities: [],
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {});
+    process.env[f.credentialEnv] = control.controlToken;
+    const releases: unknown[] = [];
+    let dropFirstAcknowledgement = true;
+    const runner = f.make(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith('/release')) {
+        releases.push(JSON.parse(String(init?.body)));
+        if (dropFirstAcknowledgement) {
+          dropFirstAcknowledgement = false;
+          throw new TypeError('Injected transient release acknowledgement outage');
+        }
+      }
+      return fetch(input, init);
+    });
+    await runner.start();
+    await f.enabled(true);
+    await until(
+      async () =>
+        (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.outcome ===
+        'completed',
+      runner,
+      'completed managed handoff',
+    );
+    await until(
+      () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
+      runner,
+      'local process stop',
+    );
+    await until(() => releases.length === 1, runner, 'first managed release attempt');
+    assert.equal(runner.snapshot().launches[0]?.releasePending, true);
+    assert.equal(
+      (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
+      false,
+    );
+    await until(() => releases.length === 2, runner, 'retried managed release acknowledgement');
+    assert.deepEqual(releases, [
+      { runnerId: runner.snapshot().runnerId },
+      { runnerId: runner.snapshot().runnerId },
+    ]);
+    assert.equal(runner.snapshot().launches[0]?.releasePending, false);
+    assert.equal(
+      (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
+      true,
+    );
+    await runner.tick();
+    assert.equal(releases.length, 2, 'the durable ledger prevents a duplicate acknowledgement');
+  },
+);
+
+test(
+  'ordinary runner still skips an empty report after remote closure',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t, ['--hold']);
+    let releases = 0;
+    const runner = f.make(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith('/release')) releases++;
+      return fetch(input, init);
+    });
+    await runner.start();
+    await f.enabled(true);
+    await until(() => childResults(f.runnerDirectory).length === 1, runner, 'holding worker');
+    await f.app.ctx.sessions.halt(f.source);
+    await until(
+      () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
+      runner,
+      'ordinary local stop',
+    );
+    await runner.tick();
+    assert.equal(releases, 0);
   },
 );
 

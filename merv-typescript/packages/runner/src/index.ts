@@ -534,7 +534,10 @@ export class MachineRunner implements Runner {
     });
     if (!liveSession(session)) {
       record = await this.host.stop(record.id);
-      this.save(record.id, { remoteClosed: true, releasePending: !terminalLaunch(record) });
+      this.save(record.id, {
+        remoteClosed: true,
+        releasePending: this.config.oneAssignment || !terminalLaunch(record),
+      });
       if (terminalLaunch(record)) {
         await this.reportUsage(record);
         await this.finishWorkspace(record);
@@ -744,20 +747,21 @@ export class MachineRunner implements Runner {
       return;
     }
   }
-  /**
-   * A worker whose handoff landed is closed by the server, so this runner never releases it,
-   * and that is the ending almost all real usage has. The report is owed until the server
-   * has answered it, which the ledger remembers across restarts; a refusal is an answer.
-   */
+  /** A managed runner acknowledges local stop even when a remote handoff left no usage file. */
   private async reportUsage(record: LaunchRecord): Promise<void> {
     if (record.metadata.usageReported === true) return;
     const usage = this.readUsage(record);
+    if (this.config.oneAssignment) this.save(record.id, { releasePending: true });
     try {
-      if (usage) await this.client.reportUsage(record.sessionId, this.ledger.runnerId, usage);
+      if (usage || this.config.oneAssignment)
+        await this.client.reportUsage(record.sessionId, this.ledger.runnerId, usage);
     } catch (error) {
       if (!(error instanceof RunnerControlError) || error.unavailable) throw error;
     }
-    this.save(record.id, { usageReported: true });
+    this.save(record.id, {
+      usageReported: true,
+      ...(this.config.oneAssignment ? { releasePending: false } : {}),
+    });
   }
   /** Stop a launch, capture what an ended one left, and owe the server its release. */
   private async halt(id: string, patch: Record<string, unknown> = {}): Promise<void> {

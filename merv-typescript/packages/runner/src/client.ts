@@ -415,15 +415,13 @@ export class RunnerClient {
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }
-  /**
-   * A session its own handoff closed has nothing left to release, yet that is the session
-   * with usage worth reporting. The release route accepts the report alone and changes
-   * nothing else about a session that has already ended.
-   */
-  async reportUsage(id: string, runnerId: string, usage: SessionUsageReport): Promise<Session> {
+  /** The release route also acknowledges that a managed runner stopped locally. */
+  async reportUsage(id: string, runnerId: string, usage?: SessionUsageReport): Promise<Session> {
     return this.session(
-      (await this.request(`/sessions/${encodeURIComponent(id)}/release`, { runnerId, usage }))
-        ?.session,
+      (await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
+        runnerId,
+        ...(usage ? { usage } : {}),
+      }))?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }
