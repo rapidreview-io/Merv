@@ -15,11 +15,8 @@ export const reflectionUiPlugin = {
         order: 35,
         path: '/reflections',
         view: { kind: 'reflections' },
-        status: async (caller: Caller) => ({
-          count: (await reflections.list(caller)).filter(
-            (wave) => wave.workflow.state !== 'approved',
-          ).length,
-        }),
+        // Only one wave is ever open in a project.
+        status: async (caller: Caller) => ({ count: (await reflections.open(caller)) ? 1 : 0 }),
         read: async (caller: Caller) =>
           JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
       }),

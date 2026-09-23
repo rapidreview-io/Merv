@@ -1354,15 +1354,17 @@ export class ReflectionService implements Reflections {
       return await this.get(caller, wave.id, tx);
     });
   }
-  async open(caller: Caller, tx: Transaction): Promise<string | undefined> {
+  async open(caller: Caller, transaction?: Transaction): Promise<string | undefined> {
     caller = structuredClone(caller);
-    await this.read(caller, tx);
-    return (
-      await tx.get<{ id: string }>(
-        'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
-        caller.projectId,
-      )
-    )?.id;
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.read(caller, tx);
+      return (
+        await tx.get<{ id: string }>(
+          'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
+          caller.projectId,
+        )
+      )?.id;
+    });
   }
   async approved(
     caller: Caller,

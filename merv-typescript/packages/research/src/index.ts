@@ -132,8 +132,6 @@ const ENDING_REASON_CHARS = 2000;
 const DIGEST_LIST_LIMIT = 100;
 /** How far research.lineage walks back before it says the chain goes on. */
 const LINEAGE_LIMIT = 20;
-/** Experiments counts these states as no longer active; the plan's experiments are sized against the rest. */
-const finishedExperiment = new Set(['complete', 'abandoned', 'failed']);
 const instructions: Record<Stage, string> = {
   defining:
     'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
@@ -810,18 +808,16 @@ export class ResearchService implements Research {
     this.requireCapability('tasks', checks);
     const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
     if (planned.length) {
-      const existing = await this.use('experiments', checks, (service) => service.list(caller, tx));
-      const taken = new Set(existing.map((experiment) => experiment.name.toLowerCase()));
+      const { names, active } = await this.use('experiments', checks, (service) =>
+        service.occupancy(caller, tx),
+      );
       for (const name of planned)
         check(
-          !taken.has(name.toLowerCase()),
+          !names.includes(name.toLowerCase()),
           'experiment_name_conflict',
           `An experiment already uses the planned name ${name}. Complete this cycle with nextWave: "skip" and create the work under another name`,
           409,
         );
-      const active = existing.filter(
-        (experiment) => !finishedExperiment.has(experiment.workflow.state),
-      ).length;
       check(
         active + planned.length <= 7,
         'experiment_limit',

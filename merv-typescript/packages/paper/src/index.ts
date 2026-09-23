@@ -103,11 +103,15 @@ export class PaperService implements Paper {
             documentKind,
           );
           const publication = row ? (JSON.parse(row.record) as PaperPublication) : null;
-          const document = publication
-            ? (await this.history(caller, documentKind, tx)).find(
-                (r) => r.revision === publication.revision,
-              )!
-            : null;
+          const published =
+            publication &&
+            (await tx.get<{ record: string }>(
+              'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
+              caller.projectId,
+              documentKind,
+              publication.revision,
+            ));
+          const document = published ? (JSON.parse(published.record) as PaperRevision) : null;
           return [
             documentKind,
             { current, published: publication && document ? { publication, document } : null },

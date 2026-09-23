@@ -12,6 +12,7 @@ import type {
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
+  ExperimentOccupancy,
   ExperimentTransition,
 } from './models.js';
 export type * from './models.js';
@@ -20,6 +21,8 @@ export interface Experiments {
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
   list(caller: Caller, tx?: Transaction): Promise<Experiment[]>;
+  /** Every experiment's name, lowercased, and how many are not yet complete, abandoned or failed. */
+  occupancy(caller: Caller, tx?: Transaction): Promise<ExperimentOccupancy>;
   attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentEvidence>;
   transition(caller: Caller, input: ExperimentTransition, tx?: Transaction): Promise<Experiment>;
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;

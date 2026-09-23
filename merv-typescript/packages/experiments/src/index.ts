@@ -33,6 +33,7 @@ import type {
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
+  ExperimentOccupancy,
   Experiments,
   ExperimentSubmission,
   ExperimentTransition,
@@ -309,6 +310,21 @@ export class ExperimentService implements Experiments {
       );
     });
   }
+  async occupancy(caller: Caller, transaction?: Transaction): Promise<ExperimentOccupancy> {
+    this.open();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const rows = await tx.all<{ name: string; state: string }>(
+        'SELECT e.name,w.state FROM experiments e JOIN wf_instances w ON w.id=e.id WHERE e.project_id=?',
+        caller.projectId,
+      );
+      return {
+        names: rows.map((row) => row.name.toLowerCase()),
+        active: rows.filter((row) => !terminal.has(row.state)).length,
+      };
+    });
+  }
   async create(
     caller: Caller,
     value: ExperimentCreate,
@@ -326,15 +342,15 @@ export class ExperimentService implements Experiments {
           'An assigned experiment worker cannot create a separate experiment',
           403,
         );
-        const existing = await this.list(caller, tx);
+        const { names, active } = await this.occupancy(caller, tx);
         check(
-          !existing.some((e) => e.name.toLowerCase() === input.name.toLowerCase()),
+          !names.includes(input.name.toLowerCase()),
           'experiment_name_conflict',
           'An experiment already uses this name',
           409,
         );
         check(
-          existing.filter((e) => !terminal.has(e.workflow.state)).length < 7,
+          active < 7,
           'experiment_limit',
           'At most seven experiments may be active in this project',
           409,

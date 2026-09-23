@@ -4,6 +4,11 @@ import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
 export type ExperimentTransitionName =
   'submit_design' | 'submit_results' | 'retry_running' | 'abandon' | 'mark_failed';
+/** What creating another experiment is checked against. */
+export interface ExperimentOccupancy {
+  names: string[];
+  active: number;
+}
 export interface ExperimentCreate {
   name: string;
   intent: string;
