@@ -23,7 +23,6 @@ import type {
   WorkflowSnapshot,
   WorkflowStart,
   WorkflowTransition,
-  WorkflowUpgrade,
   WorkflowPolicy,
   WorkflowEvaluationInput,
   WorkflowDecision,
@@ -39,8 +38,6 @@ import type {
   WorkflowDispatchCandidate,
   WorkflowLease,
   WorkflowLeaseOffer,
-  WorkflowReadReferences,
-  WorkflowExecutionReferences,
   WorkflowCheckContext,
   WorkflowHistoryEntry,
   WorkflowExtendLimit,
@@ -108,6 +105,11 @@ const migrations = [
     version: 6,
     sql: postgresMigrations[6],
   },
+  {
+    // Deletes the instances of retired versions; see packages/workflows/README.md.
+    version: 7,
+    sql: postgresMigrations[7],
+  },
 ];
 
 /** The most instances one dependency closure is walked over. */
@@ -135,7 +137,6 @@ export type { WorkflowHistoryEntry } from '@merv/contracts';
 /** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
-  private readonly readProviders = new Map<string, WorkflowReadReferences>();
   private closed = false;
 
   constructor(
@@ -146,27 +147,6 @@ export class WorkflowsService implements Workflows {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('workflows', migrations);
-  }
-
-  registerReadReferences(provider: WorkflowReadReferences): () => void {
-    this.assertOpen();
-    check(
-      provider.id && typeof provider.resolve === 'function',
-      'invalid_read_provider',
-      'A read provider needs an ID and resolver',
-    );
-    check(
-      !this.readProviders.has(provider.id),
-      'read_provider_exists',
-      'This read provider is already registered',
-      409,
-    );
-    const registration = { ...provider };
-    this.readProviders.set(provider.id, registration);
-    return () => {
-      if (this.readProviders.get(registration.id) === registration)
-        this.readProviders.delete(registration.id);
-    };
   }
 
   private async admitRead(
@@ -210,66 +190,7 @@ export class WorkflowsService implements Workflows {
         await this.scope.require(caller, 'read', tx);
         return { tool, input: structuredClone(input) };
       }
-      // The fixed policy remains authoritative. A coordinator may supplement only
-      // a denied resource read, never a tool grant, scalar binding or write.
-      if (
-        error.code !== 'execution_arguments_forbidden' ||
-        !['artifact.get', 'artifact.read', 'review.get'].includes(tool)
-      )
-        throw error;
-      const fields = new Set(
-        execution.policy.tools
-          .find((entry) => entry.name === tool)!
-          .alternatives.flatMap((entry) =>
-            Object.values(entry).flatMap((binding) =>
-              binding.kind === 'oneOf' ? [binding.name] : [],
-            ),
-          ),
-      );
-      const references = executionMetadata(execution.references);
-      const snapshot = await this.readSnapshot(tx, caller.projectId, execution.instanceId);
-      const context = readContext({
-        caller,
-        snapshot,
-        tx,
-        dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
-      });
-      const additions: {
-        provider: WorkflowReadReferences;
-        references: WorkflowExecutionReferences;
-      }[] = [];
-      // Snapshot registrations before yielding. New/replaced providers belong to the next request.
-      for (const provider of [...this.readProviders.values()]) {
-        if (this.readProviders.get(provider.id) !== provider) continue;
-        const extra = executionMetadata(await provider.resolve(context, tool));
-        if (extra && this.readProviders.get(provider.id) === provider)
-          additions.push({ provider, references: extra });
-      }
-      await this.scope.require(caller, 'read', tx);
-      const after = await this.readSnapshot(tx, caller.projectId, snapshot.id);
-      this.requireActive(registration);
-      check(
-        canonical(after) === canonical(snapshot),
-        'invalid_read_provider',
-        'Read providers must not change the workflow instance',
-        500,
-      );
-      for (const { provider, references: extra } of additions) {
-        if (this.readProviders.get(provider.id) !== provider) continue;
-        for (const [name, ids] of Object.entries(extra)) {
-          if (!fields.has(name)) continue;
-          check(
-            Array.isArray(references[name]) &&
-              Array.isArray(ids) &&
-              ids.every((id) => typeof id === 'string' && id.length > 0),
-            'invalid_read_provider',
-            'Read providers may extend only declared resource arrays',
-            500,
-          );
-          references[name] = [...new Set([...(references[name] as string[]), ...ids])];
-        }
-      }
-      return admitDispatch({ ...execution, references }, tool, input);
+      throw error;
     }
   }
 
@@ -348,10 +269,6 @@ export class WorkflowsService implements Workflows {
       transition: async (caller, input, tx) => {
         this.requireActive(registration);
         return await this.transitionInternal(caller, input, tx, registration);
-      },
-      upgrade: async (caller, input, tx) => {
-        this.requireActive(registration);
-        return await this.upgradeInternal(caller, input, registration, tx);
       },
       addDependencies: async (caller, input, tx) => {
         this.requireActive(registration);
@@ -1940,137 +1857,6 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  private async upgradeInternal(
-    caller: Caller,
-    { ...input }: WorkflowUpgrade,
-    target: Registration,
-    tx?: Transaction,
-  ): Promise<WorkflowSnapshot> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    this.requestId(input.requestId);
-    check(
-      typeof input.instanceId === 'string' && input.instanceId.length > 0,
-      'invalid_instance',
-      'Workflow instance id is required',
-    );
-    check(
-      Number.isSafeInteger(input.fromVersion) && input.fromVersion > 0,
-      'invalid_version',
-      'Source workflow version must be a positive integer',
-    );
-    check(
-      Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
-      'invalid_revision',
-      'Expected revision must be a nonnegative integer',
-    );
-    const destination = target.definition;
-    const hash = fingerprint({
-      operation: 'upgrade',
-      actorId: caller.actorId,
-      workflow: destination.name,
-      instanceId: input.instanceId,
-      fromVersion: input.fromVersion,
-      toVersion: destination.version,
-      expectedRevision: input.expectedRevision,
-    });
-    return await inTransaction(this.state, tx, async (transaction) => {
-      await this.scope.require(caller, 'write', transaction);
-      const sourceRegistration = this.definition(destination.name, input.fromVersion);
-      const source = sourceRegistration.definition;
-      check(
-        source.managed && destination.managed,
-        'workflow_upgrade_forbidden',
-        'Only a managed program can upgrade its workflow instances',
-        403,
-      );
-      const before = await this.readSnapshot(transaction, caller.projectId, input.instanceId);
-      check(
-        before.workflow === destination.name,
-        'workflow_handle_mismatch',
-        'The program handle does not own this workflow',
-        403,
-      );
-      // A completed command replays its historical response even after a later transition.
-      const replay = await this.replay(transaction, caller.projectId, input.requestId, hash);
-      if (replay) {
-        this.requireActive(target);
-        this.requireActive(sourceRegistration);
-        return replay;
-      }
-      check(
-        destination.version > source.version &&
-          destination.initial === source.initial &&
-          canonical(destination.states) === canonical(source.states) &&
-          canonical(destination.terminal) === canonical(source.terminal) &&
-          source.edges.every((edge) =>
-            destination.edges.some(
-              (next) =>
-                next.from === edge.from && next.action === edge.action && next.to === edge.to,
-            ),
-          ),
-        'workflow_upgrade_incompatible',
-        'An upgrade must select a newer version with unchanged states and all existing transitions',
-        409,
-      );
-      check(
-        before.version === input.fromVersion,
-        'workflow_version_conflict',
-        'The workflow no longer uses the expected source version',
-        409,
-      );
-      check(
-        before.revision === input.expectedRevision,
-        'revision_conflict',
-        `Expected revision ${input.expectedRevision}, found ${before.revision}`,
-        409,
-      );
-      check(
-        !source.terminal.includes(before.state),
-        'invalid_transition',
-        'Terminal workflow instances cannot be upgraded',
-        409,
-      );
-      const after: WorkflowSnapshot = {
-        ...before,
-        version: destination.version,
-        revision: before.revision + 1,
-        updatedAt: now(),
-      };
-      const changed = await transaction.run(
-        'UPDATE wf_instances SET version=?, revision=?, updated_at=? WHERE id=? AND project_id=? AND version=? AND revision=?',
-        after.version,
-        after.revision,
-        after.updatedAt,
-        before.id,
-        caller.projectId,
-        before.version,
-        before.revision,
-      );
-      check(
-        changed.changes === 1,
-        'revision_conflict',
-        'Workflow changed while upgrading its definition',
-        409,
-      );
-      const metadata = { fromVersion: before.version, toVersion: after.version };
-      await this.record(
-        transaction,
-        caller,
-        after,
-        input.requestId,
-        hash,
-        'upgrade',
-        before.state,
-        metadata,
-        metadata,
-      );
-      this.requireActive(target);
-      this.requireActive(sourceRegistration);
-      return after;
-    });
-  }
-
   private definition(name: string, version?: number): Registration {
     const registration =
       version === undefined
@@ -2270,7 +2056,6 @@ export class WorkflowsService implements Workflows {
   close(): void {
     this.closed = true;
     this.registrations.clear();
-    this.readProviders.clear();
   }
 
   private assertOpen(): void {

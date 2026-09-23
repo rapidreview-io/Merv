@@ -189,7 +189,7 @@ interface ReviewRow {
   provenance_json: string | null;
   artifact_ids: string;
   criteria: string;
-  format_version: 1 | 2;
+  format_version: 2;
   manifest: string;
   snapshot_hash: string;
   status: ReviewRequest['status'];
@@ -286,6 +286,10 @@ export class ReviewService implements Reviews {
         {
           version: 9,
           sql: postgresMigrations[9],
+        },
+        {
+          version: 10,
+          sql: postgresMigrations[10],
         },
       ]);
     };
@@ -517,7 +521,6 @@ export class ReviewService implements Reviews {
         ...result,
         administrativeActorId: result.administrativeActorId ?? result.producerId,
         pinnedInputIds: result.pinnedInputIds ?? [],
-        formatVersion: result.formatVersion ?? 1,
         synopsis: result.synopsis ?? null,
         findings: result.findings ?? [],
         evidence: result.evidence ?? {},
@@ -653,12 +656,9 @@ export class ReviewService implements Reviews {
         'invalid_revision',
         'subjectRevision must be a nonnegative integer',
       );
-      const formatVersion = input.formatVersion === undefined ? 1 : input.formatVersion;
-      check(
-        formatVersion === 1 || formatVersion === 2,
-        'invalid_review_format',
-        'Review formatVersion must be 1 or 2',
-      );
+      // Format 2 is the only verdict format; an omitted field means it, and null is refused.
+      const formatVersion = input.formatVersion === undefined ? 2 : input.formatVersion;
+      check(formatVersion === 2, 'invalid_review_format', 'Review formatVersion must be 2');
       check(
         Array.isArray(input.criteria) &&
           input.criteria.length > 0 &&
@@ -666,13 +666,10 @@ export class ReviewService implements Reviews {
         'invalid_criteria',
         'At least one nonempty assessment criterion is required',
       );
-      // A format 1 verdict may carry no findings, so it has nothing a required criterion
-      // could hold the reviewer to.
       check(
-        !required ||
-          (formatVersion === 2 && required.every((number) => number <= input.criteria.length)),
+        !required || required.every((number) => number <= input.criteria.length),
         'invalid_required_criteria',
-        "Required criteria must be numbers of this review's criteria, on a format 2 review",
+        "Required criteria must be numbers of this review's criteria",
       );
       check(
         Array.isArray(input.artifactIds) &&
@@ -739,7 +736,7 @@ export class ReviewService implements Reviews {
               administrativeActorId: input.administrativeActorId ?? input.producerId,
             }
           : {}),
-        ...(formatVersion === 2 ? { formatVersion } : {}),
+        formatVersion,
         ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
         ...(required === undefined ? {} : { requiredCriteria: required }),
       });

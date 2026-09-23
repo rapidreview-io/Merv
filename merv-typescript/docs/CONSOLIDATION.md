@@ -9,8 +9,7 @@ The dedicated `@merv/consolidation` plugin was retired on 2026-09-22. Its packag
 registrations, tools, UI and special Code integration are removed. Remove its three entries
 (`consolidation`, `consolidation-tools`, `consolidation-ui`) from custom configurations.
 
-Existing database and Git records are retained without rewriting approvals or deleting
-history. The retired workflow has no execution or publication provider. A pre-version-6
-research cycle that requires that workflow reports `research_consolidation_retired`; start a
-new research cycle to use consolidation tasks. Previously committed Research command receipts
-still replay. Retained Git evidence continues to constrain repository integrity operations.
+The version-retirement migrations then deleted its workflow instances, together with the
+retired `research@2`–`5` cycles that used them, and `research@7` dropped its tables, guard
+functions and migration receipts; the ids stay listed in `wf_retired_instances` and the
+`events` log. Retained Git evidence continues to constrain repository integrity operations.

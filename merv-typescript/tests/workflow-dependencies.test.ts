@@ -393,7 +393,7 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
   assert.deepEqual((await workflows.dependencies(caller, b.id)).dependencies, []);
 });
 
-test('success declarations and edge contracts survive upgrade, provider removal, and database restart', async (t) => {
+test('success declarations and edge contracts survive provider removal and database restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-work-deps-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let { state, scope, workflows, caller } = await setup(directory);
@@ -401,24 +401,24 @@ test('success declarations and edge contracts survive upgrade, provider removal,
   t.after(async () => {
     if (!closed) await state.close();
   });
+  // Each edge pins its target version's success declaration: the same finishing state settles
+  // a prerequisite on version 1 and fails one on version 2, which declares a different success.
   const v1 = await workflows.register(graph(), policy());
-  const upstream = await start(v1, caller, 'preparation', 'upstream');
-  const oldDependent = await start(v1, caller, 'preparation', 'old', [upstream.id]);
   const v2 = await workflows.register(graph('preparation', 'done', 2), policy('failed'));
-  const upgraded = await v2.upgrade(caller, {
-    instanceId: upstream.id,
-    fromVersion: 1,
-    expectedRevision: 0,
-    requestId: 'upgrade',
-  });
-  assert.equal(upgraded.version, 2);
-  const newDependent = await start(v2, caller, 'preparation', 'new', [upstream.id]);
-  await v2.transition(caller, {
-    instanceId: upstream.id,
-    expectedRevision: 1,
-    action: 'finish',
-    requestId: 'finish',
-  });
+  const upstream = await start(v1, caller, 'preparation', 'upstream');
+  const later = await start(v2, caller, 'preparation', 'later');
+  const oldDependent = await start(v1, caller, 'preparation', 'old', [upstream.id]);
+  const newDependent = await start(v2, caller, 'preparation', 'new', [later.id]);
+  for (const [handle, target] of [
+    [v1, upstream],
+    [v2, later],
+  ] as const)
+    await handle.transition(caller, {
+      instanceId: target.id,
+      expectedRevision: 0,
+      action: 'finish',
+      requestId: `finish-${target.id}`,
+    });
   assert.equal(
     (await workflows.dependencies(caller, oldDependent.id)).dependencies[0].settled,
     true,

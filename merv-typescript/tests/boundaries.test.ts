@@ -164,6 +164,16 @@ const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 const capabilityOf = (owner: string) => (owner === 'code-research' ? 'codeResearch' : owner);
 
+/**
+ * Contracts belongs to no component. Besides its index, a component may run only these shared
+ * modules: the retirement ledger text that every retirement migration embeds.
+ */
+const contractsRuntimeExports = new Set(['retired-instances']);
+const sharedContract = (specifier: string) =>
+  specifier === '@merv/contracts' ||
+  (specifier.startsWith('@merv/contracts/') &&
+    contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
+
 /** This adapter composes the Git utility; no other feature may import its implementation. */
 const codeUtilityExports = new Set([
   'base-merge',
@@ -376,7 +386,7 @@ function assertComponentReferences(
   const isAdapter = adapterKind(path) !== undefined;
   for (const reference of moduleReferences(source)) {
     const { specifier, typeOnly } = reference;
-    if (specifier.startsWith('@merv/') && specifier !== '@merv/contracts') {
+    if (specifier.startsWith('@merv/') && !sharedContract(specifier)) {
       const utility =
         owner === 'code-research' &&
         specifier.startsWith('@merv/code/') &&

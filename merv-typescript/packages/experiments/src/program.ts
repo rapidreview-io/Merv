@@ -41,24 +41,19 @@ const producing = (state: string) => state === 'planned' || state === 'running';
 
 /**
  * Registered program versions by workspace kind. A published execution policy is immutable, so
- * versions 1 and 2 are frozen history — their policies stay byte-identical, retired grants
- * included — and any policy change publishes a new version. New experiments start on 5 or 6,
- * or 7 with an explicit accepted task as base. In a project Code hosts, Git work without an
- * explicit base starts on 8: the first producing lease pins the derived base, normally at
- * planning, and execution inherits it. Only execution reserves a writer generation.
+ * any policy change publishes a new version. New experiments start on 5 or 6, or 7 with an
+ * explicit accepted task as base. In a project Code hosts, Git work without an explicit base
+ * starts on 8: the first producing lease pins the derived base, normally at planning, and
+ * execution inherits it. Only execution reserves a writer generation. Versions 1-4 could no
+ * longer start and were retired on 2026-09-22 together with their records (experiments@4).
  */
 const workspaces: Record<number, 'none' | 'git'> = {
-  1: 'none',
-  2: 'git',
-  3: 'none',
-  4: 'git',
   5: 'none',
   6: 'git',
   7: 'git',
   8: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
-const frozenHistory = (version: number) => version <= 2;
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
 const referencedBase = (version: number) => version === 7 || derivedBase(version);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
@@ -67,14 +62,11 @@ const CODE_DRIVER = 'code.v2';
 export const programVersion = (workspace?: string, baseTaskId?: string, hosted = false): number =>
   workspace !== 'git' ? 5 : baseTaskId !== undefined ? 7 : hosted ? 8 : 6;
 /**
- * From version 5 a design is submitted with a feasibility statement and its review cannot waive
- * the feasibility criterion. Versions 3 and 4 stay registered for the experiments already on
- * them, which finish under the rules they started with.
+ * The evidence a design submission is made of, which is also what a successor planner inherits.
+ * Every registered version submits a design with a feasibility statement, and its review cannot
+ * waive the feasibility criterion.
  */
-export const feasibilityGated = (version: number) => version >= 5;
-/** The evidence a design submission is made of, which is also what a successor planner inherits. */
-export const designRoles = (version: number) =>
-  feasibilityGated(version) ? ['plan', 'feasibility'] : ['plan'];
+export const designRoles: readonly string[] = ['plan', 'feasibility'];
 
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
   name: 'experiment',
@@ -130,9 +122,9 @@ for (const state of ['design_review', 'experiment_review'] as const)
     ' You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.';
 
 /**
- * What a feasibility-gated design adds to the planner's and the design reviewer's handoff. The
- * published handoffs above still serve versions 1-4, so the gate's text is added beside them
- * rather than written into them.
+ * What a feasibility-gated design adds to the planner's and the design reviewer's handoff. It is
+ * added beside the handoffs above rather than written into them, because the published recipe and
+ * the policies of every registered version embed both texts exactly as they are.
  */
 const gatedHandoffs: Partial<Record<ActiveState, string>> = {
   planned:
@@ -140,10 +132,8 @@ const gatedHandoffs: Partial<Record<ActiveState, string>> = {
   design_review:
     'Criterion 4 is required: a pass cannot waive it or leave it not_verified, and its finding must cite the feasibility statement artifact. Open the records the statement names and recompute its numbers, and look for requirements, dependencies and blockers the statement leaves out. If it does not hold, the verdict is needs_changes.',
 };
-const handoff = (state: ActiveState, version: number) =>
-  feasibilityGated(version) && gatedHandoffs[state]
-    ? `${handoffs[state]} ${gatedHandoffs[state]}`
-    : handoffs[state];
+const handoff = (state: ActiveState) =>
+  gatedHandoffs[state] ? `${handoffs[state]} ${gatedHandoffs[state]}` : handoffs[state];
 /** The shape a planner fills in, shown beside the design it is asked for. */
 const feasibilityFormat: FeasibilityStatement = {
   formatVersion: 1,
@@ -330,6 +320,10 @@ export class ExperimentProgram {
         {
           version: 2,
           sql: postgresMigrations[2],
+        },
+        {
+          version: 3,
+          sql: postgresMigrations[3],
         },
       ]);
       try {
@@ -607,10 +601,7 @@ export class ExperimentProgram {
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
-    const roles =
-      experiment.workflow.state === 'planned'
-        ? designRoles(experiment.workflow.version)
-        : ['result', 'report'];
+    const roles = experiment.workflow.state === 'planned' ? designRoles : ['result', 'report'];
     return experiment.evidence.filter(
       (evidence) =>
         evidence.current &&
@@ -697,9 +688,7 @@ export class ExperimentProgram {
             },
           ],
         },
-        ...(state === 'planned' && feasibilityGated(experiment.workflow.version)
-          ? { feasibilityFormat }
-          : {}),
+        ...(state === 'planned' ? { feasibilityFormat } : {}),
         attempt: experiment.attempt,
         workflow: experiment.workflow,
         selectedEvidence: experiment.evidence.filter((evidence) =>
@@ -901,7 +890,7 @@ export class ExperimentProgram {
     const needsClaim = review?.status === 'requested';
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-      : handoff(state, experiment.workflow.version);
+      : handoff(state);
     const preview = await recipe.preview(
       context.caller,
       {
@@ -946,15 +935,7 @@ export class ExperimentProgram {
       state === 'planned'
         ? ['submit_design', 'abandon', 'mark_failed']
         : ['submit_results', 'retry_running', 'abandon', 'mark_failed'];
-    // Frozen history: versions 1 and 2 keep the retired experiment.graph grant and role, because a
-    // published execution policy can never change. No live session can call a retired tool.
-    const frozen = frozenHistory(version);
-    const roles =
-      state === 'planned'
-        ? designRoles(version)
-        : frozen
-          ? ['result', 'report', 'graph']
-          : ['result', 'report'];
+    const roles = state === 'planned' ? designRoles : ['result', 'report'];
     const git = programWorkspace(version) === 'git';
     return {
       readOnly: reviewing(state),
@@ -986,7 +967,6 @@ export class ExperimentProgram {
         ),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
-        ...(frozen ? [grant('experiment.graph', experiment)] : []),
         grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
@@ -1236,7 +1216,7 @@ export class ExperimentProgram {
                   ? 'review_required'
                   : 'independent_review',
           waiting: producing(context.snapshot.state)
-            ? handoff(context.snapshot.state as ActiveState, version)
+            ? handoff(context.snapshot.state as ActiveState)
             : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
           references: [
             ...(context.dependencies ?? []).map((dependency) => ({
@@ -1266,7 +1246,7 @@ export class ExperimentProgram {
         };
       },
       actions: [
-        action('submit_design', ['planned'], handoff('planned', version), true),
+        action('submit_design', ['planned'], handoff('planned'), true),
         action('submit_results', ['running'], handoffs.running, true),
         action(
           'retry_running',
@@ -1291,7 +1271,7 @@ export class ExperimentProgram {
               ? ['approve_design', 'revise_design']
               : ['accept_results', 'revise_plan', 'revise_execution'],
           tool: 'review.submit',
-          instruction: handoff(state, version),
+          instruction: handoff(state),
           requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
           arguments: async (context: WorkflowCheckContext): Promise<Data> => {
             const review = await this.review(context.caller, await this.facts(context), context.tx);

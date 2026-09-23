@@ -522,7 +522,7 @@ test('awaited transition checks share the writer and withdrawal rolls back the e
   );
 });
 
-test('awaited assignment and evidence providers cannot survive their own withdrawal', async (t) => {
+test('an awaited assignment provider cannot survive its own withdrawal', async (t) => {
   const { state, workflows, caller } = await callbackFixture(t);
   const gate = barrier();
   const definition: WorkflowDefinition = {
@@ -593,40 +593,5 @@ test('awaited assignment and evidence providers cannot survive their own withdra
     (await workflows.begin(caller, { instanceId: instance.id, expectedRevision: 0 })).workStart
       ?.revision,
     0,
-  );
-  const execution = await workflows.execution(caller, {
-    instanceId: instance.id,
-    expectedRevision: 0,
-  });
-  const reads = barrier();
-  const remove = workflows.registerReadReferences({
-    id: 'live-evidence',
-    resolve: async ({ snapshot, tx }) => {
-      await reads.wait();
-      assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
-      return { artifacts: ['external-output'] };
-    },
-  });
-  const dispatch = {
-    instanceId: instance.id,
-    expectedRevision: 0,
-    policyHash: execution.policyHash,
-    registrationId: execution.registrationId,
-    tool: 'artifact.read',
-    input: { artifactId: 'external-output' },
-  };
-  const reading = workflows.authorizeDispatch(caller, dispatch);
-  await reads.entered;
-  remove();
-  workflows.registerReadReferences({
-    id: 'live-evidence',
-    resolve: async () => ({ artifacts: ['external-output'] }),
-  });
-  reads.release();
-  await assert.rejects(reading, { code: 'execution_arguments_forbidden' });
-  remove(); // Stale disposal must not withdraw its same-ID replacement.
-  assert.equal(
-    (await workflows.authorizeDispatch(caller, dispatch)).input.artifactId,
-    'external-output',
   );
 });

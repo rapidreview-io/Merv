@@ -57,5 +57,9 @@ export async function migrateExperiments(state: State): Promise<void> {
       version: 3,
       sql: postgresMigrations[3],
     },
+    {
+      version: 4,
+      sql: postgresMigrations[4],
+    },
   ]);
 }

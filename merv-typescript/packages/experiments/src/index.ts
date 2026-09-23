@@ -61,7 +61,6 @@ import {
   designRoles,
   EXPERIMENT_LIMITS,
   ExperimentProgram,
-  feasibilityGated,
   derivedBase,
   programVersion,
   programWorkspace,
@@ -78,22 +77,18 @@ export type * from './types.js';
 
 const terminal = new Set(['complete', 'abandoned', 'failed']);
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
+/**
+ * Feasibility is its own design criterion, the last, so the review can be asked never to waive it;
+ * the statement's arithmetic is its author's, which is why the reviewer is told to look for what it
+ * leaves out as well as for what it gets wrong.
+ */
 const designCriteria = [
   'The plan defines a testable hypothesis and an evaluation that can distinguish it from alternatives.',
   'Controls, baselines, data, metrics and decision criteria make the proposed comparison defensible.',
-  'The proposed execution is feasible and its limitations and possible failure modes are addressed.',
-];
-/**
- * Design criteria from program version 5. Feasibility is its own criterion, the last, so the
- * review can be asked never to waive it; the statement's arithmetic is its author's, which is why
- * the reviewer is told to look for what it leaves out as well as for what it gets wrong.
- */
-const gatedDesignCriteria = [
-  ...designCriteria.slice(0, 2),
   'The limitations and possible failure modes of the proposed execution are addressed.',
   'The feasibility statement is accurate and complete: each required and available quantity, the compute and time estimate, and the presence of every dependency were verified by the reviewer against retained records; no requirement, dependency or blocker the design implies is omitted; and no known blocker remains.',
 ];
-const feasibilityCriterion = gatedDesignCriteria.length;
+const feasibilityCriterion = designCriteria.length;
 const resultsCriteria = [
   'The retained execution and results follow the exact approved plan, with deviations and failures explained.',
   'The submitted measurements agree with the retained results and any metrics exhibit, and the report selects what mattered without hiding known rework.',
@@ -449,10 +444,9 @@ export class ExperimentService implements Experiments {
         );
         await this.program.assertProducer(caller, experiment, tx);
         check(
-          (experiment.workflow.state === 'planned'
-            ? designRoles(experiment.workflow.version)
-            : ['result', 'report']
-          ).includes(input.role),
+          (experiment.workflow.state === 'planned' ? designRoles : ['result', 'report']).includes(
+            input.role,
+          ),
           'invalid_experiment_role',
           'This evidence role is not writable in the current state',
           409,
@@ -509,7 +503,7 @@ export class ExperimentService implements Experiments {
       });
     });
   }
-  private current(experiment: Experiment, roles: string[]): ExperimentEvidence[] {
+  private current(experiment: Experiment, roles: readonly string[]): ExperimentEvidence[] {
     return experiment.evidence.filter(
       (e) => e.current && e.attemptIndex === experiment.attempt.index && roles.includes(e.role),
     );
@@ -517,7 +511,7 @@ export class ExperimentService implements Experiments {
   private async selected(
     caller: Caller,
     experiment: Experiment,
-    roles: string[],
+    roles: readonly string[],
     tx: Transaction,
   ): Promise<ExperimentEvidence[]> {
     const evidence = this.current(experiment, roles);
@@ -756,7 +750,7 @@ export class ExperimentService implements Experiments {
     let evidence = await this.selected(
       caller,
       experiment,
-      stage === 'design' ? designRoles(experiment.workflow.version) : ['result', 'report'],
+      stage === 'design' ? designRoles : ['result', 'report'],
       tx,
     );
     let figureIds: string[] = [];
@@ -766,19 +760,17 @@ export class ExperimentService implements Experiments {
       const text = await this.text(caller, plan.artifactId, tx);
       figureIds = await this.figures(caller, text, experiment, tx);
       validatePlan(text, { figures: figureIds });
-      if (feasibilityGated(experiment.workflow.version)) {
-        const statement = parseFeasibility(
-          await this.text(caller, this.one(evidence, 'feasibility').artifactId, tx),
-        );
-        // The cheap check: a design whose own figures fall short never reaches a reviewer.
-        const shortfalls = feasibilityShortfalls(statement);
-        check(
-          shortfalls.length === 0,
-          'experiment_infeasible',
-          `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason`,
-          409,
-        );
-      }
+      const statement = parseFeasibility(
+        await this.text(caller, this.one(evidence, 'feasibility').artifactId, tx),
+      );
+      // The cheap check: a design whose own figures fall short never reaches a reviewer.
+      const shortfalls = feasibilityShortfalls(statement);
+      check(
+        shortfalls.length === 0,
+        'experiment_infeasible',
+        `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason`,
+        409,
+      );
     } else {
       const approved = this.approved(experiment);
       // Include the exact approved design, never a newer plan association.
@@ -932,16 +924,8 @@ export class ExperimentService implements Experiments {
           : {}),
         artifactIds,
         pinnedInputIds,
-        criteria: [
-          ...(stage !== 'design'
-            ? resultsCriteria
-            : feasibilityGated(experiment.workflow.version)
-              ? gatedDesignCriteria
-              : designCriteria),
-        ],
-        ...(stage === 'design' && feasibilityGated(experiment.workflow.version)
-          ? { requiredCriteria: [feasibilityCriterion] }
-          : {}),
+        criteria: [...(stage === 'design' ? designCriteria : resultsCriteria)],
+        ...(stage === 'design' ? { requiredCriteria: [feasibilityCriterion] } : {}),
         formatVersion: 2,
         requestId: `experiment:submission:${caller.actorId}:${input.requestId}`,
       },

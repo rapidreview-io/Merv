@@ -10,8 +10,6 @@ import {
   LoadState,
   RecordPage,
   Ruled,
-  Short,
-  Stamp,
   StatusPill,
   Submit,
   Summary,
@@ -20,7 +18,6 @@ import {
   words,
 } from '../components';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { Gate, RowDiagram } from '../process';
 import { useScopeKey, useSession } from '../session';
@@ -45,30 +42,7 @@ interface Workflow {
   revision: number;
   updatedAt?: string;
 }
-interface FrozenSource {
-  corpus: {
-    id: string;
-    createdAt: string;
-    manifestHash: string;
-    selection: {
-      project: { name: string };
-      experiments: { id: string; name: string; workflow: Workflow }[];
-      tasks: { id: string; title: string; workflow: Workflow }[];
-      artifacts: (
-        { id: string; status: 'retained'; artifact: Artifact } | { id: string; status: 'missing' }
-      )[];
-    };
-  } | null;
-  paper: {
-    documents: Record<
-      string,
-      { current: { revision: number; sections: { id: string; title: string; content: string }[] } }
-    >;
-    citations: { id: string; title: string; year: number | null; identifier: string }[];
-  } | null;
-}
-interface Reflection extends FrozenSource {
-  experimentIds: string[];
+interface Reflection {
   id: string;
   title: string;
   attempt: number;
@@ -95,17 +69,6 @@ interface Reflection extends FrozenSource {
 }
 type Lens = Reflection['lenses'][number];
 
-/** One band of the frozen snapshot: a heading over its list, or nothing at all. */
-function Band({ title, items }: { title: string; items: ReactNode[] }) {
-  if (!items.length) return null;
-  return (
-    <div className="stack">
-      <h3>{title}</h3>
-      <ul>{items}</ul>
-    </div>
-  );
-}
-
 function EvidenceLink({ artifact }: { artifact: Artifact }) {
   return (
     <Link to={`/artifacts/${artifact.id}`} title={`${artifact.id}\nSHA-256 ${artifact.hash}`}>
@@ -121,95 +84,6 @@ function WaveGate({ id, kind, children }: { id: string; kind: string; children?:
     <Gate graph={process.error ? undefined : process.data} kind={kind}>
       {children}
     </Gate>
-  );
-}
-
-function FrozenSources({ source }: { source: Pick<Reflection, 'corpus' | 'paper'> }) {
-  const { corpus, paper } = source;
-  // A wave that froze nothing reads the live project, which the rail already leads to.
-  if (!corpus || !paper) return null;
-  return (
-    <>
-      <h3 className="ev-role">Frozen sources</h3>
-      <p>
-        {corpus.selection.experiments.length} experiments · {corpus.selection.tasks.length} tasks ·{' '}
-        <Stamp at={corpus.createdAt} />
-      </p>
-      <details className="stack">
-        <Summary>Research snapshot</Summary>
-        <KV
-          rows={[
-            ['Source hash', <Short value={corpus.manifestHash} />],
-            ['Project', corpus.selection.project.name],
-          ]}
-        />
-        <Band
-          title="Experiments"
-          items={corpus.selection.experiments.map((experiment) => (
-            <li key={experiment.id}>
-              <Link to={`/experiments/${experiment.id}`}>{experiment.name}</Link> ·{' '}
-              {experiment.workflow.state}
-            </li>
-          ))}
-        />
-        <Band
-          title="Tasks"
-          items={corpus.selection.tasks.map((task) => (
-            <li key={task.id}>
-              <Link to={`/tasks/${task.id}`}>{task.title}</Link> · {task.workflow.state}
-            </li>
-          ))}
-        />
-        <Band
-          title="Exact evidence"
-          items={corpus.selection.artifacts.map((entry) => (
-            <li key={entry.id}>
-              {entry.status === 'retained' ? (
-                <EvidenceLink artifact={entry.artifact} />
-              ) : (
-                'Unavailable at capture'
-              )}
-            </li>
-          ))}
-        />
-      </details>
-      <details className="stack">
-        <Summary>Paper at capture</Summary>
-        {/* A document nothing was written in by then is not drawn, nor a section left blank. */}
-        {Object.entries(paper.documents)
-          .filter(([, document]) => document.current.sections.length)
-          .map(([kind, document]) => (
-            <section key={kind} className="stack">
-              <h3>
-                {kind === 'problem' ? 'Problem and scope' : kind[0]!.toUpperCase() + kind.slice(1)}
-              </h3>
-              {document.current.sections.map((section) => (
-                <div key={section.id}>
-                  <strong>{section.title}</strong>
-                  {section.content && <Markdown source={section.content} />}
-                </div>
-              ))}
-            </section>
-          ))}
-        {paper.citations.length > 0 && (
-          <h3>
-            References <span className="section-n">{paper.citations.length}</span>
-          </h3>
-        )}
-        {paper.citations.length > 0 && (
-          <ul>
-            {paper.citations.map((citation) => (
-              <li key={citation.id}>
-                {citation.title}{' '}
-                <span className="faint">
-                  {citation.year ?? ''} · {citation.identifier}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </details>
-    </>
   );
 }
 
@@ -370,25 +244,20 @@ function ReflectionDetail({ row, shell }: ViewProps) {
         </>
       }
       related={
-        (wave.review || (wave.corpus && wave.paper)) && (
+        wave.review && (
           <>
-            {wave.review && (
-              <>
-                <h3 className="ev-role">Review</h3>
-                <ReviewSummary review={wave.review} />
-                {(nameOf(wave.review.reviewerId) || wave.review.returnTo) && (
-                  <p className="muted">
-                    {[
-                      nameOf(wave.review.reviewerId),
-                      wave.review.returnTo && `Returned to ${words(wave.review.returnTo)}`,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                )}
-              </>
+            <h3 className="ev-role">Review</h3>
+            <ReviewSummary review={wave.review} />
+            {(nameOf(wave.review.reviewerId) || wave.review.returnTo) && (
+              <p className="muted">
+                {[
+                  nameOf(wave.review.reviewerId),
+                  wave.review.returnTo && `Returned to ${words(wave.review.returnTo)}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
             )}
-            <FrozenSources source={wave} />
           </>
         )
       }

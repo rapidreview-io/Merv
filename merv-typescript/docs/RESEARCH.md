@@ -7,9 +7,9 @@ defining → researching → reflecting → complete
                                   ↘ consolidating ⟲ → complete  (accepted code main lacks)
 ```
 
-New cycles use `research@6`: pin the project definition, wait for the selected work to finish (including failure or abandonment), and create a five-lens reflection. Task and experiment execution prerequisites still require success. Versions 2–5 retain their stored definitions; dedicated consolidation is retired as described below. Once the reflection is independently approved, the cycle completes when the project's accepted code is all on main; otherwise it injects one ordinary Git task that integrates what main lacks and publishes it, and waits on that task's acceptance and on its publication reaching main. There is no workspace choice at creation. Experiment and reflection submissions include their paper changes, accepted by their existing scientific reviews; Research creates no Methods/Results child workflows.
+Every cycle uses `research@6`: pin the project definition, wait for the selected work to finish (including failure or abandonment), and create a five-lens reflection. Task and experiment execution prerequisites still require success. Versions 2–5 and the dedicated Consolidation workflow are retired, and their records deleted, as described [below](#retired-versions). Once the reflection is independently approved, the cycle completes when the project's accepted code is all on main; otherwise it injects one ordinary Git task that integrates what main lacks and publishes it, and waits on that task's acceptance and on its publication reaching main. There is no workspace choice at creation. Experiment and reflection submissions include their paper changes, accepted by their existing scientific reviews; Research creates no Methods/Results child workflows.
 
-Research owns the existing `reflection.create` tool and uses the same service method when advancing a research cycle into reflection. It registers an optional Workflows read-reference resolver for live reflection evidence, supplied by Knowledge. Removing Research removes these extra read permissions, without unloading Reflections or interrupting its assignment, lease or submission lifecycle. Reload restores reads for the same agent. Fixed tool grants, project scope, lens independence and write restrictions remain authoritative.
+Research owns the existing `reflection.create` tool and uses the same service method when advancing a research cycle into reflection. A wave's workers read live research through their fixed tool grants (`project.records`, `task.get`, `experiment.get_state`, `paper.read`), so removing Research changes nothing they may read and neither unloads Reflections nor interrupts its assignment, lease or submission lifecycle. Project scope, lens independence and write restrictions remain authoritative.
 
 Advancing from reflection verifies its exact independent approval, then asks Code what main lacks (`code.acceptedSince`, a Git reading taken before the advance's transaction opens; quarantined acceptances are named on the `research.advanced` event and left out). Where the project is not hosted by Code, nothing can publish, and the cycle completes. Otherwise Research creates one service task (`tasks.serviceTasks('research')`, workspace git) titled `<cycle>: consolidation`, whose prerequisites are exactly those accepted units, so its base holds them and main; its goal asks for every experiment of the cycle to be accounted for as kept, adapted or dropped, and ends with the provenance line naming the reflection, its report and its change specification. The task is marked with `code.publishOnAcceptance` before its first lease, appended to the cycle's `integrations`, and attached as a child the cycle waits on. The cycle then moves to `consolidating`.
 
@@ -24,7 +24,7 @@ From `consolidating` the advance reads the newest consolidation task and its `Co
 | done                     | disabled, closed, unsealed, incident, none | `publication_pending` (409): a signed-in operator clears or investigates it                                                                     |
 | ended without acceptance | —                                          | `integration_failed` (409) until the advance carries `retryIntegration: true`, which injects afresh, or completes when main lacks nothing       |
 
-Every injected task is appended to `integrations`, newest last, so a cycle's consolidation history is on its record; `research.end` still ends the cycle from `consolidating`. Pre-version-6 cycles that require the retired Consolidation workflow report `research_consolidation_retired`. Their stored records remain unchanged; new work uses consolidation tasks.
+Every injected task is appended to `integrations`, newest last, so a cycle's consolidation history is on its record; `research.end` still ends the cycle from `consolidating`.
 
 Research requires only State, Scope and Workflows. Paper, Reflections, Knowledge, Tasks, Experiments, Artifacts and Code are optional bindings. Removing one leaves Research, its records, tools and UI active. Each action requires only the providers it actually uses:
 
@@ -39,12 +39,12 @@ Research requires only State, Scope and Workflows. Paper, Reflections, Knowledge
 | Digest a cycle as it completes or is ended                            | None required: composed only when Artifacts, Knowledge, the cycle's Reflections and, with an injected task, Code are bound |
 | Create a cycle with `previousCycleId` whose predecessor has no digest | Artifacts and Knowledge; also Reflections and Code when the predecessor has those children                                 |
 
-Knowledge's extra reflection-evidence resolver exists only while Knowledge is bound. Removing it withdraws those additional read permissions without stopping the core reflection workflow. It does not turn unavailable evidence into an empty successful result. Creating a reflection wave itself does not require Knowledge.
+Creating a reflection wave does not require Knowledge.
 
 A missing provider produces a named action blocker. Code-free cycles complete without Code;
 cycles with retained Git obligations wait for it to return. Git answers which accepted units
 are missing outside the committing transaction. The retired Consolidation plugin is never
-required or loaded; old cycles reaching that workflow report `research_consolidation_retired`.
+required or loaded.
 
 Child creation, dependency links, outer transition and replay receipt share one transaction. Request IDs reject different-input reuse. Owner/operator authorization and project scope apply throughout.
 
@@ -68,19 +68,19 @@ Synthesis may submit its change specification as a structured plan (see [Reflect
 
 Because the text of a created task or experiment was written by an agent and is filed under the human who accepted it, every created record ends with its provenance: a `Why:` paragraph holding the item's rationale and an `Origin:` line naming the reflection, the change-specification artifact and hash, and the item key. The plan's limits keep a goal or details plus this suffix well inside the 16,000-character caps of `task.create` and `experiment.create`.
 
-**Workspaces.** Version-2 specifications declare each item's workspace explicitly. Research passes `provider: "code"` as `workspace: "git"` without `baseTaskId`; Tasks and Experiments choose their existing hosted or legacy versions. An unhosted project still creates legacy Git work. Code absence refuses the whole advance with the owning service's `code_unavailable`; the approved reflection remains intact and retryable. Automatic waves expose that refusal in their existing automation blocker. Version-1 plans and version-2 `provider: "none"` items create workspace-free work.
+**Workspaces.** A specification declares each item's workspace explicitly. Research passes `provider: "code"` as `workspace: "git"` without `baseTaskId`; Tasks and Experiments choose their existing hosted or legacy versions. An unhosted project still creates legacy Git work. Code absence refuses the whole advance with the owning service's `code_unavailable`; the approved reflection remains intact and retryable. Automatic waves expose that refusal in their existing automation blocker. `provider: "none"` items create workspace-free work.
 
 **One transaction.** The outer transition, every created record, the successor cycle, the `research.advanced` event and the replay receipt commit together, inside the caller's transaction when one is passed. A refusal anywhere — an unavailable workspace provider, a capability replaced mid-operation — leaves the cycle where it was with nothing created. Every child request ID derives from the actor and the advance's `requestId` (`item:<key>` for work, `successor` for the cycle), so a replay returns the same records; a different `requestId` after success finds `research_complete`.
 
 **Blockers.** Research checks the project state it can inspect in the `workflow.status_and_next` preflight (pass `nextWave: "create"` as input) and again inside the committing transition. Workspace admission is checked by Tasks and Experiments when creating each item in that same transaction:
 
-| Code                                                                      | Meaning                                                                                                        |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `tasks_unavailable`, `experiments_unavailable`, `reflections_unavailable` | A provider the creation needs is not loaded                                                                    |
-| `reflection_open`                                                         | Another reflection wave pauses task and experiment starts                                                      |
-| `experiment_name_conflict`                                                | A planned experiment name is already used in the project (compared without case)                               |
-| `experiment_limit`                                                        | Active experiments plus the plan's would exceed seven                                                          |
-| `next_wave_inapplicable`                                                  | Carried-over work is not a task or experiment; legacy cycles also reject failed or abandoned carried-over work |
+| Code                                                                      | Meaning                                                                          |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `tasks_unavailable`, `experiments_unavailable`, `reflections_unavailable` | A provider the creation needs is not loaded                                      |
+| `reflection_open`                                                         | Another reflection wave pauses task and experiment starts                        |
+| `experiment_name_conflict`                                                | A planned experiment name is already used in the project (compared without case) |
+| `experiment_limit`                                                        | Active experiments plus the plan's would exceed seven                            |
+| `next_wave_inapplicable`                                                  | Carried-over work is not a task or experiment                                    |
 
 Every message but the general `reflections_unavailable` names `nextWave: "skip"` as the way on.
 
@@ -117,17 +117,25 @@ Reports and change specifications are named by ID and hash, never inlined; of a 
 
 **`research.lineage`** is read-only. Given a `researchId`, it returns the cycles it follows, oldest first and ending with the cycle asked about — each with `id`, `name`, `state`, `createdAt`, `previousCycleId`, child IDs and `digest` — walking back at most 20 cycles (`truncated: true` when the chain goes on), and the `successor` that follows it, if any.
 
-## Existing cycles
+## Retired versions
 
 A completing advance asks for `nextWave` according to the approved reflection's plan. Finishing
 requires Reflections unless the caller explicitly chooses `nextWave: "skip"`. Published Research
-definitions remain immutable; new cycles use version 6 and consolidation tasks. Creation
+definitions remain immutable; every cycle uses version 6 and consolidation tasks. Creation
 refuses the obsolete `consolidationWorkspace` and `consolidationDependsOn` inputs.
 
-Existing cycles retain their stored graphs and historical fields. The old Consolidation plugin
-has no runtime provider, so a legacy handoff is blocked explicitly rather than converted into
-an approval or silently reinterpreted as a task. Completed command receipts and Research reads
-remain available. Start a new cycle for task-based consolidation.
+`research@2`–`5` can no longer start, so they are no longer registered. The `research@7`
+migration deleted their cycles, automation rows and command receipts; the `reflection@3` wave
+each had opened as its reflecting stage went with them (`reflections@2`). Their ids stay listed in
+`wf_retired_instances` (reasons `retired_version` and `stage_of_retired_research`), and the
+`events` log still names them; their artifacts, digests included, are kept. A surviving cycle
+that followed a retired one no longer has a `previousCycleId`, and an automatic run rooted in
+a retired cycle is rooted at its earliest surviving cycle instead. Code keeps the acceptances
+of retired Git experiments as history; what main lacks leaves them out, since no consolidation
+task can depend on an instance that no longer exists. `research.get` and
+`research.lineage` no longer return `consolidationId`. The same migration dropped the tables,
+guard functions and migration receipts the retired Consolidation plugin had left behind. The
+published definitions of the retired versions stay pinned in `wf_definitions`.
 
 Existing `research@1` records and their standalone-writing child references remain historical records. The coordinator does not reinterpret or auto-complete an unfinished version-1 cycle. Start a new cycle using retained scientific work as explicit prerequisites when resuming that older model.
 

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createService, digest, type Caller, type Transaction } from '@merv/contracts';
 import { ReviewService } from '@merv/reviews';
 import { resolutionFixture } from './fixtures/resolution.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 test('provenance migration preserves populated reviews and freezes certificates', async (t) => {
   const f = await resolutionFixture(t, { reviews: 8 });
@@ -75,6 +76,7 @@ test('provenance migration preserves populated reviews and freezes certificates'
         claimId: claimed.claimId!,
         verdict: 'pass',
         notes: 'Checked',
+        ...assessment(claimed),
         requestId: 'pass',
       })
     ).verdict,
@@ -82,14 +84,15 @@ test('provenance migration preserves populated reviews and freezes certificates'
   );
   assert.equal(computations, 1, 'the owner supplies the certificate only at creation');
   // The optional provider never changes an ordinary review's behavior.
-  const legacy = await reviews.start(f.admin, before.id);
+  const ordinary = await reviews.start(f.admin, before.id);
   assert.equal(
     (
       await reviews.submit(f.admin, {
         reviewId: before.id,
-        claimId: legacy.claimId!,
+        claimId: ordinary.claimId!,
         verdict: 'pass',
         notes: 'Checked',
+        ...assessment(ordinary),
         requestId: 'old-pass',
       })
     ).verdict,
@@ -147,6 +150,7 @@ test("submission checks the caller's current directing authority against pinned 
       claimId: claim.claimId!,
       verdict: 'pass',
       notes: 'Checked',
+      ...assessment(claim),
       requestId: 'submit',
     }),
     { code: 'review_independence' },

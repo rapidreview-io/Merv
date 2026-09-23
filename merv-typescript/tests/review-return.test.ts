@@ -22,6 +22,7 @@ import {
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 async function fixture(maximumMigration = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-return-'));
@@ -70,6 +71,7 @@ async function fixture(maximumMigration = Infinity) {
     claimId: review.claimId!,
     verdict: 'needs_changes',
     notes: 'The observation needs another independent check.',
+    ...assessment(review),
     requestId: `submit-${++sequence}`,
   });
   const durable = async () =>

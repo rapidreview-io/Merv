@@ -29,7 +29,7 @@ export const LENSES = [
 ] as const;
 export const REFLECTION_WORKFLOW: WorkflowDefinition = {
   name: 'reflection',
-  version: 2,
+  version: 3,
   blocksStarts: ['task', 'experiment'],
   managed: true,
   initial: 'reflecting',
@@ -61,7 +61,12 @@ export const REFLECTION_CRITERIA = [
 /** Asked only when the change specification is a structured plan the next wave will create. */
 export const CHANGE_SPEC_CRITERION =
   'Every next-wave work item follows from cited lens evidence, has checkable Done-when checks or a falsifiable question, and orders cheap feasibility work before the experiments that depend on it; rejected alternatives and carried-over work are recorded honestly, and a stop decision is justified.';
-export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage) => ({
+/**
+ * Version 7 of the three stage recipes. Only the lens recipe is still registered; synthesis@7 and
+ * review@7 served the retired reflection@2 and remain only as the text version 8 is derived from,
+ * whose hash is pinned.
+ */
+const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage) => ({
   name: `reflection.${stage}`,
   version: 7,
   kind: stage === 'review' ? 'review' : 'work',
@@ -103,7 +108,8 @@ export const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map
   },
 }));
 
-// Live version-2 waves keep their published instructions when the server restarts.
+export const LENS_RECIPE = RECIPES.find((recipe) => recipe.name === 'reflection.lens')!;
+/** Synthesis and review for reflection@3, whose plans declare a workspace per item. */
 export const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
   (recipe) => recipe.name !== 'reflection.lens',
 ).map((recipe) => ({

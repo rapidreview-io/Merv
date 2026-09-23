@@ -99,7 +99,7 @@ const KEEP: Record<string, string[]> = {
   reviews: ['id', 'subjectId', 'status', 'reviewerId', 'claimable', 'verdict', 'createdAt'],
   cycles: ['id', 'name', 'ownerId', 'workflow'],
   files: ['size'],
-  reflections: ['id', 'title', 'ownerId', 'experimentIds', 'workflow'],
+  reflections: ['id', 'title', 'ownerId', 'workflow'],
   connections: ['state'],
 };
 /** The map shows a summary of each record's prose; the record's page has all of it. */

@@ -30,13 +30,13 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
-import type { Paper, PaperProposal } from '@merv/paper/types';
+import type { Paper } from '@merv/paper/types';
 import { parseChangeSpec } from './change-spec.js';
 import {
   CHANGE_SPEC_CRITERION,
   LENSES,
+  LENS_RECIPE,
   LENS_WORKFLOW,
-  RECIPES,
   WORKSPACE_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
@@ -63,8 +63,6 @@ interface WaveRow {
   owner_id: string;
   created_at: string;
   attempt: number;
-  corpus: string;
-  paper: string;
   review_id: string | null;
   submission: string | null;
   approved: string | null;
@@ -81,8 +79,6 @@ interface LensRow {
   artifact: string | null;
 }
 interface Submission {
-  paperProposal?: PaperProposal;
-  experimentIds?: string[];
   report: Artifact;
   changeSpec: Artifact;
   /** Set only for an application/json change specification; approval copies it unchanged. */
@@ -134,8 +130,8 @@ const configuration = z
 
 /** Domain composition only: every runnable stage is an ordinary registered workflow node. */
 export class ReflectionService implements Reflections {
-  private parents = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
-  private children = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
+  private wave?: Awaited<ReturnType<Workflows['register']>>;
+  private lensWorkflow?: Awaited<ReturnType<Workflows['register']>>;
   private contexts = new Map<string, ContextRegistration>();
   private releaseOwner?: () => void;
   private closed = false;
@@ -157,23 +153,16 @@ export class ReflectionService implements Reflections {
           version: 1,
           sql: postgresMigrations[1],
         },
+        {
+          version: 2,
+          sql: postgresMigrations[2],
+        },
       ]);
       try {
-        for (const recipe of [...RECIPES, ...WORKSPACE_RECIPES])
-          this.contexts.set(
-            `${recipe.name}@${recipe.version}`,
-            await contextBuilder.register(recipe),
-          );
-        for (const definition of [LENS_WORKFLOW])
-          this.children.set(
-            definition.version,
-            await workflows.register(definition, this.policy(true, true)),
-          );
-        for (const definition of [REFLECTION_WORKFLOW, { ...REFLECTION_WORKFLOW, version: 3 }])
-          this.parents.set(
-            definition.version,
-            await workflows.register(definition, this.policy(false, true)),
-          );
+        for (const recipe of [LENS_RECIPE, ...WORKSPACE_RECIPES])
+          this.contexts.set(recipe.name, await contextBuilder.register(recipe));
+        this.lensWorkflow = await workflows.register(LENS_WORKFLOW, this.policy(true));
+        this.wave = await workflows.register(REFLECTION_WORKFLOW, this.policy(false));
         this.releaseOwner = reviews.registerSubmitOwner({
           id: 'reflections',
           owns: async (review, tx) =>
@@ -194,7 +183,8 @@ export class ReflectionService implements Reflections {
     if (this.closed) return;
     this.closed = true;
     this.releaseOwner?.();
-    for (const handle of [...this.parents.values(), ...this.children.values()]) handle.dispose();
+    this.wave?.dispose();
+    this.lensWorkflow?.dispose();
     for (const context of this.contexts.values()) context.dispose();
     this.contexts.clear();
   }
@@ -257,12 +247,6 @@ export class ReflectionService implements Reflections {
         ownerId: row.owner_id,
         createdAt: row.created_at,
         attempt: row.attempt,
-        corpus: JSON.parse(row.corpus),
-        experimentIds:
-          submission?.experimentIds ??
-          JSON.parse(row.corpus)?.selection.experiments.map((e: { id: string }) => e.id) ??
-          [],
-        paper: JSON.parse(row.paper),
         lenses: await mapAsync(
           await this.lensRows(row, tx),
           async (lens) => await this.hydrateLens(caller, lens, tx),
@@ -272,7 +256,6 @@ export class ReflectionService implements Reflections {
         report: submission?.report ?? null,
         changeSpec: submission?.changeSpec ?? null,
         plan: submission?.plan ?? null,
-        paperProposal: submission?.paperProposal ?? null,
       };
     });
   }
@@ -332,11 +315,11 @@ export class ReflectionService implements Reflections {
         );
         if (input.previousCycleDigestId)
           await this.artifacts.get(caller, input.previousCycleDigestId, tx);
-        const workflow = await this.parents.get(3)!.start(
+        const workflow = await this.wave!.start(
           caller,
           {
             workflow: 'reflection',
-            version: 3,
+            version: REFLECTION_WORKFLOW.version,
             requestId: requestKey(caller, 'wave', input.requestId),
             // Later transitions pass no such key, so the wave keeps the digest it started with.
             data: {
@@ -369,13 +352,12 @@ export class ReflectionService implements Reflections {
     });
   }
   private async createLenses(caller: Caller, row: WaveRow, tx: Transaction): Promise<void> {
-    const version = LENS_WORKFLOW.version;
     for (const lens of LENSES) {
-      const workflow = await this.children.get(version)!.start(
+      const workflow = await this.lensWorkflow!.start(
         caller,
         {
           workflow: 'reflection.lens',
-          version,
+          version: LENS_WORKFLOW.version,
           requestId: `reflection:${row.id}:${row.attempt}:${lens.perspective}`,
           data: { reflectionId: row.id, attempt: row.attempt, perspective: lens.perspective },
         },
@@ -568,11 +550,7 @@ export class ReflectionService implements Reflections {
       ...(review && submission
         ? {
             submission: {
-              artifactIds: [
-                submission.report.id,
-                submission.changeSpec.id,
-                ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
-              ],
+              artifactIds: [submission.report.id, submission.changeSpec.id],
               mode: 'references' as const,
             },
             assessment: { text: JSON.stringify(review) },
@@ -611,15 +589,8 @@ export class ReflectionService implements Reflections {
       !lens && context.snapshot.state === 'in_review' && wave.review_id
         ? await this.reviews.get(context.caller, wave.review_id, context.tx)
         : null;
-    const live = context.snapshot.version >= 2;
     return {
-      ...(live
-        ? {
-            researchReviews: [
-              ...(JSON.parse(wave.feedback) as { id: string }[]).map((review) => review.id),
-            ],
-          }
-        : {}),
+      researchReviews: (JSON.parse(wave.feedback) as { id: string }[]).map((review) => review.id),
       reflectionId: wave.id,
       artifacts: [
         ...new Set([
@@ -641,10 +612,11 @@ export class ReflectionService implements Reflections {
     const inputs = context.caller.session
       ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipes = !lens && context.snapshot.version >= 3 ? WORKSPACE_RECIPES : RECIPES;
-    const recipe = recipes.find((entry) => entry.name === `reflection.${stage}`)!;
+    const recipe = [LENS_RECIPE, ...WORKSPACE_RECIPES].find(
+      (entry) => entry.name === `reflection.${stage}`,
+    )!;
     const preview = await this.contexts
-      .get(`${recipe.name}@${recipe.version}`)!
+      .get(recipe.name)!
       .preview(
         context.caller,
         { subject: { id: context.snapshot.id, revision: context.snapshot.revision }, inputs },
@@ -675,24 +647,16 @@ export class ReflectionService implements Reflections {
       context: preview,
     };
   }
-  private execution(lens: boolean, reviewing: boolean, live: boolean): WorkflowExecutionPolicy {
+  private execution(lens: boolean, reviewing: boolean): WorkflowExecutionPolicy {
     return {
       readOnly: reviewing,
       tools: [
-        ...(live
-          ? [
-              grant('project.records', {}),
-              grant('task.get', {}),
-              grant('experiment.get_state', {}),
-              grant('paper.read', {}),
-              ...(!reviewing
-                ? [
-                    grant('review.get', {
-                      reviewId: { kind: 'oneOf' as const, name: 'researchReviews' },
-                    }),
-                  ]
-                : []),
-            ]
+        grant('project.records', {}),
+        grant('task.get', {}),
+        grant('experiment.get_state', {}),
+        grant('paper.read', {}),
+        ...(!reviewing
+          ? [grant('review.get', { reviewId: { kind: 'oneOf' as const, name: 'researchReviews' } })]
           : []),
         grant('workflow.status_and_next', { instanceId: target('instanceId') }),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
@@ -707,9 +671,7 @@ export class ReflectionService implements Reflections {
               grant(
                 'review.get',
                 { reviewId: ref('reviewId') },
-                ...(live
-                  ? [{ reviewId: { kind: 'oneOf' as const, name: 'researchReviews' } }]
-                  : []),
+                { reviewId: { kind: 'oneOf' as const, name: 'researchReviews' } },
               ),
               grant('review.start', { reviewId: ref('reviewId') }),
               grant('review.submit', {
@@ -835,7 +797,7 @@ export class ReflectionService implements Reflections {
       instance_id: lease.instanceId,
     });
   }
-  private policy(lens: boolean, live: boolean): WorkflowPolicy {
+  private policy(lens: boolean): WorkflowPolicy {
     const assignments = (lens ? ['reflecting'] : ['synthesizing', 'in_review']).map((state) => ({
       state,
       check: async (c: WorkflowCheckContext) => {
@@ -843,7 +805,7 @@ export class ReflectionService implements Reflections {
       },
       build: async (c: WorkflowCheckContext) => await this.build(c),
       references: async (c: WorkflowCheckContext) => await this.references(c),
-      execution: this.execution(lens, state === 'in_review', live),
+      execution: this.execution(lens, state === 'in_review'),
       lease: this.hooks(),
     }));
     return {
@@ -978,13 +940,7 @@ export class ReflectionService implements Reflections {
                       c.input.changeSpecArtifactId,
                       c.tx,
                     );
-                    await this.plan(
-                      c.caller,
-                      artifact,
-                      c.tx,
-                      c.snapshot.version,
-                      c.snapshot.data.requirePlan === true,
-                    );
+                    await this.plan(c.caller, artifact, c.tx, c.snapshot.data.requirePlan === true);
                   }
                 },
               },
@@ -1084,7 +1040,6 @@ export class ReflectionService implements Reflections {
     caller: Caller,
     changeSpec: Artifact,
     tx: Transaction,
-    workflowVersion: number,
     required = false,
   ): Promise<ChangeSpec | undefined> {
     check(
@@ -1095,12 +1050,6 @@ export class ReflectionService implements Reflections {
     );
     if (changeSpec.mediaType !== 'application/json') return undefined;
     const plan = parseChangeSpec((await this.artifacts.read(caller, changeSpec.id)).content);
-    const version = workflowVersion === 2 ? 1 : 2;
-    check(
-      plan.version === version,
-      'invalid_change_spec',
-      `This reflection@${workflowVersion} wave writes change-spec version ${version}`,
-    );
     // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
     for (const { workflowId } of plan.carriedOver) {
       const carried = await this.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
@@ -1141,7 +1090,7 @@ export class ReflectionService implements Reflections {
           'reflection_summary_required',
           'Lens report requires a nonempty Summary section',
         );
-        await this.children.get(snapshot.version)!.transition(
+        await this.lensWorkflow!.transition(
           caller,
           {
             instanceId: lens.id,
@@ -1162,7 +1111,7 @@ export class ReflectionService implements Reflections {
         const children = await this.lensRows(wave, tx);
         if (children.length === 5 && children.every((child) => child.artifact)) {
           const parent = await this.workflows.get(caller, wave.id, tx);
-          await this.parents.get(parent.version)!.transition(
+          await this.wave!.transition(
             caller,
             {
               instanceId: wave.id,
@@ -1189,11 +1138,6 @@ export class ReflectionService implements Reflections {
     transaction?: Transaction,
   ): Promise<Reflection> {
     ({ caller, input } = structuredClone({ caller, input }));
-    check(
-      !('paperChangesArtifactId' in input),
-      'invalid_reflection_input',
-      'Paper edits belong to the reviewer; include paperChanges with review.submit',
-    );
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'submit', input, tx, async () => {
@@ -1227,7 +1171,6 @@ export class ReflectionService implements Reflections {
           caller,
           submission.changeSpec,
           tx,
-          snapshot.version,
           snapshot.data.requirePlan === true,
         );
         if (plan) submission.plan = plan;
@@ -1238,7 +1181,7 @@ export class ReflectionService implements Reflections {
           'All five lens submissions are required',
           409,
         );
-        const next = await this.parents.get(snapshot.version)!.transition(
+        const next = await this.wave!.transition(
           caller,
           {
             instanceId: wave.id,
@@ -1258,12 +1201,7 @@ export class ReflectionService implements Reflections {
             producerId: caller.actorId,
             administrativeActorId: wave.owner_id,
             artifactIds: [
-              ...new Set([
-                submission.report.id,
-                submission.changeSpec.id,
-                ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
-                ...pinnedInputIds,
-              ]),
+              ...new Set([submission.report.id, submission.changeSpec.id, ...pinnedInputIds]),
             ],
             pinnedInputIds,
             // Lens authors, whoever directed a lens worker, the owner and the authority that
@@ -1347,7 +1285,7 @@ export class ReflectionService implements Reflections {
             ? 'restart_lenses'
             : 'revise_synthesis';
       // Domain checks were completed above; generic transition still performs revision CAS.
-      const next = await this.parents.get(snapshot.version)!.transition(
+      const next = await this.wave!.transition(
         caller,
         {
           instanceId: wave.id,
@@ -1377,12 +1315,6 @@ export class ReflectionService implements Reflections {
           id: wave.id,
           projectId: wave.project_id,
           revision: next.revision,
-          corpus: JSON.parse(wave.corpus),
-          experimentIds:
-            submission.experimentIds ??
-            JSON.parse(wave.corpus)?.selection.experiments.map((e: { id: string }) => e.id) ??
-            [],
-          paper: JSON.parse(wave.paper),
           ...submission,
           lenses: (await this.lensRows(wave, tx)).map((lens) => ({
             id: lens.id,
@@ -1448,12 +1380,15 @@ export class ReflectionService implements Reflections {
         'Reflection needs independent approval before consolidation',
         409,
       );
-      const approved = JSON.parse(wave.approved) as ApprovedReflection;
-      return {
-        ...approved,
-        experimentIds:
-          approved.experimentIds ?? approved.corpus?.selection.experiments.map((e) => e.id) ?? [],
-      };
+      // Waves approved before this shape was narrowed also stored corpus, paper and
+      // experimentIds, always empty for the version that remains; they are not part of it.
+      const {
+        corpus: _corpus,
+        paper: _paper,
+        experimentIds: _experimentIds,
+        ...approved
+      } = JSON.parse(wave.approved) as ApprovedReflection & Record<string, unknown>;
+      return approved;
     });
   }
 }

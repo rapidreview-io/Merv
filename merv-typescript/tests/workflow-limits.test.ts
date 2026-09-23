@@ -152,13 +152,16 @@ test('a policy may only cap declared returning edges, each once, within bounds',
       {
         ...definition,
         name: 'reserved',
-        edges: [...definition.edges, { from: 'in_review', action: 'upgrade', to: 'drafting' }],
+        edges: [
+          ...definition.edges,
+          { from: 'in_review', action: 'add_dependencies', to: 'drafting' },
+        ],
       },
       {
-        ...policy([{ ...returns(2), actions: ['upgrade'] }]),
+        ...policy([{ ...returns(2), actions: ['add_dependencies'] }]),
         actions: policy().actions.map((rule) =>
           rule.name === 'verdict'
-            ? { ...rule, transitions: [...rule.transitions!, 'upgrade'] }
+            ? { ...rule, transitions: [...rule.transitions!, 'add_dependencies'] }
             : rule,
         ),
       },

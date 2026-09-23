@@ -105,6 +105,7 @@ test('registered workflow definitions and execution policies match every version
       `context recipe ${key} is not listed in tests/fixtures/published-policies.json; add it with its hash ${hash} and published: false until it ships`,
     );
     assert.equal(hash, row.hash, remedy(key, 'context recipe', row));
+    assert.ok(!row.retired, `context recipe ${key} is marked retired but is registered again.`);
   }
   for (const row of published.policies) {
     const key = `${row.workflow}@${row.version}/${row.state}`;

@@ -138,40 +138,43 @@ const instructions: Record<Stage, string> = {
   defining:
     'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
   researching:
-    'Finish the selected research workflows successfully, then advance to open a reflection wave over live research.',
+    'Reflect once all selected work has finished. Failed and abandoned work are outcomes to examine.',
   reflecting: `Complete all reflection lenses and independent synthesis review, then finish the cycle or start its consolidation: accepted code that main does not hold yet is integrated by one task and published to main. ${nextWaveGuidance}`,
   consolidating: `Wait for the consolidation task to be accepted and its publication to reach main, then complete the research cycle. A publication main overtook injects a successor task. Paper changes are reviewed within the experiment and reflection workflows. ${nextWaveGuidance}`,
   complete:
     'The selected research, reflection and any required code integration are complete. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here.',
 };
+/** The one research version: array order is part of its published fingerprint. */
 const definition: WorkflowDefinition = {
   name: 'research',
-  version: 2,
+  version: 6,
   managed: true,
   initial: 'defining',
-  states: [...stages],
-  terminal: ['complete'],
-  edges: stages
-    .slice(0, -1)
-    .map((from, index) => ({ from, action: 'advance', to: stages[index + 1] })),
+  states: [...stages, 'abandoned', 'failed'],
+  terminal: ['complete', 'abandoned', 'failed'],
+  edges: [
+    ...stages
+      .slice(0, -1)
+      .map((from, index) => ({ from, action: 'advance', to: stages[index + 1] })),
+    { from: 'reflecting', action: 'complete', to: 'complete' },
+    ...stages.slice(0, -1).flatMap((from) => [
+      { from, action: 'abandon', to: 'abandoned' },
+      { from, action: 'mark_failed', to: 'failed' },
+    ]),
+    { from: 'consolidating', action: 'reinject', to: 'consolidating' },
+  ],
 };
 interface Row {
   id: string;
   record: string;
   problem: string | null;
   reflection_id: string | null;
-  consolidation_id: string | null;
-  methods_update_id: string | null;
-  results_update_id: string | null;
   predecessor_id: string | null;
   digest: string | null;
   integrations: string | null;
   code_required: number | null;
 }
-/**
- * The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. A
- * record written before version 6 also carries the consolidation choice it was opened with.
- */
+/** The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. */
 type StoredRecord = Pick<
   ResearchRecord,
   'id' | 'projectId' | 'ownerId' | 'name' | 'createdAt' | 'researchDependencies'
@@ -181,9 +184,8 @@ type StoredRecord = Pick<
 export class ResearchService implements Research {
   private closed = false;
   private automaticBound = false;
-  private releaseReadReferences?: () => void;
   private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
-  private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
+  private handle?: Awaited<ReturnType<Workflows['register']>>;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -229,45 +231,15 @@ export class ResearchService implements Research {
           version: 6,
           sql: postgresMigrations[6],
         },
+        {
+          // Deletes the cycles of research@2-5, re-links the survivors that followed them, and
+          // drops what the retired Consolidation plugin left behind.
+          version: 7,
+          sql: postgresMigrations[7],
+        },
       ]);
       try {
-        // Existing cycles keep their immutable state machine: only new cycles may skip
-        // consolidation, only version 4 on can be ended before it reaches an answer, and only
-        // version 6 consolidates through an injected task it may inject again.
-        for (const version of [2, 3, 4, 5, 6]) {
-          const ends = version >= 4;
-          this.handles.set(
-            version,
-            await workflows.register(
-              {
-                ...definition,
-                version,
-                ...(ends
-                  ? {
-                      states: [...definition.states, 'abandoned', 'failed'],
-                      terminal: [...definition.terminal, 'abandoned', 'failed'],
-                    }
-                  : {}),
-                edges: [
-                  ...definition.edges,
-                  ...(version >= 3
-                    ? [{ from: 'reflecting' as const, action: 'complete', to: 'complete' }]
-                    : []),
-                  ...(ends
-                    ? stages.slice(0, -1).flatMap((from) => [
-                        { from, action: 'abandon', to: 'abandoned' },
-                        { from, action: 'mark_failed', to: 'failed' },
-                      ])
-                    : []),
-                  ...(version >= 6
-                    ? [{ from: 'consolidating' as const, action: 'reinject', to: 'consolidating' }]
-                    : []),
-                ],
-              },
-              this.policy(version),
-            ),
-          );
-        }
+        this.handle = await workflows.register(definition, this.policy());
         if (paper) this.bindPaper(paper);
         if (reflections) this.bindReflections(reflections);
         if (knowledge) this.bindKnowledge(knowledge);
@@ -276,13 +248,13 @@ export class ResearchService implements Research {
         if (artifacts) this.bindArtifacts(artifacts);
         if (code) this.bindCode(code);
       } catch (error) {
-        for (const handle of this.handles.values()) handle.dispose();
+        this.handle?.dispose();
         throw error;
       }
     };
   }
 
-  private policy(version: number): WorkflowPolicy {
+  private policy(): WorkflowPolicy {
     return {
       successStates: ['complete'],
       describe: async (context) => {
@@ -294,7 +266,7 @@ export class ResearchService implements Research {
           label: record.name,
           gate: context.snapshot.state,
           waiting:
-            version >= 5 && context.snapshot.state === 'researching'
+            context.snapshot.state === 'researching'
               ? 'Wait for the selected work to finish, including failed and abandoned work, then open reflection.'
               : instructions[context.snapshot.state as Stage],
           references: [
@@ -321,48 +293,38 @@ export class ResearchService implements Research {
           ],
         };
       },
-      // Legacy v4 treats selected failures as a reason to end; v5 reflects on them.
-      ...(version === 4 ? { dependencyFailureAction: 'end' } : {}),
       actions: [
-        ...(version >= 4
-          ? [
-              {
-                name: 'end',
-                states: [...stages.slice(0, -1)],
-                transitions: ['abandon', 'mark_failed'],
-                // Never the suggested move: ending is what you reach for when the work cannot
-                // go on, and the engine offers it by name when a prerequisite has died.
-                suggested: false,
-                tool: 'research.end',
-                instruction:
-                  'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal.',
-                requiredInput: ['outcome', 'reason'],
-                arguments: (context: WorkflowCheckContext) => ({
-                  researchId: context.snapshot.id,
-                  expectedRevision: context.snapshot.revision,
-                }),
-                check: async (context: WorkflowCheckContext) => {
-                  const record = await this.get(context.caller, context.snapshot.id, context.tx);
-                  await this.authorize(context.caller, record, context.tx);
-                  if (context.input) parse(endChoiceSchema, context.input);
-                },
-              },
-            ]
-          : []),
+        {
+          name: 'end',
+          states: [...stages.slice(0, -1)],
+          transitions: ['abandon', 'mark_failed'],
+          // Never the suggested move: ending is what you reach for when the work cannot
+          // go on, and the engine offers it by name when a prerequisite has died.
+          suggested: false,
+          tool: 'research.end',
+          instruction:
+            'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal.',
+          requiredInput: ['outcome', 'reason'],
+          arguments: (context: WorkflowCheckContext) => ({
+            researchId: context.snapshot.id,
+            expectedRevision: context.snapshot.revision,
+          }),
+          check: async (context: WorkflowCheckContext) => {
+            const record = await this.get(context.caller, context.snapshot.id, context.tx);
+            await this.authorize(context.caller, record, context.tx);
+            if (context.input) parse(endChoiceSchema, context.input);
+          },
+        },
         ...stages.slice(0, -1).map((stage) => ({
           name: `advance_${stage}`,
           states: [stage],
           transitions: [
             'advance',
-            ...(version >= 3 && stage === 'reflecting' ? ['complete'] : []),
-            ...(version >= 6 && stage === 'consolidating' ? ['reinject'] : []),
+            ...(stage === 'reflecting' ? ['complete'] : []),
+            ...(stage === 'consolidating' ? ['reinject'] : []),
           ],
           tool: 'research.advance',
-          instruction:
-            version >= 5 && stage === 'researching'
-              ? 'Reflect once all selected work has finished. Failed and abandoned work are outcomes to examine.'
-              : instructions[stage],
-          requiresDependencies: version < 5 && stage !== 'defining',
+          instruction: instructions[stage],
           arguments: (context: WorkflowCheckContext) => ({
             researchId: context.snapshot.id,
             expectedRevision: context.snapshot.revision,
@@ -386,14 +348,10 @@ export class ResearchService implements Research {
                   // A choice already made was judged by the check; a skip must not need Reflections.
                   const choice = parse(nextWaveChoiceSchema, input ?? {});
                   if (choice.nextWave) return [];
+                  // Without Git's answer a preflight reads the cycle as completing: the choice
+                  // is asked whenever the plan continues, and honoured only when it completes.
                   const record = await this.get(caller, snapshot.id, tx);
-                  return (await this.continuing(
-                    caller,
-                    record,
-                    tx,
-                    [],
-                    await this.assumed(caller, record, tx, choice),
-                  ))
+                  return (await this.continuing(caller, record, tx, [], 'complete'))
                     ? ['nextWave']
                     : [];
                 },
@@ -428,7 +386,7 @@ export class ResearchService implements Research {
       const row = await this.row(caller, id, tx);
       const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
       // The selection is what the cycle waits on now, not what it was created with.
-      const children = [row.reflection_id, row.consolidation_id, ...integrations];
+      const children = [row.reflection_id, ...integrations];
       const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
       const successor = await tx.get<{ id: string }>(
         'SELECT id FROM research_cycles WHERE predecessor_id=? AND project_id=?',
@@ -467,7 +425,6 @@ export class ResearchService implements Research {
         workflow: await this.workflows.get(caller, id, tx),
         problem: row.problem ? JSON.parse(row.problem) : null,
         reflectionId: row.reflection_id,
-        consolidationId: row.consolidation_id,
         integrations,
       };
     });
@@ -581,7 +538,7 @@ export class ResearchService implements Research {
         );
       }
     }
-    const workflow = await this.handles.get(6)!.start(
+    const workflow = await this.handle!.start(
       caller,
       {
         workflow: 'research',
@@ -696,7 +653,6 @@ export class ResearchService implements Research {
     if (stage === 'researching' || stage === 'reflecting')
       this.requireCapability('reflections', checks);
     if (
-      record.workflow.version >= 6 &&
       (stage === 'reflecting' || stage === 'consolidating') &&
       ((await this.row(caller, record.id, tx)).code_required !== 0 || record.integrations.length)
     )
@@ -711,19 +667,7 @@ export class ResearchService implements Research {
         409,
       );
     }
-    check(
-      !(
-        record.workflow.version < 6 &&
-        (stage === 'consolidating' ||
-          (stage === 'reflecting' && this.usesRetiredConsolidation(record)))
-      ),
-      'research_consolidation_retired',
-      'This cycle uses the retired Consolidation workflow. Its records are retained; start a new research cycle to consolidate through a task.',
-      409,
-    );
-    if (record.workflow.version < 5) {
-      await this.workflows.checkDependencies(caller, record.id, tx);
-    } else if (stage === 'researching') {
+    if (stage === 'researching') {
       const selection = new Set(record.researchDependencies);
       const pending = (
         await this.workflows.dependencies(caller, record.id, tx)
@@ -753,7 +697,7 @@ export class ResearchService implements Research {
       const approved = await this.continuing(caller, record, tx, checks, move);
       if (approved && choice.nextWave === 'create') {
         this.checkAutomaticContinuation(caller, record);
-        await this.creatable(caller, approved.plan, tx, checks, record.workflow.version >= 5);
+        await this.creatable(caller, approved.plan, tx, checks);
       }
     }
     checks.forEach((check) => check());
@@ -762,7 +706,7 @@ export class ResearchService implements Research {
 
   /**
    * The transition an advance makes; `inject` and `reinject` first inject a consolidation task.
-   * A version-6 cycle consolidates through that task: an unfinished one, one that ended without
+   * A cycle consolidates through that task: an unfinished one, one that ended without
    * acceptance and one not on main yet are refused here, so a preflight reports the same wait.
    * Whether main lacks accepted code is Git's answer: an advance reads it as `since` and hands
    * the guard the move it chose; a preflight has neither and reads the move main lacking makes.
@@ -777,10 +721,6 @@ export class ResearchService implements Research {
   ): Promise<Move> {
     const stage = record.workflow.state as Stage;
     if (stage !== 'reflecting' && stage !== 'consolidating') return 'advance';
-    if (record.workflow.version < 6)
-      return stage === 'reflecting' && !this.usesRetiredConsolidation(record)
-        ? 'complete'
-        : 'advance';
     // A preflight that answers the completion question is read as completing, so a plan that
     // would refuse is reported before the advance, as it always was.
     const judged = (holds: Move, lacks: Move): Move => {
@@ -825,22 +765,6 @@ export class ResearchService implements Research {
     );
   }
 
-  /**
-   * The move a preflight reads for the choice it asks. A version-6 cycle is read as completing:
-   * without Git's answer the choice is asked whenever the plan continues, and honoured only when
-   * the cycle does complete.
-   */
-  private async assumed(
-    caller: Caller,
-    record: ResearchRecord,
-    tx: Transaction,
-    choice: Choice,
-  ): Promise<Move> {
-    return record.workflow.version >= 6
-      ? 'complete'
-      : await this.move(caller, record, tx, [], undefined, choice);
-  }
-
   /** Git answers what main lacks outside every transaction; null says it could not be asked. */
   private asked(since: Unpublished | null): asserts since is Unpublished {
     check(
@@ -882,7 +806,6 @@ export class ResearchService implements Research {
     plan: ChangeSpec,
     tx: Transaction,
     checks: BindingChecks,
-    acceptsFailures = false,
   ): Promise<void> {
     this.requireCapability('tasks', checks);
     const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
@@ -919,13 +842,6 @@ export class ResearchService implements Research {
         ['task', 'experiment'].includes(carried.workflow),
         'next_wave_inapplicable',
         `Carried-over work ${workflowId} is neither a task nor an experiment; complete this cycle with nextWave: "skip"`,
-        409,
-      );
-      // The next cycle ends when work it waits on has died, so it would be opened already dead.
-      check(
-        acceptsFailures || !['failed', 'abandoned'].includes(carried.state),
-        'next_wave_inapplicable',
-        `Carried-over work ${workflowId} has ${carried.state} and cannot be waited on; complete this cycle with nextWave: "skip"`,
         409,
       );
     }
@@ -970,8 +886,7 @@ export class ResearchService implements Research {
       const provenance = `\n\nWhy: ${item.rationale}${origin(approved, pinned('change specification', approved.changeSpec), `item ${item.key}`)}`;
       const dependsOn = item.dependsOn.map((key) => created.get(key)!);
       const itemRequestId = this.request(caller, requestId, `item:${item.key}`);
-      // Retained v1 plans never requested a workspace; only an explicit declaration does.
-      const workspace = item.workspace?.provider === 'code' ? ('git' as const) : undefined;
+      const workspace = item.workspace.provider === 'code' ? ('git' as const) : undefined;
       const work =
         item.kind === 'task'
           ? await this.use('tasks', checks, (service) =>
@@ -1116,11 +1031,7 @@ export class ResearchService implements Research {
     const checks: BindingChecks = [];
     const asks = await inTransaction(this.state, tx, async (tx) => {
       const record = await this.get(caller, researchId, tx);
-      if (
-        record.workflow.version < 6 ||
-        !['reflecting', 'consolidating'].includes(record.workflow.state)
-      )
-        return false;
+      if (!['reflecting', 'consolidating'].includes(record.workflow.state)) return false;
       await this.authorize(caller, record, tx);
       const row = await this.row(caller, researchId, tx);
       const hosted = binding
@@ -1142,7 +1053,31 @@ export class ResearchService implements Research {
       return hosted;
     });
     if (!asks) return { unitIds: [], quarantined: [] };
-    return tx ? null : await this.use('code', checks, (code) => code.acceptedSince(caller));
+    if (tx) return null;
+    const since = await this.use('code', checks, (code) => code.acceptedSince(caller));
+    return { unitIds: await this.unretired(caller, since.unitIds), quarantined: since.quarantined };
+  }
+
+  /**
+   * The units whose workflow instance was not retired. Code keeps the acceptance of a retired
+   * instance as history (the 2026-09-22 retirement deleted the instance itself), but no task can
+   * depend on an instance that no longer exists, so no cycle integrates that code.
+   */
+  private async unretired(caller: Caller, unitIds: string[]): Promise<string[]> {
+    if (!unitIds.length) return unitIds;
+    const retired = new Set(
+      (
+        await this.state.read(
+          async (sql) =>
+            await sql.all<{ id: string }>(
+              `SELECT id FROM wf_retired_instances WHERE project_id=? AND id IN (${unitIds.map(() => '?').join(',')})`,
+              caller.projectId,
+              ...unitIds,
+            ),
+        )
+      ).map((row) => row.id),
+    );
+    return unitIds.filter((id) => !retired.has(id));
   }
 
   /**
@@ -1231,10 +1166,9 @@ export class ResearchService implements Research {
               ?.state ?? null,
         }
       : null;
-    const experimentIds = new Set([
-      ...selected.filter((item) => item.workflow === 'experiment').map((item) => item.id),
-      ...(reflection?.experimentIds ?? []),
-    ]);
+    const experimentIds = new Set(
+      selected.filter((item) => item.workflow === 'experiment').map((item) => item.id),
+    );
     const experiments = records.experiments.filter((entry) => experimentIds.has(entry.id));
     const taskIds = new Set(
       selected.filter((item) => item.workflow === 'task').map((item) => item.id),
@@ -1325,7 +1259,6 @@ export class ResearchService implements Research {
           createdAt: cycle.createdAt,
           previousCycleId: cycle.previousCycleId,
           reflectionId: cycle.reflectionId,
-          consolidationId: cycle.consolidationId,
           digest: cycle.digest,
         })),
         truncated: !!cycles[0].previousCycleId,
@@ -1339,9 +1272,9 @@ export class ResearchService implements Research {
   }
 
   /**
-   * The owner reselects the work a cycle waits on while it is still defining or researching:
-   * legacy cycles may need to remove unsuccessful prerequisites; v5 retains them as outcomes. The
-   * cycle's own children (its reflection, its consolidation) are never part of the selection.
+   * The owner reselects the work a cycle waits on while it is still defining or researching;
+   * unsuccessful work stays selected as an outcome unless the owner drops it. The cycle's own
+   * children (its reflection, its consolidation tasks) are never part of the selection.
    */
   async replan(
     caller: Caller,
@@ -1361,7 +1294,7 @@ export class ResearchService implements Research {
           409,
         );
         const current = record.researchDependencies;
-        await this.handles.get(record.workflow.version)!.addDependencies(
+        await this.handle!.addDependencies(
           caller,
           {
             instanceId: record.id,
@@ -1381,8 +1314,7 @@ export class ResearchService implements Research {
 
   /**
    * End a cycle that cannot reach an answer. Its children keep their own records and their
-   * own endings; what ends here is the coordination. Before version 4 a cycle had no terminal
-   * state but `complete`, so one whose work could not finish stayed where it stopped for good.
+   * own endings; what ends here is the coordination.
    */
   async end(
     caller: Caller,
@@ -1397,14 +1329,7 @@ export class ResearchService implements Research {
       await this.authorize(caller, record, tx);
       const checks: BindingChecks = [];
       const result = await this.command(caller, 'end', input, tx, async () => {
-        const handle = this.handles.get(record.workflow.version);
-        check(
-          handle && record.workflow.version >= 4,
-          'research_version_unavailable',
-          'This cycle was started on a workflow version with no ending transition',
-          409,
-        );
-        const moved = await handle!.transition(
+        const moved = await this.handle!.transition(
           caller,
           {
             instanceId: record.id,
@@ -1460,13 +1385,7 @@ export class ResearchService implements Research {
           'The research cycle changed; read its current revision',
           409,
         );
-        const handle = this.handles.get(record.workflow.version);
-        check(
-          handle,
-          'research_version_unavailable',
-          'This historical research version cannot be advanced',
-          409,
-        );
+        const handle = this.handle!;
         const move = await this.ready(caller, record, tx, checks, input, since);
         const injecting = move === 'inject' || move === 'reinject';
         const continuing =
@@ -1529,7 +1448,7 @@ export class ResearchService implements Research {
         const choice: Choice = {
           ...(input.nextWave ? { nextWave: input.nextWave } : {}),
           ...(input.retryIntegration ? { retryIntegration: true } : {}),
-          ...(record.workflow.version >= 6 ? { move } : {}),
+          move,
         };
         const moved = await handle.transition(
           caller,
@@ -1537,7 +1456,7 @@ export class ResearchService implements Research {
             instanceId: record.id,
             expectedRevision: input.expectedRevision,
             action: move === 'inject' ? 'advance' : move,
-            ...(Object.keys(choice).length ? { input: choice } : {}),
+            input: choice,
             requestId: this.request(caller, input.requestId, 'advance'),
           },
           tx,
@@ -1679,9 +1598,7 @@ export class ResearchService implements Research {
         ? { code: blocker.code, message: clip(blocker.message, 2000) }
         : { code: 'research_waiting', message: guidance.instruction };
     }
-    const stoppedByLimit =
-      atLimit &&
-      !!(await this.continuing(caller, record, tx, [], await this.assumed(caller, record, tx, {})));
+    const stoppedByLimit = atLimit && !!(await this.continuing(caller, record, tx, [], 'complete'));
     const input: ResearchAdvance = {
       researchId: record.id,
       expectedRevision: record.workflow.revision,
@@ -1860,42 +1777,7 @@ export class ResearchService implements Research {
     return this.bind('artifacts', artifacts);
   }
   bindKnowledge(knowledge: Knowledge): () => void {
-    this.open();
-    this.releaseReadReferences?.();
-    const unbind = this.bind('knowledge', knowledge);
-    const binding = this.bindings.knowledge;
-    try {
-      const release = this.workflows.registerReadReferences({
-        id: 'research',
-        resolve: async (context) => {
-          if (
-            context.snapshot.version < 2 ||
-            !['reflection', 'reflection.lens'].includes(context.snapshot.workflow)
-          )
-            return null;
-          check(
-            this.bindings.knowledge === binding,
-            'knowledge_unavailable',
-            unavailable.knowledge,
-            409,
-          );
-          const sources = await this.use('knowledge', [], (service) =>
-            service.researchReferences(context.caller, context.tx),
-          );
-          return { artifacts: sources.artifacts, researchReviews: sources.reviews };
-        },
-      });
-      const dispose = () => {
-        release();
-        unbind();
-        if (this.releaseReadReferences === dispose) this.releaseReadReferences = undefined;
-      };
-      this.releaseReadReferences = dispose;
-      return dispose;
-    } catch (error) {
-      unbind();
-      throw error;
-    }
+    return this.bind('knowledge', knowledge);
   }
   private requireCapability<K extends keyof Capabilities>(name: K, checks: BindingChecks) {
     this.open();
@@ -1918,15 +1800,8 @@ export class ResearchService implements Research {
     checks.forEach((check) => check());
     return result;
   }
-  /** Only retained cycles can refer to the retired dedicated workflow. */
-  private usesRetiredConsolidation(record: ResearchRecord): boolean {
-    const { version } = record.workflow;
-    return version < 3 || (version < 6 && record.consolidationWorkspace === 'git');
-  }
   private children(record: ResearchRecord): string[] {
-    return [record.reflectionId, record.consolidationId, ...record.integrations].filter(
-      (id): id is string => !!id,
-    );
+    return [record.reflectionId, ...record.integrations].filter((id): id is string => !!id);
   }
   private request(caller: Caller, requestId: string, step: string) {
     return `research:${step}:${digest({ actorId: caller.actorId, requestId })}`;
@@ -1946,9 +1821,8 @@ export class ResearchService implements Research {
   close() {
     if (this.closed) return;
     this.closed = true;
-    this.releaseReadReferences?.();
     this.bindings = {};
-    for (const handle of this.handles.values()) handle.dispose();
+    this.handle?.dispose();
   }
 }
 export const researchPlugin = {

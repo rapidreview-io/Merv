@@ -11,9 +11,6 @@ import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.j
 import type { ResearchLineage } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
 import {
-  LENSES,
-  LENS_WORKFLOW,
-  REFLECTION_WORKFLOW,
   CHANGE_SPEC_CRITERION,
   REFLECTION_CRITERIA,
 } from '../packages/reflections/src/definitions.js';
@@ -204,8 +201,9 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   await assert.rejects(async () => await f.app.ctx.reflections.approved(f.owner, wave.id), {
     code: 'reflection_not_approved',
   });
-  assert.equal(wave.corpus, null);
-  assert.equal(wave.paper, null);
+  // The frozen corpus, paper snapshot and experiment list of retired waves are no longer shown.
+  for (const retired of ['corpus', 'paper', 'experimentIds', 'paperProposal'])
+    assert.ok(!(retired in wave), retired);
   await assert.rejects(
     async () =>
       await f.app.ctx.tasks.create(f.owner, {
@@ -310,8 +308,8 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   assert.equal(approved.plan, undefined);
   assert.equal(wave.review!.criteria.length, 4);
   assert.equal(approved.reviewerId, reviewer.actorId);
-  assert.equal(approved.corpus, null);
-  assert.equal(approved.paper, null);
+  for (const retired of ['corpus', 'paper', 'experimentIds', 'paperProposal', 'graph'])
+    assert.ok(!(retired in approved), retired);
   assert.ok(
     (
       await f.app.ctx.tasks.create(f.owner, {
@@ -333,268 +331,164 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   assert.ok((await f.app.ctx.research.startReflection(f.owner, { requestId: 'next-wave' })).id);
 });
 
-async function retainedWave(f: Awaited<ReturnType<typeof fixture>>) {
-  await f.app.setEnabled('reflections', false);
-  // Seed a live wave through its published graph, as the older server created it.
-  const seed = async (definition: typeof REFLECTION_WORKFLOW, success: string) => {
-    const policies = await f.app.ctx.state.read((sql) =>
-      sql.all<{ state: string; manifest_json: string }>(
-        'SELECT state,manifest_json FROM wf_execution_policies WHERE workflow=? AND version=?',
-        definition.name,
-        definition.version,
-      ),
-    );
-    return await f.app.ctx.workflows.register(definition, {
-      successStates: [success],
-      actions: definition.edges.map((edge) => ({
-        name: edge.action,
-        states: [edge.from],
-        transitions: [edge.action],
-        tool: 'fixture.seed',
-        instruction: 'Seed a retained wave.',
-        check: () => {},
-      })),
-      assignments: policies
-        .filter((row) => row.manifest_json !== 'null')
-        .map((row) => ({
-          state: row.state,
-          execution: JSON.parse(row.manifest_json),
-          references: () => ({}),
-          check: () => {},
-          build: () => {
-            throw new Error('Seeded assignments are never rendered');
-          },
-        })),
-    });
-  };
-  const parent = await seed(REFLECTION_WORKFLOW, 'approved');
-  const child = await seed(LENS_WORKFLOW, 'complete');
-  const id = await f.app.ctx.state.transaction(async (tx) => {
-    const wave = await parent.start(
-      f.owner,
+test('a JSON change specification is parsed, reviewed as a plan and retained with the approval', async (t) => {
+  const f = await fixture(t);
+  const carried = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Unfinished measurement',
+    goal: 'Started before the wave',
+    checks: ['Recorded'],
+    requestId: 'carried',
+  });
+  let wave = await f.lenses(await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' }));
+  const plan: ChangeSpec = {
+    version: 2,
+    changes: 'Narrow the scope to the controlled setting.',
+    next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
+    items: [
       {
-        workflow: 'reflection',
-        version: 2,
-        requestId: 'retained-wave',
-        data: { title: 'Retained wave' },
+        key: 'measure',
+        kind: 'task',
+        title: 'Build the measurement',
+        goal: 'Establish the measurement the experiment needs.',
+        checks: ['The measurement is recorded'],
+        dependsOn: [],
+        rationale: 'The methods lens found it missing.',
+        workspace: { provider: 'code', version: 1 },
       },
-      tx,
-    );
-    await tx.run(
-      'INSERT INTO reflections(id,project_id,title,owner_id,created_at,attempt,corpus,paper,review_id,submission,approved,feedback) VALUES(?,?,?,?,?,1,?,?,NULL,NULL,NULL,?)',
-      wave.id,
-      f.owner.projectId,
-      'Retained wave',
-      f.owner.actorId,
-      wave.createdAt,
-      'null',
-      'null',
-      '[]',
-    );
-    for (const lens of LENSES) {
-      const work = await child.start(
-        f.owner,
-        {
-          workflow: 'reflection.lens',
-          version: 2,
-          requestId: lens.perspective,
-          data: { reflectionId: wave.id, attempt: 1, perspective: lens.perspective },
-        },
-        tx,
-      );
-      await tx.run(
-        'INSERT INTO reflection_lenses(id,project_id,reflection_id,attempt,perspective,instructions,producer_id,artifact) VALUES(?,?,?,1,?,?,NULL,NULL)',
-        work.id,
-        f.owner.projectId,
-        wave.id,
-        lens.perspective,
-        lens.instructions,
-      );
-    }
-    return wave.id;
-  });
-  parent.dispose();
-  child.dispose();
-  await f.app.setEnabled('reflections', true);
-  return await f.app.ctx.reflections.get(f.owner, id);
-}
+      {
+        key: 'control',
+        kind: 'experiment',
+        name: 'controlled-rerun',
+        question: 'Does the effect survive the control?',
+        details: '',
 
-for (const version of [1, 2] as const)
-  test(`a version-${version} JSON change specification is parsed, reviewed as a plan and retained with the approval`, async (t) => {
-    const f = await fixture(t);
-    const carried = await f.app.ctx.tasks.create(f.owner, {
-      title: 'Unfinished measurement',
-      goal: 'Started before the wave',
-      checks: ['Recorded'],
-      requestId: 'carried',
+        dependsOn: ['measure'],
+        rationale: 'The evidence lens found the control missing.',
+        workspace: { provider: 'code', version: 1 },
+      },
+    ],
+    carriedOver: [{ workflowId: carried.id, reason: 'Still needed by the next cycle.' }],
+    rejected: [{ title: 'Scale up first', reason: 'No evidence yet that the effect is real.' }],
+  };
+  assert.equal(wave.workflow.version, 3);
+  assert.ok(wave.lenses.every((lens) => lens.workflow.version === 2));
+  const assignment = await f.app.ctx.workflows.assignment(f.owner, wave.id);
+  assert.match(JSON.stringify(assignment), /version: 2/);
+  assert.match(JSON.stringify(assignment), /deliverable is code in the project's repository/);
+  const report = await f.create(f.owner, 'Synthesis');
+  const submit = async (spec: Artifact, requestId: string) =>
+    await f.app.ctx.reflections.submit(f.owner, {
+      reflectionId: wave.id,
+      reportArtifactId: report.id,
+      changeSpecArtifactId: spec.id,
+      expectedRevision: wave.workflow.revision,
+      requestId,
     });
-    let wave = await f.lenses(
-      version === 1
-        ? await retainedWave(f)
-        : await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' }),
-    );
-    let plan: ChangeSpec = {
-      version: 1,
-      changes: 'Narrow the scope to the controlled setting.',
-      next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
-      items: [
-        {
-          key: 'measure',
-          kind: 'task',
-          title: 'Build the measurement',
-          goal: 'Establish the measurement the experiment needs.',
-          checks: ['The measurement is recorded'],
-          dependsOn: [],
-          rationale: 'The methods lens found it missing.',
-        },
-        {
-          key: 'control',
-          kind: 'experiment',
-          name: 'controlled-rerun',
-          question: 'Does the effect survive the control?',
-          details: '',
-
-          dependsOn: ['measure'],
-          rationale: 'The evidence lens found the control missing.',
-        },
-      ],
-      carriedOver: [{ workflowId: carried.id, reason: 'Still needed by the next cycle.' }],
-      rejected: [{ title: 'Scale up first', reason: 'No evidence yet that the effect is real.' }],
-    };
-    const versionOne = plan;
-    const versionTwo: ChangeSpec = {
-      ...plan,
-      version: 2,
-      items: plan.items.map((item) => ({ ...item, workspace: { provider: 'code', version: 1 } })),
-    };
-    if (version === 2) plan = versionTwo;
-    assert.equal(wave.workflow.version, version + 1);
-    assert.ok(wave.lenses.every((lens) => lens.workflow.version === 2));
-    const assignment = await f.app.ctx.workflows.assignment(f.owner, wave.id);
-    assert.match(JSON.stringify(assignment), new RegExp(`version: ${version}`));
-    if (version === 2)
-      assert.match(JSON.stringify(assignment), /deliverable is code in the project's repository/);
-    const report = await f.create(f.owner, 'Synthesis');
-    const submit = async (spec: Artifact, requestId: string) =>
-      await f.app.ctx.reflections.submit(f.owner, {
-        reflectionId: wave.id,
-        reportArtifactId: report.id,
-        changeSpecArtifactId: spec.id,
-        expectedRevision: wave.workflow.revision,
-        requestId,
-      });
-    const json = async (value: unknown) =>
-      await f.app.ctx.artifacts.create(f.owner, {
-        title: 'Changes',
-        mediaType: 'application/json',
-        content: typeof value === 'string' ? value : JSON.stringify(value),
-      });
-    for (const [label, value] of [
-      ['malformed', '{not json'],
-      ['unknown field', { ...plan, budget: 3 }],
-      ['wrong version', { ...plan, version: 3 }],
-      ['cycle', { ...plan, items: [{ ...plan.items[0]!, dependsOn: ['measure'] }] }],
-      [
-        'missing carried work',
-        { ...plan, carriedOver: [{ workflowId: 'task_none', reason: 'x' }] },
-      ],
-      [
-        'carried work of another kind',
-        { ...plan, carriedOver: [{ workflowId: wave.id, reason: 'x' }] },
-      ],
-    ] as const) {
-      await assert.rejects(
-        async () => await submit(await json(value), `refused-${label}`),
-        { code: 'invalid_change_spec' },
-        label,
-      );
-      const after = await f.app.ctx.reflections.get(f.owner, wave.id);
-      assert.equal(after.workflow.state, 'synthesizing');
-      assert.equal(after.workflow.revision, wave.workflow.revision);
-      assert.equal(after.plan, null);
-    }
-    const wrongVersion = await json(version === 1 ? versionTwo : versionOne);
-    const mismatch = `This reflection@${version + 1} wave writes change-spec version ${version}`;
-    const preflight = await f.app.ctx.workflows.evaluate(f.owner, wave.id, {
-      action: 'submit',
-      input: { reportArtifactId: report.id, changeSpecArtifactId: wrongVersion.id },
+  const json = async (value: unknown) =>
+    await f.app.ctx.artifacts.create(f.owner, {
+      title: 'Changes',
+      mediaType: 'application/json',
+      content: typeof value === 'string' ? value : JSON.stringify(value),
     });
-    assert.ok(
-      preflight.blockers.some(
-        (blocker) => blocker.code === 'invalid_change_spec' && blocker.message === mismatch,
-      ),
-    );
-    await assert.rejects(submit(wrongVersion, 'wrong-wave-version'), {
-      code: 'invalid_change_spec',
-      message: mismatch,
-    });
-    assert.equal(
-      (await f.app.ctx.reflections.get(f.owner, wave.id)).workflow.revision,
-      wave.workflow.revision,
-    );
-    const original = await json(plan);
-    const originalHash = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
-    assert.equal(original.hash, originalHash);
-    const submitted = await submit(original, 'structured');
-    assert.deepEqual(await submit(original, 'structured'), submitted);
-    wave = submitted;
-    const reviewContext = await f.app.ctx.workflows.assignment(
-      await f.actor('Preview reviewer', 'reviewer'),
-      wave.id,
-    );
-    if (version === 2)
-      assert.match(
-        JSON.stringify(reviewContext),
-        /Verify that each declaration matches its deliverable/,
-      );
-    assert.ok(JSON.stringify(reviewContext).includes(original.id));
-    assert.deepEqual(
-      JSON.parse((await f.app.ctx.artifacts.read(f.owner, original.id)).content),
-      plan,
-    );
-    assert.deepEqual(wave.plan, plan);
-    assert.equal(wave.review!.criteria.length, 5);
-    assert.equal(wave.review!.criteria[4], CHANGE_SPEC_CRITERION);
-    // A repair that falls back to prose drops the plan and the criterion that judged it.
-    wave = await f.verdict(
-      wave,
-      await f.actor('First reviewer', 'reviewer'),
-      false,
-      'synthesizing',
-    );
-    assert.equal(wave.workflow.state, 'synthesizing');
-    const structuredReviewId = wave.review!.id;
-    wave = await submit(await f.create(f.owner, 'Changes as prose'), 'prose');
-    assert.equal(wave.plan, null);
-    assert.notEqual(wave.review!.id, structuredReviewId);
-    assert.equal(wave.review!.criteria.length, 4);
-    assert.ok(!wave.review!.criteria.includes(CHANGE_SPEC_CRITERION));
-    wave = await f.verdict(
-      wave,
-      await f.actor('Second reviewer', 'reviewer'),
-      false,
-      'synthesizing',
-    );
-    wave = await submit(original, 'structured-again');
-    wave = await f.verdict(wave, await f.actor('Third reviewer', 'reviewer'), true);
-    assert.equal(wave.workflow.state, 'approved');
-    assert.deepEqual(wave.plan, plan);
-    const approved = await f.app.ctx.reflections.approved(f.owner, wave.id);
-    assert.deepEqual(approved.plan, plan);
-    assert.equal(approved.changeSpec.hash, originalHash);
+  for (const [label, value] of [
+    ['malformed', '{not json'],
+    ['unknown field', { ...plan, budget: 3 }],
+    ['wrong version', { ...plan, version: 3 }],
+    // The first format, which declared no workspaces, was only ever written by reflection@2.
+    [
+      'first version',
+      {
+        ...plan,
+        version: 1,
+        items: plan.items.map(({ workspace: _workspace, ...item }) => item),
+      },
+    ],
+    ['cycle', { ...plan, items: [{ ...plan.items[0]!, dependsOn: ['measure'] }] }],
+    ['missing carried work', { ...plan, carriedOver: [{ workflowId: 'task_none', reason: 'x' }] }],
+    [
+      'carried work of another kind',
+      { ...plan, carriedOver: [{ workflowId: wave.id, reason: 'x' }] },
+    ],
+  ] as const) {
     await assert.rejects(
-      async () =>
-        await f.app.ctx.state.transaction(
-          async (tx) =>
-            await tx.run(
-              'UPDATE reflections SET approved=? WHERE id=?',
-              JSON.stringify({ plan: { ...plan, items: [] } }),
-              wave.id,
-            ),
-        ),
-      { code: 'state_constraint' },
+      async () => await submit(await json(value), `refused-${label}`),
+      { code: 'invalid_change_spec' },
+      label,
     );
+    const after = await f.app.ctx.reflections.get(f.owner, wave.id);
+    assert.equal(after.workflow.state, 'synthesizing');
+    assert.equal(after.workflow.revision, wave.workflow.revision);
+    assert.equal(after.plan, null);
+  }
+  // Asking whether a refused plan is ready gives the answer the submission would.
+  const refused = await json({ ...plan, version: 3 });
+  const refusal = await submit(refused, 'refused-preflight').then(
+    () => assert.fail('A version-3 plan is refused'),
+    (error: { code: string; message: string }) => error,
+  );
+  assert.equal(refusal.code, 'invalid_change_spec');
+  const preflight = await f.app.ctx.workflows.evaluate(f.owner, wave.id, {
+    action: 'submit',
+    input: { reportArtifactId: report.id, changeSpecArtifactId: refused.id },
   });
+  assert.ok(
+    preflight.blockers.some(
+      (blocker) => blocker.code === refusal.code && blocker.message === refusal.message,
+    ),
+    JSON.stringify({ refusal: refusal.message, blockers: preflight.blockers }),
+  );
+  const original = await json(plan);
+  const originalHash = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+  assert.equal(original.hash, originalHash);
+  const submitted = await submit(original, 'structured');
+  assert.deepEqual(await submit(original, 'structured'), submitted);
+  wave = submitted;
+  const reviewContext = await f.app.ctx.workflows.assignment(
+    await f.actor('Preview reviewer', 'reviewer'),
+    wave.id,
+  );
+  assert.match(
+    JSON.stringify(reviewContext),
+    /Verify that each declaration matches its deliverable/,
+  );
+  assert.ok(JSON.stringify(reviewContext).includes(original.id));
+  assert.deepEqual(
+    JSON.parse((await f.app.ctx.artifacts.read(f.owner, original.id)).content),
+    plan,
+  );
+  assert.deepEqual(wave.plan, plan);
+  assert.equal(wave.review!.criteria.length, 5);
+  assert.equal(wave.review!.criteria[4], CHANGE_SPEC_CRITERION);
+  // A repair that falls back to prose drops the plan and the criterion that judged it.
+  wave = await f.verdict(wave, await f.actor('First reviewer', 'reviewer'), false, 'synthesizing');
+  assert.equal(wave.workflow.state, 'synthesizing');
+  const structuredReviewId = wave.review!.id;
+  wave = await submit(await f.create(f.owner, 'Changes as prose'), 'prose');
+  assert.equal(wave.plan, null);
+  assert.notEqual(wave.review!.id, structuredReviewId);
+  assert.equal(wave.review!.criteria.length, 4);
+  assert.ok(!wave.review!.criteria.includes(CHANGE_SPEC_CRITERION));
+  wave = await f.verdict(wave, await f.actor('Second reviewer', 'reviewer'), false, 'synthesizing');
+  wave = await submit(original, 'structured-again');
+  wave = await f.verdict(wave, await f.actor('Third reviewer', 'reviewer'), true);
+  assert.equal(wave.workflow.state, 'approved');
+  assert.deepEqual(wave.plan, plan);
+  const approved = await f.app.ctx.reflections.approved(f.owner, wave.id);
+  assert.deepEqual(approved.plan, plan);
+  assert.equal(approved.changeSpec.hash, originalHash);
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.state.transaction(
+        async (tx) =>
+          await tx.run(
+            'UPDATE reflections SET approved=? WHERE id=?',
+            JSON.stringify({ plan: { ...plan, items: [] } }),
+            wave.id,
+          ),
+      ),
+    { code: 'state_constraint' },
+  );
+});
 
 test('review return preserves lenses for synthesis repair and creates fresh versioned children for lens repair', async (t) => {
   const f = await fixture(t);
@@ -1001,7 +895,7 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
         code: 'reflection_unavailable',
       });
       await f.app.setEnabled('reflections', true);
-      assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).corpus, null);
+      assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).id, wave.id);
       assert.equal(
         (await f.app.ctx.sessions.agentSelf(secret)).current!.assignment.context!.hash,
         execution.assignment.context!.hash,
@@ -1260,7 +1154,6 @@ test('reflection reviewer authors paper edits with the verdict and main-agent ed
     await f.app.ctx.research.startReflection(f.owner, { requestId: 'paper-reflection' }),
   );
   wave = await f.synthesize(wave);
-  assert.equal(wave.paperProposal, null);
   const reviewer = await f.actor('Scientific reviewer', 'reviewer');
   const assignment = await f.app.ctx.workflows.assignment(reviewer, wave.id);
   assert.ok(JSON.stringify(assignment).includes('paperChanges'));
@@ -1571,8 +1464,6 @@ test('large research stays outside the assignment and live source permissions do
   });
   assert.ok(Buffer.byteLength(JSON.stringify(execution.assignment)) < 16_000);
   assert.ok(!execution.assignment.context!.prompt.includes('long research context'));
-  assert.equal(wave.corpus, null);
-  assert.equal(wave.paper, null);
 });
 
 test('standalone Reflections can create and complete its own work without Research or Knowledge', async (t) => {
@@ -1588,33 +1479,5 @@ test('standalone Reflections can create and complete its own work without Resear
     true,
   );
   assert.equal(approved.workflow.state, 'approved');
-  assert.deepEqual((await f.app.ctx.reflections.approved(f.owner, wave.id)).experimentIds, []);
-});
-
-test('a retained reflection@2 keeps recipe 7 through restart and lens rework', async (t) => {
-  const f = await fixture(t);
-  const retained = await retainedWave(f);
-  const id = retained.id;
-  let wave = await f.lenses(await f.app.ctx.reflections.get(f.owner, id));
-  const synthesis = await f.app.ctx.workflows.assignment(f.owner, id);
-  assert.match(synthesis.handoff.instruction, /version: 1/);
-  assert.doesNotMatch(synthesis.brief, /workspace/);
-  const reviewer = await f.actor('Historical reviewer', 'reviewer');
-  wave = await f.synthesize(wave);
-  const review = await f.app.ctx.workflows.assignment(reviewer, id);
-  assert.doesNotMatch(review.brief, /workspace/);
-  wave = await f.verdict(wave, reviewer, false, 'reflecting');
-  assert.equal(wave.workflow.version, 2);
-  assert.ok(wave.lenses.every((lens) => lens.workflow.version === 2));
-  wave = await f.lenses(wave);
-  assert.match(
-    (await f.app.ctx.workflows.assignment(f.owner, id)).handoff.instruction,
-    /version: 1/,
-  );
-  wave = await f.verdict(
-    await f.synthesize(wave),
-    await f.actor('Final historical reviewer', 'reviewer'),
-    true,
-  );
-  assert.equal(wave.workflow.state, 'approved');
+  assert.equal((await f.app.ctx.reflections.approved(f.owner, wave.id)).id, wave.id);
 });

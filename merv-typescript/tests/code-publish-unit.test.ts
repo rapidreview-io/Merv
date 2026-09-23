@@ -13,6 +13,7 @@ import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { config as githubConfig, githubFixture } from './github-fixture.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 /**
  * A project Code hosts, with its own repositories and the GitHub App faked at its seam, where
@@ -164,6 +165,7 @@ async function fixture(t: TestContext, connected = false) {
       claimId: claim.claimId!,
       verdict: 'pass',
       notes: 'Checked the delivered change.',
+      ...assessment(claim),
       requestId: `pass-${request.id}`,
     });
     return request.id;

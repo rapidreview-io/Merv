@@ -2,8 +2,6 @@ import type { PaperProposal } from '@merv/paper/models';
 import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
-/** Retired roles stay readable: stored rows predate the 2026-09-16 graph retirement. */
-export type StoredExperimentRole = ExperimentRole | 'graph';
 export type ExperimentTransitionName =
   'submit_design' | 'submit_results' | 'retry_running' | 'abandon' | 'mark_failed';
 export interface ExperimentCreate {
@@ -39,7 +37,7 @@ export interface ExperimentEvidence {
   id: string;
   experimentId: string;
   attemptIndex: number;
-  role: StoredExperimentRole;
+  role: ExperimentRole;
   path: string;
   artifactId: string;
   hash: string;

@@ -53,8 +53,8 @@ export interface Task {
   producerId: string;
   briefId: string;
   deliveryIds: string[];
-  /** 2 where a delivery confirms each check by number; 1 on a task older than that. */
-  evidenceVersion?: 1 | 2;
+  /** A delivery confirms each check by number; version 1 was retired with its tasks. */
+  evidenceVersion?: 2;
   reviewId: string | null;
   workflow: { state: string; revision: number; updatedAt: string };
   failure: { reason: string; actorId: string; createdAt: string } | null;
@@ -394,7 +394,6 @@ export function useDelivery(
   const [locked, setLocked] = useState(false);
   const delivers =
     !!t &&
-    t.evidenceVersion !== 1 &&
     !!process?.edges.some(
       (edge) => edge.tool === 'task.submit_delivery' && !!edge.status && edge.status !== 'blocked',
     );

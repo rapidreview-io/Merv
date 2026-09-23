@@ -13,6 +13,7 @@ import type { Role, StoredEvent } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-permissions-'));
@@ -120,6 +121,7 @@ test('losing review permission releases unfinished claims without changing evide
           claimId: claim.claimId!,
           verdict: 'pass',
           notes: 'Checked.',
+          ...assessment(claim),
           requestId: 'stale',
         }),
       { code: 'stale_claim' },
@@ -201,6 +203,7 @@ test('permission-loss recovery preserves submitted verdicts and rolls back its e
       claimId: closed.claimId!,
       verdict: 'pass',
       notes: 'Verified.',
+      ...assessment(closed),
       requestId: 'verdict',
     });
     const unfinished = await f.reviews.start(f.reviewer, (await f.request()).id);

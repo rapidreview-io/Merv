@@ -354,7 +354,7 @@ test('unavailable task recipes block begin while task reads and explicit closure
 test('an experiment plan task carries a feasibility check its delivery review cannot waive', async () => {
   const f = await fixture();
   try {
-    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']!.checks[0]!;
+    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']![0]!;
     const source = async (title: string) =>
       (await f.app.ctx.artifacts.create(f.producer.caller, { title, content: `${title}.` })).id;
     const contextInputs = {
@@ -373,7 +373,7 @@ test('an experiment plan task carries a feasibility check its delivery review ca
       checks: [feasible.toUpperCase(), 'Two plus three equals five.'],
     });
     assert.deepEqual(supplied.checks, [feasible.toUpperCase(), 'Two plus three equals five.']);
-    // The older version stays registered for its own tasks but is no way around the check.
+    // Version 1 is retired: it is no longer registered, so it is no way around the check.
     await assert.rejects(
       async () => await f.create({ type: 'experiment.plan', typeVersion: 1, contextInputs }),
       { code: 'task_type_unavailable' },

@@ -64,7 +64,7 @@ A workspace belongs to a workflow **version**, because a published execution pol
 
 | Work                                          | Writable checkout                                                 | Reviewer checkout                                                 |
 | --------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Git experiment (`experiment@2/4/6`)           | `running`: persistent shared `experiments`, base `central`        | `experiment_review`: ephemeral read-only, `reference:code`        |
+| Git experiment (`experiment@6`)               | `running`: persistent shared `experiments`, base `central`        | `experiment_review`: ephemeral read-only, `reference:code`        |
 | Based Git experiment (`experiment@7`)         | `running`: persistent shared `experiments`, base `reference:base` | as above                                                          |
 | Git experiment, derived base (`experiment@8`) | `running`: `reference:base`, driver `code.v2`                     | as above                                                          |
 | Git task (`task@3`)                           | `in_progress`: persistent shared `tasks`, base `central`          | `in_review`: ephemeral read-only `task-reviews`, `reference:code` |

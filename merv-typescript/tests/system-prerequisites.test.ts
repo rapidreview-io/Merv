@@ -119,8 +119,12 @@ test('workspace-free tasks work with Code absent and task manifests retain their
   const published = JSON.parse(
     readFileSync(new URL('./fixtures/published-policies.json', import.meta.url), 'utf8'),
   );
+  // A retired version is no longer registered; its published row is kept only as history.
+  const live = (row: { retired?: boolean }) => !row.retired;
   await f.state.read(async (sql) => {
-    for (const row of published.definitions.filter((row: { name: string }) => row.name === 'task'))
+    for (const row of published.definitions.filter(
+      (row: { name: string; retired?: boolean }) => row.name === 'task' && live(row),
+    ))
       assert.equal(
         (await sql.get<{ fingerprint: string }>(
           'SELECT fingerprint FROM wf_definitions WHERE name=? AND version=?',
@@ -130,7 +134,7 @@ test('workspace-free tasks work with Code absent and task manifests retain their
         row.fingerprint,
       );
     for (const row of published.policies.filter(
-      (row: { workflow: string }) => row.workflow === 'task',
+      (row: { workflow: string; retired?: boolean }) => row.workflow === 'task' && live(row),
     ))
       assert.equal(
         (await sql.get<{ fingerprint: string }>(

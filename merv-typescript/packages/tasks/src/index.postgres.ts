@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -91,4 +93,26 @@ FOR EACH ROW EXECUTE FUNCTION task_lease_no_delete_guard();
   7: `
 ALTER TABLE task_leases DROP CONSTRAINT task_leases_actor_id_key;
 `,
+  // Deletes the tasks the ledger retires: task@1 instances (also those later upgraded to v2),
+  // evidence version 1 and the experiment.plan@1 recipe, which no current flow can start.
+  8: `${retiredInstancesSql}
+${withoutTriggers(
+  'task_leases',
+  ['task_lease_no_delete'],
+  `DELETE FROM task_leases WHERE task_id IN (SELECT id FROM wf_retired_instances);`,
+)}
+${withoutTriggers(
+  'task_checkpoints',
+  ['task_checkpoints_no_delete'],
+  `DELETE FROM task_checkpoints WHERE task_id IN (SELECT id FROM wf_retired_instances);`,
+)}
+DELETE FROM task_commands WHERE result::jsonb->>'id' IN (SELECT id FROM wf_retired_instances)
+  OR result::jsonb->>'taskId' IN (SELECT id FROM wf_retired_instances);
+DELETE FROM tasks WHERE id IN (SELECT id FROM wf_retired_instances);
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM tasks WHERE evidence_version=1 OR (type_name='experiment.plan' AND type_version=1)) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Retired tasks remain', ERRCODE = '23514';
+  END IF;
+END $check$;`,
 };

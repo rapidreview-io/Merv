@@ -20,7 +20,7 @@ import type { ResearchDigest, ResearchRecord } from '../packages/research/src/ty
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource } from './fixtures/code-store.js';
-import { hostedCode, legacyCycle, type LegacyCycle, type Main } from './fixtures/research.js';
+import { hostedCode, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext, store = false) {
@@ -92,20 +92,6 @@ async function fixture(t: TestContext, store = false) {
     });
   const create = async () =>
     await research.create(owner, { name: 'Research loop', requestId: id() });
-  /** A cycle on a retained version: v2 by default, or a v5 cycle that chose Git consolidation. */
-  const legacy = async (options: LegacyCycle = {}) => {
-    research.close();
-    const cycleId = await legacyCycle(app.ctx, owner, id(), options);
-    research = await service();
-    return await research.get(owner, cycleId);
-  };
-  const git = async (dependsOn: string[] = [], consolidationDependencies: string[] = []) =>
-    await legacy({
-      version: 5,
-      consolidationWorkspace: 'git',
-      dependsOn,
-      consolidationDependencies,
-    });
   const advance = async (record: ResearchRecord) =>
     await research.advance(owner, {
       researchId: record.id,
@@ -196,8 +182,6 @@ async function fixture(t: TestContext, store = false) {
     artifact,
     reflect,
     finish,
-    legacy,
-    git,
     /** The same storage with Artifacts unbound or bound again, as when a plugin is unloaded. */
     async rebind(digests: boolean) {
       research.close();
@@ -288,11 +272,17 @@ test('Research requests retain their admitted caller and reflection inputs', asy
 test('failed Research activation releases its earlier workflow registration', async (t) => {
   const f = await fixture(t);
   f.research.close();
-  const releaseConflict = f.app.ctx.workflows.registerReadReferences({
-    id: 'research',
-    resolve: async () => null,
+  // Binding runs after the workflow is registered, so a binding that throws leaves a handle to
+  // release: a second activation could not register research@6 again if it were still held.
+  const refusing = new Proxy(f.app.ctx.tasks, {
+    get: (tasks, key) =>
+      key === 'serviceTasks'
+        ? () => {
+            throw new Error('binding refused');
+          }
+        : Reflect.get(tasks, key),
   });
-  const activate = async () =>
+  const activate = async (tasks = f.app.ctx.tasks) =>
     await createService(
       new ResearchService(
         f.app.ctx.state,
@@ -301,10 +291,10 @@ test('failed Research activation releases its earlier workflow registration', as
         f.app.ctx.paper,
         f.app.ctx.reflections,
         f.app.ctx.knowledge,
+        tasks,
       ),
     );
-  await assert.rejects(activate, { code: 'read_provider_exists' });
-  releaseConflict();
+  await assert.rejects(activate(refusing), /binding refused/);
   const restarted = await activate();
   try {
     assert.equal(
@@ -348,7 +338,6 @@ test('new no-code research completes after approved reflection without consolida
   assert.equal(record.workflow.state, 'complete');
   // New cycles observe failed outcomes instead of requiring successful experiments.
   assert.equal(record.workflow.version, 6);
-  assert.equal(record.consolidationId, null);
   assert.equal((await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.length, 1);
   assert.ok(!f.app.status().some(({ id }) => id.startsWith('consolidation')));
   await assert.rejects(async () => await f.advance(record), { code: 'research_complete' });
@@ -399,6 +388,47 @@ test('a version-6 cycle whose accepted code is all on main completes at reflecti
   assert.deepEqual(done.integrations, []);
   assert.deepEqual(published, []);
   assert.equal((await digestOf(f, done)).digest.integration, null);
+});
+
+/**
+ * Accepted Git work of an instance the 2026-09-22 retirement deleted: Code keeps the acceptance,
+ * and only the retirement ledger still names the instance.
+ */
+const retired = async (f: Awaited<ReturnType<typeof fixture>>) => {
+  const id = 'wf_retired_git_experiment';
+  await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.run(
+        `INSERT INTO wf_retired_instances(id,project_id,workflow,version,reason)
+         VALUES(?,?,'experiment',4,'retired_version')`,
+        id,
+        f.owner.projectId,
+      ),
+  );
+  return id;
+};
+
+test('accepted code of a retired instance is history no cycle integrates', async (t) => {
+  // A task cannot depend on an instance that no longer exists, so the consolidation task
+  // stands on the rest of what main lacks.
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const { advance } = await hosted(f, { unitIds: [await retired(f), accepted.id] });
+  const moved = await advance();
+  assert.equal(moved.workflow.state, 'consolidating');
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, moved.integrations[0]!)).dependencies.map(
+      (d) => d.id,
+    ),
+    [accepted.id],
+  );
+  // With nothing else unpublished, the cycle completes at approval as if main held it all.
+  const g = await fixture(t);
+  const only = await hosted(g, { unitIds: [await retired(g)] });
+  const done = await only.advance();
+  assert.equal(done.workflow.state, 'complete');
+  assert.deepEqual(done.integrations, []);
+  assert.deepEqual(only.published, []);
 });
 
 test('accepted code main lacks injects one consolidation task marked to publish, and the cycle waits on it', async (t) => {
@@ -1021,42 +1051,6 @@ test('outer advance rolls back both child creation and replay receipts when call
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
 });
 
-for (const version of [2, 5] as const)
-  test(`retired consolidation leaves version-${version} research readable without creating work`, async (t) => {
-    const f = await fixture(t);
-    await f.definition();
-    const legacy = await f.legacy({
-      version,
-      consolidationWorkspace: version === 5 ? 'git' : 'none',
-    });
-    const first = {
-      researchId: legacy.id,
-      expectedRevision: legacy.workflow.revision,
-      requestId: f.id(),
-    };
-    const started = await f.research.advance(f.owner, first);
-    const reflected = await f.advance(started);
-    await f.reflect(reflected);
-    const before = await f.research.get(f.owner, reflected.id);
-    const work = await f.app.ctx.workflows.list(f.owner);
-    await assert.rejects(f.advance(before), { code: 'research_consolidation_retired' });
-    assert.deepEqual(await f.research.get(f.owner, before.id), before);
-    assert.deepEqual(await f.app.ctx.workflows.list(f.owner), work);
-    assert.deepEqual(await f.research.advance(f.owner, first), started);
-    assert.match(
-      JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, before.id)),
-      /research_consolidation_retired/,
-    );
-    assert.ok(!f.app.ctx.workflows.catalog().some(({ name }) => name === 'consolidation'));
-    assert.ok(
-      !(await f.app.ctx.tools.list()).some(({ name }) => name.startsWith('consolidation.')),
-    );
-    const current = await f.advance(await f.advance(await f.create()));
-    await f.reflect(current);
-    assert.equal((await f.advance(current)).workflow.state, 'complete');
-    assert.equal((await f.research.get(f.owner, before.id)).workflow.state, 'reflecting');
-  });
-
 test('a research cycle that cannot reach an answer can be ended', async (t) => {
   const f = await fixture(t);
   // A preflight carries the bound fields beside the choice; refusing them there would report
@@ -1629,44 +1623,6 @@ for (const firstCode of ['task', 'experiment'] as const)
     await f.code(true);
     assert.ok((await f.research.advance(f.owner, input)).successorId);
   });
-
-test('v1 plans keep their exact hash and workspace-free behavior', async (t) => {
-  const f = await fixture(t);
-  const current = planned();
-  const { record, command } = await reflected(f, current);
-  const plan: ChangeSpec = {
-    ...current,
-    version: 1,
-    items: current.items.map(({ workspace: _workspace, ...item }) => item),
-  };
-  const changeSpec = await f.app.ctx.artifacts.create(f.owner, {
-    title: 'Retained v1 specification',
-    content: JSON.stringify(plan),
-    mediaType: 'application/json',
-  });
-  const approved = {
-    ...(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!)),
-    plan,
-    changeSpec,
-  };
-  // Research consumes the retained owner contract without resubmitting it through a new wave.
-  t.mock.method(f.app.ctx.reflections, 'approved', async () => approved);
-  const done = await f.research.advance(f.owner, command('create'));
-  const next = await f.research.get(f.owner, done.successorId!);
-  assert.deepEqual(approved.plan, plan);
-  assert.equal(next.origin!.changeSpec.hash, approved.changeSpec.hash);
-  assert.equal(
-    (await digestOf(f, done)).digest.reflection!.changeSpec.hash,
-    approved.changeSpec.hash,
-  );
-  for (const item of next.origin!.items) {
-    const work =
-      item.kind === 'task'
-        ? await f.app.ctx.tasks.get(f.owner, item.id)
-        : await f.app.ctx.experiments.get(f.owner, item.id);
-    assert.notEqual(work.workspace, 'git');
-  }
-});
 
 test("a materialised hosted experiment derives its base from its task's reviewed acceptance", async (t) => {
   const f = await fixture(t, true);

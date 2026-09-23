@@ -34,7 +34,7 @@ export interface Review {
   claimable?: boolean;
   artifactIds: string[];
   criteria: string[];
-  formatVersion: 1 | 2;
+  formatVersion: 2;
   status: 'requested' | 'started' | 'submitted' | 'superseded';
   reviewerId: string | null;
   claimId: string | null;

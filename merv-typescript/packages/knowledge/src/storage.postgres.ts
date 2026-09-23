@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -44,5 +46,13 @@ END;
 $merv$;
 CREATE TRIGGER knowledge_commands_no_delete BEFORE DELETE ON knowledge_commands
 FOR EACH ROW EXECUTE FUNCTION knowledge_commands_no_delete_guard();
+`,
+  // Only the corpus capture of the retired reflection@1 wrote snapshots, and nothing reads them.
+  // No ledger row is needed to find them, but the release's preconditions run here too, so this
+  // deletion never commits in a boot that another retirement migration will refuse.
+  2: `
+${retiredInstancesSql}
+${withoutTriggers('knowledge_commands', ['knowledge_commands_no_delete'], 'DELETE FROM knowledge_commands;')}
+${withoutTriggers('knowledge_snapshots', ['knowledge_snapshots_no_delete'], 'DELETE FROM knowledge_snapshots;')}
 `,
 };

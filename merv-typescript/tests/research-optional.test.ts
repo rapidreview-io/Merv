@@ -356,42 +356,6 @@ test('a withdrawn optional provider cannot commit results returned after an awai
   finalUnbind();
 });
 
-test('live read grants reject in-flight results from a replaced Knowledge registration', async (t) => {
-  const f = await fixture(t);
-  const wave = await f.research.startReflection(f.owner, { requestId: f.id() });
-  const target = { instanceId: wave.lenses[0]!.id, expectedRevision: 0 };
-  const execution = await f.app.ctx.workflows.execution(f.owner, target);
-  const entered = pending(),
-    release = pending();
-  const knowledge = f.app.ctx.knowledge;
-  const unbind = f.research.bindKnowledge({
-    ...knowledge,
-    researchReferences: async () => {
-      entered.resolve();
-      await release.promise;
-      return { artifacts: ['art_withdrawn'], reviews: [], experiments: [] };
-    },
-  });
-  const request = {
-    ...target,
-    policyHash: execution.policyHash,
-    registrationId: execution.registrationId,
-    tool: 'artifact.read',
-    input: { artifactId: 'art_withdrawn' },
-  };
-  const operation = f.app.ctx.workflows.authorizeDispatch(f.owner, request);
-  const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
-  await entered.promise;
-  unbind();
-  f.research.bindKnowledge(knowledge);
-  release.resolve();
-  await rejected;
-  await assert.rejects(f.app.ctx.workflows.authorizeDispatch(f.owner, request), {
-    code: 'execution_arguments_forbidden',
-  });
-  assert.equal(f.app.ctx.research, f.research);
-});
-
 test('an approved current cycle completes while Knowledge is absent and retains its reflection', async (t) => {
   const f = await fixture(t);
   await f.define();

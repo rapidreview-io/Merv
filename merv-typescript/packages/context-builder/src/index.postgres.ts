@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -36,4 +38,12 @@ $merv$;
 CREATE TRIGGER context_packages_no_delete BEFORE DELETE ON context_packages
 FOR EACH ROW EXECUTE FUNCTION context_packages_no_delete_guard();
 `,
+  // Deletes the packages built for retired workflow instances. Recipes stay: they are pinned
+  // definitions, not records of work.
+  2: `${retiredInstancesSql}
+${withoutTriggers(
+  'context_packages',
+  ['context_packages_no_delete'],
+  `DELETE FROM context_packages WHERE package::jsonb #>> '{subject,id}' IN (SELECT id FROM wf_retired_instances);`,
+)}`,
 };

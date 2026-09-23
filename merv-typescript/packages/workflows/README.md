@@ -60,7 +60,7 @@ Unmanaged graph mutations require `write` permission directly.
 ## Durability
 
 - A name/version has a persisted fingerprint. Changed graph definitions must use
-  a new version, including after restart. Instances remain pinned unless their owning program explicitly upgrades them.
+  a new version, including after restart. An instance stays on the version it started on.
 - Starting without a version chooses the latest installed version. Retrying that
   request returns the original response even if a newer version was installed.
 - Request IDs are scoped to the project. Reuse requires identical actor and command
@@ -73,13 +73,27 @@ Unmanaged graph mutations require `write` permission directly.
   definitions, instances, history, or request receipts. Reads remain available;
   reinstalling the same version resumes operations. Explicit old handles stay invalid.
 
-Managed registration handles also support `upgrade` to a newer version of the same
-workflow when the graph only adds edges: initial state, state names, terminal states
-and all prior edges must remain unchanged. The source and target registrations
-must both be active. Upgrades require write access, reject terminal instances,
-advance the revision, and record source/target versions in history. They preserve
-state/data and can share the program command’s transaction. This is not a general
-state-mapping or bulk migration facility.
+## Retired versions
+
+A version that no current flow can start is retired: its program stops registering it and a
+migration deletes its instances with every row keyed by them. The 2026-09-22 retirement
+(task@1, experiment@1–4, reflection@1–2 and lens@1, research@2–5, consolidation, evidence
+version 1, review format 1 and the `experiment.plan@1` recipe) also removed the engine's
+`upgrade` primitive, which only task@1 used. The definition, success and execution-policy rows
+of a retired version stay as history.
+
+Workflows owns the ledger of that retirement, `wf_retired_instances` (id, project, workflow,
+version, reason). Every component migration that deletes retired records first runs the shared
+snippet in `@merv/contracts/retired-instances`, which fills the ledger insert-only; whichever
+runs first captures the whole set while its inputs still exist, and the rest read it. A guard
+refuses any update or delete of it, because once `wf_instances` has lost the retired rows the
+set could not be computed again. The ledger is kept permanently: it explains the ids the
+`events` log still names, which is never rewritten. The snippet then refuses the release while
+deleting the set would strand a surviving record: a live session of a retired instance, a
+surviving research cycle staged on a retired wave, a format 1 review of a survivor, or graph
+evidence of a surviving experiment. Every retirement migration runs it before its deletes, so
+the first to run refuses before any component commits and the previous image still boots. The
+snippet's text is embedded in published migrations and may not change.
 
 The engine does not yet implement child graphs, automatic effects or timers.
 Programs can coordinate domain work through one caller-owned transaction.

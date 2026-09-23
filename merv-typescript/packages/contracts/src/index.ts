@@ -940,12 +940,6 @@ export interface WorkflowTransition {
   /** Proposed command arguments for registered checks; not merged into workflow state. */
   input?: Data;
 }
-export interface WorkflowUpgrade {
-  instanceId: string;
-  fromVersion: number;
-  expectedRevision: number;
-  requestId: string;
-}
 export interface WorkflowCheckContext {
   caller: Caller;
   snapshot: WorkflowSnapshot;
@@ -1161,16 +1155,7 @@ export interface WorkflowEvaluationInput {
   action?: string;
   input?: Data;
 }
-export interface WorkflowReadReferences {
-  id: string;
-  /** Awaited, read-only domain lookup for denied evidence reads. Never called for writes or assignment/lease lifecycle. */
-  resolve(
-    context: WorkflowCheckContext,
-    tool: string,
-  ): WorkflowExecutionReferences | null | Promise<WorkflowExecutionReferences | null>;
-}
 export interface Workflows {
-  registerReadReferences(provider: WorkflowReadReferences): () => void;
   /** Metadata-only, project-scoped readiness. Does not reserve work or render assignment bytes. */
   /** Candidates a source may dispatch; with `worker`, only those that worker may take. */
   dispatchCandidates(
@@ -1221,8 +1206,6 @@ export interface Workflows {
       input: WorkflowTransition,
       tx?: Transaction,
     ): Promise<WorkflowSnapshot>;
-    /** Explicit managed-program upgrade to this handle's additive definition; preserves state and data. */
-    upgrade(caller: Caller, input: WorkflowUpgrade, tx?: Transaction): Promise<WorkflowSnapshot>;
     /** Program-owned additive DAG composition; not an agent-facing mutation. */
     addDependencies(
       caller: Caller,
@@ -1357,7 +1340,7 @@ export interface ReviewRequest {
   /** Whether the reader of this answer may claim it now. Present on reads, not on writes. */
   claimable?: boolean;
   criteria: string[];
-  formatVersion: 1 | 2;
+  formatVersion: 2;
   snapshotHash: string;
   status: 'requested' | 'started' | 'submitted' | 'superseded';
   reviewerId: string | null;
@@ -1394,11 +1377,11 @@ export interface ReviewInput {
   /**
    * Numbers of the criteria a pass can never waive: each must be met with retained evidence.
    * The requesting domain sets it, so a reviewer cannot wave through the check the domain
-   * depends on. Format 2 only, because a format 1 verdict may carry no findings at all.
+   * depends on.
    */
   requiredCriteria?: number[];
-  /** The integrating program pins the verdict format when requesting review. */
-  formatVersion?: 1 | 2;
+  /** The only verdict format: a synopsis and one finding per criterion. */
+  formatVersion?: 2;
   requestId: string;
 }
 export interface ReviewSubmit {
@@ -1466,7 +1449,7 @@ export interface Task {
   title: string;
   goal: string;
   checks: string[];
-  evidenceVersion: 1 | 2;
+  evidenceVersion: 2;
   acceptanceChecks: { number: number; text: string }[];
   deliveryConfirmations: TaskConfirmation[];
   deliveryAssessmentId: string | null;
@@ -1622,7 +1605,7 @@ export interface TaskDelivery {
   artifactIds: string[];
   /** A Git task only: this worker's own succeeded code.commit operation. */
   commandId?: string;
-  /** Required for tasks created with evidenceVersion 2. These are producer claims. */
+  /** Required: one per acceptance check. These are producer claims. */
   confirmations?: TaskConfirmation[];
   expectedRevision: number;
   requestId: string;

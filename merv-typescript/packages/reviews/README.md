@@ -19,4 +19,4 @@ See [explicit review return paths](../../docs/REVIEW_RETURN_PATHS.md).
 
 The durable `reviews.actor-revoked.v1` consumer releases revoked actors’ unfinished claims. It preserves the review/evidence snapshot, retains claim history, and emits a causal `review.claim_released` event. Unloaded consumers catch up on reactivation. Submitted verdicts remain immutable. `start` returns a fresh `claimId` and generation; `submit` requires that claim ID. Existing started reviews migrate to stable legacy claim IDs. See [the full recovery contract](../../docs/RECOVERY_AND_CONTEXT.md).
 
-Existing format 1 requests and receipt snapshots remain supported. Reissue preserves the pinned format; recovery preserves the assessment inputs and fences previous claims. See [review assessments](../../docs/REVIEW_ASSESSMENTS.md) for storage, validation, UI/context integration and Python parity.
+Every request uses format 2 (format 1 was retired on 2026-09-22). Reissue preserves the pinned format; recovery preserves the assessment inputs and fences previous claims. See [review assessments](../../docs/REVIEW_ASSESSMENTS.md) for storage, validation, UI/context integration and Python parity.

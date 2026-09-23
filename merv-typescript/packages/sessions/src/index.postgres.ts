@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -121,4 +123,47 @@ CREATE TRIGGER session_usage_write_once BEFORE UPDATE ON session_usage
 FOR EACH ROW EXECUTE FUNCTION session_usage_write_once_guard();
 `,
   5: `CREATE INDEX worker_sessions_instance ON worker_sessions(project_id,instance_id,revision);`,
+  // Deletes the sessions of retired workflow instances with the rows that hang off them. The
+  // dispatch and tool-call tables belong to components that migrate after this one, so they are
+  // reached only once they exist.
+  6: `${retiredInstancesSql}
+CREATE TEMP TABLE retired_sessions ON COMMIT DROP AS
+  SELECT id FROM worker_sessions WHERE instance_id IN (SELECT id FROM wf_retired_instances);
+DO $retire$
+BEGIN
+  IF to_regclass('session_tool_calls') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_tool_calls WHERE execution_id IN (SELECT id FROM retired_sessions)';
+  END IF;
+  IF to_regclass('session_dispatch_receipts') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE session_dispatch_receipts DISABLE TRIGGER session_dispatch_receipts_no_delete';
+    EXECUTE 'DELETE FROM session_dispatch_receipts WHERE session_id IN (SELECT id FROM retired_sessions)';
+    EXECUTE 'ALTER TABLE session_dispatch_receipts ENABLE TRIGGER session_dispatch_receipts_no_delete';
+  END IF;
+  IF to_regclass('session_dispatch_holds') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_dispatch_holds WHERE instance_id IN (SELECT id FROM wf_retired_instances)
+      OR last_session_id IN (SELECT id FROM retired_sessions)';
+  END IF;
+  IF to_regclass('session_hold_requests') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_hold_requests
+      WHERE result::jsonb->>''instanceId'' IN (SELECT id FROM wf_retired_instances)';
+  END IF;
+  IF to_regclass('session_budgets') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_budgets WHERE scope_id IN (SELECT id FROM wf_retired_instances)';
+  END IF;
+END $retire$;
+${withoutTriggers(
+  'session_workspaces',
+  ['session_workspaces_no_delete'],
+  `DELETE FROM session_workspaces WHERE session_id IN (SELECT id FROM retired_sessions);`,
+)}
+${withoutTriggers(
+  'session_usage',
+  ['session_usage_no_delete'],
+  `DELETE FROM session_usage WHERE session_id IN (SELECT id FROM retired_sessions);`,
+)}
+${withoutTriggers(
+  'worker_sessions',
+  ['worker_sessions_no_delete'],
+  `DELETE FROM worker_sessions WHERE id IN (SELECT id FROM retired_sessions);`,
+)}`,
 };

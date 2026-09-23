@@ -11,6 +11,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, ReviewInput, Role } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 async function fixture(t: TestContext, version = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));
@@ -119,6 +120,7 @@ test('pinned contributors cannot claim or submit synthesis review; independent r
     claimId: claimed.claimId!,
     verdict: 'pass',
     notes: 'Verified the synthesis against each pinned lens.',
+    ...assessment(claimed),
     requestId: 'verdict',
   });
   assert.equal(submitted.status, 'submitted');
@@ -203,6 +205,7 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
         claimId: claimed.claimId!,
         verdict: 'pass',
         notes: 'Cannot submit after losing authority.',
+        ...assessment(claimed),
         requestId: 'revoked-verdict',
       }),
     { code: 'forbidden' },
@@ -278,6 +281,7 @@ test('additive migration preserves legacy snapshot hash, absent field and stored
     claimId: claimed.claimId!,
     verdict: 'pass' as const,
     notes: 'Verified independently before migration.',
+    ...assessment(claimed),
     requestId: 'legacy-verdict',
   };
   const submitted = await f.reviews.submit(f.reviewer, submit);
@@ -413,6 +417,7 @@ test('review submission retains the decision checked before a pending validation
     claimId: claim.claimId!,
     verdict: 'pass' as const,
     notes: 'Checked all evidence.',
+    ...assessment(claim),
     requestId: 'stable-decision',
   };
   const input = { ...original };
