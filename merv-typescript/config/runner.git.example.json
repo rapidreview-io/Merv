@@ -14,7 +14,8 @@
       "harness": "codex",
       "executable": "codex",
       "enabled": true,
-      "parallelism": 1
+      "parallelism": 1,
+      "model": "gpt-6-luna"
     }
   ]
 }

@@ -24,7 +24,7 @@ Within the lease transaction validate current source, epoch, profile and cancell
 
 Authority fencing, physical shutdown and released mutable workspace ownership are separate facts. A local lease timestamp is not proof of termination. Keep uncertain machines counted until confirmed; do not transfer mutable ownership prematurely. Remote effects already started require reconciliation. Finite renewable leases bound orphan lifetime; unload persists retirement intent and attempts bounded cleanup, and re-enable reconciles. Provider failures back off rather than freeing phantom slots.
 
-**Scheduling.** Codex is the default v1 harness. One fixed profile, small global/project limits, oldest pending request first. No fairness scheduler, warm pool or billing subsystem. Limits apply to Fleet machines, not external runners/research sandboxes. No automatic shared-VM fallback.
+**Scheduling.** Codex with `gpt-6-luna` is the default v1 task harness/model. Work-type model routing is deferred. One fixed profile, small global/project limits, oldest pending request first. No fairness scheduler, warm pool or billing subsystem. Limits apply to Fleet machines, not external runners/research sandboxes. No automatic shared-VM fallback.
 
 **Acceptance.** PostgreSQL concurrent admission; duplicate create/start/exchange; source revocation; stale epoch; cancel/claim race; unload; failed capture; uncertain provider stop. Then three independent code.v2 assignments on three real sandboxes, one injected failure, external runner coexistence, exact bases and retained review handoff. Confirm eventual cleanup and bounded State writes. Record startup/resource measurements. Rollback stops admission and drains while retaining domain records.
 
