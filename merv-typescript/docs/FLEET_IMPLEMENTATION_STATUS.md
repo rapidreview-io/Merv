@@ -21,8 +21,11 @@ disabled; no release milestone or provider acceptance gate has passed.
   the gateway host key; the receiver stores a private tmpfs bootstrap and a
   durable local launch claim before detached supervisor dispatch. This path
   avoids ordinary job scripts and their retained command/environment fields.
-  A production provider image, release manifest and trusted supervisor are not
-  wired together or attested yet.
+  The control plane now requires an operator-owned provider and independent
+  native image verification before each delivery attempt. Cloudflare checks the
+  pinned application image, exact native instance and running version, including
+  all inventory pages, then rechecks for deployment drift. Actual hosted-image
+  acceptance is still pending.
 - The TypeScript Runner has an isolated Codex adapter, including a
   dedicated assignment launcher, scoped process environment and repository
   skill controls. Its local `oneAssignment` setting fences the runner to one
@@ -80,6 +83,14 @@ composition, existing credentials/remote permissions, Code HTTP transfers,
 Sessions and actual Runner child-process recovery. No tests failed or skipped
 in that run. These overlap the earlier focused counts above.
 
+The next sandbox checkpoint passed **86 tests** covering native Cloudflare
+verification, protected launch, bootstrap boundaries, and the three newer
+production fixes merged from `0d64e2f8`. These overlap previous counts. The final
+merged image also passed the local Docker smoke for certificate SSH, tunnel
+startup, root-owned protected workspace parents, and UID 12001 Git handoff.
+A read-only live Cloudflare API check verified the application response and the
+terminal pagination shape; it did not verify a running protected instance.
+
 ## Fleet v1 implementation in progress
 
 - `@merv/fleet` now owns one PostgreSQL allocation table, stable requests, capacity
@@ -106,6 +117,9 @@ in that run. These overlap the earlier focused counts above.
   and waits for the supervisor's release acknowledgement and workspace capture
   before treating an assignment as finished. It adds no research dependency or
   separate scheduler tables.
+- Deployment rendering now opts into Fleet only with explicit fixed-runtime
+  settings. Workflow demand is separately enabled; credentials are referenced
+  by environment variable name and never included in rendered configuration.
 
 A real-services integration now covers shared demand → Fleet allocation →
 protected launch receipt → managed enrollment → heartbeat → one lease → release
@@ -130,13 +144,24 @@ passed 53 tests. These runs overlap and are not an aggregate suite count.
 2. Pilot Pi only after Fleet acceptance, within the separate read-only and
    conversational-write gates in the proposal.
 
+The attempted credential-free Cloudflare capability canary stopped before
+provisioning: automatic approval review rejected creating a sandbox API bearer
+token in the dedicated test namespace. The deployed CLI has no signed-in
+session. No token file, VM, deployment or service change resulted. Explicit
+approval for that test credential is needed before this route can proceed;
+the provided OpenAI key is not the blocker. The canary will check actual tmpfs
+and OS isolation, retain non-secret evidence, destroy its VM, confirm native
+termination, and revoke the test credential. See
+`output/fleet-cloudflare-canary/report.md` for the current evidence.
+
 Enrollment is deliberately short-lived (15 minutes, bounded by the allocation
 deadline). A prolonged uncertain launch can exhaust that window; it must retire
 and retry as a new allocation, not extend the old credential indefinitely. Fleet
 currently bounds that recovery by the allocation deadline.
 
 Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
-cloned from sandbox commit `c7b9582`. The integrated runtime launch checkpoint is
-`fe3b117`, following `7b66e70` and the earlier foundation/transport commits; the incremental backup is
+cloned from sandbox commit `c7b9582`, now merged with deployed sandbox commit
+`0d64e2f8`. The latest checkpoint is `4369915`, following `07b25e0` and merge
+`e14b89d`; the incremental backup is
 `output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
 untouched, and nothing was pushed or deployed.
