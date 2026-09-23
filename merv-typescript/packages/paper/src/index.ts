@@ -384,9 +384,11 @@ export class PaperService implements Paper {
     });
   }
   async checkReview(caller: Caller, input: PaperReview, tx: Transaction) {
-    caller = this.capture(caller);
+    return await this.reviewed(this.capture(caller), parse(reviewSchema, input), tx);
+  }
+  /** The documents a parsed review would publish, before and after its edits. */
+  private async reviewed(caller: Caller, changes: PaperReview, tx: Transaction) {
     this.state.assertTransaction(tx);
-    const changes = parse(reviewSchema, input);
     await this.scope.require(caller, 'review', tx);
     check(
       new Set(changes.documents.map((d) => d.kind)).size === changes.documents.length,
@@ -406,7 +408,7 @@ export class PaperService implements Paper {
   ): Promise<PaperPublication[]> {
     caller = this.capture(caller);
     input = parse(reviewSchema, input);
-    const documents = await this.checkReview(caller, input, tx);
+    const documents = await this.reviewed(caller, input, tx);
     const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
       const artifact = await this.artifacts.get(caller, id, tx);
       return { id, hash: artifact.hash };

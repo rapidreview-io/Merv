@@ -1953,12 +1953,19 @@ export class TaskService implements Tasks {
     return await this.records(caller);
   }
 
+  /** With a proposed delivery, answers the commit and confirmations it checked, for reuse. */
   private async checkDelivery({
     caller,
     snapshot: current,
     tx,
     input: proposed,
-  }: WorkflowCheckContext): Promise<void> {
+  }: WorkflowCheckContext): Promise<
+    | {
+        commit: Awaited<ReturnType<TaskService['deliveredCommit']>> | null;
+        confirmations: TaskConfirmation[];
+      }
+    | undefined
+  > {
     await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller, current.id);
     check(
@@ -1974,7 +1981,7 @@ export class TaskService implements Tasks {
       'Task must be in progress to submit a delivery',
       409,
     );
-    if (!proposed) return;
+    if (!proposed) return undefined;
     const input = proposed as unknown as TaskDelivery;
     check(
       input.taskId === undefined || input.taskId === current.id,
@@ -2002,7 +2009,7 @@ export class TaskService implements Tasks {
       'A scratch task cannot attach an unrelated commit',
       409,
     );
-    if (git) await this.deliveredCommit(caller, current, input.commandId, tx);
+    const commit = git ? await this.deliveredCommit(caller, current, input.commandId, tx) : null;
     // No task's brief is a delivery, this task's least of all; nor is a record Merv rendered
     // for an earlier delivery, which every delivery records in history. A Git task that
     // delivers its commit alone names no artifact to look up.
@@ -2039,7 +2046,15 @@ export class TaskService implements Tasks {
       'invalid_delivery',
       'Delivery artifacts must be nonempty and belong to the producer',
     );
-    validateConfirmations(input.confirmations, JSON.parse(row.checks), input.artifactIds, git);
+    return {
+      commit,
+      confirmations: validateConfirmations(
+        input.confirmations,
+        JSON.parse(row.checks),
+        input.artifactIds,
+        git,
+      ),
+    };
   }
 
   /**
@@ -2250,12 +2265,14 @@ export class TaskService implements Tasks {
         const row = await this.row(tx, caller, input.taskId);
         const checks: string[] = JSON.parse(row.checks);
         const current = await this.workflows.get(caller, row.id, tx);
-        await this.checkDelivery({ caller, snapshot: current, tx, input: { ...input } });
+        const delivered = (await this.checkDelivery({
+          caller,
+          snapshot: current,
+          tx,
+          input: { ...input },
+        }))!;
         await this.workflows.checkDependencies(caller, row.id, tx);
-        const git = taskWorkspace(current.version) !== 'none';
-        const commit = git
-          ? await this.deliveredCommit(caller, current, input.commandId, tx)
-          : null;
+        const commit = delivered.commit;
         // Reviews pins artifacts and knows nothing of commits, so the commit enters the review
         // as a rendered record: pinned and hashed like any evidence, and citable by a finding.
         const codeArtifact = commit
@@ -2269,12 +2286,7 @@ export class TaskService implements Tasks {
             )
           : null;
         // A met claim that cites no file is backed by the delivered commit, which is always there.
-        const confirmations = validateConfirmations(
-          input.confirmations,
-          checks,
-          input.artifactIds,
-          git,
-        ).map((item) =>
+        const confirmations = delivered.confirmations.map((item) =>
           codeArtifact && item.status === 'met' && !item.evidenceIds.length
             ? { ...item, evidenceIds: [codeArtifact.id] }
             : item,

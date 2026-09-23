@@ -83,6 +83,12 @@ import {
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
+/** The evidence, figures and exhibit a design or results submission pins. */
+interface Submission {
+  evidence: ExperimentEvidence[];
+  figureIds: string[];
+  exhibit: ExperimentExhibit | null;
+}
 /**
  * Ending or retrying names its reason under evidence. Guidance reaches here without the input
  * schema, so the check is made here once rather than only where the tool parses its input.
@@ -683,7 +689,7 @@ export class ExperimentService implements Experiments {
       return await this.command(caller, 'transition', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
         this.revision(experiment, input.expectedRevision);
-        await this.checkAction({
+        const prepared = await this.checkAction({
           caller,
           snapshot: experiment.workflow,
           tx,
@@ -691,7 +697,7 @@ export class ExperimentService implements Experiments {
           transition: input.transition,
         });
         if (input.transition === 'submit_design' || input.transition === 'submit_results')
-          return await this.submit(caller, experiment, input, tx);
+          return await this.submit(caller, experiment, input, prepared!, tx);
         if (experiment.reviewId && reviewing(experiment.workflow.state))
           await this.reviews.supersede(caller, experiment.reviewId, tx);
         const moved = await (
@@ -752,11 +758,7 @@ export class ExperimentService implements Experiments {
     experiment: Experiment,
     stage: 'design' | 'results',
     tx: Transaction,
-  ): Promise<{
-    evidence: ExperimentEvidence[];
-    figureIds: string[];
-    exhibit: ExperimentExhibit | null;
-  }> {
+  ): Promise<Submission> {
     let evidence = await this.selected(
       caller,
       experiment,
@@ -862,19 +864,15 @@ export class ExperimentService implements Experiments {
     );
     return ref;
   }
+  /** `prepared` is what checkAction verified moments earlier in this transaction. */
   private async submit(
     caller: Caller,
     experiment: Experiment,
     input: ExperimentTransition,
+    { evidence, figureIds, exhibit }: Submission,
     tx: Transaction,
   ): Promise<Experiment> {
     const stage = input.transition === 'submit_design' ? 'design' : 'results';
-    const { evidence, figureIds, exhibit } = await this.prepareSubmission(
-      caller,
-      experiment,
-      stage,
-      tx,
-    );
     const codeCaptureRef = await this.finalCaptureRef(caller, experiment, stage, tx);
     if (exhibit?.willPin) {
       const artifact = await this.artifacts.create(
@@ -1250,7 +1248,8 @@ export class ExperimentService implements Experiments {
       );
   }
   /** Exit readiness checks share actual submission validation; dispatch admission remains separate. */
-  private async checkAction(context: WorkflowCheckContext): Promise<void> {
+  /** For a submission, answers what it would submit. */
+  private async checkAction(context: WorkflowCheckContext): Promise<Submission | undefined> {
     const { caller, tx } = context,
       experiment = await this.get(caller, context.snapshot.id, tx);
     const action = context.transition;
@@ -1325,7 +1324,7 @@ export class ExperimentService implements Experiments {
         await this.workflows.checkDependencies(caller, experiment.id, tx);
         if (caller.session) await this.finalCaptureRef(caller, experiment, 'results', tx);
       }
-      await this.prepareSubmission(
+      return await this.prepareSubmission(
         caller,
         experiment,
         action === 'submit_design' ? 'design' : 'results',
