@@ -1,6 +1,7 @@
 /** Explicit real-model local acceptance; creates only an isolated synthetic Merv project.
  * Run with MERV_DB_URL set to a disposable local PostgreSQL service. The saved
- * runner API key is read from its exact macOS Keychain account, never printed.
+ * runner API key is supplied privately through MERV_RUNNER_API_KEY or read from
+ * its exact macOS Keychain account. Neither path prints the credential.
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -39,6 +40,8 @@ async function command(executable: string, args: string[], input?: string): Prom
   });
 }
 const docker = (args: string[], input?: string) => command('docker', args, input);
+let modelApiKey = process.env.MERV_RUNNER_API_KEY ?? '';
+delete process.env.MERV_RUNNER_API_KEY;
 const run = `hosted-smoke-${Date.now()}`;
 const directory = resolve(`../output/${run}`);
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -50,7 +53,6 @@ const app = await createApp({
   port: 0,
 });
 let allocated = false;
-let modelApiKey = '';
 let sourceToken = '';
 try {
   const boot = await app.ctx.scope.bootstrap({
@@ -63,30 +65,32 @@ try {
     credentialId: boot.credential.id,
   };
   sourceToken = boot.token;
-  const home = resolve('../output/runner-codex/home');
-  const account = `cli|${createHash('sha256').update(home).digest('hex').slice(0, 16)}`;
-  const savedAuth = await command('security', [
-    'find-generic-password',
-    '-s',
-    'Codex Auth',
-    '-a',
-    account,
-    '-w',
-  ]);
-  try {
-    const auth: unknown = JSON.parse(savedAuth);
-    if (
-      !auth ||
-      typeof auth !== 'object' ||
-      !('OPENAI_API_KEY' in auth) ||
-      typeof auth.OPENAI_API_KEY !== 'string' ||
-      !auth.OPENAI_API_KEY.trim()
-    )
-      throw new Error('missing key');
-    modelApiKey = auth.OPENAI_API_KEY;
-  } catch {
-    // JSON parser errors can include secret-bearing input; never propagate them.
-    throw new Error('Dedicated runner API key is unavailable or malformed');
+  if (!modelApiKey) {
+    const home = resolve('../output/runner-codex/home');
+    const account = `cli|${createHash('sha256').update(home).digest('hex').slice(0, 16)}`;
+    const savedAuth = await command('security', [
+      'find-generic-password',
+      '-s',
+      'Codex Auth',
+      '-a',
+      account,
+      '-w',
+    ]);
+    try {
+      const auth: unknown = JSON.parse(savedAuth);
+      if (
+        !auth ||
+        typeof auth !== 'object' ||
+        !('OPENAI_API_KEY' in auth) ||
+        typeof auth.OPENAI_API_KEY !== 'string' ||
+        !auth.OPENAI_API_KEY.trim()
+      )
+        throw new Error('missing key');
+      modelApiKey = auth.OPENAI_API_KEY;
+    } catch {
+      // JSON parser errors can include secret-bearing input; never propagate them.
+      throw new Error('Dedicated runner API key is unavailable or malformed');
+    }
   }
   const task = await app.ctx.tasks.create(caller, {
     title: 'Hosted runner isolation acceptance',
