@@ -1072,6 +1072,23 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     assert.equal(returned.workflow.state, round === 3 ? 'suspended' : 'in_progress');
     await f.sessions.release(runner, { sessionId: session.id, runnerId: 'round-runner' });
     await f.events.drain();
+    if (round === 1) {
+      // A waiter that arrives while the returned resolution is reworked joins the same task.
+      const [future] = await Promise.all([
+        f.waiter(),
+        f.code.reconcileAll(),
+        f.code.reconcileAll(),
+      ]);
+      assert.deepEqual(
+        (await f.workflows.dependencies(f.admin, future.id)).dependencies
+          .filter((edge) => edge.kind === 'system')
+          .map((edge) => edge.id),
+        [taskId],
+      );
+      await f.bases.work(f.admin.projectId);
+      const record = (await f.record())!;
+      assert.deepEqual([record.resolutionTaskId, record.state], [taskId, 'awaiting_resolution']);
+    }
     // The fixture plays the final handoff; real final capture is exercised by the driver tests.
     await f.state.transaction((tx) =>
       tx.run("UPDATE code_units SET writer_state='closed' WHERE unit_id=?", taskId),
@@ -1238,7 +1255,8 @@ for (const shape of ['single parent', 'different second parent'] as const)
       });
   });
 
-for (const verdict of ['pass', 'needs_changes', 'fail'] as const)
+// A returned resolution (needs_changes) is the rounds test above.
+for (const verdict of ['pass', 'fail'] as const)
   test(`service resolution uses the existing independent review path (${verdict})`, async (t) => {
     const f = await fixture(t, true);
     await f.waiter();
@@ -1374,25 +1392,8 @@ for (const verdict of ['pass', 'needs_changes', 'fail'] as const)
       await f.sessions.prepare(reviewWorker, 'review.submit', assessment),
       (caller) => f.tasks.submitReview(caller, assessment),
     );
-    assert.equal(
-      result.workflow.state,
-      verdict === 'pass' ? 'done' : verdict === 'fail' ? 'suspended' : 'in_progress',
-    );
+    assert.equal(result.workflow.state, verdict === 'pass' ? 'done' : 'suspended');
     await f.events.drain();
-    if (verdict === 'needs_changes') {
-      const [future] = await Promise.all([
-        f.waiter(),
-        f.code.reconcileAll(),
-        f.code.reconcileAll(),
-      ]);
-      assert.equal((await f.tasks.get(f.admin, id)).workflow.state, 'in_progress');
-      assert.deepEqual(
-        (await f.workflows.dependencies(f.admin, future.id)).dependencies
-          .filter((edge) => edge.kind === 'system')
-          .map((edge) => edge.id),
-        [id],
-      );
-    }
     await f.bases.work(f.admin.projectId);
     const resolved = (await f.record())!;
     assert.equal(resolved.resolutionTaskId, id);
