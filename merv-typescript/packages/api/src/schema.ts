@@ -2,32 +2,14 @@ import Ajv from 'ajv';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import type { ValidateFunction } from 'ajv';
-import { MervError } from '@merv/contracts';
+import { MervError, plain } from '@merv/contracts';
 
-/** JSON snapshots isolate callers and exclude values a JSON transport cannot preserve. */
-export function cloneJson<T>(value: T): T {
-  const ancestors = new Set<object>();
-  function copy(input: unknown): unknown {
-    if (input === null || typeof input === 'string' || typeof input === 'boolean') return input;
-    if (typeof input === 'number' && Number.isFinite(input)) return input;
-    if (!input || typeof input !== 'object' || ancestors.has(input))
-      throw new TypeError('Value must be finite, acyclic JSON');
-    if (!Array.isArray(input) && ![Object.prototype, null].includes(Object.getPrototypeOf(input)))
-      throw new TypeError('Value must be a plain JSON object');
-    ancestors.add(input);
-    try {
-      if (Array.isArray(input)) return input.map(copy);
-      return Object.fromEntries(
-        Object.entries(input)
-          .filter(([, child]) => child !== undefined)
-          .map(([key, child]) => [key, copy(child)]),
-      );
-    } finally {
-      ancestors.delete(input);
-    }
-  }
-  return copy(value) as T;
-}
+/**
+ * JSON snapshots isolate callers and exclude values a JSON transport cannot preserve. Remote MCP
+ * metadata and results keep any key, escaped text and depth a JSON peer can send.
+ */
+export const cloneJson = <T>(value: T): T =>
+  plain<T>(value, 'invalid_json', { keys: 'any', strings: 'json', depth: Infinity });
 
 function rejectReferences(schema: unknown): void {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return;

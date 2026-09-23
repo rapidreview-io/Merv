@@ -1,9 +1,8 @@
 import { postgresMigrations } from './project-context.postgres.js';
-import { types } from 'node:util';
 import { z } from 'zod';
 import {
   visible,
-  check,
+  parsed,
   type Migration,
   type Project,
   type ProjectContextUpdate,
@@ -45,38 +44,7 @@ export const projectContextUpdateSchema = z
   })
   .strict();
 
-/** Inspect descriptors before Zod so direct service calls cannot execute supplied getters. */
+/** A detached copy parsed, so direct service calls cannot execute supplied getters. */
 export function parseProjectContextUpdate(input: unknown): ProjectContextUpdate {
-  check(
-    input !== null && typeof input === 'object' && !types.isProxy(input),
-    'invalid_project_context',
-    'Project context input must contain plain string fields',
-  );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_project_context',
-    'Project context input must contain plain string fields',
-  );
-  const keys = Reflect.ownKeys(input);
-  const fields = ['summary', 'expectedSummary', 'requestId'];
-  check(
-    keys.length === fields.length &&
-      keys.every((key) => typeof key === 'string' && fields.includes(key)),
-    'invalid_project_context',
-    'Only summary, expectedSummary and requestId are accepted',
-  );
-  const copied: Record<string, string> = {};
-  for (const key of fields) {
-    const descriptor = Object.getOwnPropertyDescriptor(input, key);
-    check(
-      descriptor?.enumerable && 'value' in descriptor && typeof descriptor.value === 'string',
-      'invalid_project_context',
-      'Project context fields must be own string values',
-    );
-    copied[key] = descriptor.value;
-  }
-  const parsed = projectContextUpdateSchema.safeParse(copied);
-  check(parsed.success, 'invalid_project_context', 'Invalid project context fields or text size');
-  return parsed.data;
+  return parsed(projectContextUpdateSchema, input, 'invalid_project_context');
 }
