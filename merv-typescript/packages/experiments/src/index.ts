@@ -59,12 +59,18 @@ import {
   validateReport,
 } from './evidence.js';
 import {
+  approvedSubmission,
+  currentEvidence,
   designRoles,
   EXPERIMENT_LIMITS,
   ExperimentProgram,
   derivedBase,
   programVersion,
   programWorkspace,
+  reviewedSubmission,
+  reviewing,
+  rolesFor,
+  TERMINAL,
 } from './program.js';
 import {
   attemptMetadata,
@@ -76,7 +82,20 @@ import {
 } from './storage.js';
 export type * from './types.js';
 
-const terminal = new Set(['complete', 'abandoned', 'failed']);
+const terminal = new Set<string>(TERMINAL);
+/**
+ * Ending or retrying names its reason under evidence. Guidance reaches here without the input
+ * schema, so the check is made here once rather than only where the tool parses its input.
+ */
+function reasoned(input: Data | undefined, message: string): void {
+  if (input)
+    check(
+      typeof (input.evidence as Data | undefined)?.reason === 'string' &&
+        !!(input.evidence as Data).reason,
+      'reason_required',
+      message,
+    );
+}
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 /**
  * Feasibility is its own design criterion, the last, so the review can be asked never to waive it;
@@ -460,9 +479,7 @@ export class ExperimentService implements Experiments {
         );
         await this.program.assertProducer(caller, experiment, tx);
         check(
-          (experiment.workflow.state === 'planned' ? designRoles : ['result', 'report']).includes(
-            input.role,
-          ),
+          rolesFor(experiment.workflow.state).includes(input.role),
           'invalid_experiment_role',
           'This evidence role is not writable in the current state',
           409,
@@ -519,18 +536,13 @@ export class ExperimentService implements Experiments {
       });
     });
   }
-  private current(experiment: Experiment, roles: readonly string[]): ExperimentEvidence[] {
-    return experiment.evidence.filter(
-      (e) => e.current && e.attemptIndex === experiment.attempt.index && roles.includes(e.role),
-    );
-  }
   private async selected(
     caller: Caller,
     experiment: Experiment,
     roles: readonly string[],
     tx: Transaction,
   ): Promise<ExperimentEvidence[]> {
-    const evidence = this.current(experiment, roles);
+    const evidence = currentEvidence(experiment, roles);
     // The worker holding this experiment sees the evidence it was offered plus its own;
     // anyone else, another record's worker included, reads what the record holds.
     if (!caller.session || !(await this.program.holds(caller, experiment, tx))) return evidence;
@@ -604,21 +616,6 @@ export class ExperimentService implements Experiments {
       );
     }
     return ids;
-  }
-  private approved(experiment: Experiment): ExperimentSubmission {
-    const submission = experiment.submissions.find(
-      (s) => s.id === experiment.attempt.approvedSubmissionId,
-    );
-    check(
-      submission &&
-        submission.stage === 'design' &&
-        submission.attemptIndex === experiment.attempt.index &&
-        submission.reviewId === experiment.attempt.approvedReviewId,
-      'approved_plan_required',
-      'The current attempt requires an exact approved plan',
-      409,
-    );
-    return submission;
   }
   private async buildExhibit(
     caller: Caller,
@@ -695,10 +692,7 @@ export class ExperimentService implements Experiments {
         });
         if (input.transition === 'submit_design' || input.transition === 'submit_results')
           return await this.submit(caller, experiment, input, tx);
-        if (
-          experiment.reviewId &&
-          ['design_review', 'experiment_review'].includes(experiment.workflow.state)
-        )
+        if (experiment.reviewId && reviewing(experiment.workflow.state))
           await this.reviews.supersede(caller, experiment.reviewId, tx);
         const moved = await (
           await this.program.handleFor(experiment.workflow.version)
@@ -788,7 +782,7 @@ export class ExperimentService implements Experiments {
         409,
       );
     } else {
-      const approved = this.approved(experiment);
+      const approved = approvedSubmission(experiment);
       // Include the exact approved design, never a newer plan association.
       evidence = [...approved.evidence, ...evidence];
       const report = this.one(evidence, 'report');
@@ -805,7 +799,7 @@ export class ExperimentService implements Experiments {
     }
     const recovery = await this.program.pinnedRecovery(caller, experiment, tx);
     const inherited = [...recovery];
-    if (stage === 'results') inherited.push(...this.approved(experiment).evidence);
+    if (stage === 'results') inherited.push(...approvedSubmission(experiment).evidence);
     for (const item of evidence) {
       const metadata = await this.artifacts.get(caller, item.artifactId, tx);
       check(
@@ -1194,8 +1188,7 @@ export class ExperimentService implements Experiments {
     await this.scope.require(caller, 'review', tx);
     const review = await this.reviews.get(caller, input.reviewId, tx);
     check(
-      experiment.reviewId === review.id &&
-        ['design_review', 'experiment_review'].includes(experiment.workflow.state),
+      experiment.reviewId === review.id && reviewing(experiment.workflow.state),
       'stale_review',
       'This review no longer belongs to the current submission',
       409,
@@ -1207,20 +1200,13 @@ export class ExperimentService implements Experiments {
       'Review is pinned to a different experiment revision',
       409,
     );
-    const submission = experiment.submissions.find((s) => s.reviewId === review.id);
+    const submission = reviewedSubmission(experiment, review.id);
     check(
       submission &&
-        submission.attemptIndex === experiment.attempt.index &&
-        submission.subjectRevision === review.subjectRevision,
-      'stale_review',
-      'The review must pin this exact attempt and submission',
-      409,
-    );
-    check(
-      submission.stage === (experiment.workflow.state === 'design_review' ? 'design' : 'results') &&
+        submission.subjectRevision === review.subjectRevision &&
         submission.producerId === review.producerId,
       'stale_review',
-      'The review submission identity does not match',
+      'The review must pin this exact attempt and submission',
       409,
     );
     const ids = [
@@ -1279,7 +1265,7 @@ export class ExperimentService implements Experiments {
           'revise_plan',
           'revise_execution',
         ].includes(action)) ||
-      (!action && ['design_review', 'experiment_review'].includes(experiment.workflow.state))
+      (!action && reviewing(experiment.workflow.state))
     ) {
       check(context.input, 'review_input_required', 'A complete verdict is required', 409);
       const input = context.input as unknown as ReviewApplication;
@@ -1301,13 +1287,7 @@ export class ExperimentService implements Experiments {
         409,
       );
       await this.program.assertAdministration(caller, experiment, tx);
-      if (context.input)
-        check(
-          typeof (context.input.evidence as Data | undefined)?.reason === 'string' &&
-            !!(context.input.evidence as Data).reason,
-          'reason_required',
-          'Ending an experiment requires a reason',
-        );
+      reasoned(context.input, 'Ending an experiment requires a reason');
       return;
     }
     await this.program.assertProducer(caller, experiment, tx);
@@ -1342,7 +1322,6 @@ export class ExperimentService implements Experiments {
           'At least one result is required',
           409,
         );
-        this.approved(experiment);
         await this.workflows.checkDependencies(caller, experiment.id, tx);
         if (caller.session) await this.finalCaptureRef(caller, experiment, 'results', tx);
       }
@@ -1362,13 +1341,7 @@ export class ExperimentService implements Experiments {
       );
       // The submission requires the interruption's reason under evidence, as ending does.
       // Without this, guidance answered `ready` for a retry the tool then refused.
-      if (context.input)
-        check(
-          typeof (context.input.evidence as Data | undefined)?.reason === 'string' &&
-            !!(context.input.evidence as Data).reason,
-          'reason_required',
-          'Retrying an experiment requires the reason for the interruption',
-        );
+      reasoned(context.input, 'Retrying an experiment requires the reason for the interruption');
     }
   }
   private revision(experiment: Experiment, expected: number): void {
