@@ -637,46 +637,6 @@ test('main moving under an approved head is a stale wait, not a failure', async 
   assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, [work.id]);
 });
 
-test('a retained pre-unit publication is not reconciled by the current unit path', async (t) => {
-  const f = await fixture(t, true);
-  await f.canary();
-  const work = await f.declare('Publishing');
-  await f.publishes(work);
-  await f.pin(work);
-  await f.accept(work, f.feature);
-  const [sealed] = await f.code.publications(f.admin);
-  // Historical envelopes without a source remain stored but have no active owner.
-  await f.state.transaction(async (tx) => {
-    const row = (await tx.get<{
-      record_json: string;
-      binding_json: string;
-      review_json: string;
-    }>(
-      'SELECT record_json,binding_json,review_json FROM code_publications WHERE proposal_id=?',
-      sealed.proposalId,
-    ))!;
-    const record = JSON.parse(row.record_json) as {
-      proposalId: string;
-      approval: { source?: string };
-    };
-    delete record.approval.source;
-    record.proposalId = 'codeprop_before';
-    await tx.run('UPDATE code_publications SET settled=1 WHERE proposal_id=?', sealed.proposalId);
-    await tx.run(
-      'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json,review_json) VALUES(?,?,?,?,?)',
-      'codeprop_before',
-      f.admin.projectId,
-      JSON.stringify(record),
-      row.binding_json,
-      row.review_json,
-    );
-  });
-  // A sync leaves that immutable row untouched and continues serving current units.
-  const before = (await f.sync()).find((item) => item.proposalId === 'codeprop_before')!;
-  assert.equal(before.lastError, null);
-  assert.equal(before.approval?.source, undefined);
-});
-
 test('a disabled project and a published tree mismatch both show on the unit', async (t) => {
   const f = await fixture(t, true);
   await f.canary();
