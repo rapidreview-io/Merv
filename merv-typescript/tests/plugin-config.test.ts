@@ -9,6 +9,7 @@ import { blobsPlugin } from '@merv/blobs';
 import { scopePlugin } from '@merv/scope';
 import { identityPlugin } from '@merv/identity';
 import { apiPlugin, toolsPlugin } from '@merv/api';
+import { openState, schemaFor, stateConfig } from './fixtures/state.js';
 
 function folder(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-plugin-config-'));
@@ -18,7 +19,7 @@ function folder(t: TestContext) {
 
 async function dependencies(ctx: Context, service: string) {
   if (service !== 'tools' && service !== 'api') return;
-  await ctx.plugin(statePlugin, { path: ':memory:' });
+  await ctx.plugin(statePlugin, stateConfig(':memory:'));
   await ctx.plugin(scopePlugin);
   if (service === 'api') {
     await ctx.plugin(toolsPlugin);
@@ -26,14 +27,19 @@ async function dependencies(ctx: Context, service: string) {
   }
 }
 
-async function rejectsBeforePublication(plugin: Plugin, service: string, config: unknown) {
+async function rejectsBeforePublication(
+  plugin: Plugin,
+  service: string,
+  config: unknown,
+  expected: assert.AssertPredicate = ValidationError,
+) {
   const ctx = new Context();
   try {
     await dependencies(ctx, service);
     const fiber = ctx.plugin(plugin, config);
     // Cordis currently leaves state=PENDING after schema rejection. Its await()
     // rejection is authoritative; no apply() effect or service may be published.
-    await assert.rejects(fiber.await(), ValidationError);
+    await assert.rejects(fiber.await(), expected);
     assert.equal(ctx.get(service), undefined);
     assert.deepEqual(fiber.getEffects(), []);
   } finally {
@@ -41,21 +47,46 @@ async function rejectsBeforePublication(plugin: Plugin, service: string, config:
   }
 }
 
-test('State Config rejects missing, blank, wrong-type and extra options before opening SQLite', async (t) => {
+test('State Config rejects blank, wrong-type, retired and extra options before connecting', async (t) => {
   const directory = folder(t),
-    path = join(directory, 'must-not-exist', 'state.sqlite');
+    schema = schemaFor(join(directory, 'must-not-exist'));
+  const observer = await openState();
+  const created = async () =>
+    (
+      await observer.read((sql) =>
+        sql.get<{ name: string | null }>('SELECT to_regnamespace(?)::text AS name', schema),
+      )
+    )?.name ?? null;
+  const url = 'MERV_TEST_POSTGRES_URL';
   for (const config of [
-    undefined,
     null,
-    {},
-    { path: '' },
-    { path: ' \t' },
-    { path: 42 },
-    { path, extra: true },
+    [],
+    // The retired SQLite options are unknown keys now, not a second backend.
+    { path: join(directory, 'state.sqlite') },
+    { backend: 'sqlite', connectionStringEnv: url, schema },
+    { connectionStringEnv: '', schema },
+    { connectionStringEnv: ' \t', schema },
+    { connectionStringEnv: 42, schema },
+    { connectionStringEnv: url, schema: '' },
+    { connectionStringEnv: url, schema: '1bad' },
+    { connectionStringEnv: url, schema, schemaEnv: 'not-a-name' },
+    { connectionStringEnv: url, schema, maxConnections: 0 },
+    { connectionStringEnv: url, schema, extra: true },
   ]) {
     await rejectsBeforePublication(statePlugin, 'state', config);
-    assert.equal(existsSync(join(directory, 'must-not-exist')), false);
+    assert.equal(await created(), null);
   }
+  // A well-formed entry whose connection variable is unset is refused by apply(), still before
+  // connecting or publishing the service.
+  const missing = 'MERV_TEST_UNSET_DATABASE_URL';
+  assert.equal(process.env[missing], undefined);
+  await rejectsBeforePublication(
+    statePlugin,
+    'state',
+    { connectionStringEnv: missing, schema },
+    { code: 'invalid_config' },
+  );
+  assert.equal(await created(), null);
 });
 
 test('Blobs Config rejects missing, blank, wrong-type and extra options before making directories', async (t) => {
@@ -128,19 +159,26 @@ test('API Config validates options before publishing or listening', async () => 
   for (const config of malformed) await rejectsBeforePublication(apiPlugin, 'api', config);
 });
 
-test('valid resource paths are preserved and Cordis owns their published services', async (t) => {
+test('valid resource locations are preserved and Cordis owns their published services', async (t) => {
   const directory = folder(t),
-    path = join(directory, 'space in path.sqlite'),
+    config = stateConfig(directory),
     root = join(directory, 'blob directory');
   const ctx = new Context();
   try {
-    const state = await ctx.plugin(statePlugin, { path });
+    const state = await ctx.plugin(statePlugin, config);
     const blobs = await ctx.plugin(blobsPlugin, { root });
     assert.equal(state.state, FiberState.ACTIVE);
     assert.equal(blobs.state, FiberState.ACTIVE);
-    assert.equal(state.config.path, path);
+    assert.equal(state.config.schema, config.schema);
     assert.equal(blobs.config.root, root);
-    assert.equal(existsSync(path), true);
+    assert.equal(
+      (
+        await ctx.state.read(
+          async (sql) => await sql.get<{ schema: string }>('SELECT current_schema() AS schema'),
+        )
+      )?.schema,
+      config.schema,
+    );
     const stored = await ctx.blobs.put(
       'config-test',
       Buffer.from('Configuration preserved bytes.'),

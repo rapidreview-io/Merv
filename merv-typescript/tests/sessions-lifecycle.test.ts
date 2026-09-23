@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createService } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { AgentObservations } from '../packages/sessions/src/observations.js';
+import { openState } from './fixtures/state.js';
 
 function barrier() {
   let enter!: () => void, release!: () => void;
@@ -30,7 +31,7 @@ for (const fails of [false, true])
     `concurrent session close joins the complete ordered drain${fails ? ' even after a disposer fails' : ''}`,
     { timeout: 5000 },
     async (t) => {
-      const state = new SqliteState(':memory:');
+      const state = await openState(':memory:');
       const scope = await createService(new ProjectScope(state));
       const workflows = await createService(new WorkflowsService(state, scope));
       const events = await createService(new DurableEvents(state));

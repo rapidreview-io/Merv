@@ -7,17 +7,18 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
 import type { Caller, HumanPrincipal, Principal, Role } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
 async function fixture(path = ':memory:') {
-  const state = new SqliteState(path);
+  const state = await openState(path);
   let time = initialTime;
   const scope = await createService(new ProjectScope(state, () => time));
   const login = async (subject: string, realm = issuer) =>
@@ -492,7 +493,7 @@ test(
   { timeout: 15_000 },
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'merv-member-operator-race-'));
-    const path = join(directory, 'state.sqlite');
+    const path = directory;
     const f = await fixture(path);
     const alice = await f.login('alice'),
       bob = await f.login('bob');
@@ -508,10 +509,16 @@ test(
       (async () => {
         const { register } = await import(workerData.loader);
         register();
-        const [{ SqliteState }, { ProjectScope }] = await Promise.all([
+        const [{ PostgresState }, { ProjectScope }] = await Promise.all([
           import(workerData.stateModule), import(workerData.scopeModule),
         ]);
-        const state = new SqliteState(workerData.path);
+        const state = await PostgresState.open({
+          connectionString: workerData.url,
+          schema: workerData.schema,
+          maxConnections: 2,
+          readConnections: 1,
+          lockTimeoutMs: 30000,
+        });
         const scope = new ProjectScope(state, () => workerData.time);
         await scope.initialize();
         const control = new Int32Array(workerData.barrier);
@@ -551,7 +558,8 @@ test(
         workerData: {
           principal,
           first,
-          path,
+          url: postgresUrl,
+          schema: schemaFor(path),
           barrier,
           projectId: project.id,
           time: initialTime,
@@ -684,8 +692,8 @@ test('membership mutations, actor state and project receipts roll back with fail
 
 test('v2 migration preserves local projects and credentials; adoption is explicit and ownership repair is audited', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-shared-membership-v2-'));
-  const path = join(directory, 'state.sqlite');
-  let state = new SqliteState(path);
+  const path = directory;
+  let state = await openState(path);
   t.after(async () => {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
@@ -757,22 +765,21 @@ test('v2 migration preserves local projects and credentials; adoption is explici
     adopted.id,
   );
   await state.close();
-  state = new SqliteState(path);
+  state = await openState(path);
   scope = await createService(new ProjectScope(state));
   assert.equal((await scope.authenticate(legacy.token)).id, legacy.actor.id);
   assert.equal((await scope.caller(alice, legacy.project.id)).human?.membershipId, returned.id);
-  assert.deepEqual(await state.read(async (sql) => await sql.all('PRAGMA foreign_key_check')), []);
   await assert.rejects(
     async () =>
       await state.transaction(async (tx) => await tx.run('DELETE FROM project_memberships')),
-    /retained/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await state.transaction(
         async (tx) => await tx.run('UPDATE member_actors SET subject=?', 'changed'),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
 });
 

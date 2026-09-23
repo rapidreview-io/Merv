@@ -5,29 +5,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { Pool } from 'pg';
 import type { Caller, TaskReview } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { s3Server } from './fixtures/s3-server.js';
+import { postgresUrl, schemaFor } from './fixtures/state.js';
 
-const connectionString = process.env.MERV_TEST_POSTGRES_URL;
-const live = { skip: !connectionString, timeout: 90_000 };
 const production = async (): Promise<ApplicationConfig> =>
   JSON.parse(await readFile(new URL('../config/production.example.json', import.meta.url), 'utf8'));
 
 async function fixture(t: TestContext, backend: 'disk' | 's3') {
   const directory = await mkdtemp(join(tmpdir(), 'merv-production-storage-'));
-  const schema = `storage_${randomUUID().replaceAll('-', '')}`;
   const envName = `MERV_STORAGE_TEST_${randomUUID().replaceAll('-', '').toUpperCase()}`;
-  process.env[envName] = connectionString!;
+  process.env[envName] = postgresUrl;
   const server = backend === 's3' ? await s3Server() : undefined;
   const config = await production();
   config.plugins.find((entry) => entry.id === 'state')!.config = {
     backend: 'postgres',
     connectionStringEnv: envName,
-    schema,
+    schema: schemaFor(),
     maxConnections: 5,
     connectionTimeoutMs: 3000,
     lockTimeoutMs: 3000,
@@ -59,12 +56,6 @@ export default {
   t.after(async () => {
     await app?.stop();
     await server?.close();
-    const cleanup = new Pool({ connectionString });
-    try {
-      await cleanup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
-    } finally {
-      await cleanup.end();
-    }
     delete process.env[envName];
     await rm(directory, { recursive: true, force: true });
   });
@@ -113,11 +104,10 @@ test('production example preserves the full composition and changes only storage
 for (const backend of ['disk', 's3'] as const) {
   test(
     `assembled PostgreSQL + ${backend} preserves artifact, review, event and replay atomicity across restarts`,
-    live,
+    { timeout: 90_000 },
     async (t) => {
       const f = await fixture(t, backend);
       let app = await f.start();
-      assert.equal(app.ctx.state.dialect, 'postgres');
       assert.ok(
         app
           .status()

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from 'cordis';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -19,13 +19,14 @@ import {
   type ReviewRequest,
   type ReviewSubmit,
 } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
 
 async function fixture(maximumMigration = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-return-'));
-  const path = join(directory, 'state.sqlite');
-  const state = new SqliteState(path);
+  const path = directory;
+  const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({ projectName: 'Return route', actorName: 'Operator' });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };
@@ -137,10 +138,10 @@ test('selected review routes are immutable verdict evidence, included in replay 
             async (tx) =>
               await tx.run('UPDATE reviews SET return_to=? WHERE id=?', replacement, result.id),
           ),
-        /immutable/,
+        { code: 'state_constraint' },
       );
     await f.state.close();
-    const state = new SqliteState(f.path);
+    const state = await openState(f.path);
     try {
       const scope = await createService(new ProjectScope(state));
       const reviews = await createService(

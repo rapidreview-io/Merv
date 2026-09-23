@@ -202,59 +202,32 @@ export class ResearchService implements Research {
       await state.migrate('research', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-CREATE TABLE research_cycles (id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record TEXT NOT NULL,problem TEXT,reflection_id TEXT,consolidation_id TEXT,methods_update_id TEXT,results_update_id TEXT);
-CREATE TRIGGER research_identity BEFORE UPDATE OF id,project_id,record ON research_cycles BEGIN SELECT RAISE(ABORT,'Research inputs are immutable'); END;
-CREATE TRIGGER research_children BEFORE UPDATE ON research_cycles WHEN (OLD.problem IS NOT NULL AND NEW.problem IS NOT OLD.problem) OR (OLD.reflection_id IS NOT NULL AND NEW.reflection_id IS NOT OLD.reflection_id) OR (OLD.consolidation_id IS NOT NULL AND NEW.consolidation_id IS NOT OLD.consolidation_id) OR (OLD.methods_update_id IS NOT NULL AND NEW.methods_update_id IS NOT OLD.methods_update_id) OR (OLD.results_update_id IS NOT NULL AND NEW.results_update_id IS NOT OLD.results_update_id) BEGIN SELECT RAISE(ABORT,'Research children and accepted definition are immutable'); END;
-CREATE TRIGGER research_retained BEFORE DELETE ON research_cycles BEGIN SELECT RAISE(ABORT,'Research history is retained'); END;
-CREATE TABLE research_commands (project_id TEXT NOT NULL,actor_id TEXT NOT NULL,request_id TEXT NOT NULL,input_hash TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(project_id,actor_id,request_id));
-`,
+          sql: postgresMigrations[1],
         },
         {
           // A cycle opened from an approved plan names the cycle it follows. The index makes
           // "one successor per cycle" a fact of storage rather than of a lookup before insert.
           version: 2,
-          postgres: postgresMigrations[2],
-          sql: `
-ALTER TABLE research_cycles ADD COLUMN predecessor_id TEXT;
-CREATE UNIQUE INDEX research_successor ON research_cycles(predecessor_id) WHERE predecessor_id IS NOT NULL;
-CREATE TRIGGER research_predecessor BEFORE UPDATE OF predecessor_id ON research_cycles BEGIN SELECT RAISE(ABORT,'Research inputs are immutable'); END;
-`,
+          sql: postgresMigrations[2],
         },
         {
           // What a finished cycle decided, as the metadata of one immutable artifact. It is written
           // once, possibly long after the cycle ended, so only a second write is refused.
           version: 3,
-          postgres: postgresMigrations[3],
-          sql: `
-ALTER TABLE research_cycles ADD COLUMN digest TEXT;
-CREATE TRIGGER research_digest BEFORE UPDATE OF digest ON research_cycles WHEN OLD.digest IS NOT NULL BEGIN SELECT RAISE(ABORT,'A research cycle digest is immutable'); END;
-`,
+          sql: postgresMigrations[3],
         },
         {
           version: 4,
-          postgres: postgresMigrations[4],
-          sql: `
-CREATE TABLE research_automation (
- research_id TEXT PRIMARY KEY REFERENCES research_cycles(id),project_id TEXT NOT NULL,
- source_json TEXT NOT NULL,root_id TEXT NOT NULL REFERENCES research_cycles(id),
- cycle_index INTEGER NOT NULL,max_cycles INTEGER NOT NULL,blocker_json TEXT);
-CREATE TRIGGER research_automation_identity BEFORE UPDATE OF research_id,project_id,source_json,root_id,cycle_index,max_cycles ON research_automation BEGIN SELECT RAISE(ABORT,'Research automation authority is immutable'); END;
-CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation BEGIN SELECT RAISE(ABORT,'Research automation is retained'); END;
-`,
+          sql: postgresMigrations[4],
         },
         {
           // The consolidation tasks a version-6 cycle injected, newest last; unlike the children it changes.
           version: 5,
-          postgres: postgresMigrations[5],
-          sql: 'ALTER TABLE research_cycles ADD COLUMN integrations TEXT;',
+          sql: postgresMigrations[5],
         },
         {
           version: 6,
-          postgres: postgresMigrations[6],
-          // NULL preserves the uncertainty of cycles created before integration was optional.
-          sql: 'ALTER TABLE research_cycles ADD COLUMN code_required INTEGER CHECK(code_required IN (0,1));',
+          sql: postgresMigrations[6],
         },
       ]);
       try {
@@ -515,9 +488,7 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
         await tx.all<{ id: string }>(
-          tx.dialect === 'postgres'
-            ? 'SELECT id FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid'
-            : 'SELECT id FROM research_cycles WHERE project_id=? ORDER BY rowid',
+          'SELECT id FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid',
           caller.projectId,
         ),
         async (row) => await this.get(caller, row.id, tx),
@@ -1180,8 +1151,8 @@ CREATE TRIGGER research_automation_retained BEFORE DELETE ON research_automation
    * the cycle as a predecessor composes it late; `required` refuses instead.
    *
    * Two creators naming one undigested predecessor may both compose. The guarded update keeps
-   * one: SQLite serialises the writers, Postgres makes the second wait and then match no row
-   * or fail its transaction. Either way the stored digest is re-read and returned, and the
+   * one: writers are serialised, so the second waits for the first and then matches no row or
+   * fails its transaction. Either way the stored digest is re-read and returned, and the
    * loser's artifact stays unreferenced.
    */
   private async digested(

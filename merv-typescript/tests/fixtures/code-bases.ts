@@ -1,8 +1,6 @@
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,22 +12,14 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { CodeService } from '@merv/code-research/service';
 import { LeasedSessions } from '@merv/sessions';
-import { SqliteState, PostgresState } from '@merv/state';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeBaseService } from '@merv/code-research/bases';
-import type { Backend } from './code-store.js';
+import { openState } from './state.js';
 
 /** A project repository holding four accepted commits off one main: a and c collide, b and d do not. */
-export async function baseFixture(t: TestContext, backend: Backend, enabled = true) {
+export async function baseFixture(t: TestContext, enabled = true) {
   const root = mkdtempSync(join(tmpdir(), 'merv-bases-'));
-  const schema = `code_bases_${randomUUID().replaceAll('-', '')}`;
-  const state =
-    backend === 'sqlite'
-      ? new SqliteState(join(root, 'state.sqlite'))
-      : await PostgresState.open({
-          connectionString: process.env.MERV_TEST_POSTGRES_URL!,
-          schema,
-        });
+  const state = await openState();
   let time = Date.now();
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
@@ -115,14 +105,6 @@ export async function baseFixture(t: TestContext, backend: Backend, enabled = tr
     workflows.close();
     await state.close();
     rmSync(root, { recursive: true, force: true });
-    if (backend === 'postgres') {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   const parents = (oid: string) =>
     execFileSync('git', ['--git-dir', bare, 'rev-list', '--parents', '-n', '1', oid], {

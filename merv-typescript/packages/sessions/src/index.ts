@@ -210,130 +210,25 @@ export class LeasedSessions implements Sessions {
       await state.migrate('sessions', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE worker_sessions (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-        actor_id TEXT NOT NULL UNIQUE REFERENCES actors(id), instance_id TEXT NOT NULL, revision INTEGER NOT NULL,
-        owner_hash TEXT NOT NULL, runner_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('offered','active','released','expired')), session_json TEXT NOT NULL,
-        UNIQUE(owner_hash,runner_id,request_id)
-      );
-      CREATE UNIQUE INDEX worker_sessions_live_target ON worker_sessions(project_id,instance_id,revision)
-        WHERE status IN ('offered','active');
-      CREATE TRIGGER worker_sessions_no_delete BEFORE DELETE ON worker_sessions
-        BEGIN SELECT RAISE(ABORT,'Session history is retained'); END;
-      CREATE TRIGGER worker_sessions_immutable BEFORE UPDATE ON worker_sessions
-        WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.actor_id IS NOT OLD.actor_id OR
-          NEW.instance_id IS NOT OLD.instance_id OR NEW.revision IS NOT OLD.revision OR NEW.owner_hash IS NOT OLD.owner_hash OR
-          NEW.runner_id IS NOT OLD.runner_id OR NEW.request_id IS NOT OLD.request_id OR NEW.token_hash IS NOT OLD.token_hash OR
-          NEW.fingerprint IS NOT OLD.fingerprint OR OLD.status IN ('released','expired') OR
-          (OLD.status='active' AND NEW.status='offered') OR
-          json_extract(NEW.session_json,'$.source') IS NOT json_extract(OLD.session_json,'$.source') OR
-          json_extract(NEW.session_json,'$.assignment') IS NOT json_extract(OLD.session_json,'$.assignment') OR
-          json_extract(NEW.session_json,'$.execution') IS NOT json_extract(OLD.session_json,'$.execution') OR
-          json_extract(NEW.session_json,'$.lease') IS NOT json_extract(OLD.session_json,'$.lease') OR
-          json_extract(NEW.session_json,'$.hardDeadline') IS NOT json_extract(OLD.session_json,'$.hardDeadline') OR
-          json_extract(NEW.session_json,'$.createdAt') IS NOT json_extract(OLD.session_json,'$.createdAt') OR
-          json_extract(NEW.session_json,'$.role') IS NOT json_extract(OLD.session_json,'$.role')
-        BEGIN SELECT RAISE(ABORT,'Session assignment and delegation are immutable'); END;
-    `,
+          sql: postgresMigrations[1],
         },
         {
           version: 2,
-          postgres: postgresMigrations[2],
-          sql: `
-      CREATE TABLE session_workspaces (
-        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id),
-        attachment_json TEXT NOT NULL CHECK(json_valid(attachment_json)),
-        result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json))
-      );
-      CREATE TRIGGER session_workspaces_no_delete BEFORE DELETE ON session_workspaces
-        BEGIN SELECT RAISE(ABORT,'Workspace capture history is retained'); END;
-      CREATE TRIGGER session_workspaces_immutable BEFORE UPDATE ON session_workspaces
-        WHEN NEW.session_id IS NOT OLD.session_id OR NEW.attachment_json IS NOT OLD.attachment_json OR
-          (OLD.result_json IS NOT NULL AND NEW.result_json IS NOT OLD.result_json)
-        BEGIN SELECT RAISE(ABORT,'Workspace attachment and final capture are immutable'); END;
-    `,
+          sql: postgresMigrations[2],
         },
         {
           version: 3,
-          rebuild: true,
-          postgres: postgresMigrations[3],
-          sql: `CREATE TEMP TABLE worker_sessions_backup AS SELECT * FROM worker_sessions;
-DROP TRIGGER worker_sessions_no_delete;
-DROP TRIGGER worker_sessions_immutable;
-DROP TABLE worker_sessions;
-
-      CREATE TABLE worker_sessions (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-        actor_id TEXT NOT NULL REFERENCES actors(id), instance_id TEXT NOT NULL, revision INTEGER NOT NULL,
-        owner_hash TEXT NOT NULL, runner_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('offered','active','released','expired')), session_json TEXT NOT NULL,
-        UNIQUE(owner_hash,runner_id,request_id)
-      );
-      CREATE UNIQUE INDEX worker_sessions_live_target ON worker_sessions(project_id,instance_id,revision)
-        WHERE status IN ('offered','active');
-      CREATE TRIGGER worker_sessions_no_delete BEFORE DELETE ON worker_sessions
-        BEGIN SELECT RAISE(ABORT,'Session history is retained'); END;
-      CREATE TRIGGER worker_sessions_immutable BEFORE UPDATE ON worker_sessions
-        WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.actor_id IS NOT OLD.actor_id OR
-          NEW.instance_id IS NOT OLD.instance_id OR NEW.revision IS NOT OLD.revision OR NEW.owner_hash IS NOT OLD.owner_hash OR
-          NEW.runner_id IS NOT OLD.runner_id OR NEW.request_id IS NOT OLD.request_id OR NEW.token_hash IS NOT OLD.token_hash OR
-          NEW.fingerprint IS NOT OLD.fingerprint OR OLD.status IN ('released','expired') OR
-          (OLD.status='active' AND NEW.status='offered') OR
-          json_extract(NEW.session_json,'$.source') IS NOT json_extract(OLD.session_json,'$.source') OR
-          json_extract(NEW.session_json,'$.assignment') IS NOT json_extract(OLD.session_json,'$.assignment') OR
-          json_extract(NEW.session_json,'$.execution') IS NOT json_extract(OLD.session_json,'$.execution') OR
-          json_extract(NEW.session_json,'$.lease') IS NOT json_extract(OLD.session_json,'$.lease') OR
-          json_extract(NEW.session_json,'$.hardDeadline') IS NOT json_extract(OLD.session_json,'$.hardDeadline') OR
-          json_extract(NEW.session_json,'$.createdAt') IS NOT json_extract(OLD.session_json,'$.createdAt') OR
-          json_extract(NEW.session_json,'$.role') IS NOT json_extract(OLD.session_json,'$.role')
-        BEGIN SELECT RAISE(ABORT,'Session assignment and delegation are immutable'); END;
-
-INSERT INTO worker_sessions SELECT * FROM worker_sessions_backup;
-DROP TABLE worker_sessions_backup;
-CREATE UNIQUE INDEX worker_sessions_live_actor ON worker_sessions(actor_id) WHERE status IN ('offered','active');
-CREATE TRIGGER worker_sessions_agent_immutable BEFORE UPDATE ON worker_sessions
-WHEN json_extract(NEW.session_json,'$.agentId') IS NOT json_extract(OLD.session_json,'$.agentId') OR
-json_extract(NEW.session_json,'$.agentSessionId') IS NOT json_extract(OLD.session_json,'$.agentSessionId') OR
-json_extract(NEW.session_json,'$.contextEpoch') IS NOT json_extract(OLD.session_json,'$.contextEpoch')
-BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
+          sql: postgresMigrations[3],
         },
         {
           // A new table, because a closed session row refuses every update: what a session
           // cost is known only at and after its close.
           version: 4,
-          postgres: postgresMigrations[4],
-          sql: `
-      CREATE TABLE session_usage (
-        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id), project_id TEXT NOT NULL,
-        instance_id TEXT NOT NULL, revision INTEGER NOT NULL, workflow TEXT NOT NULL, state TEXT NOT NULL,
-        role TEXT NOT NULL, outcome TEXT NOT NULL, started_at TEXT, closed_at TEXT NOT NULL,
-        wall_ms INTEGER NOT NULL CHECK(wall_ms >= 0), harness TEXT, model TEXT,
-        input_tokens INTEGER CHECK(input_tokens IS NULL OR input_tokens >= 0),
-        output_tokens INTEGER CHECK(output_tokens IS NULL OR output_tokens >= 0),
-        cost_micros INTEGER CHECK(cost_micros IS NULL OR cost_micros >= 0),
-        reported_model TEXT, reported_at TEXT
-      );
-      CREATE INDEX session_usage_project ON session_usage(project_id, instance_id, revision);
-      CREATE TRIGGER session_usage_no_delete BEFORE DELETE ON session_usage
-        BEGIN SELECT RAISE(ABORT,'Session usage is retained'); END;
-      CREATE TRIGGER session_usage_write_once BEFORE UPDATE ON session_usage
-        WHEN OLD.reported_at IS NOT NULL OR NEW.session_id IS NOT OLD.session_id OR NEW.project_id IS NOT OLD.project_id OR
-          NEW.instance_id IS NOT OLD.instance_id OR NEW.revision IS NOT OLD.revision OR NEW.workflow IS NOT OLD.workflow OR
-          NEW.state IS NOT OLD.state OR NEW.role IS NOT OLD.role OR NEW.outcome IS NOT OLD.outcome OR
-          NEW.started_at IS NOT OLD.started_at OR NEW.closed_at IS NOT OLD.closed_at OR NEW.wall_ms IS NOT OLD.wall_ms OR
-          NEW.harness IS NOT OLD.harness OR NEW.model IS NOT OLD.model
-        BEGIN SELECT RAISE(ABORT,'Session usage is recorded once'); END;
-    `,
+          sql: postgresMigrations[4],
         },
         {
           version: 5,
-          postgres: postgresMigrations[5],
-          sql: `CREATE INDEX worker_sessions_instance ON worker_sessions(project_id,instance_id,revision);`,
+          sql: postgresMigrations[5],
         },
       ]);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
@@ -713,10 +608,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     tx: Transaction,
   ) {
     this.state.assertTransaction(tx);
-    const writable =
-      tx.dialect === 'postgres'
-        ? "(session_json::jsonb #>> '{execution,policy,readOnly}')='false'"
-        : "json_extract(session_json,'$.execution.policy.readOnly')=0";
+    const writable = "(session_json::jsonb #>> '{execution,policy,readOnly}')='false'";
     const rows = await tx.all<{ id: string; actor_id: string; session_json: string }>(
       `SELECT id,actor_id,session_json FROM worker_sessions WHERE project_id=? AND instance_id=? AND ${writable}${beforeRevision === null ? '' : ' AND revision<?'} ORDER BY id`,
       projectId,
@@ -977,9 +869,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       current: await this.currentAgentExecution(agent, tx),
       assignments: await mapAsync(
         await tx.all<Row>(
-          tx.dialect === 'postgres'
-            ? 'SELECT * FROM worker_sessions WHERE actor_id=? ORDER BY _merv_rowid'
-            : 'SELECT * FROM worker_sessions WHERE actor_id=? ORDER BY rowid',
+          'SELECT * FROM worker_sessions WHERE actor_id=? ORDER BY _merv_rowid',
           agent.actorId,
         ),
         (row) => this.decode(row, tx),
@@ -1080,9 +970,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
         execution_label: string;
         execution_role: Session['role'];
       }>(
-        sql.dialect === 'postgres'
-          ? `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`
-          : `SELECT a.agent_json, w.id AS execution_id, json_extract(w.session_json,'$.assignment.label') AS execution_label, json_extract(w.session_json,'$.role') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY json_extract(a.agent_json,'$.createdAt') DESC,a.rowid DESC`,
+        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`,
         caller.projectId,
       )
     ).map((row) => {
@@ -1312,9 +1200,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
       const owner = await this.owner(caller, tx);
       return await mapAsync(
         await tx.all<Row>(
-          tx.dialect === 'postgres'
-            ? 'SELECT * FROM worker_sessions WHERE owner_hash=? ORDER BY _merv_rowid'
-            : 'SELECT * FROM worker_sessions WHERE owner_hash=? ORDER BY rowid',
+          'SELECT * FROM worker_sessions WHERE owner_hash=? ORDER BY _merv_rowid',
           owner.hash,
         ),
         (row) => this.decode(row, tx),
@@ -1965,9 +1851,7 @@ BEGIN SELECT RAISE(ABORT,'Agent attribution is immutable'); END;`,
     await this.serviceWork.expire(tx);
     const idle = this.idlePass(tx);
     for (const row of await tx.all<Row>(
-      tx.dialect === 'postgres'
-        ? "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid"
-        : "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY rowid",
+      "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid",
     )) {
       const session = await this.decode(row, tx);
       if (!(await this.reconcile(session, tx)) && idle.due(session))

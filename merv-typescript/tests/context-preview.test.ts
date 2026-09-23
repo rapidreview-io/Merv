@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -16,6 +16,7 @@ import {
   type TaskTypeDefinition,
   type Transaction,
 } from '@merv/contracts';
+import { countWrites, openState } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
   name: 'test.preview',
@@ -35,7 +36,7 @@ const definition: TaskTypeDefinition = {
 
 async function setup(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-preview-'));
-  const state = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
@@ -48,10 +49,8 @@ async function setup(t: TestContext) {
   });
   const identity = await scope.bootstrap({ projectName: 'Preview', actorName: 'Operator' });
   const operator: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
-  const changes = async () =>
-    await state.read(
-      async (sql) => (await sql.get<{ n: number }>('SELECT total_changes() AS n'))!.n,
-    );
+  // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
+  const changes = countWrites(state);
   const packageCount = async () =>
     await state.read(
       async (sql) =>
@@ -101,6 +100,7 @@ test('preview renders the exact future package without creating IDs, timestamps,
   assert.ok(createdAt);
   assert.deepEqual(savedPreview, preview);
   assert.equal(await packageCount(), 1);
+  assert.ok((await changes()) > before, 'the write counter sees the saved build');
   assert.equal(await state.eventHead(), eventHead + 1);
   assert.deepEqual(
     await registration.replay(operator, { subject: input.subject, requestId: 'begin' }),

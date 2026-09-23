@@ -148,11 +148,6 @@ async function initialize(state: State) {
     {
       version: 1,
       sql: `${table}
-CREATE TRIGGER legacy_foundation_no_update BEFORE UPDATE ON legacy_foundation_imports
- BEGIN SELECT RAISE(ABORT,'Import receipts are immutable'); END;
-CREATE TRIGGER legacy_foundation_no_delete BEFORE DELETE ON legacy_foundation_imports
- BEGIN SELECT RAISE(ABORT,'Import receipts are retained'); END;`,
-      postgres: `${table}
 CREATE FUNCTION legacy_foundation_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
 BEGIN RAISE EXCEPTION USING MESSAGE='Import receipts are immutable', ERRCODE='23514'; END;
 $merv$;

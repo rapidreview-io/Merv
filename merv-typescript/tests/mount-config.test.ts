@@ -1,15 +1,16 @@
 import { createService } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ToolRegistry } from '@merv/api';
 import { MountManager, mountsPlugin } from '@merv/mounts';
 import { Context } from 'cordis';
+import { openState } from './fixtures/state.js';
 
 test('failed multi-mount construction releases only namespaces acquired by that manager', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const access = scope.toolPolicy;
   const credentials = new EnvironmentCredentials(scope);
@@ -55,7 +56,7 @@ test('failed multi-mount construction releases only namespaces acquired by that 
 
 // Reject binding mistakes before acquiring namespaces or opening upstream connections.
 test('Mounts rejects invalid credential bindings before publishing its service or tools', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const registry = new ToolRegistry(scope, scope.toolPolicy);
   const ctx = new Context();

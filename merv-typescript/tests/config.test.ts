@@ -52,7 +52,9 @@ test('default configuration includes session enforcement and API adds its contro
     ),
   );
   assert.deepEqual(core.entries.find((entry) => entry.id === 'state')?.config, {
-    path: join(resolve('./data'), 'state.sqlite'),
+    connectionStringEnv: 'MERV_DB_URL',
+    schemaEnv: 'MERV_DB_SCHEMA',
+    schema: 'merv',
   });
   assert.deepEqual(core.entries.find((entry) => entry.id === 'blobs')?.config, {
     root: join(resolve('./data'), 'blobs'),

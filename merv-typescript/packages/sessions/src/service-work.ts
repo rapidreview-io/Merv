@@ -61,13 +61,7 @@ export class SessionServiceWork implements ServiceWork {
     await this.state.migrate('session_service_work', [
       {
         version: 1,
-        sql: `${table}
-CREATE TRIGGER session_service_work_guard BEFORE UPDATE ON session_service_work
-WHEN OLD.settled_at IS NOT NULL OR ${frozen.map((c) => `NEW.${c} IS NOT OLD.${c}`).join(' OR ')}
-BEGIN SELECT RAISE(ABORT,'Service work reservations and settlements are retained'); END;
-CREATE TRIGGER session_service_work_no_delete BEFORE DELETE ON session_service_work
-BEGIN SELECT RAISE(ABORT,'Service work is retained'); END;`,
-        postgres: `${table.replaceAll(' INTEGER', ' BIGINT')}
+        sql: `${table.replaceAll(' INTEGER', ' BIGINT')}
 CREATE FUNCTION session_service_work_guard() RETURNS trigger AS $$ BEGIN
 IF TG_OP='DELETE' THEN RAISE EXCEPTION 'Service work is retained'; END IF;
 IF OLD.settled_at IS NOT NULL OR ${frozen.map((c) => `NEW.${c} IS DISTINCT FROM OLD.${c}`).join(' OR ')} THEN

@@ -52,24 +52,7 @@ export class AgentDirectory {
       await state.migrate('agents', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE agents(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-        actor_id TEXT NOT NULL UNIQUE REFERENCES actors(id), owner_hash TEXT NOT NULL,
-        runner_id TEXT NOT NULL, request_id TEXT NOT NULL, token_hash TEXT UNIQUE,
-        fingerprint TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','retired')), agent_json TEXT NOT NULL,
-        UNIQUE(owner_hash,runner_id,request_id));
-      CREATE TRIGGER agents_no_delete BEFORE DELETE ON agents BEGIN SELECT RAISE(ABORT,'Agent history is retained'); END;
-      CREATE TRIGGER agents_immutable BEFORE UPDATE ON agents
-        WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.actor_id IS NOT OLD.actor_id OR
-          NEW.owner_hash IS NOT OLD.owner_hash OR NEW.runner_id IS NOT OLD.runner_id OR NEW.request_id IS NOT OLD.request_id OR
-          NEW.token_hash IS NOT OLD.token_hash OR NEW.fingerprint IS NOT OLD.fingerprint OR OLD.status='retired' OR
-          json_extract(NEW.agent_json,'$.source') IS NOT json_extract(OLD.agent_json,'$.source') OR
-          json_extract(NEW.agent_json,'$.sessionId') IS NOT json_extract(OLD.agent_json,'$.sessionId') OR
-          json_extract(NEW.agent_json,'$.persistent') IS NOT json_extract(OLD.agent_json,'$.persistent') OR
-          json_extract(NEW.agent_json,'$.contextEpoch') < json_extract(OLD.agent_json,'$.contextEpoch')
-        BEGIN SELECT RAISE(ABORT,'Agent identity and source are immutable'); END;
-    `,
+          sql: postgresMigrations[1],
         },
       ]);
     };
@@ -211,9 +194,7 @@ export class AgentDirectory {
     const source = await this.scope.delegationSource(caller, tx);
     return (
       await tx.all<AgentRow>(
-        tx.dialect === 'postgres'
-          ? 'SELECT * FROM agents WHERE owner_hash=? ORDER BY _merv_rowid'
-          : 'SELECT * FROM agents WHERE owner_hash=? ORDER BY rowid',
+        'SELECT * FROM agents WHERE owner_hash=? ORDER BY _merv_rowid',
         digest(source),
       )
     ).map((row) => JSON.parse(row.agent_json));

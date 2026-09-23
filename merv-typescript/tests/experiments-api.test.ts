@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import type { Caller } from '@merv/contracts';
 import { feasibilityStatement } from './feasibility-fixture.js';

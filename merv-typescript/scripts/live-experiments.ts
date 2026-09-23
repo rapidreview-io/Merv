@@ -11,6 +11,7 @@ import type { CodeCapture } from '@merv/code-research/types';
 import { MachineRunner } from '@merv/runner';
 import { programVersion } from '@merv/experiments/program';
 import { createApp } from '../src/app.js';
+import { useRunSchema } from './database.js';
 
 // Explicit native acceptance of the production Experiments program, with controlled data.
 // No synthetic workflow, review owner, tool, or artifact/evidence writer is registered here.
@@ -24,6 +25,7 @@ assert.ok(
 const directory = resolve(
   destinations[0] ?? `live-runs/experiments-${gitMode ? 'git-' : ''}${Date.now()}`,
 );
+const schema = useRunSchema(directory);
 mkdirSync(directory, { recursive: false, mode: 0o700 });
 const credentialEnv = 'MERV_NATIVE_EXPERIMENTS_SOURCE';
 const previous = process.env[credentialEnv];
@@ -606,6 +608,7 @@ try {
   }
   report = {
     passed: true,
+    schema,
     mode: gitMode ? 'git' : 'scratch',
     introduction,
     frozenIntroductionsVerified: 4,

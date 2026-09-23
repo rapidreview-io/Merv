@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Artifact, Caller, Task } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;

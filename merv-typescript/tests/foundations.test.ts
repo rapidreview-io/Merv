@@ -5,15 +5,16 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from 'cordis';
-import { SqliteState, statePlugin } from '@merv/state';
+import { statePlugin } from '@merv/state';
 import { DiskBlobs, blobsPlugin } from '@merv/blobs';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { ArtifactStore, artifactsPlugin } from '@merv/artifacts';
 import type { Transaction } from '@merv/contracts';
+import { openState, stateConfig } from './fixtures/state.js';
 
 async function fixture(t: any) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-foundation-'));
-  const state = new SqliteState(join(dir, 'state.sqlite'));
+  const state = await openState(dir);
   t.after(async () => {
     await state.close();
     rmSync(dir, { recursive: true, force: true });
@@ -44,7 +45,10 @@ test('component migrations are independent, immutable, atomic and persistent', a
   );
   assert.equal(
     await state.read(
-      async (sql) => await sql.get("SELECT name FROM sqlite_master WHERE name='undone'"),
+      async (sql) =>
+        await sql.get(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='undone'",
+        ),
     ),
     undefined,
   );
@@ -76,7 +80,7 @@ test('component migrations are independent, immutable, atomic and persistent', a
     /contained rejection/,
   );
   await state.transaction(async (tx) => await tx.run('INSERT INTO sample VALUES(?)', 'retained'));
-  const second = new SqliteState(join(dir, 'state.sqlite'));
+  const second = await openState(dir);
   try {
     assert.equal(
       (await second.read(async (sql) => await sql.get<{ id: string }>('SELECT id FROM sample')))
@@ -107,7 +111,7 @@ test('events commit with the transaction and survive reopening', async (t) => {
         data: { number: 1 },
       }),
   );
-  const second = new SqliteState(join(dir, 'state.sqlite'));
+  const second = await openState(dir);
   try {
     assert.equal((await second.events(caller.projectId)).at(-1)?.type, 'committed');
   } finally {
@@ -147,20 +151,21 @@ test('artifacts retain exact bytes, reject mutation, scope reads and detect corr
       await state.transaction(
         async (tx) => await tx.run('UPDATE artifacts SET title=? WHERE id=?', 'changed', value.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await state.transaction(
         async (tx) =>
           await tx.run(
-            'INSERT OR REPLACE INTO artifacts SELECT id,project_id,created_by,?,media_type,hash,size,created_at FROM artifacts WHERE id=?',
+            'INSERT INTO artifacts SELECT id,project_id,created_by,?,media_type,hash,size,created_at FROM artifacts WHERE id=? ON CONFLICT (id) DO UPDATE SET title=excluded.title',
             'replaced',
             value.id,
           ),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
+  assert.equal((await artifacts.get(caller, value.id)).title, 'Evidence');
   const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
   await assert.rejects(
     async () =>
@@ -257,7 +262,7 @@ test('Cordis activates independent components from declared dependencies and unw
   await ctx.plugin(blobsPlugin, { root: join(dir, 'blobs') });
   await art;
   assert.equal(ctx.get('artifacts'), undefined);
-  const provider = await ctx.plugin(statePlugin, { path: join(dir, 'state.sqlite') });
+  const provider = await ctx.plugin(statePlugin, stateConfig(dir));
   await scope.await();
   await art.await();
   const credentials = await ctx.scope.bootstrap({ projectName: 'Independent', actorName: 'User' });
@@ -265,78 +270,8 @@ test('Cordis activates independent components from declared dependencies and unw
   const saved = await ctx.artifacts.create(caller, { title: 'One', content: 'survives unload' });
   await provider.dispose();
   assert.equal(ctx.get('artifacts'), undefined);
-  await ctx.plugin(statePlugin, { path: join(dir, 'state.sqlite') });
+  await ctx.plugin(statePlugin, stateConfig(dir));
   await scope.await();
   await art.await();
   assert.equal((await ctx.artifacts.read(caller, saved.id)).content, 'survives unload');
-});
-
-test('table rebuild migrations retain referenced history and restore foreign-key enforcement on success and rollback', async (t) => {
-  const { state } = await fixture(t);
-  const initial = {
-    version: 1,
-    sql: `
-    CREATE TABLE rebuild_parent(id TEXT PRIMARY KEY, actor TEXT UNIQUE);
-    CREATE TABLE rebuild_child(parent TEXT REFERENCES rebuild_parent(id));
-    INSERT INTO rebuild_parent VALUES('execution-a','agent-a');
-    INSERT INTO rebuild_child VALUES('execution-a');
-  `,
-  };
-  await state.migrate('rebuild_test', [initial]);
-  const migration = {
-    version: 2,
-    rebuild: true,
-    sql: `
-    CREATE TEMP TABLE rebuild_backup AS SELECT * FROM rebuild_parent;
-    DROP TABLE rebuild_parent;
-    CREATE TABLE rebuild_parent(id TEXT PRIMARY KEY, actor TEXT);
-    INSERT INTO rebuild_parent SELECT * FROM rebuild_backup;
-    DROP TABLE rebuild_backup;
-  `,
-  };
-  await state.migrate('rebuild_test', [initial, migration]);
-  await state.transaction(
-    async (tx) => await tx.run("INSERT INTO rebuild_parent VALUES('execution-b','agent-a')"),
-  );
-  assert.deepEqual(await state.read(async (sql) => await sql.all('PRAGMA foreign_key_check')), []);
-  assert.equal(
-    (
-      await state.read(
-        async (sql) => await sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM rebuild_parent'),
-      )
-    )?.n,
-    2,
-  );
-  await assert.rejects(
-    async () =>
-      await state.transaction(
-        async (tx) => await tx.run("INSERT INTO rebuild_child VALUES('missing')"),
-      ),
-    /FOREIGN KEY/,
-  );
-  await assert.rejects(
-    async () =>
-      await state.migrate('rebuild_test', [
-        initial,
-        migration,
-        { version: 3, rebuild: true, sql: "DELETE FROM rebuild_parent WHERE id='execution-a';" },
-      ]),
-    { code: 'migration_foreign_key' },
-  );
-  assert.equal(
-    (
-      await state.read(
-        async (sql) =>
-          await sql.get<{ id: string }>("SELECT id FROM rebuild_parent WHERE id='execution-a'"),
-      )
-    )?.id,
-    'execution-a',
-  );
-  await assert.rejects(
-    async () =>
-      await state.transaction(
-        async (tx) => await tx.run("INSERT INTO rebuild_child VALUES('still-missing')"),
-      ),
-    /FOREIGN KEY/,
-  );
 });

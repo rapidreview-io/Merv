@@ -10,7 +10,7 @@ import {
   type FeasibilityStatement,
 } from '@merv/experiments/evidence';
 import type { Experiment, ExperimentAttach } from '@merv/experiments/types';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
 

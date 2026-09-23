@@ -1,14 +1,12 @@
 import { createService, type State } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { PostgresState } from '@merv/state';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
-import { Pool } from 'pg';
 import { CodePublicationService } from '../packages/code-research/src/publications.js';
 import type { CodeTransportService } from '../packages/code-research/src/transport.js';
 import type { CodeProposal } from '../packages/code-research/src/types.js';
 import { CodeGitHubService } from '../packages/code/src/github.js';
+// Loaded at top level so its cleanup hook belongs to the file, not to the first githubFixture test.
 import {
   baseOid,
   config,
@@ -18,6 +16,7 @@ import {
   repository,
   treeOid,
 } from './github-fixture.js';
+import { openState, schemaFor } from './fixtures/state.js';
 
 async function setup(t: TestContext, storage?: State) {
   const f = await githubFixture(t, storage);
@@ -403,40 +402,27 @@ test('repository relinking fences publications, and verdict rollback leaves the 
   assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 0);
 });
 
-test(
-  'PostgreSQL retains publication/review bindings and recovers an uncertain PR across service instances',
-  { skip: !process.env.MERV_TEST_POSTGRES_URL },
-  async (t) => {
-    const connectionString = process.env.MERV_TEST_POSTGRES_URL!,
-      schema = `github_pub_${randomUUID().replaceAll('-', '')}`;
-    const state = await PostgresState.open({ connectionString, schema });
-    t.after(async () => {
-      await state.close();
-      const pool = new Pool({ connectionString });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    });
-    const f = await setup(t, state);
-    await retainedPublications(f);
-    f.control.loseCreateReply = true;
-    assert.equal((await f.sync()).pull?.draft, true);
-    await f.review();
-    const secondState = await PostgresState.open({ connectionString, schema });
-    t.after(() => secondState.close());
-    const secondScope = await createService(new ProjectScope(secondState));
-    const secondGitHub = await createService(
-      new CodeGitHubService(secondState, secondScope, config, f.fetcher),
-    );
-    t.after(() => secondGitHub.close());
-    const restarted = await createService(
-      new CodePublicationService(secondState, secondScope, secondGitHub, f.transport),
-    );
-    assert.equal((await restarted.publications(f.caller))[0].review?.verdict, 'pass');
-    const ready = (await restarted.syncPublications(f.caller))[0];
-    assert.equal(ready.pull?.draft, false);
-    assert.equal(f.pulls.length, 1);
-  },
-);
+test('PostgreSQL retains publication/review bindings and recovers an uncertain PR across service instances', async (t) => {
+  const schema = schemaFor();
+  const state = await openState(undefined, { schema });
+  t.after(() => state.close());
+  const f = await setup(t, state);
+  await retainedPublications(f);
+  f.control.loseCreateReply = true;
+  assert.equal((await f.sync()).pull?.draft, true);
+  await f.review();
+  const secondState = await openState(undefined, { schema });
+  t.after(() => secondState.close());
+  const secondScope = await createService(new ProjectScope(secondState));
+  const secondGitHub = await createService(
+    new CodeGitHubService(secondState, secondScope, config, f.fetcher),
+  );
+  t.after(() => secondGitHub.close());
+  const restarted = await createService(
+    new CodePublicationService(secondState, secondScope, secondGitHub, f.transport),
+  );
+  assert.equal((await restarted.publications(f.caller))[0].review?.verdict, 'pass');
+  const ready = (await restarted.syncPublications(f.caller))[0];
+  assert.equal(ready.pull?.draft, false);
+  assert.equal(f.pulls.length, 1);
+});

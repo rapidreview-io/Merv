@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import ts from 'typescript';
+import { postgresUrl, schemaFor } from './fixtures/state.js';
 import { postgresMigrations as migrations0 } from '../packages/artifacts/src/index.postgres.js';
 import { postgresMigrations as migrations2 } from '../packages/code-research/src/commands.postgres.js';
 import { postgresMigrations as migrations3 } from '../packages/code-research/src/proposals.postgres.js';
@@ -31,7 +30,8 @@ import { postgresMigrations as migrations22 } from '../packages/sessions/src/obs
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
 
-type DomainMigration = { owner: string; version: number; sqlite: string; postgres: string };
+type DomainMigration = { owner: string; version: number; postgres: string };
+/** Every native migration file (`<owner>.postgres.ts`), keyed by the owner that registers it. */
 const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/artifacts/src/index.ts': migrations0,
   'packages/code-research/src/commands.ts': migrations2,
@@ -59,45 +59,14 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/code/src/units.ts': migrations25,
 };
 const root = fileURLToPath(new URL('../', import.meta.url));
-async function migrations(): Promise<DomainMigration[]> {
-  const result: DomainMigration[] = [];
-  for (const name of readdirSync(join(root, 'packages'))) {
-    if (['state', 'blobs', 'contracts', 'runner', 'ui'].includes(name)) continue;
-    const source = join(root, 'packages', name, 'src');
-    for (const file of readdirSync(source).filter((file) => file.endsWith('.postgres.ts'))) {
-      const owner = `packages/${name}/src/${file.replace('.postgres.ts', '.ts')}`;
-      const counterpart = nativeMigrations[owner];
-      const ast = ts.createSourceFile(
-        owner,
-        readFileSync(join(root, owner), 'utf8'),
-        ts.ScriptTarget.Latest,
-        true,
-      );
-      function visit(node: ts.Node) {
-        if (ts.isObjectLiteralExpression(node)) {
-          const property = (key: string) =>
-            node.properties.find((p) => p.name?.getText(ast) === key) as
-              ts.PropertyAssignment | undefined;
-          const version = property('version')?.initializer;
-          const sql = property('sql')?.initializer;
-          if (version && ts.isNumericLiteral(version) && sql && ts.isStringLiteralLike(sql)) {
-            assert.ok(
-              property('postgres'),
-              `${owner}@${version.text} must explicitly select native SQL`,
-            );
-            result.push({
-              owner,
-              version: Number(version.text),
-              sqlite: sql.text,
-              postgres: counterpart[Number(version.text)]!,
-            });
-          }
-        }
-        ts.forEachChild(node, visit);
-      }
-      visit(ast);
-    }
-  }
+function migrations(): DomainMigration[] {
+  const result = Object.entries(nativeMigrations).flatMap(([owner, texts]) =>
+    Object.entries(texts).map(([version, postgres]) => ({
+      owner,
+      version: Number(version),
+      postgres,
+    })),
+  );
   const rank = (m: DomainMigration) =>
     m.owner.includes('/scope/')
       ? 0
@@ -115,8 +84,23 @@ async function migrations(): Promise<DomainMigration[]> {
   );
 }
 
-test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLite rebuild migrations', async () => {
-  const all = await migrations();
+test('every native migration file is listed here', () => {
+  const files = readdirSync(join(root, 'packages')).flatMap((name) => {
+    let source: string[];
+    try {
+      source = readdirSync(join(root, 'packages', name, 'src'));
+    } catch {
+      return [];
+    }
+    return source
+      .filter((file) => file.endsWith('.postgres.ts'))
+      .map((file) => `packages/${name}/src/${file.replace('.postgres.ts', '.ts')}`);
+  });
+  assert.deepEqual(files.sort(), Object.keys(nativeMigrations).sort());
+});
+
+test('domain migrations are PostgreSQL without SQLite constructs', () => {
+  const all = migrations();
   assert.equal(all.length, 66);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
@@ -124,155 +108,142 @@ test('domain migrations provide explicit native PostgreSQL SQL and preserve SQLi
       migration.postgres,
       /RAISE\(ABORT|\bAUTOINCREMENT\b|\bCOLLATE NOCASE\b|\bjson_extract\s*\(|\bjson_each\s*\(|\bjson_valid\s*\(|\bPRAGMA\b/,
     );
-    if (migration.sqlite.includes('CREATE TEMP TABLE')) {
-      assert.match(migration.postgres, /ALTER TABLE \w+ DROP CONSTRAINT/);
-      assert.doesNotMatch(migration.postgres, /DROP TABLE|CREATE TEMP TABLE/);
-    }
   }
 });
 
-const connectionString = process.env.MERV_TEST_POSTGRES_DSN;
-test(
-  'all native domain migrations execute on PostgreSQL and retain provenance, ordering and atomicity',
-  {
-    skip: connectionString
-      ? false
-      : 'Set MERV_TEST_POSTGRES_DSN for a disposable PostgreSQL acceptance database',
-  },
-  async (t) => {
-    const client = new pg.Client({ connectionString });
-    const schema = `merv_sql_${randomUUID().replaceAll('-', '')}`;
-    await client.connect();
-    t.after(async () => {
-      try {
-        await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-      } finally {
-        await client.end();
-      }
-    });
-    await client.query(`CREATE SCHEMA ${schema}`);
-    await client.query(`SET search_path TO ${schema}`);
-    await client.query(`CREATE TABLE events(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+test('all native domain migrations execute on PostgreSQL and retain provenance, ordering and atomicity', async (t) => {
+  const client = new pg.Client({ connectionString: postgresUrl });
+  const schema = schemaFor();
+  await client.connect();
+  t.after(async () => {
+    try {
+      await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    } finally {
+      await client.end();
+    }
+  });
+  await client.query(`CREATE SCHEMA ${schema}`);
+  await client.query(`SET search_path TO ${schema}`);
+  await client.query(`CREATE TABLE events(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     project_id TEXT NOT NULL,actor_id TEXT NOT NULL,type TEXT NOT NULL,subject_id TEXT NOT NULL,
     data_json TEXT NOT NULL,created_at TEXT NOT NULL)`);
-    for (const migration of await migrations()) {
-      await client.query('BEGIN');
-      try {
-        await client.query(migration.postgres);
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw new Error(`${migration.owner}@${migration.version}: ${(error as Error).message}`, {
-          cause: error,
-        });
-      }
-      if (migration.owner === 'packages/scope/src/index.ts' && migration.version === 1) {
-        await client.query(
-          "INSERT INTO projects(id,name,created_at) VALUES('project','Legacy project','2026-01-01')",
-        );
-        await client.query(
-          "INSERT INTO actors(id,project_id,name,role,token_hash,active) VALUES('actor','project','Legacy actor','operator','fixture-token-hash',1)",
-        );
-      }
-      if (migration.owner === 'packages/scope/src/index.ts' && migration.version === 2) {
-        const migrated = await client.query(
-          "SELECT actor_id,token_hash FROM actor_credentials WHERE project_id='project'",
-        );
-        assert.deepEqual(migrated.rows, [{ actor_id: 'actor', token_hash: 'fixture-token-hash' }]);
-      }
-      if (migration.owner === 'packages/sessions/src/index.ts' && migration.version === 1) {
-        await client.query(
-          "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('old','project','actor','work-old',0,'owner','runner','old','old-hash','old-input','released','{}')",
-        );
-      }
-    }
-    // Native ALTER preserves old executions and allows a stable actor to undertake new work.
-    await client.query(
-      "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('new','project','actor','work-new',0,'owner','runner','new','new-hash','new-input','active','{}')",
-    );
-    assert.deepEqual(
-      (await client.query('SELECT id FROM worker_sessions ORDER BY _merv_rowid')).rows.map(
-        (row) => row.id,
-      ),
-      ['old', 'new'],
-    );
-    await assert.rejects(
-      client.query(
-        'UPDATE worker_sessions SET session_json=\'{"source":{"actorId":"other"}}\' WHERE id=\'new\'',
-      ),
-      /immutable/,
-    );
-    await client.query("UPDATE worker_sessions SET status='released' WHERE id='new'");
-    await assert.rejects(client.query("DELETE FROM worker_sessions WHERE id='old'"), /retained/);
-
-    const review =
-      "INSERT INTO reviews(id,project_id,subject_id,subject_revision,producer_id,artifact_ids,criteria,manifest,snapshot_hash,status,reviewer_id,created_at,excluded_actor_ids) VALUES($1,'project','subject',0,'producer','[]','[]','{}','hash','requested',$2,'now','[\"contributor\"]')";
-    await assert.rejects(
-      client.query(review, ['bad-review', 'contributor']),
-      /contributor cannot review/,
-    );
-    await client.query(review, ['review', 'independent']);
-    await assert.rejects(
-      client.query("UPDATE reviews SET reviewer_id='contributor' WHERE id='review'"),
-      /contributor cannot review/,
-    );
-    await assert.rejects(
-      client.query("UPDATE reviews SET excluded_actor_ids='[]' WHERE id='review'"),
-      /immutable/,
-    );
-    await assert.rejects(
-      client.query("UPDATE reviews SET required_criteria='[1]' WHERE id='review'"),
-      /immutable/,
-    );
-
-    const post =
-      "INSERT INTO feed_posts(id,project_id,author_id,body,artifact_ids,created_at) VALUES($1,'project','actor','Body','[]','now') RETURNING sequence";
-    const first = await client.query(post, ['post-a']);
-    const second = await client.query(post, ['post-b']);
-    assert.ok(BigInt(second.rows[0].sequence) > BigInt(first.rows[0].sequence));
-    await assert.rejects(
-      client.query("UPDATE feed_posts SET body='changed' WHERE id='post-a'"),
-      /immutable/,
-    );
-
+  for (const migration of migrations()) {
     await client.query('BEGIN');
-    await client.query(
-      "INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES('rollback','project','actor','Evidence','text/plain','hash',123,'now')",
-    );
-    await assert.rejects(
-      client.query("UPDATE artifacts SET title='changed' WHERE id='rollback'"),
-      /immutable/,
-    );
-    await client.query('ROLLBACK');
-    assert.equal(
-      (await client.query("SELECT COUNT(*) AS count FROM artifacts WHERE id='rollback'")).rows[0]
-        .count,
-      '0',
-    );
-    // One successor per research cycle is a storage fact on both backends; the failures differ
-    // by dialect, so the refusal itself is what is asserted.
-    const cycle =
-      "INSERT INTO research_cycles(id,project_id,record,predecessor_id) VALUES($1,'project','{}',$2)";
-    await client.query(cycle, ['cycle', null]);
-    await client.query(cycle, ['unrelated', null]);
-    await client.query(cycle, ['follower', 'cycle']);
-    await assert.rejects(client.query(cycle, ['rival', 'cycle']), { code: '23505' });
-    await assert.rejects(
-      client.query("UPDATE research_cycles SET predecessor_id='unrelated' WHERE id='follower'"),
-      { code: '23514' },
-    );
-    await assert.rejects(
-      client.query("UPDATE research_cycles SET predecessor_id='cycle' WHERE id='unrelated'"),
-      { code: '23514' },
-    );
+    try {
+      await client.query(migration.postgres);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw new Error(`${migration.owner}@${migration.version}: ${(error as Error).message}`, {
+        cause: error,
+      });
+    }
+    if (migration.owner === 'packages/scope/src/index.ts' && migration.version === 1) {
+      await client.query(
+        "INSERT INTO projects(id,name,created_at) VALUES('project','Legacy project','2026-01-01')",
+      );
+      await client.query(
+        "INSERT INTO actors(id,project_id,name,role,token_hash,active) VALUES('actor','project','Legacy actor','operator','fixture-token-hash',1)",
+      );
+    }
+    if (migration.owner === 'packages/scope/src/index.ts' && migration.version === 2) {
+      const migrated = await client.query(
+        "SELECT actor_id,token_hash FROM actor_credentials WHERE project_id='project'",
+      );
+      assert.deepEqual(migrated.rows, [{ actor_id: 'actor', token_hash: 'fixture-token-hash' }]);
+    }
+    if (migration.owner === 'packages/sessions/src/index.ts' && migration.version === 1) {
+      await client.query(
+        "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('old','project','actor','work-old',0,'owner','runner','old','old-hash','old-input','released','{}')",
+      );
+    }
+  }
+  // Native ALTER preserves old executions and allows a stable actor to undertake new work.
+  await client.query(
+    "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('new','project','actor','work-new',0,'owner','runner','new','new-hash','new-input','active','{}')",
+  );
+  assert.deepEqual(
+    (await client.query('SELECT id FROM worker_sessions ORDER BY _merv_rowid')).rows.map(
+      (row) => row.id,
+    ),
+    ['old', 'new'],
+  );
+  await assert.rejects(
+    client.query(
+      'UPDATE worker_sessions SET session_json=\'{"source":{"actorId":"other"}}\' WHERE id=\'new\'',
+    ),
+    /immutable/,
+  );
+  await client.query("UPDATE worker_sessions SET status='released' WHERE id='new'");
+  await assert.rejects(client.query("DELETE FROM worker_sessions WHERE id='old'"), /retained/);
 
-    await client.query(
-      "INSERT INTO event_consumers(id,definition_hash,cursor,retry_at) VALUES('consumer','hash',1,1800000000000)",
-    );
-    assert.equal(
-      (await client.query("SELECT retry_at FROM event_consumers WHERE id='consumer'")).rows[0]
-        .retry_at,
-      '1800000000000',
-    );
-  },
-);
+  const review =
+    "INSERT INTO reviews(id,project_id,subject_id,subject_revision,producer_id,artifact_ids,criteria,manifest,snapshot_hash,status,reviewer_id,created_at,excluded_actor_ids) VALUES($1,'project','subject',0,'producer','[]','[]','{}','hash','requested',$2,'now','[\"contributor\"]')";
+  await assert.rejects(
+    client.query(review, ['bad-review', 'contributor']),
+    /contributor cannot review/,
+  );
+  await client.query(review, ['review', 'independent']);
+  await assert.rejects(
+    client.query("UPDATE reviews SET reviewer_id='contributor' WHERE id='review'"),
+    /contributor cannot review/,
+  );
+  await assert.rejects(
+    client.query("UPDATE reviews SET excluded_actor_ids='[]' WHERE id='review'"),
+    /immutable/,
+  );
+  await assert.rejects(
+    client.query("UPDATE reviews SET required_criteria='[1]' WHERE id='review'"),
+    /immutable/,
+  );
+
+  const post =
+    "INSERT INTO feed_posts(id,project_id,author_id,body,artifact_ids,created_at) VALUES($1,'project','actor','Body','[]','now') RETURNING sequence";
+  const first = await client.query(post, ['post-a']);
+  const second = await client.query(post, ['post-b']);
+  assert.ok(BigInt(second.rows[0].sequence) > BigInt(first.rows[0].sequence));
+  await assert.rejects(
+    client.query("UPDATE feed_posts SET body='changed' WHERE id='post-a'"),
+    /immutable/,
+  );
+
+  await client.query('BEGIN');
+  await client.query(
+    "INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES('rollback','project','actor','Evidence','text/plain','hash',123,'now')",
+  );
+  await assert.rejects(
+    client.query("UPDATE artifacts SET title='changed' WHERE id='rollback'"),
+    /immutable/,
+  );
+  await client.query('ROLLBACK');
+  assert.equal(
+    (await client.query("SELECT COUNT(*) AS count FROM artifacts WHERE id='rollback'")).rows[0]
+      .count,
+    '0',
+  );
+  // One successor per research cycle is a storage fact: the database itself refuses a rival
+  // successor and a rewritten predecessor.
+  const cycle =
+    "INSERT INTO research_cycles(id,project_id,record,predecessor_id) VALUES($1,'project','{}',$2)";
+  await client.query(cycle, ['cycle', null]);
+  await client.query(cycle, ['unrelated', null]);
+  await client.query(cycle, ['follower', 'cycle']);
+  await assert.rejects(client.query(cycle, ['rival', 'cycle']), { code: '23505' });
+  await assert.rejects(
+    client.query("UPDATE research_cycles SET predecessor_id='unrelated' WHERE id='follower'"),
+    { code: '23514' },
+  );
+  await assert.rejects(
+    client.query("UPDATE research_cycles SET predecessor_id='cycle' WHERE id='unrelated'"),
+    { code: '23514' },
+  );
+
+  await client.query(
+    "INSERT INTO event_consumers(id,definition_hash,cursor,retry_at) VALUES('consumer','hash',1,1800000000000)",
+  );
+  assert.equal(
+    (await client.query("SELECT retry_at FROM event_consumers WHERE id='consumer'")).rows[0]
+      .retry_at,
+    '1800000000000',
+  );
+});

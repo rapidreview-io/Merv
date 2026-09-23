@@ -4,10 +4,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SignJWT } from 'jose';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { legacyHistoryUiPlugin } from '../src/legacy-history-ui.js';
 import { importLegacyHistory } from '../src/legacy-history.js';
 import { emptyLegacyHistorySnapshot, legacyHistoryRow } from './fixtures/legacy-history.js';
+import { stateConfig } from './fixtures/state.js';
 
 test('history UI paginates through authenticated ui.read and withdraws cleanly', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-history-ui-'));
@@ -22,7 +23,7 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
     directory,
     config: {
       plugins: [
-        { id: 'state', name: '@merv/state', config: { path: ':memory:' } },
+        { id: 'state', name: '@merv/state', config: stateConfig(':memory:') },
         { id: 'scope', name: '@merv/scope' },
         {
           id: 'identity',

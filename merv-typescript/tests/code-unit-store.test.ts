@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { createService, type Caller, type Transaction } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { CodeUnitStore, type AcceptanceBody, type BaseBody } from '@merv/code/units';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeStore } from '@merv/code/store/operations';
 import { gitSource } from './fixtures/code-store.js';
+import { openState } from './fixtures/state.js';
 
 /** The storage capability accepts facts from an owner; it has no research service to consult. */
 class OwnerStore extends CodeUnitStore {
@@ -42,7 +43,7 @@ class OwnerStore extends CodeUnitStore {
 
 async function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'merv-unit-store-'));
-  const state = new SqliteState(join(root, 'state.sqlite'));
+  const state = await openState(root);
   const scope = await createService(new ProjectScope(state));
   const writers = new CodeWriterService(state, scope, 900);
   let store = await createService(new OwnerStore(state, scope, writers));
@@ -93,8 +94,11 @@ async function fixture(t: TestContext) {
 test('Code unit storage runs without research services and rolls facts back with its owner', async (t) => {
   const f = await fixture(t);
   const tables = await f.state.read((sql) =>
-    sql.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'"),
+    sql.all<{ name: string }>(
+      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'",
+    ),
   );
+  assert.ok(tables.some(({ name }) => name === 'code_units'));
   assert.equal(
     tables.some(({ name }) => /^(workflow_instances|sessions|reviews)$/.test(name)),
     false,
@@ -221,8 +225,11 @@ test('standalone Code storage imports and rebinds while retaining unfinished bas
     assert.equal((await rebind()).status, 'completed');
     assert.equal((await f.store.status(f.caller)).project?.repositoryId, 'renamed');
     const tables = await f.state.read((sql) =>
-      sql.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'"),
+      sql.all<{ name: string }>(
+        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'",
+      ),
     );
+    assert.ok(tables.some(({ name }) => name === 'code_units'));
     assert.equal(
       tables.some(({ name }) => /^(wf_|reviews$|sessions$|research_)/.test(name)),
       false,

@@ -23,53 +23,7 @@ import { projectValue, type ProjectRow } from './project-context.js';
 
 export const membershipMigration: Migration = {
   version: 3,
-  postgres: postgresMigrations[3],
-  sql: `
-    CREATE TABLE shared_users (
-      issuer TEXT NOT NULL, subject TEXT NOT NULL, created_at TEXT NOT NULL,
-      PRIMARY KEY(issuer,subject)
-    );
-    CREATE TABLE member_actors (
-      project_id TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL,
-      actor_id TEXT NOT NULL UNIQUE,
-      PRIMARY KEY(project_id,issuer,subject),
-      FOREIGN KEY(actor_id,project_id) REFERENCES actors(id,project_id)
-    );
-    CREATE TABLE project_memberships (
-      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL,
-      actor_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('operator','producer','reviewer','reader')),
-      active INTEGER NOT NULL CHECK(active IN (0,1)), created_at TEXT NOT NULL, revoked_at TEXT,
-      FOREIGN KEY(project_id,issuer,subject) REFERENCES member_actors(project_id,issuer,subject),
-      FOREIGN KEY(actor_id,project_id) REFERENCES actors(id,project_id),
-      CHECK((active=1 AND revoked_at IS NULL) OR (active=0 AND revoked_at IS NOT NULL))
-    );
-    CREATE UNIQUE INDEX project_membership_active ON project_memberships(project_id,issuer,subject) WHERE active=1;
-    CREATE UNIQUE INDEX project_membership_actor_active ON project_memberships(actor_id) WHERE active=1;
-    CREATE INDEX project_membership_user ON project_memberships(issuer,subject,project_id);
-    CREATE TABLE user_project_requests (
-      issuer TEXT NOT NULL, subject TEXT NOT NULL, request_id TEXT NOT NULL,
-      fingerprint TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id),
-      PRIMARY KEY(issuer,subject,request_id),
-      FOREIGN KEY(issuer,subject) REFERENCES shared_users(issuer,subject)
-    );
-    CREATE TRIGGER shared_users_no_update BEFORE UPDATE ON shared_users
-      BEGIN SELECT RAISE(ABORT,'Verified user identity is immutable'); END;
-    CREATE TRIGGER shared_users_no_delete BEFORE DELETE ON shared_users
-      BEGIN SELECT RAISE(ABORT,'Verified user identity is retained'); END;
-    CREATE TRIGGER member_actors_no_update BEFORE UPDATE ON member_actors
-      BEGIN SELECT RAISE(ABORT,'Member attribution is immutable'); END;
-    CREATE TRIGGER member_actors_no_delete BEFORE DELETE ON member_actors
-      BEGIN SELECT RAISE(ABORT,'Member attribution is retained'); END;
-    CREATE TRIGGER project_memberships_no_delete BEFORE DELETE ON project_memberships
-      BEGIN SELECT RAISE(ABORT,'Membership history is retained'); END;
-    CREATE TRIGGER project_memberships_immutable BEFORE UPDATE ON project_memberships
-      WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR
-        NEW.issuer IS NOT OLD.issuer OR NEW.subject IS NOT OLD.subject OR
-        NEW.actor_id IS NOT OLD.actor_id OR NEW.role IS NOT OLD.role OR
-        NEW.created_at IS NOT OLD.created_at OR OLD.active<>1 OR NEW.active<>0 OR
-        OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL
-      BEGIN SELECT RAISE(ABORT,'Membership epochs only allow removal'); END;
-  `,
+  sql: postgresMigrations[3],
 };
 
 interface MembershipRow {
@@ -366,9 +320,7 @@ export class Memberships {
       await this.resolve(await this.human(principal, tx), projectId, tx);
       return (
         await tx.all<MembershipRow>(
-          tx.dialect === 'postgres'
-            ? 'SELECT * FROM project_memberships WHERE project_id=? ORDER BY _merv_rowid'
-            : 'SELECT * FROM project_memberships WHERE project_id=? ORDER BY rowid',
+          'SELECT * FROM project_memberships WHERE project_id=? ORDER BY _merv_rowid',
           projectId,
         )
       ).map(membership);
@@ -558,9 +510,7 @@ export class Memberships {
     await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const previous = await tx.get<MembershipRow>(
-        tx.dialect === 'postgres'
-          ? 'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,_merv_rowid DESC LIMIT 1'
-          : 'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,rowid DESC LIMIT 1',
+        'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,_merv_rowid DESC LIMIT 1',
         projectId,
         caller.human!.issuer,
         subject,
@@ -604,9 +554,7 @@ export class Memberships {
       await this.project(tx, projectId);
       if (reason !== undefined) {
         const previous = await tx.get<MembershipRow>(
-          tx.dialect === 'postgres'
-            ? 'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,_merv_rowid DESC LIMIT 1'
-            : 'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,rowid DESC LIMIT 1',
+          'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,_merv_rowid DESC LIMIT 1',
           projectId,
           human.user.issuer,
           human.user.subject,

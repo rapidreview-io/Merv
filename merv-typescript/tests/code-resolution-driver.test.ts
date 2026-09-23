@@ -15,17 +15,17 @@ import { CodeRepositories } from '@merv/code/store/repository';
 import { MERGE_SETTINGS } from '../packages/code/src/merge-settings.js';
 import { baseKey } from '../packages/code/src/base-plan.js';
 import { pendingMerge, pinMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
-import { backends, optional, git, type Backend } from './fixtures/code-store.js';
+import { git } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';
 
-async function fixture(t: TestContext, backend: Backend) {
+async function fixture(t: TestContext) {
   // The writer lock is covered by the repository suite. Everything after that lock is real.
   t.mock.method(
     CodeRepositories.prototype as unknown as { acquire(): Promise<void> },
     'acquire',
     async () => {},
   );
-  const f = await writerFixture(t, backend);
+  const f = await writerFixture(t);
   const left = f.source.commit({ 'README.md': 'left\n' });
   assert.equal((await f.deliver(f.source.bundle(left, [f.root]))).status, 'completed');
   f.source.git('checkout', '--detach', f.root);
@@ -105,185 +105,155 @@ async function fixture(t: TestContext, backend: Backend) {
   return { ...f, left, right, machine, repositories };
 }
 
-for (const backend of backends) {
-  test(
-    `${backend}: pending second parent survives a handoff and the first merge joins the saved checkpoint exactly`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.lease('first');
-      const first = f.machine();
-      const work = await first.prepare('first');
-      assert.equal(work.snapshot!.pendingMerge!.secondParent, f.right);
-      await f.event('session.workspace_attached', 'first');
-      git(work.path, ['config', 'merge.conflictStyle', 'diff3']);
-      git(work.path, ['config', 'merge.renames', 'false']);
-      const planned = await f.repositories.git.run(
-        [...MERGE_SETTINGS, 'merge-tree', '--write-tree', f.left, f.right],
-        { env: f.repositories.environment(f.admin.projectId) },
-      );
-      assert.equal(planned.code, 1);
-      const started = await first.command('first', f.left, 'start');
-      assert.equal(git(work.path, ['write-tree']), planned.stdout.toString('utf8').split('\n')[0]);
-      assert.equal(started.receipt.headOid, f.left);
-      assert.match(readFileSync(join(work.path, 'README.md'), 'utf8'), /<<<<<<< /);
-      assert.deepEqual(
-        await first.driver.checkpointCommit(first.launch('first'), started.command),
-        started.receipt,
-      );
-      writeFileSync(join(work.path, 'README.md'), 'partial resolution retained\n');
-      first.stopped.add('launch-first');
-      f.end('first');
-      await f.event('session.released', 'first');
-      const captured = (await first.driver.capture(first.launch('first')))!;
-      const wip = captured.headOid;
-      assert.equal(git(work.path, ['show', '-s', '--format=%P', wip]), f.left);
-      assert.equal(captured.pendingMerge!.firstMerge, null);
-      await first.driver.close(first.launch('first'));
-      await f.lease('second');
-      const second = f.machine();
-      const resumed = await second.prepare('second');
-      assert.equal(resumed.snapshot!.headOid, wip);
-      assert.equal(resumed.snapshot!.pendingMerge!.checkpoint, wip);
-      assert.equal(resumed.snapshot!.pendingMerge!.secondParent, f.right);
-      assert.equal(
-        readFileSync(join(resumed.path, 'README.md'), 'utf8'),
-        'partial resolution retained\n',
-      );
-      await f.event('session.workspace_attached', 'second');
-      // No tree change: completing still creates the required merge commit.
-      const completed = await second.command('second', wip, 'complete');
-      assert.notEqual(completed.receipt.headOid, wip);
-      assert.equal(completed.receipt.treeOid, captured.treeOid);
-      assert.equal(
-        git(resumed.path, ['show', '-s', '--format=%P', completed.receipt.headOid]),
-        `${wip} ${f.right}`,
-      );
-      const stored = await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, f.unitId));
-      assert.equal(stored!.firstMerge, completed.receipt.headOid);
-      assert.equal(stored!.checkpoint, completed.receipt.headOid);
-      writeFileSync(join(resumed.path, 'README.md'), 'corrected after independent review\n');
-      const corrected = await second.command('second', completed.receipt.headOid);
-      assert.equal(
-        git(resumed.path, ['show', '-s', '--format=%P', corrected.receipt.headOid]),
-        completed.receipt.headOid,
-      );
-      assert.deepEqual(
-        await verifyResolution(
-          f.repositories.git,
-          f.repositories.environment(f.admin.projectId),
-          f.left,
-          f.right,
-          corrected.receipt.headOid,
-        ),
-        { firstMerge: completed.receipt.headOid, error: null },
-      );
-      second.stopped.add('launch-second');
-      f.end('second');
-      await f.event('session.released', 'second');
-      const final = (await second.driver.capture(second.launch('second')))!;
-      assert.equal(final.pendingMerge!.firstMerge, completed.receipt.headOid);
-      assert.ok(f.refs().some((ref) => ref.includes('-second ')));
-      await f.repositories.sweep(async () => false, Date.now() + 3_600_000);
-      assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/exports/')));
-      // A later publication round keeps the same branch, but freezes another pair of inputs.
-      const newerMain = f.source.commit({ 'new-main.txt': 'Another publication advanced main.\n' });
-      await f.deliver(f.source.bundle(newerMain, [f.right]));
-      const nextPlan = baseKey([corrected.receipt.headOid, newerMain]);
-      await f.state.transaction((tx) =>
-        pinMerge(
-          tx,
-          f.admin.projectId,
-          f.unitId,
-          nextPlan,
-          corrected.receipt.headOid,
-          newerMain,
-          1,
-        ),
-      );
-      await f.lease('third');
-      const third = f.machine();
-      const thirdWork = await third.prepare('third');
-      await f.event('session.workspace_attached', 'third');
-      assert.equal(thirdWork.snapshot!.branch, resumed.snapshot!.branch);
-      assert.equal(thirdWork.snapshot!.pendingMerge!.plan, nextPlan);
-      await third.command('third', corrected.receipt.headOid, 'start');
-      const next = await third.command('third', corrected.receipt.headOid, 'complete');
-      assert.equal(
-        git(thirdWork.path, ['show', '-s', '--format=%P', next.receipt.headOid]),
-        `${corrected.receipt.headOid} ${newerMain}`,
-      );
-      const rounds = await f.state.read((sql) =>
-        sql.all<{ first_merge: string; right_oid: string }>(
-          'SELECT first_merge,right_oid FROM code_pending_merges WHERE unit_id=? ORDER BY round',
-          f.unitId,
-        ),
-      );
-      assert.equal(rounds.length, 2);
-      assert.deepEqual(
-        { ...rounds[0] },
-        { first_merge: completed.receipt.headOid, right_oid: f.right },
-      );
-      assert.deepEqual(
-        { ...rounds[1] },
-        { first_merge: next.receipt.headOid, right_oid: newerMain },
-      );
-      await assert.rejects(
-        f.state.transaction((tx) =>
-          tx.run(
-            'UPDATE code_pending_merges SET head_oid=? WHERE project_id=? AND unit_id=? AND round=0',
-            newerMain,
-            f.admin.projectId,
-            f.unitId,
-          ),
-        ),
-        backend === 'sqlite' ? /frozen/ : { code: /^state_/ },
-      );
-    },
+test('pending second parent survives a handoff and the first merge joins the saved checkpoint exactly', async (t) => {
+  const f = await fixture(t);
+  await f.lease('first');
+  const first = f.machine();
+  const work = await first.prepare('first');
+  assert.equal(work.snapshot!.pendingMerge!.secondParent, f.right);
+  await f.event('session.workspace_attached', 'first');
+  git(work.path, ['config', 'merge.conflictStyle', 'diff3']);
+  git(work.path, ['config', 'merge.renames', 'false']);
+  const planned = await f.repositories.git.run(
+    [...MERGE_SETTINGS, 'merge-tree', '--write-tree', f.left, f.right],
+    { env: f.repositories.environment(f.admin.projectId) },
   );
+  assert.equal(planned.code, 1);
+  const started = await first.command('first', f.left, 'start');
+  assert.equal(git(work.path, ['write-tree']), planned.stdout.toString('utf8').split('\n')[0]);
+  assert.equal(started.receipt.headOid, f.left);
+  assert.match(readFileSync(join(work.path, 'README.md'), 'utf8'), /<<<<<<< /);
+  assert.deepEqual(
+    await first.driver.checkpointCommit(first.launch('first'), started.command),
+    started.receipt,
+  );
+  writeFileSync(join(work.path, 'README.md'), 'partial resolution retained\n');
+  first.stopped.add('launch-first');
+  f.end('first');
+  await f.event('session.released', 'first');
+  const captured = (await first.driver.capture(first.launch('first')))!;
+  const wip = captured.headOid;
+  assert.equal(git(work.path, ['show', '-s', '--format=%P', wip]), f.left);
+  assert.equal(captured.pendingMerge!.firstMerge, null);
+  await first.driver.close(first.launch('first'));
+  await f.lease('second');
+  const second = f.machine();
+  const resumed = await second.prepare('second');
+  assert.equal(resumed.snapshot!.headOid, wip);
+  assert.equal(resumed.snapshot!.pendingMerge!.checkpoint, wip);
+  assert.equal(resumed.snapshot!.pendingMerge!.secondParent, f.right);
+  assert.equal(
+    readFileSync(join(resumed.path, 'README.md'), 'utf8'),
+    'partial resolution retained\n',
+  );
+  await f.event('session.workspace_attached', 'second');
+  // No tree change: completing still creates the required merge commit.
+  const completed = await second.command('second', wip, 'complete');
+  assert.notEqual(completed.receipt.headOid, wip);
+  assert.equal(completed.receipt.treeOid, captured.treeOid);
+  assert.equal(
+    git(resumed.path, ['show', '-s', '--format=%P', completed.receipt.headOid]),
+    `${wip} ${f.right}`,
+  );
+  const stored = await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, f.unitId));
+  assert.equal(stored!.firstMerge, completed.receipt.headOid);
+  assert.equal(stored!.checkpoint, completed.receipt.headOid);
+  writeFileSync(join(resumed.path, 'README.md'), 'corrected after independent review\n');
+  const corrected = await second.command('second', completed.receipt.headOid);
+  assert.equal(
+    git(resumed.path, ['show', '-s', '--format=%P', corrected.receipt.headOid]),
+    completed.receipt.headOid,
+  );
+  assert.deepEqual(
+    await verifyResolution(
+      f.repositories.git,
+      f.repositories.environment(f.admin.projectId),
+      f.left,
+      f.right,
+      corrected.receipt.headOid,
+    ),
+    { firstMerge: completed.receipt.headOid, error: null },
+  );
+  second.stopped.add('launch-second');
+  f.end('second');
+  await f.event('session.released', 'second');
+  const final = (await second.driver.capture(second.launch('second')))!;
+  assert.equal(final.pendingMerge!.firstMerge, completed.receipt.headOid);
+  assert.ok(f.refs().some((ref) => ref.includes('-second ')));
+  await f.repositories.sweep(async () => false, Date.now() + 3_600_000);
+  assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/exports/')));
+  // A later publication round keeps the same branch, but freezes another pair of inputs.
+  const newerMain = f.source.commit({ 'new-main.txt': 'Another publication advanced main.\n' });
+  await f.deliver(f.source.bundle(newerMain, [f.right]));
+  const nextPlan = baseKey([corrected.receipt.headOid, newerMain]);
+  await f.state.transaction((tx) =>
+    pinMerge(tx, f.admin.projectId, f.unitId, nextPlan, corrected.receipt.headOid, newerMain, 1),
+  );
+  await f.lease('third');
+  const third = f.machine();
+  const thirdWork = await third.prepare('third');
+  await f.event('session.workspace_attached', 'third');
+  assert.equal(thirdWork.snapshot!.branch, resumed.snapshot!.branch);
+  assert.equal(thirdWork.snapshot!.pendingMerge!.plan, nextPlan);
+  await third.command('third', corrected.receipt.headOid, 'start');
+  const next = await third.command('third', corrected.receipt.headOid, 'complete');
+  assert.equal(
+    git(thirdWork.path, ['show', '-s', '--format=%P', next.receipt.headOid]),
+    `${corrected.receipt.headOid} ${newerMain}`,
+  );
+  const rounds = await f.state.read((sql) =>
+    sql.all<{ first_merge: string; right_oid: string }>(
+      'SELECT first_merge,right_oid FROM code_pending_merges WHERE unit_id=? ORDER BY round',
+      f.unitId,
+    ),
+  );
+  assert.equal(rounds.length, 2);
+  assert.deepEqual(
+    { ...rounds[0] },
+    { first_merge: completed.receipt.headOid, right_oid: f.right },
+  );
+  assert.deepEqual({ ...rounds[1] }, { first_merge: next.receipt.headOid, right_oid: newerMain });
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      tx.run(
+        'UPDATE code_pending_merges SET head_oid=? WHERE project_id=? AND unit_id=? AND round=0',
+        newerMain,
+        f.admin.projectId,
+        f.unitId,
+      ),
+    ),
+    { code: 'state_constraint' },
+  );
+});
 
-  test(
-    `${backend}: start requires a clean checkout and admission refuses the wrong second parent`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.lease('dirty');
-      const machine = f.machine();
-      const work = await machine.prepare('dirty');
-      await f.event('session.workspace_attached', 'dirty');
-      writeFileSync(join(work.path, 'untracked.txt'), 'keep my work');
-      await assert.rejects(machine.command('dirty', f.left, 'start'), {
-        code: 'workspace_merge_dirty',
-      });
-      assert.equal(readFileSync(join(work.path, 'untracked.txt'), 'utf8'), 'keep my work');
-      const tree = f.source.git('rev-parse', `${f.left}^{tree}`);
-      const wrong = f.source.git(
-        'commit-tree',
-        tree,
-        '-p',
-        f.left,
-        '-p',
-        f.root,
-        '-m',
-        'Wrong parent',
-      );
-      const refused = await f.upload(
-        'checkpoint',
-        'dirty',
-        1,
-        f.left,
-        f.source.bundle(wrong, [f.left]),
-      );
-      assert.equal(refused.status, 'failed');
-      assert.equal(refused.error, 'code_resolution_parents');
-      assert.equal((await f.unit()).canonicalHead, null);
-      assert.equal(
-        (await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, f.unitId)))!.firstMerge,
-        null,
-      );
-    },
+test('start requires a clean checkout and admission refuses the wrong second parent', async (t) => {
+  const f = await fixture(t);
+  await f.lease('dirty');
+  const machine = f.machine();
+  const work = await machine.prepare('dirty');
+  await f.event('session.workspace_attached', 'dirty');
+  writeFileSync(join(work.path, 'untracked.txt'), 'keep my work');
+  await assert.rejects(machine.command('dirty', f.left, 'start'), {
+    code: 'workspace_merge_dirty',
+  });
+  assert.equal(readFileSync(join(work.path, 'untracked.txt'), 'utf8'), 'keep my work');
+  const tree = f.source.git('rev-parse', `${f.left}^{tree}`);
+  const wrong = f.source.git('commit-tree', tree, '-p', f.left, '-p', f.root, '-m', 'Wrong parent');
+  const refused = await f.upload(
+    'checkpoint',
+    'dirty',
+    1,
+    f.left,
+    f.source.bundle(wrong, [f.left]),
   );
-}
+  assert.equal(refused.status, 'failed');
+  assert.equal(refused.error, 'code_resolution_parents');
+  assert.equal((await f.unit()).canonicalHead, null);
+  assert.equal(
+    (await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, f.unitId)))!.firstMerge,
+    null,
+  );
+});
 
 /**
  * The cache is keyed by the project, and the identity it records is the one the server named

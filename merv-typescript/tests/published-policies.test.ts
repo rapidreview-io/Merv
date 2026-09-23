@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 interface Row {
   fingerprint: string;

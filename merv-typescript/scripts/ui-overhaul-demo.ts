@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { createApp } from '../src/app.js';
+import { useRunSchema } from './database.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { SignJWT } from 'jose';
 import type { Project } from '@merv/contracts';
@@ -15,11 +16,13 @@ import { emptyLegacyHistorySnapshot, legacyHistoryRow } from '../tests/fixtures/
  * Run: node --import tsx scripts/ui-overhaul-demo.ts
  * PORT defaults to an available loopback port. Credentials are saved only in the
  * new /private/tmp directory (mode 0600), never printed. No external provider calls.
+ * State goes to a new schema on the PostgreSQL that MERV_DB_URL names (scripts/database.ts).
  * For live UI editing: MERV_API=<reported api> PORT=5181 npm run dev:ui
  * Type enable/disable <plugin> or quit on stdin; SIGINT also closes the server.
  */
 async function main() {
   const directory = mkdtempSync('/private/tmp/merv-ui-overhaul-');
+  const schema = useRunSchema(directory);
   const secretEnv = 'MERV_UI_OVERHAUL_IDENTITY_SECRET';
   process.env[secretEnv] = randomBytes(48).toString('base64url');
   const config = JSON.parse(
@@ -420,6 +423,7 @@ async function main() {
         api: url,
         ui: `${url}/ui/`,
         directory,
+        schema,
         projects,
         tokens: {
           operator: human.token,
@@ -449,6 +453,7 @@ async function main() {
         api: url,
         ui: `${url}/ui/`,
         directory,
+        schema,
         credentialsFile,
         coverage: {
           projects: projects.length,

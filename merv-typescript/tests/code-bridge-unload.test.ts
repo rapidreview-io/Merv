@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { enqueueMirror, type MirrorTransport } from '@merv/code/store/mirror';
 import type { CodeService } from '@merv/code-research/service';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource } from './fixtures/code-store.js';

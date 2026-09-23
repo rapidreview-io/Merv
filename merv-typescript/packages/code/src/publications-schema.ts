@@ -36,14 +36,6 @@ export const publicationMigration = {
     guards
       .map(
         ([table, event, condition, message], i) =>
-          `CREATE TRIGGER publication_guard_${i} BEFORE ${event} ON ${table} ${condition ? `WHEN ${condition.replaceAll('IS DISTINCT FROM', 'IS NOT')}` : ''} BEGIN SELECT RAISE(ABORT,'${message}'); END;`,
-      )
-      .join('\n'),
-  postgres:
-    additions +
-    guards
-      .map(
-        ([table, event, condition, message], i) =>
           `CREATE FUNCTION publication_guard_${i}() RETURNS trigger LANGUAGE plpgsql AS $merv$ BEGIN ${condition ? `IF ${condition} THEN` : ''} RAISE EXCEPTION USING MESSAGE='${message}', ERRCODE='23514'; ${condition ? 'END IF;' : ''} RETURN NEW; END; $merv$; CREATE TRIGGER publication_guard_${i} BEFORE ${event} ON ${table} FOR EACH ROW EXECUTE FUNCTION publication_guard_${i}();`,
       )
       .join('\n'),
@@ -51,8 +43,5 @@ export const publicationMigration = {
 
 /** Preserve deployed migration identities while storage remains available without research. */
 export async function migratePublications(state: State): Promise<void> {
-  await state.migrate('code_publications', [
-    { version: 1, sql: schema, postgres: schema },
-    publicationMigration,
-  ]);
+  await state.migrate('code_publications', [{ version: 1, sql: schema }, publicationMigration]);
 }

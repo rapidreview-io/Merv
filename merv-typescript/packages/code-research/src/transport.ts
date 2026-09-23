@@ -45,9 +45,7 @@ export class CodeTransportService {
     private github: CodeGitHubService,
   ) {}
   async initialize() {
-    await this.state.migrate('code_github_transport', [
-      { version: 1, sql: schema, postgres: schema },
-    ]);
+    await this.state.migrate('code_github_transport', [{ version: 1, sql: schema }]);
   }
   private async session(caller: Caller, input: CodeTransportInput) {
     check(

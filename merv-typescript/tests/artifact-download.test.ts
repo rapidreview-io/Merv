@@ -7,9 +7,10 @@ import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { S3Blobs } from '@merv/blobs';
 import type { Artifact, Caller } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { importLegacyFoundation } from '../src/legacy-import.js';
 import { s3Server } from './fixtures/s3-server.js';
+import { stateConfig } from './fixtures/state.js';
 
 async function fixture(t: TestContext, s3 = true) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-download-'));
@@ -30,7 +31,7 @@ export default { name: 'merv-blobs', apply(ctx) {
     directory,
     config: {
       plugins: [
-        { id: 'state', name: '@merv/state', config: { path: join(directory, 'state.sqlite') } },
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
         {
           id: 'blobs',

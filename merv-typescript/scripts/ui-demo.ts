@@ -8,6 +8,7 @@ import { defaultConfigFile } from '../src/config.js';
 import { sandboxesPlugin } from '@merv/sandboxes';
 import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
 import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
+import { useRunSchema } from './database.js';
 import { fakeGitHub, seedGit } from './ui-demo-git.js';
 
 /**
@@ -22,14 +23,18 @@ import { fakeGitHub, seedGit } from './ui-demo-git.js';
  * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
  * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
  * project, which publishes its own sidebar rows and its two tools from the service's manifest;
- * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. MERV_DEMO_CONFIG names another
- * plugin configuration, for a demo on Postgres. `npm run fake:sandboxes` serves
+ * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. `npm run fake:sandboxes` serves
  * all of it on port 3210. Without MERV_SANDBOXES_URL the demo composes exactly as before.
+ *
+ * State goes to the PostgreSQL that MERV_DB_URL names, in a schema derived from the data
+ * directory (scripts/database.ts): set MERV_DEMO_DIR to reopen the same demo database, or
+ * MERV_DB_SCHEMA to name one. MERV_DEMO_CONFIG names another plugin configuration.
  */
 async function main() {
   const seedsGit = process.argv.includes('--git');
   if (seedsGit) fakeGitHub();
   const directory = process.env.MERV_DEMO_DIR ?? mkdtempSync(join(tmpdir(), 'merv-ui-demo-'));
+  const schema = useRunSchema(directory);
   const app = await createApp({
     directory,
     configFile: process.env.MERV_DEMO_CONFIG ?? defaultConfigFile,
@@ -275,6 +280,7 @@ async function main() {
         status: 'ready',
         ui: `${url}/ui/`,
         directory,
+        schema,
         ...(sandboxes.length ? { sandboxes } : {}),
         ...(git ? { git } : {}),
         tokens: {

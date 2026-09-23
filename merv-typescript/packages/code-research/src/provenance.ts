@@ -38,10 +38,7 @@ export async function resolutionProvenance(
   );
   const units = new Map<string, number | null>();
   const acceptances: { unitId: string; hash: string }[] = [];
-  const commitField =
-    tx.dialect === 'postgres'
-      ? "(acceptance_json::jsonb #>> '{code,commit}')"
-      : "json_extract(acceptance_json,'$.code.commit')";
+  const commitField = "(acceptance_json::jsonb #>> '{code,commit}')";
   for (const commit of root.members) {
     const rows = await tx.all<{
       unit_id: string;

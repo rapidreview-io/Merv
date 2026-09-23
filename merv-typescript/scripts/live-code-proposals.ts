@@ -8,10 +8,12 @@ import { check, type Data, type WorkflowAssignmentRule } from '@merv/contracts';
 import type {} from '@merv/code-research/types';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
+import { useRunSchema } from './database.js';
 
 // Explicit native-model acceptance on synthetic data. This seals a commit for actual
 // Reviews through production owner routing; it does not implement reflection consolidation or central publication.
 const directory = resolve(process.argv[2] ?? `live-runs/code-proposals-${Date.now()}`);
+const schema = useRunSchema(directory);
 mkdirSync(directory, { recursive: false, mode: 0o700 });
 const repository = join(directory, 'source');
 mkdirSync(repository);
@@ -529,6 +531,7 @@ try {
   };
   const report = {
     passed: true,
+    schema,
     ...totals,
     initialOid,
     committedOid: committed,

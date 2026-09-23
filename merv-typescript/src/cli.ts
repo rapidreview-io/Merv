@@ -41,7 +41,7 @@ function options(command: string, args: string[]) {
     check(
       name !== 'config' || ['serve', 'adopt-project', 'runner'].includes(command),
       'arguments',
-      '--config is supported only by serve, adopt-project and runner; init and actor use the minimal local state/scope configuration',
+      '--config is supported only by serve, adopt-project and runner; init and actor use the minimal state/scope configuration',
     );
     check(allowed.has(name), 'arguments', `Unknown option for ${command}: --${name}`);
     check(!Object.hasOwn(result, name), 'arguments', `Duplicate option: --${name}`);
@@ -138,7 +138,12 @@ async function main() {
   npm run cli -- code-restore [--verify-only] [--root PATH] [--project ID] [--at STAMP] [--deployment NAME] [--overwrite]
   npm start -- [--dir .merv] [--config PATH] [--port 3081] [--host 127.0.0.1]
 
-init writes the local operator credential to credentials.json (mode 0600).
+Server state lives in PostgreSQL. With config/default.json, init, actor, adopt-project and
+serve read its connection string from MERV_DB_URL and the schema from MERV_DB_SCHEMA (default
+merv); give each local instance its own schema. --dir holds only local files: credentials,
+blobs and Code's Git repositories.
+init writes the local operator credential to credentials.json (mode 0600). It checks only
+that file, so init with a new or emptied --dir adds another project to the same schema.
 actor writes its credential to credentials/<actor-id>.json (mode 0600).
 serve loads config/default.json unless --config names another Cordis plugin configuration;
 --host and --port override its placeholders. The browser UI is served at <url>/ui when built.
@@ -395,6 +400,13 @@ with the database's own tool before starting the server.`);
     }
     return;
   }
+  // A deployment's environment names its schema here; init and actor would write a bootstrap
+  // project and credentials beside it, under the default schema, in the same database.
+  check(
+    !process.env.MERV_TS_DB_SCHEMA?.trim(),
+    'deployment_environment',
+    `${command} is for local instances and refuses to run where MERV_TS_DB_SCHEMA is set`,
+  );
   const app = await createApp({ directory, components: ['state', 'scope'] });
   try {
     if (command === 'init') {

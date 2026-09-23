@@ -8,13 +8,14 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { Caller } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 function identity(c: {
   actor: { id: string; projectId: string };
@@ -136,7 +137,7 @@ test('HTTP/MCP rotation replaces authority while task and actor identity stay du
 
 test('expiry rejects HTTP and MCP discovery/calls, including a credential invalidated after authentication', async (t) => {
   let time = Date.parse('2026-09-15T00:00:00.000Z');
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state, () => time));
   const tools = new ToolRegistry(scope);
   tools.register({
@@ -181,7 +182,7 @@ test('expiry rejects HTTP and MCP discovery/calls, including a credential invali
 });
 
 test('registry rechecks credential and remote grants between initial admission and handler dispatch', async (t) => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const operator = await scope.bootstrap({ projectName: 'Dispatch', actorName: 'Operator' });
   const issued = await scope.issueActor(identity(operator), { name: 'Worker', role: 'producer' });
@@ -200,10 +201,37 @@ test('registry rechecks credential and remote grants between initial admission a
     await state.close();
   });
   let admitted = 0;
+  // Both calls must pass initial admission before the rotation lands, and neither may dispatch
+  // before it commits. Reads do not queue behind the rotation's writer on PostgreSQL, so timing
+  // alone cannot place it between the two checks; each call waits at a gate after admission.
+  let gated = 0;
+  let open!: () => void;
+  const bothAdmitted = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const rotated = bothAdmitted.then(() =>
+    scope.rotateCredential(identity(operator), { credentialId: issued.credential.id }),
+  );
+  const gate = async () => {
+    if (++gated === 2) open();
+    await rotated;
+  };
+  const grant = access.require.bind(access);
+  let remoteAdmitted = false;
+  t.mock.method(access, 'require', async (...args: Parameters<typeof grant>) => {
+    await grant(...args);
+    if (!remoteAdmitted) {
+      remoteAdmitted = true;
+      await gate();
+    }
+  });
   tools.register({
     name: 'probe',
     description: 'Probe.',
-    inputSchema: z.object({}).strict(),
+    inputSchema: z
+      .object({})
+      .strict()
+      .superRefine(async () => await gate()),
     handler: () => {
       admitted++;
       return {};
@@ -222,16 +250,17 @@ test('registry rechecks credential and remote grants between initial admission a
       },
     },
   ]);
-  const native = tools.call('probe', identity(issued), {});
-  const remote = tools.call('_remote.probe', identity(issued), {});
-  await scope.rotateCredential(identity(operator), { credentialId: issued.credential.id });
-  await assert.rejects(native, { code: 'forbidden' });
-  await assert.rejects(remote, { code: 'forbidden' });
+  await Promise.all([
+    assert.rejects(tools.call('probe', identity(issued), {}), { code: 'forbidden' }),
+    assert.rejects(tools.call('_remote.probe', identity(issued), {}), { code: 'forbidden' }),
+  ]);
+  await rotated;
+  assert.equal(gated, 2, 'both calls passed initial admission before the rotation');
   assert.equal(admitted, 0);
 });
 
 test('mount connection setup retains the original credential fence before upstream dispatch', async (t) => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const operator = await scope.bootstrap({ projectName: 'Mount fence', actorName: 'Operator' });
   const issued = await scope.issueActor(identity(operator), { name: 'Worker', role: 'producer' });

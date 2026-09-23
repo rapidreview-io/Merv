@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FiberState } from 'cordis';
 import { MervError } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { loadConfiguration, type ApplicationConfig } from '../src/config.js';
 import { resources } from './fixtures/loader-marker.js';
 

@@ -17,7 +17,7 @@ export interface Connection {
   get<T>(sql: string, params: SqlValue[]): Promise<T | undefined>;
   all<T>(sql: string, params: SqlValue[]): Promise<T[]>;
   exec(sql: string): Promise<void>;
-  discard?(): void;
+  discard(): void;
 }
 
 interface Context {
@@ -33,7 +33,6 @@ interface Context {
 
 /** Explicit transactions stay on one connection; async context never crosses requests. */
 export abstract class StateStore implements State {
-  abstract readonly dialect: 'sqlite' | 'postgres';
   private readonly context = new AsyncLocalStorage<Context>();
   private readonly operations = new Set<Promise<unknown>>();
   private readonly listeners = new Set<() => void>();
@@ -78,7 +77,6 @@ export abstract class StateStore implements State {
       );
     };
     scope.sql = {
-      dialect: this.dialect,
       run: async (sql, ...params) => {
         valid();
         check(!scope.readOnly, 'read_only_scope', 'A read scope cannot write', 409);
@@ -132,7 +130,7 @@ export abstract class StateStore implements State {
       try {
         await connection.exec('ROLLBACK');
       } catch {
-        connection.discard?.();
+        connection.discard();
       }
       throw error;
     } finally {
@@ -221,9 +219,7 @@ export abstract class StateStore implements State {
   }
 
   async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
-    // SQLite hands out one serialised connection, so a scope held across a handler would
-    // deadlock anything the handler waits on; the writer lock this avoids is Postgres's.
-    if (this.dialect !== 'postgres' || this.context.getStore()) return await fn();
+    if (this.context.getStore()) return await fn();
     return this.operation(() =>
       this.connect(async (connection) => {
         const scope = this.scope(connection);
@@ -239,7 +235,7 @@ export abstract class StateStore implements State {
           try {
             await connection.exec('ROLLBACK');
           } catch {
-            connection.discard?.();
+            connection.discard();
           }
           throw error;
         } finally {
@@ -278,81 +274,69 @@ export abstract class StateStore implements State {
         'Migration versions must be unique positive integers',
       );
       seen.add(migration.version);
-      if (this.dialect === 'postgres')
-        check(
-          typeof migration.postgres === 'string',
-          'migration_dialect_missing',
-          `PostgreSQL migration ${component}/${migration.version} is missing`,
-        );
+      check(
+        typeof migration.sql === 'string' &&
+          Object.keys(migration).every((key) => key === 'version' || key === 'sql'),
+        'invalid_migration',
+        `Migration ${component}/${migration.version} must be { version, sql }`,
+      );
     }
     return this.operation(() =>
       this.connect(async (connection) => {
-        const rebuild = this.dialect === 'sqlite' && ordered.some((migration) => migration.rebuild);
-        if (rebuild) await connection.exec('PRAGMA foreign_keys=OFF');
-        try {
-          await this.transact(connection, async (tx) => {
-            const ahead = await tx.get<{ version: number | null }>(
-              'SELECT MAX(version) AS version FROM component_migrations WHERE component=? AND version>?',
+        await this.transact(connection, async (tx) => {
+          const ahead = await tx.get<{ version: number | null }>(
+            'SELECT MAX(version) AS version FROM component_migrations WHERE component=? AND version>?',
+            component,
+            ordered.at(-1)?.version ?? 0,
+          );
+          // A database that has already run migrations this code has never seen belongs to a
+          // newer server. Reading that schema on the terms this code knows would be silent
+          // and wrong, so a rollback that left the database behind fails here instead.
+          check(
+            !ahead?.version,
+            'migration_ahead',
+            `The database has ${component} migration ${ahead?.version}, which this server does not know`,
+            409,
+          );
+          for (const migration of ordered) {
+            const sql = migration.sql;
+            const hash = digest(sql);
+            const previous = await tx.get<{ hash: string }>(
+              'SELECT hash FROM component_migrations WHERE component=? AND version=?',
               component,
-              ordered.at(-1)?.version ?? 0,
+              migration.version,
             );
-            // A database that has already run migrations this code has never seen belongs to a
-            // newer server. Reading that schema on the terms this code knows would be silent
-            // and wrong, so a rollback that left the database behind fails here instead.
-            check(
-              !ahead?.version,
-              'migration_ahead',
-              `The database has ${component} migration ${ahead?.version}, which this server does not know`,
-              409,
-            );
-            for (const migration of ordered) {
-              const sql = this.dialect === 'postgres' ? migration.postgres! : migration.sql;
-              const hash = digest(sql);
-              const previous = await tx.get<{ hash: string }>(
-                'SELECT hash FROM component_migrations WHERE component=? AND version=?',
-                component,
-                migration.version,
-              );
-              if (previous) {
-                check(
-                  previous.hash === hash,
-                  'migration_changed',
-                  `Published migration ${component}/${migration.version} changed`,
-                  409,
-                );
-                continue;
-              }
-              const latest =
-                (
-                  await tx.get<{ version: number | null }>(
-                    'SELECT MAX(version) AS version FROM component_migrations WHERE component=?',
-                    component,
-                  )
-                )?.version ?? 0;
+            if (previous) {
               check(
-                migration.version > latest,
-                'migration_order',
-                'Cannot insert an older migration',
+                previous.hash === hash,
+                'migration_changed',
+                `Published migration ${component}/${migration.version} changed`,
                 409,
               );
-              await connection.exec(sql);
-              await tx.run(
-                'INSERT INTO component_migrations(component,version,hash) VALUES(?,?,?)',
-                component,
-                migration.version,
-                hash,
-              );
+              continue;
             }
-            if (rebuild)
-              check(
-                !(await tx.get('PRAGMA foreign_key_check')),
-                'migration_foreign_key',
-                'Migration violates foreign keys',
-              );
-          });
-        } finally {
-          if (rebuild) await connection.exec('PRAGMA foreign_keys=ON');
-        }
+            const latest =
+              (
+                await tx.get<{ version: number | null }>(
+                  'SELECT MAX(version) AS version FROM component_migrations WHERE component=?',
+                  component,
+                )
+              )?.version ?? 0;
+            check(
+              migration.version > latest,
+              'migration_order',
+              'Cannot insert an older migration',
+              409,
+            );
+            await connection.exec(sql);
+            await tx.run(
+              'INSERT INTO component_migrations(component,version,hash) VALUES(?,?,?)',
+              component,
+              migration.version,
+              hash,
+            );
+          }
+        });
       }),
     );
   }

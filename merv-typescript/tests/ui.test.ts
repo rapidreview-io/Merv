@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { buildNavigation } from '../packages/ui/web/navigation.js';
 import type { Row } from '../packages/ui/web/shell-types.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { RemoteFixture } from './fixtures/remote-server.js';
 
 const caller = { actorId: 'actor_test', projectId: 'project_test' };

@@ -2,29 +2,19 @@ import type { Caller } from '@merv/contracts';
 import type { Knowledge } from '@merv/knowledge/types';
 import type { ResearchRecord } from '@merv/research/types';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { Pool } from 'pg';
 import { ResearchService } from '../packages/research/src/index.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
-import { backends, optional, type Backend } from './fixtures/code-store.js';
 
-async function fixture(t: TestContext, backend: Backend, coreOnly = false, withoutCode = false) {
+async function fixture(t: TestContext, coreOnly = false, withoutCode = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-research-optional-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  const schema = `research_optional_${randomUUID().replaceAll('-', '')}`;
-  if (backend === 'postgres')
-    config.plugins.find(({ id }) => id === 'state')!.config = {
-      backend,
-      connectionStringEnv: 'MERV_TEST_POSTGRES_URL',
-      schema,
-    };
   config.plugins = config.plugins.filter(
     ({ id }) =>
       (!withoutCode || !id.startsWith('code')) &&
@@ -38,14 +28,6 @@ async function fixture(t: TestContext, backend: Backend, coreOnly = false, witho
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
-    if (backend === 'postgres') {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   const boot = await app.ctx.scope.bootstrap({
     projectName: 'Optional research',
@@ -151,435 +133,374 @@ const pending = () => {
   return { promise, resolve };
 };
 
-for (const backend of backends)
-  test(`research completes with Code never loaded (${backend})`, optional(backend), async (t) => {
-    const f = await fixture(t, backend, false, true);
-    assert.equal(f.app.ctx.code, undefined);
-    assert.equal(f.app.ctx.codeResearch, undefined);
+test('research completes with Code never loaded', async (t) => {
+  const f = await fixture(t, false, true);
+  assert.equal(f.app.ctx.code, undefined);
+  assert.equal(f.app.ctx.codeResearch, undefined);
+  await f.define();
+  const reflected = await f.advance(await f.advance(await f.create()));
+  await f.approve(reflected);
+  const completed = await f.advance(reflected);
+  assert.equal(completed.workflow.state, 'complete');
+  assert.deepEqual(completed.integrations, []);
+});
+
+test("a new cycle during Code outage retains the project's earlier obligation", async (t) => {
+  const f = await fixture(t);
+  const unbind = f.research.bindCode({
+    hosted: async () => true,
+    acceptedSince: async () => ({
+      unitIds: [],
+      quarantined: [],
+      main: 'main',
+      hash: 'reading',
+    }),
+    publishOnAcceptance: async () => {
+      throw new Error('unexpected publication');
+    },
+    unit: async () => {
+      throw new Error('unexpected unit read');
+    },
+  });
+  await f.create();
+  unbind();
+  await f.app.setEnabled('code', false);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  assert.deepEqual(record.researchDependencies, []);
+  await f.approve(record);
+  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+});
+
+for (const beforeCycle of [true, false])
+  test(`unselected Git work declared ${beforeCycle ? 'before' : 'during'} the first research cycle survives Code outage`, async (t) => {
+    const f = await fixture(t);
     await f.define();
-    const reflected = await f.advance(await f.advance(await f.create()));
-    await f.approve(reflected);
-    const completed = await f.advance(reflected);
-    assert.equal(completed.workflow.state, 'complete');
-    assert.deepEqual(completed.integrations, []);
+    let record = beforeCycle ? undefined : await f.create();
+    await f.app.ctx.tasks.create(f.owner, {
+      title: 'Repository work',
+      goal: 'Keep a reproducible harness',
+      checks: ['The harness runs'],
+      workspace: 'git',
+      requestId: f.id(),
+    });
+    await f.app.setEnabled('code', false);
+    record ??= await f.create();
+    record = await f.advance(await f.advance(record));
+    assert.deepEqual(record.researchDependencies, []);
+    await f.approve(record);
+    await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+    assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
   });
 
-for (const backend of backends)
-  test(
-    `a new cycle during Code outage retains the project's earlier obligation (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      const unbind = f.research.bindCode({
-        hosted: async () => true,
-        acceptedSince: async () => ({
-          unitIds: [],
-          quarantined: [],
-          main: 'main',
-          hash: 'reading',
-        }),
-        publishOnAcceptance: async () => {
-          throw new Error('unexpected publication');
-        },
-        unit: async () => {
-          throw new Error('unexpected unit read');
-        },
-      });
-      await f.create();
-      unbind();
-      await f.app.setEnabled('code', false);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.create()));
-      assert.deepEqual(record.researchDependencies, []);
-      await f.approve(record);
-      await assert.rejects(f.advance(record), { code: 'code_unavailable' });
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+test('Research boots with only State, Scope and Workflows and reports the missing stage provider', async (t) => {
+  const f = await fixture(t, true);
+  const record = await f.create();
+  assert.equal(f.app.status().find(({ id }) => id === 'research')!.state, 'active');
+  assert.deepEqual(await f.research.list(f.owner), [record]);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 6);
+  assert.match(
+    JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
+    /paper_unavailable/,
+  );
+  await assert.rejects(f.advance(record), { code: 'paper_unavailable' });
+  await assert.rejects(f.research.startReflection(f.owner, { requestId: f.id() }), {
+    code: 'reflections_unavailable',
+  });
+});
+
+test('a hosted cycle retains its Code obligation when the provider unloads', async (t) => {
+  const f = await fixture(t);
+  const unbind = f.research.bindCode({
+    hosted: async () => true,
+    acceptedSince: async () => ({
+      unitIds: [],
+      quarantined: [],
+      main: 'main',
+      hash: 'reading',
+    }),
+    publishOnAcceptance: async () => {
+      throw new Error('unexpected publication');
+    },
+    unit: async () => {
+      throw new Error('unexpected unit read');
+    },
+  });
+  await f.define();
+  let record = await f.advance(await f.advance(await f.create()));
+  await f.approve(record);
+  unbind();
+  await f.app.setEnabled('code', false);
+  await f.app.setEnabled('research', false);
+  await f.app.setEnabled('research', true);
+  record = await f.research.get(f.owner, record.id);
+  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+});
+
+test('becoming hosted during a cycle records the obligation even when advance waits for review', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  const unbind = f.research.bindCode({
+    hosted: async () => true,
+    acceptedSince: async () => ({
+      unitIds: [],
+      quarantined: [],
+      main: 'main',
+      hash: 'reading',
+    }),
+    publishOnAcceptance: async () => {
+      throw new Error('unexpected publication');
+    },
+    unit: async () => {
+      throw new Error('unexpected unit read');
+    },
+  });
+  await assert.rejects(f.advance(record), { code: 'reflection_not_approved' });
+  unbind();
+  await f.app.setEnabled('code', false);
+  await f.approve(record);
+  await assert.rejects(f.advance(record), { code: 'code_unavailable' });
+});
+
+test('optional provider unload keeps Research and its tools alive; only the current stage waits', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  let record = await f.create();
+  const definitionInput = f.command(record);
+  await f.app.setEnabled('paper', false);
+  assert.equal(f.app.ctx.research, f.research);
+  assert.ok((await f.app.ctx.tools.list()).some(({ name }) => name === 'research.advance'));
+  assert.deepEqual(await f.research.list(f.owner), [record]);
+  await assert.rejects(f.research.advance(f.owner, definitionInput), {
+    code: 'paper_unavailable',
+  });
+  await f.app.setEnabled('paper', true);
+  record = await f.research.advance(f.owner, definitionInput);
+  const researching = record;
+  assert.equal(record.workflow.state, 'researching');
+  const reflectionInput = f.command(record);
+  await f.app.setEnabled('reflections', false);
+  assert.equal(f.app.ctx.research, f.research);
+  assert.match(
+    JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
+    /reflections_unavailable/,
+  );
+  await assert.rejects(f.research.advance(f.owner, reflectionInput), {
+    code: 'reflections_unavailable',
+  });
+  await f.app.setEnabled('reflections', true);
+  await f.app.setEnabled('knowledge', false);
+  record = await f.research.advance(f.owner, reflectionInput);
+  assert.equal(record.workflow.state, 'reflecting');
+  assert.equal(f.app.ctx.research, f.research);
+  assert.deepEqual(await f.research.advance(f.owner, definitionInput), researching);
+  await f.approve(record);
+  const finish = f.command(record);
+  await f.app.setEnabled('reflections', false);
+  await assert.rejects(f.research.advance(f.owner, finish), {
+    code: 'reflections_unavailable',
+  });
+  await f.app.setEnabled('reflections', true);
+  const completed = await f.research.advance(f.owner, finish);
+  assert.equal(completed.workflow.state, 'complete');
+  await f.app.setEnabled('paper', false);
+  assert.deepEqual(await f.research.advance(f.owner, finish), completed);
+});
+
+test('a withdrawn optional provider cannot commit results returned after an await; unrelated removal is harmless', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.create();
+  const input = f.command(record);
+  const paper = f.app.ctx.paper;
+  const entered = pending(),
+    release = pending();
+  const unbind = f.research.bindPaper({
+    ...paper,
+    read: async (...args) => {
+      const result = await paper.read(...args);
+      entered.resolve();
+      await release.promise;
+      return result;
+    },
+  });
+  const operation = f.research.advance(f.owner, input);
+  const rejected = assert.rejects(operation, { code: 'paper_unavailable' });
+  await entered.promise;
+  unbind();
+  // Rebinding even the same object is a different lifetime, not permission to accept stale work.
+  f.research.bindPaper(paper);
+  release.resolve();
+  await rejected;
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'defining');
+  assert.equal((await f.research.get(f.owner, record.id)).problem, null);
+  const reentered = pending(),
+    rerelease = pending();
+  const finalUnbind = f.research.bindPaper({
+    ...paper,
+    read: async (...args) => {
+      const result = await paper.read(...args);
+      reentered.resolve();
+      await rerelease.promise;
+      return result;
+    },
+  });
+  const retry = f.research.advance(f.owner, input);
+  await reentered.promise;
+  await f.app.setEnabled('knowledge', false);
+  rerelease.resolve();
+  assert.equal((await retry).workflow.state, 'researching');
+  finalUnbind();
+});
+
+test('live read grants reject in-flight results from a replaced Knowledge registration', async (t) => {
+  const f = await fixture(t);
+  const wave = await f.research.startReflection(f.owner, { requestId: f.id() });
+  const target = { instanceId: wave.lenses[0]!.id, expectedRevision: 0 };
+  const execution = await f.app.ctx.workflows.execution(f.owner, target);
+  const entered = pending(),
+    release = pending();
+  const knowledge = f.app.ctx.knowledge;
+  const unbind = f.research.bindKnowledge({
+    ...knowledge,
+    researchReferences: async () => {
+      entered.resolve();
+      await release.promise;
+      return { artifacts: ['art_withdrawn'], reviews: [], experiments: [] };
+    },
+  });
+  const request = {
+    ...target,
+    policyHash: execution.policyHash,
+    registrationId: execution.registrationId,
+    tool: 'artifact.read',
+    input: { artifactId: 'art_withdrawn' },
+  };
+  const operation = f.app.ctx.workflows.authorizeDispatch(f.owner, request);
+  const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
+  await entered.promise;
+  unbind();
+  f.research.bindKnowledge(knowledge);
+  release.resolve();
+  await rejected;
+  await assert.rejects(f.app.ctx.workflows.authorizeDispatch(f.owner, request), {
+    code: 'execution_arguments_forbidden',
+  });
+  assert.equal(f.app.ctx.research, f.research);
+});
+
+test('an approved current cycle completes while Knowledge is absent and retains its reflection', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  await f.approve(record);
+  await f.app.setEnabled('knowledge', false);
+  const completed = await f.advance(record);
+  assert.equal(completed.workflow.state, 'complete');
+  assert.equal(completed.reflectionId, record.reflectionId);
+  assert.equal(completed.digest, null);
+});
+
+test('Knowledge withdrawal during current cycle digest rolls back the completion and same-request retry works', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  await f.approve(record);
+  const input = f.command(record);
+  const knowledge = f.app.ctx.knowledge;
+  const entered = pending(),
+    release = pending();
+  const delayed: Knowledge = {
+    ...knowledge,
+    records: async (...args) => {
+      const records = await knowledge.records(...args);
+      entered.resolve();
+      await release.promise;
+      return records;
+    },
+  };
+  const unbind = f.research.bindKnowledge(delayed);
+  const operation = f.research.advance(f.owner, input);
+  const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
+  await entered.promise;
+  unbind();
+  f.research.bindKnowledge(knowledge);
+  release.resolve();
+  await rejected;
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+  const result = await f.research.advance(f.owner, input);
+  assert.equal(result.workflow.state, 'complete');
+  assert.ok(result.digest);
+});
+
+test('replacing Reflections during Knowledge await invalidates current cycle completion', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  await f.approve(record);
+  const input = f.command(record);
+  const knowledge = f.app.ctx.knowledge;
+  const entered = pending(),
+    release = pending();
+  f.research.bindKnowledge({
+    ...knowledge,
+    records: async (...args) => {
+      const records = await knowledge.records(...args);
+      entered.resolve();
+      await release.promise;
+      return records;
+    },
+  });
+  const operation = f.research.advance(f.owner, input);
+  const rejected = assert.rejects(operation, { code: 'reflections_unavailable' });
+  await entered.promise;
+  f.research.bindReflections(f.app.ctx.reflections);
+  release.resolve();
+  await rejected;
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+  f.research.bindKnowledge(knowledge);
+  assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
+});
+
+test('replacement during approved reflection read cannot use a second provider lifetime', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const record = await f.advance(await f.advance(await f.create()));
+  await f.approve(record);
+  const input = f.command(record);
+  const reflections = f.app.ctx.reflections;
+  const original = reflections.approved.bind(reflections);
+  const entered = pending(),
+    release = pending();
+  const waiting = t.mock.method(
+    reflections,
+    'approved',
+    async (...args: Parameters<typeof original>) => {
+      const result = await original(...args);
+      entered.resolve();
+      await release.promise;
+      return result;
     },
   );
-
-for (const backend of backends)
-  for (const beforeCycle of [true, false])
-    test(
-      `unselected Git work declared ${beforeCycle ? 'before' : 'during'} the first research cycle survives Code outage (${backend})`,
-      optional(backend),
-      async (t) => {
-        const f = await fixture(t, backend);
-        await f.define();
-        let record = beforeCycle ? undefined : await f.create();
-        await f.app.ctx.tasks.create(f.owner, {
-          title: 'Repository work',
-          goal: 'Keep a reproducible harness',
-          checks: ['The harness runs'],
-          workspace: 'git',
-          requestId: f.id(),
-        });
-        await f.app.setEnabled('code', false);
-        record ??= await f.create();
-        record = await f.advance(await f.advance(record));
-        assert.deepEqual(record.researchDependencies, []);
-        await f.approve(record);
-        await assert.rejects(f.advance(record), { code: 'code_unavailable' });
-        assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-      },
-    );
-
-for (const backend of backends)
-  test(
-    `Research boots with only State, Scope and Workflows and reports the missing stage provider (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend, true);
-      const record = await f.create();
-      assert.equal(f.app.status().find(({ id }) => id === 'research')!.state, 'active');
-      assert.deepEqual(await f.research.list(f.owner), [record]);
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.version, 6);
-      assert.match(
-        JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
-        /paper_unavailable/,
-      );
-      await assert.rejects(f.advance(record), { code: 'paper_unavailable' });
-      await assert.rejects(f.research.startReflection(f.owner, { requestId: f.id() }), {
-        code: 'reflections_unavailable',
-      });
+  const operation = f.research.advance(f.owner, input);
+  const rejected = assert.rejects(operation, { code: 'reflections_unavailable' });
+  await entered.promise;
+  let calls = 0;
+  f.research.bindReflections({
+    ...reflections,
+    get: reflections.get.bind(reflections),
+    approved: async (...args) => {
+      calls++;
+      return reflections.approved(...args);
     },
-  );
-
-for (const backend of backends)
-  test(
-    `a hosted cycle retains its Code obligation when the provider unloads (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      const unbind = f.research.bindCode({
-        hosted: async () => true,
-        acceptedSince: async () => ({
-          unitIds: [],
-          quarantined: [],
-          main: 'main',
-          hash: 'reading',
-        }),
-        publishOnAcceptance: async () => {
-          throw new Error('unexpected publication');
-        },
-        unit: async () => {
-          throw new Error('unexpected unit read');
-        },
-      });
-      await f.define();
-      let record = await f.advance(await f.advance(await f.create()));
-      await f.approve(record);
-      unbind();
-      await f.app.setEnabled('code', false);
-      await f.app.setEnabled('research', false);
-      await f.app.setEnabled('research', true);
-      record = await f.research.get(f.owner, record.id);
-      await assert.rejects(f.advance(record), { code: 'code_unavailable' });
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `becoming hosted during a cycle records the obligation even when advance waits for review (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.create()));
-      const unbind = f.research.bindCode({
-        hosted: async () => true,
-        acceptedSince: async () => ({
-          unitIds: [],
-          quarantined: [],
-          main: 'main',
-          hash: 'reading',
-        }),
-        publishOnAcceptance: async () => {
-          throw new Error('unexpected publication');
-        },
-        unit: async () => {
-          throw new Error('unexpected unit read');
-        },
-      });
-      await assert.rejects(f.advance(record), { code: 'reflection_not_approved' });
-      unbind();
-      await f.app.setEnabled('code', false);
-      await f.approve(record);
-      await assert.rejects(f.advance(record), { code: 'code_unavailable' });
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `optional provider unload keeps Research and its tools alive; only the current stage waits (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      let record = await f.create();
-      const definitionInput = f.command(record);
-      await f.app.setEnabled('paper', false);
-      assert.equal(f.app.ctx.research, f.research);
-      assert.ok((await f.app.ctx.tools.list()).some(({ name }) => name === 'research.advance'));
-      assert.deepEqual(await f.research.list(f.owner), [record]);
-      await assert.rejects(f.research.advance(f.owner, definitionInput), {
-        code: 'paper_unavailable',
-      });
-      await f.app.setEnabled('paper', true);
-      record = await f.research.advance(f.owner, definitionInput);
-      const researching = record;
-      assert.equal(record.workflow.state, 'researching');
-      const reflectionInput = f.command(record);
-      await f.app.setEnabled('reflections', false);
-      assert.equal(f.app.ctx.research, f.research);
-      assert.match(
-        JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
-        /reflections_unavailable/,
-      );
-      await assert.rejects(f.research.advance(f.owner, reflectionInput), {
-        code: 'reflections_unavailable',
-      });
-      await f.app.setEnabled('reflections', true);
-      await f.app.setEnabled('knowledge', false);
-      record = await f.research.advance(f.owner, reflectionInput);
-      assert.equal(record.workflow.state, 'reflecting');
-      assert.equal(f.app.ctx.research, f.research);
-      assert.deepEqual(await f.research.advance(f.owner, definitionInput), researching);
-      await f.approve(record);
-      const finish = f.command(record);
-      await f.app.setEnabled('reflections', false);
-      await assert.rejects(f.research.advance(f.owner, finish), {
-        code: 'reflections_unavailable',
-      });
-      await f.app.setEnabled('reflections', true);
-      const completed = await f.research.advance(f.owner, finish);
-      assert.equal(completed.workflow.state, 'complete');
-      await f.app.setEnabled('paper', false);
-      assert.deepEqual(await f.research.advance(f.owner, finish), completed);
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `a withdrawn optional provider cannot commit results returned after an await; unrelated removal is harmless (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.create();
-      const input = f.command(record);
-      const paper = f.app.ctx.paper;
-      const entered = pending(),
-        release = pending();
-      const unbind = f.research.bindPaper({
-        ...paper,
-        read: async (...args) => {
-          const result = await paper.read(...args);
-          entered.resolve();
-          await release.promise;
-          return result;
-        },
-      });
-      const operation = f.research.advance(f.owner, input);
-      const rejected = assert.rejects(operation, { code: 'paper_unavailable' });
-      await entered.promise;
-      unbind();
-      // Rebinding even the same object is a different lifetime, not permission to accept stale work.
-      f.research.bindPaper(paper);
-      release.resolve();
-      await rejected;
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'defining');
-      assert.equal((await f.research.get(f.owner, record.id)).problem, null);
-      const reentered = pending(),
-        rerelease = pending();
-      const finalUnbind = f.research.bindPaper({
-        ...paper,
-        read: async (...args) => {
-          const result = await paper.read(...args);
-          reentered.resolve();
-          await rerelease.promise;
-          return result;
-        },
-      });
-      const retry = f.research.advance(f.owner, input);
-      await reentered.promise;
-      await f.app.setEnabled('knowledge', false);
-      rerelease.resolve();
-      assert.equal((await retry).workflow.state, 'researching');
-      finalUnbind();
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `live read grants reject in-flight results from a replaced Knowledge registration (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      const wave = await f.research.startReflection(f.owner, { requestId: f.id() });
-      const target = { instanceId: wave.lenses[0]!.id, expectedRevision: 0 };
-      const execution = await f.app.ctx.workflows.execution(f.owner, target);
-      const entered = pending(),
-        release = pending();
-      const knowledge = f.app.ctx.knowledge;
-      const unbind = f.research.bindKnowledge({
-        ...knowledge,
-        researchReferences: async () => {
-          entered.resolve();
-          await release.promise;
-          return { artifacts: ['art_withdrawn'], reviews: [], experiments: [] };
-        },
-      });
-      const request = {
-        ...target,
-        policyHash: execution.policyHash,
-        registrationId: execution.registrationId,
-        tool: 'artifact.read',
-        input: { artifactId: 'art_withdrawn' },
-      };
-      const operation = f.app.ctx.workflows.authorizeDispatch(f.owner, request);
-      const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
-      await entered.promise;
-      unbind();
-      f.research.bindKnowledge(knowledge);
-      release.resolve();
-      await rejected;
-      await assert.rejects(f.app.ctx.workflows.authorizeDispatch(f.owner, request), {
-        code: 'execution_arguments_forbidden',
-      });
-      assert.equal(f.app.ctx.research, f.research);
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `an approved current cycle completes while Knowledge is absent and retains its reflection (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.create()));
-      await f.approve(record);
-      await f.app.setEnabled('knowledge', false);
-      const completed = await f.advance(record);
-      assert.equal(completed.workflow.state, 'complete');
-      assert.equal(completed.reflectionId, record.reflectionId);
-      assert.equal(completed.digest, null);
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `Knowledge withdrawal during current cycle digest rolls back the completion and same-request retry works (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.create()));
-      await f.approve(record);
-      const input = f.command(record);
-      const knowledge = f.app.ctx.knowledge;
-      const entered = pending(),
-        release = pending();
-      const delayed: Knowledge = {
-        ...knowledge,
-        records: async (...args) => {
-          const records = await knowledge.records(...args);
-          entered.resolve();
-          await release.promise;
-          return records;
-        },
-      };
-      const unbind = f.research.bindKnowledge(delayed);
-      const operation = f.research.advance(f.owner, input);
-      const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
-      await entered.promise;
-      unbind();
-      f.research.bindKnowledge(knowledge);
-      release.resolve();
-      await rejected;
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-      const result = await f.research.advance(f.owner, input);
-      assert.equal(result.workflow.state, 'complete');
-      assert.ok(result.digest);
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `replacing Reflections during Knowledge await invalidates current cycle completion (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.create()));
-      await f.approve(record);
-      const input = f.command(record);
-      const knowledge = f.app.ctx.knowledge;
-      const entered = pending(),
-        release = pending();
-      f.research.bindKnowledge({
-        ...knowledge,
-        records: async (...args) => {
-          const records = await knowledge.records(...args);
-          entered.resolve();
-          await release.promise;
-          return records;
-        },
-      });
-      const operation = f.research.advance(f.owner, input);
-      const rejected = assert.rejects(operation, { code: 'reflections_unavailable' });
-      await entered.promise;
-      f.research.bindReflections(f.app.ctx.reflections);
-      release.resolve();
-      await rejected;
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-      f.research.bindKnowledge(knowledge);
-      assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
-    },
-  );
-
-for (const backend of backends)
-  test(
-    `replacement during approved reflection read cannot use a second provider lifetime (${backend})`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.define();
-      const record = await f.advance(await f.advance(await f.create()));
-      await f.approve(record);
-      const input = f.command(record);
-      const reflections = f.app.ctx.reflections;
-      const original = reflections.approved.bind(reflections);
-      const entered = pending(),
-        release = pending();
-      const waiting = t.mock.method(
-        reflections,
-        'approved',
-        async (...args: Parameters<typeof original>) => {
-          const result = await original(...args);
-          entered.resolve();
-          await release.promise;
-          return result;
-        },
-      );
-      const operation = f.research.advance(f.owner, input);
-      const rejected = assert.rejects(operation, { code: 'reflections_unavailable' });
-      await entered.promise;
-      let calls = 0;
-      f.research.bindReflections({
-        ...reflections,
-        get: reflections.get.bind(reflections),
-        approved: async (...args) => {
-          calls++;
-          return reflections.approved(...args);
-        },
-      });
-      release.resolve();
-      await rejected;
-      waiting.mock.restore();
-      assert.equal(calls, 0);
-      assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-      assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
-    },
-  );
+  });
+  release.resolve();
+  await rejected;
+  waiting.mock.restore();
+  assert.equal(calls, 0);
+  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
+  assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
+});

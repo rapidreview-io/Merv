@@ -8,7 +8,7 @@ import { inspect } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { CredentialServer } from './fixtures/credential-server.js';

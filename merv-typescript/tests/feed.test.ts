@@ -4,17 +4,18 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { FeedService } from '../packages/feed/src/index.js';
 import { MervError, type Caller } from '@merv/contracts';
 import type { FeedInput, FeedListInput } from '@merv/feed/types';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-feed-'));
-  const state = new SqliteState(join(directory, 'state.sqlite'));
+  const state = await openState(directory);
   t.after(async () => {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
@@ -326,7 +327,7 @@ test('Feed post, durable event, and request record roll back together and retry 
   assert.equal((await f.feed.post(f.reviewer, externallyAtomic)).body, externallyAtomic.body);
 });
 
-test('Feed posts and deduplication records are immutable in SQLite', async (t) => {
+test('Feed posts and deduplication records are immutable in storage', async (t) => {
   const f = await fixture(t);
   const post = await f.feed.post(f.producer, { body: 'Original.', requestId: 'immutable' });
   await assert.rejects(
@@ -335,22 +336,21 @@ test('Feed posts and deduplication records are immutable in SQLite', async (t) =
         async (tx) =>
           await tx.run('UPDATE feed_posts SET body = ? WHERE id = ?', 'Edited', post.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await f.state.transaction(
         async (tx) => await tx.run('DELETE FROM feed_posts WHERE id = ?', post.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await f.state.transaction(
         async (tx) =>
           await tx.run(
-            'INSERT OR REPLACE INTO feed_posts (sequence,id,project_id,author_id,body,artifact_ids,created_at) VALUES (?,?,?,?,?,?,?)',
-            post.sequence,
+            'INSERT INTO feed_posts (id,project_id,author_id,body,artifact_ids,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET body = excluded.body',
             post.id,
             post.projectId,
             post.authorId,
@@ -359,27 +359,31 @@ test('Feed posts and deduplication records are immutable in SQLite', async (t) =
             post.createdAt,
           ),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await f.state.transaction(
         async (tx) => await tx.run('UPDATE feed_requests SET input_hash = ?', 'overwritten'),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   assert.deepEqual(await f.feed.get(f.producer, post.id), post);
 });
 
 test('Feed cursor pages and activity preserve project boundaries and survive reopening', async (t) => {
   const f = await fixture(t);
-  const records = await Promise.all(
-    Array.from(
-      { length: 55 },
-      async (_, i) =>
-        await f.feed.post(f.producer, { body: `Message ${i}`, requestId: `page-${i}` }),
-    ),
-  );
+  // Concurrent posts commit in the order their writers take the lock, not the order they were
+  // called; `sequence` is that commit order, and pages follow it.
+  const records = (
+    await Promise.all(
+      Array.from(
+        { length: 55 },
+        async (_, i) =>
+          await f.feed.post(f.producer, { body: `Message ${i}`, requestId: `page-${i}` }),
+      ),
+    )
+  ).sort((a, b) => a.sequence - b.sequence);
   const other = await f.scope.bootstrap({
     projectName: 'Other project',
     actorName: 'Other operator',
@@ -438,7 +442,7 @@ test('Feed cursor pages and activity preserve project boundaries and survive reo
     swapped.mock.restore();
   }
   await f.state.close();
-  const reopened = new SqliteState(join(f.directory, 'state.sqlite'));
+  const reopened = await openState(f.directory);
   try {
     const scope = await createService(new ProjectScope(reopened)),
       artifacts = await createService(new ArtifactStore(reopened, scope, f.blobs));

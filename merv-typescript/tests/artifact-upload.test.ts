@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { artifactFile, uploadArtifact } from '../src/artifact-upload.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 test('file convenience bounds and encodes local text/binary without server filesystem access', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'merv-file-'));

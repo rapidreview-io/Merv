@@ -1,7 +1,6 @@
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,10 +11,9 @@ import {
   type WorkflowLoopLimit,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import { Pool } from 'pg';
-import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
+import { openState } from './fixtures/state.js';
 
 const definition: WorkflowDefinition = {
   name: 'draft',
@@ -93,25 +91,13 @@ const policy = (limits?: WorkflowLoopLimit[], lease = false): WorkflowPolicy => 
     : {}),
 });
 
-const postgresUrl = process.env.MERV_TEST_POSTGRES_URL;
-async function fixture(t: TestContext, backend: 'sqlite' | 'postgres' = 'sqlite') {
-  const schema = `limits_test_${randomUUID().replaceAll('-', '')}`;
-  const state =
-    backend === 'sqlite'
-      ? new SqliteState(':memory:')
-      : await PostgresState.open({ connectionString: postgresUrl!, schema });
+async function fixture(t: TestContext) {
+  const state = await openState();
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   t.after(async () => {
     workflows.close();
     await state.close();
-    if (backend === 'sqlite') return;
-    const pool = new Pool({ connectionString: postgresUrl });
-    try {
-      await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-    } finally {
-      await pool.end();
-    }
   });
   const boot = await scope.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
@@ -135,10 +121,6 @@ async function fixture(t: TestContext, backend: 'sqlite' | 'postgres' = 'sqlite'
     (await state.events(owner.projectId)).filter((event) => event.type === type);
   return { state, scope, workflows, owner, move, loop, events };
 }
-const backends = ['sqlite', 'postgres'] as const;
-const optional = (backend: (typeof backends)[number]) => ({
-  skip: backend === 'postgres' && !postgresUrl,
-});
 const refused = (code: string, status: number) => (error: unknown) =>
   error instanceof MervError && error.code === code && error.status === status;
 
@@ -194,63 +176,58 @@ test('a policy may only cap declared returning edges, each once, within bounds',
   assert.deepEqual([status.base, status.actions], [2, ['return', 'restart']]);
 });
 
-for (const backend of backends)
-  test(
-    `${backend}: a capped loop permits its rounds, refuses the next, and leaves the record untouched`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.workflows.register(definition, policy([returns(2)]));
-      const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
-      // The two actions of one limit are counted together.
-      await f.move(instance.id, 'submit');
-      await f.move(instance.id, 'return');
-      await f.move(instance.id, 'submit');
-      const last = await f.move(instance.id, 'restart', 'last-return');
-      assert.deepEqual(await f.events('workflow.escalated'), []);
-      const arrived = await f.move(instance.id, 'submit');
-      const history = (await f.workflows.history(f.owner, instance.id)).length;
-      const eventCount = (await f.state.events(f.owner.projectId)).length;
-      for (const action of ['return', 'restart'])
-        await assert.rejects(
-          f.move(instance.id, action),
-          (error: unknown) =>
-            refused('loop_limit_reached', 409)(error) &&
-            /review_returns is exhausted on this draft \(2\/2\)/.test((error as Error).message),
-        );
-      assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
-      assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
-      assert.equal((await f.state.events(f.owner.projectId)).length, eventCount);
-      // A retry of the last permitted return is still answered with what it recorded.
-      assert.deepEqual(
-        await f.workflows.transition(f.owner, {
-          instanceId: instance.id,
-          action: 'restart',
-          requestId: 'last-return',
-          expectedRevision: last.revision - 1,
-        }),
-        last,
-      );
-      // Arrival at the exhausted limit is recorded once; reads and a step that stays record none.
-      const escalated = await f.events('workflow.escalated');
-      assert.equal(escalated.length, 1);
-      assert.deepEqual(escalated[0].data, {
-        workflow: 'draft',
-        version: 1,
-        revision: arrived.revision,
-        state: 'in_review',
-        limit: 'review_returns',
-        used: 2,
-        max: 2,
-      });
-      await f.workflows.evaluate(f.owner, instance.id);
-      await f.workflows.overview(f.owner);
-      await f.move(instance.id, 'reissue');
-      assert.equal((await f.events('workflow.escalated')).length, 1);
-      // The work is not failed: the uncapped ending stays open.
-      assert.equal((await f.move(instance.id, 'approve')).state, 'approved');
-    },
+test('a capped loop permits its rounds, refuses the next, and leaves the record untouched', async (t) => {
+  const f = await fixture(t);
+  await f.workflows.register(definition, policy([returns(2)]));
+  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
+  // The two actions of one limit are counted together.
+  await f.move(instance.id, 'submit');
+  await f.move(instance.id, 'return');
+  await f.move(instance.id, 'submit');
+  const last = await f.move(instance.id, 'restart', 'last-return');
+  assert.deepEqual(await f.events('workflow.escalated'), []);
+  const arrived = await f.move(instance.id, 'submit');
+  const history = (await f.workflows.history(f.owner, instance.id)).length;
+  const eventCount = (await f.state.events(f.owner.projectId)).length;
+  for (const action of ['return', 'restart'])
+    await assert.rejects(
+      f.move(instance.id, action),
+      (error: unknown) =>
+        refused('loop_limit_reached', 409)(error) &&
+        /review_returns is exhausted on this draft \(2\/2\)/.test((error as Error).message),
+    );
+  assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
+  assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
+  assert.equal((await f.state.events(f.owner.projectId)).length, eventCount);
+  // A retry of the last permitted return is still answered with what it recorded.
+  assert.deepEqual(
+    await f.workflows.transition(f.owner, {
+      instanceId: instance.id,
+      action: 'restart',
+      requestId: 'last-return',
+      expectedRevision: last.revision - 1,
+    }),
+    last,
   );
+  // Arrival at the exhausted limit is recorded once; reads and a step that stays record none.
+  const escalated = await f.events('workflow.escalated');
+  assert.equal(escalated.length, 1);
+  assert.deepEqual(escalated[0].data, {
+    workflow: 'draft',
+    version: 1,
+    revision: arrived.revision,
+    state: 'in_review',
+    limit: 'review_returns',
+    used: 2,
+    max: 2,
+  });
+  await f.workflows.evaluate(f.owner, instance.id);
+  await f.workflows.overview(f.owner);
+  await f.move(instance.id, 'reissue');
+  assert.equal((await f.events('workflow.escalated')).length, 1);
+  // The work is not failed: the uncapped ending stays open.
+  assert.equal((await f.move(instance.id, 'approve')).state, 'approved');
+});
 
 test('guidance names the exhausted limit, keeps the human action, and the overview escalates', async (t) => {
   const f = await fixture(t);
@@ -362,101 +339,92 @@ test('only a project admin who is not a leased worker may extend a limit', async
   assert.deepEqual(await f.events('workflow.limit_extended'), []);
 });
 
-for (const backend of backends)
-  test(
-    `${backend}: a grant is idempotent, append-only, additive, and changes no revision`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.workflows.register(definition, policy([returns(1)]));
-      const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
-      const arrived = await f.loop(instance.id, 1);
-      const grant = {
-        instanceId: instance.id,
-        limit: 'review_returns',
-        additional: 2,
-        reason: '  The reviewer asked for one more pass  ',
-        requestId: 'grant-1',
-      };
-      await assert.rejects(
-        f.workflows.extendLimit(f.owner, { ...grant, limit: 'unheard_of' }),
-        refused('unknown_limit', 404),
-      );
-      for (const additional of [0, 1.5, 101])
-        await assert.rejects(
-          f.workflows.extendLimit(f.owner, { ...grant, additional }),
-          refused('invalid_input', 400),
-        );
-      await assert.rejects(
-        f.workflows.extendLimit(f.owner, { ...grant, reason: '   ' }),
-        refused('invalid_input', 400),
-      );
-      const history = (await f.workflows.history(f.owner, instance.id)).length;
-      const first = await f.workflows.extendLimit(f.owner, grant);
-      assert.deepEqual(
-        [first.base, first.granted, first.max, first.used, first.remaining, first.exhausted],
-        [1, 2, 3, 1, 2, false],
-      );
-      assert.deepEqual(await f.workflows.extendLimit(f.owner, grant), first);
-      await assert.rejects(
-        f.workflows.extendLimit(f.owner, { ...grant, additional: 3 }),
-        refused('request_conflict', 409),
-      );
-      // A request id belongs to one command across the whole engine.
-      await assert.rejects(
-        f.workflows.extendLimit(f.owner, { ...grant, requestId: 'start' }),
-        refused('request_conflict', 409),
-      );
-      const second = await f.workflows.extendLimit(f.owner, { ...grant, requestId: 'grant-2' });
-      assert.deepEqual([second.granted, second.max], [4, 5]);
-      assert.equal(typeof second.max, 'number');
-
-      assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
-      assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
-      const extended = await f.events('workflow.limit_extended');
-      assert.deepEqual(
-        extended.map((event) => event.data),
-        [3, 5].map((max) => ({
-          workflow: 'draft',
-          version: 1,
-          limit: 'review_returns',
-          additional: 2,
-          max,
-          used: 1,
-          reason: 'The reviewer asked for one more pass',
-        })),
-      );
-      await assert.rejects(
-        f.state.transaction(
-          async (tx) => await tx.run('UPDATE wf_limit_grants SET additional=additional+100'),
-        ),
-        // PostgreSQL's trigger refuses it too, but State never forwards a server's own words.
-        backend === 'postgres'
-          ? { code: 'state_constraint' }
-          : /Workflow limit grants are immutable/,
-      );
-      await assert.rejects(
-        f.state.transaction(async (tx) => await tx.run('DELETE FROM wf_limit_grants')),
-        backend === 'postgres'
-          ? { code: 'state_constraint' }
-          : /Workflow limit grants are retained/,
-      );
-
-      await f.move(instance.id, 'approve');
-      await assert.rejects(
-        f.workflows.extendLimit(f.owner, { ...grant, requestId: 'too-late' }),
-        refused('invalid_transition', 409),
-      );
-      // What was granted while it lived is still answered after it ended.
-      assert.equal((await f.workflows.extendLimit(f.owner, grant)).granted, 4);
-    },
+test('a grant is idempotent, append-only, additive, and changes no revision', async (t) => {
+  const f = await fixture(t);
+  await f.workflows.register(definition, policy([returns(1)]));
+  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
+  const arrived = await f.loop(instance.id, 1);
+  const grant = {
+    instanceId: instance.id,
+    limit: 'review_returns',
+    additional: 2,
+    reason: '  The reviewer asked for one more pass  ',
+    requestId: 'grant-1',
+  };
+  await assert.rejects(
+    f.workflows.extendLimit(f.owner, { ...grant, limit: 'unheard_of' }),
+    refused('unknown_limit', 404),
   );
+  for (const additional of [0, 1.5, 101])
+    await assert.rejects(
+      f.workflows.extendLimit(f.owner, { ...grant, additional }),
+      refused('invalid_input', 400),
+    );
+  await assert.rejects(
+    f.workflows.extendLimit(f.owner, { ...grant, reason: '   ' }),
+    refused('invalid_input', 400),
+  );
+  const history = (await f.workflows.history(f.owner, instance.id)).length;
+  const first = await f.workflows.extendLimit(f.owner, grant);
+  assert.deepEqual(
+    [first.base, first.granted, first.max, first.used, first.remaining, first.exhausted],
+    [1, 2, 3, 1, 2, false],
+  );
+  assert.deepEqual(await f.workflows.extendLimit(f.owner, grant), first);
+  await assert.rejects(
+    f.workflows.extendLimit(f.owner, { ...grant, additional: 3 }),
+    refused('request_conflict', 409),
+  );
+  // A request id belongs to one command across the whole engine.
+  await assert.rejects(
+    f.workflows.extendLimit(f.owner, { ...grant, requestId: 'start' }),
+    refused('request_conflict', 409),
+  );
+  const second = await f.workflows.extendLimit(f.owner, { ...grant, requestId: 'grant-2' });
+  assert.deepEqual([second.granted, second.max], [4, 5]);
+  assert.equal(typeof second.max, 'number');
+
+  assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
+  assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
+  const extended = await f.events('workflow.limit_extended');
+  assert.deepEqual(
+    extended.map((event) => event.data),
+    [3, 5].map((max) => ({
+      workflow: 'draft',
+      version: 1,
+      limit: 'review_returns',
+      additional: 2,
+      max,
+      used: 1,
+      reason: 'The reviewer asked for one more pass',
+    })),
+  );
+  await assert.rejects(
+    f.state.transaction(
+      async (tx) => await tx.run('UPDATE wf_limit_grants SET additional=additional+100'),
+    ),
+    // PostgreSQL's trigger refuses it too, but State never forwards a server's own words.
+    { code: 'state_constraint' },
+  );
+  await assert.rejects(
+    f.state.transaction(async (tx) => await tx.run('DELETE FROM wf_limit_grants')),
+    { code: 'state_constraint' },
+  );
+
+  await f.move(instance.id, 'approve');
+  await assert.rejects(
+    f.workflows.extendLimit(f.owner, { ...grant, requestId: 'too-late' }),
+    refused('invalid_transition', 409),
+  );
+  // What was granted while it lived is still answered after it ended.
+  assert.equal((await f.workflows.extendLimit(f.owner, grant)).granted, 4);
+});
 
 test('a lower cap deployed on the same version escalates live work from its history', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-limits-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const path = join(directory, 'merv.db');
-  const state = new SqliteState(path);
+  const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   const boot = await scope.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
@@ -475,7 +443,7 @@ test('a lower cap deployed on the same version escalates live work from its hist
   workflows.close();
   await state.close();
 
-  const restarted = new SqliteState(path);
+  const restarted = await openState(path);
   const next = await createService(
     new WorkflowsService(restarted, await createService(new ProjectScope(restarted))),
   );

@@ -1,12 +1,10 @@
 import { createService, type Caller } from '@merv/contracts';
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
-import { Pool } from 'pg';
-import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -18,11 +16,7 @@ import { CodeService, type CodeStoreOptions } from '@merv/code-research/service'
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeStoreConfig, FaultPoint } from '@merv/code/store/operations';
 import { boundProject } from './code-binding.js';
-
-export const backends = ['sqlite', 'postgres'] as const;
-export type Backend = (typeof backends)[number];
-const postgresUrl = process.env.MERV_TEST_POSTGRES_URL;
-export const optional = (backend: Backend) => ({ skip: backend === 'postgres' && !postgresUrl });
+import { openState, schemaFor } from './state.js';
 
 /** Git as a test runs it: no configuration of the machine or the user reaches it. */
 export function git(cwd: string, args: string[], input?: string | Buffer): string {
@@ -109,10 +103,9 @@ export function described(file: string, tip: string): Bundle {
   };
 }
 
-/** Real services on one backend, a bound project, and Code keeping repositories in `root`. */
+/** Real services on a fresh schema, a bound project, and Code keeping repositories in `root`. */
 export async function codeStoreFixture(
   t: TestContext,
-  backend: Backend,
   config: Partial<CodeStoreConfig> = {},
   /** The commit the project names as its main; by default one no repository holds. */
   mainOid = 'a'.repeat(40),
@@ -121,11 +114,8 @@ export async function codeStoreFixture(
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-cs-'));
   const root = join(directory, 'code');
-  const schema = `code_store_${randomUUID().replaceAll('-', '')}`;
-  const state =
-    backend === 'sqlite'
-      ? new SqliteState(join(directory, 'state.sqlite'))
-      : await PostgresState.open({ connectionString: postgresUrl!, schema });
+  const schema = schemaFor();
+  const state = await openState(undefined, { schema });
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
@@ -156,13 +146,6 @@ export async function codeStoreFixture(
     workflows.close();
     await state.close();
     rmSync(directory, { recursive: true, force: true });
-    if (backend === 'sqlite') return;
-    const pool = new Pool({ connectionString: postgresUrl });
-    try {
-      await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-    } finally {
-      await pool.end();
-    }
   });
   const boot = await scope.bootstrap({ projectName: 'Code store', actorName: 'Owner' });
   const admin: Caller = {
@@ -179,8 +162,8 @@ export async function codeStoreFixture(
   return {
     directory,
     root,
-    /** The PostgreSQL schema this fixture owns; empty on SQLite, which has none. */
-    schema: backend === 'postgres' ? schema : '',
+    /** The PostgreSQL schema this fixture owns. */
+    schema,
     state,
     scope,
     workflows,

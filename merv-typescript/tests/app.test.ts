@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -250,7 +250,7 @@ test('invalid composition fails without leaving an active application', async ()
     rmSync(directory, { recursive: true, force: true });
   }
 });
-test('application stop disposes Cordis and SQLite after API shutdown rejects', async () => {
+test('application stop disposes Cordis and the state store after API shutdown rejects', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-stop-failure-'));
   const app = await createApp({ directory, api: true, port: 0 });
   const state = app.ctx.state,

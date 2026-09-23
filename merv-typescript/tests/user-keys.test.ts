@@ -7,18 +7,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, Principal, Role, UserKey } from '@merv/contracts';
+import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
 async function fixture(path = ':memory:') {
-  const state = new SqliteState(path);
+  const state = await openState(path);
   let time = initialTime;
   const scope = await createService(new ProjectScope(state, () => time));
   const login = async (subject: string, realm = issuer) =>
@@ -499,11 +500,11 @@ test('key lifecycle writes roll back with their audit events, and key ownership,
           async (tx) =>
             await tx.run(`UPDATE user_keys SET ${column}=? WHERE id=?`, 'changed', issued.key.id),
         ),
-      /first revocation/,
+      { code: 'state_constraint' },
     );
   await assert.rejects(
     async () => await f.state.transaction(async (tx) => await tx.run('DELETE FROM user_keys')),
-    /retained/,
+    { code: 'state_constraint' },
   );
   const child = await f.scope.rotateKey(f.owner, { keyId: issued.key.id });
   await assert.rejects(
@@ -512,7 +513,7 @@ test('key lifecycle writes roll back with their audit events, and key ownership,
         async (tx) =>
           await tx.run('UPDATE user_keys SET revoked_at=NULL WHERE id=?', issued.key.id),
       ),
-    /first revocation/,
+    { code: 'state_constraint' },
   );
   // Direct invalid inserts also cannot create a wider grant in a rotation lineage.
   await assert.rejects(
@@ -525,7 +526,7 @@ test('key lifecycle writes roll back with their audit events, and key ownership,
             child.key.id,
           ),
       ),
-    /preserves user key/,
+    { code: 'state_constraint' },
   );
   const beforeRevoke = await f.scope.keys(f.owner);
   f.state.appendEvent = async (tx, event) => {
@@ -649,7 +650,7 @@ for (const [firstAction, secondAction] of [
     { timeout: 15_000 },
     async (t) => {
       const directory = mkdtempSync(join(tmpdir(), 'merv-key-race-'));
-      const path = join(directory, 'state.db');
+      const path = directory;
       const f = await fixture(path);
       const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
       const barrier = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT);
@@ -658,8 +659,9 @@ for (const [firstAction, secondAction] of [
       const { parentPort, workerData } = require('node:worker_threads');
       (async () => {
         const { register } = await import(workerData.loader); register();
-        const [{ SqliteState }, { ProjectScope }] = await Promise.all([import(workerData.stateModule), import(workerData.scopeModule)]);
-        const state = new SqliteState(workerData.path), scope = new ProjectScope(state, () => workerData.time);
+        const [{ PostgresState }, { ProjectScope }] = await Promise.all([import(workerData.stateModule), import(workerData.scopeModule)]);
+        const state = await PostgresState.open({ connectionString: workerData.url, schema: workerData.schema, maxConnections: 2, readConnections: 1, lockTimeoutMs: 30000 });
+        const scope = new ProjectScope(state, () => workerData.time);
         await scope.initialize();
         const control = new Int32Array(workerData.barrier), append = state.appendEvent.bind(state);
         state.appendEvent = async (tx,event) => {
@@ -693,7 +695,8 @@ for (const [firstAction, secondAction] of [
             action,
             first,
             owner: f.owner,
-            path,
+            url: postgresUrl,
+            schema: schemaFor(path),
             barrier,
             time: initialTime,
             keyId: issued.key.id,
@@ -747,7 +750,7 @@ for (const [firstAction, secondAction] of [
       assert.equal(
         Atomics.load(control, 0),
         1,
-        'First operation holds the SQLite writer transaction',
+        'First operation holds the database writer transaction',
       );
       assert.equal(Atomics.load(control, 2), 0, 'Second operation cannot enter its callback yet');
       const results = Promise.all([message(first, 'result'), message(second, 'result')]);

@@ -3,10 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { openState } from './fixtures/state.js';
 
 function deferred() {
   let resolve!: () => void;
@@ -21,7 +22,7 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
     `mounted dispatch retains the user-key fence across connection setup and ${withdrawal}`,
     { timeout: 5000 },
     async (t) => {
-      const state = new SqliteState(':memory:');
+      const state = await openState(':memory:');
       const scope = await createService(new ProjectScope(state));
       const verified = async (subject: string) =>
         await scope.acceptVerifiedIdentity({

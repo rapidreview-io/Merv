@@ -1,4 +1,4 @@
-/** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
+/** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE paper_revisions(project_id TEXT NOT NULL,kind TEXT NOT NULL,revision BIGINT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(project_id,kind,revision));

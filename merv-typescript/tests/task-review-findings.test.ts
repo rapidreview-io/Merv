@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { Caller, TaskReview } from '@merv/contracts';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 

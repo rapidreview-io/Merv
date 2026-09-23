@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 

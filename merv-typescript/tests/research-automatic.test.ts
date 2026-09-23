@@ -2,14 +2,12 @@ import { createService, MervError, type Caller, type ReviewApplication } from '@
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import type { ResearchCreate } from '@merv/research/types';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { Pool } from 'pg';
 import { ResearchService } from '../packages/research/src/index.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { hostedCode, legacyCycle, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
@@ -72,15 +70,6 @@ async function fixture(t: TestContext, plugin = false) {
       !id.endsWith('-api') &&
       !id.endsWith('-ui'),
   );
-  const postgresSchema = process.env.MERV_TEST_POSTGRES_URL
-    ? `automatic_${randomUUID().replaceAll('-', '')}`
-    : null;
-  if (postgresSchema)
-    config.plugins.find((entry: { id: string }) => entry.id === 'state').config = {
-      backend: 'postgres',
-      connectionStringEnv: 'MERV_TEST_POSTGRES_URL',
-      schema: postgresSchema,
-    };
   let app = await createApp({ directory, config });
   const service = async () =>
     plugin
@@ -289,14 +278,6 @@ async function fixture(t: TestContext, plugin = false) {
     await disable();
     if (!plugin) research.close();
     await app.stop();
-    if (postgresSchema) {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA ${postgresSchema} CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
     rmSync(directory, { recursive: true, force: true });
   });
   return {

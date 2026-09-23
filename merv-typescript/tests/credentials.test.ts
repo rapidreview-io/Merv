@@ -3,14 +3,15 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { MervError, type Caller } from '@merv/contracts';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import type { CredentialBinding } from '../packages/mounts/src/types.js';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext, clock?: () => number) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   t.after(async () => await state.close());
   const scope = await createService(new ProjectScope(state, clock));
   const admin = await scope.bootstrap({ projectName: 'First', actorName: 'Operator' });

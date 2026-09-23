@@ -13,11 +13,12 @@ import {
   type WorkflowExecutionPolicy,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
 
 const definition: WorkflowDefinition = {
   name: 'execution-test',
@@ -126,7 +127,7 @@ function policy(
   };
 }
 async function fixture() {
-  const state = new SqliteState(':memory:'),
+  const state = await openState(':memory:'),
     scope = await createService(new ProjectScope(state)),
     workflows = await createService(new WorkflowsService(state, scope));
   const boot = await scope.bootstrap({ projectName: 'Execution', actorName: 'Owner' });
@@ -441,8 +442,8 @@ test('dispatch rechecks caller, target revision, live references and active regi
 
 test('fixed manifests including absence are durable and immutable across registration and cold restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-execution-policy-'));
-  const path = join(directory, 'state.db');
-  let state = new SqliteState(path),
+  const path = directory;
+  let state = await openState(path),
     scope = await createService(new ProjectScope(state)),
     workflows = await createService(new WorkflowsService(state, scope));
   t.after(async () => {
@@ -460,7 +461,7 @@ test('fixed manifests including absence are durable and immutable across registr
   });
   workflows.close();
   await state.close();
-  state = new SqliteState(path);
+  state = await openState(path);
   scope = await createService(new ProjectScope(state));
   workflows = await createService(new WorkflowsService(state, scope));
   for (const changed of [
@@ -495,12 +496,12 @@ test('fixed manifests including absence are durable and immutable across registr
       await state.transaction(
         async (tx) => await tx.run('UPDATE wf_execution_policies SET manifest_json=?', '{}'),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await state.transaction(async (tx) => await tx.run('DELETE FROM wf_execution_policies')),
-    /retained/,
+    { code: 'state_constraint' },
   );
   const absent = { ...definition, name: 'absent' };
   const noExecution = policy(scope);

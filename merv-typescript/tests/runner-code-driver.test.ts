@@ -101,7 +101,7 @@ async function command(
 }
 
 test('a checkout is exactly the head Code names, its cache knows no remote, and HEAD moves only once Code admitted the commit', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   let beforeAck: string | undefined;
   let path = '';
@@ -196,7 +196,7 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
 });
 
 test('a quarantined commit leaves the checkout as it was and never rides along in the next bundle', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   const m = machine(t, f);
   const driver = m.start();
@@ -224,7 +224,7 @@ test('a quarantined commit leaves the checkout as it was and never rides along i
 });
 
 test('an interrupted upload continues where Code stands, and a final capture is replayed and never rebuilt', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.open({ config: { partBytes: 1024 } });
   await f.lease('ses_1');
   let parts = 0;
@@ -294,7 +294,7 @@ test('an interrupted upload continues where Code stands, and a final capture is 
 });
 
 test('a final capture Code quarantines reports the last admitted head, and what was refused stays on the machine', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   const m = machine(t, f);
   const driver = m.start();
@@ -313,7 +313,7 @@ test('a final capture Code quarantines reports the last admitted head, and what 
 });
 
 test('a final capture Code refuses to read ends the capture instead of being sent forever', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   // A bundle larger than one transfer may be is refused at the schema, before Code looks at
   // any state, and every replay sends the identical bytes. The capture must end at the last
@@ -344,7 +344,7 @@ test('a final capture Code refuses to read ends the capture instead of being sen
 });
 
 test('a checkout Code would never keep ends its generation at the last admitted commit', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   const m = machine(t, f);
   const driver = m.start();
@@ -396,7 +396,7 @@ test('a checkout Code would never keep ends its generation at the last admitted 
 });
 
 test('an export Code no longer holds defers the launch rather than failing it', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   // A cut export lives on the server and can go while a machine is reading it — it expired,
   // or Code was restarted. That is the server's business, not a fault of this launch, and the
@@ -420,7 +420,7 @@ test('an export Code no longer holds defers the launch rather than failing it', 
 });
 
 test('a session that never attached hands over nothing, and its generation simply closes', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   // The download fails after Code was asked what to prepare.
   const m = machine(t, f, (inner) => ({
@@ -443,7 +443,7 @@ test('a session that never attached hands over nothing, and its generation simpl
 });
 
 test('the driver keeps its own tables beside an existing ledger and leaves the runner’s untouched', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   const directory = mkdtempSync(join(tmpdir(), 'merv-drv-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const binding = {

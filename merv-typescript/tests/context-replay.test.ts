@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -14,7 +14,8 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { TASK_WORKFLOW } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, TaskTypeDefinition } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
+import { openState } from './fixtures/state.js';
 
 const recipe: TaskTypeDefinition = {
   name: 'test.reference-context',
@@ -30,7 +31,7 @@ const recipe: TaskTypeDefinition = {
 
 test('artifact context modes retain binary references without charging blob size against the prompt budget', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-reference-'));
-  const state = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
@@ -141,7 +142,7 @@ test('artifact context modes retain binary references without charging blob size
 
 test('owner replay pins recipe and exact assignment while ordinary context builds still reject changed inputs', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-replay-owner-'));
-  const state = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),

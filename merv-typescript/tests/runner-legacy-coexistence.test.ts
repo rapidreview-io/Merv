@@ -10,7 +10,7 @@ import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import type { CodeService } from '@merv/code-research/service';
 import type { Session } from '@merv/sessions/types';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource } from './fixtures/code-store.js';
 

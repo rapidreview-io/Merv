@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller } from '@merv/contracts';
 import type { RunnerSnapshot } from '@merv/runner';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { loadConfiguration } from '../src/config.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));

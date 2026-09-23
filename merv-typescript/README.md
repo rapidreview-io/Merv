@@ -42,12 +42,17 @@ Domain Events and Context Builder are implemented as two independent services. T
 
 ## Run locally
 
-Requires Node.js **22.13 or later** and npm. The development baseline is Node **22.13.1** (`.nvmrc`) and npm **11.1.0** (`packageManager`). SQLite uses Node's built-in `node:sqlite`; some supported Node versions print an experimental-module warning.
+Requires Node.js **22.13 or later**, npm and PostgreSQL **17**. The development baseline is Node **22.13.1** (`.nvmrc`) and npm **11.1.0** (`packageManager`). The machine runner and Code's workspace driver keep their local ledgers in Node's built-in `node:sqlite`; some supported Node versions print an experimental-module warning.
 
 From this directory:
 
 ```sh
 npm ci
+# Any PostgreSQL 17 works; the test suite needs more than the default 100 connections.
+docker run --detach --name merv-postgres --env POSTGRES_USER=merv --env POSTGRES_PASSWORD=merv \
+  --env POSTGRES_DB=merv --publish 127.0.0.1:5432:5432 postgres:17 -c max_connections=300
+export MERV_DB_URL=postgres://merv:merv@127.0.0.1:5432/merv MERV_DB_SCHEMA=merv_local
+export MERV_TEST_POSTGRES_URL=$MERV_DB_URL
 npm run typecheck
 npm test
 npm run init -- --name "My project" --dir .merv
@@ -58,7 +63,7 @@ npm start -- --dir .merv --host 127.0.0.1 --port 3081
 
 `init` creates a project and local operator. It writes `.merv/credentials.json` with mode `0600`. Each `actor` command prints the path to its own credential file under `.merv/credentials/`; its token is stored there, not printed. The server prints its HTTP and MCP URLs when ready. `Ctrl-C` drains admitted calls and shuts down the plugin graph.
 
-The default data directory contains `state.sqlite`, immutable blobs, and local credential files. Keep that directory to retain local work across restarts. For PostgreSQL metadata and S3/R2 artifact bytes, use [the production storage configuration](config/production.example.json) and [storage setup guide](docs/PRODUCTION_STORAGE.md). Both provider choices use asynchronous interfaces. The HTTP server binds to loopback by default; hosted authentication and public TLS termination remain separate deployment concerns.
+The server keeps its state in PostgreSQL: `MERV_DB_URL` is the connection string and `MERV_DB_SCHEMA` the schema (default `merv`). Give each local instance its own schema. Configure TLS through the state plugin's `ssl` option; `ssl*` parameters in the URL are refused. The data directory holds only immutable blobs, Code's Git repositories and local credential files. Keep the directory and its schema together to retain local work across restarts. `init` checks only `credentials.json`, so deleting `.merv` and running `init` again adds a second project to the same schema; drop the schema (`DROP SCHEMA merv_local CASCADE`) to start over. For the production database and S3/R2 artifact bytes, use [the production storage configuration](config/production.example.json) and [storage setup guide](docs/PRODUCTION_STORAGE.md). Both blob providers use asynchronous interfaces. The HTTP server binds to loopback by default; hosted authentication and public TLS termination remain separate deployment concerns.
 
 ### Development
 
@@ -73,7 +78,7 @@ npm test
 
 Use `npm run format` before committing. Prettier is version-pinned and uses the shared repository configuration in this directory. Integration tests bind temporary loopback ports; an environment that forbids listening needs that permission for the HTTP/MCP checks.
 
-Dependencies, build output, caches, default runtime directories, SQLite files, and credential files are ignored. Custom `--dir` locations also have `credentials.json` and `credentials/` ignored; keep their artifact bytes private and outside source control. See [the execution plan](EXECUTION_PLAN.md) and [execution evidence](EXECUTION_LOG.md) for the ongoing component integration work.
+Dependencies, build output, caches, default runtime directories, SQLite files (runner ledgers), and credential files are ignored. Custom `--dir` locations also have `credentials.json` and `credentials/` ignored; keep their artifact bytes private and outside source control. See [the execution plan](EXECUTION_PLAN.md) and [execution evidence](EXECUTION_LOG.md) for the ongoing component integration work.
 
 ### Configure plugins
 
@@ -340,7 +345,7 @@ flowchart TB
 | ----------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `@merv/domain-events`   | Durable local event delivery, progress and retries                                        | State                                                       |
 | `@merv/context-builder` | Versioned recipes and immutable agent context packages                                    | State, scope, artifacts                                     |
-| `@merv/state`           | Async SQLite or PostgreSQL transactions, per-component migrations, durable events         | None                                                        |
+| `@merv/state`           | PostgreSQL transactions, per-component migrations, durable events                         | None                                                        |
 | `@merv/blobs`           | Async immutable bytes on disk or S3/R2, project namespaces, content hashes                | None                                                        |
 | `@merv/scope`           | Projects, actor identities, bearer credentials, roles and access checks                   | State                                                       |
 | `@merv/identity`        | Shared signed-user identity verification                                                  | None                                                        |
@@ -370,7 +375,7 @@ For example, an artifacts-only Cordis application can install `statePlugin`, `bl
 
 ## Durable behavior and lifecycle
 
-- **Transactions are asynchronous and explicit.** Components await storage and pass the same live transaction through declared interfaces, so verdicts, transitions, events and replay receipts commit together. Foreign, expired and implicit nested transactions are rejected. SQLite retains WAL, full synchronous disk writes and `BEGIN IMMEDIATE`; PostgreSQL pins one connection and serializes writers with a schema-scoped transaction lock to preserve event commit ordering. Services await initialization before Cordis publishes them.
+- **Transactions are asynchronous and explicit.** Components await storage and pass the same live transaction through declared interfaces, so verdicts, transitions, events and replay receipts commit together. Foreign, expired and implicit nested transactions are rejected. Each transaction pins one PostgreSQL connection, and a schema-scoped transaction lock serializes writers to preserve event commit ordering. Services await initialization before Cordis publishes them.
 - **Migrations belong to components.** Applied SQL is hashed under `(component, version)`. Changing an applied migration or inserting an older version is rejected. Migration failure rolls back the component's changes.
 - **Artifacts are completed and immutable.** Bytes are content-addressed, writes do not overwrite existing content, reads verify hashes, and database triggers reject metadata updates/deletes. Upload streaming and mutable drafts are outside this version. A failed metadata transaction can leave an unreferenced blob; no garbage collector runs automatically.
 - **Workflow versions are pinned.** Persisted graph definitions are fingerprinted and immutable. Existing instances retain their version. Publishing another version does not migrate live instances. A managed graph returns an owner registration handle; direct generic mutations are rejected. The task program keeps that handle private.
@@ -419,7 +424,7 @@ Run the repeatable removal experiment with the official MCP SDK client:
 npm run test:feed-unload
 ```
 
-It pauses an admitted `feed.post` at a test barrier, disables **only the feed provider entry**, checks that Cordis removes the four tools and waits for the call, then finishes a task/review loop while feed is absent. Re-enabling only the provider restores the original adapter, posts, and durable activity. The same process, listener, client connections, and unrelated service instances remain throughout. The barrier makes removal overlap the feed call; it does not replace Cordis, SQLite, or the MCP transport. The command retains a synthetic database and `report.json` under a new `live-runs/feed-unload-<timestamp>/` directory.
+It pauses an admitted `feed.post` at a test barrier, disables **only the feed provider entry**, checks that Cordis removes the four tools and waits for the call, then finishes a task/review loop while feed is absent. Re-enabling only the provider restores the original adapter, posts, and durable activity. The same process, listener, client connections, and unrelated service instances remain throughout. The barrier makes removal overlap the feed call; it does not replace Cordis, PostgreSQL, or the MCP transport. The command writes `report.json` under a new `live-runs/feed-unload-<timestamp>/` directory and keeps its synthetic data in its own PostgreSQL schema, which the report names.
 
 ## Verification
 
@@ -429,7 +434,7 @@ npm run build
 npm test
 ```
 
-`build` emits JavaScript and declarations under `dist`; the supplied launch commands execute the workspace TypeScript with `tsx`. The tests use temporary data directories and actual SQLite. HTTP/MCP tests bind loopback sockets, so environments that restrict networking must permit local listeners for those tests.
+`build` emits JavaScript and declarations under `dist`; the supplied launch commands execute the workspace TypeScript with `tsx`. The tests use temporary data directories and a local PostgreSQL at `MERV_TEST_POSTGRES_URL`; without it they fail at once rather than skip. Each data directory gets its own schema, `t_<time>_<random>`, dropped when its test file ends. `npm test` first drops test schemas older than six hours that a killed run left behind, and `npm run test:sweep [hours]` does the same on demand; neither touches any other schema, so a database shared with other runs is safe. HTTP/MCP tests bind loopback sockets, so environments that restrict networking must permit local listeners for those tests.
 
 | Test file                          | Coverage                                                                                                                                                               |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -442,7 +447,6 @@ npm test
 | `tests/plugin-config.test.ts`      | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
 | `tests/loader.test.ts`             | Config-only extension, asynchronous dependencies, current entry handles, failure readiness, optional absence                                                           |
 | `tests/cli-config.test.ts`         | Explicit config startup, safe status, argument validation, missing API cleanup, signal shutdown                                                                        |
-| `tests/state-lifecycle.test.ts`    | Native SQLite handle closure on initialization failure and failed Cordis activation                                                                                    |
 | `tests/workflow-unload.test.ts`    | Immediate tool withdrawal, held-call draining, independent services, and restoration through loader entries                                                            |
 | `tests/foundations.test.ts`        | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
 | `tests/workflows.test.ts`          | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
@@ -467,13 +471,13 @@ npm run test:live
 npm run test:live -- live-runs/my-acceptance-run
 ```
 
-It requires an installed, authenticated `codex` CLI, network access to its configured model provider, and permission to listen on loopback. Set `MERV_CODEX_BIN` if the executable is elsewhere. These are real model calls and use the signed-in account's Codex allowance; they are separate from `npm test`.
+It requires an installed, authenticated `codex` CLI, network access to its configured model provider, permission to listen on loopback, and `MERV_DB_URL`. Like every live run and demo under `scripts/`, it keeps its data in its own PostgreSQL schema, `run_<directory name>_<hash of its path>`, unless `MERV_DB_SCHEMA` names one; `report.json` records it. Deleting a run directory leaves its schema behind, so drop both before reusing a directory name. Set `MERV_CODEX_BIN` if the executable is elsewhere. These are real model calls and use the signed-in account's Codex allowance; they are separate from `npm test`.
 
 Each session uses an empty workspace, a read-only filesystem sandbox, disabled shell tools and app connectors, and an allowlist of the scenario's MCP tools. Per-tool approvals apply only to that child process and the synthetic server. Persistent Codex settings are unchanged. Merv still enforces producer/reviewer/reader permissions, including the deliberately refused operations. These settings use the documented [Codex MCP tool policy](https://learn.chatgpt.com/docs/extend/mcp).
 
 The producer creates a brief and arithmetic delivery, enters review, and attempts a forbidden self-review. The server restarts; the reviewer inspects retained evidence and submits a verdict. After another restart, the reader checks the final task and history and attempts a forbidden administrative mutation. The runner checks three distinct session IDs, server permission-denial codes, the exact expected task, and transcript arguments proving the reviewer read every pinned artifact before submitting. It also asserts durable task state, revisions, and identities through the application services.
 
-Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each phase's `.jsonl`, `.stderr.log`, and `.final.txt`; `report.json` is written only after the runner's checks and final shutdown succeed. A runtime failure writes `failure.json`. The directory also retains its synthetic database and credentials and is excluded from Git. See [the recorded verification](VERIFICATION.md) for the automated and live acceptance results.
+Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each phase's `.jsonl`, `.stderr.log`, and `.final.txt`; `report.json` is written only after the runner's checks and final shutdown succeed. A runtime failure writes `failure.json`. The directory also retains its synthetic credentials and is excluded from Git; the synthetic data stays in the run's schema until you drop it. See [the recorded verification](VERIFICATION.md) for the automated and live acceptance results.
 
 ## Optional upstream mounts
 

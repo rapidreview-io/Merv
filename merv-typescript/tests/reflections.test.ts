@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import type { ResearchLineage } from '../packages/research/src/types.js';
@@ -328,7 +328,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
         async (tx) =>
           await tx.run('UPDATE reflections SET title=? WHERE id=?', 'Tampered', wave.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   assert.ok((await f.app.ctx.research.startReflection(f.owner, { requestId: 'next-wave' })).id);
 });
@@ -592,7 +592,7 @@ for (const version of [1, 2] as const)
               wave.id,
             ),
         ),
-      /immutable/,
+      { code: 'state_constraint' },
     );
   });
 

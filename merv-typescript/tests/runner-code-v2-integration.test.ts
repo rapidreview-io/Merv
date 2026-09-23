@@ -18,7 +18,7 @@ import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeService } from '@merv/code-research/service';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';

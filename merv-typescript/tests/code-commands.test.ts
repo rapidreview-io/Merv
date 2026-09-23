@@ -14,12 +14,14 @@ import {
   type SessionWorkspace,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeCommandService } from '../packages/code-research/src/commands.js';
+import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 
 const oid = (digit: string) => digit.repeat(40);
 const input = (requestId = 'commit'): CodeCommitInput => ({
@@ -61,7 +63,7 @@ async function fixture(
   let clock = Date.now(),
     builds = 0,
     poisoned = false;
-  let state: SqliteState,
+  let state: PostgresState,
     scope: ProjectScope,
     workflows: WorkflowsService,
     events: DurableEvents,
@@ -148,7 +150,7 @@ async function fixture(
   });
   let handle: Awaited<ReturnType<WorkflowsService['register']>>;
   const open = async () => {
-    state = new SqliteState(join(directory, 'state.sqlite'));
+    state = await openState(directory);
     scope = await createService(new ProjectScope(state, () => clock));
     workflows = await createService(new WorkflowsService(state, scope));
     events = await createService(new DurableEvents(state));
@@ -451,7 +453,7 @@ test('project readers can inspect while worker reads and runner control preserve
   assert.equal((await f.code.operation(f.source, queued.command.id)).status, 'queued');
 });
 
-test('receipts bind all command identity, require a claim, and are immutable at service and SQLite boundaries', async (t) => {
+test('receipts bind all command identity, require a claim, and are immutable at service and database boundaries', async (t) => {
   const f = await fixture(t),
     worker = await f.ready();
   const queued = await f.code.commit(worker.caller, input());
@@ -521,7 +523,7 @@ test('receipts bind all command identity, require a claim, and are immutable at 
             queued.command.id,
           ),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
@@ -532,14 +534,14 @@ test('receipts bind all command identity, require a claim, and are immutable at 
             queued.command.id,
           ),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await f.state.transaction(
         async (tx) => await tx.run('DELETE FROM code_commands WHERE id=?', queued.command.id),
       ),
-    /retained/,
+    { code: 'state_constraint' },
   );
 });
 

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import {
@@ -19,6 +19,8 @@ import {
   type WorkflowPolicy,
   type WorkflowWorkStart,
 } from '@merv/contracts';
+import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 
 const graph: WorkflowDefinition = {
   name: 'assignment_test',
@@ -33,7 +35,7 @@ const graph: WorkflowDefinition = {
 };
 
 async function setup(path = ':memory:') {
-  const state = new SqliteState(path);
+  const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
   const credentials = await scope.bootstrap({ projectName: 'Assignments', actorName: 'Operator' });
   const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
@@ -272,14 +274,19 @@ test('failed context projection rolls back its activation event and start, inclu
     instanceId: f.instance.id,
     expectedRevision: 0,
   });
-  assert.equal(begun.workStart?.eventId, head + 1);
+  // PostgreSQL does not reuse identity values of rolled-back inserts, so the start's event is not
+  // head + 1; it is still the one and only event committed after the failed attempts.
+  assert.deepEqual(
+    (await f.state.eventBatch(head, 10)).map((event) => event.id),
+    [begun.workStart?.eventId],
+  );
 });
 
 test('start history is immutable and survives revisions, unload, termination and database restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-assignment-history-'));
-  const path = join(directory, 'state.sqlite');
+  const path = directory;
   const f = await setup(path);
-  let live: SqliteState = f.state;
+  let live: PostgresState = f.state;
   t.after(async () => {
     await live.close();
     rmSync(directory, { recursive: true, force: true });
@@ -309,11 +316,11 @@ test('start history is immutable and survives revisions, unload, termination and
       await f.state.transaction(
         async (tx) => await tx.run('UPDATE wf_work_starts SET actor_id=?', 'x'),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () => await f.state.transaction(async (tx) => await tx.run('DELETE FROM wf_work_starts')),
-    /retained/,
+    { code: 'state_constraint' },
   );
   f.registration.dispose();
   assert.equal((await f.workflows.evaluate(f.caller, f.instance.id)).available, false);
@@ -345,7 +352,7 @@ test('start history is immutable and survives revisions, unload, termination and
     { code: 'workflow_ended' },
   );
   await f.state.close();
-  live = new SqliteState(path);
+  live = await openState(path);
   const workflows = await createService(
     new WorkflowsService(live, await createService(new ProjectScope(live))),
   );
@@ -501,9 +508,9 @@ test('assignment declarations and output fail closed while installed policy stay
 
 test('independent database connections converge on one first activation and reject stale begin', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-assignment-connections-'));
-  const path = join(directory, 'state.sqlite');
+  const path = directory;
   const f = await setup(path);
-  const secondState = new SqliteState(path);
+  const secondState = await openState(path);
   const secondScope = await createService(new ProjectScope(secondState));
   const second = await createService(new WorkflowsService(secondState, secondScope));
   t.after(async () => {
@@ -651,7 +658,7 @@ test(
   { timeout: 15_000 },
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'merv-assignment-concurrent-'));
-    const path = join(directory, 'state.sqlite');
+    const path = directory;
     const f = await setup(path);
     const actor = (
       await f.scope.issueActor(f.caller, {
@@ -665,7 +672,15 @@ test(
     const spawn = (caller: Caller, first: boolean) =>
       new Worker(new URL('./fixtures/workflow-begin-worker.mjs', import.meta.url), {
         execArgv: [],
-        workerData: { path, graph, caller, instanceId: f.instance.id, first, barrier },
+        workerData: {
+          url: postgresUrl,
+          schema: schemaFor(path),
+          graph,
+          caller,
+          instanceId: f.instance.id,
+          first,
+          barrier,
+        },
       });
     const first = spawn(f.caller, true);
     const second = spawn(otherCaller, false);
@@ -706,7 +721,11 @@ test(
     const firstHeld = message(first, 'held');
     first.postMessage('begin');
     await firstHeld;
-    assert.equal(Atomics.load(control, 0), 1, 'First begin holds an open SQLite write transaction');
+    assert.equal(
+      Atomics.load(control, 0),
+      1,
+      'First begin holds an open database write transaction',
+    );
     const secondAttempt = message(second, 'attempt');
     second.postMessage('begin');
     await secondAttempt;

@@ -17,6 +17,7 @@ import type {
   UserKey,
 } from '@merv/contracts';
 import type {} from '@merv/identity/types';
+import { useRunSchema } from './database.js';
 import { verifyLiveEvidence } from './live-evidence.js';
 import { startProtocolProxy } from './protocol-proxy.js';
 
@@ -24,6 +25,7 @@ import { startProtocolProxy } from './protocol-proxy.js';
 const runDirectory = resolve(
   process.argv[2] ?? join('live-runs', new Date().toISOString().replaceAll(':', '-')),
 );
+const schema = useRunSchema(runDirectory);
 mkdirSync(dirname(runDirectory), { recursive: true });
 // Never overwrite or mistake a previous attempt's report for this run.
 mkdirSync(runDirectory, { mode: 0o700 });
@@ -669,6 +671,7 @@ async function run() {
     const report = {
       status: 'passed',
       directory: runDirectory,
+      schema,
       evidenceChecks,
       assignmentChecks,
       ...(userKeys
@@ -740,7 +743,11 @@ async function run() {
 run().catch((error) => {
   writeFileSync(
     join(runDirectory, 'failure.json'),
-    JSON.stringify({ message: error.message, stack: error.stack, phases: summary }, null, 2) + '\n',
+    JSON.stringify(
+      { message: error.message, stack: error.stack, schema, phases: summary },
+      null,
+      2,
+    ) + '\n',
   );
   console.error(error);
   process.exitCode = 1;

@@ -13,7 +13,7 @@ import type {
   TaskDelivery,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext) {
@@ -375,7 +375,7 @@ test('logical task owner can reissue worker delivery while preserving immutable 
         async (tx) =>
           await tx.run('UPDATE reviews SET pinned_input_ids=? WHERE id=?', '[]', original.id),
       ),
-    /immutable/i,
+    { code: 'state_constraint' },
   );
 });
 

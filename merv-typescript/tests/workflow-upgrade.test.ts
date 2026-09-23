@@ -4,10 +4,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import type { Caller, WorkflowDefinition } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 const graph = (version: number): WorkflowDefinition => ({
   name: 'upgradeable',
@@ -25,7 +26,7 @@ const graph = (version: number): WorkflowDefinition => ({
 });
 
 async function setup(path = ':memory:') {
-  const state = new SqliteState(path);
+  const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
   const bootstrap = await scope.bootstrap({ projectName: 'Upgrades', actorName: 'Operator' });
   const caller = { actorId: bootstrap.actor.id, projectId: bootstrap.project.id };
@@ -316,7 +317,7 @@ test('only additive managed definitions can upgrade existing instances', async (
   }
   for (const unmanagedVersion of [1, 2]) {
     await t.test(`unmanaged version ${unmanagedVersion}`, async (t) => {
-      const state = new SqliteState(':memory:');
+      const state = await openState(':memory:');
       t.after(async () => await state.close());
       const scope = await createService(new ProjectScope(state));
       const bootstrap = await scope.bootstrap({ projectName: 'Unmanaged', actorName: 'Operator' });
@@ -342,9 +343,9 @@ test('only additive managed definitions can upgrade existing instances', async (
 test('upgrade remains explicit and replayable across restart and competing connections', async (t) => {
   const folder = mkdtempSync(join(tmpdir(), 'merv-upgrade-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
-  const path = join(folder, 'state.sqlite');
+  const path = folder;
   const first = await setup(path);
-  const secondState = new SqliteState(path);
+  const secondState = await openState(path);
   t.after(async () => await secondState.close());
   const second = await createService(
     new WorkflowsService(secondState, await createService(new ProjectScope(secondState))),
@@ -372,7 +373,7 @@ test('upgrade remains explicit and replayable across restart and competing conne
   const upgraded = await secondTarget.upgrade(first.caller, command);
   assert.equal((await first.workflows.get(first.caller, first.initial.id)).revision, 2);
   await first.state.close();
-  const reopened = new SqliteState(path);
+  const reopened = await openState(path);
   t.after(async () => await reopened.close());
   const restored = await createService(
     new WorkflowsService(reopened, await createService(new ProjectScope(reopened))),

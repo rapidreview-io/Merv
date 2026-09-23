@@ -21,10 +21,6 @@ export async function migratePendingMerges(state: State): Promise<void> {
     {
       version: 1,
       sql: `${table}
-CREATE TRIGGER code_pending_merge_frozen BEFORE UPDATE ON code_pending_merges WHEN ${changed.replaceAll('IS DISTINCT FROM', 'IS NOT')}
-BEGIN SELECT RAISE(ABORT,'Merge inputs and completed first merge are frozen'); END;
-CREATE TRIGGER code_pending_merge_retained BEFORE DELETE ON code_pending_merges BEGIN SELECT RAISE(ABORT,'Merge checkpoints are retained'); END;`,
-      postgres: `${table}
 CREATE FUNCTION code_pending_merge_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
 IF TG_OP='DELETE' THEN RAISE EXCEPTION 'Merge checkpoints are retained'; END IF;
 IF ${changed} THEN RAISE EXCEPTION 'Merge inputs and completed first merge are frozen'; END IF;

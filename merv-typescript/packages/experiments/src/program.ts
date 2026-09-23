@@ -325,46 +325,11 @@ export class ExperimentProgram {
       await host.state.migrate('experiment_program', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE experiment_leases (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, experiment_id TEXT NOT NULL,
-        revision INTEGER NOT NULL, attempt_index INTEGER NOT NULL, state TEXT NOT NULL,
-        actor_id TEXT NOT NULL UNIQUE, source_actor_id TEXT NOT NULL, review_id TEXT, claim_id TEXT,
-        receipt TEXT NOT NULL, artifacts TEXT NOT NULL, recovery TEXT NOT NULL, inputs TEXT NOT NULL,
-        released_at TEXT
-      );
-      CREATE UNIQUE INDEX experiment_lease_active ON experiment_leases(project_id,experiment_id,revision) WHERE released_at IS NULL;
-      CREATE TRIGGER experiment_lease_immutable BEFORE UPDATE OF id,project_id,experiment_id,revision,attempt_index,state,actor_id,source_actor_id,review_id,claim_id,receipt,artifacts,recovery,inputs ON experiment_leases
-        BEGIN SELECT RAISE(ABORT,'Experiment lease provenance is immutable'); END;
-      CREATE TRIGGER experiment_lease_no_delete BEFORE DELETE ON experiment_leases
-        BEGIN SELECT RAISE(ABORT,'Experiment lease provenance is retained'); END;
-    `,
+          sql: postgresMigrations[1],
         },
         {
           version: 2,
-          rebuild: true,
-          postgres: postgresMigrations[2],
-          sql: `CREATE TEMP TABLE experiment_leases_backup AS SELECT * FROM experiment_leases;
-DROP TRIGGER experiment_lease_immutable;
-DROP TRIGGER experiment_lease_no_delete;
-DROP TABLE experiment_leases;
-
-      CREATE TABLE experiment_leases (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, experiment_id TEXT NOT NULL,
-        revision INTEGER NOT NULL, attempt_index INTEGER NOT NULL, state TEXT NOT NULL,
-        actor_id TEXT NOT NULL, source_actor_id TEXT NOT NULL, review_id TEXT, claim_id TEXT,
-        receipt TEXT NOT NULL, artifacts TEXT NOT NULL, recovery TEXT NOT NULL, inputs TEXT NOT NULL,
-        released_at TEXT
-      );
-      CREATE UNIQUE INDEX experiment_lease_active ON experiment_leases(project_id,experiment_id,revision) WHERE released_at IS NULL;
-      CREATE TRIGGER experiment_lease_immutable BEFORE UPDATE OF id,project_id,experiment_id,revision,attempt_index,state,actor_id,source_actor_id,review_id,claim_id,receipt,artifacts,recovery,inputs ON experiment_leases
-        BEGIN SELECT RAISE(ABORT,'Experiment lease provenance is immutable'); END;
-      CREATE TRIGGER experiment_lease_no_delete BEFORE DELETE ON experiment_leases
-        BEGIN SELECT RAISE(ABORT,'Experiment lease provenance is retained'); END;
-
-INSERT INTO experiment_leases SELECT * FROM experiment_leases_backup;
-DROP TABLE experiment_leases_backup;`,
+          sql: postgresMigrations[2],
         },
       ]);
       try {

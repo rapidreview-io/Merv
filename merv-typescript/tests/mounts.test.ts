@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { Context } from 'cordis';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ToolRegistry } from '@merv/api';
@@ -18,6 +18,7 @@ import {
   representativeResult,
 } from './fixtures/remote-server.js';
 import { CredentialServer } from './fixtures/credential-server.js';
+import { openState } from './fixtures/state.js';
 
 async function until(predicate: () => boolean | Promise<boolean>, message: string): Promise<void> {
   const end = Date.now() + 4000;
@@ -27,7 +28,7 @@ async function until(predicate: () => boolean | Promise<boolean>, message: strin
   }
 }
 async function local(t: TestContext, mountIds = ['fixture']) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const admin = await scope.bootstrap({ projectName: 'Mounts', actorName: 'Operator' });
   const caller = { actorId: admin.actor.id, projectId: admin.project.id };
@@ -453,11 +454,14 @@ test(
       },
     });
     await consumer.await();
-    const firstHold = upstream.holdNextCall('media'),
-      secondHold = upstream.holdNextCall('media');
+    // Admission reads run on separate connections, so two concurrent calls can reach the
+    // upstream in either order. Each hold takes the next arrival, so the calls enter one by one.
+    const firstHold = upstream.holdNextCall('media');
     const first = services.registry.call('_first.media', services.caller, {});
+    await firstHold.entered;
+    const secondHold = upstream.holdNextCall('media');
     const second = services.registry.call('_second.media', services.caller, {});
-    await Promise.all([firstHold.entered, secondHold.entered]);
+    await secondHold.entered;
     let disposed = false;
     const disposal = fiber.dispose().then(() => {
       disposed = true;

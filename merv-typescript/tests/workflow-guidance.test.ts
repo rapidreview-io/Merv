@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { check, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
 
 test('a new program registers guidance and guards without engine cases; reads, preflight, disposal and revision fences agree', async () => {

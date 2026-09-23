@@ -4,18 +4,19 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import type { Role, StoredEvent } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-permissions-'));
-  const state = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({ projectName: 'Recovery', actorName: 'Operator' });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };

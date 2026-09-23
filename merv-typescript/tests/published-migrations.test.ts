@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { digest, type Migration, type State } from '@merv/contracts';
 import { StateStore } from '@merv/state/base';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { importLegacyFoundation } from '../src/legacy-import.js';
 import { initializeLegacyHistory } from '../src/legacy-history.js';
 
 interface Row {
   component: string;
   version: number;
-  /** digest() of this version's PostgreSQL SQL, as State writes it to component_migrations.hash. */
+  /** digest() of this version's SQL, as State writes it to component_migrations.hash. */
   hash: string;
   published: boolean;
   /**
@@ -29,10 +29,9 @@ const published = JSON.parse(
 /**
  * Every registered migration, keyed component@version, with the hash production would compare.
  *
- * State hashes the dialect's SQL, so only the PostgreSQL string can be checked against Supabase;
- * a SQLite boot writes SQLite hashes. State.migrate is the one chokepoint every component goes
- * through, so recording its arguments yields the PostgreSQL text with every template literal
- * already resolved — which a static read of the sources cannot do.
+ * State.migrate is the one chokepoint every component goes through, so recording its arguments
+ * yields each migration's SQL with every template literal already resolved — which a static read
+ * of the sources cannot do. State hashes exactly that string.
  */
 async function registered(stop: (close: () => Promise<void>) => void) {
   const seen: { component: string; migration: Migration }[] = [];
@@ -89,12 +88,14 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   const hashes = new Map<string, string>();
   for (const { component, migration } of seen) {
     const key = `${component}@${migration.version}`;
-    assert.equal(
-      typeof migration.postgres,
-      'string',
-      `migration ${key} has no PostgreSQL SQL; production refuses it with migration_dialect_missing`,
+    // The legacy importers are recorded without reaching State, so check their shape here too.
+    assert.deepEqual(
+      Object.keys(migration).sort(),
+      ['sql', 'version'],
+      `migration ${key} must be { version, sql }; State refuses anything else with invalid_migration`,
     );
-    hashes.set(key, digest(migration.postgres));
+    assert.equal(typeof migration.sql, 'string', `migration ${key} has no SQL`);
+    hashes.set(key, digest(migration.sql));
   }
   return hashes;
 }

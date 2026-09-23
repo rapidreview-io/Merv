@@ -26,15 +26,9 @@ defaults:
 
 jobs:
   verify:
-    name: verify (${{ matrix.backend }})
+    name: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        backend:
-          - sqlite
-          - postgres
     steps:
       - uses: actions/checkout@v4
 
@@ -61,12 +55,12 @@ jobs:
       - name: Check formatting
         run: npx prettier --check packages src tests
 
-      # Each test creates its own schema, so the role owns the database; the suite
-      # opens far more than the default 100 connections.
+      # The server runs on PostgreSQL only, and so does every server test. Each test creates its
+      # own schema, so the role owns the database; the suite opens far more than the default 100
+      # connections.
       - name: Install the PostgreSQL 17 client
         # pg_dump refuses a server newer than itself, and the runner ships client 16 while the
         # tests dump a PostgreSQL 17 container. Production is 17 too.
-        if: matrix.backend == 'postgres'
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
@@ -75,7 +69,6 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-17
           pg_dump --version
       - name: Start PostgreSQL
-        if: matrix.backend == 'postgres'
         run: |
           set -euo pipefail
           docker run --detach --name merv-postgres \
@@ -91,7 +84,6 @@ jobs:
               docker exec merv-postgres psql --username merv --dbname merv --command 'SHOW max_connections'
               url=postgres://merv:merv@localhost:5432/merv
               echo "MERV_TEST_POSTGRES_URL=$url" >> "$GITHUB_ENV"
-              echo "MERV_TEST_POSTGRES_DSN=$url" >> "$GITHUB_ENV"
               exit 0
             fi
             sleep 2
@@ -104,5 +96,4 @@ jobs:
         run: npm test
 
       - name: Build
-        if: matrix.backend == 'sqlite'
         run: npm run build

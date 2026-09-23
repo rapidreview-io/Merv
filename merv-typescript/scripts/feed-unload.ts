@@ -1,11 +1,13 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { useRunSchema } from './database.js';
 import { runFeedUnloadScenario } from './feed-unload-scenario.js';
 
 const directory = resolve(
   process.argv[2] ??
     join('live-runs', `feed-unload-${new Date().toISOString().replaceAll(':', '-')}`),
 );
+const schema = useRunSchema(directory);
 mkdirSync(dirname(directory), { recursive: true });
 mkdirSync(directory, { mode: 0o700 });
 try {
@@ -15,14 +17,18 @@ try {
   const path = join(directory, 'report.json');
   writeFileSync(
     path,
-    JSON.stringify({ ...report, completedAt: new Date().toISOString() }, null, 2) + '\n',
+    JSON.stringify({ ...report, schema, completedAt: new Date().toISOString() }, null, 2) + '\n',
   );
   console.log(JSON.stringify({ status: 'passed', report: path }));
 } catch (error) {
   writeFileSync(
     join(directory, 'failure.json'),
     JSON.stringify(
-      { status: 'failed', message: error instanceof Error ? error.message : String(error) },
+      {
+        status: 'failed',
+        schema,
+        message: error instanceof Error ? error.message : String(error),
+      },
       null,
       2,
     ) + '\n',

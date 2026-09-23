@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createService, type SessionAuthority } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
+import { openState } from './fixtures/state.js';
 
 for (const operation of ['require', 'authority', 'delegation'] as const) {
   for (const replace of [false, true]) {
     test(`${operation} refuses authority ${replace ? 're-registered' : 'withdrawn'} while authorization is pending`, async (t) => {
-      const state = new SqliteState(':memory:');
+      const state = await openState(':memory:');
       t.after(() => state.close());
       const scope = await createService(new ProjectScope(state));
       const boot = await scope.bootstrap({ projectName: 'Authority lifetime', actorName: 'Owner' });

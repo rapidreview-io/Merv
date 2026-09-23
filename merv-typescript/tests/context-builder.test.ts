@@ -5,14 +5,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 import type { TaskTypeDefinition } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
   name: 'test.context',
@@ -31,7 +32,7 @@ const definition: TaskTypeDefinition = {
 
 test('recipes enforce required context, reserve its budget, pin sources, isolate projects and survive version changes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-'));
-  const state = new SqliteState(join(directory, 'state.db')),
+  const state = await openState(directory),
     scope = await createService(new ProjectScope(state)),
     artifacts = await createService(
       new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
@@ -106,7 +107,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
           async (tx) =>
             await tx.run('UPDATE context_packages SET package=? WHERE id=?', '{}', context.id),
         ),
-      /immutable/,
+      { code: 'state_constraint' },
     );
     registration.dispose();
     await assert.rejects(

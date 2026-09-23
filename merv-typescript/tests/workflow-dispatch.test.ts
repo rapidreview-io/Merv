@@ -15,12 +15,13 @@ import {
   type WorkflowPolicy,
   type WorkflowWorkspacePolicy,
 } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { executionFingerprint, validateExecution } from '@merv/workflows/execution';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { countWrites, openState } from './fixtures/state.js';
 
 const definition = (name: string, version = 1): WorkflowDefinition => ({
   name,
@@ -34,7 +35,7 @@ const poison = (): never => {
   throw new Error('Discovery must not render, resolve inputs, reserve, or evaluate exit actions');
 };
 async function fixture(t: TestContext) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   t.after(async () => {
@@ -129,10 +130,9 @@ test('dispatch discovers only metadata and prioritizes read-only candidates with
   const two = await work.start({ title: 'Second work' });
   const verifier = await review.start({ title: 'Independent verification' });
   f.forbidExits();
-  const before = await f.state.read(
-    async (sql) =>
-      (await sql.get<{ changes: number }>('SELECT total_changes() AS changes'))!.changes,
-  );
+  // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
+  const writes = countWrites(f.state);
+  const before = writes();
   const head = await f.state.eventHead();
   const candidates = await f.workflows.dispatchCandidates(f.source);
   const workOrder = await f.state.read(async (sql) =>
@@ -155,13 +155,7 @@ test('dispatch discovers only metadata and prioritizes read-only candidates with
   assert.equal(candidates[1].projectId, f.source.projectId);
   assert.deepEqual(new Set(workOrder), new Set([one.id, two.id]));
   assert.equal(await f.state.eventHead(), head);
-  assert.equal(
-    await f.state.read(
-      async (sql) =>
-        (await sql.get<{ changes: number }>('SELECT total_changes() AS changes'))!.changes,
-    ),
-    before,
-  );
+  assert.equal(writes(), before);
   candidates[0].workspace = { mode: 'none' };
   assert.equal((await f.workflows.dispatchCandidates(f.source))[0].workspace.mode, 'ephemeral');
 });

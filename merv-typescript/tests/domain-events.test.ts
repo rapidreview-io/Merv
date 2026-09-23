@@ -5,9 +5,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { DurableEvents } from '@merv/domain-events';
 import { digest, type EventConsumer } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check: () => boolean | Promise<boolean>) {
@@ -20,7 +22,7 @@ async function until(check: () => boolean | Promise<boolean>) {
 
 test('durable delivery rolls back effects with its cursor, isolates failures, resumes after restart and does not duplicate commits', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'merv-events-'));
-  let state = new SqliteState(join(dir, 'state.db'));
+  let state = await openState(dir);
   let events = await createService(new DurableEvents(state));
   try {
     await state.migrate('probe', [
@@ -78,7 +80,7 @@ test('durable delivery rolls back effects with its cursor, isolates failures, re
     assert.equal((await state.read(async (sql) => await sql.all('SELECT * FROM probe'))).length, 1);
     await events.close();
     await state.close();
-    state = new SqliteState(join(dir, 'state.db'));
+    state = await openState(dir);
     events = await createService(new DurableEvents(state));
     fail = false;
     await events.subscribe(handler('flaky'));
@@ -106,7 +108,7 @@ test('durable delivery rolls back effects with its cursor, isolates failures, re
 });
 
 test('review recovery survives unloaded consumers and revoked initiators, preserves snapshots, and fences stale claims', async () => {
-  const { createApp } = await import('../src/app.js');
+  const { createApp } = await import('./fixtures/app.js');
   const directory = mkdtempSync(join(tmpdir(), 'merv-recovery-'));
   let app = await createApp({ directory, api: false });
   try {
@@ -217,7 +219,7 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
 });
 
 test('async handlers are supported, changed subscriptions require a new ID, and detach stops further admissions', async () => {
-  const state = new SqliteState(':memory:'),
+  const state = await openState(':memory:'),
     events = await createService(new DurableEvents(state));
   try {
     const detachAsync = await events.subscribe({
@@ -289,7 +291,7 @@ test('existing review databases acquire resumable claim IDs without rewriting co
   const { DiskBlobs } = await import('@merv/blobs');
   const { ArtifactStore } = await import('@merv/artifacts');
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-migration-'));
-  const state = new SqliteState(':memory:'),
+  const state = await openState(':memory:'),
     scope = await createService(new ProjectScope(state));
   try {
     const identity = await scope.bootstrap({ projectName: 'Migration', actorName: 'Producer' });
@@ -393,7 +395,7 @@ function signal() {
   return { promise, resolve };
 }
 
-async function emitProbe(state: SqliteState) {
+async function emitProbe(state: PostgresState) {
   return state.transaction((tx) =>
     state.appendEvent(tx, {
       projectId: 'p',
@@ -407,8 +409,8 @@ async function emitProbe(state: SqliteState) {
 
 test('a failed delivery cannot put another worker’s successful delivery back into retry', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-events-stale-failure-'));
-  const state = new SqliteState(join(directory, 'state.db'));
-  const other = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
+  const other = await openState(directory);
   const events = await createService(new DurableEvents(state));
   const successor = await createService(new DurableEvents(other));
   const failed = signal(),
@@ -470,8 +472,8 @@ test('a failed delivery cannot put another worker’s successful delivery back i
 
 test('drain joins async handlers and close waits for their atomic commit without admitting the next event', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-events-drain-'));
-  const state = new SqliteState(join(directory, 'state.db'));
-  const observer = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
+  const observer = await openState(directory);
   const events = await createService(new DurableEvents(state));
   const entered = signal(),
     released = signal();
@@ -479,6 +481,10 @@ test('drain joins async handlers and close waits for their atomic commit without
     await state.migrate('probe', [
       { version: 1, sql: 'CREATE TABLE probe (event INTEGER PRIMARY KEY);' },
     ]);
+    // Both events exist before the consumer does: a handler held open inside its delivery
+    // transaction holds the writer lock, so an emit after subscribing could wait on it.
+    const first = await emitProbe(state);
+    await emitProbe(state);
     await events.subscribe({
       id: 'worker',
       types: ['probe.created'],
@@ -489,8 +495,6 @@ test('drain joins async handlers and close waits for their atomic commit without
         await released.promise;
       },
     });
-    const first = await emitProbe(state);
-    await emitProbe(state);
     const draining = events.drain();
     await entered.promise;
     assert.equal(events.drain(), draining);
@@ -528,12 +532,15 @@ test('drain joins async handlers and close waits for their atomic commit without
 });
 
 test('consumer disposer withdraws future admissions and waits for an admitted async transaction', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   const entered = signal(),
     released = signal();
   let calls = 0;
   try {
+    // Emit first: the blocked handler below holds the writer lock until it is released.
+    await emitProbe(state);
+    await emitProbe(state);
     const detach = await events.subscribe({
       id: 'worker',
       types: ['probe.created'],
@@ -544,8 +551,6 @@ test('consumer disposer withdraws future admissions and waits for an admitted as
         await released.promise;
       },
     });
-    await emitProbe(state);
-    await emitProbe(state);
     const draining = events.drain();
     await entered.promise;
     let detached = false;
@@ -567,7 +572,7 @@ test('consumer disposer withdraws future admissions and waits for an admitted as
 });
 
 test('async self-detachment does not wait for its own transaction', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   let calls = 0;
   try {
@@ -591,7 +596,7 @@ test('async self-detachment does not wait for its own transaction', async () => 
 });
 
 test('close joins pending subscriptions and duplicate registration cannot race activation', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   const entered = signal(),
     released = signal();
@@ -627,7 +632,7 @@ test('close joins pending subscriptions and duplicate registration cannot race a
 });
 
 test('background drain contains transient storage rejections and retries durable work', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   const transaction = state.transaction.bind(state);
   let calls = 0;
@@ -640,13 +645,26 @@ test('background drain contains transient storage rejections and retries durable
         calls++;
       },
     });
-    await emitProbe(state);
+    // Inject the failures while no delivery is in flight, then commit the event past them. A
+    // delivery transaction requested before the injection could otherwise deliver first and
+    // leave the failures to a later drain that the explicit drain below would join.
+    await events.drain();
     let failures = 2;
     state.transaction = async (fn) => {
       if (failures-- > 0) throw new Error('temporary storage failure');
       return transaction(fn);
     };
+    await transaction((tx) =>
+      state.appendEvent(tx, {
+        projectId: 'p',
+        actorId: 'a',
+        subjectId: 's',
+        type: 'probe.created',
+        data: {},
+      }),
+    );
     await until(() => calls === 1);
+    assert.ok(failures < 0, 'both injected failures reached the background drain first');
     await events.drain();
     assert.equal((await events.status())[0]!.cursor, 1);
   } finally {
@@ -657,7 +675,7 @@ test('background drain contains transient storage rejections and retries durable
 });
 
 test('joining drain includes a commit made after an earlier consumer exhausted its backlog', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   const transaction = state.transaction.bind(state);
   const entered = signal(),
@@ -709,11 +727,14 @@ test('joining drain includes a commit made after an earlier consumer exhausted i
 
 for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
   test(`handler event edits cannot move the durable cursor to ${cursor}`, async () => {
-    const state = new SqliteState(':memory:');
+    const state = await openState(':memory:');
     const events = await createService(new DurableEvents(state));
     try {
       await state.migrate('cursor_probe', [
-        { version: 1, sql: 'CREATE TABLE cursor_probe(event INTEGER);' },
+        {
+          version: 1,
+          sql: 'CREATE TABLE cursor_probe(seq BIGINT GENERATED ALWAYS AS IDENTITY, event BIGINT);',
+        },
       ]);
       let changed = false;
       await events.subscribe({
@@ -721,7 +742,7 @@ for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
         types: ['probe.created'],
         from: 'beginning',
         async handle(event, tx) {
-          await tx.run('INSERT INTO cursor_probe VALUES (?)', event.id);
+          await tx.run('INSERT INTO cursor_probe(event) VALUES (?)', event.id);
           if (!changed) {
             changed = true;
             event.id = cursor;
@@ -734,7 +755,7 @@ for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
       assert.deepEqual(
         (
           await state.read((sql) =>
-            sql.all<{ event: number }>('SELECT event FROM cursor_probe ORDER BY rowid'),
+            sql.all<{ event: number }>('SELECT event FROM cursor_probe ORDER BY seq'),
           )
         ).map((row) => row.event),
         [first.id, second.id],
@@ -752,7 +773,7 @@ for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
 
 for (const shape of ['getter', 'proxy', 'revoked proxy'] as const) {
   test(`a handler's thrown ${shape} cannot prevent failure isolation`, async () => {
-    const state = new SqliteState(':memory:');
+    const state = await openState(':memory:');
     const events = await createService(new DurableEvents(state));
     let effects = 0,
       healthyCalls = 0;
@@ -806,7 +827,7 @@ for (const shape of ['getter', 'proxy', 'revoked proxy'] as const) {
 
 for (const operation of ['drain', 'close'] as const) {
   test(`a handler cannot ${operation} its own dispatcher and strand other consumers`, async () => {
-    const state = new SqliteState(':memory:');
+    const state = await openState(':memory:');
     const events = await createService(new DurableEvents(state));
     let outcome: unknown;
     let healthy = 0;
@@ -862,7 +883,7 @@ for (const operation of ['drain', 'close'] as const) {
 }
 
 test('a continuation inherited from a completed handler can close normally', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   const released = signal();
   let continuation: Promise<void> | undefined;

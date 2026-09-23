@@ -17,10 +17,12 @@ import {
 } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
+import { useRunSchema } from './database.js';
 
 // Two real native reviewers exercise generic returnTo transport and Reviews routing.
 // This synthetic program deliberately has no Experiment records or execution loop.
 const directory = resolve(process.argv[2] ?? `live-runs/review-returns-${Date.now()}`);
+const schema = useRunSchema(directory);
 mkdirSync(directory, { recursive: false, mode: 0o700 });
 const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
 const credentialEnv = 'MERV_NATIVE_REVIEW_RETURNS_SOURCE';
@@ -94,7 +96,10 @@ try {
       sql: `
     CREATE TABLE native_return_cases(instance_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, review_id TEXT NOT NULL UNIQUE, case_name TEXT NOT NULL, return_to TEXT NOT NULL, verdict TEXT NOT NULL);
     CREATE TABLE native_return_commands(project_id TEXT NOT NULL, actor_id TEXT NOT NULL, request_id TEXT NOT NULL, input_hash TEXT NOT NULL, result_json TEXT NOT NULL, PRIMARY KEY(project_id,actor_id,request_id));
-    CREATE TRIGGER native_return_receipts_immutable BEFORE UPDATE ON native_return_commands BEGIN SELECT RAISE(ABORT,'Fixture receipts are immutable'); END;
+    CREATE FUNCTION native_return_receipts_immutable() RETURNS TRIGGER LANGUAGE plpgsql AS $fixture$
+    BEGIN RAISE EXCEPTION 'Fixture receipts are immutable'; END;
+    $fixture$;
+    CREATE TRIGGER native_return_receipts_immutable BEFORE UPDATE ON native_return_commands FOR EACH ROW EXECUTE FUNCTION native_return_receipts_immutable();
   `,
     },
   ]);
@@ -562,6 +567,7 @@ try {
   }
   report = {
     passed: true,
+    schema,
     freshAgents: 2,
     successfulCalls: calls.length,
     failedCalls: 0,

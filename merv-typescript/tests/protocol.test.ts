@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { supportedProtocolVersions } from '../packages/api/src/protocol.js';
 
 test('the installed client refuses an incompatible upstream initialization before discovery', async (t) => {

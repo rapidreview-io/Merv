@@ -9,11 +9,12 @@ import { SignJWT } from 'jose';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { SupabaseIdentity } from '@merv/identity';
 import { ApiServer, ToolRegistry } from '@merv/api';
 import type { Caller, Project, ProjectMembership } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 const authUrl = 'https://shared-auth.example';
 const issuer = `${authUrl}/auth/v1`;
@@ -43,7 +44,7 @@ async function fixture(t: TestContext, database = ':memory:') {
   const env = `MERV_IDENTITY_API_TEST_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = new TextDecoder().decode(secret);
   const identity = new SupabaseIdentity({ supabaseUrl: authUrl, mode: 'hs256', secretEnv: env });
-  const state = new SqliteState(database);
+  const state = await openState(database);
   const scope = await createService(new ProjectScope(state));
   const access = scope.toolPolicy;
   const tools = new ToolRegistry(scope, access);
@@ -117,7 +118,7 @@ async function fixture(t: TestContext, database = ':memory:') {
 test('verified users discover two projects, administer memberships, and retain project identity across restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-shared-identity-api-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const database = join(directory, 'state.sqlite');
+  const database = directory;
   const f = await fixture(t, database);
   const account = await f.request<{
     kind: string;

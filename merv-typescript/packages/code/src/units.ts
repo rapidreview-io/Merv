@@ -132,166 +132,17 @@ export class CodeUnitStore {
     await this.state.migrate('code_units', [
       {
         version: 1,
-        postgres: postgresMigrations[1],
-        sql: `
-CREATE TABLE code_projects (
-  project_id TEXT PRIMARY KEY,
-  mode TEXT NOT NULL CHECK (mode IN ('local')),
-  repository_id TEXT NOT NULL,
-  binding_json TEXT NOT NULL,
-  main_json TEXT NOT NULL,
-  limits_json TEXT NOT NULL,
-  warnings_json TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  store_json TEXT
-);
-CREATE TABLE code_units (
-  project_id TEXT NOT NULL,
-  unit_id TEXT NOT NULL,
-  workflow TEXT NOT NULL,
-  version INTEGER NOT NULL,
-  declared_at TEXT NOT NULL,
-  base_json TEXT,
-  base_hash TEXT,
-  base_lease_id TEXT,
-  based_at TEXT,
-  acceptance_json TEXT,
-  acceptance_hash TEXT,
-  accepted_at TEXT,
-  generation INTEGER NOT NULL DEFAULT 0,
-  writer_state TEXT NOT NULL DEFAULT 'idle' CHECK (writer_state IN ('idle','reserved','active','closing','closed','recovery_required')),
-  writer_session_id TEXT,
-  writer_lease_id TEXT,
-  writer_changed_at TEXT,
-  head_oid TEXT,
-  head_operation_id TEXT,
-  mirrored_oid TEXT,
-  mirrored_at TEXT,
-  quarantine_operation_id TEXT,
-  quarantine_base_key TEXT,
-  PRIMARY KEY (project_id,unit_id),
-  CHECK ((base_json IS NULL)=(base_hash IS NULL) AND (base_json IS NULL)=(base_lease_id IS NULL) AND (base_json IS NULL)=(based_at IS NULL)),
-  CHECK ((acceptance_json IS NULL)=(acceptance_hash IS NULL) AND (acceptance_json IS NULL)=(accepted_at IS NULL))
-);
-CREATE INDEX code_units_declared ON code_units(project_id,declared_at,unit_id);
-CREATE TABLE code_edges (
-  project_id TEXT NOT NULL,
-  source_ref TEXT NOT NULL,
-  relation TEXT NOT NULL,
-  target_ref TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (project_id,source_ref,relation,target_ref)
-);
-CREATE INDEX code_edges_target ON code_edges(project_id,target_ref,relation);
-CREATE TABLE code_operations (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  principal_scope TEXT NOT NULL,
-  request_id TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  input_hash TEXT NOT NULL,
-  payload_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('prepared','completed','failed')),
-  result_json TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  completed_at TEXT,
-  unit_id TEXT,
-  generation INTEGER,
-  phase TEXT,
-  progress_json TEXT,
-  detail_json TEXT,
-  claim_id TEXT,
-  claim_until TEXT,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  next_at TEXT,
-  updated_at TEXT,
-  UNIQUE (project_id,principal_scope,request_id),
-  CHECK (
-    (status='prepared' AND result_json IS NULL AND error IS NULL AND completed_at IS NULL) OR
-    (status='completed' AND result_json IS NOT NULL AND error IS NULL AND completed_at IS NOT NULL) OR
-    (status='failed' AND result_json IS NULL AND error IS NOT NULL AND completed_at IS NOT NULL)
-  )
-);
-CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
-  WHEN NEW.project_id IS NOT OLD.project_id OR NEW.mode IS NOT OLD.mode OR NEW.repository_id IS NOT OLD.repository_id OR NEW.binding_json IS NOT OLD.binding_json
-  BEGIN SELECT RAISE(ABORT,'Code repository binding is immutable'); END;
-CREATE TRIGGER code_projects_no_delete BEFORE DELETE ON code_projects
-  BEGIN SELECT RAISE(ABORT,'Code repository bindings are retained'); END;
-CREATE TRIGGER code_units_identity BEFORE UPDATE ON code_units
-  WHEN NEW.project_id IS NOT OLD.project_id OR NEW.unit_id IS NOT OLD.unit_id OR NEW.workflow IS NOT OLD.workflow OR NEW.version IS NOT OLD.version OR NEW.declared_at IS NOT OLD.declared_at
-  BEGIN SELECT RAISE(ABORT,'Code unit identity is immutable'); END;
-CREATE TRIGGER code_units_base BEFORE UPDATE ON code_units
-  WHEN OLD.base_json IS NOT NULL AND (NEW.base_json IS NOT OLD.base_json OR NEW.base_hash IS NOT OLD.base_hash OR NEW.base_lease_id IS NOT OLD.base_lease_id OR NEW.based_at IS NOT OLD.based_at)
-  BEGIN SELECT RAISE(ABORT,'The base pin of a unit is immutable'); END;
-CREATE TRIGGER code_units_acceptance BEFORE UPDATE ON code_units
-  WHEN OLD.acceptance_json IS NOT NULL AND (NEW.acceptance_json IS NOT OLD.acceptance_json OR NEW.acceptance_hash IS NOT OLD.acceptance_hash OR NEW.accepted_at IS NOT OLD.accepted_at)
-  BEGIN SELECT RAISE(ABORT,'The acceptance of a unit is immutable'); END;
-CREATE TRIGGER code_units_no_delete BEFORE DELETE ON code_units
-  BEGIN SELECT RAISE(ABORT,'Code units are retained'); END;
-CREATE TRIGGER code_edges_no_update BEFORE UPDATE ON code_edges
-  BEGIN SELECT RAISE(ABORT,'Code lineage is immutable'); END;
-CREATE TRIGGER code_edges_no_delete BEFORE DELETE ON code_edges
-  BEGIN SELECT RAISE(ABORT,'Code lineage is retained'); END;
-CREATE TRIGGER code_operations_identity BEFORE UPDATE ON code_operations
-  WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.principal_scope IS NOT OLD.principal_scope OR NEW.request_id IS NOT OLD.request_id OR NEW.kind IS NOT OLD.kind OR NEW.input_hash IS NOT OLD.input_hash OR NEW.payload_json IS NOT OLD.payload_json OR NEW.created_at IS NOT OLD.created_at
-  BEGIN SELECT RAISE(ABORT,'Code operation identity is immutable'); END;
-CREATE TRIGGER code_operations_result BEFORE UPDATE ON code_operations
-  WHEN OLD.status <> 'prepared'
-  BEGIN SELECT RAISE(ABORT,'A finished Code operation is immutable'); END;
-CREATE TRIGGER code_operations_no_delete BEFORE DELETE ON code_operations
-  BEGIN SELECT RAISE(ABORT,'Code operations are retained'); END;
-CREATE TRIGGER code_projects_store BEFORE UPDATE ON code_projects
-  WHEN OLD.store_json IS NOT NULL AND NEW.store_json IS NOT OLD.store_json
-  BEGIN SELECT RAISE(ABORT,'The repository of a project is recorded once and is immutable'); END;
-CREATE UNIQUE INDEX code_operations_unit_open ON code_operations(project_id,unit_id,kind) WHERE status='prepared' AND unit_id IS NOT NULL;
-CREATE INDEX code_operations_due ON code_operations(status,kind,next_at);
-CREATE TRIGGER code_units_generation BEFORE UPDATE ON code_units
-  WHEN NEW.generation < OLD.generation OR NEW.generation > OLD.generation + 1
-  BEGIN SELECT RAISE(ABORT,'A writer generation only advances by one'); END;
-CREATE TRIGGER code_units_generation_open BEFORE UPDATE ON code_units
-  WHEN NEW.generation IS NOT OLD.generation AND EXISTS (
-    SELECT 1 FROM code_operations
-    WHERE project_id=OLD.project_id AND unit_id=OLD.unit_id AND kind='upload' AND status='prepared' AND phase IN ('admitting','objects_durable','refs_applied')
-  )
-  BEGIN SELECT RAISE(ABORT,'A writer generation cannot change while an admitted upload is unresolved'); END;
-CREATE TABLE code_unit_frontiers(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,inputs_json TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
-CREATE TRIGGER code_unit_frontiers_no_update BEFORE UPDATE ON code_unit_frontiers BEGIN SELECT RAISE(ABORT,'Unit frontier is immutable'); END;
-CREATE TRIGGER code_unit_frontiers_no_delete BEFORE DELETE ON code_unit_frontiers BEGIN SELECT RAISE(ABORT,'Unit frontier is retained'); END;
-CREATE TABLE code_unit_inputs(project_id TEXT NOT NULL,unit_id TEXT NOT NULL,reference TEXT NOT NULL,PRIMARY KEY(project_id,unit_id));
-CREATE TRIGGER code_unit_inputs_no_update BEFORE UPDATE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are immutable'); END;
-CREATE TRIGGER code_unit_inputs_no_delete BEFORE DELETE ON code_unit_inputs BEGIN SELECT RAISE(ABORT,'Unit inputs are retained'); END;
-CREATE INDEX code_units_accepted_commit ON code_units(project_id,json_extract(acceptance_json,'$.code.commit')) WHERE acceptance_json IS NOT NULL;
-CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
-WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key
-BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
-`,
+        sql: postgresMigrations[1],
       },
       {
         version: 2,
-        postgres: postgresMigrations[2],
-        // A quarantine is still never pointed at another base behind the record's back, but a
-        // released one has to be able to go: without this no operator route could ever undo a
-        // quarantine given by mistake, and every unit it reached would stay unusable forever.
-        sql: `
-DROP TRIGGER code_units_base_quarantine;
-CREATE TRIGGER code_units_base_quarantine BEFORE UPDATE ON code_units
-WHEN OLD.quarantine_base_key IS NOT NULL AND NEW.quarantine_base_key IS NOT OLD.quarantine_base_key AND NEW.quarantine_base_key IS NOT NULL
-BEGIN SELECT RAISE(ABORT,'Base quarantine is retained'); END;
-`,
+        sql: postgresMigrations[2],
       },
       {
         // Publishing to main is declared once on the unit and, once sealed, its publication is
         // immutable. Version 2 shipped on 2026-09-22 before these columns existed.
         version: 3,
-        postgres: postgresMigrations[3],
-        sql: `
-ALTER TABLE code_units ADD COLUMN publishes_at TEXT;
-ALTER TABLE code_units ADD COLUMN publication_id TEXT;
-CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units
-WHEN (OLD.publishes_at IS NOT NULL AND NEW.publishes_at IS NOT OLD.publishes_at) OR (OLD.publication_id IS NOT NULL AND NEW.publication_id IS NOT OLD.publication_id)
-BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publication is immutable'); END;
-`,
+        sql: postgresMigrations[3],
       },
       {
         // The binding is still not something a writer may edit; it is now something exactly one
@@ -305,23 +156,7 @@ BEGIN SELECT RAISE(ABORT,'Publishing to main is declared once and its publicatio
         // entry appended that names the repository being left. A subquery in a WHEN clause is
         // already how code_units_generation_open reads code_operations, in version 1.
         version: 4,
-        postgres: postgresMigrations[4],
-        sql: `
-DROP TRIGGER code_projects_binding;
-CREATE TRIGGER code_projects_binding BEFORE UPDATE ON code_projects
-  WHEN NEW.project_id IS NOT OLD.project_id OR NEW.mode IS NOT OLD.mode
-    OR ((NEW.repository_id IS NOT OLD.repository_id OR NEW.binding_json IS NOT OLD.binding_json) AND NOT EXISTS (
-      SELECT 1 FROM code_operations
-      WHERE id=json_extract(NEW.binding_json,'$.operationId') AND project_id=OLD.project_id
-        AND kind='rebind' AND status='prepared'
-        AND json_extract(payload_json,'$.repositoryId')=NEW.repository_id
-    ))
-    OR (NEW.repository_id IS NOT OLD.repository_id AND (
-      json_extract(NEW.binding_json,'$.previous[#-1].repositoryId') IS NOT OLD.repository_id
-      OR json_remove(json_extract(NEW.binding_json,'$.previous'),'$[#-1]') IS NOT COALESCE(json_extract(OLD.binding_json,'$.previous'),json_array())
-    ))
-  BEGIN SELECT RAISE(ABORT,'Code repository binding is immutable outside its own rebind operation'); END;
-`,
+        sql: postgresMigrations[4],
       },
     ]);
     await migratePendingMerges(this.state);

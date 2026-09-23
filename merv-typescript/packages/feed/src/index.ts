@@ -52,28 +52,7 @@ export class FeedService implements Feed {
       await state.migrate('feed', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE feed_posts (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, author_id TEXT NOT NULL,
-        body TEXT NOT NULL, artifact_ids TEXT NOT NULL, created_at TEXT NOT NULL
-      );
-      CREATE INDEX feed_posts_project_sequence ON feed_posts(project_id, sequence);
-      CREATE TABLE feed_requests (
-        project_id TEXT NOT NULL, author_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        input_hash TEXT NOT NULL, response_json TEXT NOT NULL,
-        PRIMARY KEY(project_id, author_id, request_id)
-      );
-      CREATE TRIGGER feed_posts_no_update BEFORE UPDATE ON feed_posts
-        BEGIN SELECT RAISE(ABORT, 'Feed posts are immutable'); END;
-      CREATE TRIGGER feed_posts_no_delete BEFORE DELETE ON feed_posts
-        BEGIN SELECT RAISE(ABORT, 'Feed posts are immutable'); END;
-      CREATE TRIGGER feed_requests_no_update BEFORE UPDATE ON feed_requests
-        BEGIN SELECT RAISE(ABORT, 'Feed request records are immutable'); END;
-      CREATE TRIGGER feed_requests_no_delete BEFORE DELETE ON feed_requests
-        BEGIN SELECT RAISE(ABORT, 'Feed request records are immutable'); END;
-    `,
+          sql: postgresMigrations[1],
         },
       ]);
     };

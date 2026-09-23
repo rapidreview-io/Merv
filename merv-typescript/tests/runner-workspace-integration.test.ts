@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { MachineRunner } from '@merv/runner';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 test(
   'real Git worker handoff captures WIP after remote closure and replays a lost result receipt',

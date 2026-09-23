@@ -27,21 +27,7 @@ export const projectValue = (row: ProjectRow): Project => ({
 
 export const projectContextMigration: Migration = {
   version: 6,
-  postgres: postgresMigrations[6],
-  sql: `
-    ALTER TABLE projects ADD COLUMN summary TEXT NOT NULL DEFAULT '';
-    ALTER TABLE projects ADD COLUMN context_revision INTEGER NOT NULL DEFAULT 0
-      CHECK(context_revision >= 0 AND context_revision <= 9007199254740991);
-    CREATE TABLE project_context_commands (
-      project_id TEXT NOT NULL REFERENCES projects(id), actor_id TEXT NOT NULL REFERENCES actors(id),
-      request_id TEXT NOT NULL, input_hash TEXT NOT NULL, result_json TEXT NOT NULL,
-      PRIMARY KEY(project_id,actor_id,request_id)
-    );
-    CREATE TRIGGER project_context_commands_no_update BEFORE UPDATE ON project_context_commands
-      BEGIN SELECT RAISE(ABORT,'Project context receipts are immutable'); END;
-    CREATE TRIGGER project_context_commands_no_delete BEFORE DELETE ON project_context_commands
-      BEGIN SELECT RAISE(ABORT,'Project context receipts are retained'); END;
-  `,
+  sql: postgresMigrations[6],
 };
 
 const summaryText = z

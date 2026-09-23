@@ -457,11 +457,7 @@ export async function createService<T extends { initialize(): Promise<void> }>(
   return service;
 }
 export interface Sql {
-  readonly dialect: 'sqlite' | 'postgres';
-  run(
-    sql: string,
-    ...params: SqlValue[]
-  ): Promise<{ changes: number; lastInsertRowid: number | bigint }>;
+  run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }>;
   get<T = Record<string, unknown>>(sql: string, ...params: SqlValue[]): Promise<T | undefined>;
   all<T = Record<string, unknown>>(sql: string, ...params: SqlValue[]): Promise<T[]>;
 }
@@ -469,12 +465,9 @@ export interface Transaction extends Sql {
   readonly transactionId: symbol;
 }
 export interface Migration {
-  /** Rebuild tables transactionally, checking all foreign keys before commit. */
-  rebuild?: boolean;
   version: number;
+  /** PostgreSQL text; its digest() is pinned in component_migrations.hash. */
   sql: string;
-  /** Native PostgreSQL migration; SQLite history remains unchanged. */
-  postgres?: string;
 }
 export interface StoredEvent {
   id: number;
@@ -486,7 +479,6 @@ export interface StoredEvent {
   createdAt: string;
 }
 export interface State {
-  readonly dialect: 'sqlite' | 'postgres';
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T>;
   /** A read-only snapshot scope: nested component transactions never take the writer lock. */

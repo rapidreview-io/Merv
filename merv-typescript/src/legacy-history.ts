@@ -1001,15 +1001,6 @@ export async function initializeLegacyHistory(state: State): Promise<void> {
       version: 1,
       sql:
         tables +
-        ['legacy_history_imports', 'legacy_history_records']
-          .map(
-            (table) => `
-CREATE TRIGGER ${table}_immutable_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT,'Legacy history is immutable'); END;
-CREATE TRIGGER ${table}_immutable_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT,'Legacy history is retained'); END;`,
-          )
-          .join(''),
-      postgres:
-        tables +
         `
 CREATE FUNCTION legacy_history_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
 BEGIN RAISE EXCEPTION USING MESSAGE='Legacy history is immutable', ERRCODE='23514'; END; $merv$;

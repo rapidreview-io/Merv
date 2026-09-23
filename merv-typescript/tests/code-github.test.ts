@@ -3,12 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
 import { request as httpRequest } from 'node:http';
 import { PostgresState } from '@merv/state';
 import { createService, type State } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { CodeGitHubService } from '../packages/code/src/github.js';
 import {
@@ -18,6 +16,7 @@ import {
 } from '../packages/code/src/github-client.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { openState, schemaFor } from './fixtures/state.js';
 
 const config: GitHubConfig = {
   origin: 'http://127.0.0.1:4317',
@@ -104,7 +103,7 @@ function fakeGitHub() {
   return { fetcher, calls, control };
 }
 async function foundation(t: TestContext, storage?: State) {
-  const state = storage ?? new SqliteState(':memory:');
+  const state = storage ?? (await openState(':memory:'));
   const scope = await createService(new ProjectScope(state));
   const principal = await scope.acceptVerifiedIdentity({
     issuer,
@@ -130,7 +129,7 @@ async function foundation(t: TestContext, storage?: State) {
   if (!storage)
     t.after(async () => {
       await service.close();
-      await (state as SqliteState).close();
+      await (state as PostgresState).close();
     });
   async function ready(who = caller) {
     const begin = await service.begin(who, {
@@ -382,12 +381,12 @@ test('refresh success persists new tokens; uncertain refresh and upstream revoca
 test('restart preserves pending authorization and connection, while disconnecting one project leaves another intact', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'merv-code-github-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const firstState = new SqliteState(join(dir, 'state.sqlite'));
+  const firstState = await openState(dir);
   const f = await foundation(t, firstState);
   const ready = await f.ready();
   await f.service.close();
   await firstState.close();
-  const state = new SqliteState(join(dir, 'state.sqlite'));
+  const state = await openState(dir);
   const scope = await createService(new ProjectScope(state));
   const service = await createService(new CodeGitHubService(state, scope, config, f.gh.fetcher));
   t.after(async () => {
@@ -476,49 +475,38 @@ test('disconnect during authorization discards and revokes newly issued tokens; 
   assert.equal(closed, true);
 });
 
-test(
-  'PostgreSQL persists GitHub connections and fences refresh across separate connections',
-  { skip: !process.env.MERV_TEST_POSTGRES_URL },
-  async (t) => {
-    const connectionString = process.env.MERV_TEST_POSTGRES_URL!;
-    const schema = `github_${randomUUID().replaceAll('-', '')}`;
-    const state = await PostgresState.open({ connectionString, schema });
-    const f = await foundation(t, state);
-    const secondState = await PostgresState.open({ connectionString, schema });
-    const secondScope = await createService(new ProjectScope(secondState));
-    const second = await createService(
-      new CodeGitHubService(secondState, secondScope, config, f.gh.fetcher),
-    );
-    t.after(async () => {
-      await f.service.close();
-      await second.close();
-      await state.close();
-      await secondState.close();
-      const pool = new Pool({ connectionString });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    });
-    f.gh.control.expiresIn = 1;
-    await f.connect();
-    assert.equal((await second.status(f.caller)).status, 'connected');
-    f.gh.control.pauseRefresh = deferred();
-    const first = f.service.repositories(f.caller);
-    await f.gh.control.refreshEntered.promise;
-    await assert.rejects(second.repositories(f.caller), { code: 'github_busy' });
-    f.gh.control.pauseRefresh.resolve();
-    assert.equal((await first).length, 1);
-    const linked = await second.link(f.caller, {
-      expectedRevision: 1,
-      installationId: 17,
-      repositoryId: 101,
-    });
-    assert.equal(linked.repository?.id, 101);
-    assert.equal((await f.service.status(f.caller)).repository?.id, 101);
-  },
-);
+test('PostgreSQL persists GitHub connections and fences refresh across separate connections', async (t) => {
+  const schema = schemaFor();
+  const state = await openState(undefined, { schema });
+  const f = await foundation(t, state);
+  const secondState = await openState(undefined, { schema });
+  const secondScope = await createService(new ProjectScope(secondState));
+  const second = await createService(
+    new CodeGitHubService(secondState, secondScope, config, f.gh.fetcher),
+  );
+  t.after(async () => {
+    await f.service.close();
+    await second.close();
+    await state.close();
+    await secondState.close();
+  });
+  f.gh.control.expiresIn = 1;
+  await f.connect();
+  assert.equal((await second.status(f.caller)).status, 'connected');
+  f.gh.control.pauseRefresh = deferred();
+  const first = f.service.repositories(f.caller);
+  await f.gh.control.refreshEntered.promise;
+  await assert.rejects(second.repositories(f.caller), { code: 'github_busy' });
+  f.gh.control.pauseRefresh.resolve();
+  assert.equal((await first).length, 1);
+  const linked = await second.link(f.caller, {
+    expectedRevision: 1,
+    installationId: 17,
+    repositoryId: 101,
+  });
+  assert.equal(linked.repository?.id, 101);
+  assert.equal((await f.service.status(f.caller)).repository?.id, 101);
+});
 
 test('actual HTTP routes authenticate Merv, keep callback cookies out of JSON, and reject callback/identity substitution', async (t) => {
   const f = await foundation(t);

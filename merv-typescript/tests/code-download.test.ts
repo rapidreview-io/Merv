@@ -75,7 +75,7 @@ function machine(t: TestContext) {
 }
 
 test('a writer is given exactly the canonical head and a reviewer exactly the referenced commit, on any machine', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   const started = await manifest(f, 'ses_1');
   assert.deepEqual(
@@ -151,7 +151,7 @@ test('a writer is given exactly the canonical head and a reviewer exactly the re
 });
 
 test('a quarantined capture is never part of what a successor is given, and an export expires', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   await f.event('session.workspace_attached', 'ses_1');
   await f.event('session.closed', 'ses_1');
@@ -188,7 +188,7 @@ test('a quarantined capture is never part of what a successor is given, and an e
 });
 
 test('an export a machine is still reading keeps its place, however long the transfer takes', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   const found = await download(f, 'ses_1', []);
   assert.ok(!('upToDate' in found));
@@ -227,7 +227,7 @@ test('an export a machine is still reading keeps its place, however long the tra
 });
 
 test('a part is served although the exports volume will not stamp the file it came from', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   const found = await download(f, 'ses_1', []);
   assert.ok(!('upToDate' in found));
@@ -262,7 +262,7 @@ test('a part is served although the exports volume will not stamp the file it ca
 });
 
 test('a part that comes back after its export was cut anew leaves the new bundle described as it is', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   await f.event('session.workspace_attached', 'ses_1');
   const first = f.source.commit({ 'a.txt': 'a'.repeat(40_000) }, 'first');
@@ -310,7 +310,7 @@ test('a part that comes back after its export was cut anew leaves the new bundle
 });
 
 test('a download is weighed against the project quota before it takes a byte of the disk', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   // The bundle is written under the project's directory and counts against its quota, so with
   // only room for what is already kept the download is refused outright, rather than written
@@ -327,7 +327,7 @@ test('a download is weighed against the project quota before it takes a byte of 
 });
 
 test('a bundle Git could not write is a refusal, never an answer that nothing is missing', async (t) => {
-  const f = await writerFixture(t, 'sqlite');
+  const f = await writerFixture(t);
   await f.lease('ses_1');
   // Only Git refusing an empty bundle means the machine already holds the history. A bundle
   // that could not be written at all (here the directory cannot be written to, as a full

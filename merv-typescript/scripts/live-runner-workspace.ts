@@ -7,9 +7,11 @@ import { z } from 'zod';
 import { check, type WorkflowAssignmentRule } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
+import { useRunSchema } from './database.js';
 
 // Real-model acceptance for generic work→capture→read-only verification, using only synthetic data.
 const directory = resolve(process.argv[2] ?? `live-runs/git-${Date.now()}`);
+const schema = useRunSchema(directory);
 mkdirSync(directory, { recursive: false, mode: 0o700 });
 const repository = join(directory, 'source');
 mkdirSync(repository);
@@ -286,6 +288,7 @@ try {
   assert.ok(phases.every((phase) => phase.shellCalls > 0));
   const report = {
     passed: true,
+    schema,
     initialOid,
     capturedOid: captured,
     sourceUnchanged: true,

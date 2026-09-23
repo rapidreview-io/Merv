@@ -130,7 +130,8 @@ async function eventually(check: () => Promise<boolean>, label: string) {
 /**
  * Run actual Nisa Python operations + its MCP server through Merv generic Mounts.
  * Only the corpus/index, identity verifier and model runner are synthetic fixtures.
- * No real Nisa/sandbox service, saved credential, or model invocation is used.
+ * No real Nisa/sandbox service, saved credential, or model invocation is used. Merv's state
+ * goes to the PostgreSQL that MERV_DB_URL and MERV_DB_SCHEMA select (scripts/database.ts).
  */
 export async function runNisaMcpScenario(directory: string, checkout: string) {
   checkout = resolve(checkout);

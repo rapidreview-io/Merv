@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Caller, Data, WorkflowExecution } from '@merv/contracts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) => ({
   instanceId: execution.instanceId,

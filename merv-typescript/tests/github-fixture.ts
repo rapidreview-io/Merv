@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import type { TestContext } from 'node:test';
 import { createService, type Caller, type State } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { CodeGitHubService } from '../packages/code/src/github.js';
 import type { GitHubConfig } from '../packages/code/src/github-client.js';
+import type { PostgresState } from '@merv/state';
 
 export const baseOid = 'a'.repeat(40),
   headOid = 'b'.repeat(40),
@@ -31,7 +31,8 @@ export const config: GitHubConfig = {
   privateKey: Buffer.from(key).toString('base64'),
 };
 export async function githubFixture(t: TestContext, storage?: State, existingCaller?: Caller) {
-  const state = storage ?? new SqliteState(':memory:');
+  // Imported only when needed: scripts/ui-demo-git.ts passes its own state and runs outside tests.
+  const state = storage ?? (await (await import('./fixtures/state.js')).openState(':memory:'));
   const scope = await createService(new ProjectScope(state));
   const identity = {
     issuer: 'https://fixture.test/auth/v1',
@@ -232,7 +233,7 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
   const github = await createService(new CodeGitHubService(state, scope, config, fetcher));
   t.after(async () => {
     await github.close();
-    if (!storage) await (state as SqliteState).close();
+    if (!storage) await (state as PostgresState).close();
   });
   const begin = await github.begin(caller, { expectedRevision: 0 });
   const cookie = begin.cookie.split(';')[0].slice('merv_github_flow='.length);

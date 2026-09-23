@@ -662,9 +662,20 @@ export class ApiServer {
       this.options.snapshot &&
       !path.startsWith('/sessions/self') &&
       !path.startsWith('/code/')
-    )
-      return await this.options.snapshot(() => this.route(req, res, url, path));
+    ) {
+      // A verified user's first request records that user, which is a write, so the caller
+      // is authenticated before the read-only scope opens. Mounted handlers authenticate
+      // themselves.
+      const principal = this.mounted(path) ? undefined : await this.authenticate(req);
+      return await this.options.snapshot(() => this.route(req, res, url, path, principal));
+    }
     return await this.route(req, res, url, path);
+  }
+
+  private mounted(path: string): MountHandler | undefined {
+    for (const [prefix, handler] of this.mounts)
+      if (path === prefix || path.startsWith(`${prefix}/`)) return handler;
+    return undefined;
   }
 
   private async route(
@@ -672,12 +683,13 @@ export class ApiServer {
     res: ServerResponse,
     url: URL,
     path: string,
+    authenticated?: ApiPrincipal,
   ): Promise<void> {
-    for (const [prefix, handler] of this.mounts)
-      if (path === prefix || path.startsWith(`${prefix}/`)) {
-        await handler(req, res);
-        return;
-      }
+    const mounted = this.mounted(path);
+    if (mounted) {
+      await mounted(req, res);
+      return;
+    }
     // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
     if (path === '/sessions/self' || path.startsWith('/sessions/self/')) {
       if ([...url.searchParams].length)
@@ -721,7 +733,7 @@ export class ApiServer {
       }
       throw new ApiError('not_found', 'Unknown agent control route', 404);
     }
-    const principal = await this.authenticate(req);
+    const principal = authenticated ?? (await this.authenticate(req));
     if (path === '/code/publications' || path.startsWith('/code/publications/')) {
       const caller = await this.selectedCaller(
         principal,

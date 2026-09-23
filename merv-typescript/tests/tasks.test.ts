@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -15,10 +15,12 @@ import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, ReviewHistory, Workflows } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 
 async function fixture(limits?: { reviewRounds: number }) {
   const path = mkdtempSync(join(tmpdir(), 'merv-task-test-'));
-  const state = new SqliteState(join(path, 'state.db')),
+  const state = await openState(path),
     scope = await createService(new ProjectScope(state));
   const credentials = await scope.bootstrap({ projectName: 'Test', actorName: 'Operator' });
   const operator: Caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
@@ -908,7 +910,7 @@ test('brief and delivery gates enforce scope, authorship, check coverage, and fa
 
 test('generic reviews work without a workflow engine or task program and reject operator self-review', async () => {
   const path = mkdtempSync(join(tmpdir(), 'merv-review-only-'));
-  const state = new SqliteState(join(path, 'state.db')),
+  const state = await openState(path),
     scope = await createService(new ProjectScope(state));
   const credential = await scope.bootstrap({
     projectName: 'Standalone review',
@@ -976,9 +978,9 @@ test('generic reviews work without a workflow engine or task program and reject 
   }
 });
 
-test('task and pinned review resume after SQLite reopen', async () => {
+test('task and pinned review resume after the state reopens', async () => {
   const f = await fixture();
-  let reopened: SqliteState | undefined, restarted: TaskService | undefined;
+  let reopened: PostgresState | undefined, restarted: TaskService | undefined;
   try {
     const task = await f.create(),
       delivery = await f.delivery();
@@ -999,7 +1001,7 @@ test('task and pinned review resume after SQLite reopen', async () => {
     const beforeRestart = await f.tasks.get(f.producer, task.id);
     f.tasks.dispose();
     await f.state.close();
-    reopened = new SqliteState(join(f.path, 'state.db'));
+    reopened = await openState(f.path);
     const scope = await createService(new ProjectScope(reopened)),
       artifacts = await createService(new ArtifactStore(reopened, scope, f.blobs));
     const workflows = await createService(new WorkflowsService(reopened, scope)),
@@ -1127,7 +1129,7 @@ test('task briefs, review snapshots, and completed verdicts are immutable in sto
           async (tx) =>
             await tx.run('UPDATE tasks SET goal = ? WHERE id = ?', 'Changed goal', task.id),
         ),
-      /brief is immutable/,
+      { code: 'state_constraint' },
     );
     await assert.rejects(
       async () =>
@@ -1139,7 +1141,7 @@ test('task briefs, review snapshots, and completed verdicts are immutable in sto
               pending.reviewId!,
             ),
         ),
-      /snapshot is immutable/,
+      { code: 'state_constraint' },
     );
     await f.reviews.start(f.reviewer, pending.reviewId!);
     await f.tasks.submitReview(f.reviewer, {
@@ -1157,7 +1159,7 @@ test('task briefs, review snapshots, and completed verdicts are immutable in sto
           async (tx) =>
             await tx.run("UPDATE reviews SET verdict = 'fail' WHERE id = ?", pending.reviewId!),
         ),
-      /verdict is immutable/,
+      { code: 'state_constraint' },
     );
   } finally {
     await f.cleanup();

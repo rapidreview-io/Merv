@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import type { WorkflowExecutionPolicy } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type {} from '@merv/code-research/types';
 
 test(

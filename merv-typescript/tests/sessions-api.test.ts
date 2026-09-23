@@ -11,7 +11,7 @@ import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { RunnerClient } from '../packages/runner/src/client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import {
@@ -14,6 +14,7 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 function graph(name = 'preparation', success = 'done', version = 1): WorkflowDefinition {
   return {
@@ -61,7 +62,7 @@ function policy(success = 'done', authorize = true): WorkflowPolicy {
   };
 }
 async function setup(path = ':memory:') {
-  const state = new SqliteState(path),
+  const state = await openState(path),
     scope = await createService(new ProjectScope(state));
   const identity = await scope.bootstrap({ projectName: 'Dependencies', actorName: 'Operator' });
   const caller = { actorId: identity.actor.id, projectId: identity.project.id };
@@ -395,7 +396,7 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
 test('success declarations and edge contracts survive upgrade, provider removal, and database restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-work-deps-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  let { state, scope, workflows, caller } = await setup(join(directory, 'state.sqlite'));
+  let { state, scope, workflows, caller } = await setup(directory);
   let closed = false;
   t.after(async () => {
     if (!closed) await state.close();
@@ -444,7 +445,7 @@ test('success declarations and edge contracts survive upgrade, provider removal,
   );
   await state.close();
   closed = true;
-  state = new SqliteState(join(directory, 'state.sqlite'));
+  state = await openState(directory);
   closed = false;
   scope = await createService(new ProjectScope(state));
   workflows = await createService(new WorkflowsService(state, scope));

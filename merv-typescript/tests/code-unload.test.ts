@@ -14,7 +14,7 @@ import type {
   CodeCommitReceipt,
   SessionWorkspace,
 } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 
 const oid = (digit: string) => digit.repeat(40);

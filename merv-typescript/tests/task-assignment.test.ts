@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Caller, TaskCreate } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
+import { countWrites } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 
@@ -50,11 +52,11 @@ async function fixture(api = false) {
   };
   const begin = async (caller: Caller, id: string, revision = 0) =>
     await app.ctx.workflows.begin(caller, { instanceId: id, expectedRevision: revision });
+  // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
+  const written = countWrites(app.ctx.state as PostgresState);
   const writes = async () => {
     await app.ctx.domainEvents.drain();
-    return await app.ctx.state.read(
-      async (sql) => (await sql.get<{ n: number }>('SELECT total_changes() AS n'))!.n,
-    );
+    return written();
   };
   return {
     app,

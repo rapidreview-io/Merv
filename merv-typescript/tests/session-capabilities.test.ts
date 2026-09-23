@@ -8,11 +8,12 @@ import {
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import { openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const request = () => randomBytes(10).toString('hex');
@@ -32,7 +33,7 @@ const auto = (runnerId: string) => ({
 const oid = 'a'.repeat(40);
 
 async function fixture(t: TestContext) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));

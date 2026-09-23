@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { collectRemoteCatalog } from '../packages/mounts/src/remote-catalog.js';
 import {
   RemoteFixture,

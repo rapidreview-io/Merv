@@ -198,7 +198,9 @@
       "id": "state",
       "name": "@merv/state",
       "config": {
-        "path": "${directory}/state.sqlite"
+        "connectionStringEnv": "MERV_DB_URL",
+        "schemaEnv": "MERV_DB_SCHEMA",
+        "schema": "merv"
       }
     }
   ]

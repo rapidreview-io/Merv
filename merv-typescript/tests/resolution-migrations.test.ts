@@ -7,73 +7,58 @@ import {
   pendingMerge,
   pinMerge,
 } from '../packages/code/src/pending-merge.js';
-import { backends, optional } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 
-for (const backend of backends)
-  test(
-    `${backend}: pending-merge migration preserve populated owner databases and enforce write-once facts`,
-    optional(backend),
-    async (t) => {
-      const f = await resolutionFixture(t, backend);
-      const task = await f.tasks.create(f.admin, {
-        title: 'Existing task',
-        goal: 'Keep the existing work readable.',
-        checks: ['Existing evidence is retained.'],
-        requestId: 'existing',
-      });
-      const beforeTask = await f.tasks.get(f.admin, task.id);
-      const migrate = f.state.migrate.bind(f.state);
-      f.state.migrate = async (component, migrations) => {
-        if (component !== 'code_pending_merges') await migrate(component, migrations);
-      };
-      const code = await createService(
-        new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
-      );
-      f.beforeClose.push(() => code.close());
-      f.state.migrate = migrate;
-      await migratePendingMerges(f.state);
-      assert.deepEqual(await f.tasks.get(f.admin, task.id), beforeTask);
-      await f.state.transaction(async (tx) => {
-        await pinMerge(
-          tx,
-          f.admin.projectId,
-          task.id,
-          'd'.repeat(64),
-          'a'.repeat(40),
-          'b'.repeat(40),
-        );
-        await tx.run(
-          'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE unit_id=?',
-          'c'.repeat(40),
-          'c'.repeat(40),
-          task.id,
-        );
-      });
-      for (const set of [
-        "plan_key='changed'",
-        "left_oid='changed'",
-        "right_oid='changed'",
-        'first_merge=NULL',
-      ])
-        await assert.rejects(
-          f.state.transaction((tx) =>
-            tx.run(`UPDATE code_pending_merges SET ${set} WHERE unit_id=?`, task.id),
-          ),
-        );
-      await assert.rejects(
-        f.state.transaction((tx) =>
-          tx.run('DELETE FROM code_pending_merges WHERE unit_id=?', task.id),
-        ),
-      );
-      const checkpoint = await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, task.id));
-      await migratePendingMerges(f.state);
-      assert.deepEqual(
-        await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, task.id)),
-        checkpoint,
-      );
-    },
+test('pending-merge migration preserve populated owner databases and enforce write-once facts', async (t) => {
+  const f = await resolutionFixture(t);
+  const task = await f.tasks.create(f.admin, {
+    title: 'Existing task',
+    goal: 'Keep the existing work readable.',
+    checks: ['Existing evidence is retained.'],
+    requestId: 'existing',
+  });
+  const beforeTask = await f.tasks.get(f.admin, task.id);
+  const migrate = f.state.migrate.bind(f.state);
+  f.state.migrate = async (component, migrations) => {
+    if (component !== 'code_pending_merges') await migrate(component, migrations);
+  };
+  const code = await createService(
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
   );
+  f.beforeClose.push(() => code.close());
+  f.state.migrate = migrate;
+  await migratePendingMerges(f.state);
+  assert.deepEqual(await f.tasks.get(f.admin, task.id), beforeTask);
+  await f.state.transaction(async (tx) => {
+    await pinMerge(tx, f.admin.projectId, task.id, 'd'.repeat(64), 'a'.repeat(40), 'b'.repeat(40));
+    await tx.run(
+      'UPDATE code_pending_merges SET head_oid=?,first_merge=? WHERE unit_id=?',
+      'c'.repeat(40),
+      'c'.repeat(40),
+      task.id,
+    );
+  });
+  for (const set of [
+    "plan_key='changed'",
+    "left_oid='changed'",
+    "right_oid='changed'",
+    'first_merge=NULL',
+  ])
+    await assert.rejects(
+      f.state.transaction((tx) =>
+        tx.run(`UPDATE code_pending_merges SET ${set} WHERE unit_id=?`, task.id),
+      ),
+    );
+  await assert.rejects(
+    f.state.transaction((tx) => tx.run('DELETE FROM code_pending_merges WHERE unit_id=?', task.id)),
+  );
+  const checkpoint = await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, task.id));
+  await migratePendingMerges(f.state);
+  assert.deepEqual(
+    await f.state.read((sql) => pendingMerge(sql, f.admin.projectId, task.id)),
+    checkpoint,
+  );
+});
 
 test('the driver retains merge metadata and start receipts in its existing workspace and transfer rows', async (t) => {
   const { mkdtempSync, rmSync } = await import('node:fs');

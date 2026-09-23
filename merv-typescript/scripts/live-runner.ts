@@ -4,9 +4,11 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
+import { useRunSchema } from './database.js';
 
 // Explicit real-model acceptance, separate from the deterministic test suite.
 const directory = resolve(process.argv[2] ?? `live-runs/runner-${Date.now()}`);
+const schema = useRunSchema(directory);
 mkdirSync(directory, { recursive: false, mode: 0o700 });
 const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
 const boot = await app.ctx.scope.bootstrap({
@@ -126,6 +128,7 @@ try {
   );
   const report = {
     passed: true,
+    schema,
     task: finalTask,
     review,
     starts,

@@ -14,7 +14,7 @@ import {
   type MirrorTransport,
   type MirrorUpdate,
 } from '@merv/code/store/mirror';
-import { backends, git, optional, type Backend } from './fixtures/code-store.js';
+import { git } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';
 import { githubFixture } from './github-fixture.js';
 
@@ -66,10 +66,10 @@ function elsewhere(t: TestContext) {
 }
 
 /** A hosted project with one unit whose work is published to that repository. */
-async function mirrored(t: TestContext, backend: Backend, config = {}) {
+async function mirrored(t: TestContext, config = {}) {
   const remote = elsewhere(t);
   let transport: MirrorTransport | undefined;
-  const f = await writerFixture(t, backend, 900, {
+  const f = await writerFixture(t, 900, {
     mirror: {
       target: (projectId) => transport!.target(projectId),
       lsRemote: (projectId, ref) => transport!.lsRemote(projectId, ref),
@@ -96,369 +96,331 @@ async function mirrored(t: TestContext, backend: Backend, config = {}) {
   };
 }
 
-for (const backend of backends) {
-  test(
-    `${backend}: a unit's branch is published, coalesces while it waits and only ever fast-forwards`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      await f.lease('session-1');
-      const one = f.source.commit({ 'a.txt': 'one\n' });
-      await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
-      const two = f.source.commit({ 'a.txt': 'two\n' });
-      await f.upload('checkpoint', 'session-1', 1, one, f.source.bundle(two, [one]));
-      assert.equal((await f.open()).length, 1, 'one ref waiting, however often it moved');
+test("a unit's branch is published, coalesces while it waits and only ever fast-forwards", async (t) => {
+  const f = await mirrored(t);
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+  const two = f.source.commit({ 'a.txt': 'two\n' });
+  await f.upload('checkpoint', 'session-1', 1, one, f.source.bundle(two, [one]));
+  assert.equal((await f.open()).length, 1, 'one ref waiting, however often it moved');
 
-      await f.step();
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${two}`]);
-      assert.deepEqual(
-        f.remote.pushes.map((push) => [push.oid, push.expectedRemote]),
-        [[two, null]],
-        'one push, of the newest commit, onto a branch that was not there',
-      );
-      assert.deepEqual([(await f.unit()).mirroredHead, (await f.unit()).canonicalHead], [two, two]);
-      assert.equal((await f.status()).state, 'idle');
-
-      const three = f.source.commit({ 'a.txt': 'three\n' });
-      await f.upload('checkpoint', 'session-1', 1, two, f.source.bundle(three, [two]));
-      await f.step();
-      assert.deepEqual(f.remote.pushes[1], {
-        ref: `refs/heads/merv/work/${f.unitId}`,
-        oid: three,
-        expectedRemote: two,
-      });
-      assert.equal((await f.open()).length, 0);
-      // Nothing is asked for twice: a pass with everything published pushes nothing.
-      await f.step();
-      assert.equal(f.remote.pushes.length, 2);
-    },
+  await f.step();
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${two}`]);
+  assert.deepEqual(
+    f.remote.pushes.map((push) => [push.oid, push.expectedRemote]),
+    [[two, null]],
+    'one push, of the newest commit, onto a branch that was not there',
   );
+  assert.deepEqual([(await f.unit()).mirroredHead, (await f.unit()).canonicalHead], [two, two]);
+  assert.equal((await f.status()).state, 'idle');
 
-  test(
-    `${backend}: a branch that moved by another hand is never forced, and an operator re-queues it once they have seen it`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      // Somebody else's commit on the published branch, which Code did not write and
-      // which nothing of this unit's history is built on.
-      f.source.git('checkout', '--quiet', '-b', 'theirs');
-      const foreign = f.source.commit({ 'theirs.txt': 'not ours\n' });
-      f.source.git('checkout', '--quiet', 'main');
-      f.remote.put(`refs/heads/merv/work/${f.unitId}`, foreign, f.source.repository);
+  const three = f.source.commit({ 'a.txt': 'three\n' });
+  await f.upload('checkpoint', 'session-1', 1, two, f.source.bundle(three, [two]));
+  await f.step();
+  assert.deepEqual(f.remote.pushes[1], {
+    ref: `refs/heads/merv/work/${f.unitId}`,
+    oid: three,
+    expectedRemote: two,
+  });
+  assert.equal((await f.open()).length, 0);
+  // Nothing is asked for twice: a pass with everything published pushes nothing.
+  await f.step();
+  assert.equal(f.remote.pushes.length, 2);
+});
 
-      await f.lease('session-1');
-      const ours = f.source.commit({ 'a.txt': 'one\n' }, 'ours');
-      await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(ours, [f.root]));
-      await f.step();
-      assert.deepEqual(f.remote.pushes, [], 'nothing is pushed over it');
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${foreign}`]);
-      const blocked = await f.status();
-      assert.equal(blocked.state, 'blocked');
-      assert.deepEqual(
-        blocked.blockedRefs.map((ref) => [ref.code, ref.ref]),
-        [['code_mirror_diverged', `refs/merv/work/${f.unitId}`]],
-      );
-      assert.deepEqual(
-        (await f.warnings()).map((warning) => [warning.code, warning.ref]),
-        [['code_mirror_diverged', `refs/heads/merv/work/${f.unitId}`]],
-      );
-      assert.equal((await f.unit()).canonicalHead, ours, 'the work itself is untouched');
+test('a branch that moved by another hand is never forced, and an operator re-queues it once they have seen it', async (t) => {
+  const f = await mirrored(t);
+  // Somebody else's commit on the published branch, which Code did not write and
+  // which nothing of this unit's history is built on.
+  f.source.git('checkout', '--quiet', '-b', 'theirs');
+  const foreign = f.source.commit({ 'theirs.txt': 'not ours\n' });
+  f.source.git('checkout', '--quiet', 'main');
+  f.remote.put(`refs/heads/merv/work/${f.unitId}`, foreign, f.source.repository);
 
-      const human = await f.human();
-      const operation = blocked.blockedRefs[0].operationId;
-      await assert.rejects(
-        async () => await f.code.retryMirror(human, { operationId: operation, requestId: 'r1' }),
-        { code: 'code_mirror_diverged' },
-      );
-      await assert.rejects(
-        async () =>
-          await f.code.retryMirror(human, {
-            operationId: operation,
-            acknowledgeRemote: ours,
-            requestId: 'r2',
-          }),
-        { code: 'code_mirror_diverged' },
-      );
-      // Acknowledging exactly the foreign commit re-queues it; it still never forces.
+  await f.lease('session-1');
+  const ours = f.source.commit({ 'a.txt': 'one\n' }, 'ours');
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(ours, [f.root]));
+  await f.step();
+  assert.deepEqual(f.remote.pushes, [], 'nothing is pushed over it');
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${foreign}`]);
+  const blocked = await f.status();
+  assert.equal(blocked.state, 'blocked');
+  assert.deepEqual(
+    blocked.blockedRefs.map((ref) => [ref.code, ref.ref]),
+    [['code_mirror_diverged', `refs/merv/work/${f.unitId}`]],
+  );
+  assert.deepEqual(
+    (await f.warnings()).map((warning) => [warning.code, warning.ref]),
+    [['code_mirror_diverged', `refs/heads/merv/work/${f.unitId}`]],
+  );
+  assert.equal((await f.unit()).canonicalHead, ours, 'the work itself is untouched');
+
+  const human = await f.human();
+  const operation = blocked.blockedRefs[0].operationId;
+  await assert.rejects(
+    async () => await f.code.retryMirror(human, { operationId: operation, requestId: 'r1' }),
+    { code: 'code_mirror_diverged' },
+  );
+  await assert.rejects(
+    async () =>
       await f.code.retryMirror(human, {
         operationId: operation,
-        acknowledgeRemote: foreign,
-        requestId: 'r3',
-      });
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${foreign}`]);
-      assert.equal((await f.status()).state, 'blocked');
-
-      // Once the foreign commit is somewhere else and the branch is gone, it publishes.
-      git(f.source.repository, [
-        'push',
-        '--quiet',
-        '--delete',
-        f.remote.remote,
-        `refs/heads/merv/work/${f.unitId}`,
-      ]);
-      await f.code.retryMirror(human, {
-        operationId: operation,
-        acknowledgeRemote: foreign,
-        requestId: 'r4',
-      });
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${ours}`]);
-      assert.deepEqual(await f.warnings(), []);
-      assert.equal((await f.status()).state, 'idle');
-    },
+        acknowledgeRemote: ours,
+        requestId: 'r2',
+      }),
+    { code: 'code_mirror_diverged' },
   );
+  // Acknowledging exactly the foreign commit re-queues it; it still never forces.
+  await f.code.retryMirror(human, {
+    operationId: operation,
+    acknowledgeRemote: foreign,
+    requestId: 'r3',
+  });
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${foreign}`]);
+  assert.equal((await f.status()).state, 'blocked');
 
-  test(
-    `${backend}: a repository that is away is retried and then waits for an operator, and holds nothing up`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      await f.lease('session-1');
-      const one = f.source.commit({ 'a.txt': 'one\n' });
-      await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
-      f.remote.control.mode = 'fail';
+  // Once the foreign commit is somewhere else and the branch is gone, it publishes.
+  git(f.source.repository, [
+    'push',
+    '--quiet',
+    '--delete',
+    f.remote.remote,
+    `refs/heads/merv/work/${f.unitId}`,
+  ]);
+  await f.code.retryMirror(human, {
+    operationId: operation,
+    acknowledgeRemote: foreign,
+    requestId: 'r4',
+  });
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${ours}`]);
+  assert.deepEqual(await f.warnings(), []);
+  assert.equal((await f.status()).state, 'idle');
+});
 
-      await f.step();
-      assert.deepEqual(
-        (await f.open()).map((row) => row.phase),
-        ['retry_wait'],
-      );
-      assert.equal((await f.status()).state, 'retrying');
-      await f.step();
-      await f.step();
-      const stopped = await f.status();
-      assert.equal(stopped.state, 'blocked');
-      assert.equal(stopped.blockedRefs[0].code, 'code_mirror_failed');
-      assert.equal(f.remote.pushes.length, 3, 'three attempts, then it waits');
-      assert.deepEqual(
-        (
-          await f.state.read(
-            async (sql) =>
-              await sql.all<{ type: string }>(
-                "SELECT type FROM events WHERE type='code.mirror_blocked'",
-              ),
-          )
-        ).length,
-        1,
-      );
+test('a repository that is away is retried and then waits for an operator, and holds nothing up', async (t) => {
+  const f = await mirrored(t);
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+  f.remote.control.mode = 'fail';
 
-      // The session goes on: the branch is durable in Code, which is all a handoff needs.
-      const two = f.source.commit({ 'a.txt': 'two\n' });
-      const final = await f.upload('final', 'session-1', 1, one, f.source.bundle(two, [one]));
-      assert.equal(final.status, 'completed');
-      assert.equal((await f.unit()).writerState, 'closed');
-
-      f.remote.control.mode = 'ok';
-      await f.code.retryMirror(await f.human(), {
-        operationId: stopped.blockedRefs[0].operationId,
-        requestId: 'retry',
-      });
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${two}`]);
-      assert.deepEqual(await f.warnings(), []);
-      assert.equal((await f.unit()).mirroredHead, two, 'it catches up with where the unit is now');
-    },
+  await f.step();
+  assert.deepEqual(
+    (await f.open()).map((row) => row.phase),
+    ['retry_wait'],
   );
-
-  test(
-    `${backend}: a push whose answer was lost is read again instead of made twice`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      await f.lease('session-1');
-      const one = f.source.commit({ 'a.txt': 'one\n' });
-      await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
-      f.remote.control.mode = 'lost';
-
-      await f.step();
-      assert.equal(f.remote.pushes.length, 1);
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${one}`]);
-      assert.equal((await f.open()).length, 0);
-      assert.equal((await f.unit()).mirroredHead, one);
-    },
-  );
-
-  test(
-    `${backend}: a quarantined unit and an unlinked project publish nothing, and neither is an error`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      await f.lease('session-1');
-      const one = f.source.commit({ 'a.txt': 'one\n' });
-      await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
-
-      f.remote.control.blocked = 'github_repository_required';
-      await f.step();
-      assert.deepEqual(f.remote.pushes, []);
-      const off = await f.status();
-      assert.deepEqual(
-        [off.state, off.repository, off.blockedBy],
-        ['off', null, 'github_repository_required'],
-      );
-      assert.deepEqual(await f.warnings(), [], 'nothing linked is quiet, not a warning');
-
-      f.remote.control.blocked = null;
-      await f.state.transaction(
-        async (tx) =>
-          await tx.run(
-            "UPDATE code_units SET quarantine_operation_id='cop_fixture' WHERE unit_id=?",
-            f.unitId,
+  assert.equal((await f.status()).state, 'retrying');
+  await f.step();
+  await f.step();
+  const stopped = await f.status();
+  assert.equal(stopped.state, 'blocked');
+  assert.equal(stopped.blockedRefs[0].code, 'code_mirror_failed');
+  assert.equal(f.remote.pushes.length, 3, 'three attempts, then it waits');
+  assert.deepEqual(
+    (
+      await f.state.read(
+        async (sql) =>
+          await sql.all<{ type: string }>(
+            "SELECT type FROM events WHERE type='code.mirror_blocked'",
           ),
-      );
-      await f.step();
-      assert.deepEqual(f.remote.pushes, [], 'a refused capture holds its unit back');
-      assert.deepEqual(
-        (await f.open()).map((row) => row.phase),
-        ['retry_wait'],
-      );
-
-      await f.state.transaction(
-        async (tx) =>
-          await tx.run(
-            'UPDATE code_units SET quarantine_operation_id=NULL WHERE unit_id=?',
-            f.unitId,
-          ),
-      );
-      await f.step();
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${one}`]);
-    },
+      )
+    ).length,
+    1,
   );
 
-  test(
-    `${backend}: an accepted commit is created on the repository, never moved, and blocks if another one is there`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      await f.lease('session-1');
-      const one = f.source.commit({ 'a.txt': 'one\n' });
-      await f.upload('final', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
-      await f.step();
+  // The session goes on: the branch is durable in Code, which is all a handoff needs.
+  const two = f.source.commit({ 'a.txt': 'two\n' });
+  const final = await f.upload('final', 'session-1', 1, one, f.source.bundle(two, [one]));
+  assert.equal(final.status, 'completed');
+  assert.equal((await f.unit()).writerState, 'closed');
 
-      // An acceptance journals the ref its commit is kept under; the journal makes it.
-      const accepted = async (tip: string, requestId: string) => {
-        await f.state.transaction(async (tx: Transaction) => {
-          const payload = {
-            format: 1,
-            source: 'accept-ref',
-            actorId: f.admin.actorId,
-            unitId: f.unitId,
-            tip,
-          };
-          const at = now();
-          await tx.run(
-            'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            newId('cop'),
-            f.admin.projectId,
-            'system:code',
-            requestId,
-            'accept-ref',
-            digest(payload),
-            canonical(payload),
-            'prepared',
-            at,
-            f.unitId,
-            'objects_durable',
-            canonical({
-              received: 0,
-              expectedOld: null,
-              target: tip,
-              receiptRef: `refs/merv/accepted/${f.unitId}`,
-            }),
-            at,
-          );
-        });
-        await f.code.maintainStore();
-        await f.step();
+  f.remote.control.mode = 'ok';
+  await f.code.retryMirror(await f.human(), {
+    operationId: stopped.blockedRefs[0].operationId,
+    requestId: 'retry',
+  });
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${two}`]);
+  assert.deepEqual(await f.warnings(), []);
+  assert.equal((await f.unit()).mirroredHead, two, 'it catches up with where the unit is now');
+});
+
+test('a push whose answer was lost is read again instead of made twice', async (t) => {
+  const f = await mirrored(t);
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+  f.remote.control.mode = 'lost';
+
+  await f.step();
+  assert.equal(f.remote.pushes.length, 1);
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${one}`]);
+  assert.equal((await f.open()).length, 0);
+  assert.equal((await f.unit()).mirroredHead, one);
+});
+
+test('a quarantined unit and an unlinked project publish nothing, and neither is an error', async (t) => {
+  const f = await mirrored(t);
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+
+  f.remote.control.blocked = 'github_repository_required';
+  await f.step();
+  assert.deepEqual(f.remote.pushes, []);
+  const off = await f.status();
+  assert.deepEqual(
+    [off.state, off.repository, off.blockedBy],
+    ['off', null, 'github_repository_required'],
+  );
+  assert.deepEqual(await f.warnings(), [], 'nothing linked is quiet, not a warning');
+
+  f.remote.control.blocked = null;
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        "UPDATE code_units SET quarantine_operation_id='cop_fixture' WHERE unit_id=?",
+        f.unitId,
+      ),
+  );
+  await f.step();
+  assert.deepEqual(f.remote.pushes, [], 'a refused capture holds its unit back');
+  assert.deepEqual(
+    (await f.open()).map((row) => row.phase),
+    ['retry_wait'],
+  );
+
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run('UPDATE code_units SET quarantine_operation_id=NULL WHERE unit_id=?', f.unitId),
+  );
+  await f.step();
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${one}`]);
+});
+
+test('an accepted commit is created on the repository, never moved, and blocks if another one is there', async (t) => {
+  const f = await mirrored(t);
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('final', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+  await f.step();
+
+  // An acceptance journals the ref its commit is kept under; the journal makes it.
+  const accepted = async (tip: string, requestId: string) => {
+    await f.state.transaction(async (tx: Transaction) => {
+      const payload = {
+        format: 1,
+        source: 'accept-ref',
+        actorId: f.admin.actorId,
+        unitId: f.unitId,
+        tip,
       };
-      await accepted(one, `accept-ref:${f.unitId}`);
-      assert.ok(
-        f.refs().includes(`refs/merv/accepted/${f.unitId} ${one}`),
-        JSON.stringify(f.refs()),
+      const at = now();
+      await tx.run(
+        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        newId('cop'),
+        f.admin.projectId,
+        'system:code',
+        requestId,
+        'accept-ref',
+        digest(payload),
+        canonical(payload),
+        'prepared',
+        at,
+        f.unitId,
+        'objects_durable',
+        canonical({
+          received: 0,
+          expectedOld: null,
+          target: tip,
+          receiptRef: `refs/merv/accepted/${f.unitId}`,
+        }),
+        at,
       );
-      assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
-      const pushed = f.remote.pushes.length;
-      await f.step();
-      assert.equal(f.remote.pushes.length, pushed, 'an accepted ref is published exactly once');
+    });
+    await f.code.maintainStore();
+    await f.step();
+  };
+  await accepted(one, `accept-ref:${f.unitId}`);
+  assert.ok(f.refs().includes(`refs/merv/accepted/${f.unitId} ${one}`), JSON.stringify(f.refs()));
+  assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
+  const pushed = f.remote.pushes.length;
+  await f.step();
+  assert.equal(f.remote.pushes.length, pushed, 'an accepted ref is published exactly once');
 
-      // An accepted ref is created, never moved: asked for another commit, it blocks.
-      const other = f.source.commit({ 'a.txt': 'other\n' });
-      await f.state.transaction(
-        async (tx) =>
-          await enqueueMirror(tx, f.admin.projectId, 'mirror-accepted', f.unitId, other),
-      );
-      await f.step();
-      assert.equal(f.remote.pushes.length, pushed, 'nothing is pushed over an accepted ref');
-      assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
-      assert.deepEqual(
-        (await f.status()).blockedRefs.map((ref) => [ref.code, ref.ref]),
-        [['code_mirror_diverged', `refs/merv/accepted/${f.unitId}`]],
-      );
-    },
+  // An accepted ref is created, never moved: asked for another commit, it blocks.
+  const other = f.source.commit({ 'a.txt': 'other\n' });
+  await f.state.transaction(
+    async (tx) => await enqueueMirror(tx, f.admin.projectId, 'mirror-accepted', f.unitId, other),
   );
-  test(
-    `${backend}: with the repository away for the whole run, every generation still works, hands over and is accepted`,
-    optional(backend),
-    async (t) => {
-      const f = await mirrored(t, backend);
-      f.remote.control.mode = 'fail';
-      await f.lease('session-1');
-      const one = f.source.commit({ 'a.txt': 'one\n' });
-      assert.equal(
-        (await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root])))
-          .status,
-        'completed',
-      );
-      await f.step();
-      const two = f.source.commit({ 'a.txt': 'two\n' });
-      assert.equal(
-        (await f.upload('final', 'session-1', 1, one, f.source.bundle(two, [one]))).status,
-        'completed',
-      );
-      f.end('session-1');
-      await f.event('session.closed', 'session-1');
-      assert.equal((await f.unit()).writerState, 'closed');
-
-      // The next machine takes the unit up from exactly where Code holds it.
-      assert.equal((await f.lease('session-2')).generation, 2);
-      const three = f.source.commit({ 'a.txt': 'three\n' });
-      assert.equal(
-        (await f.upload('final', 'session-2', 2, two, f.source.bundle(three, [two]))).status,
-        'completed',
-      );
-      await f.step();
-      await f.step();
-      await f.step();
-
-      const status = await f.status();
-      assert.equal(status.state, 'blocked');
-      const unit = await f.unit();
-      assert.deepEqual(
-        [unit.canonicalHead, unit.mirroredHead, unit.writerState],
-        [three, null, 'closed'],
-      );
-      assert.ok(status.oldestPendingAt);
-      assert.deepEqual(
-        (
-          await f.state.read(
-            async (sql) =>
-              await sql.all<{ error: string | null }>(
-                "SELECT error FROM code_operations WHERE kind='upload' AND status<>'completed'",
-              ),
-          )
-        ).length,
-        0,
-        'nothing a machine handed over was left unfinished by a repository being away',
-      );
-
-      // And it catches up by itself the moment the repository answers again.
-      f.remote.control.mode = 'ok';
-      await f.code.retryMirror(await f.human(), {
-        operationId: status.blockedRefs[0].operationId,
-        requestId: 'back',
-      });
-      assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${three}`]);
-      assert.equal((await f.unit()).mirroredHead, three);
-    },
+  await f.step();
+  assert.equal(f.remote.pushes.length, pushed, 'nothing is pushed over an accepted ref');
+  assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
+  assert.deepEqual(
+    (await f.status()).blockedRefs.map((ref) => [ref.code, ref.ref]),
+    [['code_mirror_diverged', `refs/merv/accepted/${f.unitId}`]],
   );
-}
+});
+test('with the repository away for the whole run, every generation still works, hands over and is accepted', async (t) => {
+  const f = await mirrored(t);
+  f.remote.control.mode = 'fail';
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  assert.equal(
+    (await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]))).status,
+    'completed',
+  );
+  await f.step();
+  const two = f.source.commit({ 'a.txt': 'two\n' });
+  assert.equal(
+    (await f.upload('final', 'session-1', 1, one, f.source.bundle(two, [one]))).status,
+    'completed',
+  );
+  f.end('session-1');
+  await f.event('session.closed', 'session-1');
+  assert.equal((await f.unit()).writerState, 'closed');
+
+  // The next machine takes the unit up from exactly where Code holds it.
+  assert.equal((await f.lease('session-2')).generation, 2);
+  const three = f.source.commit({ 'a.txt': 'three\n' });
+  assert.equal(
+    (await f.upload('final', 'session-2', 2, two, f.source.bundle(three, [two]))).status,
+    'completed',
+  );
+  await f.step();
+  await f.step();
+  await f.step();
+
+  const status = await f.status();
+  assert.equal(status.state, 'blocked');
+  const unit = await f.unit();
+  assert.deepEqual(
+    [unit.canonicalHead, unit.mirroredHead, unit.writerState],
+    [three, null, 'closed'],
+  );
+  assert.ok(status.oldestPendingAt);
+  assert.deepEqual(
+    (
+      await f.state.read(
+        async (sql) =>
+          await sql.all<{ error: string | null }>(
+            "SELECT error FROM code_operations WHERE kind='upload' AND status<>'completed'",
+          ),
+      )
+    ).length,
+    0,
+    'nothing a machine handed over was left unfinished by a repository being away',
+  );
+
+  // And it catches up by itself the moment the repository answers again.
+  f.remote.control.mode = 'ok';
+  await f.code.retryMirror(await f.human(), {
+    operationId: status.blockedRefs[0].operationId,
+    requestId: 'back',
+  });
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${three}`]);
+  assert.equal((await f.unit()).mirroredHead, three);
+});
 
 test('what publishes a project’s work is the owner’s link and the write automation they turned on', async (t) => {
   const f = await githubFixture(t);

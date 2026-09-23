@@ -16,7 +16,7 @@ import type {
   TaskReview,
   WorkflowExecution,
 } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -37,6 +37,7 @@ import type {
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
 
 const plan =
   '# Summary\nCompare two methods.\n# Objective & hypothesis\nA improves held-out accuracy.\n# Evaluation\nUse the same held-out examples, baseline, metric and denominator.\n';
@@ -45,7 +46,7 @@ const report =
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiment-program-'));
-  const state = new SqliteState(join(directory, 'state.sqlite'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const blobs = new DiskBlobs(join(directory, 'blobs'));
   const artifacts = await createService(new ArtifactStore(state, scope, blobs));
@@ -1031,7 +1032,7 @@ test('Git experiments retain the central-base protocol and wait for their exact 
           input as unknown as { title: string; content: string; mediaType: string },
         ),
     );
-    f.run(
+    await f.run(
       worker,
       'experiment.attach',
       {
@@ -1231,6 +1232,9 @@ test('historical observations stay project-scoped and pure after source revocati
   assert.equal(getters, 0);
   const operator = await f.issue('operator');
   const before = await f.code.capture(f.reviewer, ref);
+  // Stop durable delivery before the revocation: the sessions lifecycle consumer would otherwise
+  // close this session in reaction to it, concurrently with the reads measured below.
+  await f.events.close();
   await f.scope.revokeCredential(operator, f.source.credentialId!);
   await assert.rejects(async () => await f.code.capture(f.source, ref), { code: 'forbidden' });
   for (const method of ['get', 'list', 'describe'] as const)

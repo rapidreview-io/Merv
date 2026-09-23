@@ -2,14 +2,16 @@ import { createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import type { Caller, IssuedActorCredential } from '@merv/contracts';
+import { postgresMigrations as scopeMigrations } from '../packages/scope/src/index.postgres.js';
+import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const start = Date.parse('2026-09-16T10:00:00.000Z');
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -20,7 +22,7 @@ const asCaller = (issued: IssuedActorCredential): Caller => ({
 });
 
 async function fixture(path = ':memory:') {
-  const state = new SqliteState(path);
+  const state = await openState(path);
   let time = start;
   const scope = await createService(new ProjectScope(state, () => time));
   const admin = await scope.bootstrap({ projectName: 'Actor credentials', actorName: 'Operator' });
@@ -37,21 +39,14 @@ async function fixture(path = ':memory:') {
 
 test('v1 migration separates digests without changing actor identities, project authority or old bearer tokens', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-actor-credentials-v1-'));
-  const path = join(directory, 'state.sqlite');
-  const state = new SqliteState(path);
+  const path = directory;
+  const state = await openState(path);
   t.after(async () => {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
   // Frozen schema actually shipped by Scope v1, including its migration fingerprint.
-  await state.migrate('scope', [
-    {
-      version: 1,
-      sql: `CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT NOT NULL);
-      CREATE TABLE actors(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('operator','producer','reviewer','reader')),token_hash TEXT NOT NULL UNIQUE,active INTEGER NOT NULL DEFAULT 1);
-      CREATE INDEX actors_project ON actors(project_id);`,
-    },
-  ]);
+  await state.migrate('scope', [{ version: 1, sql: scopeMigrations[1]! }]);
   const old = [
     {
       id: 'actor_operator',
@@ -137,10 +132,13 @@ test('v1 migration separates digests without changing actor identities, project 
       code: 'forbidden',
     },
   );
-  assert.deepEqual(await state.read(async (sql) => await sql.all('PRAGMA foreign_key_check')), []);
   const columns = await state.read(
-    async (sql) => await sql.all<{ name: string }>('PRAGMA table_info(actors)'),
+    async (sql) =>
+      await sql.all<{ name: string }>(
+        "SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='actors'",
+      ),
   );
+  assert.ok(columns.length > 0);
   assert.equal(
     columns.some((column) => column.name === 'token_hash'),
     false,
@@ -165,7 +163,7 @@ test('v1 migration separates digests without changing actor identities, project 
 
 test('issuance returns secret once while storage, metadata and events retain only its digest', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-actor-credential-secrets-'));
-  const path = join(directory, 'state.sqlite');
+  const path = directory;
   const f = await fixture(path);
   t.after(async () => {
     await f.state.close();
@@ -195,8 +193,17 @@ test('issuance returns secret once while storage, metadata and events retain onl
   const events = JSON.stringify(await f.state.events(f.operator.projectId));
   assert.equal(events.includes(issued.token), false);
   assert.equal(events.includes(hash(issued.token)), false);
-  assert.equal(readFileSync(path).includes(Buffer.from(issued.token)), false);
-  assert.equal(readFileSync(`${path}-wal`).includes(Buffer.from(issued.token)), false);
+  // Every stored row of every table in this database, not just the credential table.
+  const everything = await f.state.read(async (sql) => {
+    const tables = await sql.all<{ name: string }>(
+      "SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE' ORDER BY table_name",
+    );
+    let text = '';
+    for (const { name } of tables) text += JSON.stringify(await sql.all(`SELECT * FROM "${name}"`));
+    return text;
+  });
+  assert.ok(everything.includes(hash(issued.token)));
+  assert.equal(everything.includes(issued.token), false);
   metadata[0].actorId = 'changed';
   issued.credential.expiresAt = 'changed';
   assert.notEqual((await f.scope.actorCredentials(asCaller(issued)))[0].actorId, 'changed');
@@ -537,7 +544,7 @@ test('credential revocation preserves actor authority and provenance; actor revo
         async (tx) =>
           await tx.run('DELETE FROM actor_credentials WHERE id=?', active.credential.id),
       ),
-    /retained/,
+    { code: 'state_constraint' },
   );
   for (const column of [
     'actor_id',
@@ -557,7 +564,7 @@ test('credential revocation preserves actor authority and provenance; actor revo
               active.credential.id,
             ),
         ),
-      /first revocation/,
+      { code: 'state_constraint' },
     );
   await assert.rejects(
     async () =>
@@ -568,7 +575,7 @@ test('credential revocation preserves actor authority and provenance; actor revo
             issued.credential.id,
           ),
       ),
-    /first revocation/,
+    { code: 'state_constraint' },
   );
 });
 
@@ -857,7 +864,7 @@ test(
   { timeout: 15_000 },
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'merv-actor-credential-race-'));
-    const path = join(directory, 'state.sqlite');
+    const path = directory;
     const f = await fixture(path);
     const operator2 = await f.scope.issueActor(f.operator, {
       name: 'Other operator',
@@ -871,10 +878,16 @@ test(
       (async () => {
         const { register } = await import(workerData.loader);
         register();
-        const [{ SqliteState }, { ProjectScope }] = await Promise.all([
+        const [{ PostgresState }, { ProjectScope }] = await Promise.all([
           import(workerData.stateModule), import(workerData.scopeModule),
         ]);
-        const state = new SqliteState(workerData.path);
+        const state = await PostgresState.open({
+          connectionString: workerData.url,
+          schema: workerData.schema,
+          maxConnections: 2,
+          readConnections: 1,
+          lockTimeoutMs: 30000,
+        });
         const scope = new ProjectScope(state, () => workerData.time);
         await scope.initialize();
         const control = new Int32Array(workerData.barrier);
@@ -917,7 +930,8 @@ test(
         eval: true,
         execArgv: [],
         workerData: {
-          path,
+          url: postgresUrl,
+          schema: schemaFor(path),
           caller,
           first,
           barrier,
@@ -977,7 +991,7 @@ test(
     assert.equal(
       Atomics.load(control, 0),
       1,
-      'First rotation still holds SQLite write transaction',
+      'First rotation still holds the database write transaction',
     );
     assert.equal(
       Atomics.load(control, 2),

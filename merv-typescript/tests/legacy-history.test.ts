@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { Pool } from 'pg';
 import { digest, type Caller, type Data, type State } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import {
   importLegacyHistory,
   initializeLegacyHistory,
@@ -19,38 +17,21 @@ import {
   type LegacyHistoryType,
 } from '../src/legacy-history.js';
 import { emptyLegacyHistorySnapshot, legacyHistoryRow } from './fixtures/legacy-history.js';
+import { stateConfig } from './fixtures/state.js';
 
-async function fixture(t: TestContext, postgres = false) {
+async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-legacy-history-'));
-  const schema = `history_${randomUUID().replaceAll('-', '')}`;
-  const env = `MERV_HISTORY_${randomUUID().replaceAll('-', '').toUpperCase()}`;
-  if (postgres) process.env[env] = process.env.MERV_TEST_POSTGRES_URL;
   const app = await createApp({
     directory,
     config: {
       plugins: [
-        {
-          id: 'state',
-          name: '@merv/state',
-          config: postgres
-            ? { backend: 'postgres', connectionStringEnv: env, schema }
-            : { path: join(directory, 'state.sqlite') },
-        },
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
       ],
     },
   });
   t.after(async () => {
     await app.stop();
-    if (postgres) {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
-    delete process.env[env];
     await rm(directory, { recursive: true, force: true });
   });
   const first = await app.ctx.scope.bootstrap({
@@ -247,106 +228,99 @@ async function fixture(t: TestContext, postgres = false) {
   };
 }
 
-for (const postgres of [false, true])
-  test(
-    `immutable research history preserves IDs, attempts, evidence and publication on ${postgres ? 'PostgreSQL' : 'SQLite'}`,
-    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
-    async (t) => {
-      const { app, snapshot, caller, other, reader } = await fixture(t, postgres);
-      const receipt = await importLegacyHistory(app.ctx.state, snapshot);
-      assert.equal(receipt.counts.workflow_history, 2);
-      assert.equal(receipt.retention.objectBytes, 'not-verified-by-history-import');
-      assert.equal(receipt.retention.nativeWorkflowContinuation, 'not-imported');
-      assert.deepEqual(
-        (
-          await reader.detail(caller, {
-            sourceId: snapshot.sourceId,
-            type: 'artifacts',
-            id: 'artifact-original',
-          })
-        ).fileRetention,
-        { status: 'unverified' },
-      );
-      const reordered = structuredClone(snapshot);
-      reordered.projectIds.reverse();
-      for (const rows of Object.values(reordered.tables)) rows.reverse();
-      assert.deepEqual(await importLegacyHistory(app.ctx.state, reordered), receipt);
-      const details = await reader.detail(caller, {
+test('immutable research history preserves IDs, attempts, evidence and publication', async (t) => {
+  const { app, snapshot, caller, other, reader } = await fixture(t);
+  const receipt = await importLegacyHistory(app.ctx.state, snapshot);
+  assert.equal(receipt.counts.workflow_history, 2);
+  assert.equal(receipt.retention.objectBytes, 'not-verified-by-history-import');
+  assert.equal(receipt.retention.nativeWorkflowContinuation, 'not-imported');
+  assert.deepEqual(
+    (
+      await reader.detail(caller, {
         sourceId: snapshot.sourceId,
-        type: 'workflow_history',
-        id: 'history-1',
-      });
-      assert.deepEqual(details.data.after_json, { state: 'running', data: { attempt_index: 1 } });
-      assert.equal(details.hash, digest(details.data));
-      assert.equal(
-        (
-          await reader.detail(caller, {
-            sourceId: snapshot.sourceId,
-            type: 'reviews',
-            id: 'review-original',
-          })
-        ).data.session_id,
-        'reviewer-original',
-      );
-      assert.equal(
-        (
-          await reader.detail(caller, {
-            sourceId: snapshot.sourceId,
-            type: 'reflections',
-            id: 'reflection-original',
-          })
-        ).data.published_graph_version_id,
-        'graph-original',
-      );
-      const summaries = await reader.summary(caller, { sourceId: snapshot.sourceId });
-      assert.equal(summaries.counts.experiments, 1);
-      assert.equal('projectCounts' in summaries, false);
-      assert.equal(
-        (await reader.summary(other, { sourceId: snapshot.sourceId })).counts.workflow_history,
-        0,
-      );
-      const page = await reader.list(caller, {
-        sourceId: snapshot.sourceId,
-        type: 'workflow_history',
-        limit: 1,
-      });
-      assert.equal(page.records.length, 1);
-      assert.equal('data' in page.records[0], false);
-      const next = await reader.list(caller, {
-        sourceId: snapshot.sourceId,
-        type: 'workflow_history',
-        limit: 1,
-        after: page.next,
-      });
-      assert.notEqual(page.records[0].id, next.records[0].id);
-      assert.equal(next.next, undefined);
-      await assert.rejects(
-        reader.detail(other, {
-          sourceId: snapshot.sourceId,
-          type: 'workflow_history',
-          id: 'history-1',
-        }),
-        { code: 'legacy_history_not_found' },
-      );
-      for (const table of ['legacy_history_imports', 'legacy_history_records'])
-        for (const verb of ['UPDATE', 'DELETE'])
-          await assert.rejects(
-            app.ctx.state.transaction((tx) =>
-              tx.run(
-                verb === 'UPDATE'
-                  ? `UPDATE ${table} SET source_id=source_id`
-                  : `DELETE FROM ${table}`,
-              ),
-            ),
-            postgres ? { code: 'state_constraint' } : /immutable|retained/i,
-          );
-      const changed = structuredClone(snapshot);
-      changed.tables.tasks[0].goal = 'Different history';
-      await assert.rejects(importLegacyHistory(app.ctx.state, changed), {
-        code: 'legacy_history_conflict',
-      });
-    },
+        type: 'artifacts',
+        id: 'artifact-original',
+      })
+    ).fileRetention,
+    { status: 'unverified' },
   );
+  const reordered = structuredClone(snapshot);
+  reordered.projectIds.reverse();
+  for (const rows of Object.values(reordered.tables)) rows.reverse();
+  assert.deepEqual(await importLegacyHistory(app.ctx.state, reordered), receipt);
+  const details = await reader.detail(caller, {
+    sourceId: snapshot.sourceId,
+    type: 'workflow_history',
+    id: 'history-1',
+  });
+  assert.deepEqual(details.data.after_json, { state: 'running', data: { attempt_index: 1 } });
+  assert.equal(details.hash, digest(details.data));
+  assert.equal(
+    (
+      await reader.detail(caller, {
+        sourceId: snapshot.sourceId,
+        type: 'reviews',
+        id: 'review-original',
+      })
+    ).data.session_id,
+    'reviewer-original',
+  );
+  assert.equal(
+    (
+      await reader.detail(caller, {
+        sourceId: snapshot.sourceId,
+        type: 'reflections',
+        id: 'reflection-original',
+      })
+    ).data.published_graph_version_id,
+    'graph-original',
+  );
+  const summaries = await reader.summary(caller, { sourceId: snapshot.sourceId });
+  assert.equal(summaries.counts.experiments, 1);
+  assert.equal('projectCounts' in summaries, false);
+  assert.equal(
+    (await reader.summary(other, { sourceId: snapshot.sourceId })).counts.workflow_history,
+    0,
+  );
+  const page = await reader.list(caller, {
+    sourceId: snapshot.sourceId,
+    type: 'workflow_history',
+    limit: 1,
+  });
+  assert.equal(page.records.length, 1);
+  assert.equal('data' in page.records[0], false);
+  const next = await reader.list(caller, {
+    sourceId: snapshot.sourceId,
+    type: 'workflow_history',
+    limit: 1,
+    after: page.next,
+  });
+  assert.notEqual(page.records[0].id, next.records[0].id);
+  assert.equal(next.next, undefined);
+  await assert.rejects(
+    reader.detail(other, {
+      sourceId: snapshot.sourceId,
+      type: 'workflow_history',
+      id: 'history-1',
+    }),
+    { code: 'legacy_history_not_found' },
+  );
+  for (const table of ['legacy_history_imports', 'legacy_history_records'])
+    for (const verb of ['UPDATE', 'DELETE'])
+      await assert.rejects(
+        app.ctx.state.transaction((tx) =>
+          tx.run(
+            verb === 'UPDATE' ? `UPDATE ${table} SET source_id=source_id` : `DELETE FROM ${table}`,
+          ),
+        ),
+        { code: 'state_constraint' },
+      );
+  const changed = structuredClone(snapshot);
+  changed.tables.tasks[0].goal = 'Different history';
+  await assert.rejects(importLegacyHistory(app.ctx.state, changed), {
+    code: 'legacy_history_conflict',
+  });
+});
 
 test('export allowlist excludes capabilities, credentials and tool payloads; JSON projection hashes only retained content', async (t) => {
   const { snapshot } = await fixture(t);
@@ -565,154 +539,145 @@ test('projection v2 preserves nested token metrics and scientific integrity refe
   });
 });
 
-for (const postgres of [false, true])
-  test(
-    `artifact retention is explicit, immutable and project-scoped on ${postgres ? 'PostgreSQL' : 'SQLite'}`,
-    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
-    async (t) => {
-      const { app, snapshot, caller, other, reader, add } = await fixture(t, postgres);
-      snapshot.tables.artifacts[0].size_bytes = 3;
-      add('artifacts', {
+test('artifact retention is explicit, immutable and project-scoped', async (t) => {
+  const { app, snapshot, caller, other, reader, add } = await fixture(t);
+  snapshot.tables.artifacts[0].size_bytes = 3;
+  add('artifacts', {
+    id: 'lineage-original',
+    project_id: caller.projectId,
+    status: 'complete',
+    content_sha256: 'c'.repeat(64),
+    size_bytes: 5,
+  });
+  add('artifacts', {
+    id: 'foreign-file',
+    project_id: other.projectId,
+    status: 'complete',
+    content_sha256: 'd'.repeat(64),
+    size_bytes: 7,
+  });
+  add('artifacts', { id: 'pending-file', project_id: caller.projectId, status: 'pending' });
+  // Original IDs are unique within each table, not across all research record types.
+  add('tasks', {
+    id: 'lineage-original',
+    project_id: caller.projectId,
+    goal: 'Unrelated task',
+  });
+  const auditSha256 = 'e'.repeat(64);
+  const artifactRetention: LegacyHistoryArtifactRetention = {
+    auditSha256,
+    artifacts: [
+      {
+        projectId: caller.projectId,
+        id: 'artifact-original',
+        hash: 'a'.repeat(64),
+        size: 3,
+        status: 'verified',
+        artifactId: 'artifact-original',
+      },
+      {
+        projectId: caller.projectId,
         id: 'lineage-original',
-        project_id: caller.projectId,
-        status: 'complete',
-        content_sha256: 'c'.repeat(64),
-        size_bytes: 5,
-      });
-      add('artifacts', {
-        id: 'foreign-file',
-        project_id: other.projectId,
-        status: 'complete',
-        content_sha256: 'd'.repeat(64),
-        size_bytes: 7,
-      });
-      add('artifacts', { id: 'pending-file', project_id: caller.projectId, status: 'pending' });
-      // Original IDs are unique within each table, not across all research record types.
-      add('tasks', {
-        id: 'lineage-original',
-        project_id: caller.projectId,
-        goal: 'Unrelated task',
-      });
-      const auditSha256 = 'e'.repeat(64);
-      const artifactRetention: LegacyHistoryArtifactRetention = {
+        hash: 'c'.repeat(64),
+        size: 5,
+        status: 'metadata-only',
+        reason: 'legacy-lineage-without-retained-bytes',
         auditSha256,
-        artifacts: [
-          {
-            projectId: caller.projectId,
-            id: 'artifact-original',
-            hash: 'a'.repeat(64),
-            size: 3,
-            status: 'verified',
-            artifactId: 'artifact-original',
-          },
-          {
-            projectId: caller.projectId,
-            id: 'lineage-original',
-            hash: 'c'.repeat(64),
-            size: 5,
-            status: 'metadata-only',
-            reason: 'legacy-lineage-without-retained-bytes',
-            auditSha256,
-          },
-          {
-            projectId: other.projectId,
-            id: 'foreign-file',
-            hash: 'd'.repeat(64),
-            size: 7,
-            status: 'verified',
-            artifactId: 'foreign-file',
-          },
-        ],
-      };
-      const sourcePlan = planLegacyHistory(snapshot);
-      const receipt = await importLegacyHistory(app.ctx.state, snapshot, { artifactRetention });
-      assert.equal(receipt.fingerprint, sourcePlan.fingerprint);
-      assert.deepEqual(receipt.artifactRetention!.counts, {
-        verified: 2,
-        metadataOnly: 1,
-        unverified: 1,
-      });
-      assert.equal(receipt.artifactRetention!.auditSha256, auditSha256);
-      assert.deepEqual(
-        await importLegacyHistory(app.ctx.state, snapshot, {
-          artifactRetention: {
-            ...artifactRetention,
-            artifacts: [...artifactRetention.artifacts].reverse(),
-          },
-        }),
-        receipt,
-      );
-      for (const entry of artifactRetention.artifacts.filter(
-        (a) => a.projectId === caller.projectId,
-      )) {
-        const detail = await reader.detail(caller, {
-          sourceId: snapshot.sourceId,
-          type: 'artifacts',
-          id: entry.id,
-        });
-        const original = sourcePlan.records.find(
-          (r) => r.type === 'artifacts' && r.id === entry.id,
-        )!;
-        assert.deepEqual(detail.data, original.data);
-        assert.equal(detail.hash, original.hash);
-        assert.deepEqual(
-          detail.fileRetention,
-          entry.status === 'verified'
-            ? { status: 'verified', artifactId: entry.id }
-            : { status: 'metadata-only', reason: entry.reason, auditSha256 },
-        );
-      }
-      const page = await reader.list(caller, { sourceId: snapshot.sourceId, type: 'artifacts' });
-      assert.deepEqual(page.records.find((r) => r.id === 'pending-file')!.fileRetention, {
-        status: 'unverified',
-      });
-      assert.equal(
-        page.records.some((r) => r.id === 'foreign-file'),
-        false,
-      );
-      assert.equal(
-        (
-          await reader.detail(caller, {
-            sourceId: snapshot.sourceId,
-            type: 'tasks',
-            id: 'lineage-original',
-          })
-        ).fileRetention,
-        undefined,
-      );
-      assert.deepEqual(
-        (await reader.summary(caller, { sourceId: snapshot.sourceId })).artifactRetention,
-        {
-          fingerprint: receipt.artifactRetention!.fingerprint,
-          auditSha256,
-          counts: { verified: 1, metadataOnly: 1, unverified: 1 },
-        },
-      );
-      assert.deepEqual(
-        (await reader.summary(other, { sourceId: snapshot.sourceId })).artifactRetention!.counts,
-        { verified: 1, metadataOnly: 0, unverified: 0 },
-      );
-      await assert.rejects(
-        reader.detail(other, {
-          sourceId: snapshot.sourceId,
-          type: 'artifacts',
-          id: 'lineage-original',
-        }),
-        { code: 'legacy_history_not_found' },
-      );
-      await assert.rejects(importLegacyHistory(app.ctx.state, snapshot), {
-        code: 'legacy_history_conflict',
-      });
-      const changed = structuredClone(artifactRetention);
-      changed.auditSha256 = 'f'.repeat(64);
-      const lineage = changed.artifacts.find((r) => r.status === 'metadata-only')!;
-      if (lineage.status === 'metadata-only') lineage.auditSha256 = changed.auditSha256;
-      await assert.rejects(
-        importLegacyHistory(app.ctx.state, snapshot, { artifactRetention: changed }),
-        { code: 'legacy_history_conflict' },
-      );
+      },
+      {
+        projectId: other.projectId,
+        id: 'foreign-file',
+        hash: 'd'.repeat(64),
+        size: 7,
+        status: 'verified',
+        artifactId: 'foreign-file',
+      },
+    ],
+  };
+  const sourcePlan = planLegacyHistory(snapshot);
+  const receipt = await importLegacyHistory(app.ctx.state, snapshot, { artifactRetention });
+  assert.equal(receipt.fingerprint, sourcePlan.fingerprint);
+  assert.deepEqual(receipt.artifactRetention!.counts, {
+    verified: 2,
+    metadataOnly: 1,
+    unverified: 1,
+  });
+  assert.equal(receipt.artifactRetention!.auditSha256, auditSha256);
+  assert.deepEqual(
+    await importLegacyHistory(app.ctx.state, snapshot, {
+      artifactRetention: {
+        ...artifactRetention,
+        artifacts: [...artifactRetention.artifacts].reverse(),
+      },
+    }),
+    receipt,
+  );
+  for (const entry of artifactRetention.artifacts.filter((a) => a.projectId === caller.projectId)) {
+    const detail = await reader.detail(caller, {
+      sourceId: snapshot.sourceId,
+      type: 'artifacts',
+      id: entry.id,
+    });
+    const original = sourcePlan.records.find((r) => r.type === 'artifacts' && r.id === entry.id)!;
+    assert.deepEqual(detail.data, original.data);
+    assert.equal(detail.hash, original.hash);
+    assert.deepEqual(
+      detail.fileRetention,
+      entry.status === 'verified'
+        ? { status: 'verified', artifactId: entry.id }
+        : { status: 'metadata-only', reason: entry.reason, auditSha256 },
+    );
+  }
+  const page = await reader.list(caller, { sourceId: snapshot.sourceId, type: 'artifacts' });
+  assert.deepEqual(page.records.find((r) => r.id === 'pending-file')!.fileRetention, {
+    status: 'unverified',
+  });
+  assert.equal(
+    page.records.some((r) => r.id === 'foreign-file'),
+    false,
+  );
+  assert.equal(
+    (
+      await reader.detail(caller, {
+        sourceId: snapshot.sourceId,
+        type: 'tasks',
+        id: 'lineage-original',
+      })
+    ).fileRetention,
+    undefined,
+  );
+  assert.deepEqual(
+    (await reader.summary(caller, { sourceId: snapshot.sourceId })).artifactRetention,
+    {
+      fingerprint: receipt.artifactRetention!.fingerprint,
+      auditSha256,
+      counts: { verified: 1, metadataOnly: 1, unverified: 1 },
     },
   );
+  assert.deepEqual(
+    (await reader.summary(other, { sourceId: snapshot.sourceId })).artifactRetention!.counts,
+    { verified: 1, metadataOnly: 0, unverified: 0 },
+  );
+  await assert.rejects(
+    reader.detail(other, {
+      sourceId: snapshot.sourceId,
+      type: 'artifacts',
+      id: 'lineage-original',
+    }),
+    { code: 'legacy_history_not_found' },
+  );
+  await assert.rejects(importLegacyHistory(app.ctx.state, snapshot), {
+    code: 'legacy_history_conflict',
+  });
+  const changed = structuredClone(artifactRetention);
+  changed.auditSha256 = 'f'.repeat(64);
+  const lineage = changed.artifacts.find((r) => r.status === 'metadata-only')!;
+  if (lineage.status === 'metadata-only') lineage.auditSha256 = changed.auditSha256;
+  await assert.rejects(
+    importLegacyHistory(app.ctx.state, snapshot, { artifactRetention: changed }),
+    { code: 'legacy_history_conflict' },
+  );
+});
 
 test('retention rejects incomplete or substituted source identities and unsupported missing-byte claims before writes', async (t) => {
   const { app, snapshot, caller, other } = await fixture(t);

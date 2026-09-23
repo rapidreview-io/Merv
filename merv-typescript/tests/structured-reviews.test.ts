@@ -4,16 +4,17 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import { digest, type ReviewInput, type ReviewRequest, type ReviewSubmit } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 async function fixture(schemaVersion = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-findings-'));
-  const state = new SqliteState(join(directory, 'state.db'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({
     projectName: 'Structured assessment',
@@ -348,7 +349,7 @@ test('structured verdicts replay exact inputs, forbid later mutation, and surviv
             async (tx) =>
               await tx.run(`UPDATE reviews SET ${column}=? WHERE id=?`, value, result.id),
           ),
-        /immutable/,
+        { code: 'state_constraint' },
       );
     }
     await assert.rejects(
@@ -356,11 +357,11 @@ test('structured verdicts replay exact inputs, forbid later mutation, and surviv
         await f.state.transaction(
           async (tx) => await tx.run('DELETE FROM reviews WHERE id=?', result.id),
         ),
-      /durable/,
+      { code: 'state_constraint' },
     );
     assert.deepEqual(await f.durable(), before);
     await f.state.close();
-    const state = new SqliteState(join(f.directory, 'state.db'));
+    const state = await openState(f.directory);
     try {
       const scope = await createService(new ProjectScope(state)),
         artifacts = await createService(
@@ -486,7 +487,7 @@ test('legacy review requests keep their snapshot hashes and optional assessment 
           async (tx) =>
             await tx.run('UPDATE reviews SET format_version=1 WHERE id=?', structured.id),
         ),
-      /immutable/,
+      { code: 'state_constraint' },
     );
     const before = await f.durable();
     for (const formatVersion of [null, 0, 3, '2']) {
@@ -668,7 +669,7 @@ test('a real pre-v4 database gains format defaults without rewriting immutable s
               'legacy-submitted',
             ),
         ),
-      /immutable/,
+      { code: 'state_constraint' },
     );
     for (const id of ['legacy-requested', 'legacy-started']) {
       const claim = await reviews.start(f.reviewer, id);
@@ -829,7 +830,7 @@ test('required criteria are immutable sorted provenance in the snapshot, returne
           async (tx) =>
             await tx.run('UPDATE reviews SET required_criteria=? WHERE id=?', '[1]', review.id),
         ),
-      /immutable/,
+      { code: 'state_constraint' },
     );
     const reissued = await f.reviews.reissue(f.producer, {
       reviewId: review.id,

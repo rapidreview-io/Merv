@@ -6,21 +6,22 @@ import { request as httpRequest } from 'node:http';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { CodeApiProvider } from '../packages/api/src/types.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { importRepository } from '../src/code-import.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
+import { openState } from './fixtures/state.js';
 
 const PART = 4 * 1024 * 1024;
 
 async function fixture(t: TestContext) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({ projectName: 'Code transfers', actorName: 'Controller' });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });

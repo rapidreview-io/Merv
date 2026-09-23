@@ -29,6 +29,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { stateConfig } from './fixtures/state.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packagesRoot = join(root, 'packages');
@@ -828,7 +829,7 @@ test('each service boots with only its declared dependency closure and without A
   const plugins: Record<string, { plugin: any; config?: any }> = {
     domainEvents: { plugin: domainEventsPlugin },
     contextBuilder: { plugin: contextBuilderPlugin },
-    state: { plugin: statePlugin, config: { path: ':memory:' } },
+    state: { plugin: statePlugin, config: stateConfig(':memory:') },
     blobs: { plugin: blobsPlugin, config: { root: directory } },
     scope: { plugin: scopePlugin },
     artifacts: { plugin: artifactsPlugin },

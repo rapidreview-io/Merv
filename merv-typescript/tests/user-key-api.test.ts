@@ -7,12 +7,13 @@ import { SignJWT } from 'jose';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { scopeToolsPlugin } from '@merv/scope/tools';
 import { SupabaseIdentity } from '@merv/identity';
 import { ApiServer, ToolRegistry } from '@merv/api';
 import type { Caller, IssuedUserKey, Project, UserKey } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 const issuer = 'https://key-api.example/auth/v1';
 const secret = 'synthetic-merv-user-key-api-secret-at-least-32-bytes';
@@ -31,7 +32,7 @@ async function fixture(t: TestContext) {
     routing.jwt++;
     return verify(token);
   };
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state, () => time));
   const authenticate = scope.authenticate.bind(scope);
   scope.authenticate = async (token) => {

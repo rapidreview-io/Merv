@@ -6,7 +6,8 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SignJWT } from 'jose';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
+import { cliEnv } from './fixtures/state.js';
 
 const exec = promisify(execFile);
 const root = new URL('../', import.meta.url).pathname;
@@ -34,9 +35,11 @@ function configuration(directory: string) {
   writeFileSync(path, JSON.stringify(config));
   return path;
 }
-const environment = (bearer?: string) => ({
+/** The CLI opens the same PostgreSQL schema as createApp does for `directory`. */
+const environment = (directory: string, bearer?: string) => ({
   PATH: process.env.PATH,
   TMPDIR: process.env.TMPDIR,
+  ...cliEnv(directory),
   MERV_CLI_TEST_SECRET: secret,
   ...(bearer ? { MERV_CLI_TEST_BEARER: bearer } : {}),
 });
@@ -65,7 +68,7 @@ test('local CLI adopts legacy project and explicitly repairs owned membership wi
   ];
   const result = await exec(process.execPath, args, {
     cwd: root,
-    env: environment(first),
+    env: environment(directory, first),
     timeout: 10_000,
   });
   const receipt = JSON.parse(result.stdout.trim());
@@ -76,7 +79,11 @@ test('local CLI adopts legacy project and explicitly repairs owned membership wi
   assert.equal((result.stdout + result.stderr).includes(secret), false);
   const replacement = await token('replacement-human');
   await assert.rejects(
-    exec(process.execPath, args, { cwd: root, env: environment(replacement), timeout: 10_000 }),
+    exec(process.execPath, args, {
+      cwd: root,
+      env: environment(directory, replacement),
+      timeout: 10_000,
+    }),
     (error) => {
       assert.equal(String(error).includes(replacement), false);
       return true;
@@ -85,7 +92,7 @@ test('local CLI adopts legacy project and explicitly repairs owned membership wi
   const repaired = await exec(
     process.execPath,
     [...args, '--repair-reason', 'Original account is no longer recoverable'],
-    { cwd: root, env: environment(replacement), timeout: 10_000 },
+    { cwd: root, env: environment(directory, replacement), timeout: 10_000 },
   );
   assert.equal(JSON.parse(repaired.stdout.trim()).membership.subject, 'replacement-human');
   app = await createApp({ directory, components: ['state', 'scope'] });
@@ -113,7 +120,7 @@ test('shared-identity CLI server starts before any local actor initialization an
     ['--import', 'tsx', 'src/cli.ts', 'serve', '--dir', directory, '--config', path, '--port', '0'],
     {
       cwd: root,
-      env: environment(),
+      env: environment(directory),
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );

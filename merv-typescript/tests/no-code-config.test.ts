@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateRunnerConfig } from '@merv/runner';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 test('documented no-Code server and runner compose usable research without Git plugins', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-no-code-config-'));

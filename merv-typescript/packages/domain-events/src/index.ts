@@ -47,13 +47,7 @@ export class DurableEvents implements DomainEvents {
     await this.state.migrate('domain_events', [
       {
         version: 1,
-        postgres: postgresMigrations[1],
-        sql: `
-      CREATE TABLE event_consumers (
-        id TEXT PRIMARY KEY, definition_hash TEXT NOT NULL, cursor INTEGER NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0, error TEXT, retry_at INTEGER NOT NULL DEFAULT 0
-      );
-    `,
+        sql: postgresMigrations[1],
       },
     ]);
     if (this.closed) return;

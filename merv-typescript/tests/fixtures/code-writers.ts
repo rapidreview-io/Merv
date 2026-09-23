@@ -8,7 +8,7 @@ import {
   type WorkflowPolicy,
 } from '@merv/contracts';
 import type { CodeStoreOptions } from '@merv/code-research/service';
-import { codeStoreFixture, gitSource, type Backend, type Bundle } from './code-store.js';
+import { codeStoreFixture, gitSource, type Bundle } from './code-store.js';
 
 const definition: WorkflowDefinition = {
   name: 'build',
@@ -49,14 +49,13 @@ export const refused = (code: string) => (error: unknown) => {
 /** A hosted project with one unit, and sessions the test plays itself. */
 export async function writerFixture(
   t: TestContext,
-  backend: Backend,
   grace = 900,
   options: Pick<CodeStoreOptions, 'mirror' | 'mirrorConfig'> = {},
 ) {
   const source = gitSource(t);
   const root = source.commit({ 'README.md': 'root\n' });
   const sessions = new Map<string, Record<string, unknown>>();
-  const f = await codeStoreFixture(t, backend, {}, root, {
+  const f = await codeStoreFixture(t, {}, root, {
     get: async (_caller, id) => {
       const session = sessions.get(id);
       if (!session) throw new MervError('session_not_found', 'Session not found', 404);

@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 const executable = fileURLToPath(new URL('./fixtures/runner-worker.mjs', import.meta.url));
 const terminal = (status: string) => status === 'exited' || status === 'stopped';

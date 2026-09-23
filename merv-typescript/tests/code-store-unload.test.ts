@@ -46,7 +46,7 @@ test(
   async (t) => {
     const source = gitSource(t);
     const first = source.commit({ 'notes.md': 'first' });
-    const f = await codeStoreFixture(t, 'sqlite', {}, first);
+    const f = await codeStoreFixture(t, {}, first);
     assert.equal((await f.deliver(source.bundle(first))).status, 'completed');
     await f.code.close();
     const git = new HeldGit(join(f.root, 'tmp'));

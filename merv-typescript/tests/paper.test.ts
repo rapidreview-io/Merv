@@ -4,17 +4,18 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { PaperService } from '@merv/paper';
 import { MervError, type Caller } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
 async function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), 'paper-documents-'));
-  const state = new SqliteState(join(dir, 'state.sqlite')),
+  const state = await openState(dir),
     scope = await createService(new ProjectScope(state)),
     artifacts = await createService(
       new ArtifactStore(state, scope, new DiskBlobs(join(dir, 'blobs'))),
@@ -209,12 +210,12 @@ test('paper keeps ordered section history, structured scope and scoped citation 
       await f.state.transaction(
         async (tx) => await tx.run('UPDATE paper_revisions SET record=?', '{}'),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await f.state.transaction(async (tx) => await tx.run('DELETE FROM paper_citations')),
-    /retained/,
+    { code: 'state_constraint' },
   );
 });
 
@@ -333,7 +334,7 @@ test('reviewer edits retain provenance, roll back together, and enforce revision
   );
   await assert.rejects(
     f.state.transaction((tx) => tx.run('UPDATE paper_revisions SET record=?', '{}')),
-    /immutable/,
+    { code: 'state_constraint' },
   );
 });
 
@@ -361,7 +362,7 @@ test('historical producer proposals remain readable without changing the current
   };
   await f.state.transaction((tx) =>
     tx.run(
-      'INSERT INTO paper_proposals VALUES(?,?,?,?)',
+      'INSERT INTO paper_proposals(id,project_id,record,acceptance) VALUES(?,?,?,?)',
       legacy.id,
       f.operator.projectId,
       JSON.stringify(legacy),

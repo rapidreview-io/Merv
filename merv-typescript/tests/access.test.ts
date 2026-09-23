@@ -3,13 +3,14 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Context, FiberState, ValidationError, type Plugin } from 'cordis';
 import { MervError, type Caller } from '@merv/contracts';
-import { SqliteState, statePlugin } from '@merv/state';
+import { statePlugin } from '@merv/state';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
 import type { ToolGrant } from '@merv/contracts';
+import { openState, stateConfig } from './fixtures/state.js';
 
 async function setup(t: TestContext) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   t.after(async () => await state.close());
   const scope = await createService(new ProjectScope(state));
   const first = await scope.bootstrap({
@@ -150,7 +151,7 @@ test('Scope owns tool policy, defaults and suspension with only State as its dep
   try {
     const scope = ctx.plugin(scopePlugin);
     assert.equal(ctx.get('scope'), undefined);
-    await ctx.plugin(statePlugin, { path: ':memory:' });
+    await ctx.plugin(statePlugin, stateConfig(':memory:'));
     await scope;
     assert.equal(scope.state, FiberState.ACTIVE);
     assert.deepEqual(scope.config, { grants: [] });
@@ -184,7 +185,7 @@ test('strict Cordis Config rejects malformed grants before publishing the servic
   ]) {
     const ctx = new Context();
     try {
-      await ctx.plugin(statePlugin, { path: ':memory:' });
+      await ctx.plugin(statePlugin, stateConfig(':memory:'));
       const scope = ctx.plugin(scopePlugin as Plugin, config);
       await assert.rejects(scope.await(), ValidationError);
       assert.equal(ctx.get('scope'), undefined);

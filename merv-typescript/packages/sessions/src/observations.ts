@@ -71,20 +71,7 @@ export class AgentObservations {
       await state.migrate('session_tool_calls', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE session_tool_calls (
-        id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES worker_sessions(id),
-        tool TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','interrupted')),
-        started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER,
-        input_tokens INTEGER NOT NULL, output_tokens INTEGER
-      );
-      CREATE INDEX session_tool_calls_execution ON session_tool_calls(execution_id);
-      CREATE TRIGGER session_tool_calls_immutable BEFORE UPDATE ON session_tool_calls
-      WHEN OLD.status!='running' OR NEW.id IS NOT OLD.id OR NEW.execution_id IS NOT OLD.execution_id
-        OR NEW.tool IS NOT OLD.tool OR NEW.started_at IS NOT OLD.started_at
-      BEGIN SELECT RAISE(ABORT,'Tool call attribution and completed observations are immutable'); END;
-    `,
+          sql: postgresMigrations[1],
         },
       ]);
     };
@@ -166,9 +153,7 @@ export class AgentObservations {
       const agent: Agent = JSON.parse(row.agent_json);
       const sessions = (
         await tx.all<{ session_json: string }>(
-          tx.dialect === 'postgres'
-            ? 'SELECT session_json FROM worker_sessions WHERE actor_id=? AND project_id=? ORDER BY _merv_rowid DESC'
-            : 'SELECT session_json FROM worker_sessions WHERE actor_id=? AND project_id=? ORDER BY rowid DESC',
+          'SELECT session_json FROM worker_sessions WHERE actor_id=? AND project_id=? ORDER BY _merv_rowid DESC',
           agent.actorId,
           caller.projectId,
         )
@@ -181,9 +166,7 @@ export class AgentObservations {
       const from =
         'FROM session_tool_calls c JOIN worker_sessions s ON s.id=c.execution_id WHERE s.actor_id=? AND s.project_id=?';
       const calls = await tx.all<AgentToolCall>(
-        tx.dialect === 'postgres'
-          ? `SELECT ${columns} ${from} ORDER BY CASE WHEN c.status='running' THEN 0 ELSE 1 END,c._merv_rowid DESC LIMIT 100`
-          : `SELECT ${columns} ${from} ORDER BY CASE WHEN c.status='running' THEN 0 ELSE 1 END,c.rowid DESC LIMIT 100`,
+        `SELECT ${columns} ${from} ORDER BY CASE WHEN c.status='running' THEN 0 ELSE 1 END,c._merv_rowid DESC LIMIT 100`,
         agent.actorId,
         caller.projectId,
       );

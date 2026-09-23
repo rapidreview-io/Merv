@@ -9,12 +9,14 @@ import type { IssuedUserKey, Project, Task } from '@merv/contracts';
 import type { Session, SessionsProjectStatus } from '@merv/sessions/types';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
+import { useRunSchema } from './database.js';
 import { startProtocolProxy } from './protocol-proxy.js';
 
 // Explicit real-model acceptance run, separate from deterministic tests. No real project data.
 const runDirectory = resolve(
   process.argv.slice(2).find((arg) => arg !== '--automatic') ?? `live-runs/sessions-${Date.now()}`,
 );
+const schema = useRunSchema(runDirectory);
 const automatic = process.argv.includes('--automatic');
 mkdirSync(runDirectory, { recursive: false, mode: 0o700 });
 const workspace = join(runDirectory, 'agent-workspace');
@@ -321,6 +323,7 @@ try {
   }
   const report = {
     passed: true,
+    schema,
     automatic,
     dispatchChecks,
     ...(projectStatus ? { projectStatus } : {}),

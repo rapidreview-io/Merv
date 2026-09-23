@@ -155,24 +155,7 @@ export class ReflectionService implements Reflections {
       await state.migrate('reflections', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE reflections(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,owner_id TEXT NOT NULL,created_at TEXT NOT NULL,attempt INTEGER NOT NULL,corpus TEXT NOT NULL,paper TEXT NOT NULL,review_id TEXT,submission TEXT,approved TEXT,feedback TEXT NOT NULL);
-      CREATE UNIQUE INDEX reflection_open_project ON reflections(project_id) WHERE approved IS NULL;
-      CREATE TRIGGER reflection_identity_immutable BEFORE UPDATE OF id,project_id,title,owner_id,created_at,corpus,paper ON reflections BEGIN SELECT RAISE(ABORT,'Reflection corpus and identity are immutable'); END;
-      CREATE TRIGGER reflection_approved_immutable BEFORE UPDATE ON reflections WHEN OLD.approved IS NOT NULL BEGIN SELECT RAISE(ABORT,'Approved reflections are immutable'); END;
-      CREATE TRIGGER reflection_no_delete BEFORE DELETE ON reflections BEGIN SELECT RAISE(ABORT,'Reflection history is retained'); END;
-      CREATE TABLE reflection_lenses(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,reflection_id TEXT NOT NULL REFERENCES reflections(id),attempt INTEGER NOT NULL,perspective TEXT NOT NULL,instructions TEXT NOT NULL,producer_id TEXT,artifact TEXT,UNIQUE(reflection_id,attempt,perspective));
-      CREATE UNIQUE INDEX reflection_independent_lenses ON reflection_lenses(reflection_id,attempt,producer_id) WHERE producer_id IS NOT NULL;
-      CREATE TRIGGER reflection_lens_identity_immutable BEFORE UPDATE OF id,project_id,reflection_id,attempt,perspective,instructions ON reflection_lenses BEGIN SELECT RAISE(ABORT,'Lens identity is immutable'); END;
-      CREATE TRIGGER reflection_lens_output_immutable BEFORE UPDATE ON reflection_lenses WHEN OLD.artifact IS NOT NULL BEGIN SELECT RAISE(ABORT,'Submitted lenses are immutable'); END;
-      CREATE TRIGGER reflection_lens_no_delete BEFORE DELETE ON reflection_lenses BEGIN SELECT RAISE(ABORT,'Lens history is retained'); END;
-      CREATE TABLE reflection_commands(project_id TEXT NOT NULL,actor_id TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,result TEXT NOT NULL,PRIMARY KEY(project_id,actor_id,request_id));
-      CREATE TABLE reflection_leases(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,instance_id TEXT NOT NULL,revision INTEGER NOT NULL,actor_id TEXT NOT NULL,receipt TEXT NOT NULL,inputs TEXT NOT NULL,artifacts TEXT NOT NULL,review_id TEXT,claim_id TEXT,released_at TEXT);
-      CREATE UNIQUE INDEX reflection_active_lease ON reflection_leases(project_id,instance_id,revision) WHERE released_at IS NULL;
-      CREATE TRIGGER reflection_lease_immutable BEFORE UPDATE OF id,project_id,instance_id,revision,actor_id,receipt,inputs,artifacts,review_id,claim_id ON reflection_leases BEGIN SELECT RAISE(ABORT,'Reflection lease provenance is immutable'); END;
-      CREATE TRIGGER reflection_lease_no_delete BEFORE DELETE ON reflection_leases BEGIN SELECT RAISE(ABORT,'Reflection leases are retained'); END;
-    `,
+          sql: postgresMigrations[1],
         },
       ]);
       try {
@@ -241,9 +224,7 @@ export class ReflectionService implements Reflections {
   }
   private async lensRows(row: WaveRow, tx: Transaction): Promise<LensRow[]> {
     return await tx.all<LensRow>(
-      tx.dialect === 'postgres'
-        ? 'SELECT * FROM reflection_lenses WHERE reflection_id=? AND attempt=? ORDER BY _merv_rowid'
-        : 'SELECT * FROM reflection_lenses WHERE reflection_id=? AND attempt=? ORDER BY rowid',
+      'SELECT * FROM reflection_lenses WHERE reflection_id=? AND attempt=? ORDER BY _merv_rowid',
       row.id,
       row.attempt,
     );
@@ -301,9 +282,7 @@ export class ReflectionService implements Reflections {
       await this.read(caller, tx);
       return await mapAsync(
         await tx.all<{ id: string }>(
-          tx.dialect === 'postgres'
-            ? 'SELECT id FROM reflections WHERE project_id=? ORDER BY _merv_rowid DESC'
-            : 'SELECT id FROM reflections WHERE project_id=? ORDER BY rowid DESC',
+          'SELECT id FROM reflections WHERE project_id=? ORDER BY _merv_rowid DESC',
           caller.projectId,
         ),
         async (row) => await this.get(caller, row.id, tx),

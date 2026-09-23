@@ -34,7 +34,10 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
   return JSON.parse((result.content as { type: string; text: string }[])[0].text);
 }
 
-/** Real Cordis, SQLite, HTTP and MCP. Only an explicit test latch slows the feed handler. */
+/**
+ * Real Cordis, PostgreSQL, HTTP and MCP. Only an explicit test latch slows the feed handler.
+ * The caller selects the database through MERV_DB_URL and MERV_DB_SCHEMA (scripts/database.ts).
+ */
 export async function runFeedUnloadScenario(
   directory: string,
   onCheckpoint: (value: unknown) => void = () => {},

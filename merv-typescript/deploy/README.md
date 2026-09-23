@@ -65,7 +65,7 @@ MERV_TS_IMAGE=merv-typescript:RELEASE_ID docker compose -f deploy/compose.yml co
 MERV_TS_IMAGE=merv-typescript:RELEASE_ID docker compose -f deploy/compose.yml up -d
 ```
 
-Do not use `--remove-orphans`, the legacy project name, or a Compose command that includes the legacy stack. This composition binds only localhost, joins the database network, and does not change public routing. Do not run `init`: that command initializes the local SQLite configuration, not this PostgreSQL deployment.
+Do not use `--remove-orphans`, the legacy project name, or a Compose command that includes the legacy stack. This composition binds only localhost, joins the database network, and does not change public routing. Never run `init` or `actor` in the production container: they are for local instances, and there they would write a bootstrap project and credentials into the database named by `MERV_DB_URL`, under schema `merv` or `MERV_DB_SCHEMA`, outside the `merv_ts*` schema this deployment uses. Both refuse to run while `MERV_TS_DB_SCHEMA` is set.
 
 For browser staging, use an SSH tunnel from the workstation and open `http://127.0.0.1:3081/ui/`:
 

@@ -98,9 +98,7 @@ export class PaperService implements Paper {
         await mapAsync(kinds, async (documentKind) => {
           const current = await this.current(caller, documentKind, tx);
           const row = await tx.get<{ record: string }>(
-            tx.dialect === 'postgres'
-              ? 'SELECT record FROM paper_publications WHERE project_id=? AND kind=? ORDER BY _merv_rowid DESC LIMIT 1'
-              : 'SELECT record FROM paper_publications WHERE project_id=? AND kind=? ORDER BY rowid DESC LIMIT 1',
+            'SELECT record FROM paper_publications WHERE project_id=? AND kind=? ORDER BY _merv_rowid DESC LIMIT 1',
             caller.projectId,
             documentKind,
           );
@@ -118,9 +116,7 @@ export class PaperService implements Paper {
       ) as PaperWorkspace['documents'];
       const proposals = (
         await tx.all<{ record: string; acceptance: string | null }>(
-          tx.dialect === 'postgres'
-            ? 'SELECT record,acceptance FROM paper_proposals WHERE project_id=? ORDER BY _merv_rowid DESC'
-            : 'SELECT record,acceptance FROM paper_proposals WHERE project_id=? ORDER BY rowid DESC',
+          'SELECT record,acceptance FROM paper_proposals WHERE project_id=? ORDER BY _merv_rowid DESC',
           caller.projectId,
         )
       ).map((row) => ({

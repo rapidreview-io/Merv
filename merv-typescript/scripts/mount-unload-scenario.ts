@@ -30,7 +30,10 @@ function remoteCall(client: Client, name: string) {
   );
 }
 
-/** Whole application and authenticated independent MCP fixture; no external credential or service. */
+/**
+ * Whole application and authenticated independent MCP fixture; no external credential or service
+ * beyond the PostgreSQL that MERV_DB_URL and MERV_DB_SCHEMA select (scripts/database.ts).
+ */
 export async function runMountUnloadScenario(
   directory: string,
   onCheckpoint: (value: unknown) => void = () => {},

@@ -3,7 +3,7 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { Context } from 'cordis';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import {
   MervError,
@@ -18,6 +18,7 @@ import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { CodeApiProvider } from '../packages/api/src/types.js';
 import codeApiPlugin from '../packages/code-research/src/api.js';
+import { openState } from './fixtures/state.js';
 
 const control: CodeCommandControl = {
   sessionId: 'session_fixture',
@@ -36,7 +37,7 @@ const receipt: CodeCommitReceipt = {
 };
 
 async function fixture(t: TestContext, maxBodyBytes?: number) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({ projectName: 'Code controls', actorName: 'Controller' });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });

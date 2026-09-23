@@ -296,59 +296,19 @@ export class SessionDispatch {
       await state.migrate('session_dispatch', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE project_session_dispatch (
-        project_id TEXT PRIMARY KEY REFERENCES projects(id), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
-        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL
-      );
-      CREATE TABLE session_runners (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), owner_hash TEXT NOT NULL,
-        runner_id TEXT NOT NULL, source_json TEXT NOT NULL, presence_json TEXT NOT NULL,
-        desired_version INTEGER NOT NULL DEFAULT 0, settings_json TEXT NOT NULL, last_seen_at TEXT NOT NULL,
-        UNIQUE(owner_hash,runner_id)
-      );
-      CREATE TABLE session_dispatch_receipts (
-        owner_hash TEXT NOT NULL, runner_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        fingerprint TEXT NOT NULL, session_id TEXT NOT NULL UNIQUE REFERENCES worker_sessions(id),
-        runner_ref TEXT NOT NULL REFERENCES session_runners(id), platform_json TEXT NOT NULL,
-        PRIMARY KEY(owner_hash,runner_id,request_id)
-      );
-      CREATE TRIGGER session_dispatch_receipts_no_update BEFORE UPDATE ON session_dispatch_receipts
-        BEGIN SELECT RAISE(ABORT,'Dispatch receipts are immutable'); END;
-      CREATE TRIGGER session_dispatch_receipts_no_delete BEFORE DELETE ON session_dispatch_receipts
-        BEGIN SELECT RAISE(ABORT,'Dispatch receipts are retained'); END;
-      CREATE TRIGGER session_runners_identity BEFORE UPDATE ON session_runners
-        WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.owner_hash IS NOT OLD.owner_hash OR
-          NEW.runner_id IS NOT OLD.runner_id OR NEW.source_json IS NOT OLD.source_json
-        BEGIN SELECT RAISE(ABORT,'Runner delegation is immutable'); END;
-    `,
+          sql: postgresMigrations[1],
         },
         {
           // The last decision, not a log: one row per runner, so storage is constant.
           version: 2,
-          postgres: postgresMigrations[2],
-          sql: `
-      ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
-      ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
-    `,
+          sql: postgresMigrations[2],
         },
         {
           // Configuration an admin changes, like the dispatch switch, so nothing guards it;
           // its history is the session.budget_changed events. The project's own id as the
           // scope is the project budget; any other scope is a workflow instance.
           version: 3,
-          postgres: postgresMigrations[3],
-          sql: `
-      CREATE TABLE session_budgets (
-        project_id TEXT NOT NULL REFERENCES projects(id), scope_id TEXT NOT NULL,
-        max_wall_ms INTEGER CHECK(max_wall_ms IS NULL OR max_wall_ms > 0),
-        max_cost_micros INTEGER CHECK(max_cost_micros IS NULL OR max_cost_micros > 0),
-        max_tokens INTEGER CHECK(max_tokens IS NULL OR max_tokens > 0),
-        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
-        PRIMARY KEY(project_id, scope_id)
-      );
-    `,
+          sql: postgresMigrations[3],
         },
         {
           // What keeps a candidate from running, kept where dispatch decides: one counter row
@@ -356,23 +316,7 @@ export class SessionDispatch {
           // a mutable counter, not a record; its history is the session.dispatch_held and
           // session.hold_released events.
           version: 4,
-          postgres: postgresMigrations[4],
-          sql: `
-      ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
-      CREATE TABLE session_dispatch_holds (
-        project_id TEXT NOT NULL REFERENCES projects(id), instance_id TEXT NOT NULL, revision INTEGER NOT NULL,
-        attempts INTEGER NOT NULL CHECK(attempts>=0), last_code TEXT NOT NULL, last_message TEXT NOT NULL,
-        last_session_id TEXT REFERENCES worker_sessions(id), first_at TEXT NOT NULL, last_at TEXT NOT NULL,
-        held_at TEXT,
-        PRIMARY KEY(project_id,instance_id,revision)
-      );
-      CREATE INDEX session_dispatch_holds_held ON session_dispatch_holds(project_id) WHERE held_at IS NOT NULL;
-      CREATE TABLE session_hold_requests (
-        project_id TEXT NOT NULL, actor_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        input_hash TEXT NOT NULL, result TEXT NOT NULL,
-        PRIMARY KEY(project_id,actor_id,request_id)
-      );
-    `,
+          sql: postgresMigrations[4],
         },
       ]);
     };
@@ -1054,9 +998,7 @@ export class SessionDispatch {
     const deferred = new Set<string>();
     const runs = new Map<string, Session[]>();
     for (const row of await tx.all<SessionRow>(
-      tx.dialect === 'postgres'
-        ? "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')>?"
-        : "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND json_extract(session_json,'$.closedAt')>?",
+      "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')>?",
       projectId,
       new Date(now - deferredSinceMs).toISOString(),
     )) {
@@ -1218,9 +1160,7 @@ export class SessionDispatch {
             result_json: string | null;
           }
         >(
-          tx.dialect === 'postgres'
-            ? "SELECT s.id,s.session_json,d.runner_ref,d.platform_json,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id LEFT JOIN session_workspaces w ON w.session_id=s.id WHERE s.project_id=? ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC LIMIT 200"
-            : "SELECT s.id,s.session_json,d.runner_ref,d.platform_json,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id LEFT JOIN session_workspaces w ON w.session_id=s.id WHERE s.project_id=? ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s.rowid DESC LIMIT 200",
+          "SELECT s.id,s.session_json,d.runner_ref,d.platform_json,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id LEFT JOIN session_workspaces w ON w.session_id=s.id WHERE s.project_id=? ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC LIMIT 200",
           caller.projectId,
         )
       ).map((row) => {
@@ -1459,9 +1399,7 @@ export class SessionDispatch {
       // the lease itself, inside the write transaction that grants it.
       const failures = (
         await tx.all<SessionRow>(
-          tx.dialect === 'postgres'
-            ? "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?"
-            : "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND json_extract(d.platform_json,'$.name')=? AND s.status IN ('released','expired') AND json_extract(s.session_json,'$.closedAt')>?",
+          "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?",
           owner.hash,
           input.runnerId,
           platform.name,

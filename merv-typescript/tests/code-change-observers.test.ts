@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { StoredEvent } from '@merv/contracts';
 import type { CodeService } from '@merv/code-research/service';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 
 async function fixture(t: TestContext, finalizeGraceSeconds = 900) {

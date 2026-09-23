@@ -12,7 +12,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
@@ -49,7 +48,7 @@ export interface BackupManifest {
   refs: { name: string; oid: string }[];
   refsHash: string;
   /** The database copy this repository copy is consistent with; it was taken first. */
-  database: (BackupObject & { backend: 'postgres' | 'sqlite' }) | null;
+  database: (BackupObject & { backend: 'postgres' }) | null;
 }
 /** What one run of the backup journals; `fingerprint` is the digest of everything above it. */
 export interface CodeBackupReceipt {
@@ -58,7 +57,7 @@ export interface CodeBackupReceipt {
   takenAt: string;
   verifiedAt: string;
   bundle: (BackupObject & { reused: boolean }) | null;
-  database: (BackupObject & { backend: 'postgres' | 'sqlite' }) | null;
+  database: (BackupObject & { backend: 'postgres' }) | null;
   manifest: BackupObject | null;
   refs: number;
   refsHash: string;
@@ -318,7 +317,7 @@ export class S3BackupStore implements BackupObjectStore {
 
 /** One consistent copy of the database, taken by the database's own tool and never by a query. */
 export interface DatabaseCopy {
-  backend: 'postgres' | 'sqlite';
+  backend: 'postgres';
   /** What the object key ends in, so a restore knows what it is holding. */
   extension: string;
   write(file: string): Promise<void>;
@@ -384,25 +383,6 @@ export function postgresDump(connectionString: string, schema: string): Database
   };
 }
 
-/**
- * A copy of a SQLite database file. `VACUUM INTO` on a read-only connection of its own writes
- * one consistent file while the server keeps writing, which a plain file copy would not.
- */
-export function sqliteCopy(path: string): DatabaseCopy {
-  return {
-    backend: 'sqlite',
-    extension: '.sqlite',
-    async write(file) {
-      const database = new DatabaseSync(path, { readOnly: true });
-      try {
-        database.exec(`VACUUM INTO '${file.replaceAll("'", "''")}'`);
-      } finally {
-        database.close();
-      }
-    },
-  };
-}
-
 export interface CodeBackupSettings {
   /** The one segment that keeps two deployments sharing a bucket apart; usually the schema. */
   deployment: string;
@@ -455,9 +435,7 @@ export class CodeBackups {
    * objects no row names, which is harmless and recoverable; a database ahead of its
    * repository names commits that are simply gone, which is not.
    */
-  async database(
-    takenAt: string,
-  ): Promise<(BackupObject & { backend: 'postgres' | 'sqlite' }) | null> {
+  async database(takenAt: string): Promise<(BackupObject & { backend: 'postgres' }) | null> {
     const copy = this.settings.database;
     if (!copy) return null;
     await this.repositories.assertVolume();
@@ -530,7 +508,7 @@ export class CodeBackups {
     projectId: string,
     repositoryId: string,
     takenAt: string,
-    database: (BackupObject & { backend: 'postgres' | 'sqlite' }) | null,
+    database: (BackupObject & { backend: 'postgres' }) | null,
     /** Runs its job in this project's own turn and in one of the deployment's transfer slots. */
     turn: <T>(job: () => Promise<T>) => Promise<T>,
   ): Promise<{

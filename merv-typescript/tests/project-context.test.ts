@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { parseProjectContextUpdate, projectContextUpdateSchema } from '@merv/scope/project-context';
 import type {
@@ -16,13 +16,14 @@ import type {
   TaskContext,
   Transaction,
 } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-project-context-'));
-  const path = join(directory, 'state.sqlite');
+  const path = directory;
   let time = Date.parse('2026-09-15T12:00:00.000Z');
-  let state = new SqliteState(path);
+  let state = await openState(path);
   let scope = await createService(new ProjectScope(state, () => time));
   const boot = await scope.bootstrap({
     projectName: 'Project Introduction',
@@ -73,7 +74,7 @@ async function fixture(t: TestContext) {
     },
     async restart() {
       await state.close();
-      state = new SqliteState(path);
+      state = await openState(path);
       scope = await createService(new ProjectScope(state, () => time));
     },
     events: async () =>
@@ -156,10 +157,9 @@ test('Introduction updates trim only new text, retain original receipts across l
     "UPDATE project_context_commands SET result_json='{}'",
     'DELETE FROM project_context_commands',
   ])
-    await assert.rejects(
-      async () => await f.state.transaction(async (tx) => await tx.run(sql)),
-      /immutable|retained/,
-    );
+    await assert.rejects(async () => await f.state.transaction(async (tx) => await tx.run(sql)), {
+      code: 'state_constraint',
+    });
 });
 
 test('Introduction CAS preserves previously stored whitespace exactly and fences stale observations after reopening', async (t) => {
@@ -347,7 +347,7 @@ test('Borrowed transactions compose and authority loss after event publication r
       code: 'invalid_transaction',
     },
   );
-  const other = new SqliteState(':memory:');
+  const other = await openState(':memory:');
   try {
     await other.transaction(
       async (tx) =>
@@ -437,7 +437,7 @@ test('Input validation is strict and bounded without evaluating accessors, proxi
 });
 
 test('Existing project rows gain empty Introduction defaults through migration without replacing project identity', async (t) => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   t.after(async () => await state.close());
   const migrate = state.migrate.bind(state);
   state.migrate = async (component, migrations) =>
@@ -447,16 +447,20 @@ test('Existing project rows gain empty Introduction defaults through migration w
     );
   const legacy = await createService(new ProjectScope(state));
   const boot = await legacy.bootstrap({ projectName: 'Legacy project', actorName: 'Operator' });
-  assert.equal(
+  const columns = async () =>
     (
       await state.read(
-        async (sql) => await sql.all<{ name: string }>('PRAGMA table_info(projects)'),
+        async (sql) =>
+          await sql.all<{ name: string }>(
+            "SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='projects'",
+          ),
       )
-    ).some((column) => column.name === 'summary'),
-    false,
-  );
+    ).map((column) => column.name);
+  assert.ok((await columns()).includes('id'));
+  assert.equal((await columns()).includes('summary'), false);
   state.migrate = migrate;
   const scope = await createService(new ProjectScope(state));
+  assert.ok((await columns()).includes('summary'));
   const caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

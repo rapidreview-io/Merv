@@ -281,81 +281,31 @@ export class TaskService implements Tasks {
       await state.migrate('tasks', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE tasks (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, goal TEXT NOT NULL,
-        checks TEXT NOT NULL, producer_id TEXT NOT NULL, brief_id TEXT NOT NULL,
-        delivery_ids TEXT NOT NULL DEFAULT '[]', review_id TEXT, created_at TEXT NOT NULL
-      );
-      CREATE INDEX tasks_project ON tasks(project_id, created_at);
-      CREATE TABLE task_commands (
-        project_id TEXT NOT NULL, actor_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        operation TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL,
-        PRIMARY KEY(project_id, actor_id, request_id)
-      );
-    `,
+          sql: postgresMigrations[1],
         },
         {
           version: 2,
-          postgres: postgresMigrations[2],
-          sql: `
-      CREATE TRIGGER tasks_brief_immutable BEFORE UPDATE OF project_id, title, goal, checks, producer_id, brief_id, created_at ON tasks
-        BEGIN SELECT RAISE(ABORT, 'A task brief is immutable'); END;
-    `,
+          sql: postgresMigrations[2],
         },
         {
           version: 3,
-          postgres: postgresMigrations[3],
-          sql: `
-        ALTER TABLE tasks ADD COLUMN type_name TEXT NOT NULL DEFAULT 'task.work';
-        ALTER TABLE tasks ADD COLUMN type_version INTEGER NOT NULL DEFAULT 1;
-        ALTER TABLE tasks ADD COLUMN context_inputs TEXT NOT NULL DEFAULT '{}';
-        CREATE TRIGGER tasks_context_immutable BEFORE UPDATE OF type_name,type_version,context_inputs ON tasks
-          BEGIN SELECT RAISE(ABORT,'Task type and context inputs are immutable'); END;
-      `,
+          sql: postgresMigrations[3],
         },
         {
           version: 4,
-          postgres: postgresMigrations[4],
-          sql: `
-        CREATE TABLE task_checkpoints(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,task_id TEXT NOT NULL,purpose TEXT NOT NULL,revision INTEGER NOT NULL,review_id TEXT,checkpoint TEXT NOT NULL);
-        CREATE INDEX task_checkpoints_target ON task_checkpoints(project_id,task_id,purpose,revision);
-        CREATE TRIGGER task_checkpoints_immutable BEFORE UPDATE ON task_checkpoints BEGIN SELECT RAISE(ABORT,'Checkpoints are immutable'); END;
-        CREATE TRIGGER task_checkpoints_no_delete BEFORE DELETE ON task_checkpoints BEGIN SELECT RAISE(ABORT,'Checkpoints are durable'); END;
-      `,
+          sql: postgresMigrations[4],
         },
         {
           version: 5,
-          postgres: postgresMigrations[5],
-          sql: `
-        ALTER TABLE tasks ADD COLUMN evidence_version INTEGER NOT NULL DEFAULT 1 CHECK(evidence_version IN (1,2));
-        CREATE TRIGGER tasks_evidence_version_immutable BEFORE UPDATE OF evidence_version ON tasks
-          BEGIN SELECT RAISE(ABORT,'Task evidence contract is immutable'); END;
-        `,
+          sql: postgresMigrations[5],
         },
         {
           version: 6,
-          postgres: postgresMigrations[6],
-          sql: `CREATE TABLE task_leases(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,task_id TEXT NOT NULL,revision INTEGER NOT NULL,actor_id TEXT NOT NULL UNIQUE,source_actor_id TEXT NOT NULL,purpose TEXT NOT NULL CHECK(purpose IN ('work','review')),review_id TEXT,claim_id TEXT,receipt TEXT NOT NULL,pinned_artifacts TEXT NOT NULL,checkpoints TEXT NOT NULL,released_at TEXT);
-        CREATE UNIQUE INDEX task_lease_active ON task_leases(project_id,task_id,revision) WHERE released_at IS NULL;
-        CREATE TRIGGER task_lease_identity_immutable BEFORE UPDATE OF id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints ON task_leases BEGIN SELECT RAISE(ABORT,'Lease assignment provenance is immutable'); END;
-        CREATE TRIGGER task_lease_no_delete BEFORE DELETE ON task_leases BEGIN SELECT RAISE(ABORT,'Lease assignment provenance is durable'); END;`,
+          sql: postgresMigrations[6],
         },
         {
           version: 7,
-          rebuild: true,
-          postgres: postgresMigrations[7],
-          sql: `CREATE TEMP TABLE task_leases_backup AS SELECT * FROM task_leases;
-DROP TRIGGER task_lease_identity_immutable;
-DROP TRIGGER task_lease_no_delete;
-DROP TABLE task_leases;
-CREATE TABLE task_leases(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,task_id TEXT NOT NULL,revision INTEGER NOT NULL,actor_id TEXT NOT NULL,source_actor_id TEXT NOT NULL,purpose TEXT NOT NULL CHECK(purpose IN ('work','review')),review_id TEXT,claim_id TEXT,receipt TEXT NOT NULL,pinned_artifacts TEXT NOT NULL,checkpoints TEXT NOT NULL,released_at TEXT);
-        CREATE UNIQUE INDEX task_lease_active ON task_leases(project_id,task_id,revision) WHERE released_at IS NULL;
-        CREATE TRIGGER task_lease_identity_immutable BEFORE UPDATE OF id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints ON task_leases BEGIN SELECT RAISE(ABORT,'Lease assignment provenance is immutable'); END;
-        CREATE TRIGGER task_lease_no_delete BEFORE DELETE ON task_leases BEGIN SELECT RAISE(ABORT,'Lease assignment provenance is durable'); END;
-INSERT INTO task_leases SELECT * FROM task_leases_backup;
-DROP TABLE task_leases_backup;`,
+          sql: postgresMigrations[7],
         },
       ]);
       try {
@@ -675,9 +625,7 @@ DROP TABLE task_leases_backup;`,
   ): Promise<TaskCheckpoint[]> {
     return (
       await tx.all<{ checkpoint: string }>(
-        tx.dialect === 'postgres'
-          ? `SELECT checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND purpose=? AND (?='work' OR (review_id=? AND revision=?)) AND (CAST(? AS TEXT) IS NULL OR (checkpoint::jsonb #>> '{actorId}')=?) ORDER BY _merv_rowid DESC LIMIT 20`
-          : `SELECT checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND purpose=? AND (?='work' OR (review_id=? AND revision=?)) AND (? IS NULL OR json_extract(checkpoint,'$.actorId')=?) ORDER BY rowid DESC LIMIT 20`,
+        `SELECT checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND purpose=? AND (?='work' OR (review_id=? AND revision=?)) AND (CAST(? AS TEXT) IS NULL OR (checkpoint::jsonb #>> '{actorId}')=?) ORDER BY _merv_rowid DESC LIMIT 20`,
         caller.projectId,
         taskId,
         purpose,

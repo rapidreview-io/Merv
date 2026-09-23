@@ -92,7 +92,7 @@ test('the import journal freezes GitHub authorization across retries and rejects
   const source = gitSource(t);
   const head = source.commit({ 'readme.txt': 'research' });
   source.git('branch', 'release/science');
-  const f = await codeStoreFixture(t, 'sqlite', {}, head);
+  const f = await codeStoreFixture(t, {}, head);
   const selected = { revision: 3, repositoryId: 42, baseBranch: 'release/science' };
   const observed: unknown[] = [];
   await f.open({
@@ -133,7 +133,7 @@ test('preparing a Unicode research branch imports its actual Git history and ret
   const head = source.commit({ 'research.txt': 'Unicode branch baseline' });
   const baseBranch = '研究/évaluation';
   source.git('branch', baseBranch);
-  const f = await codeStoreFixture(t, 'sqlite', {}, head);
+  const f = await codeStoreFixture(t, {}, head);
   const principal = await f.scope.acceptVerifiedIdentity({
     issuer: 'https://issuer.example.test',
     subject: 'unicode-owner',
@@ -178,7 +178,7 @@ test('preparing a Unicode research branch imports its actual Git history and ret
 });
 
 test('relinking before the atomic bind leaves the project baseline unchanged', async (t) => {
-  const f = await codeStoreFixture(t, 'sqlite');
+  const f = await codeStoreFixture(t);
   const human = await f.human();
   const before = (await f.code.status(human)).project;
   t.mock.method(f.code.github, 'assertBinding', async () => {
@@ -201,7 +201,7 @@ test('relinking before the atomic bind leaves the project baseline unchanged', a
 });
 
 test('relinking before import authorization never fetches the replacement repository', async (t) => {
-  const f = await codeStoreFixture(t, 'sqlite');
+  const f = await codeStoreFixture(t);
   let tokens = 0;
   t.mock.method(
     f.code.github,

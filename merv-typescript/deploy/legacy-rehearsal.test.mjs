@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import test from 'node:test';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import pg from 'pg';
 import {
   captureSnapshot,
   importTarget,
@@ -295,7 +296,20 @@ test('private reports publish atomically and replay only exact bytes without ove
   }
 });
 
-test('reconciliation proves native files and every unchanged archived row plus availability envelope', async () => {
+test('reconciliation proves native files and every unchanged archived row plus availability envelope', async (t) => {
+  const url = process.env.MERV_TEST_POSTGRES_URL;
+  assert.ok(url?.trim(), 'Set MERV_TEST_POSTGRES_URL, e.g. postgres://merv@127.0.0.1:55439/merv');
+  // Named like tests/fixtures/state.ts, so `npm run test:sweep` removes it if this run dies.
+  const schema = `t_${Date.now().toString(36)}_${randomBytes(5).toString('hex')}`;
+  t.after(async () => {
+    const admin = new pg.Client({ connectionString: url });
+    await admin.connect();
+    try {
+      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    } finally {
+      await admin.end();
+    }
+  });
   const f = fixture();
   const missing = {
     ...f.tables.artifacts[0],
@@ -347,7 +361,11 @@ test('reconciliation proves native files and every unchanged archived row plus a
     directory,
     config: {
       plugins: [
-        { id: 'state', name: '@merv/state', config: { path: join(directory, 'state.sqlite') } },
+        {
+          id: 'state',
+          name: '@merv/state',
+          config: { connectionStringEnv: 'MERV_TEST_POSTGRES_URL', schema },
+        },
         { id: 'scope', name: '@merv/scope' },
         { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
         { id: 'artifacts', name: '@merv/artifacts' },

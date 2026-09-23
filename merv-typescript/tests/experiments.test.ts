@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -21,6 +21,7 @@ import type {
   ExperimentTransition,
 } from '@merv/experiments/types';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
+import { openState } from './fixtures/state.js';
 const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nThe change should improve validation accuracy.\n# Evaluation\nCompare two fixed seeds and matched controls.';
 const report =
@@ -29,7 +30,7 @@ const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
-    state = new SqliteState(join(dir, 'state.sqlite'));
+    state = await openState(dir);
   const scope = await createService(new ProjectScope(state)),
     boot = await scope.bootstrap({ projectName: 'Experiments', actorName: 'Operator' });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
@@ -394,7 +395,7 @@ test('Immutable role/path versions, strict attempt/revision and actual submittin
         async (tx) =>
           await tx.run('UPDATE experiment_evidence SET record=? WHERE id=?', '{}', first.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
@@ -512,7 +513,7 @@ test('Command receipts replay exact results across reload and rollback all compo
       await f.state.transaction(
         async (tx) => await tx.run('DELETE FROM experiment_submissions WHERE id=?', snapshot.id),
       ),
-    /retained/,
+    { code: 'state_constraint' },
   );
 });
 test('Active cap, name uniqueness and same-project dependencies fail atomically', async (t) => {
@@ -653,7 +654,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
   e = await f.transition(e, 'submit_design');
   const application = await f.reviewInput(e, 'needs_changes', 'planned');
   e = (await f.reviews.apply(f.reviewer, application)) as Experiment;
-  const state = new SqliteState(join(f.directory, 'state.sqlite')),
+  const state = await openState(f.directory),
     scope = await createService(new ProjectScope(state)),
     artifacts = await createService(
       new ArtifactStore(state, scope, new DiskBlobs(join(f.directory, 'blobs'))),

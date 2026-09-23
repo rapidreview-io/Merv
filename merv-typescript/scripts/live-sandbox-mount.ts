@@ -7,6 +7,7 @@ import { createApp } from '../src/app.js';
 import { loadConfiguration, type ApplicationConfig } from '../src/config.js';
 import type { Caller } from '@merv/contracts';
 import { mountsPlugin } from '@merv/mounts';
+import { dropSchema, runSchema } from './database.js';
 
 const origin = 'https://sandboxes.rapidreview.io';
 const mountId = 'sandbox';
@@ -495,10 +496,15 @@ async function runAgent(
 
 async function live(outputDirectory: string) {
   checkPreparation(outputDirectory);
+  requireCondition(process.env.MERV_DB_URL?.trim(), 'database_url_missing');
   mkdirSync(dirname(outputDirectory), { recursive: true });
   mkdirSync(outputDirectory, { mode: 0o700 });
   const workspace = join(outputDirectory, 'temporary');
   mkdirSync(workspace, { mode: 0o700 });
+  // Local state is temporary: its own PostgreSQL schema, dropped with the workspace.
+  const schema = runSchema(workspace);
+  const previousSchema = process.env.MERV_DB_SCHEMA;
+  process.env.MERV_DB_SCHEMA = schema;
   const controller = new AbortController();
   const abort = () => controller.abort();
   process.once('SIGINT', abort);
@@ -590,10 +596,13 @@ async function live(outputDirectory: string) {
     restoreFetch?.();
     if (previousSecret === undefined) delete process.env[secretVariable];
     else process.env[secretVariable] = previousSecret;
+    if (previousSchema === undefined) delete process.env.MERV_DB_SCHEMA;
+    else process.env.MERV_DB_SCHEMA = previousSchema;
     boundary.token = '';
     boundary.identity = undefined;
     cleanup.environmentRestored = true;
     try {
+      await dropSchema(schema);
       rmSync(workspace, { recursive: true, force: true });
       cleanup.temporaryStateRemoved = true;
     } catch {

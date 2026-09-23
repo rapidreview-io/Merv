@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { SqliteState } from '@merv/state';
 import type { Transaction } from '@merv/contracts';
+import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 function deferred() {
   let resolve!: () => void;
@@ -22,8 +22,8 @@ const event = {
   data: { value: 1 },
 };
 
-test('SQLite async requests cannot enter another request transaction or see its rolled-back data', async () => {
-  const state = new SqliteState(':memory:');
+test('async requests cannot enter another request transaction or see its rolled-back data', async () => {
+  const state = await openState(':memory:');
   await state.migrate('test', migration);
   const inserted = deferred();
   const release = deferred();
@@ -52,9 +52,9 @@ test('SQLite async requests cannot enter another request transaction or see its 
   await state.close();
 });
 
-test('SQLite keeps explicit transactions, migration checksums and event delivery atomic', async () => {
-  const state = new SqliteState(':memory:');
-  const foreign = new SqliteState(':memory:');
+test('state keeps explicit transactions, migration checksums and event delivery atomic', async () => {
+  const state = await openState(':memory:');
+  const foreign = await openState(':memory:');
   await state.migrate('test', migration);
   await state.migrate('test', migration);
   await assert.rejects(state.migrate('test', [{ version: 1, sql: 'SELECT 1;' }]), {
@@ -100,16 +100,18 @@ test('SQLite keeps explicit transactions, migration checksums and event delivery
   assert.equal(wakeups, 1);
   await assert.rejects(captured.get('SELECT 1'), { code: 'transaction_closed' });
   assert.equal((await state.events('project')).length, 2);
+  // The events trigger refuses the delete; PostgreSQL errors reach callers as state_constraint.
   await assert.rejects(
     state.transaction((tx) => tx.run('DELETE FROM events')),
-    /Events are retained/,
+    { code: 'state_constraint' },
   );
+  assert.equal((await state.events('project')).length, 2);
   await state.close();
   await foreign.close();
 });
 
-test('SQLite close drains admitted requests and denies new work', async () => {
-  const state = new SqliteState(':memory:');
+test('state close drains admitted requests and denies new work', async () => {
+  const state = await openState(':memory:');
   const entered = deferred();
   const release = deferred();
   const transaction = state.transaction(async (tx) => {
@@ -119,7 +121,12 @@ test('SQLite close drains admitted requests and denies new work', async () => {
     return 42;
   });
   await entered.promise;
-  const admittedRead = state.eventHead();
+  // Reads do not queue behind the writer lock; this admitted read stays in flight until the
+  // admitted transaction commits, so close() must drain both.
+  const admittedRead = state.read(async (sql) => {
+    await transaction;
+    return (await sql.get<{ id: number }>('SELECT COALESCE(MAX(id),0) AS id FROM events'))!.id;
+  });
   let closed = false;
   const closing = state.close().then(() => {
     closed = true;
@@ -134,7 +141,7 @@ test('SQLite close drains admitted requests and denies new work', async () => {
 });
 
 test('commit notifications start independent database scopes after a read-owned transaction', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   let observed!: Promise<number>;
   state.onEventsCommitted(() => {
     observed = state.eventHead();
@@ -144,28 +151,8 @@ test('commit notifications start independent database scopes after a read-owned 
   await state.close();
 });
 
-test('SQLite rebuild migrations validate foreign keys before commit and restore enforcement', async () => {
-  const state = new SqliteState(':memory:');
-  await state.migrate('test', [
-    {
-      version: 1,
-      sql: 'CREATE TABLE parents(id INTEGER PRIMARY KEY); CREATE TABLE children(parent_id INTEGER REFERENCES parents(id));',
-    },
-  ]);
-  await assert.rejects(
-    state.migrate('test', [{ version: 2, rebuild: true, sql: 'INSERT INTO children VALUES(9);' }]),
-    { code: 'migration_foreign_key' },
-  );
-  assert.deepEqual(await state.read((sql) => sql.all('SELECT * FROM children')), []);
-  await assert.rejects(
-    state.transaction((tx) => tx.run('INSERT INTO children VALUES(9)')),
-    /FOREIGN KEY/,
-  );
-  await state.close();
-});
-
 test('appendEvent returns the same detached event snapshot that was inserted', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   try {
     const input = structuredClone(event);
     const inserted = await state.transaction(async (tx) => {
@@ -186,7 +173,7 @@ test('appendEvent returns the same detached event snapshot that was inserted', a
 });
 
 test('queued migrations retain the validated version and SQL input', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const entered = deferred(),
     release = deferred();
   try {
@@ -206,7 +193,7 @@ test('queued migrations retain the validated version and SQL input', async () =>
       (
         await state.read((sql) =>
           sql.all<{ name: string }>(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('original_migration','changed_migration') ORDER BY name",
+            "SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('original_migration','changed_migration') ORDER BY table_name",
           ),
         )
       ).map((row) => row.name),
@@ -229,7 +216,7 @@ test('queued migrations retain the validated version and SQL input', async () =>
 });
 
 test('a commit listener can replace itself without being notified repeatedly for one commit', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   let calls = 0,
     detach = () => {};
   const listener = () => {
@@ -251,7 +238,7 @@ test('a commit listener can replace itself without being notified repeatedly for
 });
 
 test('a listener withdrawn during notification is not admitted later in that notification', async () => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   let laterCalls = 0,
     detachLater = () => {};
   state.onEventsCommitted(() => detachLater());
@@ -278,8 +265,13 @@ test('rejected asynchronous commit listeners cannot crash the process or block o
       '-e',
       `
     import assert from 'node:assert/strict';
-    import { SqliteState } from '@merv/state';
-    const state = new SqliteState(':memory:');
+    import { PostgresState } from '@merv/state';
+    const state = await PostgresState.open({
+      connectionString: ${JSON.stringify(postgresUrl)},
+      schema: ${JSON.stringify(schemaFor())},
+      maxConnections: 2,
+      readConnections: 1,
+    });
     let calls = 0;
     state.onEventsCommitted(async () => {
       await new Promise((resolve) => setImmediate(resolve));

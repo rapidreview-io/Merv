@@ -116,8 +116,8 @@ export class CodeGitHubService implements CodeGitHub {
 ALTER TABLE code_github ADD COLUMN automation TEXT NOT NULL DEFAULT 'off' CHECK (automation IN ('off','read','write'));
 ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     await this.state.migrate('code_github', [
-      { version: 1, sql: schema, postgres: schema },
-      { version: 2, sql: automation, postgres: automation },
+      { version: 1, sql: schema },
+      { version: 2, sql: automation },
     ]);
     await this.state.transaction((tx) =>
       tx.run('DELETE FROM code_github_flows WHERE expires_at<=?', timestamp()),

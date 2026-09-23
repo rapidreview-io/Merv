@@ -1,8 +1,7 @@
 import { createService } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
+import { randomBytes } from 'node:crypto';
 import {
   MervError,
   check,
@@ -10,25 +9,22 @@ import {
   type Transaction,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import { PostgresState, SqliteState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
+import { openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
-async function fixture(t: TestContext, legacySchema = false, postgres = false) {
+async function fixture(t: TestContext, legacySchema = false) {
   let clock = Date.now(),
     builds = 0,
     brokenBuild = false,
     largeBuild = false;
   let buildHook: ((tx: Transaction) => void | Promise<void>) | undefined;
   let leaseCheckHook: (() => void | Promise<void>) | undefined;
-  const schema = `merv_sessions_${randomUUID().replaceAll('-', '')}`;
-  const state = postgres
-    ? await PostgresState.open({ connectionString: process.env.MERV_TEST_POSTGRES_URL!, schema })
-    : new SqliteState(':memory:');
+  const state = await openState();
   const migrate = state.migrate.bind(state);
   if (legacySchema)
     state.migrate = async (component, migrations) =>
@@ -44,8 +40,6 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
     {
       version: 1,
       sql: 'CREATE TABLE reservations(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,live INTEGER NOT NULL);',
-      postgres:
-        'CREATE TABLE reservations(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,live INTEGER NOT NULL);',
     },
   ]);
   const policy = (): WorkflowPolicy => ({
@@ -188,14 +182,6 @@ async function fixture(t: TestContext, legacySchema = false, postgres = false) {
     await events.close();
     await workflows.close();
     await state.close();
-    if (postgres) {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   return {
     state,
@@ -1175,7 +1161,7 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
       t.mock.method(f.workflows, 'dispatchCandidates', async (caller: Caller, tx: Transaction) => {
         const result = original(caller, tx);
         await tx.run(
-          "UPDATE session_runners SET presence_json=json_set(presence_json,'$.platforms[0].enabled',json('false')) WHERE id=?",
+          "UPDATE session_runners SET presence_json=jsonb_set(presence_json::jsonb,'{platforms,0,enabled}','false')::text WHERE id=?",
           runner.id,
         );
         return result;
@@ -1183,7 +1169,7 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
     } else
       f.onBuild(async (tx) => {
         await tx.run(
-          "UPDATE session_runners SET presence_json=json_set(presence_json,'$.capacity',0) WHERE id=?",
+          "UPDATE session_runners SET presence_json=jsonb_set(presence_json::jsonb,'{capacity}','0')::text WHERE id=?",
           runner.id,
         );
       });
@@ -1471,10 +1457,6 @@ test('upgrading the historical one-worker schema preserves a live execution and 
   await f.restart();
   assert.deepEqual(await f.sessions.get(f.source, session.id), before);
   assert.deepEqual(await f.sessions.authenticate(token), active);
-  assert.deepEqual(
-    await f.state.read(async (sql) => await sql.all('PRAGMA foreign_key_check')),
-    [],
-  );
   assert.equal(
     (
       await f.state.read(
@@ -1492,7 +1474,7 @@ test('upgrading the historical one-worker schema preserves a live execution and 
       await f.state.transaction(
         async (tx) => await tx.run('DELETE FROM worker_sessions WHERE id=?', session.id),
       ),
-    /retained/,
+    { code: 'state_constraint' },
   );
 });
 
@@ -1564,7 +1546,7 @@ test('agent observations retain tool timings and estimates across assignments wi
       await f.state.transaction(
         async (tx) => await tx.run("UPDATE session_tool_calls SET status='failed'"),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await f.sessions.releaseAgentAssignment(token, first.id);
   const second = await assign('second');
@@ -1688,72 +1670,66 @@ test('agent table includes retired instances in join order and is not truncated 
   assert.ok(agents.every((agent) => agent.createdAt && agent.runnerId === 'external'));
 });
 
-test(
-  'PostgreSQL preserves continuing agent identity, lease fencing and tool observations',
-  {
-    skip: !process.env.MERV_TEST_POSTGRES_URL,
-  },
-  async (t) => {
-    const f = await fixture(t, false, true);
-    const token = secret();
-    const agent = await f.sessions.registerAgent(f.source, {
-      name: 'PostgreSQL agent',
-      runnerId: 'external',
-      requestId: 'postgres-agent',
-      secret: token,
-    });
-    assert.deepEqual((await f.sessions.agentObservation(f.owner, agent.id)).tokenStats, {
-      totalCalls: 0,
-      completedCalls: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    });
-    const first = await f.sessions.assignAgent(token, {
-      instanceId: (await f.instance()).id,
-      expectedRevision: 0,
-      requestId: 'first',
-    });
-    const worker = await f.sessions.authenticate(token);
-    const prepared = await f.sessions.prepare(worker, 'artifact.read', {
-      artifactId: 'frozen-artifact',
-    });
-    await f.sessions.run(prepared, () => ({ content: 'answer' }));
-    const observation = await f.sessions.agentObservation(f.owner, agent.id);
-    assert.equal(observation.toolCalls[0]?.executionId, first.id);
-    assert.equal(observation.toolCalls[0]?.status, 'succeeded');
-    assert.equal(observation.tokenStats.totalCalls, 1);
-    assert.equal(observation.tokenStats.completedCalls, 1);
-    assert.ok(observation.tokenStats.inputTokens > 0);
-    assert.deepEqual(observation.tokenStats, {
-      totalCalls: 1,
-      completedCalls: 1,
-      inputTokens: observation.toolCalls[0]!.inputTokens,
-      outputTokens: observation.toolCalls[0]!.outputTokens,
-    });
-    assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
-    assert.equal(typeof observation.toolCallTotal, 'number');
-    await f.sessions.releaseAgentAssignment(token, first.id);
-    const next = await f.sessions.assignAgent(token, {
-      instanceId: (await f.instance()).id,
-      expectedRevision: 0,
-      requestId: 'next',
-    });
-    assert.equal(next.actorId, first.actorId);
-    assert.equal(next.agentId, agent.id);
-    assert.notEqual(next.id, first.id);
-    await assert.rejects(f.scope.require(worker, 'read'), { code: 'session_closed' });
-    assert.equal((await f.sessions.agentSelf(token)).assignments.length, 2);
-    assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 1);
-    await f.instance();
-    await f.sessions.heartbeatRunner(f.source, presenceInput);
-    await f.sessions.setDispatch(f.owner, { enabled: true });
-    assert.ok((await f.sessions.lease(f.source, autoInput())).session);
-    assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 2);
-    await f.scope.revokeActor(f.owner, f.source.actorId);
-    await f.events.drain();
-    await assert.rejects(f.sessions.agentSelf(token), { code: 'agent_retired' });
-  },
-);
+test('PostgreSQL preserves continuing agent identity, lease fencing and tool observations', async (t) => {
+  const f = await fixture(t);
+  const token = secret();
+  const agent = await f.sessions.registerAgent(f.source, {
+    name: 'PostgreSQL agent',
+    runnerId: 'external',
+    requestId: 'postgres-agent',
+    secret: token,
+  });
+  assert.deepEqual((await f.sessions.agentObservation(f.owner, agent.id)).tokenStats, {
+    totalCalls: 0,
+    completedCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  });
+  const first = await f.sessions.assignAgent(token, {
+    instanceId: (await f.instance()).id,
+    expectedRevision: 0,
+    requestId: 'first',
+  });
+  const worker = await f.sessions.authenticate(token);
+  const prepared = await f.sessions.prepare(worker, 'artifact.read', {
+    artifactId: 'frozen-artifact',
+  });
+  await f.sessions.run(prepared, () => ({ content: 'answer' }));
+  const observation = await f.sessions.agentObservation(f.owner, agent.id);
+  assert.equal(observation.toolCalls[0]?.executionId, first.id);
+  assert.equal(observation.toolCalls[0]?.status, 'succeeded');
+  assert.equal(observation.tokenStats.totalCalls, 1);
+  assert.equal(observation.tokenStats.completedCalls, 1);
+  assert.ok(observation.tokenStats.inputTokens > 0);
+  assert.deepEqual(observation.tokenStats, {
+    totalCalls: 1,
+    completedCalls: 1,
+    inputTokens: observation.toolCalls[0]!.inputTokens,
+    outputTokens: observation.toolCalls[0]!.outputTokens,
+  });
+  assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
+  assert.equal(typeof observation.toolCallTotal, 'number');
+  await f.sessions.releaseAgentAssignment(token, first.id);
+  const next = await f.sessions.assignAgent(token, {
+    instanceId: (await f.instance()).id,
+    expectedRevision: 0,
+    requestId: 'next',
+  });
+  assert.equal(next.actorId, first.actorId);
+  assert.equal(next.agentId, agent.id);
+  assert.notEqual(next.id, first.id);
+  await assert.rejects(f.scope.require(worker, 'read'), { code: 'session_closed' });
+  assert.equal((await f.sessions.agentSelf(token)).assignments.length, 2);
+  assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 1);
+  await f.instance();
+  await f.sessions.heartbeatRunner(f.source, presenceInput);
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  assert.ok((await f.sessions.lease(f.source, autoInput())).session);
+  assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 2);
+  await f.scope.revokeActor(f.owner, f.source.actorId);
+  await f.events.drain();
+  await assert.rejects(f.sessions.agentSelf(token), { code: 'agent_retired' });
+});
 
 for (const boundary of ['offer expiry', 'hard deadline'] as const) {
   test(`activation refuses a lease that crosses its ${boundary} during acquisition checks`, async (t) => {

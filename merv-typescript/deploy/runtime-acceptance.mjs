@@ -69,7 +69,6 @@ export async function exerciseRuntime(start) {
       app.status().every((entry) => entry.state === 'active'),
       'Every default plugin must activate',
     );
-    assert.equal(app.ctx.state.dialect, 'postgres');
     assert.ok(app.ctx.artifacts.downloadSupported, 'Acceptance requires the actual S3 provider');
     const pluginCount = app.status().length;
     const page = await fetch(`${app.ctx.api.url}/ui/`, { signal: AbortSignal.timeout(30_000) });

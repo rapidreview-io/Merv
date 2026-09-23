@@ -1,11 +1,8 @@
 import { createService } from '@merv/contracts';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { TestContext } from 'node:test';
-import { Pool } from 'pg';
-import { SqliteState, PostgresState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { ArtifactStore } from '@merv/artifacts';
@@ -15,20 +12,15 @@ import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import type { Backend } from './code-store.js';
+import { openState } from './state.js';
 
 /** The owner services without a listener, so their transaction tests also run in a sandbox. */
 export async function resolutionFixture(
   t: TestContext,
-  backend: Backend,
   versions: { workflows?: number; scope?: number; reviews?: number; human?: boolean } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-resolution-'));
-  const schema = `resolution_${randomUUID().replaceAll('-', '')}`;
-  const state =
-    backend === 'sqlite'
-      ? new SqliteState(join(directory, 'state.sqlite'))
-      : await PostgresState.open({ connectionString: process.env.MERV_TEST_POSTGRES_URL!, schema });
+  const state = await openState();
   const migrate = state.migrate.bind(state);
   state.migrate = async (component, migrations) => {
     const version =
@@ -68,14 +60,6 @@ export async function resolutionFixture(
     workflows.close();
     await state.close();
     rmSync(directory, { recursive: true, force: true });
-    if (backend === 'postgres') {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   const admin = await (async () => {
     if (versions.human) {

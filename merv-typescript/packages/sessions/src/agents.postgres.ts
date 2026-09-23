@@ -1,4 +1,4 @@
-/** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
+/** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE agents(

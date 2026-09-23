@@ -40,11 +40,7 @@ export class ArtifactStore implements Artifacts {
       await state.migrate('artifacts', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `CREATE TABLE artifacts(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,created_by TEXT NOT NULL,title TEXT NOT NULL,media_type TEXT NOT NULL,hash TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);
-      CREATE INDEX artifacts_project ON artifacts(project_id);
-      CREATE TRIGGER artifacts_immutable_update BEFORE UPDATE ON artifacts BEGIN SELECT RAISE(ABORT,'Artifacts are immutable'); END;
-      CREATE TRIGGER artifacts_immutable_delete BEFORE DELETE ON artifacts BEGIN SELECT RAISE(ABORT,'Artifacts are immutable'); END;`,
+          sql: postgresMigrations[1],
         },
       ]);
     };
@@ -145,9 +141,7 @@ export class ArtifactStore implements Artifacts {
       );
       return (
         await tx.all(
-          tx.dialect === 'postgres'
-            ? `SELECT a.* FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND (e.data_json::jsonb #>> '{source,sessionId}')=?) ORDER BY a.created_at,a.id`
-            : `SELECT a.* FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND json_extract(e.data_json,'$.source.sessionId')=?) ORDER BY a.created_at,a.id`,
+          `SELECT a.* FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND (e.data_json::jsonb #>> '{source,sessionId}')=?) ORDER BY a.created_at,a.id`,
           caller.projectId,
           caller.actorId,
           caller.session.id,

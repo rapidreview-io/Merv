@@ -3,15 +3,22 @@ import { register } from 'tsx/esm/api';
 
 // Workers need their own loader registration for workspace TypeScript exports.
 register();
-const [{ SqliteState }, { ProjectScope }, { WorkflowsService }] = await Promise.all([
+const [{ PostgresState }, { ProjectScope }, { WorkflowsService }] = await Promise.all([
   import('@merv/state'),
   import('@merv/scope'),
   import('@merv/workflows'),
 ]);
 
-const { path, graph, caller, instanceId, first, barrier } = workerData;
+const { url, schema, graph, caller, instanceId, first, barrier } = workerData;
 const control = new Int32Array(barrier);
-const state = new SqliteState(path);
+// The second worker waits on the first one's writer lock for as long as the parent holds it.
+const state = await PostgresState.open({
+  connectionString: url,
+  schema,
+  maxConnections: 2,
+  readConnections: 1,
+  lockTimeoutMs: 30000,
+});
 const scope = new ProjectScope(state);
 await scope.initialize();
 const workflows = new WorkflowsService(state, scope);
@@ -34,7 +41,7 @@ await workflows.register(graph, {
       },
       build: () => {
         if (first) {
-          // This runs inside the open SQLite write transaction, after its start insert.
+          // This runs inside the open database write transaction, after its start insert.
           Atomics.store(control, 0, 1);
           parentPort.postMessage({ type: 'held' });
           if (Atomics.wait(control, 1, 0, 5000) === 'timed-out')

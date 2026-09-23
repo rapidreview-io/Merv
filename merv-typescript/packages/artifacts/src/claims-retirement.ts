@@ -102,13 +102,7 @@ export function claimMarkdown(claim: ClaimRow, history: ClaimEvent[]): string {
 }
 
 const claimsTable = async (sql: Sql) =>
-  sql.dialect === 'postgres'
-    ? Boolean(
-        (await sql.get<{ name: string | null }>("SELECT to_regclass('claims') AS name"))?.name,
-      )
-    : Boolean(
-        await sql.get("SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='claims'"),
-      );
+  Boolean((await sql.get<{ name: string | null }>("SELECT to_regclass('claims') AS name"))?.name);
 
 export async function retireClaims(state: State, blobs: Blobs): Promise<number> {
   if (!(await state.read(claimsTable))) return 0;
@@ -159,10 +153,9 @@ export async function retireClaims(state: State, blobs: Blobs): Promise<number> 
       );
     await tx.run('DROP TABLE claim_commands');
     await tx.run('DROP TABLE claims');
-    if (tx.dialect === 'postgres')
-      await tx.run(
-        'DROP FUNCTION claims_identity_immutable_guard(), claims_no_delete_guard(), claim_commands_no_update_guard(), claim_commands_no_delete_guard()',
-      );
+    await tx.run(
+      'DROP FUNCTION claims_identity_immutable_guard(), claims_no_delete_guard(), claim_commands_no_update_guard(), claim_commands_no_delete_guard()',
+    );
     await tx.run("DELETE FROM component_migrations WHERE component='claims'");
     return files.length;
   });

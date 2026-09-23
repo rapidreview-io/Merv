@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Caller, Data, TaskCheckpointInput, WorkflowExecution } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
+import { countWrites } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) => ({
@@ -68,11 +70,11 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
     expectedRevision: 0,
   });
   const reads = t.mock.method(app.ctx.artifacts, 'read');
+  // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
+  const written = countWrites(app.ctx.state as PostgresState);
   const writes = async () => {
     await app.ctx.domainEvents.drain();
-    return await app.ctx.state.read(
-      async (sql) => (await sql.get<{ n: number }>('SELECT total_changes() AS n'))!.n,
-    );
+    return written();
   };
   const before = await writes();
   const head = await app.ctx.state.eventHead();

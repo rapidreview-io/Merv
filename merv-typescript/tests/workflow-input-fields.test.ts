@@ -9,7 +9,7 @@ import type {
   WorkflowDefinition,
   WorkflowCheckContext,
 } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 type RequiredInput = NonNullable<WorkflowActionRule['requiredInput']>;

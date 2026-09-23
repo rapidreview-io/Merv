@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -25,6 +25,7 @@ import type {
 } from '@merv/experiments/types';
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
 
 const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nTest whether the intervention changes the measured outcome.\n# Evaluation\nUse matched controls and report the uncertainty.\n';
@@ -33,7 +34,7 @@ const report =
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiment-invariants-'));
-  const state = new SqliteState(join(directory, 'state.sqlite'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),

@@ -9,7 +9,6 @@ import {
   defaultBackupSettings,
   postgresDump,
   S3BackupStore,
-  sqliteCopy,
   type CodeBackupSettings,
 } from '@merv/code/store/backup';
 
@@ -43,16 +42,12 @@ const backupConfig = z
     maxBytes: bytes.optional(),
     /** What is copied beside the repositories; a repository without its rows is inert. */
     database: z
-      .union([
-        z
-          .object({
-            backend: z.literal('postgres'),
-            connectionStringEnv: envName.default('MERV_DB_URL'),
-            schemaEnv: envName.default('MERV_TS_DB_SCHEMA'),
-          })
-          .strict(),
-        z.object({ backend: z.literal('sqlite'), path: z.string().min(1) }).strict(),
-      ])
+      .object({
+        backend: z.literal('postgres'),
+        connectionStringEnv: envName.default('MERV_DB_URL'),
+        schemaEnv: envName.default('MERV_TS_DB_SCHEMA'),
+      })
+      .strict()
       .optional(),
   })
   .strict();
@@ -88,15 +83,12 @@ function backupSettings(config: z.infer<typeof backupConfig>): CodeBackupSetting
     everySeconds: config.everySeconds ?? defaultBackupSettings.everySeconds,
     keepDays: config.keepDays ?? defaultBackupSettings.keepDays,
     maxBytes: config.maxBytes ?? defaultBackupSettings.maxBytes,
-    database:
-      config.database?.backend === 'postgres'
-        ? postgresDump(
-            required(config.database.connectionStringEnv),
-            required(config.database.schemaEnv),
-          )
-        : config.database
-          ? sqliteCopy(config.database.path)
-          : undefined,
+    database: config.database
+      ? postgresDump(
+          required(config.database.connectionStringEnv),
+          required(config.database.schemaEnv),
+        )
+      : undefined,
   };
 }
 const configuration = z

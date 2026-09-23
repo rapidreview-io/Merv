@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 

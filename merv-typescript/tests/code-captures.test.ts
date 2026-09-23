@@ -12,8 +12,9 @@ import type {
   WorkflowDefinition,
   WorkflowPolicy,
 } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
-import { createApp } from '../src/app.js';
+
+import { createApp } from './fixtures/app.js';
+import { openState } from './fixtures/state.js';
 
 const oid = (digit: string) => digit.repeat(40);
 const attachment: SessionWorkspace = {
@@ -349,7 +350,7 @@ test('Capture reads compose with an existing transaction and retain legacy final
   );
   assert.deepEqual(await f.snapshot(), before);
   assert.equal((await f.app.ctx.codeResearch.capture(f.reader, ref)).status, 'pending');
-  const other = new SqliteState(':memory:');
+  const other = await openState(':memory:');
   try {
     await other.transaction(
       async (tx) =>

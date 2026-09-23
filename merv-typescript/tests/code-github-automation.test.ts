@@ -4,6 +4,8 @@ import { verify, createPublicKey } from 'node:crypto';
 import { createService } from '@merv/contracts';
 import { GitHubClient } from '../packages/code/src/github-client.js';
 import { CodeGitHubService } from '../packages/code/src/github.js';
+// Loaded at top level so its cleanup hook belongs to the file, not to the first githubFixture test.
+import './fixtures/state.js';
 import { githubFixture, config, repository } from './github-fixture.js';
 
 test('automation is explicit, owner-bound and independent of ordinary token refresh', async (t) => {

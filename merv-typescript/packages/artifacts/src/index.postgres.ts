@@ -1,4 +1,4 @@
-/** Native PostgreSQL migrations. SQLite migration text remains unchanged in the owner. */
+/** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE artifacts(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,created_by TEXT NOT NULL,title TEXT NOT NULL,media_type TEXT NOT NULL,hash TEXT NOT NULL,size BIGINT NOT NULL,created_at TEXT NOT NULL);

@@ -48,7 +48,6 @@ function databaseError(error: unknown): MervError {
 }
 
 export class PostgresState extends StateStore {
-  readonly dialect = 'postgres' as const;
   private readonly pool: Pool;
   private readonly readers: Pool;
   private readonly schema: string;
@@ -103,6 +102,8 @@ export class PostgresState extends StateStore {
         statement_timeout: config.statementTimeoutMs ?? 30000,
         lock_timeout: config.lockTimeoutMs ?? 5000,
         ssl: config.ssl ?? false,
+        // An idle pool never keeps a process alive on its own; close() still ends it.
+        allowExitOnIdle: true,
         types: {
           getTypeParser: (oid, format) =>
             oid === 20 && format !== 'binary' ? safeInteger : types.getTypeParser(oid, format),
@@ -149,7 +150,7 @@ END $merv$;`);
             try {
               await connection.exec('ROLLBACK');
             } catch {
-              connection.discard?.();
+              connection.discard();
             }
             throw error;
           }
@@ -197,10 +198,7 @@ END $merv$;`);
         throw databaseError(error);
       }
       return await fn({
-        run: async (sql, params) => ({
-          changes: (await query(sql, params)).rowCount ?? 0,
-          lastInsertRowid: 0,
-        }),
+        run: async (sql, params) => ({ changes: (await query(sql, params)).rowCount ?? 0 }),
         get: async <R>(sql: string, params: SqlValue[]) =>
           (await query(sql, params)).rows[0] as R | undefined,
         all: async <R>(sql: string, params: SqlValue[]) => (await query(sql, params)).rows as R[],
@@ -226,7 +224,8 @@ END $merv$;`);
 
   protected async begin(connection: Connection): Promise<void> {
     await connection.exec('BEGIN');
-    // Preserve SQLite's writer serialization and commit-ordered event IDs across app instances.
+    // This advisory lock is the writer serialization: one writer per schema at a time, across app
+    // instances, which also keeps event IDs in commit order.
     await connection.get(
       'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, 0))',
       [`merv-state:${this.schema}`],

@@ -10,7 +10,7 @@ import type {
   WorkflowWorkspacePolicy,
   WorkflowExecutionReferences,
 } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 const oid = (digit: string) => digit.repeat(40);
 const workspace = (patch: Partial<SessionWorkspace> = {}): SessionWorkspace => ({
@@ -278,7 +278,7 @@ test('Git attachment and final capture are immutable, replayable and independent
             f.session.id,
           ),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
@@ -286,7 +286,7 @@ test('Git attachment and final capture are immutable, replayable and independent
         async (tx) =>
           await tx.run('DELETE FROM session_workspaces WHERE session_id=?', f.session.id),
       ),
-    /retained/,
+    { code: 'state_constraint' },
   );
 });
 

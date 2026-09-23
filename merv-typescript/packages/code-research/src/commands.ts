@@ -69,44 +69,7 @@ export class CodeCommandService implements CodeCommands {
       await state.migrate('code_commands', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-CREATE TABLE code_commands (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  actor_id TEXT NOT NULL,
-  request_id TEXT NOT NULL,
-  input_hash TEXT NOT NULL,
-  command_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('queued','dispatched','succeeded','failed','cancelled')),
-  receipt_json TEXT,
-  error TEXT,
-  UNIQUE(session_id,request_id),
-  CHECK (
-    (status IN ('queued','dispatched') AND receipt_json IS NULL AND error IS NULL) OR
-    (status='succeeded' AND receipt_json IS NOT NULL AND error IS NULL) OR
-    (status IN ('failed','cancelled') AND receipt_json IS NULL AND error IS NOT NULL)
-  )
-);
-CREATE UNIQUE INDEX code_commands_outstanding ON code_commands(session_id)
-  WHERE status IN ('queued','dispatched');
-CREATE INDEX code_commands_project ON code_commands(project_id);
-CREATE TRIGGER code_commands_identity BEFORE UPDATE ON code_commands
-WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR
-  NEW.session_id IS NOT OLD.session_id OR NEW.actor_id IS NOT OLD.actor_id OR
-  NEW.request_id IS NOT OLD.request_id OR NEW.input_hash IS NOT OLD.input_hash OR
-  NEW.command_json IS NOT OLD.command_json
-BEGIN SELECT RAISE(ABORT,'Code command identity is immutable'); END;
-CREATE TRIGGER code_commands_transition BEFORE UPDATE ON code_commands
-WHEN NOT (
-  (OLD.status='queued' AND NEW.status IN ('dispatched','cancelled')) OR
-  (OLD.status='dispatched' AND NEW.status IN ('succeeded','failed'))
-)
-BEGIN SELECT RAISE(ABORT,'Code command result is immutable'); END;
-CREATE TRIGGER code_commands_no_delete BEFORE DELETE ON code_commands
-BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
-`,
+          sql: postgresMigrations[1],
         },
       ]);
     };
@@ -215,9 +178,7 @@ BEGIN SELECT RAISE(ABORT,'Code commands are retained'); END;
       const sessionId = await this.reader(caller, tx);
       return (
         await tx.all<Row>(
-          tx.dialect === 'postgres'
-            ? `SELECT * FROM code_commands WHERE project_id=?${sessionId ? ' AND session_id=?' : ''} ORDER BY _merv_rowid DESC LIMIT 100`
-            : `SELECT * FROM code_commands WHERE project_id=?${sessionId ? ' AND session_id=?' : ''} ORDER BY rowid DESC LIMIT 100`,
+          `SELECT * FROM code_commands WHERE project_id=?${sessionId ? ' AND session_id=?' : ''} ORDER BY _merv_rowid DESC LIMIT 100`,
           caller.projectId,
           ...(sessionId ? [sessionId] : []),
         )

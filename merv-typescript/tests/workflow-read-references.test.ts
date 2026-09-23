@@ -2,12 +2,13 @@ import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Caller, Data, WorkflowDefinition, WorkflowPolicy } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const controls = { outputs: () => {} };
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));

@@ -84,143 +84,29 @@ import {
 const migrations = [
   {
     version: 1,
-    postgres: postgresMigrations[1],
-    sql: `
-  CREATE TABLE wf_definitions (
-    name TEXT NOT NULL, version INTEGER NOT NULL CHECK (version > 0),
-    fingerprint TEXT NOT NULL, definition_json TEXT NOT NULL, created_at TEXT NOT NULL,
-    PRIMARY KEY (name, version)
-  );
-  CREATE TABLE wf_instances (
-    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workflow TEXT NOT NULL,
-    version INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0),
-    data_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    FOREIGN KEY (workflow, version) REFERENCES wf_definitions(name, version)
-  );
-  CREATE INDEX wf_instances_project ON wf_instances(project_id, created_at, id);
-  CREATE TABLE wf_requests (
-    project_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-    response_json TEXT NOT NULL, PRIMARY KEY (project_id, request_id)
-  );
-  CREATE TABLE wf_history (
-    instance_id TEXT NOT NULL REFERENCES wf_instances(id), project_id TEXT NOT NULL,
-    revision INTEGER NOT NULL, action TEXT NOT NULL, actor_id TEXT NOT NULL,
-    request_id TEXT NOT NULL, from_state TEXT, to_state TEXT NOT NULL,
-    data_json TEXT NOT NULL, created_at TEXT NOT NULL,
-    PRIMARY KEY (instance_id, revision)
-  );
-`,
+    sql: postgresMigrations[1],
   },
   {
     version: 2,
-    postgres: postgresMigrations[2],
-    sql: `
-  CREATE TABLE wf_success_states (
-    workflow TEXT NOT NULL, version INTEGER NOT NULL, success_json TEXT NOT NULL,
-    PRIMARY KEY (workflow,version),
-    FOREIGN KEY (workflow,version) REFERENCES wf_definitions(name,version)
-  );
-  CREATE TABLE wf_dependencies (
-    project_id TEXT NOT NULL, source_id TEXT NOT NULL, target_id TEXT NOT NULL,
-    target_workflow TEXT NOT NULL, target_version INTEGER NOT NULL,
-    target_success_json TEXT NOT NULL, target_terminal_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (source_id,target_id), CHECK (source_id <> target_id)
-  );
-  CREATE INDEX wf_dependencies_source ON wf_dependencies(project_id,source_id);
-  CREATE INDEX wf_dependencies_target ON wf_dependencies(project_id,target_id);
-`,
+    sql: postgresMigrations[2],
   },
   {
     version: 3,
-    postgres: postgresMigrations[3],
-    sql: `
-  CREATE TABLE wf_work_starts (
-    instance_id TEXT NOT NULL REFERENCES wf_instances(id), project_id TEXT NOT NULL,
-    workflow TEXT NOT NULL, version INTEGER NOT NULL, state TEXT NOT NULL,
-    revision INTEGER NOT NULL CHECK (revision >= 0), actor_id TEXT NOT NULL,
-    started_at TEXT NOT NULL, event_id INTEGER NOT NULL UNIQUE REFERENCES events(id),
-    PRIMARY KEY (instance_id,revision)
-  );
-  CREATE INDEX wf_work_starts_project ON wf_work_starts(project_id,instance_id,revision);
-  CREATE TRIGGER wf_work_starts_no_update BEFORE UPDATE ON wf_work_starts
-    BEGIN SELECT RAISE(ABORT,'Workflow work starts are immutable'); END;
-  CREATE TRIGGER wf_work_starts_no_delete BEFORE DELETE ON wf_work_starts
-    BEGIN SELECT RAISE(ABORT,'Workflow work starts are retained'); END;
-`,
+    sql: postgresMigrations[3],
   },
   {
     version: 4,
-    postgres: postgresMigrations[4],
-    sql: `
-  CREATE TABLE wf_execution_policies (
-    workflow TEXT NOT NULL, version INTEGER NOT NULL, state TEXT NOT NULL,
-    fingerprint TEXT NOT NULL, manifest_json TEXT NOT NULL,
-    PRIMARY KEY(workflow,version,state),
-    FOREIGN KEY(workflow,version) REFERENCES wf_definitions(name,version)
-  );
-  CREATE TRIGGER wf_execution_policies_no_update BEFORE UPDATE ON wf_execution_policies
-    BEGIN SELECT RAISE(ABORT,'Workflow execution declarations are immutable'); END;
-  CREATE TRIGGER wf_execution_policies_no_delete BEFORE DELETE ON wf_execution_policies
-    BEGIN SELECT RAISE(ABORT,'Workflow execution declarations are retained'); END;
-`,
+    sql: postgresMigrations[4],
   },
   {
     version: 5,
-    postgres: postgresMigrations[5],
-    sql: `
-  CREATE TABLE wf_limit_grants (
-    project_id TEXT NOT NULL, request_id TEXT NOT NULL,
-    instance_id TEXT NOT NULL REFERENCES wf_instances(id), limit_name TEXT NOT NULL,
-    additional INTEGER NOT NULL CHECK (additional > 0), reason TEXT NOT NULL,
-    actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
-    PRIMARY KEY (project_id, request_id)
-  );
-  CREATE INDEX wf_limit_grants_instance ON wf_limit_grants(instance_id, limit_name);
-  CREATE TRIGGER wf_limit_grants_no_update BEFORE UPDATE ON wf_limit_grants
-    BEGIN SELECT RAISE(ABORT,'Workflow limit grants are immutable'); END;
-  CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
-    BEGIN SELECT RAISE(ABORT,'Workflow limit grants are retained'); END;
-`,
+    sql: postgresMigrations[5],
   },
   {
     // The one workflow table that is rewritten and cleared: it mirrors what another plugin
     // thinks now, and must stay readable and clearable while that plugin is unloaded.
     version: 6,
-    rebuild: true,
-    postgres: postgresMigrations[6],
-    sql: `
-  CREATE TABLE wf_blockers (
-    project_id TEXT NOT NULL, instance_id TEXT NOT NULL, provider TEXT NOT NULL,
-    blocker_key TEXT NOT NULL, code TEXT NOT NULL, message TEXT NOT NULL,
-    status INTEGER NOT NULL CHECK (status BETWEEN 400 AND 599), next TEXT NOT NULL,
-    related_json TEXT NOT NULL, since TEXT NOT NULL, updated_at TEXT NOT NULL,
-    PRIMARY KEY (instance_id,provider,blocker_key)
-  );
-  CREATE INDEX wf_blockers_project ON wf_blockers(project_id,provider);
-  CREATE TRIGGER wf_blockers_identity BEFORE UPDATE OF project_id,instance_id,provider,blocker_key ON wf_blockers
-    BEGIN SELECT RAISE(ABORT,'Workflow blocker identity is immutable'); END;
-
-CREATE TEMP TABLE wf_dependencies_backup AS SELECT * FROM wf_dependencies;
-DROP TABLE wf_dependencies;
-CREATE TABLE wf_dependencies (
-  project_id TEXT NOT NULL,source_id TEXT NOT NULL,target_id TEXT NOT NULL,
-  target_workflow TEXT NOT NULL,target_version INTEGER NOT NULL,
-  target_success_json TEXT NOT NULL,target_terminal_json TEXT NOT NULL,created_at TEXT NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'declared' CHECK(kind IN ('declared','system')),
-  owner TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY(source_id,target_id,kind,owner),CHECK(source_id<>target_id),
-  CHECK((kind='declared' AND owner='') OR (kind='system' AND owner<>''))
-);
-INSERT INTO wf_dependencies(project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at)
-SELECT * FROM wf_dependencies_backup;
-DROP TABLE wf_dependencies_backup;
-CREATE INDEX wf_dependencies_source ON wf_dependencies(project_id,source_id);
-CREATE INDEX wf_dependencies_target ON wf_dependencies(project_id,target_id);
-CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies WHEN NEW.kind IS NOT OLD.kind OR NEW.owner IS NOT OLD.owner BEGIN SELECT RAISE(ABORT,'Dependency contracts are immutable'); END;
-CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
-CREATE TRIGGER wf_system_requests_no_update BEFORE UPDATE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are immutable'); END;
-CREATE TRIGGER wf_system_requests_no_delete BEFORE DELETE ON wf_system_requests BEGIN SELECT RAISE(ABORT,'System requests are retained'); END;`,
+    sql: postgresMigrations[6],
   },
 ];
 
@@ -1603,8 +1489,7 @@ export class WorkflowsService implements Workflows {
 
   /**
    * A walk rather than a recursive query, like the cycle check beside the dependency insert:
-   * it reads the same on both backends, and it can ask each loaded policy for the children
-   * that no dependency edge names. The bound keeps a pathological graph from holding a
+   * it can ask each loaded policy for the children that no dependency edge names. The bound keeps a pathological graph from holding a
    * read open; the caller reports how many instances it was given.
    */
   async dependencyClosure(
@@ -1758,18 +1643,11 @@ export class WorkflowsService implements Workflows {
       const registered = this.definition(input.workflow, input.version);
       this.checkOwner(registered, owner);
       const blocker = await transaction.get<{ id: string; workflow: string }>(
-        transaction.dialect === 'postgres'
-          ? `SELECT w.id,w.workflow FROM wf_instances w
+        `SELECT w.id,w.workflow FROM wf_instances w
          JOIN wf_definitions d ON d.name=w.workflow AND d.version=w.version
          WHERE w.project_id=?
            AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(d.definition_json::jsonb #> '{blocksStarts}') AS selected(value) WHERE value=?)
            AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(d.definition_json::jsonb #> '{terminal}') AS selected(value) WHERE value=w.state)
-         LIMIT 1`
-          : `SELECT w.id,w.workflow FROM wf_instances w
-         JOIN wf_definitions d ON d.name=w.workflow AND d.version=w.version
-         WHERE w.project_id=?
-           AND EXISTS (SELECT 1 FROM json_each(d.definition_json,'$.blocksStarts') WHERE value=?)
-           AND NOT EXISTS (SELECT 1 FROM json_each(d.definition_json,'$.terminal') WHERE value=w.state)
          LIMIT 1`,
         caller.projectId,
         registered.definition.name,

@@ -174,7 +174,7 @@ The first completed import records the repository once (`code_projects.store_jso
 Per pass, per project: `git bundle create --all`, `git bundle verify`, the sha256 measured while the file is read, the object written with that digest so the store itself refuses damaged bytes, and a `HEAD` afterwards proving it is readable. Only the refs and the bundle cut from them take the project's turn and one of the two transfer slots; the upload reads a file that is already a consistent snapshot of those refs, so pushes to a large project do not queue behind gigabytes. The bundle is a transient file measured against the volume's free-space floor, not against the project's disk quota, which is for the objects the project keeps. The manifest and `latest.json` are read back byte for byte after they are written; the bundle and the dump are sized, because pulling them down again would double every pass. Beside it a manifest — the marker bytes, every ref with its oid, the bundle and the database copy with sizes and hashes — which is what makes the bucket self-describing, so a restore works with the database gone. Keys:
 
 ```text
-<prefix>/<deployment>/db/<stamp>.sql.gz            the schema dump (a SQLite deployment writes .sqlite)
+<prefix>/<deployment>/db/<stamp>.sql.gz            the schema dump
 <prefix>/<deployment>/code/<key>/<stamp>-<sha16>.bundle
 <prefix>/<deployment>/code/<key>/<stamp>.manifest.json
 <prefix>/<deployment>/code/<key>/latest.json       the one mutable key: the newest manifest

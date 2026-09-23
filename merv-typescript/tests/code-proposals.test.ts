@@ -16,7 +16,7 @@ import {
   type WorkflowDispatchAdmission,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
@@ -26,6 +26,8 @@ import { DiskBlobs } from '@merv/blobs';
 import { CodeCommandService } from '../packages/code-research/src/commands.js';
 import { CodeProposalService } from '../packages/code-research/src/proposals.js';
 import type { CodeProposalInput } from '../packages/code-research/src/types.js';
+import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 
 const oid = (digit: string) => digit.repeat(40);
 const workspace: SessionWorkspace = {
@@ -53,7 +55,7 @@ async function fixture(t: TestContext, options: { readOnly?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-proposals-'));
   let clock = Date.now(),
     poisoned = false;
-  let state: SqliteState,
+  let state: PostgresState,
     scope: ProjectScope,
     workflows: WorkflowsService,
     events: DurableEvents,
@@ -129,7 +131,7 @@ async function fixture(t: TestContext, options: { readOnly?: boolean } = {}) {
   });
   let handle: Awaited<ReturnType<WorkflowsService['register']>>;
   const open = async () => {
-    state = new SqliteState(join(directory, 'state.sqlite'));
+    state = await openState(directory);
     scope = await createService(new ProjectScope(state, () => clock));
     workflows = await createService(new WorkflowsService(state, scope));
     events = await createService(new DurableEvents(state));
@@ -342,14 +344,14 @@ test('seals exact commit, original worker, pinned input/output metadata and cano
       await f.state.transaction(
         async (tx) => await tx.run('UPDATE code_proposals SET revision=9 WHERE id=?', proposal.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
       await f.state.transaction(
         async (tx) => await tx.run('DELETE FROM code_proposals WHERE id=?', proposal.id),
       ),
-    /retained/,
+    { code: 'state_constraint' },
   );
 });
 

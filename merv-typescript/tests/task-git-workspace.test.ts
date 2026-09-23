@@ -1,6 +1,6 @@
 import { createService } from '@merv/contracts';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,8 +13,6 @@ import type {
   TaskDelivery,
   TaskReview,
 } from '@merv/contracts';
-import { PostgresState, SqliteState } from '@merv/state';
-import { Pool } from 'pg';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -27,16 +25,13 @@ import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-research/service';
 import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
 
 const oid = (char: string) => char.repeat(40);
 
-async function fixture(t: TestContext, postgres = false) {
+async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-git-'));
-  const connectionString = process.env.MERV_TEST_POSTGRES_URL!,
-    schema = `task_git_${randomUUID().replaceAll('-', '')}`;
-  const state = postgres
-    ? await PostgresState.open({ connectionString, schema })
-    : new SqliteState(join(directory, 'state.sqlite'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
@@ -202,14 +197,6 @@ async function fixture(t: TestContext, postgres = false) {
     workflows.close();
     await state.close();
     rmSync(directory, { recursive: true, force: true });
-    if (postgres) {
-      const pool = new Pool({ connectionString });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   return {
     state,
@@ -465,17 +452,8 @@ test('A Git task delivers only its own worker’s receipted commit, and a scratc
   assert.equal((await f.create()).workflow.version, 2);
 });
 
-// The delivery queries are built in one place for both backends, and an empty list or a
-// history match reads differently on each, so the whole round runs on both.
-for (const postgres of [false, true])
-  test(
-    `A delivered commit is pinned for review as a rendered record, alone or beside files (${postgres ? 'PostgreSQL' : 'SQLite'})`,
-    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
-    async (t) => await pinnedDelivery(t, postgres),
-  );
-
-async function pinnedDelivery(t: TestContext, postgres: boolean) {
-  const f = await fixture(t, postgres);
+test('A delivered commit is pinned for review as a rendered record, alone or beside files', async (t) => {
+  const f = await fixture(t);
   const task = await f.create({ workspace: 'git' });
   const held = await f.lease(task);
   const commandId = await f.commit(held);
@@ -556,17 +534,10 @@ async function pinnedDelivery(t: TestContext, postgres: boolean) {
     task.briefId,
     ...again.deliveryIds,
   ]);
-}
+});
 
-for (const postgres of [false, true])
-  test(
-    `A Git task passes only from the leased review pinned to its delivered commit, which later work builds on (${postgres ? 'PostgreSQL' : 'SQLite'})`,
-    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
-    async (t) => await pinnedReview(t, postgres),
-  );
-
-async function pinnedReview(t: TestContext, postgres: boolean) {
-  const f = await fixture(t, postgres);
+test('A Git task passes only from the leased review pinned to its delivered commit, which later work builds on', async (t) => {
+  const f = await fixture(t);
   const task = await f.create({ workspace: 'git' });
   const based = await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] });
   const relations = await f.workflows.dependencies(f.source, based.id);
@@ -780,7 +751,7 @@ async function pinnedReview(t: TestContext, postgres: boolean) {
       }),
     { code: 'workspace_base_conflict' },
   );
-}
+});
 
 test('An unhosted Git task runs on the central-base version and records its legacy acceptance', async (t) => {
   const f = await fixture(t);

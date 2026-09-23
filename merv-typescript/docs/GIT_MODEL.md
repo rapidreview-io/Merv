@@ -340,7 +340,7 @@ Planning occurs transactionally:
 
 Quarantined records are ineligible. Unresolved healthy records remain dependencies; do not create another plan to bypass them. First committed plan wins and never changes.
 
-SQLite and PostgreSQL already serialize State writers; retain unique constraints as the final protection. [state/sqlite.ts:53](../packages/state/src/sqlite.ts:53), [state/postgres.ts:227](../packages/state/src/postgres.ts:227)
+State already serializes writers: one PostgreSQL advisory lock per schema admits one writer at a time. Retain unique constraints as the final protection. [state/postgres.ts:229](../packages/state/src/postgres.ts:229)
 
 States:
 

@@ -88,15 +88,7 @@ export class RecipeContextBuilder implements ContextBuilder {
       await state.migrate('context_builder', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE context_recipes(type TEXT NOT NULL,version INTEGER NOT NULL,hash TEXT NOT NULL,definition TEXT NOT NULL,PRIMARY KEY(type,version));
-      CREATE TABLE context_packages(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,actor_id TEXT NOT NULL,request_id TEXT NOT NULL,input_hash TEXT NOT NULL,package TEXT NOT NULL,UNIQUE(project_id,actor_id,request_id));
-      CREATE TRIGGER context_recipes_immutable BEFORE UPDATE ON context_recipes BEGIN SELECT RAISE(ABORT,'Context recipe versions are immutable'); END;
-      CREATE TRIGGER context_recipes_no_delete BEFORE DELETE ON context_recipes BEGIN SELECT RAISE(ABORT,'Context recipe versions are durable'); END;
-      CREATE TRIGGER context_packages_immutable BEFORE UPDATE ON context_packages BEGIN SELECT RAISE(ABORT,'Context packages are immutable'); END;
-      CREATE TRIGGER context_packages_no_delete BEFORE DELETE ON context_packages BEGIN SELECT RAISE(ABORT,'Context packages are durable'); END;
-    `,
+          sql: postgresMigrations[1],
         },
       ]);
     };

@@ -22,35 +22,7 @@ import { projectValue, type ProjectRow } from './project-context.js';
 
 export const userKeyMigration: Migration = {
   version: 4,
-  postgres: postgresMigrations[4],
-  sql: `
-    CREATE TABLE user_keys (
-      id TEXT PRIMARY KEY, issuer TEXT NOT NULL, subject TEXT NOT NULL,
-      project_id TEXT NOT NULL REFERENCES projects(id),
-      grant_scope TEXT NOT NULL CHECK(grant_scope IN ('project','account')),
-      label TEXT, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL,
-      expires_at TEXT, revoked_at TEXT, previous_id TEXT UNIQUE REFERENCES user_keys(id),
-      FOREIGN KEY(issuer,subject) REFERENCES shared_users(issuer,subject)
-    );
-    CREATE INDEX user_keys_owner ON user_keys(issuer,subject,created_at,id);
-    CREATE TRIGGER user_keys_no_delete BEFORE DELETE ON user_keys
-      BEGIN SELECT RAISE(ABORT,'User key history is retained'); END;
-    CREATE TRIGGER user_keys_immutable BEFORE UPDATE ON user_keys
-      WHEN NEW.id IS NOT OLD.id OR NEW.issuer IS NOT OLD.issuer OR
-        NEW.subject IS NOT OLD.subject OR NEW.project_id IS NOT OLD.project_id OR
-        NEW.grant_scope IS NOT OLD.grant_scope OR NEW.label IS NOT OLD.label OR
-        NEW.token_hash IS NOT OLD.token_hash OR NEW.created_at IS NOT OLD.created_at OR
-        NEW.expires_at IS NOT OLD.expires_at OR NEW.previous_id IS NOT OLD.previous_id OR
-        OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL
-      BEGIN SELECT RAISE(ABORT,'User keys only allow first revocation'); END;
-    CREATE TRIGGER user_keys_lineage BEFORE INSERT ON user_keys
-      WHEN NEW.previous_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM user_keys p WHERE p.id=NEW.previous_id AND
-          p.issuer=NEW.issuer AND p.subject=NEW.subject AND p.project_id=NEW.project_id AND
-          p.grant_scope=NEW.grant_scope AND p.label IS NEW.label AND p.revoked_at IS NOT NULL
-      )
-      BEGIN SELECT RAISE(ABORT,'Rotation preserves user key ownership and grant'); END;
-  `,
+  sql: postgresMigrations[4],
 };
 
 interface KeyRow {

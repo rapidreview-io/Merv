@@ -4,16 +4,17 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, ReviewInput, Role } from '@merv/contracts';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext, version = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));
-  const state = new SqliteState(join(directory, 'state.sqlite'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const bootstrap = await scope.bootstrap({
     projectName: 'Contributor independence',
@@ -157,7 +158,7 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
         async (tx) =>
           await tx.run('UPDATE reviews SET excluded_actor_ids=? WHERE id=?', '[]', review.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
   await assert.rejects(
     async () =>
@@ -169,7 +170,7 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
             review.id,
           ),
       ),
-    /contributor/,
+    { code: 'state_constraint' },
   );
   await f.scope.revokeActor(f.operator, f.lensA.actorId);
   const reissueInput = {

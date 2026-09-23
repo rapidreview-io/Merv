@@ -394,9 +394,7 @@ export class CodePublicationService implements CodePublicationApi {
     const records = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const active =
-        this.state.dialect === 'postgres'
-          ? "(record_json::jsonb->'approval' IS NULL OR record_json::jsonb->'approval' = 'null'::jsonb OR record_json::jsonb->'approval'->>'source' = 'unit')"
-          : "(json_extract(record_json,'$.approval') IS NULL OR json_extract(record_json,'$.approval.source') = 'unit')";
+        "(record_json::jsonb->'approval' IS NULL OR record_json::jsonb->'approval' = 'null'::jsonb OR record_json::jsonb->'approval'->>'source' = 'unit')";
       return (
         await tx.all<Row>(
           `SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? AND ${active} ORDER BY synced_at,proposal_id LIMIT 1`,

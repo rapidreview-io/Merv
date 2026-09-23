@@ -110,103 +110,26 @@ export class ProjectScope implements Scope {
       await state.migrate('scope', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT NOT NULL);
-      CREATE TABLE actors(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('operator','producer','reviewer','reader')),token_hash TEXT NOT NULL UNIQUE,active INTEGER NOT NULL DEFAULT 1);
-      CREATE INDEX actors_project ON actors(project_id);`,
+          sql: postgresMigrations[1],
         },
         {
           version: 2,
-          postgres: postgresMigrations[2],
-          sql: `
-      CREATE TABLE actors_v2 (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
-        name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('operator','producer','reviewer','reader')),
-        active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)), UNIQUE(id,project_id)
-      );
-      INSERT INTO actors_v2(id,project_id,name,role,active)
-        SELECT id,project_id,name,role,active FROM actors;
-      CREATE TABLE actor_credentials (
-        id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, project_id TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind='actor'), token_hash TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL, expires_at TEXT, revoked_at TEXT,
-        previous_id TEXT UNIQUE REFERENCES actor_credentials(id),
-        FOREIGN KEY(actor_id,project_id) REFERENCES actors_v2(id,project_id)
-      );
-      INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at)
-        SELECT 'credential_' || lower(hex(randomblob(16))), a.id, a.project_id, 'actor', a.token_hash,
-          COALESCE((SELECT e.created_at FROM events e WHERE e.project_id=a.project_id AND
-            ((e.type='actor.created' AND e.subject_id=a.id) OR
-             (e.type='project.created' AND e.actor_id=a.id)) ORDER BY e.id LIMIT 1),
-            strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-        FROM actors a;
-      DROP TABLE actors;
-      ALTER TABLE actors_v2 RENAME TO actors;
-      CREATE INDEX actors_project ON actors(project_id);
-      CREATE INDEX actor_credentials_actor ON actor_credentials(project_id,actor_id,created_at,id);
-      CREATE TRIGGER actor_credentials_no_delete BEFORE DELETE ON actor_credentials
-        BEGIN SELECT RAISE(ABORT,'Actor credential history is retained'); END;
-      CREATE TRIGGER actor_credentials_immutable BEFORE UPDATE ON actor_credentials
-        WHEN NEW.id IS NOT OLD.id OR NEW.actor_id IS NOT OLD.actor_id OR
-          NEW.project_id IS NOT OLD.project_id OR NEW.kind IS NOT OLD.kind OR
-          NEW.token_hash IS NOT OLD.token_hash OR NEW.created_at IS NOT OLD.created_at OR
-          NEW.expires_at IS NOT OLD.expires_at OR NEW.previous_id IS NOT OLD.previous_id OR
-          OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL
-        BEGIN SELECT RAISE(ABORT,'Actor credentials only allow first revocation'); END;
-      `,
+          sql: postgresMigrations[2],
         },
         membershipMigration,
         userKeyMigration,
         {
           version: 5,
-          postgres: postgresMigrations[5],
-          sql: `
-          ALTER TABLE actors ADD COLUMN session_id TEXT;
-          CREATE UNIQUE INDEX actors_session ON actors(session_id) WHERE session_id IS NOT NULL;
-          CREATE TRIGGER actors_session_immutable BEFORE UPDATE ON actors
-            WHEN NEW.session_id IS NOT OLD.session_id OR
-              (OLD.session_id IS NOT NULL AND (NEW.role IS NOT OLD.role OR NEW.project_id IS NOT OLD.project_id OR NEW.id IS NOT OLD.id))
-            BEGIN SELECT RAISE(ABORT,'Session actor identity and role are immutable'); END;
-          CREATE TRIGGER actors_session_role BEFORE INSERT ON actors
-            WHEN NEW.session_id IS NOT NULL AND NEW.role='operator'
-            BEGIN SELECT RAISE(ABORT,'Session actors cannot be operators'); END;
-          CREATE TRIGGER actor_credentials_no_session BEFORE INSERT ON actor_credentials
-            WHEN EXISTS(SELECT 1 FROM actors WHERE id=NEW.actor_id AND session_id IS NOT NULL)
-            BEGIN SELECT RAISE(ABORT,'Session actors cannot receive independent credentials'); END;
-        `,
+          sql: postgresMigrations[5],
         },
         projectContextMigration,
         {
           version: 7,
-          postgres: postgresMigrations[7],
-          sql: `
-        ALTER TABLE actors ADD COLUMN agent_id TEXT;
-        CREATE UNIQUE INDEX actors_agent ON actors(agent_id) WHERE agent_id IS NOT NULL;
-        DROP TRIGGER actors_session_immutable;
-        CREATE TRIGGER actors_session_immutable BEFORE UPDATE ON actors
-          WHEN NEW.session_id IS NOT OLD.session_id OR NEW.agent_id IS NOT OLD.agent_id OR
-            (OLD.session_id IS NOT NULL AND (NEW.project_id IS NOT OLD.project_id OR NEW.id IS NOT OLD.id OR NEW.role='operator' OR
-              (OLD.agent_id IS NULL AND NEW.role IS NOT OLD.role)))
-          BEGIN SELECT RAISE(ABORT,'Managed actor identity is immutable'); END;
-      `,
+          sql: postgresMigrations[7],
         },
         {
           version: 8,
-          sql: `ALTER TABLE actors ADD COLUMN service_owner TEXT;
-CREATE UNIQUE INDEX actors_service ON actors(project_id,service_owner) WHERE service_owner IS NOT NULL;
-CREATE TRIGGER actors_service_identity BEFORE UPDATE ON actors
-WHEN NEW.service_owner IS NOT OLD.service_owner OR (OLD.service_owner IS NOT NULL AND (NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.role IS NOT OLD.role))
-BEGIN SELECT RAISE(ABORT,'Service actor identity is immutable'); END;
-CREATE TRIGGER actors_service_no_delete BEFORE DELETE ON actors WHEN OLD.service_owner IS NOT NULL
-BEGIN SELECT RAISE(ABORT,'Service actors are retained'); END;
-CREATE TRIGGER actors_service_role BEFORE INSERT ON actors WHEN NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL)
-BEGIN SELECT RAISE(ABORT,'Service actors are credential-free producers'); END;
-CREATE TRIGGER actor_credentials_no_service BEFORE INSERT ON actor_credentials WHEN EXISTS(SELECT 1 FROM actors WHERE id=NEW.actor_id AND service_owner IS NOT NULL)
-BEGIN SELECT RAISE(ABORT,'Service actors cannot receive credentials'); END;
-CREATE TRIGGER actors_service_update BEFORE UPDATE ON actors
-WHEN NEW.service_owner IS NOT NULL AND (NEW.role <> 'producer' OR NEW.session_id IS NOT NULL OR NEW.agent_id IS NOT NULL)
-BEGIN SELECT RAISE(ABORT,'Service actors are credential-free producers'); END;`,
-          postgres: postgresMigrations[8],
+          sql: postgresMigrations[8],
         },
       ]);
       this.members = new Memberships(

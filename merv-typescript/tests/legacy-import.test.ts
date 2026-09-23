@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { Pool } from 'pg';
 import type { Transaction } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import {
   importLegacyFoundation,
   planLegacyFoundation,
   type LegacyFoundationSnapshot,
 } from '../src/legacy-import.js';
+import { stateConfig } from './fixtures/state.js';
 
 const content = Buffer.from('Immutable evidence from the original research project.');
 const hash = createHash('sha256').update(content).digest('hex');
@@ -58,22 +58,13 @@ const snapshot = (): LegacyFoundationSnapshot => ({
   ],
 });
 
-async function fixture(t: TestContext, postgres = false) {
+async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-legacy-import-'));
-  const schema = `import_${randomUUID().replaceAll('-', '')}`;
-  const env = `MERV_IMPORT_${randomUUID().replaceAll('-', '').toUpperCase()}`;
-  if (postgres) process.env[env] = process.env.MERV_TEST_POSTGRES_URL;
   let app = await createApp({
     directory,
     config: {
       plugins: [
-        {
-          id: 'state',
-          name: '@merv/state',
-          config: postgres
-            ? { backend: 'postgres', connectionStringEnv: env, schema }
-            : { path: join(directory, 'state.sqlite') },
-        },
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
         { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
         { id: 'artifacts', name: '@merv/artifacts' },
@@ -82,15 +73,6 @@ async function fixture(t: TestContext, postgres = false) {
   });
   t.after(async () => {
     await app.stop();
-    if (postgres) {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
-    delete process.env[env];
     await rm(directory, { force: true, recursive: true });
   });
   let reads = 0;
@@ -112,70 +94,60 @@ async function fixture(t: TestContext, postgres = false) {
   return { app, services, counts, reads: () => reads };
 }
 
-for (const postgres of [false, true]) {
-  test(
-    `legacy foundation imports the same project and shared account on ${postgres ? 'PostgreSQL' : 'SQLite'} without credentials or fabricated history`,
-    { skip: postgres && !process.env.MERV_TEST_POSTGRES_URL },
-    async (t) => {
-      const f = await fixture(t, postgres);
-      const receipt = await importLegacyFoundation(f.services, snapshot());
-      assert.equal(receipt.researchHistoryImported, false);
-      assert.equal(receipt.credentialsImported, false);
-      assert.deepEqual(await f.counts(), { projects: 1, members: 1, artifacts: 1 });
-      const principal = await f.app.ctx.scope.acceptVerifiedIdentity({
-        issuer,
-        subject: 'same-supabase-user',
-        expiresAt: '2099-01-01T00:00:00.000Z',
-      });
-      const projects = await f.app.ctx.scope.projects(principal);
-      assert.equal(projects[0]!.id, 'proj_original');
-      assert.equal(projects[0]!.summary, 'Existing introduction.');
-      const caller = await f.app.ctx.scope.caller(principal, 'proj_original');
-      assert.equal((await f.app.ctx.scope.require(caller, 'admin')).role, 'operator');
-      const artifact = await f.app.ctx.artifacts.read(caller, 'art_original');
-      assert.equal(artifact.content, content.toString());
-      assert.equal(artifact.artifact.createdBy, 'legacy-agent-attribution');
-      // Research claims are retired: the export still carries them, and nothing imports them.
-      assert.equal('claims' in receipt, false);
-      const claimsTable = await f.app.ctx.state.read((sql) =>
-        sql.get<{ name: string | null }>(
-          postgres
-            ? "SELECT to_regclass('claims') AS name"
-            : "SELECT name FROM sqlite_master WHERE name='claims'",
-        ),
-      );
-      assert.equal(claimsTable?.name ?? null, null);
-      const outsider = await f.app.ctx.scope.acceptVerifiedIdentity({
-        issuer,
-        subject: 'other-user',
-        expiresAt: '2099-01-01T00:00:00.000Z',
-      });
-      assert.deepEqual(await f.app.ctx.scope.projects(outsider), []);
-      await assert.rejects(f.app.ctx.scope.caller(outsider, 'proj_original'), {
-        code: 'membership_required',
-      });
-      assert.equal(
-        (await f.app.ctx.state.read((sql) => sql.all('SELECT id FROM actor_credentials'))).length,
-        0,
-      );
-      assert.equal(
-        (await f.app.ctx.state.read((sql) => sql.all('SELECT id FROM user_keys'))).length,
-        0,
-      );
-      const reads = f.reads();
-      assert.deepEqual(await importLegacyFoundation(f.services, snapshot()), receipt);
-      assert.equal(f.reads(), reads, 'An exact replay needs no new remote reads');
-      const changed = snapshot();
-      changed.projects[0]!.summary = 'Changed input';
-      await assert.rejects(importLegacyFoundation(f.services, changed), {
-        code: 'legacy_import_conflict',
-      });
-      await assert.rejects(
-        f.app.ctx.state.transaction((tx) => tx.run('DELETE FROM legacy_foundation_imports')),
-      );
-    },
+test('legacy foundation imports the same project and shared account without credentials or fabricated history', async (t) => {
+  const f = await fixture(t);
+  const receipt = await importLegacyFoundation(f.services, snapshot());
+  assert.equal(receipt.researchHistoryImported, false);
+  assert.equal(receipt.credentialsImported, false);
+  assert.deepEqual(await f.counts(), { projects: 1, members: 1, artifacts: 1 });
+  const principal = await f.app.ctx.scope.acceptVerifiedIdentity({
+    issuer,
+    subject: 'same-supabase-user',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  });
+  const projects = await f.app.ctx.scope.projects(principal);
+  assert.equal(projects[0]!.id, 'proj_original');
+  assert.equal(projects[0]!.summary, 'Existing introduction.');
+  const caller = await f.app.ctx.scope.caller(principal, 'proj_original');
+  assert.equal((await f.app.ctx.scope.require(caller, 'admin')).role, 'operator');
+  const artifact = await f.app.ctx.artifacts.read(caller, 'art_original');
+  assert.equal(artifact.content, content.toString());
+  assert.equal(artifact.artifact.createdBy, 'legacy-agent-attribution');
+  // Research claims are retired: the export still carries them, and nothing imports them.
+  assert.equal('claims' in receipt, false);
+  const claimsTable = await f.app.ctx.state.read((sql) =>
+    sql.get<{ name: string | null }>("SELECT to_regclass('claims') AS name"),
   );
-}
+  assert.equal(claimsTable?.name ?? null, null);
+  const outsider = await f.app.ctx.scope.acceptVerifiedIdentity({
+    issuer,
+    subject: 'other-user',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  });
+  assert.deepEqual(await f.app.ctx.scope.projects(outsider), []);
+  await assert.rejects(f.app.ctx.scope.caller(outsider, 'proj_original'), {
+    code: 'membership_required',
+  });
+  assert.equal(
+    (await f.app.ctx.state.read((sql) => sql.all('SELECT id FROM actor_credentials'))).length,
+    0,
+  );
+  assert.equal(
+    (await f.app.ctx.state.read((sql) => sql.all('SELECT id FROM user_keys'))).length,
+    0,
+  );
+  const reads = f.reads();
+  assert.deepEqual(await importLegacyFoundation(f.services, snapshot()), receipt);
+  assert.equal(f.reads(), reads, 'An exact replay needs no new remote reads');
+  const changed = snapshot();
+  changed.projects[0]!.summary = 'Changed input';
+  await assert.rejects(importLegacyFoundation(f.services, changed), {
+    code: 'legacy_import_conflict',
+  });
+  await assert.rejects(
+    f.app.ctx.state.transaction((tx) => tx.run('DELETE FROM legacy_foundation_imports')),
+  );
+});
 
 test('foundation validation rejects cross-project references and identifies unsupported large bytes before writing', async (t) => {
   const f = await fixture(t);

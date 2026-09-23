@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import type { WorkflowAssignmentRule, WorkflowExecutionPolicy } from '@merv/contracts';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 
 test(
   'pending Git capture acknowledgment retains runner capacity across restart before successor checkout reuse',

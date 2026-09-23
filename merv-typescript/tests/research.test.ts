@@ -9,35 +9,27 @@ import type {
 import { createService } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Pool } from 'pg';
 import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchDigest, ResearchRecord } from '../packages/research/src/types.js';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { backends, gitSource, optional, type Backend } from './fixtures/code-store.js';
+import { gitSource } from './fixtures/code-store.js';
 import { hostedCode, legacyCycle, type LegacyCycle, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
-async function fixture(t: TestContext, backend: Backend = 'sqlite', store = false) {
+async function fixture(t: TestContext, store = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-research-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   );
   // These domain tests need Code's contracts, not its socket-backed repository store.
   if (!store) config.plugins.find((entry: { id: string }) => entry.id === 'code').config = {};
-  const schema = `research_${randomUUID().replaceAll('-', '')}`;
-  if (backend === 'postgres')
-    config.plugins.find((entry: { id: string }) => entry.id === 'state').config = {
-      backend,
-      connectionStringEnv: 'MERV_TEST_POSTGRES_URL',
-      schema,
-    };
   config.plugins = config.plugins.filter(
     (entry: { id: string }) =>
       !['api', 'identity', 'ui', 'research', 'research-tools', 'research-ui'].includes(entry.id) &&
@@ -186,14 +178,6 @@ async function fixture(t: TestContext, backend: Backend = 'sqlite', store = fals
     research.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
-    if (backend === 'postgres') {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   return {
     get app() {
@@ -627,7 +611,7 @@ test('a cycle digest is stored once, read back as artifact metadata, and never r
           async (tx) =>
             await tx.run('UPDATE research_cycles SET digest=? WHERE id=?', value, first.id),
         ),
-      /A research cycle digest is immutable/,
+      { code: 'state_constraint' },
     );
 });
 
@@ -1009,7 +993,7 @@ test('research owner authorization, project scoping, selected prerequisite succe
         async (tx) =>
           await tx.run('UPDATE research_cycles SET reflection_id=? WHERE id=?', 'other', record.id),
       ),
-    /immutable/,
+    { code: 'state_constraint' },
   );
 });
 
@@ -1037,46 +1021,41 @@ test('outer advance rolls back both child creation and replay receipts when call
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
 });
 
-for (const backend of backends)
-  for (const version of [2, 5] as const)
-    test(
-      `${backend}: retired consolidation leaves version-${version} research readable without creating work`,
-      optional(backend),
-      async (t) => {
-        const f = await fixture(t, backend);
-        await f.definition();
-        const legacy = await f.legacy({
-          version,
-          consolidationWorkspace: version === 5 ? 'git' : 'none',
-        });
-        const first = {
-          researchId: legacy.id,
-          expectedRevision: legacy.workflow.revision,
-          requestId: f.id(),
-        };
-        const started = await f.research.advance(f.owner, first);
-        const reflected = await f.advance(started);
-        await f.reflect(reflected);
-        const before = await f.research.get(f.owner, reflected.id);
-        const work = await f.app.ctx.workflows.list(f.owner);
-        await assert.rejects(f.advance(before), { code: 'research_consolidation_retired' });
-        assert.deepEqual(await f.research.get(f.owner, before.id), before);
-        assert.deepEqual(await f.app.ctx.workflows.list(f.owner), work);
-        assert.deepEqual(await f.research.advance(f.owner, first), started);
-        assert.match(
-          JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, before.id)),
-          /research_consolidation_retired/,
-        );
-        assert.ok(!f.app.ctx.workflows.catalog().some(({ name }) => name === 'consolidation'));
-        assert.ok(
-          !(await f.app.ctx.tools.list()).some(({ name }) => name.startsWith('consolidation.')),
-        );
-        const current = await f.advance(await f.advance(await f.create()));
-        await f.reflect(current);
-        assert.equal((await f.advance(current)).workflow.state, 'complete');
-        assert.equal((await f.research.get(f.owner, before.id)).workflow.state, 'reflecting');
-      },
+for (const version of [2, 5] as const)
+  test(`retired consolidation leaves version-${version} research readable without creating work`, async (t) => {
+    const f = await fixture(t);
+    await f.definition();
+    const legacy = await f.legacy({
+      version,
+      consolidationWorkspace: version === 5 ? 'git' : 'none',
+    });
+    const first = {
+      researchId: legacy.id,
+      expectedRevision: legacy.workflow.revision,
+      requestId: f.id(),
+    };
+    const started = await f.research.advance(f.owner, first);
+    const reflected = await f.advance(started);
+    await f.reflect(reflected);
+    const before = await f.research.get(f.owner, reflected.id);
+    const work = await f.app.ctx.workflows.list(f.owner);
+    await assert.rejects(f.advance(before), { code: 'research_consolidation_retired' });
+    assert.deepEqual(await f.research.get(f.owner, before.id), before);
+    assert.deepEqual(await f.app.ctx.workflows.list(f.owner), work);
+    assert.deepEqual(await f.research.advance(f.owner, first), started);
+    assert.match(
+      JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, before.id)),
+      /research_consolidation_retired/,
     );
+    assert.ok(!f.app.ctx.workflows.catalog().some(({ name }) => name === 'consolidation'));
+    assert.ok(
+      !(await f.app.ctx.tools.list()).some(({ name }) => name.startsWith('consolidation.')),
+    );
+    const current = await f.advance(await f.advance(await f.create()));
+    await f.reflect(current);
+    assert.equal((await f.advance(current)).workflow.state, 'complete');
+    assert.equal((await f.research.get(f.owner, before.id)).workflow.state, 'reflecting');
+  });
 
 test('a research cycle that cannot reach an answer can be ended', async (t) => {
   const f = await fixture(t);
@@ -1583,419 +1562,385 @@ const workspacePlan = (): Extract<ChangeSpec, { version: 2 }> => ({
     })),
 });
 
-for (const backend of backends) {
-  test(
-    `${backend}: a mixed workspace plan is atomic, replayable and uses legacy Git until hosted`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      const { record, command } = await reflected(f, workspacePlan());
-      const before = await counts(f);
-      const input = command('create');
-      await assert.rejects(
-        f.app.ctx.state.transaction(async (tx) => {
-          const done = await f.research.advance(f.owner, input, tx);
-          assert.ok(done.successorId);
-          throw new Error('caller rollback');
-        }),
-        /caller rollback/,
-      );
-      assert.deepEqual(await counts(f), before);
-      assert.equal((await f.research.get(f.owner, record.id)).successorId, null);
-      const done = await f.research.advance(f.owner, input);
-      const successor = await f.research.get(f.owner, done.successorId!);
-      const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
-      const plain = await f.app.ctx.tasks.get(f.owner, ids.corpus);
-      const coded = await f.app.ctx.tasks.get(f.owner, ids.harness);
-      const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
-      assert.equal(plain.workspace, undefined);
-      assert.equal(coded.workspace, 'git');
-      assert.equal(coded.workflow.version, 3);
-      assert.equal(coded.baseTaskId, undefined);
-      assert.equal(experiment.workspace, 'git');
-      assert.equal(experiment.workflow.version, 6);
-      assert.equal(experiment.workflow.data.baseTaskId, undefined);
-      assert.deepEqual(
-        (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
-          (item) => item.id,
-        ),
-        [coded.id],
-      );
-      assert.equal(
-        (await digestOf(f, done)).digest.reflection!.changeSpec.hash,
-        successor.origin!.changeSpec.hash,
-      );
-      await f.restart();
-      assert.deepEqual(await f.research.advance(f.owner, input), done);
-      assert.deepEqual(await counts(f), {
-        tasks: before.tasks + 2,
-        experiments: before.experiments + 1,
-        cycles: before.cycles + 1,
-      });
-    },
+test('a mixed workspace plan is atomic, replayable and uses legacy Git until hosted', async (t) => {
+  const f = await fixture(t);
+  const { record, command } = await reflected(f, workspacePlan());
+  const before = await counts(f);
+  const input = command('create');
+  await assert.rejects(
+    f.app.ctx.state.transaction(async (tx) => {
+      const done = await f.research.advance(f.owner, input, tx);
+      assert.ok(done.successorId);
+      throw new Error('caller rollback');
+    }),
+    /caller rollback/,
   );
+  assert.deepEqual(await counts(f), before);
+  assert.equal((await f.research.get(f.owner, record.id)).successorId, null);
+  const done = await f.research.advance(f.owner, input);
+  const successor = await f.research.get(f.owner, done.successorId!);
+  const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
+  const plain = await f.app.ctx.tasks.get(f.owner, ids.corpus);
+  const coded = await f.app.ctx.tasks.get(f.owner, ids.harness);
+  const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
+  assert.equal(plain.workspace, undefined);
+  assert.equal(coded.workspace, 'git');
+  assert.equal(coded.workflow.version, 3);
+  assert.equal(coded.baseTaskId, undefined);
+  assert.equal(experiment.workspace, 'git');
+  assert.equal(experiment.workflow.version, 6);
+  assert.equal(experiment.workflow.data.baseTaskId, undefined);
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
+      (item) => item.id,
+    ),
+    [coded.id],
+  );
+  assert.equal(
+    (await digestOf(f, done)).digest.reflection!.changeSpec.hash,
+    successor.origin!.changeSpec.hash,
+  );
+  await f.restart();
+  assert.deepEqual(await f.research.advance(f.owner, input), done);
+  assert.deepEqual(await counts(f), {
+    tasks: before.tasks + 2,
+    experiments: before.experiments + 1,
+    cycles: before.cycles + 1,
+  });
+});
 
-  for (const firstCode of ['task', 'experiment'] as const)
-    test(
-      `${backend}: Code absence refuses a ${firstCode} declaration without losing approval or partial work`,
-      optional(backend),
-      async (t) => {
-        const f = await fixture(t, backend);
-        const plan = workspacePlan();
-        if (firstCode === 'experiment') plan.items[1].workspace = { provider: 'none' };
-        const { record, command } = await reflected(f, plan);
-        const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
-        const before = await counts(f);
-        await f.code(false);
-        const input = command('create');
-        await assert.rejects(f.research.advance(f.owner, input), { code: 'code_unavailable' });
-        assert.deepEqual(await counts(f), before);
-        assert.deepEqual(
-          await f.app.ctx.reflections.approved(f.owner, record.reflectionId!),
-          approved,
-        );
-        assert.equal(
-          (await f.research.get(f.owner, record.id)).workflow.revision,
-          record.workflow.revision,
-        );
-        await f.code(true);
-        assert.ok((await f.research.advance(f.owner, input)).successorId);
-      },
+for (const firstCode of ['task', 'experiment'] as const)
+  test(`Code absence refuses a ${firstCode} declaration without losing approval or partial work`, async (t) => {
+    const f = await fixture(t);
+    const plan = workspacePlan();
+    if (firstCode === 'experiment') plan.items[1].workspace = { provider: 'none' };
+    const { record, command } = await reflected(f, plan);
+    const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+    const before = await counts(f);
+    await f.code(false);
+    const input = command('create');
+    await assert.rejects(f.research.advance(f.owner, input), { code: 'code_unavailable' });
+    assert.deepEqual(await counts(f), before);
+    assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
+    assert.equal(
+      (await f.research.get(f.owner, record.id)).workflow.revision,
+      record.workflow.revision,
     );
+    await f.code(true);
+    assert.ok((await f.research.advance(f.owner, input)).successorId);
+  });
 
-  test(
-    `${backend}: v1 plans keep their exact hash and workspace-free behavior`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      const current = planned();
-      const { record, command } = await reflected(f, current);
-      const plan: ChangeSpec = {
-        ...current,
-        version: 1,
-        items: current.items.map(({ workspace: _workspace, ...item }) => item),
-      };
-      const changeSpec = await f.app.ctx.artifacts.create(f.owner, {
-        title: 'Retained v1 specification',
-        content: JSON.stringify(plan),
-        mediaType: 'application/json',
-      });
-      const approved = {
-        ...(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!)),
-        plan,
-        changeSpec,
-      };
-      // Research consumes the retained owner contract without resubmitting it through a new wave.
-      t.mock.method(f.app.ctx.reflections, 'approved', async () => approved);
-      const done = await f.research.advance(f.owner, command('create'));
-      const next = await f.research.get(f.owner, done.successorId!);
-      assert.deepEqual(approved.plan, plan);
-      assert.equal(next.origin!.changeSpec.hash, approved.changeSpec.hash);
-      assert.equal(
-        (await digestOf(f, done)).digest.reflection!.changeSpec.hash,
-        approved.changeSpec.hash,
-      );
-      for (const item of next.origin!.items) {
-        const work =
-          item.kind === 'task'
-            ? await f.app.ctx.tasks.get(f.owner, item.id)
-            : await f.app.ctx.experiments.get(f.owner, item.id);
-        assert.notEqual(work.workspace, 'git');
-      }
-    },
+test('v1 plans keep their exact hash and workspace-free behavior', async (t) => {
+  const f = await fixture(t);
+  const current = planned();
+  const { record, command } = await reflected(f, current);
+  const plan: ChangeSpec = {
+    ...current,
+    version: 1,
+    items: current.items.map(({ workspace: _workspace, ...item }) => item),
+  };
+  const changeSpec = await f.app.ctx.artifacts.create(f.owner, {
+    title: 'Retained v1 specification',
+    content: JSON.stringify(plan),
+    mediaType: 'application/json',
+  });
+  const approved = {
+    ...(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!)),
+    plan,
+    changeSpec,
+  };
+  // Research consumes the retained owner contract without resubmitting it through a new wave.
+  t.mock.method(f.app.ctx.reflections, 'approved', async () => approved);
+  const done = await f.research.advance(f.owner, command('create'));
+  const next = await f.research.get(f.owner, done.successorId!);
+  assert.deepEqual(approved.plan, plan);
+  assert.equal(next.origin!.changeSpec.hash, approved.changeSpec.hash);
+  assert.equal(
+    (await digestOf(f, done)).digest.reflection!.changeSpec.hash,
+    approved.changeSpec.hash,
   );
-}
+  for (const item of next.origin!.items) {
+    const work =
+      item.kind === 'task'
+        ? await f.app.ctx.tasks.get(f.owner, item.id)
+        : await f.app.ctx.experiments.get(f.owner, item.id);
+    assert.notEqual(work.workspace, 'git');
+  }
+});
 
-for (const backend of backends)
-  test(
-    `${backend}: a materialised hosted experiment derives its base from its task's reviewed acceptance`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend, true);
-      const source = gitSource(t);
-      const main = source.commit({ 'README.md': 'Research harness\n' });
-      const { codeResearch: code, sessions, tasks, workflows, artifacts } = f.app.ctx;
-      const protocol = (code as CodeService).v2!;
-      await boundProject(f.app.ctx.state, f.owner.projectId, main, 'fixture-repository');
-      const complete = async (operation: CodeStoreOperation) => {
-        for (let attempt = 0; operation.status === 'prepared' && attempt < 200; attempt++) {
-          operation = (
-            (await protocol.call(f.owner, `uploads/${operation.id}/complete`, {})) as {
-              operation: CodeStoreOperation;
-            }
-          ).operation;
-          if (operation.status === 'prepared') await delay(25);
+test("a materialised hosted experiment derives its base from its task's reviewed acceptance", async (t) => {
+  const f = await fixture(t, true);
+  const source = gitSource(t);
+  const main = source.commit({ 'README.md': 'Research harness\n' });
+  const { codeResearch: code, sessions, tasks, workflows, artifacts } = f.app.ctx;
+  const protocol = (code as CodeService).v2!;
+  await boundProject(f.app.ctx.state, f.owner.projectId, main, 'fixture-repository');
+  const complete = async (operation: CodeStoreOperation) => {
+    for (let attempt = 0; operation.status === 'prepared' && attempt < 200; attempt++) {
+      operation = (
+        (await protocol.call(f.owner, `uploads/${operation.id}/complete`, {})) as {
+          operation: CodeStoreOperation;
         }
-        assert.equal(operation.status, 'completed', JSON.stringify(operation));
-        return operation;
-      };
-      const initial = source.bundle(main);
-      const imported = await code.importRepository(f.owner, {
-        source: 'bundle',
-        tip: main,
-        bundle: { sha256: initial.sha256, bytes: initial.bytes },
-        requestId: f.id(),
-      });
-      await protocol.putPart(f.owner, imported.id, 0, initial.content);
-      await complete(imported);
-      const { command } = await reflected(f, workspacePlan());
-      const done = await f.research.advance(f.owner, command('create'));
-      const successor = await f.research.get(f.owner, done.successorId!);
-      const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
-      let task = await tasks.get(f.owner, ids.harness);
-      const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
-      assert.equal(task.workflow.version, 5);
-      assert.equal(experiment.workflow.version, 8);
-      assert.equal(task.baseTaskId, undefined);
-      assert.equal(experiment.workflow.data.baseTaskId, undefined);
-      assert.equal((await code.unit(f.owner, experiment.id)).base, null);
-
-      const heartbeat = async (caller: Caller, runnerId: string) =>
-        sessions.heartbeatRunner(caller, {
-          runnerId,
-          machine: { hostname: runnerId, system: 'test', architecture: 'test' },
-          platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
-          capacity: 1,
-          capabilities: ['code.v2'],
-        });
-      await heartbeat(f.owner, 'producer');
-      const secret = `ms_${randomBytes(32).toString('base64url')}`;
-      const session = await sessions.offer(f.owner, {
-        instanceId: task.id,
-        expectedRevision: task.workflow.revision,
-        runnerId: 'producer',
-        requestId: f.id(),
-        secret,
-      });
-      const control = { sessionId: session.id, runnerId: 'producer', hostRef: 'producer-launch' };
-      const workspace: SessionWorkspace = {
-        repositoryId: 'fixture-repository',
-        workspaceId: task.id,
-        mode: 'persistent',
-        branch: `merv/work/${task.id}`,
-        baseOid: main,
-        headOid: main,
-        stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
-      };
-      await sessions.attach(f.owner, { ...control, workspace });
-      await f.app.ctx.domainEvents.drain();
-      const worker = await sessions.authenticate(secret);
-      const run = async <T>(
-        caller: Caller,
-        tool: string,
-        input: Data,
-        fn: (caller: Caller, input: Data) => Promise<T>,
-      ) => sessions.run(await sessions.prepare(caller, tool, input), fn);
-      const requested = await run(
-        worker,
-        'code.commit',
-        { expectedHead: main, message: 'Build harness', requestId: f.id() },
-        (caller, input) =>
-          code.commit(caller, input as unknown as Parameters<typeof code.commit>[1]),
-      );
-      const queued = (await code.nextCommand(f.owner, control))!;
-      assert.equal(queued.id, requested.command.id);
-      const head = source.commit({ 'harness.ts': 'export const measured = 1;\n' });
-      const bundle = source.bundle(head, [main]);
-      const generation = (await code.unit(f.owner, task.id)).generation;
-      const upload = (
-        (await protocol.call(f.owner, 'uploads', {
-          ...control,
-          unitId: task.id,
-          generation,
-          leaseId: session.id,
-          expectedHead: main,
-          proposedHead: head,
-          treeOid: source.git('rev-parse', `${head}^{tree}`),
-          bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-          kind: 'checkpoint',
-          commandId: queued.id,
-          requestId: queued.id,
-        })) as { operation: CodeStoreOperation }
       ).operation;
-      await protocol.putPart(f.owner, upload.id, 0, bundle.content);
-      await complete(upload);
-      await code.completeCommand(f.owner, {
-        ...control,
-        commandId: queued.id,
-        receipt: {
-          commandId: queued.id,
-          repositoryId: workspace.repositoryId,
-          workspaceId: workspace.workspaceId,
-          baseOid: main,
-          parentOid: main,
-          headOid: head,
-          treeOid: source.git('rev-parse', `${head}^{tree}`),
-          stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 0 },
-        },
-      });
-      const evidence = await run(
-        worker,
-        'artifact.create',
-        { title: 'Harness evidence', content: 'The harness runs.' },
-        (caller, input) =>
-          artifacts.create(caller, input as unknown as Parameters<typeof artifacts.create>[1]),
-      );
-      task = await run(
-        worker,
-        'task.submit_delivery',
-        {
-          ...confirmedDelivery({
-            taskId: task.id,
-            artifactIds: [evidence.id],
-            commandId: queued.id,
-          }),
-          expectedRevision: task.workflow.revision,
-          requestId: f.id(),
-        },
-        (caller, input) =>
-          tasks.submitDelivery(
-            caller,
-            input as unknown as Parameters<typeof tasks.submitDelivery>[1],
-          ),
-      );
-      await sessions.release(f.owner, { sessionId: session.id, runnerId: 'producer' });
-      await f.app.ctx.domainEvents.drain();
-      await complete(
-        (
-          (await protocol.call(f.owner, 'finalize', {
-            ...control,
-            unitId: task.id,
-            generation,
-            leaseId: session.id,
-            expectedHead: head,
-            proposedHead: head,
-            treeOid: source.git('rev-parse', `${head}^{tree}`),
-            bundle: null,
-            kind: 'final',
-          })) as { operation: CodeStoreOperation }
-        ).operation,
-      );
-      const issuedReviewer = await f.app.ctx.scope.issueActor(f.owner, {
-        name: 'Independent review machine',
-        role: 'operator',
-      });
-      const reviewRunner: Caller = {
-        projectId: f.owner.projectId,
-        actorId: issuedReviewer.actor.id,
-        credentialId: issuedReviewer.credential.id,
-      };
-      await heartbeat(reviewRunner, 'reviewer');
-      const reviewSecret = `ms_${randomBytes(32).toString('base64url')}`;
-      const reviewSession = await sessions.offer(reviewRunner, {
-        instanceId: task.id,
-        expectedRevision: task.workflow.revision,
-        runnerId: 'reviewer',
-        requestId: f.id(),
-        secret: reviewSecret,
-      });
-      await sessions.attach(reviewRunner, {
-        sessionId: reviewSession.id,
-        runnerId: 'reviewer',
-        hostRef: 'review-launch',
-        workspace: {
-          ...workspace,
-          workspaceId: reviewSession.id,
-          mode: 'ephemeral',
-          branch: null,
-          baseOid: head,
-          headOid: head,
-        },
-      });
-      const reviewer = await sessions.authenticate(reviewSecret);
-      const review = await f.app.ctx.reviews.get(f.owner, task.reviewId!);
-      await run(
-        reviewer,
-        'review.submit',
-        {
-          reviewId: review.id,
-          claimId: review.claimId!,
-          expectedRevision: task.workflow.revision,
-          verdict: 'pass',
-          notes: 'Verified the admitted harness commit.',
-          synopsis:
-            'The admitted harness was checked independently against the delivery and its checks.',
-          findings: review.criteria.map((_, i) => ({
-            criterionNumber: i + 1,
-            status: 'met',
-            evidenceIds: [evidence.id],
-            notes: 'Ran the harness.',
-          })),
-          requestId: f.id(),
-        },
-        (caller, input) => f.app.ctx.reviews.apply(caller, input as unknown as ReviewApplication),
-      );
-      const accepted = (await code.unit(f.owner, task.id)).acceptance!;
-      assert.equal(accepted.reference, head);
-      assert.equal(accepted.storage, 'code');
-      assert.ok(accepted.receipt);
-      await f.app.ctx.domainEvents.drain();
-      const planner = await sessions.offer(f.owner, {
-        instanceId: experiment.id,
-        expectedRevision: (await workflows.get(f.owner, experiment.id)).revision,
-        runnerId: 'producer',
-        secret: `ms_${randomBytes(32).toString('base64url')}`,
-        requestId: f.id(),
-      });
-      const pin = (await code.unit(f.owner, experiment.id)).base!;
-      assert.equal(pin.reference, accepted.reference);
-      assert.notEqual(pin.reference, main);
-      assert.deepEqual(pin.sources, [{ unitId: task.id, acceptanceHash: accepted.hash }]);
-      await sessions.release(f.owner, { sessionId: planner.id, runnerId: 'producer' });
-    },
-  );
+      if (operation.status === 'prepared') await delay(25);
+    }
+    assert.equal(operation.status, 'completed', JSON.stringify(operation));
+    return operation;
+  };
+  const initial = source.bundle(main);
+  const imported = await code.importRepository(f.owner, {
+    source: 'bundle',
+    tip: main,
+    bundle: { sha256: initial.sha256, bytes: initial.bytes },
+    requestId: f.id(),
+  });
+  await protocol.putPart(f.owner, imported.id, 0, initial.content);
+  await complete(imported);
+  const { command } = await reflected(f, workspacePlan());
+  const done = await f.research.advance(f.owner, command('create'));
+  const successor = await f.research.get(f.owner, done.successorId!);
+  const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
+  let task = await tasks.get(f.owner, ids.harness);
+  const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
+  assert.equal(task.workflow.version, 5);
+  assert.equal(experiment.workflow.version, 8);
+  assert.equal(task.baseTaskId, undefined);
+  assert.equal(experiment.workflow.data.baseTaskId, undefined);
+  assert.equal((await code.unit(f.owner, experiment.id)).base, null);
 
-for (const backend of backends)
-  test(
-    `${backend}: an automatic v2 wave exposes Code absence and rolls back before retry`,
-    optional(backend),
-    async (t) => {
-      const f = await fixture(t, backend);
-      await f.definition();
-      const input = await f.app.ctx.tasks.create(f.owner, {
-        title: 'Unavailable input',
-        goal: 'Find input data.',
-        checks: ['Data is available'],
-        requestId: f.id(),
-      });
-      await f.app.ctx.tasks.markFailed(f.owner, {
-        taskId: input.id,
-        expectedRevision: input.workflow.revision,
-        reason: 'The required data does not exist.',
-        requestId: f.id(),
-      });
-      let record = await f.research.create(f.owner, {
-        name: 'Automatic workspaces',
-        dependsOn: [input.id],
-        automatic: true,
-        maxCycles: 2,
-        requestId: f.id(),
-      });
-      record = await f.advance(await f.advance(record));
-      await f.reflect(record, workspacePlan());
-      const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
-      const before = await counts(f);
-      await f.code(false);
-      const release = await f.research.bindAutomatic(f.app.ctx.domainEvents);
-      try {
-        await f.app.ctx.domainEvents.drain();
-        const blocked = await f.research.get(f.owner, record.id);
-        assert.equal(blocked.automation!.blocker!.code, 'code_unavailable');
-        assert.equal(blocked.successorId, null);
-        assert.deepEqual(await counts(f), before);
-        assert.deepEqual(
-          await f.app.ctx.reflections.approved(f.owner, record.reflectionId!),
-          approved,
-        );
-        await f.code(true);
-        await f.research.wakeAutomatic();
-        await f.app.ctx.domainEvents.drain();
-        const done = await f.research.get(f.owner, record.id);
-        assert.ok(done.successorId);
-        assert.equal(done.workflow.state, 'complete');
-        assert.equal(done.automation!.blocker, null);
-      } finally {
-        await release();
-      }
-    },
+  const heartbeat = async (caller: Caller, runnerId: string) =>
+    sessions.heartbeatRunner(caller, {
+      runnerId,
+      machine: { hostname: runnerId, system: 'test', architecture: 'test' },
+      platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+      capacity: 1,
+      capabilities: ['code.v2'],
+    });
+  await heartbeat(f.owner, 'producer');
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  const session = await sessions.offer(f.owner, {
+    instanceId: task.id,
+    expectedRevision: task.workflow.revision,
+    runnerId: 'producer',
+    requestId: f.id(),
+    secret,
+  });
+  const control = { sessionId: session.id, runnerId: 'producer', hostRef: 'producer-launch' };
+  const workspace: SessionWorkspace = {
+    repositoryId: 'fixture-repository',
+    workspaceId: task.id,
+    mode: 'persistent',
+    branch: `merv/work/${task.id}`,
+    baseOid: main,
+    headOid: main,
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  };
+  await sessions.attach(f.owner, { ...control, workspace });
+  await f.app.ctx.domainEvents.drain();
+  const worker = await sessions.authenticate(secret);
+  const run = async <T>(
+    caller: Caller,
+    tool: string,
+    input: Data,
+    fn: (caller: Caller, input: Data) => Promise<T>,
+  ) => sessions.run(await sessions.prepare(caller, tool, input), fn);
+  const requested = await run(
+    worker,
+    'code.commit',
+    { expectedHead: main, message: 'Build harness', requestId: f.id() },
+    (caller, input) => code.commit(caller, input as unknown as Parameters<typeof code.commit>[1]),
   );
+  const queued = (await code.nextCommand(f.owner, control))!;
+  assert.equal(queued.id, requested.command.id);
+  const head = source.commit({ 'harness.ts': 'export const measured = 1;\n' });
+  const bundle = source.bundle(head, [main]);
+  const generation = (await code.unit(f.owner, task.id)).generation;
+  const upload = (
+    (await protocol.call(f.owner, 'uploads', {
+      ...control,
+      unitId: task.id,
+      generation,
+      leaseId: session.id,
+      expectedHead: main,
+      proposedHead: head,
+      treeOid: source.git('rev-parse', `${head}^{tree}`),
+      bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
+      kind: 'checkpoint',
+      commandId: queued.id,
+      requestId: queued.id,
+    })) as { operation: CodeStoreOperation }
+  ).operation;
+  await protocol.putPart(f.owner, upload.id, 0, bundle.content);
+  await complete(upload);
+  await code.completeCommand(f.owner, {
+    ...control,
+    commandId: queued.id,
+    receipt: {
+      commandId: queued.id,
+      repositoryId: workspace.repositoryId,
+      workspaceId: workspace.workspaceId,
+      baseOid: main,
+      parentOid: main,
+      headOid: head,
+      treeOid: source.git('rev-parse', `${head}^{tree}`),
+      stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 0 },
+    },
+  });
+  const evidence = await run(
+    worker,
+    'artifact.create',
+    { title: 'Harness evidence', content: 'The harness runs.' },
+    (caller, input) =>
+      artifacts.create(caller, input as unknown as Parameters<typeof artifacts.create>[1]),
+  );
+  task = await run(
+    worker,
+    'task.submit_delivery',
+    {
+      ...confirmedDelivery({
+        taskId: task.id,
+        artifactIds: [evidence.id],
+        commandId: queued.id,
+      }),
+      expectedRevision: task.workflow.revision,
+      requestId: f.id(),
+    },
+    (caller, input) =>
+      tasks.submitDelivery(caller, input as unknown as Parameters<typeof tasks.submitDelivery>[1]),
+  );
+  await sessions.release(f.owner, { sessionId: session.id, runnerId: 'producer' });
+  await f.app.ctx.domainEvents.drain();
+  await complete(
+    (
+      (await protocol.call(f.owner, 'finalize', {
+        ...control,
+        unitId: task.id,
+        generation,
+        leaseId: session.id,
+        expectedHead: head,
+        proposedHead: head,
+        treeOid: source.git('rev-parse', `${head}^{tree}`),
+        bundle: null,
+        kind: 'final',
+      })) as { operation: CodeStoreOperation }
+    ).operation,
+  );
+  const issuedReviewer = await f.app.ctx.scope.issueActor(f.owner, {
+    name: 'Independent review machine',
+    role: 'operator',
+  });
+  const reviewRunner: Caller = {
+    projectId: f.owner.projectId,
+    actorId: issuedReviewer.actor.id,
+    credentialId: issuedReviewer.credential.id,
+  };
+  await heartbeat(reviewRunner, 'reviewer');
+  const reviewSecret = `ms_${randomBytes(32).toString('base64url')}`;
+  const reviewSession = await sessions.offer(reviewRunner, {
+    instanceId: task.id,
+    expectedRevision: task.workflow.revision,
+    runnerId: 'reviewer',
+    requestId: f.id(),
+    secret: reviewSecret,
+  });
+  await sessions.attach(reviewRunner, {
+    sessionId: reviewSession.id,
+    runnerId: 'reviewer',
+    hostRef: 'review-launch',
+    workspace: {
+      ...workspace,
+      workspaceId: reviewSession.id,
+      mode: 'ephemeral',
+      branch: null,
+      baseOid: head,
+      headOid: head,
+    },
+  });
+  const reviewer = await sessions.authenticate(reviewSecret);
+  const review = await f.app.ctx.reviews.get(f.owner, task.reviewId!);
+  await run(
+    reviewer,
+    'review.submit',
+    {
+      reviewId: review.id,
+      claimId: review.claimId!,
+      expectedRevision: task.workflow.revision,
+      verdict: 'pass',
+      notes: 'Verified the admitted harness commit.',
+      synopsis:
+        'The admitted harness was checked independently against the delivery and its checks.',
+      findings: review.criteria.map((_, i) => ({
+        criterionNumber: i + 1,
+        status: 'met',
+        evidenceIds: [evidence.id],
+        notes: 'Ran the harness.',
+      })),
+      requestId: f.id(),
+    },
+    (caller, input) => f.app.ctx.reviews.apply(caller, input as unknown as ReviewApplication),
+  );
+  const accepted = (await code.unit(f.owner, task.id)).acceptance!;
+  assert.equal(accepted.reference, head);
+  assert.equal(accepted.storage, 'code');
+  assert.ok(accepted.receipt);
+  await f.app.ctx.domainEvents.drain();
+  const planner = await sessions.offer(f.owner, {
+    instanceId: experiment.id,
+    expectedRevision: (await workflows.get(f.owner, experiment.id)).revision,
+    runnerId: 'producer',
+    secret: `ms_${randomBytes(32).toString('base64url')}`,
+    requestId: f.id(),
+  });
+  const pin = (await code.unit(f.owner, experiment.id)).base!;
+  assert.equal(pin.reference, accepted.reference);
+  assert.notEqual(pin.reference, main);
+  assert.deepEqual(pin.sources, [{ unitId: task.id, acceptanceHash: accepted.hash }]);
+  await sessions.release(f.owner, { sessionId: planner.id, runnerId: 'producer' });
+});
+
+test('an automatic v2 wave exposes Code absence and rolls back before retry', async (t) => {
+  const f = await fixture(t);
+  await f.definition();
+  const input = await f.app.ctx.tasks.create(f.owner, {
+    title: 'Unavailable input',
+    goal: 'Find input data.',
+    checks: ['Data is available'],
+    requestId: f.id(),
+  });
+  await f.app.ctx.tasks.markFailed(f.owner, {
+    taskId: input.id,
+    expectedRevision: input.workflow.revision,
+    reason: 'The required data does not exist.',
+    requestId: f.id(),
+  });
+  let record = await f.research.create(f.owner, {
+    name: 'Automatic workspaces',
+    dependsOn: [input.id],
+    automatic: true,
+    maxCycles: 2,
+    requestId: f.id(),
+  });
+  record = await f.advance(await f.advance(record));
+  await f.reflect(record, workspacePlan());
+  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const before = await counts(f);
+  await f.code(false);
+  const release = await f.research.bindAutomatic(f.app.ctx.domainEvents);
+  try {
+    await f.app.ctx.domainEvents.drain();
+    const blocked = await f.research.get(f.owner, record.id);
+    assert.equal(blocked.automation!.blocker!.code, 'code_unavailable');
+    assert.equal(blocked.successorId, null);
+    assert.deepEqual(await counts(f), before);
+    assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
+    await f.code(true);
+    await f.research.wakeAutomatic();
+    await f.app.ctx.domainEvents.drain();
+    const done = await f.research.get(f.owner, record.id);
+    assert.ok(done.successorId);
+    assert.equal(done.workflow.state, 'complete');
+    assert.equal(done.automation!.blocker, null);
+  } finally {
+    await release();
+  }
+});

@@ -6,7 +6,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -30,6 +30,8 @@ import {
 import type { Experiment, ExperimentAttach, ExperimentTransition } from '@merv/experiments/types';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 
 const plan =
   '# Summary\nA paired test.\n# Objective & hypothesis\nThe treatment improves accuracy.\n# Evaluation\nUse matched controls on two fixed seeds.';
@@ -38,8 +40,8 @@ const report =
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-knowledge-'));
-  const path = join(directory, 'state.sqlite');
-  let state: SqliteState,
+  const path = directory;
+  let state: PostgresState,
     scope: ProjectScope,
     artifacts: ArtifactStore,
     workflows: WorkflowsService,
@@ -52,7 +54,7 @@ async function fixture(t: TestContext) {
     code: CodeService,
     knowledge: KnowledgeService;
   const open = async () => {
-    state = new SqliteState(path);
+    state = await openState(path);
     scope = await createService(new ProjectScope(state));
     artifacts = await createService(
       new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),

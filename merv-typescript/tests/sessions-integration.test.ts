@@ -5,7 +5,6 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SignJWT } from 'jose';
-import { Pool } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type {
@@ -19,13 +18,13 @@ import type {
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import type {} from '@merv/reflections/types';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 const freshSecret = () => `ms_${randomBytes(32).toString('base64url')}`;
 
-async function fixture(t: TestContext, postgres = false) {
+async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-sessions-integrated-'));
   const env = `MERV_SESSIONS_TEST_${randomUUID().replaceAll('-', '')}`;
   const signingSecret = 'synthetic-session-integration-signing-secret-at-least-32-bytes';
@@ -40,13 +39,6 @@ async function fixture(t: TestContext, postgres = false) {
     mode: 'hs256',
     secretEnv: env,
   };
-  const schema = `merv_integrated_${randomUUID().replaceAll('-', '')}`;
-  if (postgres)
-    config.plugins.find((entry) => entry.id === 'state')!.config = {
-      backend: 'postgres',
-      connectionStringEnv: 'MERV_TEST_POSTGRES_URL',
-      schema,
-    };
   let app = await createApp({ directory, config, port: 0 });
   const clients = new Set<Client>();
   t.after(async () => {
@@ -54,14 +46,6 @@ async function fixture(t: TestContext, postgres = false) {
     await app.stop();
     delete process.env[env];
     rmSync(directory, { recursive: true, force: true });
-    if (postgres) {
-      const pool = new Pool({ connectionString: process.env.MERV_TEST_POSTGRES_URL });
-      try {
-        await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-      } finally {
-        await pool.end();
-      }
-    }
   });
   const human = await new SignJWT({ role: 'authenticated', is_anonymous: false })
     .setProtectedHeader({ alg: 'HS256' })
@@ -179,8 +163,8 @@ async function fixture(t: TestContext, postgres = false) {
   };
 }
 
-async function reviewFlow(t: TestContext, postgres = false) {
-  const f = await fixture(t, postgres);
+async function reviewFlow(t: TestContext) {
+  const f = await fixture(t);
   const work = await f.offer();
   assert.equal(work.session.status, 'offered');
   assert.equal(work.session.activatedAt, null);
@@ -275,28 +259,22 @@ test('one user key can authorize independent producer and reviewer sessions thro
   await reviewFlow(t);
 });
 
-test(
-  'PostgreSQL full application retains task delivery, independent review and live reflection metadata',
-  {
-    skip: !process.env.MERV_TEST_POSTGRES_URL,
-  },
-  async (t) => {
-    const f = await reviewFlow(t, true);
-    assert.equal((await f.http('/account/keys', f.human)).status, 200);
-    const caller = await f.source();
-    const wave = (await f.app.ctx.tools.call('reflection.create', caller, {
-      title: 'Native PostgreSQL reflection',
-      requestId: 'postgres-reflection',
-    })) as { id: string; lenses: unknown[] };
-    assert.equal(wave.lenses.length, 5);
-    const loaded = await f.app.ctx.reflections.get(caller, wave.id);
-    assert.equal(loaded.lenses.length, 5);
-    const originalTask = await f.app.ctx.tasks.get(caller, f.task.id);
-    assert.equal(originalTask.workflow.state, 'done');
-    await f.restart();
-    assert.equal((await f.app.ctx.reflections.get(await f.source(), wave.id)).lenses.length, 5);
-  },
-);
+test('PostgreSQL full application retains task delivery, independent review and live reflection metadata', async (t) => {
+  const f = await reviewFlow(t);
+  assert.equal((await f.http('/account/keys', f.human)).status, 200);
+  const caller = await f.source();
+  const wave = (await f.app.ctx.tools.call('reflection.create', caller, {
+    title: 'Native PostgreSQL reflection',
+    requestId: 'postgres-reflection',
+  })) as { id: string; lenses: unknown[] };
+  assert.equal(wave.lenses.length, 5);
+  const loaded = await f.app.ctx.reflections.get(caller, wave.id);
+  assert.equal(loaded.lenses.length, 5);
+  const originalTask = await f.app.ctx.tasks.get(caller, f.task.id);
+  assert.equal(originalTask.workflow.state, 'done');
+  await f.restart();
+  assert.equal((await f.app.ctx.reflections.get(await f.source(), wave.id)).lenses.length, 5);
+});
 
 test('a real session survives restart and a released worker yields bounded context to its successor', async (t) => {
   const f = await fixture(t);

@@ -6,11 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { Context } from 'cordis';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '@merv/api';
 import { MountManager, mountsPlugin } from '@merv/mounts';
 import { CredentialServer } from './fixtures/credential-server.js';
+import { openState } from './fixtures/state.js';
 
 function bounded<T>(promise: Promise<T>): Promise<T> {
   return Promise.race([
@@ -27,7 +28,7 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 async function setup(t: TestContext) {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const admin = await scope.bootstrap({ projectName: 'Mount toggles', actorName: 'Operator' });
   const caller = { actorId: admin.actor.id, projectId: admin.project.id };

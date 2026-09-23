@@ -636,6 +636,10 @@ interface Observed {
 }
 
 async function main(options: Options) {
+  // A local server keeps its state in this run's own PostgreSQL schema (scripts/database.ts).
+  const schema = options.local
+    ? (await import('./database.js')).useRunSchema(options.out)
+    : undefined;
   mkdirSync(options.out, { recursive: true, mode: 0o700 });
   const briefSource = readFileSync(options.brief, 'utf8');
   const brief = parseBrief(briefSource);
@@ -1407,6 +1411,7 @@ async function main(options: Options) {
       },
       project: { id: projectId, name: brief.project.name, cycleId },
       baseUrl: options.local ? 'local in-process server' : baseUrl,
+      ...(schema ? { schema } : {}),
       selected: selected.map((record) => record.name),
       startedAt: new Date(started).toISOString(),
       finishedAt: new Date().toISOString(),

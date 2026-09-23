@@ -83,26 +83,7 @@ export class CodeProposalService implements CodeProposals {
       await state.migrate('code_proposals', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-CREATE TABLE code_proposals (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  instance_id TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK(revision>0),
-  session_id TEXT NOT NULL,
-  request_id TEXT NOT NULL,
-  input_hash TEXT NOT NULL,
-  proposal_json TEXT NOT NULL,
-  UNIQUE(project_id,instance_id,revision),
-  UNIQUE(project_id,session_id,request_id)
-);
-CREATE INDEX code_proposals_project ON code_proposals(project_id,instance_id,revision);
-CREATE TRIGGER code_proposals_no_update BEFORE UPDATE ON code_proposals
-BEGIN SELECT RAISE(ABORT,'Code proposals are immutable'); END;
-CREATE TRIGGER code_proposals_no_delete BEFORE DELETE ON code_proposals
-BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
-`,
+          sql: postgresMigrations[1],
         },
       ]);
     };
@@ -324,9 +305,7 @@ BEGIN SELECT RAISE(ABORT,'Code proposals are retained'); END;
     return await this.read(caller, transaction, async (tx) => {
       return (
         await tx.all<Row>(
-          tx.dialect === 'postgres'
-            ? `SELECT proposal_json,input_hash FROM code_proposals WHERE project_id=?${id ? ' AND instance_id=?' : ''} ORDER BY _merv_rowid DESC LIMIT 100`
-            : `SELECT proposal_json,input_hash FROM code_proposals WHERE project_id=?${id ? ' AND instance_id=?' : ''} ORDER BY rowid DESC LIMIT 100`,
+          `SELECT proposal_json,input_hash FROM code_proposals WHERE project_id=?${id ? ' AND instance_id=?' : ''} ORDER BY _merv_rowid DESC LIMIT 100`,
           caller.projectId,
           ...(id ? [id] : []),
         )

@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createService, type SessionAuthority } from '@merv/contracts';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { SessionApiProvider } from '../packages/api/src/types.js';
 import { fixtureAccess } from './fixtures/access.js';
+import { openState } from './fixtures/state.js';
 
 test('a used event-listener disposer cannot remove a later subscription of the same callback', async (t) => {
-  const state = new SqliteState(':memory:');
+  const state = await openState(':memory:');
   t.after(() => state.close());
   let calls = 0;
   const listener = () => {
@@ -44,7 +45,7 @@ test('a used event-listener disposer cannot remove a later subscription of the s
 
 for (const kind of ['authority', 'policy', 'http-sessions', 'http-mount'] as const) {
   test(`${kind}: a used disposer cannot withdraw a new registration of the same provider`, async (t) => {
-    const state = new SqliteState(':memory:');
+    const state = await openState(':memory:');
     const scope = await createService(new ProjectScope(state));
     const tools = new ToolRegistry(scope);
     const api = new ApiServer(scope, tools);

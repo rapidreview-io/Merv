@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteState } from '@merv/state';
+
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -14,10 +14,11 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { TaskService } from '@merv/tasks';
 import type { Caller, Task, Transaction } from '@merv/contracts';
 import type { TaskRecord } from '@merv/tasks/types';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-records-'));
-  const state = new SqliteState(join(directory, 'state.sqlite'));
+  const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({ projectName: 'Corpus inputs', actorName: 'Operator' });
   const operator: Caller = {
@@ -176,7 +177,7 @@ test('Record reads reject expired and foreign transaction handles', async (t) =>
     });
   };
   await refuse(expired);
-  const otherState = new SqliteState(':memory:');
+  const otherState = await openState(':memory:');
   try {
     await otherState.transaction(refuse);
   } finally {

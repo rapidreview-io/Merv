@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createApp } from '../src/app.js';
+import { createApp } from './fixtures/app.js';
 import { importLegacyFoundation, type LegacyFoundationSnapshot } from '../src/legacy-import.js';
 import {
   legacyUnavailableArtifacts,
@@ -13,6 +13,7 @@ import {
 } from '../src/legacy-media.js';
 import { historyMediaLinks } from '../src/legacy-media-links.js';
 import { emptyLegacyHistorySnapshot, legacyHistoryRow } from './fixtures/legacy-history.js';
+import { stateConfig } from './fixtures/state.js';
 
 const contents = [
   Buffer.from('retained artifact and figure'),
@@ -270,7 +271,7 @@ test('prepared real-file artifacts import atomically, retain original attributio
     directory,
     config: {
       plugins: [
-        { id: 'state', name: '@merv/state', config: { path: join(directory, 'state.sqlite') } },
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
         { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
         { id: 'artifacts', name: '@merv/artifacts' },
@@ -338,7 +339,7 @@ test('zero-byte completed evidence survives preparation and native import withou
     directory,
     config: {
       plugins: [
-        { id: 'state', name: '@merv/state', config: { path: join(directory, 'state.sqlite') } },
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
         { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
         { id: 'artifacts', name: '@merv/artifacts' },

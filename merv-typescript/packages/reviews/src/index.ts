@@ -253,111 +253,39 @@ export class ReviewService implements Reviews {
       await state.migrate('reviews', [
         {
           version: 1,
-          postgres: postgresMigrations[1],
-          sql: `
-      CREATE TABLE reviews (
-        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, subject_id TEXT NOT NULL,
-        subject_revision INTEGER NOT NULL CHECK(subject_revision >= 0), producer_id TEXT NOT NULL,
-        artifact_ids TEXT NOT NULL, criteria TEXT NOT NULL, manifest TEXT NOT NULL,
-        snapshot_hash TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('requested','started','submitted','superseded')),
-        reviewer_id TEXT, verdict TEXT CHECK(verdict IN ('pass','needs_changes','fail')),
-        notes TEXT, created_at TEXT NOT NULL,
-        CHECK(reviewer_id IS NULL OR reviewer_id != producer_id)
-      );
-      CREATE INDEX reviews_project ON reviews(project_id, created_at);
-      CREATE TABLE review_commands (
-        project_id TEXT NOT NULL, actor_id TEXT NOT NULL, request_id TEXT NOT NULL,
-        operation TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL,
-        PRIMARY KEY(project_id, actor_id, request_id)
-      );
-    `,
+          sql: postgresMigrations[1],
         },
         {
           version: 2,
-          postgres: postgresMigrations[2],
-          sql: `
-      CREATE TRIGGER reviews_snapshot_immutable BEFORE UPDATE OF project_id, subject_id, subject_revision, producer_id, artifact_ids, criteria, manifest, snapshot_hash, created_at ON reviews
-        BEGIN SELECT RAISE(ABORT, 'A review snapshot is immutable'); END;
-      CREATE TRIGGER reviews_verdict_immutable BEFORE UPDATE ON reviews WHEN OLD.status = 'submitted'
-        BEGIN SELECT RAISE(ABORT, 'A submitted verdict is immutable'); END;
-      CREATE TRIGGER reviews_no_delete BEFORE DELETE ON reviews
-        BEGIN SELECT RAISE(ABORT, 'Review records are durable'); END;
-    `,
+          sql: postgresMigrations[2],
         },
         {
           version: 3,
-          postgres: postgresMigrations[3],
-          sql: `
-        ALTER TABLE reviews ADD COLUMN claim_id TEXT;
-        ALTER TABLE reviews ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE reviews ADD COLUMN recovery_json TEXT;
-        UPDATE reviews SET claim_id='legacy:' || id, claim_generation=1 WHERE status='started';
-        CREATE INDEX reviews_open_claims ON reviews(project_id,reviewer_id) WHERE status='started';
-      `,
+          sql: postgresMigrations[3],
         },
         {
           version: 4,
-          postgres: postgresMigrations[4],
-          sql: `
-        ALTER TABLE reviews ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1 CHECK(format_version IN (1,2));
-        ALTER TABLE reviews ADD COLUMN synopsis TEXT;
-        ALTER TABLE reviews ADD COLUMN findings_json TEXT NOT NULL DEFAULT '[]';
-        ALTER TABLE reviews ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}';
-        CREATE TRIGGER reviews_format_immutable BEFORE UPDATE OF format_version ON reviews
-          BEGIN SELECT RAISE(ABORT, 'A review snapshot is immutable'); END;
-      `,
+          sql: postgresMigrations[4],
         },
         {
           version: 5,
-          postgres: postgresMigrations[5],
-          sql: `ALTER TABLE reviews ADD COLUMN administrative_actor_id TEXT;
-        ALTER TABLE reviews ADD COLUMN pinned_input_ids TEXT NOT NULL DEFAULT '[]';
-        CREATE TRIGGER reviews_provenance_immutable BEFORE UPDATE OF administrative_actor_id,pinned_input_ids ON reviews
-          BEGIN SELECT RAISE(ABORT,'Review provenance is immutable'); END;`,
+          sql: postgresMigrations[5],
         },
         {
           version: 6,
-          postgres: postgresMigrations[6],
-          sql: `ALTER TABLE reviews ADD COLUMN return_to TEXT CHECK(
-          return_to IS NULL OR (
-            length(return_to) BETWEEN 1 AND 128 AND
-            substr(return_to,1,1) GLOB '[A-Za-z]' AND
-            return_to NOT GLOB '*[^A-Za-z0-9_.-]*'
-          )
-        );`,
+          sql: postgresMigrations[6],
         },
         {
           version: 7,
-          postgres: postgresMigrations[7],
-          sql: `ALTER TABLE reviews ADD COLUMN excluded_actor_ids TEXT CHECK(
-          excluded_actor_ids IS NULL OR (json_valid(excluded_actor_ids) AND json_type(excluded_actor_ids)='array')
-        );
-        CREATE TRIGGER reviews_contributors_immutable BEFORE UPDATE OF excluded_actor_ids ON reviews
-          BEGIN SELECT RAISE(ABORT,'Review contributor exclusions are immutable'); END;
-        CREATE TRIGGER reviews_contributors_insert BEFORE INSERT ON reviews
-          WHEN NEW.reviewer_id IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(COALESCE(NEW.excluded_actor_ids,'[]')) WHERE value=NEW.reviewer_id)
-          BEGIN SELECT RAISE(ABORT,'A contributor cannot review their submission'); END;
-        CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
-          WHEN NEW.reviewer_id IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(COALESCE(NEW.excluded_actor_ids,'[]')) WHERE value=NEW.reviewer_id)
-          BEGIN SELECT RAISE(ABORT,'A contributor cannot review their submission'); END;`,
+          sql: postgresMigrations[7],
         },
         {
           version: 8,
-          postgres: postgresMigrations[8],
-          sql: `ALTER TABLE reviews ADD COLUMN required_criteria TEXT CHECK(
-          required_criteria IS NULL OR (json_valid(required_criteria) AND json_type(required_criteria)='array')
-        );
-        CREATE TRIGGER reviews_required_immutable BEFORE UPDATE OF required_criteria ON reviews
-          BEGIN SELECT RAISE(ABORT,'Required review criteria are immutable'); END;`,
+          sql: postgresMigrations[8],
         },
         {
           version: 9,
-          postgres: postgresMigrations[9],
-          sql: `ALTER TABLE reviews ADD COLUMN provenance_json TEXT CHECK(
-            provenance_json IS NULL OR (json_valid(provenance_json) AND json_type(provenance_json)='object' AND json_extract(provenance_json,'$.formatVersion') IS 1)
-          );
-          CREATE TRIGGER reviews_certificate_immutable BEFORE UPDATE OF provenance_json ON reviews
-            BEGIN SELECT RAISE(ABORT,'Review provenance certificate is immutable'); END;`,
+          sql: postgresMigrations[9],
         },
       ]);
     };
@@ -1142,13 +1070,9 @@ export class ReviewService implements Reviews {
     return (
       (
         await tx.get<{ id: number | null }>(
-          tx.dialect === 'postgres'
-            ? `SELECT MAX(id) AS id FROM events
+          `SELECT MAX(id) AS id FROM events
          WHERE project_id=? AND subject_id=? AND type='review.started'
-           AND ((data_json::jsonb #>> '{claimId}')=? OR ?='legacy:' || ?)`
-            : `SELECT MAX(id) AS id FROM events
-         WHERE project_id=? AND subject_id=? AND type='review.started'
-           AND (json_extract(data_json,'$.claimId')=? OR ?='legacy:' || ?)`,
+           AND ((data_json::jsonb #>> '{claimId}')=? OR ?='legacy:' || ?)`,
           row.project_id,
           row.id,
           row.claim_id,
@@ -1163,16 +1087,10 @@ export class ReviewService implements Reviews {
     // A restored membership authorizes new work, but cannot revive a claim whose
     // permission was lost. Check the committed log before eventual recovery runs.
     const loss = await tx.get<{ id: number }>(
-      tx.dialect === 'postgres'
-        ? `SELECT id FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
+      `SELECT id FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
          type='actor.revoked' OR (type='actor.permissions_changed'
            AND (data_json::jsonb #>> '{beforeRole}') IN ('operator','reviewer')
            AND COALESCE((data_json::jsonb #>> '{role}'),'') NOT IN ('operator','reviewer'))
-       ) ORDER BY id LIMIT 1`
-        : `SELECT id FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
-         type='actor.revoked' OR (type='actor.permissions_changed'
-           AND json_extract(data_json,'$.beforeRole') IN ('operator','reviewer')
-           AND COALESCE(json_extract(data_json,'$.role'),'') NOT IN ('operator','reviewer'))
        ) ORDER BY id LIMIT 1`,
       row.project_id,
       row.reviewer_id,

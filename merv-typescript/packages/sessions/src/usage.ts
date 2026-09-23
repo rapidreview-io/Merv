@@ -7,7 +7,7 @@ import type {
   UsageTotals,
 } from './types.js';
 
-/** SQLite bounds the parameters of one statement; a closure is read in slices of this many. */
+/** Keeps each statement's parameter list short; a closure is read in slices of this many. */
 const chunk = 500;
 const topInstances = 50;
 

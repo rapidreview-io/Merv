@@ -5,6 +5,8 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'no
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { cliEnv, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -39,10 +41,31 @@ function bounded<T>(operation: Promise<T>, description: string, milliseconds = 1
   });
 }
 
-function launch(t: TestContext, args: string[]) {
+/** Whether the CLI created the PostgreSQL schema that holds `directory`'s state. */
+async function stored(directory: string) {
+  const client = new pg.Client({ connectionString: postgresUrl });
+  await client.connect();
+  try {
+    const { rows } = await client.query('SELECT to_regnamespace($1) IS NOT NULL AS present', [
+      schemaFor(directory),
+    ]);
+    return rows[0].present as boolean;
+  } finally {
+    await client.end();
+  }
+}
+
+function launch(t: TestContext, args: string[], env: Record<string, string> = {}) {
+  // The CLI keeps a --dir data directory's state in the schema the test fixture assigns to it.
+  const dir = args.indexOf('--dir');
   const child = spawn(process.execPath, ['--import', 'tsx', cli, ...args], {
     cwd: root,
-    env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR },
+    env: {
+      PATH: process.env.PATH,
+      TMPDIR: process.env.TMPDIR,
+      ...(dir < 0 ? {} : cliEnv(args[dir + 1]!)),
+      ...env,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '',
@@ -162,6 +185,24 @@ test('CLI help describes config; invalid options and init/actor config misuse fa
     false,
     'Rejected arguments must not initialize local state',
   );
+  assert.equal(await stored(dataDirectory), false, 'Rejected arguments must not create a schema');
+});
+
+test('init and actor refuse a deployment environment before opening its database', async (t) => {
+  const { dataDirectory } = fixture(t);
+  for (const args of [
+    ['init', '--name', 'Stray project'],
+    ['actor', '--name', 'Stray', '--role', 'producer'],
+  ]) {
+    const process = launch(t, [...args, '--dir', dataDirectory], {
+      MERV_TS_DB_SCHEMA: 'merv_ts',
+    });
+    const result = await bounded(process.finished, `CLI did not refuse ${args[0]}`);
+    assert.equal(result.code, 1);
+    assert.match(process.stderr, /"error":"deployment_environment"/);
+  }
+  assert.equal(existsSync(dataDirectory), false, 'A refused init must not write credentials');
+  assert.equal(await stored(dataDirectory), false, 'A refused init must not create a schema');
 });
 
 test('CLI serves a temporary Cordis configuration with placeholders and reports only safe status', async (t) => {
@@ -220,7 +261,7 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
   assert.ok(catalog.tools.some((tool) => tool.name === 'task.reissue_review'));
   assert.ok(catalog.tools.some((tool) => tool.name === 'ui.shell'));
   assert.ok(catalog.tools.some((tool) => tool.name === 'feed.post'));
-  assert.ok(existsSync(join(dataDirectory, 'state.sqlite')));
+  assert.ok(await stored(dataDirectory), 'serve keeps its state in the data directory schema');
   assert.equal((await process.stop()).code, 0);
   await assert.rejects(fetch(`${ready.url}/health`));
 });

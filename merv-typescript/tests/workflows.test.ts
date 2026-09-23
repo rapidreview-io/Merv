@@ -1,16 +1,15 @@
 import { createService } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
-import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from 'cordis';
-import { SqliteState, PostgresState, statePlugin } from '@merv/state';
+import { PostgresState, statePlugin } from '@merv/state';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { WorkflowsService, workflowsPlugin } from '@merv/workflows';
 import type { Caller, WorkflowDefinition, WorkflowPolicy } from '@merv/contracts';
+import { openState, stateConfig } from './fixtures/state.js';
 
 const graph = (version = 1): WorkflowDefinition => ({
   name: 'approval',
@@ -24,10 +23,8 @@ const graph = (version = 1): WorkflowDefinition => ({
     { from: 'review', action: 'accept', to: 'done' },
   ],
 });
-async function setup(
-  path = ':memory:',
-  state: SqliteState | PostgresState = new SqliteState(path),
-) {
+async function setup(path = ':memory:', given?: PostgresState) {
+  const state = given ?? (await openState(path));
   const scope = await createService(new ProjectScope(state));
   const credentials = await scope.bootstrap({
     projectName: 'Workflow tests',
@@ -115,7 +112,7 @@ test('durable graph transitions record exact command responses, history, and eve
 test('versions are pinned and changed declarations are rejected across restart', async (t) => {
   const folder = mkdtempSync(join(tmpdir(), 'merv-workflow-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
-  const path = join(folder, 'state.sqlite');
+  const path = folder;
   const first = await setup(path);
   const initial = await first.workflows.start(first.caller, {
     workflow: 'approval',
@@ -131,7 +128,7 @@ test('versions are pinned and changed declarations are rejected across restart',
   );
   await first.state.close();
 
-  const state = new SqliteState(path);
+  const state = await openState(path);
   t.after(async () => await state.close());
   const workflows = await createService(
     new WorkflowsService(state, await createService(new ProjectScope(state))),
@@ -165,10 +162,10 @@ test('versions are pinned and changed declarations are rejected across restart',
 test('competing connections reject stale revisions and transaction rollback includes ledger and events', async (t) => {
   const folder = mkdtempSync(join(tmpdir(), 'merv-workflow-cas-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
-  const path = join(folder, 'state.sqlite');
+  const path = folder;
   const { state, scope, workflows, caller } = await setup(path);
   t.after(async () => await state.close());
-  const state2 = new SqliteState(path);
+  const state2 = await openState(path);
   t.after(async () => await state2.close());
   const other = await createService(
     new WorkflowsService(state2, await createService(new ProjectScope(state2))),
@@ -409,7 +406,7 @@ test('real Cordis dependency activation and disposal preserve database state', a
   });
   const workflowFiber = await ctx.plugin(workflowsPlugin);
   assert.equal(ctx.get('workflows'), undefined);
-  const stateFiber = ctx.plugin(statePlugin, { path: ':memory:' });
+  const stateFiber = ctx.plugin(statePlugin, stateConfig(':memory:'));
   await stateFiber.await();
   const scopeFiber = ctx.plugin(scopePlugin);
   await scopeFiber.await();
@@ -433,23 +430,10 @@ test('real Cordis dependency activation and disposal preserve database state', a
   assert.deepEqual(await ctx.workflows.get(caller, initial.id), initial);
 });
 
-const postgresUrl = process.env.MERV_TEST_POSTGRES_URL;
-async function callbackFixture(t: TestContext, backend: 'sqlite' | 'postgres') {
-  if (backend === 'sqlite') {
-    const result = await setup();
-    t.after(() => result.state.close());
-    return result;
-  }
-  const schema = `workflow_test_${randomUUID().replaceAll('-', '')}`;
-  const state = await PostgresState.open({ connectionString: postgresUrl!, schema });
+async function callbackFixture(t: TestContext) {
+  const state = await openState();
   t.after(async () => {
     await state.close();
-    const pool = new Pool({ connectionString: postgresUrl });
-    try {
-      await pool.query(`DROP SCHEMA "${schema}" CASCADE`);
-    } finally {
-      await pool.end();
-    }
   });
   return await setup(':memory:', state);
 }
@@ -472,191 +456,177 @@ function barrier() {
     },
   };
 }
-
-for (const backend of ['sqlite', 'postgres'] as const) {
-  const optional = { skip: backend === 'postgres' && !postgresUrl };
-  test(
-    `${backend}: awaited transition checks share the writer and withdrawal rolls back the entire command`,
-    optional,
-    async (t) => {
-      const { state, workflows, caller } = await callbackFixture(t, backend);
-      await state.transaction((tx) =>
-        tx.run('CREATE TABLE callback_receipts (id TEXT PRIMARY KEY)'),
-      );
-      const gate = barrier();
-      const definition: WorkflowDefinition = {
-        name: 'awaited_guard',
-        version: 1,
-        managed: true,
-        initial: 'work',
-        states: ['work', 'done'],
-        terminal: ['done'],
-        edges: [{ from: 'work', action: 'finish', to: 'done' }],
-      };
-      const policy: WorkflowPolicy = {
-        actions: [
-          {
-            name: 'finish',
-            states: ['work'],
-            transitions: ['finish'],
-            tool: 'work.finish',
-            instruction: 'Finish the work.',
-            async check({ tx }) {
-              assert.ok(await tx.get('SELECT id FROM callback_receipts WHERE id=?', 'command'));
-              await gate.wait();
-              // This must still be the live caller-owned transaction after the pause.
-              assert.ok(await tx.get('SELECT id FROM callback_receipts WHERE id=?', 'command'));
-            },
-            arguments: async ({ snapshot }) => ({ instanceId: snapshot.id }),
-            requiredInput: async () => [],
-          },
-        ],
-      };
-      let program = await workflows.register(definition, policy);
-      const instance = await program.start(caller, {
-        workflow: definition.name,
-        requestId: 'guard-start',
-      });
-      const before = await state.eventHead();
-      const command = {
-        instanceId: instance.id,
-        expectedRevision: 0,
-        action: 'finish',
-        requestId: 'guard-finish',
-      };
-      const execute = () =>
-        state.transaction(async (tx) => {
-          await tx.run('INSERT INTO callback_receipts (id) VALUES (?)', 'command');
-          return await program.transition(caller, command, tx);
-        });
-      const pending = execute();
-      await gate.entered;
-      program.dispose();
-      gate.release();
-      await assert.rejects(pending, { code: 'workflow_unavailable' });
-      assert.equal((await workflows.get(caller, instance.id)).revision, 0);
-      assert.equal(await state.eventHead(), before);
-      assert.deepEqual(await state.read((sql) => sql.all('SELECT id FROM callback_receipts')), []);
-      program = await workflows.register(definition, policy);
-      assert.equal((await execute()).state, 'done');
-      assert.equal((await workflows.history(caller, instance.id)).length, 2);
-      assert.deepEqual(
-        await program.transition(caller, command),
-        await workflows.get(caller, instance.id),
-      );
-    },
-  );
-
-  test(
-    `${backend}: awaited assignment and evidence providers cannot survive their own withdrawal`,
-    optional,
-    async (t) => {
-      const { state, workflows, caller } = await callbackFixture(t, backend);
-      const gate = barrier();
-      const definition: WorkflowDefinition = {
-        name: 'awaited_assignment',
-        version: 1,
-        initial: 'work',
-        states: ['work', 'done'],
-        terminal: ['done'],
-        edges: [{ from: 'work', action: 'finish', to: 'done' }],
-      };
-      const policy: WorkflowPolicy = {
-        actions: [
-          {
-            name: 'finish',
-            states: ['work'],
-            transitions: ['finish'],
-            tool: 'work.finish',
-            instruction: 'Finish.',
-            check: async () => {},
-          },
-        ],
-        assignments: [
-          {
-            state: 'work',
-            check: async () => {},
-            async build({ snapshot, tx }) {
-              await gate.wait();
-              assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
-              return {
-                role: 'producer',
-                label: 'Work',
-                brief: 'Work.',
-                references: [],
-                handoff: { instruction: 'Finish.', tools: [] },
-                execution: { readOnly: false, tools: [] },
-                context: null,
-              };
-            },
-            execution: {
-              readOnly: false,
-              tools: [
-                {
-                  name: 'artifact.read',
-                  alternatives: [{ artifactId: { kind: 'oneOf', name: 'artifacts' } }],
-                },
-              ],
-            },
-            references: async ({ tx, snapshot }) => {
-              assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
-              return { artifacts: ['own-output'] };
-            },
-          },
-        ],
-      };
-      const first = await workflows.register(definition, policy);
-      const instance = await workflows.start(caller, {
-        workflow: definition.name,
-        requestId: 'assignment-start',
-      });
-      const pending = workflows.begin(caller, { instanceId: instance.id, expectedRevision: 0 });
-      await gate.entered;
-      first.dispose();
-      gate.release();
-      await assert.rejects(pending, { code: 'workflow_unavailable' });
-      assert.deepEqual(await workflows.workStarts(caller, instance.id), []);
-      await workflows.register(definition, policy);
-      assert.equal(
-        (await workflows.begin(caller, { instanceId: instance.id, expectedRevision: 0 })).workStart
-          ?.revision,
-        0,
-      );
-      const execution = await workflows.execution(caller, {
-        instanceId: instance.id,
-        expectedRevision: 0,
-      });
-      const reads = barrier();
-      const remove = workflows.registerReadReferences({
-        id: 'live-evidence',
-        resolve: async ({ snapshot, tx }) => {
-          await reads.wait();
-          assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
-          return { artifacts: ['external-output'] };
+test('awaited transition checks share the writer and withdrawal rolls back the entire command', async (t) => {
+  const { state, workflows, caller } = await callbackFixture(t);
+  await state.transaction((tx) => tx.run('CREATE TABLE callback_receipts (id TEXT PRIMARY KEY)'));
+  const gate = barrier();
+  const definition: WorkflowDefinition = {
+    name: 'awaited_guard',
+    version: 1,
+    managed: true,
+    initial: 'work',
+    states: ['work', 'done'],
+    terminal: ['done'],
+    edges: [{ from: 'work', action: 'finish', to: 'done' }],
+  };
+  const policy: WorkflowPolicy = {
+    actions: [
+      {
+        name: 'finish',
+        states: ['work'],
+        transitions: ['finish'],
+        tool: 'work.finish',
+        instruction: 'Finish the work.',
+        async check({ tx }) {
+          assert.ok(await tx.get('SELECT id FROM callback_receipts WHERE id=?', 'command'));
+          await gate.wait();
+          // This must still be the live caller-owned transaction after the pause.
+          assert.ok(await tx.get('SELECT id FROM callback_receipts WHERE id=?', 'command'));
         },
-      });
-      const dispatch = {
-        instanceId: instance.id,
-        expectedRevision: 0,
-        policyHash: execution.policyHash,
-        registrationId: execution.registrationId,
-        tool: 'artifact.read',
-        input: { artifactId: 'external-output' },
-      };
-      const reading = workflows.authorizeDispatch(caller, dispatch);
-      await reads.entered;
-      remove();
-      workflows.registerReadReferences({
-        id: 'live-evidence',
-        resolve: async () => ({ artifacts: ['external-output'] }),
-      });
-      reads.release();
-      await assert.rejects(reading, { code: 'execution_arguments_forbidden' });
-      remove(); // Stale disposal must not withdraw its same-ID replacement.
-      assert.equal(
-        (await workflows.authorizeDispatch(caller, dispatch)).input.artifactId,
-        'external-output',
-      );
-    },
+        arguments: async ({ snapshot }) => ({ instanceId: snapshot.id }),
+        requiredInput: async () => [],
+      },
+    ],
+  };
+  let program = await workflows.register(definition, policy);
+  const instance = await program.start(caller, {
+    workflow: definition.name,
+    requestId: 'guard-start',
+  });
+  const before = await state.eventHead();
+  const command = {
+    instanceId: instance.id,
+    expectedRevision: 0,
+    action: 'finish',
+    requestId: 'guard-finish',
+  };
+  const execute = () =>
+    state.transaction(async (tx) => {
+      await tx.run('INSERT INTO callback_receipts (id) VALUES (?)', 'command');
+      return await program.transition(caller, command, tx);
+    });
+  const pending = execute();
+  await gate.entered;
+  program.dispose();
+  gate.release();
+  await assert.rejects(pending, { code: 'workflow_unavailable' });
+  assert.equal((await workflows.get(caller, instance.id)).revision, 0);
+  assert.equal(await state.eventHead(), before);
+  assert.deepEqual(await state.read((sql) => sql.all('SELECT id FROM callback_receipts')), []);
+  program = await workflows.register(definition, policy);
+  assert.equal((await execute()).state, 'done');
+  assert.equal((await workflows.history(caller, instance.id)).length, 2);
+  assert.deepEqual(
+    await program.transition(caller, command),
+    await workflows.get(caller, instance.id),
   );
-}
+});
+
+test('awaited assignment and evidence providers cannot survive their own withdrawal', async (t) => {
+  const { state, workflows, caller } = await callbackFixture(t);
+  const gate = barrier();
+  const definition: WorkflowDefinition = {
+    name: 'awaited_assignment',
+    version: 1,
+    initial: 'work',
+    states: ['work', 'done'],
+    terminal: ['done'],
+    edges: [{ from: 'work', action: 'finish', to: 'done' }],
+  };
+  const policy: WorkflowPolicy = {
+    actions: [
+      {
+        name: 'finish',
+        states: ['work'],
+        transitions: ['finish'],
+        tool: 'work.finish',
+        instruction: 'Finish.',
+        check: async () => {},
+      },
+    ],
+    assignments: [
+      {
+        state: 'work',
+        check: async () => {},
+        async build({ snapshot, tx }) {
+          await gate.wait();
+          assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
+          return {
+            role: 'producer',
+            label: 'Work',
+            brief: 'Work.',
+            references: [],
+            handoff: { instruction: 'Finish.', tools: [] },
+            execution: { readOnly: false, tools: [] },
+            context: null,
+          };
+        },
+        execution: {
+          readOnly: false,
+          tools: [
+            {
+              name: 'artifact.read',
+              alternatives: [{ artifactId: { kind: 'oneOf', name: 'artifacts' } }],
+            },
+          ],
+        },
+        references: async ({ tx, snapshot }) => {
+          assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
+          return { artifacts: ['own-output'] };
+        },
+      },
+    ],
+  };
+  const first = await workflows.register(definition, policy);
+  const instance = await workflows.start(caller, {
+    workflow: definition.name,
+    requestId: 'assignment-start',
+  });
+  const pending = workflows.begin(caller, { instanceId: instance.id, expectedRevision: 0 });
+  await gate.entered;
+  first.dispose();
+  gate.release();
+  await assert.rejects(pending, { code: 'workflow_unavailable' });
+  assert.deepEqual(await workflows.workStarts(caller, instance.id), []);
+  await workflows.register(definition, policy);
+  assert.equal(
+    (await workflows.begin(caller, { instanceId: instance.id, expectedRevision: 0 })).workStart
+      ?.revision,
+    0,
+  );
+  const execution = await workflows.execution(caller, {
+    instanceId: instance.id,
+    expectedRevision: 0,
+  });
+  const reads = barrier();
+  const remove = workflows.registerReadReferences({
+    id: 'live-evidence',
+    resolve: async ({ snapshot, tx }) => {
+      await reads.wait();
+      assert.ok(await tx.get('SELECT id FROM wf_instances WHERE id=?', snapshot.id));
+      return { artifacts: ['external-output'] };
+    },
+  });
+  const dispatch = {
+    instanceId: instance.id,
+    expectedRevision: 0,
+    policyHash: execution.policyHash,
+    registrationId: execution.registrationId,
+    tool: 'artifact.read',
+    input: { artifactId: 'external-output' },
+  };
+  const reading = workflows.authorizeDispatch(caller, dispatch);
+  await reads.entered;
+  remove();
+  workflows.registerReadReferences({
+    id: 'live-evidence',
+    resolve: async () => ({ artifacts: ['external-output'] }),
+  });
+  reads.release();
+  await assert.rejects(reading, { code: 'execution_arguments_forbidden' });
+  remove(); // Stale disposal must not withdraw its same-ID replacement.
+  assert.equal(
+    (await workflows.authorizeDispatch(caller, dispatch)).input.artifactId,
+    'external-output',
+  );
+});
