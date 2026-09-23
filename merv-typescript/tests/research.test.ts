@@ -28,21 +28,19 @@ async function fixture(t: TestContext, store = false) {
       !entry.id.endsWith('-ui'),
   );
   let app = await createApp({ directory, config });
-  const service = async (digests = true) =>
-    await createService(
-      new ResearchService(
-        app.ctx.state,
-        app.ctx.scope,
-        app.ctx.workflows,
-        app.ctx.paper,
-        app.ctx.reflections,
-        app.ctx.knowledge,
-        app.ctx.tasks,
-        app.ctx.experiments,
-        digests ? app.ctx.artifacts : undefined,
-        app.ctx.codeResearch,
-      ),
+  const service = async (digests = true) => {
+    const research = await createService(
+      new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows),
     );
+    research.bindPaper(app.ctx.paper);
+    research.bindReflections(app.ctx.reflections);
+    research.bindKnowledge(app.ctx.knowledge);
+    research.bindTasks(app.ctx.tasks);
+    research.bindExperiments(app.ctx.experiments);
+    if (digests) research.bindArtifacts(app.ctx.artifacts);
+    research.bindCode(app.ctx.codeResearch);
+    return research;
+  };
   let research = await service(),
     sequence = 0;
   const boot = await app.ctx.scope.bootstrap({
@@ -258,32 +256,28 @@ test('Research requests retain their admitted caller and reflection inputs', asy
   });
 });
 
-test('failed Research activation releases its earlier workflow registration', async (t) => {
+test('a failed Research activation holds nothing that blocks the next one', async (t) => {
   const f = await fixture(t);
   f.research.close();
-  // Binding runs after the workflow is registered, so a binding that throws leaves a handle to
-  // release: a second activation could not register research@6 again if it were still held.
-  const refusing = new Proxy(f.app.ctx.tasks, {
-    get: (tasks, key) =>
-      key === 'serviceTasks'
-        ? () => {
-            throw new Error('binding refused');
+  const refusing = new Proxy(f.app.ctx.workflows, {
+    get: (workflows, key) =>
+      key === 'register'
+        ? async () => {
+            throw new Error('registration refused');
           }
-        : Reflect.get(tasks, key),
+        : Reflect.get(workflows, key),
   });
-  const activate = async (tasks = f.app.ctx.tasks) =>
-    await createService(
-      new ResearchService(
-        f.app.ctx.state,
-        f.app.ctx.scope,
-        f.app.ctx.workflows,
-        f.app.ctx.paper,
-        f.app.ctx.reflections,
-        f.app.ctx.knowledge,
-        tasks,
-      ),
+  const activate = async (workflows = f.app.ctx.workflows) => {
+    const research = await createService(
+      new ResearchService(f.app.ctx.state, f.app.ctx.scope, workflows),
     );
-  await assert.rejects(activate(refusing), /binding refused/);
+    research.bindPaper(f.app.ctx.paper);
+    research.bindReflections(f.app.ctx.reflections);
+    research.bindKnowledge(f.app.ctx.knowledge);
+    research.bindTasks(f.app.ctx.tasks);
+    return research;
+  };
+  await assert.rejects(activate(refusing), /registration refused/);
   const restarted = await activate();
   try {
     assert.equal(

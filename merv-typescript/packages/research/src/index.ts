@@ -190,13 +190,6 @@ export class ResearchService implements Research {
     private state: State,
     private scope: Scope,
     private workflows: Workflows,
-    paper?: Paper,
-    reflections?: Reflections,
-    knowledge?: Knowledge,
-    tasks?: Tasks,
-    experiments?: Experiments,
-    artifacts?: Artifacts,
-    code?: ResearchCode,
   ) {
     this.initialize = async () => {
       await state.migrate('research', [
@@ -236,19 +229,8 @@ export class ResearchService implements Research {
           sql: postgresMigrations[7],
         },
       ]);
-      try {
-        this.handle = await workflows.register(definition, this.policy());
-        if (paper) this.bindPaper(paper);
-        if (reflections) this.bindReflections(reflections);
-        if (knowledge) this.bindKnowledge(knowledge);
-        if (tasks) this.bindTasks(tasks);
-        if (experiments) this.bindExperiments(experiments);
-        if (artifacts) this.bindArtifacts(artifacts);
-        if (code) this.bindCode(code);
-      } catch (error) {
-        this.handle?.dispose();
-        throw error;
-      }
+      // Providers bind later, each as it arrives; see researchPlugin.
+      this.handle = await workflows.register(definition, this.policy());
     };
   }
 
@@ -1828,6 +1810,7 @@ export const researchPlugin = {
       ctx.inject(['domainEvents'], (ctx) => {
         ctx.effect(async () => await service.bindAutomatic(ctx.domainEvents));
       });
+      // Each provider is optional: bound while it is loaded, and a bound one may unblock a cycle.
       ctx.inject(['paper'], (ctx) => {
         ctx.effect(async function* () {
           yield service.bindPaper(ctx.paper);

@@ -75,19 +75,17 @@ async function fixture(t: TestContext, plugin = false) {
     plugin
       ? (app.ctx.research as ResearchService)
       : await createService(
-          new ResearchService(
-            app.ctx.state,
-            app.ctx.scope,
-            app.ctx.workflows,
-            app.ctx.paper,
-            app.ctx.reflections,
-            app.ctx.knowledge,
-            app.ctx.tasks,
-            app.ctx.experiments,
-            app.ctx.artifacts,
-            app.ctx.codeResearch,
-          ),
-        );
+          new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows),
+        ).then((research) => {
+          research.bindPaper(app.ctx.paper);
+          research.bindReflections(app.ctx.reflections);
+          research.bindKnowledge(app.ctx.knowledge);
+          research.bindTasks(app.ctx.tasks);
+          research.bindExperiments(app.ctx.experiments);
+          research.bindArtifacts(app.ctx.artifacts);
+          research.bindCode(app.ctx.codeResearch);
+          return research;
+        });
   let research = await service();
   let release: (() => Promise<void>) | undefined;
   let sequence = 0;
