@@ -124,7 +124,8 @@ test('one run writes a verified bundle, the database copy and a manifest that na
 });
 
 test('the same request replays, unchanged refs reuse the bundle and a change writes a new one', async (t) => {
-  const { f, store, source, prefix, manifest } = await backedUp(t);
+  // Only the repository copy is in question here; the database copy is the tests around it.
+  const { f, store, source, prefix, manifest } = await backedUp(t, { database: undefined });
   const first = await f.code.runBackup(f.admin, { requestId: 'copy-one' });
   const objects = [...store.objects.keys()].sort();
 
