@@ -1,8 +1,8 @@
-import { canonical, createService } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -19,13 +19,7 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '../packages/code-research/src/service.js';
 import { KnowledgeService } from '../packages/knowledge/src/index.js';
-import {
-  MervError,
-  type ArtifactInput,
-  type Caller,
-  type Data,
-  type Transaction,
-} from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';

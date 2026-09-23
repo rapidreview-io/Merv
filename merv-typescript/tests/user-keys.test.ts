@@ -11,7 +11,7 @@ import { Memberships } from '@merv/scope/memberships';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
-import type { Caller, Principal, Role } from '@merv/contracts';
+import type { Principal } from '@merv/contracts';
 import { openState, schemaFor } from './fixtures/state.js';
 import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 import { assessment } from './fixtures/review-verdict.js';

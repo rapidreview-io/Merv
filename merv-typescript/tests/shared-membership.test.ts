@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
-import type { Caller, HumanPrincipal, Principal, Role } from '@merv/contracts';
+import type { HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState, schemaFor } from './fixtures/state.js';

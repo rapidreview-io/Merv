@@ -13,7 +13,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { ExperimentService } from '@merv/experiments';
-import { check, type Caller, type ReviewApplication, type Transaction } from '@merv/contracts';
+import { check, type Caller, type ReviewApplication } from '@merv/contracts';
 import type {
   Experiment,
   ExperimentAttach,

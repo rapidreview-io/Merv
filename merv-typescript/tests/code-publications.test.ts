@@ -6,7 +6,6 @@ import type { CodeTransportService } from '../packages/code-research/src/transpo
 import type { CodeProposal } from '../packages/code-research/src/types.js';
 import {
   baseOid,
-  config,
   githubFixture,
   headOid,
   mergeOid,
