@@ -123,21 +123,23 @@ async function fixture(t: TestContext) {
       return { candidates };
     },
   } as unknown as Sessions;
-  const adapter = new FleetWorkflowAdapter(
-    fakeFleet,
-    fakeSessions,
-    scope,
-    {
-      enabled: true,
-      projectId: boot.project.id,
-      sourceCredentialEnv: sourceEnv,
-      modelApiKeyEnv: modelEnv,
-      baseUrl: 'https://merv.example.test',
-      maxAgents: 1,
-      pollIntervalMs: 60_000,
-    },
-    () => now,
-  );
+  const makeAdapter = () =>
+    new FleetWorkflowAdapter(
+      fakeFleet,
+      fakeSessions,
+      scope,
+      {
+        enabled: true,
+        projectId: boot.project.id,
+        sourceCredentialEnv: sourceEnv,
+        modelApiKeyEnv: modelEnv,
+        baseUrl: 'https://merv.example.test',
+        maxAgents: 1,
+        pollIntervalMs: 60_000,
+      },
+      () => now,
+    );
+  let adapter = makeAdapter();
   await adapter.start();
   t.after(async () => {
     await adapter.close();
@@ -149,7 +151,14 @@ async function fixture(t: TestContext) {
     state,
     source,
     caller,
-    adapter,
+    get adapter() {
+      return adapter;
+    },
+    restart: async () => {
+      await adapter.close();
+      adapter = makeAdapter();
+      await adapter.start();
+    },
     allocations,
     inspections,
     ensureInputs,
@@ -166,7 +175,7 @@ async function fixture(t: TestContext) {
   };
 }
 
-test('workflow adapter covers demand with one pending slot and retries a released generation', async (t) => {
+test('workflow adapter covers demand with one pending slot and retries a claimed generation', async (t) => {
   const f = await fixture(t);
   f.demand([
     { instanceId: 'task_a', expectedRevision: 2 },
@@ -178,6 +187,20 @@ test('workflow adapter covers demand with one pending slot and retries a release
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   f.allocations[0]!.phase = 'released';
+  f.allocations[0]!.createAttempted = true;
+  f.inspections.set(f.allocations[0]!.id, {
+    runnerId: 'managed-machine',
+    session: {
+      id: 'session_a',
+      instanceId: 'task_a',
+      expectedRevision: 2,
+      status: 'released',
+      closedAt: new Date().toISOString(),
+      outcome: 'completed',
+      releaseAcknowledged: true,
+      capturePending: false,
+    },
+  });
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 2);
   assert.equal(f.allocations[1]?.owner.id, 'task_a:2');
@@ -187,6 +210,44 @@ test('workflow adapter covers demand with one pending slot and retries a release
   assert.equal(f.allocations[1]?.intent, 'stop');
   await f.adapter.reconcile();
   assert.equal(f.allocations[2]?.owner.id, 'task_b:0');
+});
+
+test('workflow bounds created but unclaimed retries across restart without blocking new revisions', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 2 }]);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 1);
+  // Cancellation before any provider create does not spend a retry.
+  f.allocations[0]!.phase = 'released';
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 2);
+
+  const first = f.allocations[1]!;
+  first.createAttempted = true;
+  first.phase = 'released';
+  first.updatedAt = new Date(Date.parse(first.createdAt)).toISOString();
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 2, 'a failed create cannot rent again immediately');
+  f.advance(60_000);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 3, 'one cooled-down retry is allowed');
+
+  const second = f.allocations[2]!;
+  second.createAttempted = true;
+  second.phase = 'released';
+  second.updatedAt = new Date(Date.parse(second.createdAt)).toISOString();
+  f.advance(60_000);
+  await f.restart();
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 3, 'two unclaimed attempts exhaust this task revision');
+
+  f.demand([{ instanceId: 'task_a', expectedRevision: 3 }]);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations[3]?.owner.id, 'task_a:3');
+  f.allocations[3]!.phase = 'released';
+  f.demand([{ instanceId: 'task_b', expectedRevision: 2 }]);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations[4]?.owner.id, 'task_b:2');
 });
 
 test('bootstrap carries only the managed enrollment and model key, with fixed profile and current identity', async (t) => {

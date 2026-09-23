@@ -36,6 +36,8 @@ export type FleetWorkflowConfig = z.input<typeof workflowConfig>;
 const ownerKind = 'workflow';
 const startupGraceMs = 60_000;
 const emptyRunnerGraceMs = 30_000;
+const unclaimedRetryCooldownMs = 60_000;
+const unclaimedAttemptLimit = 2;
 /** The image-owned runner advertises this exact profile; Git is transport inside Code v2. */
 export const hostedCodexPlatform = Object.freeze({
   name: 'hosted-codex',
@@ -254,9 +256,24 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const candidate of demand.candidates) {
       const id = targetId(candidate);
       if (!slots || covered.has(id)) continue;
-      const generation = allocations.filter(
-        (a) => a.owner.id === id && a.phase === 'released',
-      ).length;
+      const released = allocations.filter((a) => a.owner.id === id && a.phase === 'released');
+      let unclaimed = 0;
+      let lastUnclaimedAt = 0;
+      // A new task revision has a new id. For this exact revision, stop paying for
+      // repeated machines that never claimed work; a claimed session starts a new streak.
+      for (const a of released.toReversed()) {
+        if (!a.createAttempted) continue;
+        if ((await this.sessions.inspectManaged(a.id, a.epoch))?.session) break;
+        unclaimed++;
+        if (!lastUnclaimedAt) lastUnclaimedAt = Date.parse(a.updatedAt);
+        if (unclaimed === unclaimedAttemptLimit) break;
+      }
+      if (
+        unclaimed >= unclaimedAttemptLimit ||
+        (unclaimed > 0 && this.clock() - lastUnclaimedAt < unclaimedRetryCooldownMs)
+      )
+        continue;
+      const generation = released.length;
       await this.fleet.request(caller, {
         requestId: `wf:${digest({ id, generation })}`,
         owner: { kind: ownerKind, id },
