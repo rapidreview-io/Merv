@@ -997,10 +997,16 @@ export class ApiServer {
         this.mcpServers.delete(instance);
         void instance.close().catch(() => {});
       };
+      // In JSON-response mode the SDK transport's close() discards a reply that is still
+      // pending without settling handleRequest. A client that disconnects during a call
+      // closes the transport, so the request ends with the connection; otherwise it stays
+      // pending forever and API shutdown waits on it. The tool call itself is still drained
+      // through `calls`.
+      const disconnected = new Promise<void>((resolve) => res.once('close', resolve));
       res.once('close', close);
       try {
         await instance.connect(transport);
-        await transport.handleRequest(req, res, body);
+        await Promise.race([transport.handleRequest(req, res, body), disconnected]);
       } catch (error) {
         close();
         throw error;
