@@ -441,42 +441,74 @@ test('a credential anywhere in the delivered history is found, and never echoed'
   const f = await fixture(t);
   const base = f.source.commit({ 'README.md': 'base\n' });
   f.keep(base);
-  for (const [rule, secret] of Object.entries(secrets)) {
-    f.source.git('reset', '--quiet', '--hard', base);
-    const added = f.source.commit({
-      'config/settings.txt': `first line\ntoken = "${secret}"\nlast\n`,
-    });
-    const blob = f.source.git('rev-parse', `${added}:config/settings.txt`);
-    // Removing it again in the same transfer does not take it out of what would be kept.
-    const removed = f.source.commit({ 'config/settings.txt': 'first line\nlast\n' });
-    const bundle = f.source.bundle(removed, [base]);
-    const judged = await f.judge(bundle);
-    assert.deepEqual(judged.findings, [{ rule, path: 'config/settings.txt', oid: blob }]);
-    assert.equal(JSON.stringify(judged).includes(secret), false);
-    // A path the project exempts is skipped; the same bytes at another path are not.
-    assert.deepEqual(
-      (await f.judge(bundle, { limits: { secretExemptGlobs: ['config/**'] } })).findings,
-      [],
-    );
-    const copied = f.source.commit({ 'elsewhere.txt': `first line\ntoken = "${secret}"\nlast\n` });
-    assert.deepEqual(
+  // One file and one commit message per rule, all judged in one transfer: every rule is its own
+  // finding, in whatever order the history walk meets them.
+  const rules = Object.entries(secrets);
+  const sorted = (findings: unknown[]) => findings.map((finding) => JSON.stringify(finding)).sort();
+  const added = f.source.commit(
+    Object.fromEntries(
+      rules.map(([, secret], index) => [
+        `config/settings-${index}.txt`,
+        `first line\ntoken = "${secret}"\nlast\n`,
+      ]),
+    ),
+  );
+  const blobs = rules.map((_, index) =>
+    f.source.git('rev-parse', `${added}:config/settings-${index}.txt`),
+  );
+  // Removing them again in the same transfer does not take them out of what would be kept.
+  const removed = f.source.commit(
+    Object.fromEntries(
+      rules.map((_, index) => [`config/settings-${index}.txt`, 'first line\nlast\n']),
+    ),
+  );
+  const bundle = f.source.bundle(removed, [base]);
+  const judged = await f.judge(bundle);
+  assert.deepEqual(
+    sorted(judged.findings),
+    sorted(
+      rules.map(([rule], index) => ({
+        rule,
+        path: `config/settings-${index}.txt`,
+        oid: blobs[index],
+      })),
+    ),
+  );
+  for (const [, secret] of rules) assert.equal(JSON.stringify(judged).includes(secret), false);
+  // A path the project exempts is skipped; the same bytes at another path are not.
+  assert.deepEqual(
+    (await f.judge(bundle, { limits: { secretExemptGlobs: ['config/**'] } })).findings,
+    [],
+  );
+  const copied = f.source.commit(
+    Object.fromEntries(
+      rules.map(([, secret], index) => [
+        `elsewhere-${index}.txt`,
+        `first line\ntoken = "${secret}"\nlast\n`,
+      ]),
+    ),
+  );
+  assert.deepEqual(
+    sorted(
       (
         await f.judge(f.source.bundle(copied, [base]), {
           limits: { secretExemptGlobs: ['config/**'] },
         })
       ).findings,
-      [{ rule, path: 'elsewhere.txt', oid: blob }],
-    );
+    ),
+    sorted(
+      rules.map(([rule], index) => ({ rule, path: `elsewhere-${index}.txt`, oid: blobs[index] })),
+    ),
+  );
 
-    f.source.git('reset', '--quiet', '--hard', base);
-    const message = f.source.commit(
-      { 'ok.txt': 'fine\n' },
-      `rotate the key\n\nold value ${secret}`,
-    );
-    assert.deepEqual((await f.judge(f.source.bundle(message, [base]))).findings, [
-      { rule, path: null, oid: message },
-    ]);
-  }
+  f.source.git('reset', '--quiet', '--hard', base);
+  const messages = rules.map(([, secret], index) =>
+    f.source.commit({ [`ok-${index}.txt`]: 'fine\n' }, `rotate the key\n\nold value ${secret}`),
+  );
+  assert.deepEqual(
+    sorted((await f.judge(f.source.bundle(messages.at(-1)!, [base]))).findings),
+    sorted(rules.map(([rule], index) => ({ rule, path: null, oid: messages[index] }))),
+  );
   // Text that merely resembles a credential is not one.
   f.source.git('reset', '--quiet', '--hard', base);
   const harmless = f.source.commit({
