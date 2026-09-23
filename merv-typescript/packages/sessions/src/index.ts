@@ -1365,7 +1365,12 @@ export class LeasedSessions implements Sessions {
       // A hand offer names its runner itself, so the driver it needs is asked for here too.
       if (policy.mode !== 'none' && policy.driver !== undefined)
         check(
-          await this.dispatcher.capable(caller, session.runnerId, policy.driver, tx),
+          await this.dispatcher.capable(
+            caller.managed ? (await this.managed.require(caller, tx)).sourceCaller : caller,
+            session.runnerId,
+            policy.driver,
+            tx,
+          ),
           'runner_incompatible',
           'This runner does not advertise the workspace driver the assignment needs',
           409,

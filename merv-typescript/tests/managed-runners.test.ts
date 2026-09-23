@@ -18,7 +18,7 @@ const profile = {
 };
 const machine = { hostname: 'managed-test', system: 'Linux', architecture: 'x64' };
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, options: { codeWorkspace?: boolean } = {}) {
   const env = `MERV_MANAGED_TEST_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = randomBytes(48).toString('hex');
   const state = await openState();
@@ -67,7 +67,21 @@ async function fixture(t: TestContext) {
               ],
             },
           ],
+          ...(options.codeWorkspace
+            ? {
+                workspace: {
+                  mode: 'persistent' as const,
+                  namespace: 'managed-test',
+                  base: 'reference:code' as const,
+                  perBase: false,
+                  retain: true,
+                  advancesCentral: false,
+                  driver: 'code.v2',
+                },
+              }
+            : {}),
         },
+        ...(options.codeWorkspace ? { references: () => ({ code: 'a'.repeat(40) }) } : {}),
         lease: {
           role: () => 'producer',
           acquire: ({ leaseId }) => ({ leaseId }),
@@ -130,7 +144,7 @@ async function fixture(t: TestContext) {
     source: sourceIdentity,
     runtimeProfileId: 'codex-profile',
     platform: profile,
-    capabilities: [],
+    capabilities: options.codeWorkspace ? ['code.v2'] : [],
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   };
   const enrollment = await sessions.ensureManagedEnrollment(input);
@@ -141,7 +155,7 @@ async function fixture(t: TestContext) {
     runnerId,
     machine,
     platforms: [profile],
-    capabilities: [],
+    capabilities: options.codeWorkspace ? ['code.v2'] : [],
     capacity,
   });
   const lease = (requestId = randomUUID()) => ({
@@ -271,6 +285,38 @@ test('managed lease binds once, replays after admission closes, and rejects anot
     code: 'managed_revoked',
   });
   await assert.rejects(f.sessions.lease(f.caller, first), { code: 'managed_revoked' });
+});
+
+test('managed Code v2 runner attaches its bound checkout using its verified source capability', async (t) => {
+  const f = await fixture(t, { codeWorkspace: true });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const request = f.lease();
+  const leased = await f.sessions.lease(f.caller, request);
+  assert.ok(leased.session, leased.reason);
+  const session = leased.session;
+  const checkout = {
+    repositoryId: 'repository-managed',
+    workspaceId: 'workspace-managed',
+    mode: 'persistent' as const,
+    branch: 'merv/work/managed',
+    baseOid: 'a'.repeat(40),
+    headOid: 'a'.repeat(40),
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  };
+  const attached = await f.sessions.attach(f.caller, {
+    sessionId: session.id,
+    runnerId: f.runnerId,
+    hostRef: 'launch-managed',
+    workspace: checkout,
+  });
+  assert.equal(attached.status, 'offered');
+  assert.equal(attached.hostRef, 'launch-managed');
+  assert.deepEqual(attached.workspace?.attachment, checkout);
+  await f.sessions.authenticate(request.secret);
+  assert.equal((await f.sessions.get(f.caller, session.id)).status, 'active');
+  await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
 });
 
 test('two concurrent managed lease requests create at most one bound session', async (t) => {
