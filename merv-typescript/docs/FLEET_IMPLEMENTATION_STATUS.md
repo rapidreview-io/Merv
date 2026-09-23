@@ -208,6 +208,13 @@ cloned from sandbox commit `c7b9582`, now merged with deployed sandbox commit
 untouched. The dedicated Cloudflare image and bridge were deployed. The shared
 sandbox control services remain unchanged; their additive deployment is staged
 separately and requires the native Cloudflare credential.
+The replacement control image `merv-sandboxes-control:33109ff-fleet` was built
+on the control host from the clean, checksummed source archive and passed an
+import smoke. Its image ID is
+`sha256:2d1c085e1a230c38eff3454580397038c901e30a8fda8229ec6b12d8df5728bc`.
+The additive Compose helper has four passing tests and preserves the existing
+providers and service settings. It has not been applied. Build evidence is in
+`output/fleet-control-build-33109ff.json`.
 
 Production Merv now runs committed `737bb4aa`, release
 `20260923T060044Z-737bb4aa-0d618b370fbb`, with Fleet disabled and no sandbox
