@@ -153,11 +153,15 @@ test('the same request replays, unchanged refs reuse the bundle and a change wri
 });
 
 test('retention removes copies older than keepDays and never the one the pointer names', async (t) => {
-  const { f, store, source, prefix, manifest } = await backedUp(t, { keepDays: 0 });
+  const { f, store, source, prefix, settings, manifest } = await backedUp(t, { keepDays: 0 });
   await f.code.runBackup(f.admin, { requestId: 'copy-one' });
   const first = manifest().bundle!.key;
   await f.deliver(source.bundle(source.commit({ 'read.me': 'second' }), [manifest().refs[0].oid]));
+  // Two database copies are enough to see one pruned: the middle pass copies Code alone.
+  const database = settings.database;
+  settings.database = undefined;
   await f.code.runBackup(f.admin, { requestId: 'copy-two' });
+  settings.database = database;
   const second = manifest().bundle!.key;
 
   assert.equal(store.objects.has(first), false);
@@ -185,7 +189,7 @@ test('retention removes copies older than keepDays and never the one the pointer
 });
 
 test('a restore verifies what the bucket holds, writes it back and refuses a live root', async (t) => {
-  const { f, store, source, prefix } = await backedUp(t);
+  const { f, store, source, prefix, settings } = await backedUp(t);
   await f.code.runBackup(f.admin, { requestId: 'copy-one' });
   const manifest = JSON.parse(
     store.objects.get(`${prefix}latest.json`)!.toString('utf8'),
@@ -225,6 +229,8 @@ test('a restore verifies what the bucket holds, writes it back and refuses a liv
   // The lock only proves no server is running, and during an incident none is. A newer
   // copy over a root that holds other refs would force-rewind them, so it is refused.
   await f.deliver(source.bundle(source.commit({ 'read.me': 'second' }), [manifest.refs[0].oid]));
+  // Only the repository copy is in question from here; the database was restored above.
+  settings.database = undefined;
   await f.code.runBackup(f.admin, { requestId: 'copy-two' });
   const onto = await drill(false, join(root, 'code'));
   assert.equal(onto.projects[0].state, 'failed');
