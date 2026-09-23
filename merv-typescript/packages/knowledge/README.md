@@ -11,6 +11,9 @@ Markdown text artifact titled `Claim: …`, which resolves like any other artifa
 | `@merv/knowledge/tools` | Knowledge, Tools                                           | `project.records`, `project.references` |
 | `@merv/knowledge/ui`    | Knowledge, UI                                              | Research records page                   |
 
+The `@merv/knowledge` plugin mounts its tools and UI adapters itself, as Cordis child plugins that
+load while their registry is present; they are not configuration entries.
+
 `project.records` returns the current Scope project record, including its
 Introduction and all task/experiment metadata. It performs no
 artifact-body reads, prompt rendering, session reconciliation, exit evaluation

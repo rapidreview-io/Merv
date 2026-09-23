@@ -463,7 +463,8 @@ function assertComponentReferences(
         owner,
         `${path} crosses a component using a relative path`,
       );
-      if (!isAdapter && !['api', 'mounts'].includes(owner))
+      // A feature's entry may mount its own adapters (see ownAdapters); nothing else may load one.
+      if (!isAdapter && !['api', 'mounts'].includes(owner) && !ownAdapter(path, specifier))
         assert.ok(
           !/(?:^|[/\\])(tools|ui|api|http|registry)\.[cm]?[jt]s$/.test(specifier),
           `${path} loads a transport adapter from its core entrypoint`,
@@ -478,6 +479,49 @@ function assertComponentReferences(
     }
   }
 }
+
+/** A feature's plugin entry importing one of its own adapter modules, to mount it. */
+const ownAdapter = (path: string, specifier: string) =>
+  /[/\\]src[/\\]index\.ts$/.test(path) && /^\.\/(tools|ui|api)\.js$/.test(specifier);
+
+test('a feature mounts its own adapters only as Cordis child plugins', () => {
+  let mounted = 0;
+  for (const path of sourceFiles) {
+    const source = parse(path);
+    const imported = new Set<string>();
+    for (const statement of source.statements)
+      if (
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        ownAdapter(path, statement.moduleSpecifier.text)
+      ) {
+        const bindings = statement.importClause?.namedBindings;
+        assert.ok(
+          !statement.importClause?.name && bindings && ts.isNamedImports(bindings),
+          `${path}: import adapters by name`,
+        );
+        for (const element of bindings.elements) imported.add(element.name.text);
+      }
+    // Each adapter injects its owner and its registry; the owner only hands it to Cordis.
+    visit(source, (node) => {
+      if (!ts.isIdentifier(node) || !imported.has(node.text)) return;
+      if (ts.isImportSpecifier(node.parent)) return;
+      const call = node.parent;
+      assert.ok(
+        ts.isCallExpression(call) &&
+          call.arguments.length === 1 &&
+          call.arguments[0] === node &&
+          ts.isPropertyAccessExpression(call.expression) &&
+          ts.isIdentifier(call.expression.expression) &&
+          call.expression.expression.text === 'ctx' &&
+          call.expression.name.text === 'plugin',
+        `${path}: ${node.text} may only be mounted with ctx.plugin(${node.text})`,
+      );
+      mounted++;
+    });
+  }
+  assert.equal(mounted, 26, 'Thirteen features mount their own tools, pages and routes');
+});
 
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));

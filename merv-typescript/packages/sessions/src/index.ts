@@ -68,6 +68,9 @@ import type {
   UsageQuery,
   UsageRollup,
 } from './types.js';
+import { sessionsToolsPlugin } from './tools.js';
+import { sessionsUiPlugin } from './ui.js';
+import { sessionsApiPlugin } from './api.js';
 export type * from './types.js';
 
 /** An integer bound; null, like absence, means the default. */
@@ -2013,6 +2016,10 @@ export const sessionsPlugin = {
   name: 'merv-sessions',
   inject: ['state', 'scope', 'workflows', 'domainEvents'],
   async apply(ctx: Context, config: SessionsConfig = {}) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(sessionsToolsPlugin);
+    ctx.plugin(sessionsUiPlugin);
+    ctx.plugin(sessionsApiPlugin);
     await ctx.effect(async function* () {
       const sessions = await createService(
         new LeasedSessions(ctx.state, ctx.scope, ctx.workflows, ctx.domainEvents, config),

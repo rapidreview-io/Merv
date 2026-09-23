@@ -17,6 +17,8 @@ import {
   type Blobs,
   type Transaction,
 } from '@merv/contracts';
+import { artifactToolsPlugin } from './tools.js';
+import { artifactUiPlugin } from './ui.js';
 const fromRow = (row: any): Artifact => ({
   id: row.id,
   projectId: row.project_id,
@@ -203,6 +205,9 @@ export const artifactsPlugin = {
   name: 'merv-artifacts',
   inject: ['state', 'scope', 'blobs'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(artifactToolsPlugin);
+    ctx.plugin(artifactUiPlugin);
     ctx.provide(
       'artifacts',
       await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs)),

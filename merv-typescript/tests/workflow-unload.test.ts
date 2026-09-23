@@ -187,13 +187,14 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     assert.deepEqual(result, task);
     await bounded(unloading, 'Workflow provider did not finish disposal');
     assert.equal(provider.state, FiberState.DISPOSED);
-    assert.equal(adapter.state, FiberState.PENDING);
+    // Tasks' tools are its own child: they leave with Tasks and Tasks mounts them again.
+    assert.equal(adapter.state, FiberState.DISPOSED);
 
     await bounded(app.setEnabled('workflows', true), 'Workflow replacement did not activate');
     assert.notEqual(app.getFiber('workflows'), provider);
     await until(
-      () => adapter.state === FiberState.ACTIVE,
-      'Existing task adapter did not reactivate',
+      () => app.getFiber('tasks-tools')?.state === FiberState.ACTIVE,
+      'Task adapter did not reactivate',
     );
     await until(
       async () => (await app.ctx.tools.list()).some((tool) => tool.name === 'task.get'),

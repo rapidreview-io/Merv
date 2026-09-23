@@ -27,6 +27,8 @@ import type {
 } from './types.js';
 import { citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
 import { migratePaper } from './storage.js';
+import { paperToolsPlugin } from './tools.js';
+import { paperUiPlugin } from './ui.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
 const problemKeys = ['problem', 'scope', 'goals', 'constraints'];
@@ -451,6 +453,9 @@ export const paperPlugin = {
   name: 'merv-paper',
   inject: ['state', 'scope', 'artifacts'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(paperToolsPlugin);
+    ctx.plugin(paperUiPlugin);
     await ctx.effect(async function* () {
       const service = await createService(new PaperService(ctx.state, ctx.scope, ctx.artifacts));
       yield () => service.close();

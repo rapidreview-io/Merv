@@ -80,6 +80,7 @@ import {
   relations,
   requireDependencies,
 } from './dependencies.js';
+import { workflowToolsPlugin } from './tools.js';
 
 const migrations = [
   {
@@ -2049,6 +2050,8 @@ export const workflowsPlugin = {
   name: 'merv-workflows',
   inject: ['state', 'scope'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(workflowToolsPlugin);
     await ctx.effect(async function* () {
       const workflows = await createService(new WorkflowsService(ctx.state, ctx.scope));
       yield () => workflows.close();

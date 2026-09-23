@@ -134,8 +134,9 @@ export const documentTitle = (heading: string | undefined, project: string): str
 /**
  * The plugin a missing page belonged to, where the shell can show it: the address
  * opens with a view kind this build can draw, no registered row is of that kind,
- * and the lifecycle table holds that kind's UI plugin in a state other than
- * active. Any other missing address is a mistyped one, and says nothing of plugins.
+ * and the lifecycle table holds that kind's UI plugin, or the feature entry that mounts it, in
+ * a state other than active. Any other missing address is a mistyped one, and says nothing of
+ * plugins.
  */
 export function dormantOwner(
   pathname: string,
@@ -149,6 +150,6 @@ export function dormantOwner(
   return plugins.find(
     (plugin) =>
       plugin.state !== 'active' &&
-      (plugin.id === `${place}-ui` || plugin.name.endsWith(`/${place}/ui`)),
+      (plugin.id === `${place}-ui` || plugin.name.endsWith(`/${place}/ui`) || plugin.id === place),
   );
 }

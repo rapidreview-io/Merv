@@ -16,6 +16,9 @@ decide whether a scientific claim is true.
 | `@merv/experiments/tools` | Experiments, Tools                                                        | Six experiment tools                                            |
 | `@merv/experiments/ui`    | Experiments, UI                                                           | Experiment inventory and detail page                            |
 
+The `@merv/experiments` plugin mounts its tools and UI adapters itself, as Cordis child plugins that
+load while their registry is present; they are not configuration entries.
+
 The tools are `experiment.create`, `experiment.list`, `experiment.get_state`,
 `experiment.attach`, `experiment.transition` and `experiment.exhibit`.
 Current gates and next actions come from

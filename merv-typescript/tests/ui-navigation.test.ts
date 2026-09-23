@@ -204,6 +204,8 @@ test('a missing page speaks of a plugin only where the shell can show one that i
     dormantOwner('/feed', kinds, rows, [plugin('stream', 'failed', '@merv/feed/ui')])?.id,
     'stream',
   );
+  // A disabled feature takes the page it mounts with it; the feature's own entry is the owner.
+  assert.equal(dormantOwner('/feed', kinds, rows, [plugin('feed', 'disabled')])?.id, 'feed');
   // A mistyped address, a kind this build cannot draw, a kind whose row is registered
   // and a plugin that is running are none of them a plugin's absence.
   assert.equal(dormantOwner('/nope', kinds, rows, plugins), undefined);

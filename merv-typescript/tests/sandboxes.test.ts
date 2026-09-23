@@ -14,8 +14,6 @@ import { check, MervError, type Caller, type Json } from '@merv/contracts';
 import { UiRegistry } from '@merv/ui';
 import { SandboxService, sandboxesPlugin, sandboxTools } from '../packages/sandboxes/src/index.js';
 import { SandboxClient } from '../packages/sandboxes/src/client.js';
-import { sandboxesUiPlugin } from '../packages/sandboxes/src/ui.js';
-import { sandboxesToolsPlugin } from '../packages/sandboxes/src/tools.js';
 import { parseManifest } from '../packages/sandboxes/src/manifest.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -144,8 +142,8 @@ async function composed(t: TestContext) {
   const ctx = new Context();
   const ui = new UiRegistry();
   ctx.provide('ui', ui);
+  // Sandboxes mounts its own page once the UI registry is there.
   const fiber = ctx.plugin(sandboxesPlugin, configuration);
-  ctx.plugin(sandboxesUiPlugin);
   t.after(() => ctx.fiber.dispose());
   await fiber.await();
   await ctx.sandboxes.refresh();
@@ -173,8 +171,8 @@ async function armed(t: TestContext) {
       );
     },
   } as never);
+  // Sandboxes mounts its own tools once the registry is there.
   const fiber = ctx.plugin(sandboxesPlugin, configuration);
-  await ctx.plugin(sandboxesToolsPlugin).await();
   t.after(() => ctx.fiber.dispose());
   await fiber.await();
   /** Exactly what a transport does: refuse the input the schema refuses, then dispatch. */
@@ -588,7 +586,8 @@ test('a deployment composes the sandboxes plugins only when the service is named
     rendered()
       .slice(8)
       .map((entry) => entry.name),
-    ['@merv/sandboxes/tools', '@merv/sandboxes/ui', '@merv/sandboxes'],
+    // Sandboxes mounts its own tools and page.
+    ['@merv/sandboxes'],
   );
   assert.deepEqual(rendered().at(-1)?.config, { urlEnv: 'MERV_SANDBOXES_URL', connections });
   for (const broken of [

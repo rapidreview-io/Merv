@@ -48,6 +48,8 @@ import type {
   Reflections,
   ReflectionSubmit,
 } from './types.js';
+import { reflectionToolsPlugin } from './tools.js';
+import { reflectionUiPlugin } from './ui.js';
 export type * from './types.js';
 
 /** What the earlier rounds may take of a 24000-character recipe, so they never crowd out the assignment. */
@@ -1376,6 +1378,9 @@ export const reflectionsPlugin = {
   inject: ['state', 'scope', 'artifacts', 'paper', 'workflows', 'reviews', 'contextBuilder'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(reflectionToolsPlugin);
+    ctx.plugin(reflectionUiPlugin);
     await ctx.effect(async function* () {
       const service = await createService(
         new ReflectionService(

@@ -448,12 +448,9 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
       .outcome,
     'launch_failed',
   );
-  await f.app.setEnabled('sessions-ui', false);
-  const after = await f.http('/tools/ui.shell', f.operator, {}, f.project.id);
-  assert.equal(
-    after.body.result.rows.some((entry: { id: string }) => entry.id === 'sessions'),
-    false,
-  );
+  // Sessions' page is its own child of the UI registry; unloading the browser layer drops it.
+  await f.app.setEnabled('ui', false);
+  assert.equal(f.app.status().find((entry) => entry.id === 'sessions-ui')?.state, 'pending');
   assert.equal(
     (await f.http('/tools/ui.read', f.operator, { rowId: 'sessions' }, f.project.id)).status,
     404,
@@ -461,7 +458,7 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
   assert.equal(
     (await f.http('/sessions/status', f.operator, undefined, f.project.id)).status,
     200,
-    'UI adapter unloading leaves Sessions controls available',
+    'UI unloading leaves Sessions controls available',
   );
 });
 

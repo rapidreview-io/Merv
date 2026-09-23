@@ -11,6 +11,20 @@ import { identityPlugin } from '@merv/identity';
 import { apiPlugin, toolsPlugin } from '@merv/api';
 import { openState, schemaFor, stateConfig } from './fixtures/state.js';
 
+/** Scope mounts its own tools; a registry adds none of its own. */
+const scopeTools = [
+  'actor.create',
+  'actor.credentials',
+  'actor.issue_token',
+  'actor.list',
+  'actor.revoke',
+  'actor.revoke_token',
+  'actor.rotate_token',
+  'actor.whoami',
+  'project.context.update',
+  'project.get',
+];
+
 function folder(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-plugin-config-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -116,7 +130,7 @@ test('Tools Config defaults to an empty object and rejects accidental resource o
     const fiber = await ctx.plugin(toolsPlugin);
     assert.equal(fiber.state, FiberState.ACTIVE);
     assert.deepEqual(fiber.config, {});
-    assert.deepEqual(await ctx.tools.list(), []);
+    assert.deepEqual((await ctx.tools.list()).map((tool) => tool.name).sort(), scopeTools);
     const credential = await ctx.scope.bootstrap({
       projectName: 'Registry defaults',
       actorName: 'Operator',
@@ -211,7 +225,8 @@ test('API no-config defaults remain loopback and ephemeral with a working regist
     const response = await fetch(new URL('/tools', url), {
       headers: { authorization: `Bearer ${credentials.token}` },
     });
-    assert.deepEqual(await response.json(), { tools: [] });
+    const { tools } = (await response.json()) as { tools: { name: string }[] };
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), scopeTools);
   } finally {
     await ctx.fiber.dispose();
   }

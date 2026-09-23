@@ -60,7 +60,7 @@ test('default configuration includes session enforcement and API adds its contro
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 36, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 23, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -70,7 +70,6 @@ test('default configuration includes session enforcement and API adds its contro
   const order = (id: string) => full.entries.findIndex((entry) => entry.id === id);
   const requirements: Record<string, string[]> = {
     api: ['tools', 'scope', 'identity'],
-    'sessions-api': ['sessions', 'api'],
     'code-api': ['code-research', 'api'],
     code: ['state', 'scope'],
     'code-research': [
@@ -95,26 +94,16 @@ test('default configuration includes session enforcement and API adds its contro
     'context-builder': ['state', 'scope', 'artifacts'],
     'domain-events': ['state'],
   };
-  for (const name of [
-    'research',
-    'paper',
-    'reflections',
-    'knowledge',
-    'experiments',
-    'code',
-    'feed',
-    'tasks',
-    'reviews',
-    'artifacts',
-    'scope',
-    'workflows',
-  ]) {
-    requirements[`${name}-tools`] = [name === 'code' ? 'code-research' : name, 'tools'];
-    assert.equal(
-      full.entries.find((entry) => entry.id === `${name}-tools`)?.name,
-      `@merv/${name === 'code' ? 'code-research' : name}/tools`,
-    );
-  }
+  // Every other feature mounts its own tools, pages and routes; only Code's stay entries.
+  requirements['code-tools'] = ['code-research', 'tools'];
+  assert.equal(
+    full.entries.find((entry) => entry.id === 'code-tools')?.name,
+    '@merv/code-research/tools',
+  );
+  assert.deepEqual(
+    full.entries.filter((entry) => /-(tools|ui|api)$/.test(entry.id)).map((entry) => entry.id),
+    ['code-tools', 'code-api'],
+  );
   for (const [consumer, providers] of Object.entries(requirements))
     for (const provider of providers) {
       assert.ok(
@@ -133,7 +122,7 @@ test('legacy selection keeps only matching providers and adapters without adding
   });
   assert.deepEqual(
     selected.entries.map((entry) => entry.id),
-    ['api', 'scope-tools', 'tools', 'identity', 'scope', 'state'],
+    ['api', 'tools', 'identity', 'scope', 'state'],
   );
   assert.equal(selected.entries.find((entry) => entry.id === 'api')?.config?.port, 0);
   assert.deepEqual(
@@ -162,23 +151,18 @@ test('default Feed is optional so disabling it preserves the other declarations'
   ) as ApplicationConfig;
   config.plugins.find((entry) => entry.id === 'feed')!.disabled = true;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 49);
+  assert.equal(loaded.entries.length, 25);
   assert.deepEqual(
     loaded.entries.find((entry) => entry.id === 'feed'),
     { id: 'feed', name: '@merv/feed', required: false, disabled: true },
-  );
-  assert.deepEqual(
-    loaded.entries.find((entry) => entry.id === 'feed-tools'),
-    { id: 'feed-tools', name: '@merv/feed/tools', required: false, disabled: false },
   );
   const browser = (id: string) => id === 'ui' || id.endsWith('-ui');
   assert.ok(
     loaded.entries
       .filter(
         (entry) =>
-          !['feed', 'feed-tools', 'code', 'code-research', 'code-tools', 'code-api'].includes(
-            entry.id,
-          ) && !browser(entry.id),
+          !['feed', 'code', 'code-research', 'code-tools', 'code-api'].includes(entry.id) &&
+          !browser(entry.id),
       )
       .every((entry) => entry.required),
   );
@@ -299,7 +283,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    49,
+    25,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

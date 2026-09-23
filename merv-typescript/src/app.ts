@@ -32,44 +32,87 @@ export async function createApp(options: AppOptions) {
     await ctx.plugin(Loader, { baseUrl: configuration.baseUrl });
     const loader = ctx.loader;
     const failed = new WeakSet<Fiber>();
+    /**
+     * A feature's tool, UI and API adapters are plugins its service mounts as children, named
+     * `merv-…-tools`, `-ui` or `-api`. Each reports as the row `<entry>-<kind>` under the module
+     * name `<entry module>/<kind>`, so a broken tool registration still fails readiness.
+     */
+    const adapters = (parent: Fiber | undefined) => {
+      const found: { id: string; name: string; kind: string; fiber: Fiber }[] = [];
+      const entry = [...loader.entries()].find((item) => item.fiber === parent);
+      if (!parent || !entry) return found;
+      for (const runtime of ctx.registry.values())
+        for (const fiber of runtime.fibers) {
+          const kind = /-(tools|ui|api)$/.exec(runtime.name ?? '')?.[1];
+          // The loader keeps a wrapper of its entry's fiber; the uid names the fiber itself.
+          if (kind && parent.uid !== null && fiber.parent.fiber.uid === parent.uid)
+            found.push({
+              id: `${entry.id}-${kind}`,
+              name: `${entry.options.name}/${kind}`,
+              kind,
+              fiber,
+            });
+        }
+      return found;
+    };
     const settle = async () => {
       await loader.await();
       // The loader joins the graph. A final inspection captures validation errors:
       // Cordis can leave a rejected Config validation fiber marked PENDING.
+      const join = async (fiber: Fiber | undefined) => {
+        if (!fiber) return;
+        try {
+          await fiber.await();
+        } catch {
+          failed.add(fiber);
+        }
+      };
+      const entries = [...loader.entries()];
+      await Promise.all(entries.map(({ fiber }) => join(fiber)));
+      // Adapters load once their owner is provided; join them after their owners.
       await Promise.all(
-        [...loader.entries()].map(async ({ fiber }) => {
-          if (!fiber) return;
-          try {
-            await fiber.await();
-          } catch {
-            failed.add(fiber);
-          }
-        }),
+        entries.flatMap(({ fiber }) => adapters(fiber).map((adapter) => join(adapter.fiber))),
       );
     };
+    const missing = (fiber: Fiber) =>
+      Object.keys(fiber.inject).filter((name) => fiber.parent.get(name) === undefined);
+    const state = (fiber: Fiber): PluginStatus['state'] =>
+      failed.has(fiber) ? 'failed' : (states[fiber.state] ?? 'failed');
     const status = (): PluginStatus[] =>
-      [...loader.entries()].map((entry) => {
+      [...loader.entries()].flatMap((entry) => {
         const fiber = entry.fiber;
-        const state =
+        const current =
           fiber?.state === FiberState.UNLOADING
             ? 'unloading'
             : entry.disabled
               ? 'disabled'
-              : fiber && failed.has(fiber)
-                ? 'failed'
-                : fiber
-                  ? (states[fiber.state] ?? 'failed')
-                  : 'failed';
-        return {
+              : fiber
+                ? state(fiber)
+                : 'failed';
+        const row: PluginStatus = {
           id: entry.id,
           name: entry.options.name,
-          state,
+          state: current,
           required: required.get(entry.id) ?? true,
-          missingDependencies:
-            fiber && state === 'pending'
-              ? Object.keys(fiber.inject).filter((name) => fiber.parent.get(name) === undefined)
-              : [],
+          missingDependencies: fiber && current === 'pending' ? missing(fiber) : [],
         };
+        const rows = adapters(fiber).flatMap((adapter): PluginStatus[] => {
+          const adapterState = state(adapter.fiber);
+          const waiting = adapterState === 'pending' ? missing(adapter.fiber) : [];
+          // With no registry of its kind composed at all, an adapter has nothing to publish to.
+          if (waiting.includes(adapter.kind) && !loader.store[adapter.kind]) return [];
+          return [
+            {
+              id: adapter.id,
+              name: adapter.name,
+              state: adapterState,
+              // Browser rows never gate readiness; transports are as required as their feature.
+              required: row.required && adapter.kind !== 'ui',
+              missingDependencies: waiting,
+            },
+          ];
+        });
+        return [row, ...rows];
       });
     const assertReady = (items: PluginStatus[]) => {
       const inactive = items.filter(
@@ -96,7 +139,11 @@ export async function createApp(options: AppOptions) {
     await settle();
     assertReady(status().filter((entry) => entry.required));
 
-    const getFiber = (id: string): Fiber | undefined => loader.store[id]?.fiber;
+    const getFiber = (id: string): Fiber | undefined =>
+      loader.store[id]?.fiber ??
+      [...loader.entries()]
+        .flatMap((entry) => adapters(entry.fiber))
+        .find((adapter) => adapter.id === id)?.fiber;
     const setEnabled = (id: string, enabled: boolean): Promise<void> => {
       check(!stopping, 'unavailable', 'Application is stopping', 503);
       check(typeof enabled === 'boolean', 'invalid_config', 'enabled must be a boolean');
@@ -106,7 +153,10 @@ export async function createApp(options: AppOptions) {
         check(loader.store[id], 'plugin_not_found', `Plugin entry not found: ${id}`, 404);
         await loader.update(id, { disabled: !enabled });
         await settle();
-        if (enabled) assertReady(status().filter((entry) => entry.id === id));
+        if (enabled) {
+          const own = new Set([id, ...adapters(loader.store[id]?.fiber).map((item) => item.id)]);
+          assertReady(status().filter((entry) => own.has(entry.id)));
+        }
       });
       changing = operation.catch(() => undefined);
       return operation;

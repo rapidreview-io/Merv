@@ -325,11 +325,12 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
   }
 });
 
-test('session route and credential namespaces stay reserved when the optional HTTP adapter is unloaded', async (t) => {
+test('session route and credential namespaces stay reserved when Sessions and its HTTP routes are unloaded', async (t) => {
   const f = await fixture(t);
   assert.throws(() => f.app.ctx.api.mount('/sessions', () => {}), { code: 'invalid_mount' });
   const issued = await f.offer();
-  await f.app.setEnabled('sessions-api', false);
+  // The HTTP routes are Sessions' own child; unloading Sessions withdraws them.
+  await f.app.setEnabled('sessions', false);
   const denied = await f.http('/mcp', issued.secret, {
     jsonrpc: '2.0',
     id: 1,

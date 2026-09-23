@@ -27,6 +27,8 @@ import type {
   SandboxTarget,
   SandboxRuntimes,
 } from './types.js';
+import { sandboxesToolsPlugin } from './tools.js';
+import { sandboxesUiPlugin } from './ui.js';
 
 export type {
   Sandboxes,
@@ -383,6 +385,9 @@ export const sandboxesPlugin = {
   name: 'merv-sandboxes',
   Config: configuration,
   apply(ctx: Context, config: SandboxesConfig) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(sandboxesToolsPlugin);
+    ctx.plugin(sandboxesUiPlugin);
     const service = new SandboxService(config);
     ctx.effect(() => service.start());
     ctx.provide('sandboxes', service);

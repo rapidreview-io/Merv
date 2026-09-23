@@ -38,7 +38,6 @@ export default { name: 'merv-blobs', apply(ctx) {
         },
         { id: 'artifacts', name: '@merv/artifacts' },
         { id: 'tools', name: '@merv/api/tools-plugin' },
-        { id: 'artifact-tools', name: '@merv/artifacts/tools' },
       ],
     },
   });

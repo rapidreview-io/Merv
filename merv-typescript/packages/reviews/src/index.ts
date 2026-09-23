@@ -25,6 +25,8 @@ import {
   type StoredEvent,
 } from '@merv/contracts';
 import { validateAssessment, validateEvidence, evidenceLimits } from './findings.js';
+import { reviewToolsPlugin } from './tools.js';
+import { reviewUiPlugin } from './ui.js';
 
 const submitFields = {
   returnTo: 'invalid_return_to',
@@ -1043,6 +1045,9 @@ export const reviewsPlugin = {
   name: 'merv-reviews',
   inject: ['state', 'scope', 'artifacts', 'domainEvents'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(reviewToolsPlugin);
+    ctx.plugin(reviewUiPlugin);
     await ctx.effect(async function* () {
       const reviews = await createService(new ReviewService(ctx.state, ctx.scope, ctx.artifacts));
       yield () => reviews.close();

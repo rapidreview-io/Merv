@@ -428,7 +428,15 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   };
   assert.deepEqual((await tool('ui.read', operator, { rowId: 'code' })).body.result, emptyCode);
   assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, emptyCode);
-  assert.equal(shell.plugins.length, plugins(assets).length);
+  // Every configured entry, and the tools, pages and routes those features mount as children.
+  const configured = new Set(plugins(assets).map((entry) => entry.id));
+  assert.equal(shell.plugins.filter((entry) => configured.has(entry.id)).length, configured.size);
+  assert.ok(
+    shell.plugins.every(
+      (entry) =>
+        configured.has(entry.id) || configured.has(entry.id.replace(/-(tools|ui|api)$/, '')),
+    ),
+  );
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
   // A reader sees the rows, and no row asks for a number it cannot answer for
   // this caller: People is a directory and reports nothing. (A status that does
@@ -486,7 +494,12 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'reflections',
     'settings',
   ]);
-  assert.equal(app.status().find((entry) => entry.id === 'feed-ui')?.state, 'pending');
+  // Feed's page is its own child: it goes with Feed and leaves no row of its own behind.
+  assert.equal(app.status().find((entry) => entry.id === 'feed')?.state, 'disabled');
+  assert.equal(
+    app.status().find((entry) => entry.id === 'feed-ui'),
+    undefined,
+  );
   assert.equal((await raw(url, '/ui/')).status, 200);
   assert.equal((await tool('task.list', operator)).status, 200);
   await app.setEnabled('feed', true);

@@ -41,6 +41,8 @@ import {
   projectValue as project,
   type ProjectRow,
 } from './project-context.js';
+import { scopeToolsPlugin } from './tools.js';
+import { scopeUiPlugin } from './ui.js';
 
 interface ActorRow {
   id: string;
@@ -1163,6 +1165,9 @@ export const scopePlugin = {
     .default({ grants: [] }),
   inject: ['state'],
   async apply(ctx: Context, config: { grants: ToolGrant[] } = { grants: [] }) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(scopeToolsPlugin);
+    ctx.plugin(scopeUiPlugin);
     ctx.provide('scope', await createService(new ProjectScope(ctx.state, Date.now, config.grants)));
   },
 };

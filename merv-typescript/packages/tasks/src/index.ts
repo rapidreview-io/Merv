@@ -75,6 +75,8 @@ import {
   validateConfirmations,
 } from './evidence.js';
 import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
+import { taskToolsPlugin } from './tools.js';
+import { taskUiPlugin } from './ui.js';
 
 export type {
   Task,
@@ -2559,6 +2561,9 @@ export const tasksPlugin = {
   inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(taskToolsPlugin);
+    ctx.plugin(taskUiPlugin);
     const tasks = await createService(
       new TaskService(
         ctx.state,

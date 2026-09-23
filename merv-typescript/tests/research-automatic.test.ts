@@ -61,12 +61,7 @@ async function fixture(t: TestContext, plugin = false) {
   );
   config.plugins = config.plugins.filter(
     ({ id }: { id: string }) =>
-      ![
-        'api',
-        'identity',
-        'ui',
-        ...(!plugin ? ['research', 'research-tools', 'research-ui'] : []),
-      ].includes(id) &&
+      !['api', 'identity', 'ui', ...(!plugin ? ['research'] : [])].includes(id) &&
       !id.endsWith('-api') &&
       !id.endsWith('-ui'),
   );

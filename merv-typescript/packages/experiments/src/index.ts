@@ -79,6 +79,8 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
+import { experimentsToolsPlugin } from './tools.js';
+import { experimentsUiPlugin } from './ui.js';
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
@@ -1483,6 +1485,9 @@ export const experimentsPlugin = {
   inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(experimentsToolsPlugin);
+    ctx.plugin(experimentsUiPlugin);
     const experiments = await createService(
       new ExperimentService(
         ctx.state,

@@ -230,9 +230,14 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
   assert.equal(ready.directory, resolve(dataDirectory));
   assert.match(ready.url, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.equal(ready.mcp, `${ready.url}/mcp`);
+  // Every configured entry, plus the tools, pages and routes its feature mounts as children.
+  const configured = new Map(config.plugins.map((entry) => [entry.id, entry.required !== false]));
   assert.deepEqual(
-    ready.plugins.map((entry: { id: string }) => entry.id).sort(),
-    config.plugins.map((entry) => entry.id).sort(),
+    ready.plugins
+      .map((entry: { id: string }) => entry.id)
+      .filter((id: string) => configured.has(id))
+      .sort(),
+    [...configured.keys()].sort(),
   );
   for (const entry of ready.plugins) {
     assert.deepEqual(Object.keys(entry).sort(), [
@@ -243,9 +248,11 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
       'state',
     ]);
     assert.equal(entry.state, 'active');
+    const owner = configured.has(entry.id) ? entry.id : entry.id.replace(/-(tools|ui|api)$/, '');
+    assert.ok(configured.has(owner), `${entry.id} belongs to a configured feature`);
     assert.equal(
       entry.required,
-      config.plugins.find((configured) => configured.id === entry.id)!.required !== false,
+      configured.get(owner)! && (owner === entry.id || !entry.id.endsWith('-ui')),
     );
     assert.deepEqual(entry.missingDependencies, []);
   }

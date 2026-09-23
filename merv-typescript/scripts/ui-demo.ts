@@ -6,8 +6,6 @@ import { createInterface } from 'node:readline';
 import { createApp } from '../src/app.js';
 import { defaultConfigFile } from '../src/config.js';
 import { sandboxesPlugin } from '@merv/sandboxes';
-import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
-import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
 import { useRunSchema } from './database.js';
 import { fakeGitHub, seedGit } from './ui-demo-git.js';
 
@@ -256,8 +254,6 @@ async function main() {
         },
       ],
     });
-    app.ctx.plugin(sandboxesToolsPlugin);
-    app.ctx.plugin(sandboxesUiPlugin);
     await fiber.await();
     await app.ctx.sandboxes.refresh();
     sandboxes.push(...app.ctx.sandboxes.rows().map((row) => `${url}/ui${row.path}`));

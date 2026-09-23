@@ -126,7 +126,7 @@ export async function runFeedUnloadScenario(
     });
     await until(() => admitted, 'Feed request did not enter the handler');
     let disposed = false;
-    // Disable only the provider entry. Cordis suspends and drains its adapter.
+    // Disable only the provider entry. Cordis drains and disposes the adapter it mounted.
     unloading = app.setEnabled('feed', false).then(() => {
       disposed = true;
     });
@@ -164,8 +164,8 @@ export async function runFeedUnloadScenario(
     const admittedPost = await pending;
     await unloading;
     assert.equal(provider.state, FiberState.DISPOSED);
-    assert.equal(adapter.state, FiberState.PENDING);
-    checkpoint('feed-removed', { admittedPostId: admittedPost.id, adapterState: 'PENDING' });
+    assert.equal(adapter.state, FiberState.DISPOSED);
+    checkpoint('feed-removed', { admittedPostId: admittedPost.id, adapterState: 'DISPOSED' });
 
     // Finish the task while the feed service and all feed tools are absent.
     const delivery = await call(p, 'artifact.create', {
@@ -218,12 +218,15 @@ export async function runFeedUnloadScenario(
       revision: done.workflow.revision,
     });
 
-    // Re-enable only the provider; the original adapter must reactivate itself.
+    // Re-enable only the provider; it mounts its tools again.
     await app.setEnabled('feed', true);
     const replacement = app.getFiber('feed')!;
     assert.notEqual(replacement, provider);
     assert.equal(replacement.state, FiberState.ACTIVE);
-    await until(() => adapter.state === FiberState.ACTIVE, 'Feed adapter did not reactivate');
+    await until(
+      () => app.getFiber('feed-tools')?.state === FiberState.ACTIVE,
+      'Feed adapter did not reactivate',
+    );
     const restoredTools = (await p.listTools()).tools.map((tool) => tool.name);
     assert.deepEqual(restoredTools, beforeTools);
     assert.equal(new Set(restoredTools).size, restoredTools.length);

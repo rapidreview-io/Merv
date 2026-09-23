@@ -134,8 +134,6 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
     }
   }
   config.plugins.push(
-    { id: 'sandboxes-tools', name: '@merv/sandboxes/tools' },
-    { id: 'sandboxes-ui', name: '@merv/sandboxes/ui', required: false },
     {
       id: 'sandboxes',
       name: '@merv/sandboxes',

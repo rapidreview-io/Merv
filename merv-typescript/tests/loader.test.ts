@@ -126,6 +126,23 @@ test('configuration validation failures are reported as failed even when Cordis 
   }
 });
 
+test('a feature whose own tool registration fails keeps the application from starting', async (t) => {
+  const directory = temporary(t);
+  const refusal = { id: 'refusal', name: './tests/fixtures/loader-tool-refusal.ts' };
+  const plugins = loadConfiguration({ directory, api: true, port: 0 }).entries;
+  // Tasks mounts its tools as a child plugin; their failure is still Tasks' readiness failure.
+  const outcome = await createApp({ directory, config: { plugins: [refusal, ...plugins] } }).then(
+    async (app) => {
+      await app.stop();
+      return undefined;
+    },
+    (error: unknown) => error,
+  );
+  assert.ok(outcome instanceof MervError, 'the application must not start');
+  assert.equal(outcome.code, 'plugin_unavailable');
+  assert.match(outcome.message, /tasks-tools \(@merv\/tasks\/tools\): failed/);
+});
+
 test('disabling only optional feed in configuration leaves the API and task program available', async (t) => {
   const directory = temporary(t);
   const config: ApplicationConfig = {
@@ -147,7 +164,11 @@ test('disabling only optional feed in configuration leaves the API and task prog
     assert.equal(tools.length, 83);
     assert.ok(tools.some((tool) => tool.name === 'task.create'));
     assert.ok(!tools.some((tool) => tool.name.startsWith('feed.')));
-    assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'pending');
+    // Feed's tools are its own child and leave with it.
+    assert.equal(
+      app.status().find((entry) => entry.id === 'feed-tools'),
+      undefined,
+    );
     await app.setEnabled('feed', true);
     assert.equal((await app.ctx.tools.list()).length, 87);
     assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'active');

@@ -19,6 +19,8 @@ import {
 } from '@merv/contracts';
 
 import type { Feed, FeedInput, FeedListInput, FeedPost } from './types.js';
+import { feedToolsPlugin } from './tools.js';
+import { feedUiPlugin } from './ui.js';
 
 interface PostRow {
   id: string;
@@ -228,6 +230,9 @@ export const feedPlugin = {
   name: 'merv-feed',
   inject: ['state', 'scope', 'artifacts'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(feedToolsPlugin);
+    ctx.plugin(feedUiPlugin);
     ctx.provide('feed', await createService(new FeedService(ctx.state, ctx.scope, ctx.artifacts)));
   },
 };

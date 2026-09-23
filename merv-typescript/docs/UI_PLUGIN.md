@@ -4,7 +4,7 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 
 ## Shape
 
-| Module               | Entry id       | Injects           | Owns                                                                                |
+| Module               | Status row     | Injects           | Owns                                                                                |
 | -------------------- | -------------- | ----------------- | ----------------------------------------------------------------------------------- |
 | `@merv/ui`           | `ui`           | `api`, `tools`    | The `ui` row registry, the bundle at `/ui`, `ui.shell`, `ui.read`, the Settings row |
 | `@merv/scope/ui`     | `scope-ui`     | `scope`, `ui`     | People (a directory; no count)                                                      |
@@ -15,7 +15,7 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 | `@merv/feed/ui`      | `feed-ui`      | `feed`, `ui`      | Feed (posts and state changes as one column)                                        |
 | `@merv/mounts/ui`    | `mounts-ui`    | `mounts`, `ui`    | Connections (degraded when any mount is not ready; data via `ui.read`)              |
 
-Every entry is `required: false`. The default configuration lists all of them except `mounts-ui`, which belongs next to a `mounts` entry.
+`ui` is a configuration entry. Each feature's service plugin mounts its own row adapter (and its tools, and Sessions its HTTP routes) as a Cordis child plugin with `ctx.plugin(...)`, so none of them is a configuration entry any more; `mounts-ui` belongs next to a `mounts` entry. The adapter still injects its owner and the registry: it loads only while both are present, and its owner's disposal waits for it. `createApp` reports each mounted adapter as the status row `<entry>-ui`, `-tools` or `-api`. A row adapter never gates readiness; a failed tool or API adapter fails its feature's readiness as a separate entry used to. Code's `code-tools`, `code-api` and `code-ui` are still entries.
 
 A row is data, not code:
 
@@ -40,7 +40,7 @@ ctx.effect(() =>
 );
 ```
 
-The registration lives inside a Cordis effect, so Cordis disposes it when the adapter unloads. Disabling `feed` suspends `feed-ui`, and the next `ui.shell` call no longer lists Feed. The bundle polls `ui.shell` every four seconds, so the sidebar follows within that interval. A row whose `view.kind` the bundle does not know still renders a page that says so.
+The registration lives inside a Cordis effect, so Cordis disposes it when the adapter unloads. Disabling `feed` disposes the `feed-ui` it mounted, and the next `ui.shell` call no longer lists Feed. The bundle polls `ui.shell` every four seconds, so the sidebar follows within that interval. A row whose `view.kind` the bundle does not know still renders a page that says so.
 
 Domain plugins never import the UI. Adapters import only the public `@merv/ui/types` contract, and the boundary test holds `ui.ts` adapters to the same rules as `tools.ts` adapters: inject the owner and the registry, nothing else.
 

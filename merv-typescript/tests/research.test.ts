@@ -23,7 +23,7 @@ async function fixture(t: TestContext, store = false) {
   if (!store) config.plugins.find((entry: { id: string }) => entry.id === 'code').config = {};
   config.plugins = config.plugins.filter(
     (entry: { id: string }) =>
-      !['api', 'identity', 'ui', 'research', 'research-tools', 'research-ui'].includes(entry.id) &&
+      !['api', 'identity', 'ui', 'research'].includes(entry.id) &&
       !entry.id.endsWith('-api') &&
       !entry.id.endsWith('-ui'),
   );

@@ -4,8 +4,8 @@ Sandboxes publishes rows that a service outside this process owns. merv-sandboxe
 manifest of rows — what each row holds, never how it looks — and this plugin validates that
 manifest, registers one sidebar row per manifest row, and proxies each row's reads with the
 calling project's own credentials. It owns no domain state and no Merv capability: its only
-Cordis dependency is none at all, and the thin `@merv/sandboxes/ui` adapter injects
-`sandboxes` and `ui` to mirror the rows into the sidebar registry.
+Cordis dependency is none at all, and the thin `@merv/sandboxes/ui` adapter, which the plugin
+mounts as a Cordis child, injects `sandboxes` and `ui` to mirror the rows into the sidebar registry.
 
 The public `@merv/sandboxes/types` contract defines `Context.sandboxes`, `Sandboxes`,
 `SandboxConnection`, `SandboxesConfig`, `SandboxRow`, `SandboxTarget`, `SandboxExtend` and
@@ -43,10 +43,10 @@ Secrets are resolved for each operation and pinned through identity proof and di
 credential fingerprints are cached; secrets are never logged or reported in status. A credential
 change before dispatch refuses the operation so a retry can prove the replacement grant.
 The default composition does not install this optional plugin;
-`scripts/ui-demo.ts` composes it, its tools and its UI adapter for the demo project when
+`scripts/ui-demo.ts` composes it (it mounts its own tools and UI adapter) for the demo project when
 `MERV_SANDBOXES_URL` and `MERV_SANDBOXES_TOKEN` are both set.
 
-A deployment composes the same three entries when `MERV_SANDBOXES_URL` is set, and none at all
+A deployment composes the same one entry when `MERV_SANDBOXES_URL` is set, and none at all
 when it is not: `deploy/render-config.mjs` reads the origin from `MERV_SANDBOXES_URL` (https, no
 path, query or credentials) and one connection per project from `MERV_SANDBOXES_CONNECTIONS`, a
 JSON array of `{ projectId, namespace, tokenEnv }`. Each `tokenEnv` names the variable holding

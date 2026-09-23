@@ -69,6 +69,8 @@ import type {
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
+import { researchToolsPlugin } from './tools.js';
+import { researchUiPlugin } from './ui.js';
 export type * from './types.js';
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 type Stage = (typeof stages)[number];
@@ -1804,6 +1806,9 @@ export const researchPlugin = {
   name: 'merv-research',
   inject: ['state', 'scope', 'workflows'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(researchToolsPlugin);
+    ctx.plugin(researchUiPlugin);
     await ctx.effect(async function* () {
       const service = await createService(new ResearchService(ctx.state, ctx.scope, ctx.workflows));
       yield () => service.close();

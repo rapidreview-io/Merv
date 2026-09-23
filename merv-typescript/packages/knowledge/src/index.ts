@@ -24,6 +24,8 @@ import type {
 } from './types.js';
 import { knowledgeIdSchema, knowledgeReferencesSchema, parseKnowledgeInput } from './input.js';
 import { migrateKnowledge } from './storage.js';
+import { knowledgeToolsPlugin } from './tools.js';
+import { knowledgeUiPlugin } from './ui.js';
 
 export type * from './types.js';
 
@@ -250,6 +252,9 @@ export const knowledgePlugin = {
   name: 'merv-knowledge',
   inject: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
   async apply(ctx: Context) {
+    // Its tools, pages and routes load while both this feature and their registry do.
+    ctx.plugin(knowledgeToolsPlugin);
+    ctx.plugin(knowledgeUiPlugin);
     await ctx.effect(async function* () {
       const service = await createService(
         new KnowledgeService(
