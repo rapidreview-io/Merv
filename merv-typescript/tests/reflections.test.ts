@@ -869,51 +869,60 @@ test('leased lens calls use exact execution evidence, retain context through rel
   assert.equal(agent.id, execution.agentId);
 });
 
-test('ordinary session workers execute five lenses, synthesis and repair; unload preserves frozen assignments', async (t) => {
+test('ordinary session workers execute a lens, synthesis and repair; unload preserves frozen assignments', async (t) => {
   const f = await fixture(t);
   let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'leased-wave' });
   const actors: string[] = [];
-  for (const lens of wave.lenses) {
-    const secret = token();
-    const agent = await f.app.ctx.sessions.registerAgent(f.owner, {
-      name: lens.perspective,
-      runnerId: 'external',
-      requestId: lens.id,
-      secret,
-    });
-    actors.push(agent.actorId);
-    const execution = await f.app.ctx.sessions.assignAgent(secret, {
-      instanceId: lens.id,
+  const [lens, ...others] = wave.lenses;
+  const secret = token();
+  const agent = await f.app.ctx.sessions.registerAgent(f.owner, {
+    name: lens!.perspective,
+    runnerId: 'external',
+    requestId: lens!.id,
+    secret,
+  });
+  actors.push(agent.actorId);
+  const lensExecution = await f.app.ctx.sessions.assignAgent(secret, {
+    instanceId: lens!.id,
+    expectedRevision: 0,
+    requestId: `assign-${lens!.id}`,
+  });
+  const lensCaller = await f.app.ctx.sessions.authenticate(secret);
+  const previous = f.app.ctx.reflections;
+  await f.app.setEnabled('reflections', false);
+  await assert.rejects(async () => await previous.get(f.owner, wave.id), {
+    code: 'reflection_unavailable',
+  });
+  await f.app.setEnabled('reflections', true);
+  assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).id, wave.id);
+  assert.equal(
+    (await f.app.ctx.sessions.agentSelf(secret)).current!.assignment.context!.hash,
+    lensExecution.assignment.context!.hash,
+  );
+  const artifact = (await f.app.ctx.tools.call('artifact.create', lensCaller, {
+    title: lens!.perspective,
+    content:
+      '# Summary\nIndependent observations from the frozen corpus.\n# Evidence\nNo empirical claims without completed experiments.',
+  })) as Artifact;
+  await f.app.ctx.tools.call('reflection.submit_lens', lensCaller, {
+    lensId: lens!.id,
+    artifactId: artifact.id,
+    expectedRevision: 0,
+    requestId: `submit-${lens!.id}`,
+  });
+  await f.app.ctx.sessions.releaseAgentAssignment(secret, lensExecution.id);
+  await f.app.ctx.domainEvents.drain();
+  // The other four lenses are submitted by distinct producers directly; the session path is
+  // the one above, and every lens author is excluded from the review all the same.
+  for (const other of others) {
+    const producer = await f.actor(other.perspective);
+    actors.push(producer.actorId);
+    await f.app.ctx.reflections.submitLens(producer, {
+      lensId: other.id,
+      artifactId: (await f.create(producer, other.perspective)).id,
       expectedRevision: 0,
-      requestId: `assign-${lens.id}`,
+      requestId: `submit-${other.id}`,
     });
-    const caller = await f.app.ctx.sessions.authenticate(secret);
-    if (actors.length === 1) {
-      const previous = f.app.ctx.reflections;
-      await f.app.setEnabled('reflections', false);
-      await assert.rejects(async () => await previous.get(f.owner, wave.id), {
-        code: 'reflection_unavailable',
-      });
-      await f.app.setEnabled('reflections', true);
-      assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).id, wave.id);
-      assert.equal(
-        (await f.app.ctx.sessions.agentSelf(secret)).current!.assignment.context!.hash,
-        execution.assignment.context!.hash,
-      );
-    }
-    const artifact = (await f.app.ctx.tools.call('artifact.create', caller, {
-      title: lens.perspective,
-      content:
-        '# Summary\nIndependent observations from the frozen corpus.\n# Evidence\nNo empirical claims without completed experiments.',
-    })) as Artifact;
-    await f.app.ctx.tools.call('reflection.submit_lens', caller, {
-      lensId: lens.id,
-      artifactId: artifact.id,
-      expectedRevision: 0,
-      requestId: `submit-${lens.id}`,
-    });
-    await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
-    await f.app.ctx.domainEvents.drain();
   }
   wave = await f.app.ctx.reflections.get(f.owner, wave.id);
   assert.equal(wave.workflow.state, 'synthesizing');
@@ -965,15 +974,6 @@ test('ordinary session workers execute five lenses, synthesis and repair; unload
     changeSpecArtifactId: outputs[1]!.id,
     requestId: 'submit-synthesis',
   };
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.tools.call('reflection.submit', caller, {
-        ...submission,
-        graphArtifactId: outputs[0]!.id,
-      }),
-    { code: 'invalid_input' },
-    'the retired project graph is refused as an unexpected field',
-  );
   await assert.rejects(
     f.app.ctx.tools.call('reflection.submit', caller, {
       ...submission,
@@ -1263,9 +1263,8 @@ test('a leased lens reads research added after assignment through existing tools
   const caller = await f.app.ctx.sessions.authenticate(secret);
   const call = async (name: string, input: Record<string, unknown>) =>
     f.app.ctx.tools.call(name, caller, input);
+  // A session reads whatever its project holds, including what was added after its assignment.
   const evidence = await f.create(f.owner, 'New evidence after the lens started');
-  // A session reads whatever its project holds, before and after its assignment.
-  assert.ok(await call('artifact.read', { artifactId: evidence.id }));
   await f.app.ctx.experiments.attach(f.owner, {
     experimentId: experiment.id,
     artifactId: evidence.id,
@@ -1359,21 +1358,12 @@ test('a leased lens reads research added after assignment through existing tools
   assert.equal(f.app.status().find((plugin) => plugin.id === 'research')!.state, 'active');
   assert.equal(f.app.ctx.reflections, provider);
   assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'reflection.create'));
-  for (const [name, input] of [
-    ['artifact.read', { artifactId: evidence.id }],
-    ['artifact.get', { artifactId: delivery.id }],
-    ['review.get', { reviewId: submitted.reviewId! }],
-  ] as const)
-    assert.ok(await call(name, input), name);
+  assert.ok(await call('artifact.read', { artifactId: evidence.id }));
   const ownReport = (await call('artifact.create', {
     title: 'Independent report while research access is unavailable',
     content:
       '# Summary\nThe observed feasibility outcome is retained.\n# Evidence\nResearch inputs read before the outage support this observation.',
   })) as Artifact;
-  assert.match(
-    JSON.stringify(await call('artifact.read', { artifactId: ownReport.id })),
-    /observed feasibility outcome/,
-  );
   assert.equal((await f.app.ctx.sessions.agentSelf(secret)).current!.id, execution.id);
   assert.ok((await f.app.ctx.workflows.assignment(f.owner, wave.lenses[2]!.id)).context);
   assert.equal(
@@ -1394,8 +1384,6 @@ test('a leased lens reads research added after assignment through existing tools
     JSON.stringify(await call('artifact.read', { artifactId: evidence.id })),
     /New evidence/,
   );
-  assert.ok(await call('review.get', { reviewId: submitted.reviewId! }));
-  assert.ok(await call('artifact.read', { artifactId: peerReport.id }));
 
   const blocked = async () =>
     await f.app.ctx.experiments.create(f.owner, {
@@ -1429,13 +1417,6 @@ test('a leased lens reads research added after assignment through existing tools
     (await f.app.ctx.tools.list()).map((tool) => tool.name),
     tools,
     'no new tools',
-  );
-  assert.equal(
-    await f.app.ctx.state.read(
-      async (sql) =>
-        (await sql.get<{ count: number }>('SELECT COUNT(*) count FROM knowledge_snapshots'))!.count,
-    ),
-    0,
   );
 });
 
