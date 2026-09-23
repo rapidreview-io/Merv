@@ -1,5 +1,6 @@
 import { postgresMigrations } from './agents.postgres.js';
 import { createHash } from 'node:crypto';
+import { ownerOf } from './common.js';
 import {
   visible,
   check,
@@ -64,8 +65,7 @@ export class AgentDirectory {
     tx: Transaction,
     persistent = true,
   ): Promise<Agent> {
-    const source = await this.scope.delegationSource(caller, tx),
-      owner = digest(source);
+    const { source, hash: owner } = await ownerOf(this.scope, caller, tx);
     const fingerprint = digest({ name: input.name, secret: tokenDigest(input.secret), persistent });
     const old = await tx.get<AgentRow>(
       'SELECT * FROM agents WHERE owner_hash=? AND runner_id=? AND request_id=?',
@@ -141,11 +141,11 @@ export class AgentDirectory {
     return JSON.parse(row.agent_json);
   }
   async controlled(caller: Caller, id: string, tx: Transaction): Promise<Agent> {
-    const source = await this.scope.delegationSource(caller, tx),
+    const owner = await ownerOf(this.scope, caller, tx),
       agent = await this.get(id, tx);
     check(agent.projectId === caller.projectId, 'agent_not_found', 'Agent not found', 404);
     check(
-      digest(source) === digest(agent.source),
+      owner.hash === digest(agent.source),
       'agent_forbidden',
       'Agent belongs to another source authority',
       403,
@@ -177,11 +177,10 @@ export class AgentDirectory {
     return !!(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenDigest(secret)));
   }
   async list(caller: Caller, tx: Transaction): Promise<Agent[]> {
-    const source = await this.scope.delegationSource(caller, tx);
     return (
       await tx.all<AgentRow>(
         'SELECT * FROM agents WHERE owner_hash=? ORDER BY _merv_rowid',
-        digest(source),
+        (await ownerOf(this.scope, caller, tx)).hash,
       )
     ).map((row) => JSON.parse(row.agent_json));
   }

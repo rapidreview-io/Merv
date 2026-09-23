@@ -29,8 +29,9 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
-import { AgentDirectory, sourceCaller } from './agents.js';
-import { AgentObservations, lastActivity, summarizeAgent } from './observations.js';
+import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
+import { AgentObservations, lastActivity } from './observations.js';
+import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
@@ -91,7 +92,6 @@ const configSchema = z
   })
   .strict();
 export type SessionsConfig = z.input<typeof configSchema>;
-const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 /** Trimmed text with something to read, as it is stored and compared. */
 const trimmed = (max: number) =>
@@ -224,6 +224,19 @@ const ended = (session: Session): MervError =>
         session.closeReason ? `Session is closed: ${session.closeReason}` : 'Session is closed',
         401,
       );
+/** What session.workspace_attached and session.workspace_result say. */
+const workspaceEvent = (session: Session, workspace: SessionWorkspace) => ({
+  sessionId: session.id,
+  instanceId: session.instanceId,
+  expectedRevision: session.expectedRevision,
+  policyHash: session.execution.policyHash,
+  workflow: session.execution.workflow,
+  version: session.execution.version,
+  state: session.execution.state,
+  workerActorId: session.actorId,
+  source: session.source,
+  workspace: { ...workspace },
+});
 const permission = (role: Session['role']): Permission =>
   role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -336,6 +349,7 @@ export class LeasedSessions implements Sessions {
           state,
           scope,
           workflows,
+          this.observations,
           {
             prepare: async (caller) => await this.prepareControl(caller),
             offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx),
@@ -346,8 +360,6 @@ export class LeasedSessions implements Sessions {
               await this.closeSession(session, reason, tx, 'released', 'halted');
               return true;
             },
-            agents: async (caller, tx) => await this.agentSummaries(caller, tx),
-            activity: async (projectId, tx) => await this.observations.activity(tx, projectId),
           },
           this.clock,
           this.thresholds,
@@ -411,9 +423,6 @@ export class LeasedSessions implements Sessions {
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
   private idleCheckedAt = Number.NEGATIVE_INFINITY;
-  private time(): string {
-    return new Date(this.clock()).toISOString();
-  }
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
   }
@@ -484,7 +493,7 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     check(live(session), 'session_closed', 'Session is closed', 401);
     check(
-      session.expiresAt > this.time() && session.hardDeadline > this.time(),
+      session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
       'session_expired',
       'Session has expired',
       401,
@@ -502,7 +511,7 @@ export class LeasedSessions implements Sessions {
     );
     this.ensureOpen();
     check(
-      session.expiresAt > this.time() && session.hardDeadline > this.time(),
+      session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
       'session_expired',
       'Session expired during validation',
       401,
@@ -534,7 +543,9 @@ export class LeasedSessions implements Sessions {
       403,
     );
     check(
-      live(session) && session.expiresAt > this.time() && session.hardDeadline > this.time(),
+      live(session) &&
+        session.expiresAt > isoNow(this.clock) &&
+        session.hardDeadline > isoNow(this.clock),
       'session_closed',
       'Session is closed or expired',
       401,
@@ -566,20 +577,13 @@ export class LeasedSessions implements Sessions {
     } else await this.valid(session, tx);
     return session.source;
   }
-  private async owner(
-    caller: Caller,
-    tx: Transaction,
-  ): Promise<{ source: DelegationSource; hash: string }> {
-    const source = await this.scope.delegationSource(caller, tx);
-    return { source, hash: digest(source) };
-  }
   private async controlled(
     caller: Caller,
     id: string,
     runnerId: string | undefined,
     tx: Transaction,
   ): Promise<Session> {
-    const owner = await this.owner(caller, tx),
+    const owner = await ownerOf(this.scope, caller, tx),
       row = await this.row(tx, id);
     // Another project's session is not found here; another owner's is forbidden.
     check(row.project_id === caller.projectId, 'session_not_found', 'Session not found', 404);
@@ -608,7 +612,7 @@ export class LeasedSessions implements Sessions {
   ): Promise<Session> {
     if (!live(session)) return session;
     session.status = status;
-    session.closedAt = this.time();
+    session.closedAt = isoNow(this.clock);
     session.closeReason = reason;
     session.outcome = outcome ?? (status === 'expired' ? 'expired' : 'released');
     await this.save(tx, session);
@@ -749,13 +753,13 @@ export class LeasedSessions implements Sessions {
     tx: Transaction,
   ): Promise<Session> {
     const duration = input.hardDeadlineSeconds ?? 86400;
-    const owner = await this.owner(caller, tx);
+    const owner = await ownerOf(this.scope, caller, tx);
     const fingerprint = digest({
       instanceId: input.instanceId,
       expectedRevision: input.expectedRevision,
       runnerId: input.runnerId,
       hardDeadlineSeconds: duration,
-      tokenHash: hashToken(input.secret),
+      tokenHash: tokenDigest(input.secret),
       ...(input.agentId ? { agentId: input.agentId } : {}),
     });
     const old = await tx.get<Row>(
@@ -795,7 +799,7 @@ export class LeasedSessions implements Sessions {
     check(
       !(await tx.get(
         'SELECT id FROM worker_sessions WHERE token_hash=?',
-        hashToken(input.secret),
+        tokenDigest(input.secret),
       )) && !(await this.directory.findToken(input.secret, tx)),
       'session_secret_used',
       'Session secret was already used',
@@ -907,7 +911,7 @@ export class LeasedSessions implements Sessions {
       owner.hash,
       input.runnerId,
       input.requestId,
-      hashToken(input.secret),
+      tokenDigest(input.secret),
       fingerprint,
       session.status,
       JSON.stringify(session),
@@ -988,20 +992,10 @@ export class LeasedSessions implements Sessions {
     // every instance must not hold the writer lock.
     return await this.reading(async (tx) => {
       const agent = await this.directory.authenticate(token, tx);
-      const busy = new Set(
-        (
-          await tx.all<{ instance_id: string; revision: number }>(
-            "SELECT instance_id,revision FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
-            agent.projectId,
-          )
-        ).map((row) => `${row.instance_id}:${row.revision}`),
-      );
+      const busy = await liveTargets(tx, agent.projectId);
       const available = (
         await this.workflows.dispatchCandidates(sourceCaller(agent.source), tx, agent.actorId)
-      ).filter(
-        (item) =>
-          item.role !== 'operator' && !busy.has(`${item.instanceId}:${item.expectedRevision}`),
-      );
+      ).filter((item) => item.role !== 'operator' && !busy.has(targetKey(item)));
       return { ...(await this.agentStatus(agent, tx)), available };
     });
   }
@@ -1045,28 +1039,6 @@ export class LeasedSessions implements Sessions {
         409,
       );
       return await this.directory.reset(agent, reason, tx);
-    });
-  }
-  /** Read inside the status transaction: one payload is one consistent snapshot. */
-  private async agentSummaries(caller: Caller, sql: Transaction) {
-    await this.scope.require(caller, 'read', sql);
-    return (
-      await sql.all<{
-        agent_json: string;
-        execution_id: string | null;
-        execution_label: string;
-        execution_role: Session['role'];
-      }>(
-        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`,
-        caller.projectId,
-      )
-    ).map((row) => {
-      const agent: Agent = JSON.parse(row.agent_json);
-      return summarizeAgent(
-        agent,
-        row.execution_id,
-        row.execution_id ? { label: row.execution_label, role: row.execution_role } : null,
-      );
     });
   }
   async projectStatus(caller: Caller): Promise<SessionsProjectStatus> {
@@ -1233,19 +1205,14 @@ export class LeasedSessions implements Sessions {
         caller.projectId,
       );
       check(row, 'session_not_found', 'Session not found in this project', 404);
-      const session: Session = JSON.parse(row.session_json);
-      const workspace = await sql.get<{ attachment_json: string; result_json: string | null }>(
-        'SELECT attachment_json,result_json FROM session_workspaces WHERE session_id=?',
-        sessionId,
-      );
-      const event =
-        workspace?.result_json === null || !workspace
-          ? undefined
-          : await sql.get<{ id: number; created_at: string }>(
-              "SELECT id,created_at FROM events WHERE project_id=? AND subject_id=? AND type='session.workspace_result' ORDER BY id LIMIT 1",
-              caller.projectId,
-              sessionId,
-            );
+      const session = await this.decode(row, sql);
+      const event = session.workspace?.result
+        ? await sql.get<{ id: number; created_at: string }>(
+            "SELECT id,created_at FROM events WHERE project_id=? AND subject_id=? AND type='session.workspace_result' ORDER BY id LIMIT 1",
+            caller.projectId,
+            sessionId,
+          )
+        : undefined;
       // Provenance names who delegated the work, not the credential they held.
       const { kind, actorId, projectId } = session.source;
       return {
@@ -1269,12 +1236,7 @@ export class LeasedSessions implements Sessions {
         },
         workspaceMode: effectiveWorkspace(session.execution.policy).mode,
         live: live(session),
-        workspace: workspace
-          ? {
-              attachment: JSON.parse(workspace.attachment_json),
-              result: workspace.result_json === null ? null : JSON.parse(workspace.result_json),
-            }
-          : null,
+        workspace: session.workspace ?? null,
         observedAt: event?.created_at ?? null,
         eventId: event?.id ?? null,
       };
@@ -1284,7 +1246,7 @@ export class LeasedSessions implements Sessions {
   async list(caller: Caller): Promise<Session[]> {
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
-      const owner = await this.owner(caller, tx);
+      const owner = await ownerOf(this.scope, caller, tx);
       return await mapAsync(
         await tx.all<Row>(
           'SELECT * FROM worker_sessions WHERE owner_hash=? ORDER BY _merv_rowid',
@@ -1372,18 +1334,7 @@ export class LeasedSessions implements Sessions {
             actorId: caller.actorId,
             type: 'session.workspace_attached',
             subjectId: session.id,
-            data: {
-              sessionId: session.id,
-              instanceId: session.instanceId,
-              expectedRevision: session.expectedRevision,
-              policyHash: session.execution.policyHash,
-              workflow: session.execution.workflow,
-              version: session.execution.version,
-              state: session.execution.state,
-              workerActorId: session.actorId,
-              source: session.source,
-              workspace: { ...workspace },
-            },
+            data: workspaceEvent(session, workspace),
           });
         }
       }
@@ -1462,18 +1413,7 @@ export class LeasedSessions implements Sessions {
         actorId: caller.actorId,
         type: 'session.workspace_result',
         subjectId: session.id,
-        data: {
-          sessionId: session.id,
-          instanceId: session.instanceId,
-          expectedRevision: session.expectedRevision,
-          policyHash: session.execution.policyHash,
-          workflow: session.execution.workflow,
-          version: session.execution.version,
-          state: session.execution.state,
-          workerActorId: session.actorId,
-          source: session.source,
-          workspace: { ...workspace },
-        },
+        data: workspaceEvent(session, workspace),
       });
       return session;
     });
@@ -1560,7 +1500,7 @@ export class LeasedSessions implements Sessions {
     usage: SessionUsageReport,
     tx: Transaction,
   ): Promise<void> {
-    const stored = await reportUsage(tx, session.id, usage, this.time());
+    const stored = await reportUsage(tx, session.id, usage, isoNow(this.clock));
     if (!stored) return;
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
@@ -1593,7 +1533,7 @@ export class LeasedSessions implements Sessions {
       if (agent) check(current, 'agent_idle', 'Agent has no current assignment', 409);
       const row = current
         ? await this.row(tx, current.id)
-        : await tx.get<Row>('SELECT * FROM worker_sessions WHERE token_hash=?', hashToken(token));
+        : await tx.get<Row>('SELECT * FROM worker_sessions WHERE token_hash=?', tokenDigest(token));
       check(row, 'unauthorized', 'Invalid session bearer credential', 401);
       const session = await this.decode(row, tx),
         error = await this.reconcile(session, tx);
@@ -1611,13 +1551,13 @@ export class LeasedSessions implements Sessions {
         );
         this.ensureOpen();
         check(
-          session.expiresAt > this.time() && session.hardDeadline > this.time(),
+          session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
           'session_expired',
           'Session expired during activation',
           401,
         );
         session.status = 'active';
-        session.activatedAt = this.time();
+        session.activatedAt = isoNow(this.clock);
         session.expiresAt = new Date(
           Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
         ).toISOString();
@@ -1872,7 +1812,7 @@ export class LeasedSessions implements Sessions {
     }
     // Once per episode: the mark is what keeps a later sweep from saying it again.
     if (session.quietSince) return;
-    session.quietSince = this.time();
+    session.quietSince = isoNow(this.clock);
     await this.save(tx, session);
     await this.state.appendEvent(tx, {
       projectId: session.projectId,

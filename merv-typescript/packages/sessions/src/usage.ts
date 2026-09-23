@@ -1,4 +1,5 @@
-import { check, type Transaction } from '@merv/contracts';
+import type { Transaction } from '@merv/contracts';
+import { safeCount } from './common.js';
 import type {
   BudgetStatus,
   Session,
@@ -14,17 +15,7 @@ const topInstances = 50;
 export const accountingMethod =
   'Server service work adds measured wall time, or the reserved deadline duration after a lost process, once per execution. A project counts shared work once; each frozen sponsoring root counts its full cost. Service work has no worker session or model tokens. Wall-clock is lease wall-clock: Merv measures it from activation to close of each closed session, and a close may lag the death of the process by up to the expiry window; live sessions are not yet counted. Tokens, cost and model are reported by the runner that launched the process, or by the process itself, and are not verified; reportedSessions of sessions says how many reported. Model context, reasoning, provider billing and anything done outside a Merv-launched process are unknown to Merv. Counting began when this feature was installed.';
 
-/** PostgreSQL SUM(bigint) is numeric and arrives as text; every public sum is normalised here. */
-function sum(value: number | string | null): number {
-  const number = Number(value ?? 0);
-  check(
-    Number.isSafeInteger(number) && number >= 0,
-    'usage_overflow',
-    'Usage totals exceed the supported numeric range',
-    500,
-  );
-  return number;
-}
+const sum = safeCount('usage_overflow', 'Usage totals exceed the supported numeric range');
 
 interface GroupRow {
   instance_id: string;

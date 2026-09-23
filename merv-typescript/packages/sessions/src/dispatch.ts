@@ -22,7 +22,6 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type {
-  AgentSummary,
   AutomaticLease,
   DispatchDecision,
   DispatchHold,
@@ -42,7 +41,8 @@ import type {
   StuckReport,
 } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
-import { lastActivity } from './observations.js';
+import { lastActivity, type AgentObservations } from './observations.js';
+import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
 
 const label = z
   .string()
@@ -212,7 +212,6 @@ interface Target {
   instanceId: string;
   expectedRevision: number;
 }
-const targetKey = (item: Target) => `${item.instanceId}:${item.expectedRevision}`;
 const publicHold = (row: HoldRow): DispatchHold => ({
   instanceId: row.instance_id,
   revision: row.revision,
@@ -244,10 +243,6 @@ interface Hooks {
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
   close(session: Session, reason: string, tx: Transaction): Promise<boolean>;
-  /** Read inside the status transaction, so agents and leases are one snapshot. */
-  agents(caller: Caller, tx: Transaction): Promise<AgentSummary[]>;
-  /** The latest tool call of each active session in the project; dispatch does not read observations itself. */
-  activity(projectId: string, tx: Transaction): Promise<Map<string, string>>;
 }
 /** The order a stuck report lists its kinds in, and the keys of its counts. */
 const stuckKinds: StuckKind[] = [
@@ -280,6 +275,7 @@ export class SessionDispatch {
     private state: State,
     private scope: Scope,
     private workflows: Workflows,
+    private observations: AgentObservations,
     private hooks: Hooks,
     private clock: () => number,
     private thresholds: StuckReport['thresholds'],
@@ -313,9 +309,6 @@ export class SessionDispatch {
       ]);
     };
   }
-  private time(): string {
-    return new Date(this.clock()).toISOString();
-  }
   private async ordinary(caller: Caller, permission: 'read' | 'admin', tx: Transaction) {
     check(
       !caller.session,
@@ -324,10 +317,6 @@ export class SessionDispatch {
       403,
     );
     return await this.scope.require(caller, permission, tx);
-  }
-  private async owner(caller: Caller, tx: Transaction) {
-    const source = await this.scope.delegationSource(caller, tx);
-    return { source, hash: digest(source) };
   }
   /** Whether the caller's own runner last said it has a capability. No presence means no. */
   async capable(
@@ -338,7 +327,7 @@ export class SessionDispatch {
   ): Promise<boolean> {
     const runner = await tx.get<RunnerRow>(
       'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-      (await this.owner(caller, tx)).hash,
+      (await ownerOf(this.scope, caller, tx)).hash,
       runnerId,
     );
     return (
@@ -360,7 +349,7 @@ export class SessionDispatch {
   private async set(caller: Caller, enabled: boolean, tx: Transaction): Promise<DispatchState> {
     const old = await this.dispatch(caller.projectId, tx);
     if (old.enabled === enabled) return old;
-    const time = this.time();
+    const time = isoNow(this.clock);
     await tx.run(
       'INSERT INTO project_session_dispatch(project_id,enabled,updated_at,updated_by) VALUES(?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
       caller.projectId,
@@ -454,7 +443,7 @@ export class SessionDispatch {
           next.maxWallMs,
           next.maxCostMicros,
           next.maxTokens,
-          this.time(),
+          isoNow(this.clock),
           caller.actorId,
         );
         await recorded(this.state, tx, caller, 'session.budget_changed', scopeId, {
@@ -545,7 +534,7 @@ export class SessionDispatch {
     decision: DispatchDecision,
     tx: Transaction,
   ): Promise<void> {
-    const time = this.time();
+    const time = isoNow(this.clock);
     await tx.run(
       'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN COALESCE(decision_since,?) ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
       decision,
@@ -574,7 +563,7 @@ export class SessionDispatch {
       target.instanceId,
       target.expectedRevision,
     );
-    const time = this.time();
+    const time = isoNow(this.clock);
     await tx.run(
       'INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,last_session_id,first_at,last_at,held_at) VALUES(?,?,?,1,?,?,?,?,?,?) ON CONFLICT(project_id,instance_id,revision) DO UPDATE SET attempts=session_dispatch_holds.attempts+1,last_code=excluded.last_code,last_message=excluded.last_message,last_session_id=excluded.last_session_id,last_at=excluded.last_at,held_at=COALESCE(session_dispatch_holds.held_at,excluded.held_at)',
       projectId,
@@ -639,7 +628,7 @@ export class SessionDispatch {
     if (status === 401 || status === 403 || uncountedOfferCodes.has(failure.code)) return;
     try {
       await this.state.transaction(async (tx) => {
-        const owner = await this.owner(caller, tx);
+        const owner = await ownerOf(this.scope, caller, tx);
         await this.scope.requireDelegation(owner.source, 'read', tx);
         const held = await this.attempt(
           caller.projectId,
@@ -731,7 +720,7 @@ export class SessionDispatch {
     return await this.state.transaction(async (tx) => {
       // A runner is a durable presence that will take work: registering one is a write.
       await this.scope.require(caller, 'write', tx);
-      const owner = await this.owner(caller, tx);
+      const owner = await ownerOf(this.scope, caller, tx);
       const old = await tx.get<RunnerRow>(
         'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
         owner.hash,
@@ -743,7 +732,7 @@ export class SessionDispatch {
         'Runner cannot acknowledge unpublished settings',
       );
       const id = old?.id ?? newId('runner'),
-        time = this.time();
+        time = isoNow(this.clock);
       if (old)
         await tx.run(
           'UPDATE session_runners SET presence_json=?,last_seen_at=? WHERE id=?',
@@ -829,14 +818,7 @@ export class SessionDispatch {
     });
   }
   private async candidates(caller: Caller, tx: Transaction) {
-    const live = new Set(
-      (
-        await tx.all<{ instance_id: string; revision: number }>(
-          "SELECT instance_id,revision FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
-          caller.projectId,
-        )
-      ).map((row) => `${row.instance_id}:${row.revision}`),
-    );
+    const live = await liveTargets(tx, caller.projectId);
     const all = await this.workflows.dispatchCandidates(caller, tx);
     const queue = all.filter((item) => item.role !== 'operator' && !live.has(targetKey(item)));
     // A target that keeps failing on one revision is not retried for ever: the backoff only
@@ -912,7 +894,7 @@ export class SessionDispatch {
     },
   ): Promise<StuckReport> {
     const now = this.clock(),
-      observedAt = this.time(),
+      observedAt = isoNow(this.clock),
       limits = this.thresholds;
     const { runners, dispatch, activity } = facts;
     const { all, live, spent, unaccounted, queue } = facts.admissible;
@@ -1131,7 +1113,7 @@ export class SessionDispatch {
       return await this.attention(caller.projectId, tx, {
         runners: await this.runners(caller.projectId, tx),
         dispatch: await this.dispatch(caller.projectId, tx),
-        activity: await this.hooks.activity(caller.projectId, tx),
+        activity: await this.observations.activity(tx, caller.projectId),
         admissible: await this.candidates(caller, tx),
         blockers: await this.workflows.blockers(caller, undefined, tx),
       });
@@ -1142,7 +1124,7 @@ export class SessionDispatch {
     return await this.state.transaction(async (tx) => {
       const actor = await this.ordinary(caller, 'read', tx);
       const runners = await this.runners(caller.projectId, tx);
-      const activity = await this.hooks.activity(caller.projectId, tx);
+      const activity = await this.observations.activity(tx, caller.projectId);
       const sessions: SessionSummary[] = (
         await tx.all<
           SessionRow & {
@@ -1214,7 +1196,7 @@ export class SessionDispatch {
       });
       return {
         // One transaction, one moment: agents cannot report a lease the leases do not.
-        agents: await this.hooks.agents(caller, tx),
+        agents: await this.observations.summaries(tx, caller.projectId),
         observedAt,
         liveSessionCount: counts.live,
         sessionTotal: counts.total,
@@ -1335,7 +1317,7 @@ export class SessionDispatch {
     skipped: Set<string>,
   ): Promise<{ session: Session | null; reason: string }> {
     return await this.state.transaction(async (tx) => {
-      const owner = await this.owner(caller, tx);
+      const owner = await ownerOf(this.scope, caller, tx);
       const fingerprint = digest({
         ...input,
         hardDeadlineSeconds: input.hardDeadlineSeconds ?? 86400,

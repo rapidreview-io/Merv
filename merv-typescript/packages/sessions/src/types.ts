@@ -199,8 +199,8 @@ export interface ServiceWork {
 }
 
 export interface Sessions {
-  /** Server-only admission. Older providers may omit it; callers must then wait. */
-  readonly serviceWork?: ServiceWork;
+  /** Server-only admission. */
+  readonly serviceWork: ServiceWork;
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(
     projectId: string,

@@ -1,5 +1,6 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
+import { safeCount } from './common.js';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -12,19 +13,12 @@ function estimate(value: unknown): number | null {
   }
 }
 
-/** PostgreSQL SUM(bigint) is numeric; normalize this public aggregate only. */
-function aggregateNumber(value: number | string): number {
-  const number = Number(value);
-  check(
-    Number.isSafeInteger(number) && number >= 0,
-    'observation_overflow',
-    'Tool observation totals exceed the supported numeric range',
-    500,
-  );
-  return number;
-}
+const aggregateNumber = safeCount(
+  'observation_overflow',
+  'Tool observation totals exceed the supported numeric range',
+);
 
-export function summarizeAgent(
+function summarizeAgent(
   agent: Agent,
   currentExecutionId: string | null,
   currentAssignment: AgentSummary['currentAssignment'] = null,
@@ -137,6 +131,27 @@ export class AgentObservations {
       projectId ?? null,
     );
     return new Map(rows.map((row) => [row.id, row.at]));
+  }
+
+  /** Every agent of the project and its live assignment, read in the status transaction. */
+  async summaries(tx: Transaction, projectId: string): Promise<AgentSummary[]> {
+    return (
+      await tx.all<{
+        agent_json: string;
+        execution_id: string | null;
+        execution_label: string;
+        execution_role: Session['role'];
+      }>(
+        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`,
+        projectId,
+      )
+    ).map((row) =>
+      summarizeAgent(
+        JSON.parse(row.agent_json),
+        row.execution_id,
+        row.execution_id ? { label: row.execution_label, role: row.execution_role } : null,
+      ),
+    );
   }
 
   async read(caller: Caller, agentId: string): Promise<AgentObservation> {
