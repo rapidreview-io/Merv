@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { SandboxClient, sandboxRoute } from './client.js';
 import { parseManifest } from './manifest.js';
 import { SandboxCheckRunner } from './checks.js';
+import { SandboxRuntimeRunner } from './runtimes.js';
 import type {
   Sandboxes,
   SandboxCheckHandle,
@@ -17,6 +18,7 @@ import type {
   SandboxReadiness,
   SandboxRow,
   SandboxTarget,
+  SandboxRuntimes,
 } from './types.js';
 
 export type {
@@ -32,6 +34,11 @@ export type {
   SandboxReadiness,
   SandboxRow,
   SandboxTarget,
+  SandboxRuntimeProfile,
+  SandboxRuntimeState,
+  SandboxRuntimeLaunch,
+  SandboxRuntimeHandle,
+  SandboxRuntimes,
 } from './types.js';
 export { checkScript } from './checks.js';
 export { sandboxTools } from './manifest.js';
@@ -62,6 +69,16 @@ const configuration = z
     refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
     timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
     storageOrigins: z.array(z.string().min(1).max(512)).max(8).default([]),
+    runtime: z
+      .object({
+        provider: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+        offerId: z.string().min(1).max(256),
+        releaseId: z.string().regex(/^rt1_[0-9a-f]{64}$/),
+        leaseSeconds: z.number().int().min(60).max(86_400),
+        ttlSeconds: z.number().int().min(1).max(3600).default(300),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -118,6 +135,7 @@ export class SandboxService implements Sandboxes {
    * uploaded to, so a project check is opt-in per deployment rather than per request.
    */
   readonly checks?: SandboxChecks;
+  readonly runtimes?: SandboxRuntimes;
 
   constructor(config: SandboxesConfig) {
     const parsed = configuration.safeParse(config);
@@ -143,6 +161,38 @@ export class SandboxService implements Sandboxes {
           this.#run(handle, (handle) => runner.follow(projectId, handle)),
         release: (projectId, handle) =>
           this.#run(handle, (handle) => runner.release(projectId, handle)),
+      };
+    }
+    if (parsed.data.runtime) {
+      const runner = new SandboxRuntimeRunner(
+        this.#client,
+        (projectId) => this.#connectionFor(projectId),
+        parsed.data.runtime,
+      );
+      this.runtimes = {
+        profileId: runner.profileId,
+        provision: (projectId, operationKey) =>
+          this.#run({ projectId, operationKey }, ({ projectId, operationKey }) =>
+            runner.provision(projectId, operationKey),
+          ),
+        inspect: (projectId, handle) =>
+          this.#run({ projectId, handle }, ({ projectId, handle }) =>
+            runner.inspect(projectId, handle),
+          ),
+        launch: (projectId, handle, operationKey, bootstrap) =>
+          this.#run(
+            { projectId, handle, operationKey, bootstrap },
+            ({ projectId, handle, operationKey, bootstrap }) =>
+              runner.launch(projectId, handle, operationKey, bootstrap),
+          ),
+        stop: (projectId, handle) =>
+          this.#run({ projectId, handle }, ({ projectId, handle }) =>
+            runner.stop(projectId, handle),
+          ),
+        renew: (projectId, handle) =>
+          this.#run({ projectId, handle }, ({ projectId, handle }) =>
+            runner.renew(projectId, handle),
+          ),
       };
     }
   }

@@ -24,6 +24,59 @@ export interface SandboxesConfig {
    * Without it there are no checks at all: `Sandboxes.checks` is undefined.
    */
   storageOrigins?: string[];
+  /** Operator-selected protected runtime profile. Absence disables the server-only capability. */
+  runtime?: SandboxRuntimeProfile;
+}
+
+/** Fixed by the operator; Fleet work cannot select a provider, offer, image or release. */
+export interface SandboxRuntimeProfile {
+  provider: string;
+  offerId: string;
+  releaseId: string;
+  leaseSeconds: number;
+  ttlSeconds?: number;
+}
+
+export type SandboxRuntimeState =
+  'provisioning' | 'ready' | 'unknown' | 'deleting' | 'failed' | 'stopped';
+
+/** The public receipt contains metadata only; the bootstrap is never returned. */
+export interface SandboxRuntimeLaunch {
+  sandboxId: string;
+  launchId: string;
+  operationKey: string;
+  releaseId: string;
+  jobId: string;
+  state: 'pending' | 'consumed' | 'revoked' | 'expired';
+  deliveryState: 'pending' | 'uncertain' | 'launched';
+  expiresAt: string;
+}
+
+/** Durable Fleet handle. A deletion request is not proof of provider release. */
+export interface SandboxRuntimeHandle {
+  sandboxId: string;
+  state: SandboxRuntimeState;
+  ready: boolean;
+  deleted: boolean;
+  leaseExpiresAt: string | null;
+  revision: number;
+  launch: SandboxRuntimeLaunch | null;
+}
+
+/** Server-owned capability, deliberately absent from agent tools and the UI manifest. */
+export interface SandboxRuntimes {
+  readonly profileId: string;
+  provision(projectId: string, operationKey: string): Promise<SandboxRuntimeHandle>;
+  inspect(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
+  launch(
+    projectId: string,
+    handle: SandboxRuntimeHandle,
+    operationKey: string,
+    bootstrap: string,
+  ): Promise<SandboxRuntimeHandle>;
+  stop(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
+  /** Renew to the operator's configured lease, never an agent-selected lifetime. */
+  renew(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
 }
 
 /** The machine and the command, without the bytes: what every step after the first needs. */
@@ -133,6 +186,8 @@ export interface Sandboxes {
   subscribe(listener: () => void): () => void;
   /** Present only where the deployment named the bucket origins a source may be uploaded to. */
   readonly checks?: SandboxChecks;
+  /** Present only when deployment configured a fixed protected runtime profile. */
+  readonly runtimes?: SandboxRuntimes;
 }
 
 declare module 'cordis' {
