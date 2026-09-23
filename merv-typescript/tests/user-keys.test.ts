@@ -13,7 +13,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, Principal, Role } from '@merv/contracts';
 import { openState, schemaFor } from './fixtures/state.js';
-import { raceWriters } from './fixtures/writer-race.js';
+import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 import { assessment } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -657,7 +657,7 @@ for (const [firstAction, secondAction] of [
         : await scope.revokeKey(f.owner, issued.key.id);
     const race = await raceWriters({
       schema: schemaFor(key),
-      clock: () => initialTime,
+      service: scopeWriter(() => initialTime),
       first: act(firstAction),
       second: act(secondAction),
     });

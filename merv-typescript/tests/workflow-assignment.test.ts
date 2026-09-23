@@ -4,8 +4,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Worker } from 'node:worker_threads';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
@@ -17,9 +15,9 @@ import {
   type WorkflowCheckContext,
   type WorkflowDefinition,
   type WorkflowPolicy,
-  type WorkflowWorkStart,
 } from '@merv/contracts';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { openState, schemaFor } from './fixtures/state.js';
+import { raceWriters } from './fixtures/writer-race.js';
 import type { PostgresState } from '@merv/state';
 
 const graph: WorkflowDefinition = {
@@ -653,109 +651,77 @@ test('cached provider output is detached; async checks and workflow-changing pro
   assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), []);
 });
 
-test(
-  'simultaneous worker threads serialize begin while the first transaction remains open',
-  { timeout: 15_000 },
-  async (t) => {
-    const directory = mkdtempSync(join(tmpdir(), 'merv-assignment-concurrent-'));
-    const path = directory;
-    const f = await setup(path);
-    const actor = (
-      await f.scope.issueActor(f.caller, {
-        name: 'Concurrent worker',
-        role: 'producer',
-      })
-    ).actor;
-    const otherCaller = { actorId: actor.id, projectId: actor.projectId };
-    const barrier = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT);
-    const control = new Int32Array(barrier);
-    const spawn = (caller: Caller, first: boolean) =>
-      new Worker(new URL('./fixtures/workflow-begin-worker.mjs', import.meta.url), {
-        execArgv: [],
-        workerData: {
-          url: postgresUrl,
-          schema: schemaFor(path),
-          graph,
-          caller,
-          instanceId: f.instance.id,
-          first,
-          barrier,
-        },
+test('simultaneous writers serialize begin while the first transaction remains open', async (t) => {
+  const f = await setup('assignment-concurrent');
+  t.after(async () => await f.state.close());
+  const actor = (
+    await f.scope.issueActor(f.caller, {
+      name: 'Concurrent worker',
+      role: 'producer',
+    })
+  ).actor;
+  const otherCaller = { actorId: actor.id, projectId: actor.projectId };
+  const race = await raceWriters({
+    schema: schemaFor('assignment-concurrent'),
+    service: async (state, writer) => {
+      const scope = await createService(new ProjectScope(state));
+      const workflows = await createService(new WorkflowsService(state, scope));
+      await workflows.register(graph, {
+        actions: graph.edges.map((edge) => ({
+          name: edge.action,
+          states: [edge.from],
+          transitions: [edge.action],
+          tool: `test.${edge.action}`,
+          instruction: 'Complete the workflow step.',
+          check: async ({ caller, tx }) => void (await scope.require(caller, 'write', tx)),
+        })),
+        assignments: [
+          {
+            state: 'work',
+            check: async ({ caller, tx }) => {
+              await scope.require(caller, 'write', tx);
+              writer.entered();
+            },
+            // This runs inside the open database write transaction, after its start insert.
+            build: async () => {
+              await writer.hold();
+              return {
+                role: 'worker',
+                label: 'Concurrent assignment',
+                brief: 'Measure the instrument.',
+                references: [],
+                handoff: { instruction: 'Submit the result.', tools: ['test.finish'] },
+                execution: { readOnly: false, tools: [] },
+                context: null,
+              };
+            },
+          },
+        ],
       });
-    const first = spawn(f.caller, true);
-    const second = spawn(otherCaller, false);
-    const errors: Error[] = [];
-    for (const worker of [first, second]) worker.on('error', (error) => errors.push(error));
-    t.after(async () => {
-      Atomics.store(control, 1, 1);
-      Atomics.notify(control, 1);
-      await Promise.all([first.terminate(), second.terminate()]);
-      await f.state.close();
-      rmSync(directory, { recursive: true, force: true });
-    });
-    const message = (worker: Worker, type: string) =>
-      new Promise<{
-        type: string;
-        workStart?: WorkflowWorkStart;
-      }>((resolve, reject) => {
-        const cleanup = () => {
-          worker.off('message', receive);
-          worker.off('error', fail);
-          worker.off('exit', exited);
-        };
-        const receive = (value: { type: string; workStart?: WorkflowWorkStart }) => {
-          if (value.type !== type) return;
-          cleanup();
-          resolve(value);
-        };
-        const fail = (error: Error) => {
-          cleanup();
-          reject(error);
-        };
-        const exited = (code: number) => fail(new Error(`Worker exited ${code} before ${type}`));
-        worker.on('message', receive);
-        worker.once('error', fail);
-        worker.once('exit', exited);
-      });
-    await Promise.all([message(first, 'ready'), message(second, 'ready')]);
-    const firstHeld = message(first, 'held');
-    first.postMessage('begin');
-    await firstHeld;
-    assert.equal(
-      Atomics.load(control, 0),
-      1,
-      'First begin holds an open database write transaction',
-    );
-    const secondAttempt = message(second, 'attempt');
-    second.postMessage('begin');
-    await secondAttempt;
-    await delay(100);
-    assert.equal(
-      Atomics.load(control, 0),
-      1,
-      'The first transaction is still held during contention',
-    );
-    assert.equal(
-      Atomics.load(control, 2),
-      0,
-      'Second begin cannot reach admission before the lock releases',
-    );
-    const results = Promise.all([message(first, 'result'), message(second, 'result')]);
-    Atomics.store(control, 1, 1);
-    Atomics.notify(control, 1);
-    const [one, two] = await results;
-    assert.deepEqual(errors, []);
-    assert.ok(one.workStart);
-    assert.deepEqual(two.workStart, one.workStart);
-    assert.equal(one.workStart.actorId, f.caller.actorId);
-    assert.equal(Atomics.load(control, 2), 1, 'Second begin enters after the first commits');
-    assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), [one.workStart]);
-    assert.equal(
-      (await f.state.events(f.caller.projectId)).filter(
-        (event) => event.type === 'workflow.work_started',
-      ).length,
-      1,
-    );
-    assert.equal((await f.workflows.get(f.caller, f.instance.id)).revision, 0);
-  },
-);
+      return workflows;
+    },
+    first: async (workflows) =>
+      (await workflows.begin(f.caller, { instanceId: f.instance.id, expectedRevision: 0 }))
+        .workStart,
+    second: async (workflows) =>
+      (await workflows.begin(otherCaller, { instanceId: f.instance.id, expectedRevision: 0 }))
+        .workStart,
+  });
+  assert.equal(
+    race.secondEnteredWhileHeld,
+    false,
+    'Second begin cannot reach admission before the lock releases',
+  );
+  assert.ok(race.first.ok && race.first.value);
+  assert.deepEqual(race.second, race.first);
+  assert.equal(race.first.value.actorId, f.caller.actorId);
+  assert.equal(race.secondEntered, true, 'Second begin enters after the first commits');
+  assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), [race.first.value]);
+  assert.equal(
+    (await f.state.events(f.caller.projectId)).filter(
+      (event) => event.type === 'workflow.work_started',
+    ).length,
+    1,
+  );
+  assert.equal((await f.workflows.get(f.caller, f.instance.id)).revision, 0);
+});

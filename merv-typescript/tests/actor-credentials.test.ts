@@ -10,7 +10,7 @@ import { ProjectScope } from '@merv/scope';
 import type { Caller, IssuedActorCredential } from '@merv/contracts';
 import { postgresMigrations as scopeMigrations } from '../packages/scope/src/index.postgres.js';
 import { openState, schemaFor } from './fixtures/state.js';
-import { raceWriters } from './fixtures/writer-race.js';
+import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 
 const start = Date.parse('2026-09-16T10:00:00.000Z');
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -870,8 +870,7 @@ test('concurrent credential rotations serialize and issue exactly one successor'
     (await scope.rotateCredential(caller, { credentialId: target.credential.id })).credential;
   const race = await raceWriters({
     schema: schemaFor('actor-credential-race'),
-    clock: () => start,
-    holdAfter: 'actor.credential_rotated',
+    service: scopeWriter(() => start, 'actor.credential_rotated'),
     first: rotate(f.operator),
     second: rotate(asCaller(operator2)),
   });

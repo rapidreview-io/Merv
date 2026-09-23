@@ -12,7 +12,7 @@ import type { Caller, HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState, schemaFor } from './fixtures/state.js';
-import { raceWriters } from './fixtures/writer-race.js';
+import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
@@ -506,8 +506,7 @@ test('simultaneous self-demotions leave one verified human operator after serial
     ).role;
   const race = await raceWriters({
     schema: schemaFor('member-operator-race'),
-    clock: () => initialTime,
-    holdAfter: 'actor.permissions_changed',
+    service: scopeWriter(() => initialTime, 'actor.permissions_changed'),
     first: demote(alice),
     second: demote(bob),
   });

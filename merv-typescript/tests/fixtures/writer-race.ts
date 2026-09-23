@@ -1,10 +1,10 @@
 /**
  * Two writers racing on one database, as two server processes would: each has its own State pool
- * on the same schema and its own Scope. The first is held inside its write transaction just after
- * it appends an event; the second is started and seen queued on the database's writer lock
- * before the first may go on.
+ * on the same schema and its own services. The first is held inside its write transaction at a
+ * point the test chooses; the second is started and seen queued on State's writer lock (the
+ * transaction advisory lock on `merv-state:<schema>`) before the first may go on.
  */
-import { createService } from '@merv/contracts';
+import { createService, type Transaction } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { PostgresState } from '@merv/state';
 import { deferred } from './deferred.js';
@@ -12,6 +12,12 @@ import { openState } from './state.js';
 
 export type Settled<T> =
   { ok: true; value: T } | { ok: false; code: string | undefined; status: number | undefined };
+
+/** What a writer's services call: the first is held at `hold`; the second reports `entered`. */
+export interface Writer {
+  hold(): Promise<void>;
+  entered(): void;
+}
 
 const settle = <T>(pending: Promise<T>): Promise<Settled<T>> =>
   pending.then(
@@ -23,16 +29,16 @@ const settle = <T>(pending: Promise<T>): Promise<Settled<T>> =>
     }),
   );
 
-/** Until a backend waits for an advisory lock that backend `holder` holds. */
-async function queuedBehind(observer: PostgresState, holder: number) {
+/** Until another session waits for the writer lock of `schema`, which the first writer holds. */
+async function queued(observer: PostgresState, schema: string) {
   const deadline = Date.now() + 10_000;
   for (;;) {
     const waiting = await observer.read((sql) =>
       sql.get<{ n: number }>(
-        `SELECT count(*)::int AS n FROM pg_catalog.pg_locks w JOIN pg_catalog.pg_locks h
-           ON h.locktype='advisory' AND h.classid=w.classid AND h.objid=w.objid AND h.objsubid=w.objsubid
-         WHERE w.locktype='advisory' AND NOT w.granted AND h.granted AND h.pid=?`,
-        holder,
+        `SELECT count(*)::int AS n FROM pg_catalog.pg_locks
+         WHERE locktype='advisory' AND NOT granted
+           AND ((classid::bigint << 32) | objid::bigint) = pg_catalog.hashtextextended(?, 0)`,
+        `merv-state:${schema}`,
       ),
     );
     if (waiting!.n > 0) return;
@@ -41,16 +47,20 @@ async function queuedBehind(observer: PostgresState, holder: number) {
   }
 }
 
-export async function raceWriters<T>(options: {
+export async function raceWriters<S, T>(options: {
   /** The schema both writers share: the test's own database. */
   schema: string;
-  /** Scope's clock for both writers. */
-  clock: () => number;
-  /** The event type after which the first writer is held; by default its first event. */
-  holdAfter?: string;
-  first: (scope: ProjectScope) => Promise<T>;
-  second: (scope: ProjectScope) => Promise<T>;
-}): Promise<{ first: Settled<T>; second: Settled<T>; secondEnteredWhileHeld: boolean }> {
+  /** One writer's services on its own State. */
+  service: (state: PostgresState, writer: Writer) => Promise<S>;
+  first: (service: S) => Promise<T>;
+  second: (service: S) => Promise<T>;
+}): Promise<{
+  first: Settled<T>;
+  second: Settled<T>;
+  /** Whether the second had entered while the first was held, and by the end. */
+  secondEnteredWhileHeld: boolean;
+  secondEntered: boolean;
+}> {
   const open = () =>
     openState(undefined, {
       schema: options.schema,
@@ -58,47 +68,68 @@ export async function raceWriters<T>(options: {
       readConnections: 1,
       lockTimeoutMs: 30_000,
     });
-  const [held, waiting] = [await open(), await open()];
-  // Both Scopes are ready (their migrations are writes too) before either writer is watched.
-  const [heldScope, waitingScope] = [
-    await createService(new ProjectScope(held, options.clock)),
-    await createService(new ProjectScope(waiting, options.clock)),
-  ];
-  const holding = deferred<number>(),
+  const holding = deferred(),
     release = deferred();
-  let holds = true;
-  const append = held.appendEvent.bind(held);
-  held.appendEvent = async (tx, event) => {
-    const written = await append(tx, event);
-    if (holds && (options.holdAfter === undefined || event.type === options.holdAfter)) {
-      holds = false;
-      holding.resolve((await tx.get<{ pid: number }>('SELECT pg_backend_pid() AS pid'))!.pid);
-      await release.promise;
-    }
-    return written;
-  };
-  let entered = false;
-  const transaction = waiting.transaction.bind(waiting);
-  waiting.transaction = ((fn: Parameters<typeof transaction>[0]) =>
-    transaction((tx) => {
-      entered = true;
-      return fn(tx);
-    })) as typeof waiting.transaction;
+  let held = false,
+    entered = false;
+  const [firstState, secondState] = [await open(), await open()];
+  const [firstService, secondService] = [
+    await options.service(firstState, {
+      hold: async () => {
+        if (held) return;
+        held = true;
+        holding.resolve();
+        await release.promise;
+      },
+      entered: () => undefined,
+    }),
+    await options.service(secondState, {
+      hold: async () => undefined,
+      entered: () => {
+        entered = true;
+      },
+    }),
+  ];
   try {
-    const first = settle(options.first(heldScope));
-    const holder = await Promise.race([
+    const first = settle(options.first(firstService));
+    await Promise.race([
       holding.promise,
       first.then((result) => {
         throw new Error(`The first writer finished without being held: ${JSON.stringify(result)}`);
       }),
     ]);
-    const second = settle(options.second(waitingScope));
-    await queuedBehind(held, holder);
+    const second = settle(options.second(secondService));
+    await queued(firstState, options.schema);
     const secondEnteredWhileHeld = entered;
     release.resolve();
-    return { first: await first, second: await second, secondEnteredWhileHeld };
+    const results = { first: await first, second: await second };
+    return { ...results, secondEnteredWhileHeld, secondEntered: entered };
   } finally {
     release.resolve();
-    await Promise.allSettled([held.close(), waiting.close()]);
+    await Promise.allSettled([firstState.close(), secondState.close()]);
   }
 }
+
+/**
+ * A Scope writer: held just after it appends its first event (or its first event of type
+ * `holdAfter`), and entered once a transaction callback of its own runs.
+ */
+export const scopeWriter =
+  (clock: () => number, holdAfter?: string) =>
+  async (state: PostgresState, writer: Writer): Promise<ProjectScope> => {
+    // Scope's own migrations are writes too, so it is ready before the writer is watched.
+    const scope = await createService(new ProjectScope(state, clock));
+    const append = state.appendEvent.bind(state);
+    state.appendEvent = async (tx, event) => {
+      const written = await append(tx, event);
+      if (holdAfter === undefined || event.type === holdAfter) await writer.hold();
+      return written;
+    };
+    const transaction = state.transaction.bind(state);
+    state.transaction = ((fn: (tx: Transaction) => unknown) =>
+      transaction((tx) => {
+        writer.entered();
+        return fn(tx);
+      })) as typeof state.transaction;
+    return scope;
+  };
