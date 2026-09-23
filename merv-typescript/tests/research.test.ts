@@ -1,5 +1,4 @@
-import { CodeService } from '@merv/code-research/service';
-import type { Caller, CodeStoreOperation, Data, ReviewApplication } from '@merv/contracts';
+import type { Caller, ReviewApplication } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import assert from 'node:assert/strict';
@@ -7,12 +6,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchDigest, ResearchRecord } from '../packages/research/src/types.js';
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, importBundle } from './fixtures/code-store.js';
 import { hostedCode, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -1595,29 +1593,8 @@ test('a materialised hosted experiment waits on its hosted task and pins no base
   const source = gitSource(t);
   const main = source.commit({ 'README.md': 'Research harness\n' });
   const { codeResearch: code, tasks } = f.app.ctx;
-  const protocol = (code as CodeService).v2!;
   await boundProject(f.app.ctx.state, f.owner.projectId, main, 'fixture-repository');
-  const complete = async (operation: CodeStoreOperation) => {
-    for (let attempt = 0; operation.status === 'prepared' && attempt < 200; attempt++) {
-      operation = (
-        (await protocol.call(f.owner, `uploads/${operation.id}/complete`, {})) as {
-          operation: CodeStoreOperation;
-        }
-      ).operation;
-      if (operation.status === 'prepared') await delay(25);
-    }
-    assert.equal(operation.status, 'completed', JSON.stringify(operation));
-    return operation;
-  };
-  const initial = source.bundle(main);
-  const imported = await code.importRepository(f.owner, {
-    source: 'bundle',
-    tip: main,
-    bundle: { sha256: initial.sha256, bytes: initial.bytes },
-    requestId: f.id(),
-  });
-  await protocol.putPart(f.owner, imported.id, 0, initial.content);
-  await complete(imported);
+  await importBundle(code, f.owner, source.bundle(main), f.id());
   const { command } = await reflected(f, workspacePlan());
   const done = await f.research.advance(f.owner, command('create'));
   const successor = await f.research.get(f.owner, done.successorId!);

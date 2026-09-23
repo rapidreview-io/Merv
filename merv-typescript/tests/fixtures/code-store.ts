@@ -1,10 +1,12 @@
-import { createService, type Caller } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import { createService, type Caller, type CodeStoreOperation } from '@merv/contracts';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -120,6 +122,36 @@ export function seededSource<T>(
     seeds.set(key, seed);
   }
   return { source: gitSource(t, 'sha1', seed.repository), value: seed.value as T };
+}
+
+/**
+ * Imports `bundle` as the project's history through Code's upload protocol, as an operator's
+ * client does, and waits for the admission to complete.
+ */
+export async function importBundle(
+  code: unknown,
+  caller: Caller,
+  bundle: Bundle,
+  requestId = 'import',
+): Promise<CodeStoreOperation> {
+  const service = code as CodeService;
+  const v2 = service.v2!;
+  const begun = await service.importRepository(caller, {
+    source: 'bundle',
+    tip: bundle.tip,
+    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
+    requestId,
+  });
+  await v2.putPart(caller, begun.id, 0, bundle.content);
+  let operation = begun;
+  for (let tries = 0; operation.status === 'prepared' && tries < 200; tries++) {
+    ({ operation } = (await v2.call(caller, `uploads/${begun.id}/complete`, {})) as {
+      operation: CodeStoreOperation;
+    });
+    if (operation.status === 'prepared') await delay(25);
+  }
+  assert.equal(operation.status, 'completed', JSON.stringify(operation));
+  return operation;
 }
 
 export function described(file: string, tip: string): Bundle {
