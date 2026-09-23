@@ -28,6 +28,18 @@ import type {
   Transaction,
 } from '@merv/contracts';
 import type {} from 'cordis';
+import type {
+  ManagedEnrollmentInput,
+  ManagedRunnerBindingIdentity,
+  ManagedRunnerInspection,
+  ManagedRunnerValidator,
+} from './managed.js';
+export type {
+  ManagedEnrollmentInput,
+  ManagedRunnerBindingIdentity,
+  ManagedRunnerInspection,
+  ManagedRunnerValidator,
+} from './managed.js';
 export type {
   AgentObservation,
   AgentSummary,
@@ -202,6 +214,12 @@ export interface ServiceWork {
 export interface Sessions {
   /** Server-only admission. */
   readonly serviceWork: ServiceWork;
+  registerManagedValidator(validator: ManagedRunnerValidator): () => void;
+  ensureManagedEnrollment(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
+  enrollManaged(token: string, input: unknown): Promise<{ controlToken: string; caller: Caller }>;
+  authenticateManaged(token: string): Promise<Caller>;
+  /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
+  inspectManaged(allocationId: string, epoch: number): Promise<ManagedRunnerInspection | null>;
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(
     projectId: string,

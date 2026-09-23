@@ -42,6 +42,9 @@ export interface ToolCatalog {
  * it forwards request bodies as they came: the provider parses every `input` itself.
  */
 export interface SessionApiProvider {
+  /** Optional hosted-runner enrollment; absent means fail closed. */
+  enrollManaged?(token: string, input: unknown): Promise<{ controlToken: string; caller: Caller }>;
+  authenticateManaged?(token: string): Promise<Caller>;
   registerAgent(caller: Caller, input: unknown): Promise<unknown>;
   agents(caller: Caller): Promise<unknown[]>;
   agent(caller: Caller, agentId: string): Promise<unknown>;

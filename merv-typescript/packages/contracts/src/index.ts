@@ -566,6 +566,13 @@ export interface Caller {
   key?: { id: string; membershipId: string };
   /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
   session?: { id: string; agentSessionId?: string; invocationId?: string };
+  /** Server-authenticated supervisor; the binding is rechecked on every control. */
+  managed?: {
+    allocationId: string;
+    epoch: number;
+    credentialHash: string;
+    boundSessionId?: string;
+  };
 }
 /** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
 export type DelegationSource = { actorId: string; projectId: string } & (
@@ -575,6 +582,10 @@ export type DelegationSource = { actorId: string; projectId: string } & (
 );
 /** One installed session manager owns the authority of credentialless worker actors. */
 export interface SessionAuthority {
+  require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
+}
+/** Optional Sessions authority for allocation-bound supervisors, separate from assignment tools. */
+export interface ManagedRunnerAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
 /** A domain's event as every domain records it: who, what, on which record, from where. */
@@ -790,6 +801,7 @@ export interface Scope {
     tx?: Transaction,
   ): Promise<Actor>;
   registerSessionAuthority(authority: SessionAuthority): () => void;
+  registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void;
   createSessionActor(
     source: DelegationSource,
     input: { sessionId: string; agentId?: string; role: Exclude<Role, 'operator'>; name: string },

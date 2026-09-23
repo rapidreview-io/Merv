@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { lstatSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 export interface DriverGitResult {
   code: number;
@@ -43,16 +45,32 @@ const options = [
  * bundle files — and a failure comes back as a result instead of one collapsed error.
  */
 export class DriverGit {
-  constructor(private readonly home: string) {}
+  constructor(
+    private readonly home: string,
+    private readonly assignmentRoot?: string,
+  ) {}
 
   run(
     args: string[],
     input: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number } = {},
   ): Promise<DriverGitResult> {
     return new Promise((resolve) => {
+      // Hosted checkouts become assignment-owned before the worker runs. Never run Git
+      // against their mutable config, objects or hooks with the supervisor's identity.
+      const inAssignment =
+        input.cwd &&
+        this.assignmentRoot &&
+        relative(this.assignmentRoot, input.cwd) !== '..' &&
+        !relative(this.assignmentRoot, input.cwd).startsWith('../');
+      const checkout = inAssignment ? lstatSync(input.cwd!) : undefined;
+      const dot = checkout ? lstatSync(join(input.cwd!, '.git')) : undefined;
+      const assignmentOwned = checkout && process.getuid?.() === 0 && checkout.uid === 12001;
+      if (assignmentOwned && (checkout.gid !== 12001 || dot?.uid !== 12001 || dot.gid !== 12001))
+        throw new WorkspaceError('workspace_foreign_checkout');
+      const helper = '/opt/merv/python/merv_sandboxes/runtimes/assignment.py';
       const child = execFile(
-        'git',
-        [...options, ...args],
+        assignmentOwned ? helper : 'git',
+        [...(assignmentOwned ? ['--git'] : []), ...options, ...args],
         {
           cwd: input.cwd,
           timeout: input.timeoutMs ?? 120_000,

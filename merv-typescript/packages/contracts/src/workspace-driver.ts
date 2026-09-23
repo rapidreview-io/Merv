@@ -38,6 +38,8 @@ export interface WorkspaceDriver {
 export interface WorkspaceDriverHost {
   /** The ledger directory; a driver keeps what it owns in a directory of its own inside it. */
   directory: string;
+  /** Image-provisioned root for assignment-owned independent hosted checkouts. */
+  assignmentWorkspaceDirectory?: string;
   /** The ledger database, in which a driver may keep its own tables beside the runner's. */
   path: string;
   /** Whether the launch's process has provably stopped. */

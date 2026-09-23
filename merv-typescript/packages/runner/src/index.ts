@@ -221,7 +221,7 @@ export class MachineRunner implements Runner {
     check(
       source && !sessionSecretPattern.test(source),
       'missing_runner_credential',
-      'Runner requires an ordinary source credential in the configured environment variable',
+      'Runner requires a source or managed control credential in the configured environment variable',
     );
     this.sourceBearer = source;
     check(
@@ -262,6 +262,7 @@ export class MachineRunner implements Runner {
             factory.create(
               {
                 directory: this.ledger.directory,
+                assignmentWorkspaceDirectory: this.config.assignmentWorkspaceDirectory,
                 path: this.ledger.path,
                 terminal: (id) => terminalLaunch(this.ledger.get(id)!),
               },

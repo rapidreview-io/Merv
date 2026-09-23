@@ -4,12 +4,13 @@
  * its exact macOS Keychain account. Neither path prints the credential.
  */
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createApp } from '../../src/app.js';
+import { loadConfiguration } from '../../src/config.js';
 import { useRunSchema } from '../database.js';
 
 async function command(executable: string, args: string[], input?: string): Promise<string> {
@@ -46,11 +47,21 @@ const run = `hosted-smoke-${Date.now()}`;
 const directory = resolve(`../output/${run}`);
 mkdirSync(directory, { recursive: true, mode: 0o700 });
 const schema = useRunSchema(directory);
-const app = await createApp({
+const managedSecretEnv = `MERV_SMOKE_MANAGED_${Date.now()}`;
+process.env[managedSecretEnv] = randomBytes(48).toString('hex');
+const config = loadConfiguration({
   directory: `${directory}/server`,
   api: true,
   host: '0.0.0.0',
   port: 0,
+});
+const app = await createApp({
+  directory: `${directory}/server`,
+  config: {
+    plugins: config.entries.map((entry) =>
+      entry.id === 'sessions' ? { ...entry, config: { ...entry.config, managedSecretEnv } } : entry,
+    ),
+  },
 });
 let allocated = false;
 let sourceToken = '';
@@ -65,6 +76,33 @@ try {
     credentialId: boot.credential.id,
   };
   sourceToken = boot.token;
+  const source = await app.ctx.scope.delegationSource(caller);
+  const allocationId = `local_${run}`;
+  const profile = {
+    name: 'hosted-codex',
+    harness: 'codex' as const,
+    model: 'gpt-6-luna',
+    enabled: true,
+    parallelism: 1,
+  };
+  app.ctx.sessions.registerManagedValidator({
+    current: async (binding) =>
+      binding.allocationId === allocationId &&
+      binding.epoch === 1 &&
+      binding.runtimeProfileId === 'local-codex-acceptance' &&
+      binding.source.projectId === caller.projectId &&
+      binding.source.actorId === caller.actorId,
+    admits: async (id, epoch) => id === allocationId && epoch === 1,
+  });
+  const { enrollmentToken } = await app.ctx.sessions.ensureManagedEnrollment({
+    allocationId,
+    epoch: 1,
+    source,
+    runtimeProfileId: 'local-codex-acceptance',
+    platform: profile,
+    capabilities: ['code.v2'],
+    expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
+  });
   if (!modelApiKey) {
     const home = resolve('../output/runner-codex/home');
     const account = `cli|${createHash('sha256').update(home).digest('hex').slice(0, 16)}`;
@@ -120,7 +158,7 @@ try {
   const bootstrap = JSON.stringify({
     baseUrl: 'http://127.0.0.1:18080',
     projectId: boot.project.id,
-    sourceToken,
+    enrollmentToken,
     modelApiKey,
   });
   const receiver = `import sys,json,io,hashlib\nfrom pathlib import Path\nsys.path.insert(0,'/opt/merv/python')\nfrom merv_sandboxes.runtimes.releases import RuntimeRelease,RuntimeReleases\nfrom merv_sandboxes.runtimes.receiver import dispatch_bootstrap\ndata=json.load(sys.stdin)\np=Path('/opt/merv/runtime/start-runner')\nr=RuntimeRelease(provider='local-acceptance',image_digest=data['image'],executable=str(p),executable_sha256=hashlib.sha256(p.read_bytes()).hexdigest())\nprint(dispatch_bootstrap(io.BytesIO(data['bootstrap'].encode()),'launch_smoke','job_smoke',r.release_id,releases=RuntimeReleases([r])).decode().strip())`;
@@ -154,12 +192,19 @@ try {
   const sessions = await app.ctx.sessions.list(caller);
   const report = { run, schema, image, taskId: task.id, state, task: finalTask, sessions };
   const text = JSON.stringify(report, null, 2);
-  assert.ok(!text.includes(sourceToken) && !text.includes(modelApiKey));
+  assert.ok(
+    !text.includes(sourceToken) &&
+      !text.includes(modelApiKey) &&
+      !text.includes(enrollmentToken) &&
+      !/mr_[0-9a-f]{64}/.test(text),
+  );
   writeFileSync(`${directory}/report.json`, text, { mode: 0o600 });
   assert.equal(state, 'finished');
   assert.equal(sessions.length, 1, 'One assignment only; no review assignment on this worker');
   assert.ok(finalTask.reviewId, 'Producer submitted evidence for review');
-  console.log(`PASS: one Codex assignment submitted evidence. Report: ${directory}/report.json`);
+  console.log(
+    `PASS: one managed Codex assignment submitted evidence. Report: ${directory}/report.json`,
+  );
 } finally {
   modelApiKey = '';
   sourceToken = '';
@@ -167,5 +212,6 @@ try {
     if (allocated) await docker(['rm', '-f', run]);
   } finally {
     await app.stop();
+    delete process.env[managedSecretEnv];
   }
 }

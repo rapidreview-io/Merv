@@ -31,6 +31,7 @@ import {
   type UserKey,
   type DelegationSource,
   type SessionAuthority,
+  type ManagedRunnerAuthority,
 } from '@merv/contracts';
 import { identityValid, Memberships, membershipMigration } from './memberships.js';
 import { UserKeys, userKeyMigration } from './user-keys.js';
@@ -98,6 +99,8 @@ export class ProjectScope implements Scope {
   private userKeys!: UserKeys;
   private sessionAuthority?: SessionAuthority;
   private sessionAuthorityRegistration?: symbol;
+  private managedAuthority?: ManagedRunnerAuthority;
+  private managedAuthorityRegistration?: symbol;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -250,8 +253,30 @@ export class ProjectScope implements Scope {
       503,
     );
   }
+  registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void {
+    check(
+      !this.managedAuthority,
+      'managed_authority_registered',
+      'Managed runner authority is already installed',
+      409,
+    );
+    const registration = Symbol('managed-runner-authority');
+    this.managedAuthority = authority;
+    this.managedAuthorityRegistration = registration;
+    return () => {
+      if (this.managedAuthorityRegistration !== registration) return;
+      this.managedAuthority = undefined;
+      this.managedAuthorityRegistration = undefined;
+    };
+  }
   async delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource> {
     caller = structuredClone(caller);
+    check(
+      !caller.managed,
+      'managed_runner_forbidden',
+      'A managed runner cannot delegate authority',
+      403,
+    );
     check(
       !caller.session,
       'nested_session',
@@ -632,6 +657,7 @@ export class ProjectScope implements Scope {
   ): Promise<{ actor: Actor; source?: DelegationSource }> {
     caller = structuredClone(caller);
     const registration = this.sessionAuthorityRegistration;
+    const managedRegistration = this.managedAuthorityRegistration;
     if (tx) this.state.assertTransaction(tx);
     const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
       const row = await sql.get<ActorRow>(
@@ -648,7 +674,7 @@ export class ProjectScope implements Scope {
         403,
       );
       check(
-        [caller.human, caller.credentialId, caller.key, caller.session].filter(
+        [caller.human, caller.credentialId, caller.key, caller.session, caller.managed].filter(
           (value) => value !== undefined,
         ).length <= 1,
         'forbidden',
@@ -656,7 +682,32 @@ export class ProjectScope implements Scope {
         403,
       );
       let source: DelegationSource | undefined;
-      if (row.session_id) {
+      if (caller.managed) {
+        check(
+          permission === 'read' && !row.session_id,
+          'managed_runner_forbidden',
+          'Managed runners may only use their bound execution controls',
+          403,
+        );
+        if (!('transactionId' in sql))
+          return await this.state.snapshot(() =>
+            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
+          );
+        const authority = this.managedAuthority;
+        check(
+          authority,
+          'managed_runner_unavailable',
+          'Managed runner authority is unavailable',
+          503,
+        );
+        source = await authority.require(caller, sql as Transaction);
+        check(
+          source.actorId === caller.actorId && source.projectId === caller.projectId,
+          'managed_runner_forbidden',
+          'Managed runner source does not match this caller',
+          403,
+        );
+      } else if (row.session_id) {
         const own = (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id;
         // A session halted while this call was in flight has already retired its actor. Tell
         // the worker its session ended, the way its next call will, rather than that it lacks
@@ -729,6 +780,14 @@ export class ProjectScope implements Scope {
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
     if (value.actor.sessionId) this.requireAuthorityRegistration(registration);
+    if (caller.managed)
+      check(
+        managedRegistration !== undefined &&
+          this.managedAuthorityRegistration === managedRegistration,
+        'managed_runner_unavailable',
+        'Managed runner authority changed during authorization',
+        503,
+      );
     const allowed = permits(value.actor.role, permission);
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;

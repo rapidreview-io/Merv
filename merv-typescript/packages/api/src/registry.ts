@@ -354,12 +354,16 @@ export class ToolRegistry implements Tools {
   }
 
   async describe(caller?: Caller): Promise<ToolDescription[]> {
+    if (caller?.managed)
+      throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
     return (await this.visible(caller))
       .map((entry) => structuredClone(entry.description))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async list(caller?: Caller): Promise<AnyToolDefinition[]> {
+    if (caller?.managed)
+      throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
     return (await this.visible(caller))
       .map(({ definition, description }) =>
         isRemoteTool(definition)
@@ -372,6 +376,8 @@ export class ToolRegistry implements Tools {
   async invoke(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
     this.open();
     caller = structuredClone(caller);
+    if (caller.managed)
+      throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
     const entry = this.entries.get(name);
     if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
     input = plain(input);

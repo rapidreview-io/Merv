@@ -46,6 +46,7 @@ import type {
 import { budgetStatuses, publicBudget } from './usage.js';
 import { lastActivity, type AgentObservations } from './observations.js';
 import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
+import type { ManagedRunnerBindings } from './managed.js';
 
 const label = z
   .string()
@@ -245,6 +246,7 @@ interface DispatchRow {
   updated_by: string;
 }
 interface Hooks {
+  managed: ManagedRunnerBindings;
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
@@ -724,6 +726,7 @@ export class SessionDispatch {
     );
     input = parsed.data;
     return await this.state.transaction(async (tx) => {
+      if (caller.managed) caller = await this.hooks.managed.heartbeat(caller, input, tx);
       // A runner is a durable presence that will take work: registering one is a write.
       await this.scope.require(caller, 'write', tx);
       const owner = await ownerOf(this.scope, caller, tx);
@@ -1379,7 +1382,12 @@ export class SessionDispatch {
         : `Automatic lease input: ${parsed.error.issues.map((issue) => `${issue.path.join('.')} ${issue.message}`).join('; ')}`,
     );
     input = parsed.data;
-    await this.hooks.prepare(caller);
+    const preparedCaller = caller.managed
+      ? await this.state.transaction(
+          async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
+        )
+      : caller;
+    await this.hooks.prepare(preparedCaller);
     // A candidate whose offer cannot be built (a context past its recipe's budget) must
     // not stop the queue behind it: its failure rolls the attempt back, the next
     // candidate is tried, and the failure is what the runner sees only when nothing
@@ -1395,7 +1403,7 @@ export class SessionDispatch {
         if (!(error instanceof PoisonedOffer)) throw error;
         skipped.add(targetKey(error.candidate));
         poison = error.cause;
-        await this.poisoned(caller, error.candidate, error.cause);
+        await this.poisoned(preparedCaller, error.candidate, error.cause);
       }
     }
   }
@@ -1405,7 +1413,9 @@ export class SessionDispatch {
     skipped: Set<string>,
   ): Promise<{ session: Session | null; reason: string }> {
     return await this.state.transaction(async (tx) => {
-      const owner = await ownerOf(this.scope, caller, tx);
+      const managed = caller.managed ? await this.hooks.managed.lease(caller, input, tx) : null;
+      const effectiveCaller = managed?.sourceCaller ?? caller;
+      const owner = await ownerOf(this.scope, effectiveCaller, tx);
       const fingerprint = digest({
         ...input,
         hardDeadlineSeconds: input.hardDeadlineSeconds ?? 86400,
@@ -1423,6 +1433,13 @@ export class SessionDispatch {
         return decision;
       };
       if (old) {
+        if (managed)
+          check(
+            managed.row.bound_session_id === old.session_id,
+            'managed_bound',
+            'Managed runner receipt is not its bound session',
+            403,
+          );
         check(
           old.fingerprint === fingerprint,
           'request_conflict',
@@ -1450,8 +1467,11 @@ export class SessionDispatch {
         'Request id belongs to an explicit session offer',
         409,
       );
+      if (managed?.row.bound_session_id)
+        return { session: null, reason: await decided('capacity_full') };
       if (!(await this.dispatch(caller.projectId, tx)).enabled)
         return { session: null, reason: await decided('dispatch_disabled') };
+      if (managed) await this.hooks.managed.admits(managed.row, tx);
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
@@ -1473,7 +1493,13 @@ export class SessionDispatch {
       const capabilities = new Set(
         (JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? [],
       );
-      const selected = await this.eligibleCandidates(caller, tx, capabilities, failures, skipped);
+      const selected = await this.eligibleCandidates(
+        effectiveCaller,
+        tx,
+        capabilities,
+        failures,
+        skipped,
+      );
       const candidate = selected.candidates[0];
       if (!candidate)
         return {
@@ -1498,7 +1524,7 @@ export class SessionDispatch {
       );
       const session = await this.hooks
         .offer(
-          caller,
+          effectiveCaller,
           {
             instanceId: candidate.instanceId,
             expectedRevision: candidate.expectedRevision,
@@ -1530,6 +1556,7 @@ export class SessionDispatch {
         'Runner controls changed while building the offer',
         409,
       );
+      if (managed) await this.hooks.managed.bind(managed.row, session.id, tx);
       await tx.run(
         'INSERT INTO session_dispatch_receipts(owner_hash,runner_id,request_id,fingerprint,session_id,runner_ref,platform_json) VALUES(?,?,?,?,?,?,?)',
         owner.hash,
@@ -1540,7 +1567,7 @@ export class SessionDispatch {
         runner.id,
         JSON.stringify(input.platform),
       );
-      await recorded(this.state, tx, caller, 'session.dispatched', session.id, {
+      await recorded(this.state, tx, effectiveCaller, 'session.dispatched', session.id, {
         sessionId: session.id,
         instanceId: session.instanceId,
         runnerRef: runner.id,

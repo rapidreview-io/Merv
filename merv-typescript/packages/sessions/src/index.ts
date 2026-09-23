@@ -33,6 +33,12 @@ import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
 import { AgentObservations, lastActivity } from './observations.js';
 import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
+import {
+  ManagedRunnerBindings,
+  type ManagedEnrollmentInput,
+  type ManagedRunnerInspection,
+  type ManagedRunnerValidator,
+} from './managed.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
@@ -91,6 +97,11 @@ const configSchema = z
     quietReadySeconds: between(60, 2_592_000, 21_600),
     /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
     refusalSeconds: between(30, 86_400, 300),
+    /** Separate operator secret for deterministic managed credentials. */
+    managedSecretEnv: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      .optional(),
   })
   .strict();
 export type SessionsConfig = z.input<typeof configSchema>;
@@ -297,6 +308,7 @@ export class LeasedSessions implements Sessions {
   serviceWork!: SessionServiceWork;
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
+  private managed!: ManagedRunnerBindings;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -347,7 +359,9 @@ export class LeasedSessions implements Sessions {
           version: 6,
           sql: postgresMigrations[6],
         },
+        { version: 7, sql: postgresMigrations[7] },
       ]);
+      this.managed = new ManagedRunnerBindings(state, scope, this.clock, config.managedSecretEnv);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
       this.dispatcher = await createService(
@@ -357,6 +371,7 @@ export class LeasedSessions implements Sessions {
           workflows,
           this.observations,
           {
+            managed: this.managed,
             prepare: async (caller) => await this.prepareControl(caller),
             offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx),
             close: async (session, reason, tx) => {
@@ -383,6 +398,12 @@ export class LeasedSessions implements Sessions {
         this.disposers.push(
           scope.registerSessionAuthority({
             require: async (caller, tx) => await this.guard(caller, tx),
+          }),
+        );
+        this.disposers.push(
+          scope.registerManagedRunnerAuthority({
+            require: async (caller, tx) =>
+              JSON.parse((await this.managed.require(caller, tx)).row.source_json),
           }),
         );
         await this.observations.interrupt();
@@ -438,6 +459,14 @@ export class LeasedSessions implements Sessions {
   private idleCheckedAt = Number.NEGATIVE_INFINITY;
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
+  }
+  private ordinary(caller: Caller): void {
+    check(
+      !caller.managed,
+      'forbidden',
+      'Managed runners may only use their bound session controls',
+      403,
+    );
   }
   private async transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
     this.ensureOpen();
@@ -596,6 +625,12 @@ export class LeasedSessions implements Sessions {
     runnerId: string | undefined,
     tx: Transaction,
   ): Promise<Session> {
+    if (caller.managed) {
+      await this.managed.controlled(caller, id, runnerId, tx);
+      const row = await this.row(tx, id);
+      check(row.project_id === caller.projectId, 'session_not_found', 'Session not found', 404);
+      return await this.decode(row, tx);
+    }
     const owner = await ownerOf(this.scope, caller, tx),
       row = await this.row(tx, id);
     // Another project's session is not found here; another owner's is forbidden.
@@ -737,6 +772,7 @@ export class LeasedSessions implements Sessions {
   }
 
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
+    this.ordinary(caller);
     return await this.offerParsed(
       structuredClone(caller),
       closed(offerSchema, input, offerRefusals),
@@ -947,6 +983,7 @@ export class LeasedSessions implements Sessions {
     return clone(session);
   }
   async registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     input = closed(registrationSchema, input, {
       fallback: ['invalid_agent', 'Agent requires a name, runner, request and ms_ secret'],
@@ -979,12 +1016,14 @@ export class LeasedSessions implements Sessions {
     };
   }
   async agents(caller: Caller): Promise<AgentStatus[]> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) =>
       mapAsync(await this.directory.list(caller, tx), (agent) => this.agentStatus(agent, tx)),
     );
   }
   async agent(caller: Caller, agentId: string): Promise<AgentStatus> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(
       async (tx) =>
@@ -992,6 +1031,7 @@ export class LeasedSessions implements Sessions {
     );
   }
   async retireAgent(caller: Caller, agentId: string): Promise<Agent> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const agent = await this.directory.controlled(caller, agentId, tx);
@@ -1055,11 +1095,13 @@ export class LeasedSessions implements Sessions {
     });
   }
   async projectStatus(caller: Caller): Promise<SessionsProjectStatus> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.projectStatus(caller);
   }
   /** The rail's number on its own: no runner scan, no candidate enumeration, no blobs. */
   async liveSessionCount(caller: Caller): Promise<number> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     this.ensureOpen();
     return await this.transaction(async (tx) => {
@@ -1095,6 +1137,7 @@ export class LeasedSessions implements Sessions {
       .map((row) => row.id);
   }
   async agentObservation(caller: Caller, agentId: string) {
+    this.ordinary(caller);
     this.ensureOpen();
     check(
       text(agentId, 200),
@@ -1104,10 +1147,12 @@ export class LeasedSessions implements Sessions {
     return await this.observations.read(caller, agentId);
   }
   async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);
   }
   async stuck(caller: Caller): Promise<StuckReport> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.stuck(caller);
   }
@@ -1115,10 +1160,12 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: Parameters<Sessions['releaseHold']>[1],
   ): Promise<DispatchHold> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.releaseHold(caller, input);
   }
   async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setBudget(caller, input);
   }
@@ -1128,6 +1175,7 @@ export class LeasedSessions implements Sessions {
    * cycle cost. The scope check still bounds it to the caller's project.
    */
   async usage(caller: Caller, input: UsageQuery = {}): Promise<UsageRollup> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     this.ensureOpen();
     check(
@@ -1179,6 +1227,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: { sessionId?: string; reason?: string } = {},
   ): Promise<{ halted: number }> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.halt(caller, input);
   }
@@ -1190,6 +1239,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: { runnerId: string; settings: RunnerSettings },
   ): Promise<RunnerPresence> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setRunnerSettings(caller, input);
   }
@@ -1201,6 +1251,7 @@ export class LeasedSessions implements Sessions {
     return await this.dispatcher.lease(caller, input);
   }
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
+    this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.dispatchDemand(caller, input);
   }
@@ -1210,6 +1261,7 @@ export class LeasedSessions implements Sessions {
     sessionId: string,
     transaction?: Transaction,
   ): Promise<SessionWorkspaceObservation> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     this.ensureOpen();
     check(text(sessionId), 'invalid_session', 'A session identifier is required');
@@ -1261,6 +1313,7 @@ export class LeasedSessions implements Sessions {
     return transaction ? await read(transaction) : await this.transaction(read);
   }
   async list(caller: Caller): Promise<Session[]> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const owner = await ownerOf(this.scope, caller, tx);
@@ -1275,6 +1328,10 @@ export class LeasedSessions implements Sessions {
   }
   async get(caller: Caller, sessionId: string): Promise<Session> {
     caller = structuredClone(caller);
+    if (caller.managed)
+      return await this.reading(
+        async (tx) => await this.controlled(caller, sessionId, undefined, tx),
+      );
     const result = await this.transaction(async (tx) => {
       const session = await this.controlled(caller, sessionId, undefined, tx);
       const error = await this.reconcile(session, tx);
@@ -1481,6 +1538,8 @@ export class LeasedSessions implements Sessions {
       const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
       const released = await this.closeReleased(session, control, tx);
       if (usage) await this.reportUsage(released, usage, tx);
+      if (caller.managed)
+        await this.managed.acknowledgeRelease(caller, released.id, control.runnerId, tx);
       return released;
     });
   }
@@ -1596,7 +1655,36 @@ export class LeasedSessions implements Sessions {
     if (result.error) throw result.error;
     return result.caller!;
   }
+  registerManagedValidator(validator: ManagedRunnerValidator): () => void {
+    this.ensureOpen();
+    return this.managed.registerValidator(validator);
+  }
+  async ensureManagedEnrollment(
+    input: ManagedEnrollmentInput,
+  ): Promise<{ enrollmentToken: string }> {
+    this.ensureOpen();
+    return await this.managed.ensure(input);
+  }
+  async enrollManaged(
+    token: string,
+    input: unknown,
+  ): Promise<{ controlToken: string; caller: Caller }> {
+    this.ensureOpen();
+    return await this.managed.enroll(token, input);
+  }
+  async authenticateManaged(token: string): Promise<Caller> {
+    this.ensureOpen();
+    return await this.managed.authenticate(token);
+  }
+  async inspectManaged(
+    allocationId: string,
+    epoch: number,
+  ): Promise<ManagedRunnerInspection | null> {
+    this.ensureOpen();
+    return await this.managed.inspect(allocationId, epoch);
+  }
   async describe(caller: Caller): Promise<Session> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       check(caller.session, 'session_required', 'Session authority is required', 401);
@@ -1608,6 +1696,7 @@ export class LeasedSessions implements Sessions {
    *  asks about every registered tool, which under load meant one locked transaction each. */
   private readonly toolNames = new Map<string, { names: Set<string>; at: number }>();
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     if (read) return true;
     const id = caller.session?.id;
@@ -1660,6 +1749,7 @@ export class LeasedSessions implements Sessions {
     input: Data,
     read?: boolean,
   ): Promise<SessionInvocation> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     input = snapshotInput(input);
     const prepared = await this.reading(
@@ -1697,6 +1787,7 @@ export class LeasedSessions implements Sessions {
     return invocation;
   }
   async validate(caller: Caller, tool: string, input: Data): Promise<void> {
+    this.ordinary(caller);
     caller = structuredClone(caller);
     input = snapshotInput(input);
     await this.reading(async (tx) => {

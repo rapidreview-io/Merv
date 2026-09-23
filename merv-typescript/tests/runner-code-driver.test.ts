@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   truncateSync,
   writeFileSync,
@@ -36,8 +39,13 @@ function machine(
   t: TestContext,
   f: Fixture,
   wrap?: (inner: WorkspaceTransport) => WorkspaceTransport,
+  hosted = false,
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-drv-'));
+  const assignmentWorkspaceDirectory = hosted
+    ? join(realpathSync(directory), 'assignments')
+    : undefined;
+  if (assignmentWorkspaceDirectory) mkdirSync(assignmentWorkspaceDirectory, { mode: 0o700 });
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const direct: WorkspaceTransport = {
     call: async (route, body) => await f.code.v2!.call(f.admin, route, body),
@@ -50,6 +58,7 @@ function machine(
   t.after(() => drivers.forEach((driver) => driver.dispose()));
   const self = {
     directory,
+    assignmentWorkspaceDirectory,
     terminal,
     /** The driver as a newly started runner would construct it, on the same ledger. */
     start(transport = wrap ? wrap(direct) : direct) {
@@ -57,6 +66,7 @@ function machine(
         {
           directory,
           path: join(directory, 'ledger.sqlite'),
+          assignmentWorkspaceDirectory,
           terminal: (id) => terminal.has(id),
         },
         transport,
@@ -193,6 +203,47 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
   writeFileSync(join(judged.path, 'a.txt'), 'edited\n');
   other.terminal.add('launch-ses_q');
   await assert.rejects(reviewer.capture(other.launch('ses_q')), failed('workspace_readonly_dirty'));
+});
+
+test('hosted Code checkout has independent Git metadata and its edits pass through Code capture', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_hosted');
+  const m = machine(t, f, undefined, true);
+  const driver = m.start();
+  const launch = m.launch('ses_hosted');
+  const handle = await driver.prepare(launch, m.session('ses_hosted'));
+  assert.equal(
+    handle.path,
+    join(m.assignmentWorkspaceDirectory!, createHash('sha256').update(launch.id).digest('hex')),
+  );
+  assert.ok(lstatSync(join(handle.path, '.git')).isDirectory());
+  assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
+  assert.equal(git(handle.path, ['rev-parse', '--git-common-dir']), '.git');
+  assert.equal(git(handle.path, ['remote']), '');
+  assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
+  await f.event('session.workspace_attached', 'ses_hosted');
+  writeFileSync(join(handle.path, 'hosted.txt'), 'work from assignment\n');
+  const first = await command(f, driver, 'ses_hosted', f.root);
+  const receipt = await driver.checkpointCommit(launch, first);
+  assert.equal((await f.unit()).canonicalHead, receipt.headOid);
+  writeFileSync(join(handle.path, 'after.txt'), 'capture this too\n');
+  await f.event('session.closed', 'ses_hosted');
+  f.end('ses_hosted');
+  m.terminal.add(launch.id);
+  const final = await driver.capture(launch);
+  assert.equal((await f.unit()).canonicalHead, final?.headOid);
+  assert.equal(git(handle.path, ['show', 'HEAD:after.txt']), 'capture this too');
+  await driver.close(launch);
+  f.reviewer('ses_hosted_review', receipt.headOid);
+  const reviewLaunch = m.launch('ses_hosted_review');
+  const review = await driver.prepare(reviewLaunch, m.session('ses_hosted_review'));
+  assert.equal(review.snapshot?.headOid, receipt.headOid);
+  assert.ok(lstatSync(join(review.path, '.git')).isDirectory());
+  assert.equal(git(review.path, ['rev-parse', '--git-common-dir']), '.git');
+  m.terminal.add(reviewLaunch.id);
+  assert.equal((await driver.capture(reviewLaunch))?.headOid, receipt.headOid);
+  await driver.close(reviewLaunch);
+  assert.equal(existsSync(review.path), false);
 });
 
 test('a quarantined commit leaves the checkout as it was and never rides along in the next bundle', async (t) => {

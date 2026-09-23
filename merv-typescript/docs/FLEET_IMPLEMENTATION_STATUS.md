@@ -23,11 +23,17 @@ disabled; no release milestone or provider acceptance gate has passed.
   avoids ordinary job scripts and their retained command/environment fields.
   A production provider image, release manifest and trusted supervisor are not
   wired together or attested yet.
-- The TypeScript Runner has an isolated Codex scratch adapter, including a
+- The TypeScript Runner has an isolated Codex adapter, including a
   dedicated assignment launcher, scoped process environment and repository
   skill controls. Its local `oneAssignment` setting fences the runner to one
-  durable assignment across completion and restart. This is not managed Fleet
-  enrollment or server-side allocation.
+  durable assignment across completion and restart. Managed enrollment now
+  gives that supervisor an allocation-bound control credential; the harness
+  receives only its existing assignment-session authority.
+- Hosted Git and code.v2 checkouts have their own `.git` directory. Their private
+  mirrors and journals stay in the supervisor directory. Git against an
+  assignment-owned checkout runs as UID 12001 with privilege escalation disabled;
+  outgoing bundles are copied to a private, no-follow staging file before the
+  supervisor imports them.
 
 ## Evidence and limits
 
@@ -53,6 +59,27 @@ artifact blobs beside it. This test used a synthetic project's supervisor-held
 source credential, not production managed enrollment. It is a local Docker test,
 not Cloudflare acceptance. No deployment or cloud allocation occurred.
 
+A second real-model acceptance used **managed enrollment**, with no ordinary
+project credential delivered to the VM. The `gpt-6-luna` Codex worker again
+completed exactly one assignment, submitted evidence, and released its session.
+Evidence: `output/hosted-smoke-1790139581122/report.json`. The container was removed
+and an independent Docker lookup confirmed its absence. This checks the actual
+HTTP enrollment, restricted controls, and assignment execution locally; it does
+not exercise the Cloudflare provisioning path.
+
+Fourteen Linux assignment/launcher tests passed, covering UID/group/capability
+drop, `no_new_privs`, root-private canary denial, prepared Git handoff and
+hardlink/escaping-link/special-file refusal. A separate no-network Linux probe
+used the installed Python helper and UID 12001 edits to verify code.v2 checkpoint
+and final capture, plus legacy Git capture. Hosted Git regression suites and
+TypeScript typecheck passed.
+
+The final combined regression run passed **94 tests**: managed enrollment and
+HTTP restrictions, cross-assignment Code denial, Fleet lifecycle/adapter and
+composition, existing credentials/remote permissions, Code HTTP transfers,
+Sessions and actual Runner child-process recovery. No tests failed or skipped
+in that run. These overlap the earlier focused counts above.
+
 ## Fleet v1 implementation in progress
 
 - `@merv/fleet` now owns one PostgreSQL allocation table, stable requests, capacity
@@ -68,6 +95,24 @@ not Cloudflare acceptance. No deployment or cloud allocation occurred.
   sidebar row and drain/halt controls. No public allocation tool exists. A
   composition test verifies installation and withdrawal without Sessions or any
   research plugin.
+- Sessions now binds each managed allocation to one successful automatic claim,
+  with immutable profile/source, expiring enrollment and control credentials,
+  restricted HTTP routes and transactional Code transfer checks. General tools,
+  manual assignments and administration are denied. Existing external runners
+  continue to use their existing authentication.
+- The optional `@merv/fleet/workflow` entry connects shared Sessions demand to
+  Fleet with the fixed `hosted-codex` / `gpt-6-luna` profile and code.v2 support.
+  It carries enrollment and model credentials only through protected bootstrap,
+  and waits for the supervisor's release acknowledgement and workspace capture
+  before treating an assignment as finished. It adds no research dependency or
+  separate scheduler tables.
+
+A real-services integration now covers shared demand → Fleet allocation →
+protected launch receipt → managed enrollment → heartbeat → one lease → release
+acknowledgement → provider-confirmed stop. Only the sandbox provider is a test
+double in that run. The workflow adapter currently relies on actual claim/demand
+changes and bounded empty-worker retirement; it does not predict external
+runners' spare capacity.
 
 Ten Fleet PostgreSQL tests passed, including global/project capacity contention,
 lost-reply recovery, source revocation, cancellation during bootstrap, drain and
@@ -78,19 +123,20 @@ passed 53 tests. These runs overlap and are not an aggregate suite count.
 
 ## Remaining work
 
-1. Complete the managed-runner identity/enrollment and one-successful-assignment
-   transaction, then connect the workflow owner adapter to the allocator and
-   shared Sessions demand. The allocator's lifecycle callback contract alone is
-   not production authentication.
-2. Complete the hosted Git checkout and trusted provider image/release wiring;
+1. Complete trusted provider image/release wiring;
    verify current-authority checks, provider termination and the Cloudflare
    security gates. Then run three-machine real-work acceptance with external
    runners coexisting. Local tests do not replace that acceptance.
-3. Pilot Pi only after Fleet acceptance, within the separate read-only and
+2. Pilot Pi only after Fleet acceptance, within the separate read-only and
    conversational-write gates in the proposal.
+
+Enrollment is deliberately short-lived (15 minutes, bounded by the allocation
+deadline). A prolonged uncertain launch can exhaust that window; it must retire
+and retry as a new allocation, not extend the old credential indefinitely. Fleet
+currently bounds that recovery by the allocation deadline.
 
 Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
 cloned from sandbox commit `c7b9582`. The integrated runtime launch checkpoint is
-`7b66e70`, following the earlier foundation and transport commits; the incremental backup is
+`fe3b117`, following `7b66e70` and the earlier foundation/transport commits; the incremental backup is
 `output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
 untouched, and nothing was pushed or deployed.

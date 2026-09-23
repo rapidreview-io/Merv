@@ -1,19 +1,17 @@
-/** First isolated runner acceptance, not production managed-principal enrollment.
- * An explicitly authorized synthetic project source stays in this root process.
- * Fleet production must replace that source with allocation-bound enrollment.
- */
+/** Fixed one-assignment supervisor. Bootstrap carries expiring enrollment only. */
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { MachineRunner } from '@merv/runner';
+import { codeWorkspaceDriver } from '@merv/code/driver/index';
 
 const schema = z
   .object({
     baseUrl: z.string().url(),
     projectId: z.string().min(1),
-    sourceToken: z.string().min(16),
+    enrollmentToken: z.string().regex(/^me_[0-9a-f]{64}$/),
     modelApiKey: z.string().min(16),
   })
   .strict();
@@ -43,7 +41,7 @@ async function main() {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const loginDirectory = `${assignmentRoot}/${createHash('sha256').update('model-login').digest('hex')}`;
   mkdirSync(loginDirectory, { mode: 0o700 });
-  // The model key goes only to Codex login on stdin; the source credential does not.
+  // The model key goes only to Codex login on stdin; the Merv credential does not.
   const login = spawnSync(launcher, ['--', codex, 'login', '--with-api-key'], {
     cwd: loginDirectory,
     input: data.modelApiKey + '\n',
@@ -53,7 +51,33 @@ async function main() {
   });
   data.modelApiKey = '';
   if (login.error || login.status !== 0) throw new Error('model login failed');
-  process.env.MERV_HOSTED_SOURCE = data.sourceToken;
+  // Enrollment can precede Fleet observing the protected launch receipt. Retry the
+  // same token briefly; never fall back to an ordinary project credential.
+  let controlToken = '';
+  const enrollUntil = Date.now() + 60_000;
+  while (Date.now() < enrollUntil) {
+    const response = await fetch(`${data.baseUrl.replace(/\/$/, '')}/sessions/runners/enroll`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${data.enrollmentToken}`,
+        'content-type': 'application/json',
+        'x-merv-project-id': data.projectId,
+      },
+      body: '{}',
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => null);
+    if (response?.ok) {
+      const result = z
+        .object({ controlToken: z.string().regex(/^mr_[0-9a-f]{64}$/) })
+        .parse(await response.json());
+      controlToken = result.controlToken;
+      break;
+    }
+    await delay(1000);
+  }
+  data.enrollmentToken = '';
+  if (!controlToken) throw new Error('managed enrollment failed');
+  process.env.MERV_HOSTED_SOURCE = controlToken;
   const runner = new MachineRunner(
     {
       directory,
@@ -63,7 +87,7 @@ async function main() {
       capacity: 1,
       oneAssignment: true,
       assignmentWorkspaceDirectory: assignmentRoot,
-      workspaceDrivers: [],
+      workspaceDrivers: ['code'],
       profiles: [
         {
           name: 'hosted-codex',
@@ -76,10 +100,10 @@ async function main() {
         },
       ],
     },
-    { autoPoll: false },
+    { autoPoll: false, drivers: [codeWorkspaceDriver] },
   );
   delete process.env.MERV_HOSTED_SOURCE;
-  data.sourceToken = '';
+  controlToken = '';
   let stopping = false;
   process.on('SIGTERM', () => {
     stopping = true;

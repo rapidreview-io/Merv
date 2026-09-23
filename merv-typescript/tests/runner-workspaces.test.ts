@@ -181,6 +181,45 @@ test('isolated scratch cwd is outside the private ledger while Git storage stays
   assert.equal(readFileSync(join(handle.path, 'result.txt'), 'utf8'), 'assignment output\n');
 });
 
+test('hosted Git checkout keeps complete metadata in the assignment leaf and captures edits privately', async (t) => {
+  const f = setup(t, { assignmentScratch: true });
+  const first = f.reserve('hosted-git');
+  const handle = await f.manager.prepare(first, f.session(first.id));
+  assert.equal(
+    handle.path,
+    join(f.assignmentWorkspaceDirectory!, createHash('sha256').update(first.id).digest('hex')),
+  );
+  assert.ok(statSync(join(handle.path, '.git')).isDirectory());
+  assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
+  assert.equal(f.git(handle.path, 'rev-parse', '--git-common-dir'), '.git');
+  assert.equal(f.git(handle.path, 'remote'), '');
+  assert.equal(handle.snapshot?.headOid, f.second);
+  writeFileSync(join(handle.path, 'hosted.txt'), 'assignment edit\n');
+  f.stop(first.id);
+  const result = await f.manager.capture(first);
+  assert.notEqual(result?.headOid, f.second);
+  assert.equal(f.git(f.bare, 'show', `${result!.headOid}:hosted.txt`), 'assignment edit');
+  await f.manager.close(first);
+  const second = f.reserve('hosted-resume');
+  const resumed = await f.manager.prepare(second, f.session(second.id));
+  assert.equal(resumed.snapshot?.headOid, result?.headOid);
+  assert.equal(readFileSync(join(resumed.path, 'hosted.txt'), 'utf8'), 'assignment edit\n');
+  const review = f.reserve('hosted-review');
+  const readOnly = await f.manager.prepare(
+    review,
+    f.session(
+      review.id,
+      { mode: 'ephemeral', namespace: 'tests', base: 'central', retain: false },
+      { readOnly: true },
+    ),
+  );
+  assert.equal(f.git(readOnly.path, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
+  f.stop(review.id);
+  assert.equal((await f.manager.capture(review))?.headOid, f.second);
+  await f.manager.close(review);
+  assert.equal(existsSync(readOnly.path), false);
+});
+
 test('private clone, idempotent prepare, bounded WIP capture and persistent resume preserve per-launch history', async (t) => {
   const f = setup(t),
     first = f.reserve('first');

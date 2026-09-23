@@ -2,7 +2,15 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -13,8 +21,10 @@ import { LocalLedger, type LaunchRecord } from '../packages/runner/src/ledger.js
 import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function fixture(t: TestContext) {
+function fixture(t: TestContext, hosted = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-commit-'));
+  const assignmentRoot = hosted ? join(realpathSync(directory), 'assignments') : undefined;
+  if (assignmentRoot) mkdirSync(assignmentRoot, { mode: 0o700 });
   const repository = join(directory, 'source');
   mkdirSync(repository);
   const git = (cwd: string, ...args: string[]) =>
@@ -49,7 +59,7 @@ function fixture(t: TestContext) {
   };
   const ledger = new LocalLedger({ directory: join(directory, 'machine'), binding });
   const config = { repository, baseRef: 'refs/heads/main' };
-  let manager = new GitWorkspaceManager(ledger, config);
+  let manager = new GitWorkspaceManager(ledger, config, assignmentRoot);
   const db = new DatabaseSync(ledger.path);
   const bare = join(ledger.directory, 'workspaces/repository.git');
   const prepare = async (
@@ -109,7 +119,7 @@ function fixture(t: TestContext) {
     db.prepare("UPDATE launches SET status='stopped' WHERE id=?").run(record.id);
   const reopen = () => {
     manager.dispose();
-    manager = new GitWorkspaceManager(ledger, config);
+    manager = new GitWorkspaceManager(ledger, config, assignmentRoot);
     return manager;
   };
   t.after(() => {
@@ -130,6 +140,7 @@ function fixture(t: TestContext) {
     ledger,
     db,
     bare,
+    assignmentRoot,
     git,
     prepare,
     stop,
@@ -181,6 +192,25 @@ test('code commit changes only the owned checkout, persists a replayable receipt
   assert.equal((await f.manager.capture(first.record))!.headOid, receipt.headOid);
   await f.manager.close(first.record);
   assert.deepEqual(await f.manager.checkpointCommit(first.record, command), receipt);
+});
+
+test('hosted Git checkout checkpoints and replays a receipt without linked private metadata', async (t) => {
+  const f = fixture(t, true);
+  const first = await f.prepare();
+  assert.equal(first.handle.path, join(f.assignmentRoot!, hash(first.record.id)));
+  assert.equal(f.git(first.handle.path, 'rev-parse', '--git-common-dir'), '.git');
+  writeFileSync(join(first.handle.path, 'seed.txt'), 'hosted checkpoint\n');
+  const request = first.command();
+  const receipt = await f.manager.checkpointCommit(first.record, request);
+  assert.equal(f.git(first.handle.path, 'rev-parse', 'HEAD'), receipt.headOid);
+  assert.equal(
+    f.git(f.bare, 'rev-parse', `refs/merv/commands/${hash(request.id)}`),
+    receipt.headOid,
+  );
+  assert.deepEqual(await f.reopen().checkpointCommit(first.record, request), receipt);
+  f.stop(first.record);
+  assert.equal((await f.manager.capture(first.record))?.headOid, receipt.headOid);
+  await f.manager.close(first.record);
 });
 
 test('read-only, stopped, uncertain, expired, wrong-host and conflicting-head requests cannot mutate Git', async (t) => {

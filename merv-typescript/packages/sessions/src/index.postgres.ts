@@ -166,4 +166,51 @@ ${withoutTriggers(
   ['worker_sessions_no_delete'],
   `DELETE FROM worker_sessions WHERE id IN (SELECT id FROM retired_sessions);`,
 )}`,
+  7: `
+CREATE TABLE session_managed_runners (
+  allocation_id TEXT PRIMARY KEY,
+  epoch BIGINT NOT NULL CHECK(epoch>=0),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  source_json TEXT NOT NULL CHECK(source_json IS JSON),
+  source_hash TEXT NOT NULL,
+  runtime_profile_id TEXT NOT NULL,
+  platform_json TEXT NOT NULL CHECK(platform_json IS JSON),
+  capabilities_json TEXT NOT NULL CHECK(capabilities_json IS JSON),
+  enrollment_hash TEXT NOT NULL UNIQUE,
+  enrollment_expires_at TEXT NOT NULL,
+  control_hash TEXT NOT NULL UNIQUE,
+  control_expires_at TEXT NOT NULL,
+  runner_id TEXT,
+  bound_session_id TEXT UNIQUE REFERENCES worker_sessions(id),
+  runner_released_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE OR REPLACE FUNCTION session_managed_runners_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.allocation_id IS DISTINCT FROM OLD.allocation_id OR NEW.epoch IS DISTINCT FROM OLD.epoch OR
+     NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.source_json IS DISTINCT FROM OLD.source_json OR
+     NEW.source_hash IS DISTINCT FROM OLD.source_hash OR NEW.runtime_profile_id IS DISTINCT FROM OLD.runtime_profile_id OR
+     NEW.platform_json IS DISTINCT FROM OLD.platform_json OR NEW.capabilities_json IS DISTINCT FROM OLD.capabilities_json OR
+     NEW.enrollment_hash IS DISTINCT FROM OLD.enrollment_hash OR NEW.control_hash IS DISTINCT FROM OLD.control_hash OR
+     NEW.enrollment_expires_at IS DISTINCT FROM OLD.enrollment_expires_at OR NEW.control_expires_at IS DISTINCT FROM OLD.control_expires_at OR
+     NEW.created_at IS DISTINCT FROM OLD.created_at OR
+     (OLD.runner_id IS NOT NULL AND NEW.runner_id IS DISTINCT FROM OLD.runner_id) OR
+     (OLD.bound_session_id IS NOT NULL AND NEW.bound_session_id IS DISTINCT FROM OLD.bound_session_id) OR
+     (OLD.runner_released_at IS NOT NULL AND NEW.runner_released_at IS DISTINCT FROM OLD.runner_released_at) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Managed runner binding is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_managed_runners_immutable BEFORE UPDATE ON session_managed_runners
+FOR EACH ROW EXECUTE FUNCTION session_managed_runners_guard();
+CREATE OR REPLACE FUNCTION session_managed_runners_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Managed runner bindings are retained', ERRCODE = '23514';
+  RETURN OLD;
+END;
+$merv$;
+CREATE TRIGGER session_managed_runners_no_delete BEFORE DELETE ON session_managed_runners
+FOR EACH ROW EXECUTE FUNCTION session_managed_runners_no_delete_guard();
+`,
 };

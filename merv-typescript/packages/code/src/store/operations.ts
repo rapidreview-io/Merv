@@ -908,6 +908,7 @@ export class CodeStore {
   ): Promise<CodeStoreOperation> {
     this.assertOpen();
     caller = structuredClone(caller);
+    await this.managedRead(caller, input.sessionId);
     const requestId = input.kind === 'final' ? `final:${input.sessionId}` : input.requestId;
     check(
       input.kind === 'final' || input.requestId === input.commandId,
@@ -953,6 +954,7 @@ export class CodeStore {
     const superseded: OperationRow[] = [];
     const id = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      this.managedSession(caller, input.sessionId);
       const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous<OperationRow>(columns);
       if (previous) return previous.id;
@@ -1038,6 +1040,7 @@ export class CodeStore {
     input: { sessionId: string; head: string; haves: string[]; secondParent?: string },
   ): Promise<CodeExport> {
     this.assertOpen();
+    await this.managedRead(caller, input.sessionId);
     return this.owned(() => this.writeExport(caller, input));
   }
 
@@ -1151,6 +1154,7 @@ export class CodeStore {
     input: { sessionId: string; offset: number; length: number },
   ): Promise<Buffer> {
     this.assertOpen();
+    await this.managedRead(caller, input.sessionId);
     const known = this.exports.get(exportId);
     check(
       known &&
@@ -1839,6 +1843,25 @@ export class CodeStore {
     check(!this.closed, 'code_unavailable', 'Code is unavailable', 503);
   }
 
+  private managedSession(caller: Caller, sessionId: string): void {
+    check(
+      !caller.managed || caller.managed.boundSessionId === sessionId,
+      'managed_runner_forbidden',
+      'A managed runner may transfer code only for its bound session',
+      403,
+    );
+  }
+
+  private async managedRead(caller: Caller, sessionId: string): Promise<void> {
+    if (!caller.managed) return;
+    await this.state.snapshot(() =>
+      this.state.transaction(async (tx) => {
+        await this.scope.require(caller, 'read', tx);
+        this.managedSession(caller, sessionId);
+      }),
+    );
+  }
+
   private async administrator(caller: Caller, tx: Transaction): Promise<void> {
     await this.scope.require(caller, 'admin', tx);
     check(
@@ -1869,6 +1892,7 @@ export class CodeStore {
     const payload = JSON.parse(row.payload_json) as Payload;
     if (payload.source === 'upload') {
       await this.scope.require(caller, 'read', tx);
+      this.managedSession(caller, payload.sessionId);
       check(!caller.session, 'session_forbidden', 'A leased worker cannot move bundles', 403);
     } else await this.administrator(caller, tx);
     check(

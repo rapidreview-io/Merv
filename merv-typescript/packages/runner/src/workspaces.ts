@@ -1,17 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import {
+  constants,
   closeSync,
   copyFileSync,
   existsSync,
   fsyncSync,
+  fstatSync,
   lstatSync,
   openSync,
   readFileSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -132,6 +136,39 @@ const marker = (path: string, value: unknown) => {
     closeSync(fd);
   }
   syncPath(dirname(path));
+};
+/** Pin one assignment-produced bundle as a private regular file before root Git parses it. */
+const stageAssignmentBundle = (source: string, target: string): void => {
+  const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(input);
+    if (
+      !info.isFile() ||
+      info.nlink !== 1 ||
+      ![process.getuid?.(), 12001].includes(info.uid) ||
+      info.size > 8 * 1024 * 1024 * 1024
+    )
+      throw new WorkspaceError('workspace_foreign_path');
+    const output = openSync(target, 'wx', 0o600);
+    try {
+      const buffer = Buffer.allocUnsafe(256 * 1024);
+      let copied = 0;
+      for (;;) {
+        const count = readSync(input, buffer, 0, buffer.length, null);
+        if (!count) break;
+        copied += count;
+        if (copied > info.size) throw new WorkspaceError('workspace_foreign_path');
+        let offset = 0;
+        while (offset < count) offset += writeSync(output, buffer, offset, count - offset);
+      }
+      if (copied !== info.size) throw new WorkspaceError('workspace_foreign_path');
+      fsyncSync(output);
+    } finally {
+      closeSync(output);
+    }
+  } finally {
+    closeSync(input);
+  }
 };
 
 /** Local checkout ownership and immutable per-launch captures, independent of server persistence. */
@@ -291,7 +328,9 @@ export class GitWorkspaceManager {
               ? 'persistent/per-base'
               : 'persistent/shared';
         slotId = `${policy.mode}:${repository.repository_id}:${lineage}${suffix}`;
-        path = join(this.root, 'checkouts', layout, lineage + suffix);
+        path = this.assignmentWorkspaceDirectory
+          ? join(this.assignmentWorkspaceDirectory, hash(record.id))
+          : join(this.root, 'checkouts', layout, lineage + suffix);
         branch =
           policy.mode === 'persistent'
             ? `codex/merv/${policy.perBase ? 'per-base' : 'shared'}/${[namespace, project, instance].map(refSegment).join('/')}${suffix}`
@@ -440,8 +479,10 @@ export class GitWorkspaceManager {
     if (!journal.tree_oid) {
       // Each pre-freeze retry owns a fresh index. A crashed Git child can never mutate
       // the checkout index, a successor's index, or another attempt's frozen tree.
-      const directory = join(this.root, 'operations', hash(record.id), hash(command.id));
-      this.safeDirectory(directory);
+      const directory = this.assignmentWorkspaceDirectory
+        ? join(row.path, '.git')
+        : join(this.root, 'operations', hash(record.id), hash(command.id));
+      if (!this.assignmentWorkspaceDirectory) this.safeDirectory(directory);
       const index = join(directory, `index-${randomUUID()}`);
       const env = { GIT_INDEX_FILE: index };
       await this.checkoutGit(row, ['read-tree', command.expectedHead], env);
@@ -490,6 +531,34 @@ export class GitWorkspaceManager {
     }
     this.requireCommitLaunch(row);
     if (this.fence(row)?.status !== 'armed') throw new WorkspaceError('workspace_commit_fenced');
+    if (this.assignmentWorkspaceDirectory) {
+      await this.importAssignmentCommit(row, journal.target_oid!);
+      const privateBranch = row.branch ? `refs/heads/${row.branch}` : null;
+      const previous = privateBranch
+        ? await this.optionalRef(repository.bare_path, privateBranch)
+        : undefined;
+      await this.git(
+        ['--git-dir', repository.bare_path, 'update-ref', '--stdin'],
+        60000,
+        false,
+        undefined,
+        [
+          'start',
+          `verify ${this.ownerRef(row)} ${fence.owner_oid}`,
+          ...(privateBranch
+            ? [
+                `update ${privateBranch} ${journal.target_oid} ${previous ?? '0'.repeat(journal.target_oid!.length)}`,
+              ]
+            : []),
+          `create ${receiptRef} ${journal.target_oid}`,
+          'prepare',
+          'commit',
+          '',
+        ].join('\n'),
+      );
+      await this.syncCommitIndex(row, journal);
+      return this.finishCommitReceipt(row, command, journal);
+    }
     // HEAD and the receipt marker commit atomically; the ownership verify also fences
     // an orphan process whose controller died before the Git transaction completed.
     await this.checkoutGit(
@@ -598,6 +667,24 @@ export class GitWorkspaceManager {
             ]);
         }
       }
+      if (this.assignmentWorkspaceDirectory) {
+        const head = oid(await this.checkoutGit(row, ['rev-parse', '--verify', 'HEAD^{commit}']));
+        await this.importAssignmentCommit(row, head);
+        if (row.branch) {
+          const repository = await this.repository();
+          const ref = `refs/heads/${row.branch}`;
+          const current = await this.optionalRef(repository.bare_path, ref);
+          if (current !== head)
+            await this.git([
+              '--git-dir',
+              repository.bare_path,
+              'update-ref',
+              ref,
+              head,
+              current ?? '0'.repeat(head.length),
+            ]);
+        }
+      }
       const snapshot = (await this.snapshot(row))!;
       this.db
         .prepare("UPDATE runner_workspaces SET status='captured',result_json=? WHERE launch_id=?")
@@ -621,16 +708,21 @@ export class GitWorkspaceManager {
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
       if (!row.canceled && policy.mode !== 'none' && !policy.retain && existsSync(row.path)) {
         await this.validateCheckout(row);
-        const repository = await this.repository();
-        await this.git([
-          '--git-dir',
-          repository.bare_path,
-          'worktree',
-          'remove',
-          '--force',
-          '--',
-          row.path,
-        ]);
+        if (this.assignmentWorkspaceDirectory) {
+          this.assignmentPath(row);
+          rmSync(row.path, { recursive: true, force: true });
+        } else {
+          const repository = await this.repository();
+          await this.git([
+            '--git-dir',
+            repository.bare_path,
+            'worktree',
+            'remove',
+            '--force',
+            '--',
+            row.path,
+          ]);
+        }
       }
       this.db.exec('BEGIN IMMEDIATE');
       try {
@@ -879,6 +971,13 @@ export class GitWorkspaceManager {
       this.row(row.launch_id)?.status !== 'ready'
     )
       return;
+    if (this.assignmentWorkspaceDirectory) {
+      const head = oid(await this.checkoutGit(row, ['rev-parse', 'HEAD']));
+      if (head !== journal.target_oid)
+        await this.checkoutGit(row, ['update-ref', 'HEAD', journal.target_oid!, head]);
+      await this.checkoutGit(row, ['read-tree', journal.target_oid!]);
+      return;
+    }
     const repository = await this.repository();
     const admin = await this.adminDirectory(row, repository);
     if (oid(await this.checkoutGit(row, ['rev-parse', 'HEAD'])) !== journal.target_oid) return;
@@ -1207,6 +1306,17 @@ export class GitWorkspaceManager {
       });
     } else {
       const repository = await this.repository();
+      if (this.assignmentWorkspaceDirectory) {
+        await this.prepareAssignmentCheckout(row, repository);
+        const snapshot = await this.snapshot(row);
+        await this.armFence(row);
+        this.db
+          .prepare(
+            "UPDATE runner_workspaces SET status='ready',attachment_json=? WHERE launch_id=?",
+          )
+          .run(snapshot ? JSON.stringify(snapshot) : null, row.launch_id);
+        return;
+      }
       this.within(this.root, row.path);
       // A persistent branch's lineage records its base once; a changed record is refused
       // before any checkout is added, including the recovery of an existing path.
@@ -1272,6 +1382,73 @@ export class GitWorkspaceManager {
       .prepare("UPDATE runner_workspaces SET status='ready',attachment_json=? WHERE launch_id=?")
       .run(snapshot ? JSON.stringify(snapshot) : null, row.launch_id);
   }
+
+  private assignmentPath(row: WorkspaceRow): void {
+    if (
+      !this.assignmentWorkspaceDirectory ||
+      row.path !== join(this.assignmentWorkspaceDirectory, hash(row.launch_id))
+    )
+      throw new WorkspaceError('workspace_foreign_checkout');
+    this.within(this.assignmentWorkspaceDirectory, row.path);
+  }
+
+  private async prepareAssignmentCheckout(
+    row: WorkspaceRow,
+    repository: RepositoryRow,
+  ): Promise<void> {
+    this.assignmentPath(row);
+    const dot = join(row.path, '.git');
+    const baseRef = `refs/merv/bases/${hash(row.slot_id)}`;
+    const recorded = row.branch ? await this.optionalRef(repository.bare_path, baseRef) : undefined;
+    if (recorded && recorded !== row.base_oid)
+      throw new WorkspaceError('workspace_recorded_base_changed');
+    const head = row.branch
+      ? ((await this.optionalRef(repository.bare_path, `refs/heads/${row.branch}`)) ?? row.base_oid)
+      : row.base_oid;
+    if (!existsSync(dot)) {
+      if (existsSync(row.path)) throw new WorkspaceError('workspace_foreign_checkout');
+      privateDirectory(row.path);
+      const ref = `refs/merv/hosted/${hash(row.launch_id)}`;
+      const bundle = join(this.root, `checkout-${hash(row.launch_id)}.bundle`);
+      try {
+        await this.git(['--git-dir', repository.bare_path, 'update-ref', ref, head]);
+        await this.git(['--git-dir', repository.bare_path, 'bundle', 'create', bundle, ref]);
+        await this.git(['init', '--quiet', `--template=${this.emptyTemplate}`, row.path]);
+        await this.checkoutGit(row, ['bundle', 'unbundle', bundle]);
+      } finally {
+        rmSync(bundle, { force: true });
+        await this.git(['--git-dir', repository.bare_path, 'update-ref', '-d', ref]);
+      }
+      await this.checkoutGit(
+        row,
+        row.branch
+          ? ['checkout', '--quiet', '-B', row.branch, head]
+          : ['checkout', '--quiet', '--detach', head],
+      );
+    }
+    await this.validateCheckout(row);
+    if (row.branch && !recorded)
+      await this.git(['--git-dir', repository.bare_path, 'update-ref', baseRef, row.base_oid]);
+  }
+
+  private async importAssignmentCommit(row: WorkspaceRow, target: string): Promise<void> {
+    if (!this.assignmentWorkspaceDirectory) return;
+    this.assignmentPath(row);
+    const repository = await this.repository();
+    const ref = `refs/merv/export/${hash(`${row.launch_id}:${target}`)}`;
+    const bundle = join(row.path, '.git', `merv-export-${randomUUID()}.bundle`);
+    const staged = join(this.root, `import-${randomUUID()}.bundle`);
+    try {
+      await this.checkoutGit(row, ['update-ref', ref, target]);
+      await this.checkoutGit(row, ['bundle', 'create', bundle, ref]);
+      stageAssignmentBundle(bundle, staged);
+      await this.git(['--git-dir', repository.bare_path, 'bundle', 'unbundle', staged]);
+      await this.rev(repository.bare_path, target);
+    } finally {
+      rmSync(bundle, { force: true });
+      rmSync(staged, { force: true });
+    }
+  }
   private async validateCheckout(row: WorkspaceRow): Promise<void> {
     const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
     if (policy.mode === 'none') {
@@ -1293,6 +1470,18 @@ export class GitWorkspaceManager {
     const repository = await this.repository();
     if (repository.repository_id !== row.repository_id)
       throw new WorkspaceError('workspace_repository_changed');
+    if (this.assignmentWorkspaceDirectory) {
+      this.assignmentPath(row);
+      const dot = join(row.path, '.git');
+      if (!lstatSync(dot).isDirectory() || existsSync(join(dot, 'objects/info/alternates')))
+        throw new WorkspaceError('workspace_foreign_checkout');
+      const branch = (
+        await this.git(['-C', row.path, 'symbolic-ref', '-q', 'HEAD'], 60000, true)
+      ).trim();
+      if ((row.branch ? `refs/heads/${row.branch}` : '') !== branch)
+        throw new WorkspaceError('workspace_branch_changed');
+      return;
+    }
     this.within(this.root, row.path);
     const admin = await this.adminDirectory(row, repository);
     const branch = (
@@ -1331,6 +1520,10 @@ export class GitWorkspaceManager {
     env?: Record<string, string>,
     input?: string,
   ): Promise<string> {
+    if (this.assignmentWorkspaceDirectory) {
+      this.assignmentPath(row);
+      return this.git(['-C', row.path, ...args], 60000, false, env, input);
+    }
     const repository = await this.repository();
     const admin = await this.adminDirectory(row, repository);
     return this.git(
@@ -1402,6 +1595,16 @@ export class GitWorkspaceManager {
     env?: Record<string, string>,
     input?: string,
   ): Promise<string> {
+    const assignment =
+      args[0] === '-C' &&
+      this.assignmentWorkspaceDirectory &&
+      dirname(args[1]) === this.assignmentWorkspaceDirectory &&
+      /^[0-9a-f]{64}$/.test(args[1].slice(this.assignmentWorkspaceDirectory.length + 1));
+    const leaf = assignment ? statIfPresent(args[1]) : undefined;
+    const dot = assignment ? statIfPresent(join(args[1], '.git')) : undefined;
+    const assignmentOwned = leaf && process.getuid?.() === 0 && leaf.uid === 12001;
+    if (assignmentOwned && (leaf.gid !== 12001 || dot?.uid !== 12001 || dot.gid !== 12001))
+      throw new WorkspaceError('workspace_foreign_checkout');
     const options = [
       '-c',
       'core.hooksPath=/dev/null',
@@ -1423,25 +1626,30 @@ export class GitWorkspaceManager {
       'tag.gpgsign=false',
     ];
     try {
-      const operation = execute('git', [...options, ...args], {
-        timeout,
-        maxBuffer: 32 * 1024 * 1024,
-        encoding: 'utf8',
-        env: {
-          PATH: '/usr/bin:/bin',
-          HOME: this.emptyTemplate,
-          GIT_CONFIG_NOSYSTEM: '1',
-          GIT_CONFIG_SYSTEM: '/dev/null',
-          GIT_CONFIG_GLOBAL: '/dev/null',
-          GIT_ATTR_NOSYSTEM: '1',
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_ASKPASS: '/usr/bin/false',
-          GIT_SSH_COMMAND: '/usr/bin/false',
-          LC_ALL: 'C',
-          LANG: 'C',
-          ...env,
+      const operation = execute(
+        assignmentOwned ? '/opt/merv/python/merv_sandboxes/runtimes/assignment.py' : 'git',
+        [...(assignmentOwned ? ['--git'] : []), ...options, ...args],
+        {
+          ...(assignmentOwned ? { cwd: args[1] } : {}),
+          timeout,
+          maxBuffer: 32 * 1024 * 1024,
+          encoding: 'utf8',
+          env: {
+            PATH: '/usr/bin:/bin',
+            HOME: this.emptyTemplate,
+            GIT_CONFIG_NOSYSTEM: '1',
+            GIT_CONFIG_SYSTEM: '/dev/null',
+            GIT_CONFIG_GLOBAL: '/dev/null',
+            GIT_ATTR_NOSYSTEM: '1',
+            GIT_TERMINAL_PROMPT: '0',
+            GIT_ASKPASS: '/usr/bin/false',
+            GIT_SSH_COMMAND: '/usr/bin/false',
+            LC_ALL: 'C',
+            LANG: 'C',
+            ...env,
+          },
         },
-      });
+      );
       operation.child.stdin?.end(input);
       const result = await operation;
       return result.stdout;
