@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
+import { budgetSchema, releaseHoldSchema } from './dispatch.js';
 import type { SessionBudgetInput, Sessions, UsageQuery } from './types.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
@@ -30,14 +31,7 @@ export const sessionsToolsPlugin = {
         name: 'usage.set_budget',
         description:
           'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes, maxCostUsd or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a cost or token budget trusts unverified self-reports and is judged only while every closed session in its scope reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. A budget covers worker sessions only, never the charges of a remote job.',
-        inputSchema: z
-          .object({
-            instanceId: z.string().min(1).optional(),
-            maxWallMinutes: z.number().int().min(1).max(5_256_000).nullable().optional(),
-            maxCostUsd: z.number().positive().max(1e6).nullable().optional(),
-            maxTokens: z.number().int().min(1).max(1e13).nullable().optional(),
-          })
-          .strict(),
+        inputSchema: budgetSchema,
         handler: async (caller: Caller, input: SessionBudgetInput) =>
           await sessions.setBudget(caller, input),
       }),
@@ -57,14 +51,7 @@ export const sessionsToolsPlugin = {
         name: 'session.release_hold',
         description:
           'Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.',
-        inputSchema: z
-          .object({
-            instanceId: z.string().min(1).max(200),
-            expectedRevision: z.number().int().nonnegative(),
-            reason: z.string().min(1).max(500),
-            requestId: z.string().min(1),
-          })
-          .strict(),
+        inputSchema: releaseHoldSchema,
         handler: async (caller: Caller, input: Parameters<Sessions['releaseHold']>[1]) =>
           await sessions.releaseHold(caller, input),
       }),

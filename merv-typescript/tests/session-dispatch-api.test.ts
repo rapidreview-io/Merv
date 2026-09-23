@@ -412,6 +412,20 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
       400,
       'A usage report is a closed shape of non-negative counts',
     );
+  // Sessions parses the body: the runner is required and checked, the path names the session,
+  // and no other field is accepted.
+  for (const [body, status] of [
+    [{}, 400],
+    [{ runnerId: 'other' }, 403],
+    [{ runnerId: 'manual', sessionId: manual.body.session.id }, 400],
+    [{ runnerId: 'manual', hostRef: 'host' }, 400],
+  ] as const)
+    assert.equal(
+      (await f.http(`/sessions/${live.body.session.id}/release`, f.key.token, body, f.project.id))
+        .status,
+      status,
+      JSON.stringify(body),
+    );
   const released = await f.http(
     `/sessions/${live.body.session.id}/release`,
     f.key.token,

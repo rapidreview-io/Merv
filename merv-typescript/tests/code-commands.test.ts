@@ -448,7 +448,8 @@ test('project readers can inspect while worker reads and runner control preserve
   });
   await f.scope.revokeActor(f.source, reader.actorId);
   await assert.rejects(async () => await f.code.list(reader), { code: 'forbidden' });
-  await f.sessions.release(f.source, worker.control);
+  const { hostRef: _hostRef, ...release } = worker.control;
+  await f.sessions.release(f.source, release);
   await assert.rejects(async () => await f.code.operation(worker.caller, queued.command.id));
   assert.equal((await f.code.operation(f.source, queued.command.id)).status, 'queued');
 });

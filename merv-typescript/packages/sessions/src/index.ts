@@ -13,6 +13,7 @@ import {
   MervError,
   newId,
   plain,
+  sessionSecretPattern,
   sessionUsageReportSchema,
   sessionWorkspaceSchema,
   type Caller,
@@ -60,7 +61,6 @@ import type {
 } from './types.js';
 export type * from './types.js';
 
-const tokenPattern = /^ms_[A-Za-z0-9_-]{43}$/;
 /**
  * Closing for idleness is off unless a deployment asks for it: a tool call is the only
  * progress the server sees, and honest work can be hours of local computing with none.
@@ -78,21 +78,119 @@ const configKeys = new Set([
 ]);
 const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
-const releaseOutcomes = new Set<string>([
-  'completed',
-  'host_failed',
-  'launch_failed',
-  'workspace_failed',
-  'preparation_deferred',
-  'crash_loop',
-]);
-/** Opaque to Sessions: whatever prepares checkouts names the cause, and Sessions records it. */
-const deferralSchema = z
+/** Trimmed text with something to read, as it is stored and compared. */
+const trimmed = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .refine((value) => visible(value) && !value.includes('\0'));
+const secret = z.string().regex(sessionSecretPattern);
+const offerSchema = z
   .object({
-    cause: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-    code: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    requestId: trimmed(256),
+    agentId: trimmed(200).optional(),
+    instanceId: trimmed(200),
+    expectedRevision: z.number().int().nonnegative().safe(),
+    runnerId: trimmed(200),
+    secret,
+    hardDeadlineSeconds: z.number().int().min(300).max(604_800).optional(),
   })
   .strict();
+const offerRefusals = {
+  fallback: [
+    'invalid_session_offer',
+    'Offer requires a target revision, runner, request and caller-generated ms_ secret',
+  ],
+  fields: {
+    requestId: ['invalid_request_id', 'A stable requestId of 1–256 characters is required'],
+    hardDeadlineSeconds: ['invalid_deadline', 'Session hard deadline must be 300–604800 seconds'],
+  },
+} as const;
+const assignmentSchema = offerSchema.omit({ agentId: true, runnerId: true, secret: true });
+const registrationSchema = z
+  .object({ name: trimmed(200), runnerId: trimmed(200), requestId: trimmed(256), secret })
+  .strict();
+/** Every control names its session and the runner that holds it; the runner is checked. */
+const controlSchema = z.object({ sessionId: z.string(), runnerId: trimmed(200) }).strict();
+const hostSchema = controlSchema.extend({
+  hostRef: trimmed(512),
+  workspace: sessionWorkspaceSchema.optional(),
+});
+const resultSchema = hostSchema.extend({ workspace: sessionWorkspaceSchema });
+const controlRefusals = {
+  fallback: [
+    'invalid_session_control',
+    'A session control names the session and its runner, and no other field',
+  ],
+  fields: {
+    hostRef: ['invalid_host', 'A nonempty host reference is required'],
+    workspace: ['invalid_workspace', 'Workspace metadata must match the closed schema'],
+  },
+} as const;
+const releaseSchema = controlSchema
+  .extend({
+    usage: sessionUsageReportSchema.optional(),
+    outcome: z
+      .enum([
+        'completed',
+        'host_failed',
+        'launch_failed',
+        'workspace_failed',
+        'preparation_deferred',
+        'crash_loop',
+      ])
+      .optional(),
+    /** Opaque to Sessions: whatever prepares checkouts names the cause, and Sessions records it. */
+    deferral: z
+      .object({
+        cause: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+        code: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+      })
+      .strict()
+      .optional(),
+    reason: trimmed(200).optional(),
+  })
+  // A deferral is what keeps a put-off preparation out of the counters, so it is named or
+  // the close is an ordinary failure. Nothing else carries one.
+  .refine(
+    (input) => (input.outcome === 'preparation_deferred') === (input.deferral !== undefined),
+    { path: ['deferral'] },
+  );
+const releaseRefusals = {
+  fallback: controlRefusals.fallback,
+  fields: {
+    usage: [
+      'invalid_usage',
+      'Usage reports non-negative token counts and an optional cost and model',
+    ],
+    outcome: ['invalid_outcome', 'Unknown session process outcome'],
+    deferral: [
+      'invalid_deferral',
+      'A deferred preparation names its cause and code, and no other outcome carries one',
+    ],
+    reason: ['invalid_reason', 'Release reason must be 1–200 characters'],
+  },
+} as const;
+/**
+ * Parses one closed input. A refusal carries the code of the first field it names, or the
+ * fallback for an unknown key or a malformed whole.
+ */
+function closed<T extends z.ZodTypeAny>(
+  schema: T,
+  input: unknown,
+  refusals: {
+    fallback: readonly [string, string];
+    fields?: Readonly<Record<string, readonly [string, string]>>;
+  },
+): z.output<T> {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  const field = parsed.error.issues[0]?.path[0];
+  const [code, message] =
+    (typeof field === 'string' && refusals.fields?.[field]) || refusals.fallback;
+  throw new MervError(code, message);
+}
 /**
  * Why a session that has already ended is refusing. The reason survives the first refusal
  * because a worker whose response was lost has nothing else to go on: retrying its handoff
@@ -623,28 +721,13 @@ export class LeasedSessions implements Sessions {
   }
 
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
-    ({ caller, input } = structuredClone({ caller, input }));
-    check(
-      input && text(input.requestId, 320),
-      'invalid_request_id',
-      'A stable requestId of 1–320 characters is required',
+    return await this.offerParsed(
+      structuredClone(caller),
+      closed(offerSchema, input, offerRefusals),
     );
-    check(
-      (input.agentId === undefined || text(input.agentId)) &&
-        text(input.instanceId) &&
-        Number.isSafeInteger(input.expectedRevision) &&
-        input.expectedRevision >= 0 &&
-        text(input.runnerId) &&
-        tokenPattern.test(input.secret),
-      'invalid_session_offer',
-      'Offer requires a target revision, runner, request and caller-generated ms_ secret',
-    );
-    const duration = input.hardDeadlineSeconds ?? 86_400;
-    check(
-      Number.isInteger(duration) && duration >= 300 && duration <= 604_800,
-      'invalid_deadline',
-      'Session hard deadline must be 300–604800 seconds',
-    );
+  }
+  /** Both callers parse first: an assignment's derived request id runs past a caller's bound. */
+  private async offerParsed(caller: Caller, input: SessionOffer): Promise<Session> {
     await this.prepareControl(caller);
     return await this.transaction(async (tx) => await this.offerTransaction(caller, input, tx));
   }
@@ -848,7 +931,10 @@ export class LeasedSessions implements Sessions {
     return clone(session);
   }
   async registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent> {
-    ({ caller, input } = structuredClone({ caller, input }));
+    caller = structuredClone(caller);
+    input = closed(registrationSchema, input, {
+      fallback: ['invalid_agent', 'Agent requires a name, runner, request and ms_ secret'],
+    });
     await this.prepareControl(caller);
     return await this.transaction(async (tx) => {
       // An agent is a new actor of the project: registering one is a write.
@@ -920,14 +1006,15 @@ export class LeasedSessions implements Sessions {
       return { ...(await this.agentStatus(agent, tx)), available };
     });
   }
-  async assignAgent(token: string, { ...input }: AgentAssignment): Promise<Session> {
+  async assignAgent(token: string, input: AgentAssignment): Promise<Session> {
+    input = closed(assignmentSchema, input, offerRefusals);
     const agent = await this.reading(async (tx) => await this.directory.authenticate(token, tx));
     // The connection credential stays fixed. Each execution has a distinct, undisclosed credential.
     const secret = `ms_${createHash('sha256')
       .update(canonical({ token, requestId: input.requestId }))
       .digest('base64url')}`;
     // An agent's request ids are its own: the replay key is per runner, so they carry the agent.
-    return await this.offer(sourceCaller(agent.source), {
+    return await this.offerParsed(sourceCaller(agent.source), {
       ...input,
       requestId: `${agent.id}:${input.requestId}`,
       agentId: agent.id,
@@ -936,6 +1023,7 @@ export class LeasedSessions implements Sessions {
     });
   }
   async releaseAgentAssignment(token: string, executionId: string): Promise<Session> {
+    check(text(executionId), 'invalid_session', 'An execution identifier is required');
     return await this.transaction(async (tx) => {
       const agent = await this.directory.authenticate(token, tx);
       const session = await this.decode(await this.row(tx, executionId), tx);
@@ -1220,12 +1308,11 @@ export class LeasedSessions implements Sessions {
   }
   async attach(
     caller: Caller,
-    { ...input }: SessionControl & { hostRef: string; workspace?: SessionWorkspace },
+    input: SessionControl & { hostRef: string; workspace?: SessionWorkspace },
   ): Promise<Session> {
     caller = structuredClone(caller);
-    check(text(input.hostRef, 1024), 'invalid_host', 'A nonempty host reference is required');
-    const workspace =
-      input.workspace === undefined ? undefined : this.workspaceInput(input.workspace);
+    input = closed(hostSchema, input, controlRefusals);
+    const workspace = input.workspace;
     return await this.controlMutation(caller, input, async (session, tx) => {
       check(
         session.hostRef === null || session.hostRef === input.hostRef,
@@ -1307,18 +1394,13 @@ export class LeasedSessions implements Sessions {
       }
     });
   }
-  private workspaceInput(input: unknown): SessionWorkspace {
-    const parsed = sessionWorkspaceSchema.safeParse(input);
-    check(parsed.success, 'invalid_workspace', 'Workspace metadata must match the closed schema');
-    return parsed.data;
-  }
   async workspaceResult(
     caller: Caller,
-    { ...input }: SessionControl & { hostRef: string; workspace: SessionWorkspace },
+    input: SessionControl & { hostRef: string; workspace: SessionWorkspace },
   ): Promise<Session> {
     caller = structuredClone(caller);
-    check(text(input.hostRef, 1024), 'invalid_host', 'A nonempty host reference is required');
-    const workspace = this.workspaceInput(input.workspace);
+    input = closed(resultSchema, input, controlRefusals);
+    const workspace = input.workspace;
     return await this.transaction(async (tx) => {
       // Capturing a finished process is independent of current workflow admission.
       // In particular this operation never reactivates a remotely closed session.
@@ -1397,8 +1479,9 @@ export class LeasedSessions implements Sessions {
       return session;
     });
   }
-  async heartbeat(caller: Caller, { ...input }: SessionControl): Promise<Session> {
+  async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
     caller = structuredClone(caller);
+    input = closed(controlSchema, input, controlRefusals);
     return await this.controlMutation(caller, input, async (session, tx) => {
       check(
         session.status === 'active',
@@ -1429,9 +1512,7 @@ export class LeasedSessions implements Sessions {
   }
   async release(
     caller: Caller,
-    {
-      ...input
-    }: SessionControl & {
+    input: SessionControl & {
       reason?: string;
       outcome?: SessionReleaseOutcome;
       deferral?: SessionDeferral;
@@ -1439,34 +1520,11 @@ export class LeasedSessions implements Sessions {
     },
   ): Promise<Session> {
     caller = structuredClone(caller);
-    const usage = sessionUsageReportSchema.optional().safeParse(input.usage);
-    check(
-      usage.success,
-      'invalid_usage',
-      'Usage reports non-negative token counts and an optional cost and model',
-    );
-    check(
-      input.outcome === undefined || releaseOutcomes.has(input.outcome),
-      'invalid_outcome',
-      'Unknown session process outcome',
-    );
-    // A deferral is what keeps a put-off preparation out of the counters, so it is named or
-    // the close is an ordinary failure. Nothing else carries one.
-    check(
-      (input.outcome === 'preparation_deferred') ===
-        deferralSchema.safeParse(input.deferral).success,
-      'invalid_deferral',
-      'A deferred preparation names its cause and code, and no other outcome carries one',
-    );
-    check(
-      input.reason === undefined || text(input.reason, 200),
-      'invalid_reason',
-      'Release reason must be 1–200 characters',
-    );
+    const { usage, ...control } = closed(releaseSchema, input, releaseRefusals);
     return await this.transaction(async (tx) => {
-      const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      const released = await this.closeReleased(session, input, tx);
-      if (usage.data) await this.reportUsage(released, usage.data, tx);
+      const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
+      const released = await this.closeReleased(session, control, tx);
+      if (usage) await this.reportUsage(released, usage, tx);
       return released;
     });
   }
@@ -1523,7 +1581,7 @@ export class LeasedSessions implements Sessions {
   }
   async authenticate(token: string): Promise<Caller> {
     check(
-      typeof token === 'string' && tokenPattern.test(token),
+      typeof token === 'string' && sessionSecretPattern.test(token),
       'unauthorized',
       'Invalid session bearer credential',
       401,

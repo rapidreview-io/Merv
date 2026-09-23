@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   check,
   effectiveWorkspace,
+  sessionSecretPattern,
   sessionUsageReportSchema,
   WorkspaceDeferred,
   type CodeCommitCommand,
@@ -198,7 +199,7 @@ export class MachineRunner implements Runner {
     };
     const source = process.env[config.credentialEnv];
     check(
-      source && !/^ms_[A-Za-z0-9_-]{43}$/.test(source),
+      source && !sessionSecretPattern.test(source),
       'missing_runner_credential',
       'Runner requires an ordinary source credential in the configured environment variable',
     );

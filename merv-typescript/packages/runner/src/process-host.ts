@@ -4,6 +4,7 @@ import { rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sessionSecretPattern } from '@merv/contracts';
 import { LocalLedger, terminalLaunch, type LaunchRecord } from './ledger.js';
 
 export interface ProcessCommand {
@@ -38,7 +39,7 @@ export class ProcessHost {
     const record = this.required(input.launchId);
     if (terminalLaunch(record)) return record;
     if (record.status === 'uncertain') throw new Error('An uncertain launch cannot be restarted');
-    if (!/^ms_[A-Za-z0-9_-]{43}$/.test(input.sessionToken))
+    if (!sessionSecretPattern.test(input.sessionToken))
       throw new Error('A scoped session token is required');
     if (!Number.isSafeInteger(input.deadline) || input.deadline !== record.deadline)
       throw new Error('Launch deadline differs from its durable reservation');

@@ -5,6 +5,7 @@ import {
   check,
   digest,
   newId,
+  sessionSecretPattern,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -13,7 +14,6 @@ import {
 } from '@merv/contracts';
 import type { Agent, AgentRegistration } from './types.js';
 
-export const sessionToken = /^ms_[A-Za-z0-9_-]{43}$/;
 export const tokenDigest = (secret: string) => createHash('sha256').update(secret).digest('hex');
 export function sourceCaller(source: DelegationSource): Caller {
   const base = { actorId: source.actorId, projectId: source.projectId };
@@ -57,27 +57,13 @@ export class AgentDirectory {
       ]);
     };
   }
+  /** Sessions parsed the input: a registration, or the implicit agent of an offer. */
   async create(
     caller: Caller,
     input: AgentRegistration,
     tx: Transaction,
     persistent = true,
   ): Promise<Agent> {
-    check(
-      input &&
-        typeof input.name === 'string' &&
-        visible(input.name) &&
-        input.name.length <= 200 &&
-        typeof input.runnerId === 'string' &&
-        visible(input.runnerId) &&
-        input.runnerId.length <= 200 &&
-        typeof input.requestId === 'string' &&
-        visible(input.requestId) &&
-        input.requestId.length <= 256 &&
-        sessionToken.test(input.secret),
-      'invalid_agent',
-      'Agent requires a name, runner, request and ms_ secret',
-    );
     const source = await this.scope.delegationSource(caller, tx),
       owner = digest(source);
     const fingerprint = digest({ name: input.name, secret: tokenDigest(input.secret), persistent });
@@ -168,7 +154,7 @@ export class AgentDirectory {
   }
   async authenticate(secret: string, tx: Transaction): Promise<Agent> {
     check(
-      typeof secret === 'string' && sessionToken.test(secret),
+      typeof secret === 'string' && sessionSecretPattern.test(secret),
       'unauthorized',
       'Invalid agent credential',
       401,

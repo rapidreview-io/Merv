@@ -12,6 +12,8 @@ import {
   digest,
   effectiveWorkspace,
   newId,
+  RUNNER_HARNESSES,
+  sessionSecretPattern,
   type Caller,
   type Scope,
   type State,
@@ -48,17 +50,7 @@ const label = z
   .max(200)
   .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
 const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/);
-const harness = z.enum([
-  'codex',
-  'claude',
-  'gemini',
-  'cursor',
-  'opencode',
-  'copilot',
-  'qwen',
-  'hermes',
-  'command',
-]);
+const harness = z.enum(RUNNER_HARNESSES);
 const tuning = {
   name,
   enabled: z.boolean(),
@@ -99,15 +91,15 @@ const heartbeatSchema = z
 const leaseSchema = z
   .object({
     runnerId: label,
-    requestId: z.string().min(1).max(256),
-    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
+    requestId: z.string().trim().min(1).max(256),
+    secret: z.string().regex(sessionSecretPattern),
     platform: z
       .object({ name, harness, model: label.optional(), effort: label.optional() })
       .strict(),
     hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
   })
   .strict();
-const budgetSchema = z
+export const budgetSchema = z
   .object({
     instanceId: z.string().min(1).max(200).optional(),
     maxWallMinutes: z.number().int().min(1).max(5_256_000).nullable().optional(),
@@ -183,12 +175,12 @@ const uncountedOfferCodes = new Set([
   'code_recovery_required',
   'code_capture_quarantined',
 ]);
-const releaseHoldSchema = z
+export const releaseHoldSchema = z
   .object({
     instanceId: z.string().min(1).max(200),
-    expectedRevision: z.number().int().nonnegative().safe(),
+    expectedRevision: z.number().int().safe().nonnegative(),
     reason: z.string().min(1).max(500).refine(visible),
-    requestId: z.string(),
+    requestId: z.string().min(1),
   })
   .strict();
 interface RunnerRow {

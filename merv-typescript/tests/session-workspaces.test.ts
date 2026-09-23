@@ -124,6 +124,8 @@ async function fixture(
   };
   const session = await app.ctx.sessions.offer(source, input);
   const control = { sessionId: session.id, runnerId: 'runner', hostRef: 'launch-synthetic' };
+  // A release names its session and runner only; the host belongs to attachment and capture.
+  const { hostRef: _hostRef, ...release } = control;
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
@@ -138,6 +140,7 @@ async function fixture(
     boot,
     session,
     control,
+    release,
     secret,
     events,
     get builds() {
@@ -195,7 +198,7 @@ test('Git attachment and final capture are immutable, replayable and independent
       }),
     { code: 'workspace_attachment_conflict' },
   );
-  await f.app.ctx.sessions.release(f.source, f.control);
+  await f.app.ctx.sessions.release(f.source, f.release);
   const oldRow = await f.app.ctx.state.read(
     async (sql) =>
       (await sql.get<{ session_json: string }>(
@@ -412,7 +415,7 @@ test('workspace mode and exact reference base are pinned; read-only capture cann
     ...readonly.control,
     workspace: initial,
   });
-  await readonly.app.ctx.sessions.release(readonly.source, readonly.control);
+  await readonly.app.ctx.sessions.release(readonly.source, readonly.release);
   await assert.rejects(
     async () =>
       await readonly.app.ctx.sessions.workspaceResult(readonly.source, {
@@ -486,7 +489,7 @@ test('workspace reports reject malformed object graphs before invoking getters a
       await f.app.ctx.sessions.workspaceResult(f.source, { ...f.control, workspace: workspace() }),
     { code: 'session_not_started' },
   );
-  await f.app.ctx.sessions.release(f.source, f.control);
+  await f.app.ctx.sessions.release(f.source, f.release);
   rejectedType = 'session.workspace_result';
   await assert.rejects(
     async () =>
@@ -554,7 +557,7 @@ test('HTTP summary preserves declared workspace mode before attachment and after
     assert.equal(offered.workspaceMode, policy.mode);
     assert.equal(offered.workspace, undefined);
     if (policy.mode !== 'none') {
-      await f.app.ctx.sessions.release(f.source, { ...f.control, outcome: 'workspace_failed' });
+      await f.app.ctx.sessions.release(f.source, { ...f.release, outcome: 'workspace_failed' });
       const failed = await summary();
       assert.equal(failed.status, 'released');
       assert.equal(failed.outcome, 'workspace_failed');

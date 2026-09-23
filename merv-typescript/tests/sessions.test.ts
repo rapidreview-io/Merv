@@ -1383,19 +1383,41 @@ test('session reads and controls retain the original controlling source', async 
         { session, token } = await f.offer();
       await f.sessions.authenticate(token);
       const caller = { ...f.owner };
-      const control = { sessionId: session.id, runnerId: 'runner', hostRef: 'host' };
+      const control = { sessionId: session.id, runnerId: 'runner' };
       const pending =
         method === 'list'
           ? f.sessions.list(caller)
           : method === 'get'
             ? f.sessions.get(caller, session.id)
-            : f.sessions[method](caller, control);
+            : method === 'attach'
+              ? f.sessions.attach(caller, { ...control, hostRef: 'host' })
+              : f.sessions[method](caller, control);
       Object.assign(caller, f.source);
       if (method === 'list') assert.deepEqual(await pending, []);
       else await assert.rejects(pending, { code: 'session_forbidden' });
       assert.equal((await f.sessions.get(f.source, session.id)).status, 'active');
     });
   }
+});
+
+test('every session control names its runner and nothing else, and only that runner controls it', async (t) => {
+  const f = await fixture(t),
+    { session, token } = await f.offer();
+  await f.sessions.authenticate(token);
+  for (const method of ['attach', 'heartbeat', 'release'] as const) {
+    const host = method === 'attach' ? { hostRef: 'host' } : {};
+    for (const [control, code] of [
+      [{ sessionId: session.id }, 'invalid_session_control'],
+      [{ sessionId: session.id, runnerId: 'runner', extra: true }, 'invalid_session_control'],
+      [{ sessionId: session.id, runnerId: 'other' }, 'session_forbidden'],
+    ] as const)
+      await assert.rejects(
+        async () => await f.sessions[method](f.source, { ...control, ...host } as never),
+        { code },
+        method,
+      );
+  }
+  assert.equal((await f.sessions.get(f.source, session.id)).status, 'active');
 });
 
 test('release retains its validated reason, outcome and session while pending', async (t) => {

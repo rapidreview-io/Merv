@@ -20,8 +20,6 @@ import {
   codeCommandControlSchema,
   codeTransportInputSchema,
   CODE_PART_MAX_BYTES,
-  sessionUsageReportSchema,
-  sessionWorkspaceSchema,
   plain,
   type Caller,
   type Principal,
@@ -190,144 +188,10 @@ const createKeyInput = z
   .strict();
 const rotateKeyInput = z.object({ expiresAt: keyExpiry }).strict();
 
-const sessionOfferInput = z
-  .object({
-    agentId: nonblank.optional(),
-    instanceId: nonblank,
-    expectedRevision: z.number().int().nonnegative(),
-    runnerId: nonblank,
-    requestId: z.string().trim().min(1).max(256),
-    secret: z
-      .string()
-      .regex(
-        /^ms_[A-Za-z0-9_-]{43}$/,
-        'A session secret is ms_ followed by 43 base64url characters',
-      ),
-    hardDeadlineSeconds: z.number().int().positive().optional(),
-  })
-  .strict();
-const agentRegistrationInput = z
-  .object({
-    name: nonblank,
-    runnerId: nonblank,
-    requestId: nonblank,
-    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
-  })
-  .strict();
-const agentAssignmentInput = sessionOfferInput.omit({
-  agentId: true,
-  runnerId: true,
-  secret: true,
-});
+// Sessions parses every other session body. These two unwrap the one field a method takes, and
+// a project halt refuses a body sessionId, which would halt one session and leave dispatch on.
 const agentReleaseInput = z.object({ executionId: nonblank }).strict();
 const agentResetInput = z.object({ reason: nonblank }).strict();
-const sessionAttachInput = z
-  .object({ runnerId: nonblank, hostRef: nonblank, workspace: sessionWorkspaceSchema.optional() })
-  .strict();
-const sessionWorkspaceResultInput = z
-  .object({ runnerId: nonblank, hostRef: nonblank, workspace: sessionWorkspaceSchema })
-  .strict();
-const sessionHeartbeatInput = z.object({ runnerId: nonblank }).strict();
-const sessionReleaseInput = z
-  .object({
-    runnerId: nonblank,
-    reason: nonblank.optional(),
-    outcome: z
-      .enum([
-        'completed',
-        'host_failed',
-        'launch_failed',
-        'workspace_failed',
-        'preparation_deferred',
-        'crash_loop',
-      ])
-      .optional(),
-    /** Required with a deferred preparation; Sessions refuses one with every other outcome. */
-    deferral: z
-      .object({
-        cause: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-        code: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
-      })
-      .strict()
-      .optional(),
-    usage: sessionUsageReportSchema.optional(),
-  })
-  .strict();
-const runnerText = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value && !value.includes('\0'));
-const runnerPlatform = z
-  .object({
-    name: runnerText,
-    harness: z.enum([
-      'codex',
-      'claude',
-      'gemini',
-      'cursor',
-      'opencode',
-      'copilot',
-      'qwen',
-      'hermes',
-      'command',
-    ]),
-    model: runnerText.optional(),
-    effort: runnerText.optional(),
-  })
-  .strict();
-const sessionLeaseInput = z
-  .object({
-    runnerId: runnerText,
-    requestId: nonblank,
-    secret: z.string().regex(/^ms_[A-Za-z0-9_-]{43}$/),
-    platform: runnerPlatform,
-    hardDeadlineSeconds: z.number().int().positive().optional(),
-  })
-  .strict();
-const runnerHeartbeatInput = z
-  .object({
-    runnerId: runnerText,
-    machine: z
-      .object({ hostname: runnerText, system: runnerText, architecture: runnerText })
-      .strict(),
-    platforms: z
-      .array(
-        runnerPlatform
-          .extend({ parallelism: z.number().int().min(1).max(32), enabled: z.boolean() })
-          .strict(),
-      )
-      .max(32),
-    capacity: z.number().int().min(0).max(256),
-    appliedVersion: z.number().int().nonnegative().optional(),
-    capabilities: z
-      .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
-      .max(16)
-      .optional(),
-  })
-  .strict();
-const runnerSettingsInput = z
-  .object({
-    settings: z
-      .object({
-        platforms: z
-          .array(
-            z
-              .object({
-                name: runnerText,
-                enabled: z.boolean(),
-                model: runnerText.optional(),
-                effort: runnerText.optional(),
-                parallelism: z.number().int().min(1).max(32),
-              })
-              .strict(),
-          )
-          .max(32),
-      })
-      .strict(),
-  })
-  .strict();
-const dispatchInput = z.object({ enabled: z.boolean() }).strict();
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
 
 type ApiPrincipal = Principal | { kind: 'session'; caller: Caller };
@@ -344,6 +208,13 @@ function keyQuery(params: URLSearchParams, allowProject = false): string | undef
   const projectId = params.get('projectId');
   if (projectId === null) return undefined;
   return parseInput(keyProject, projectId);
+}
+
+/** Sessions parses its own bodies; the path's identifier is bound over the body's. */
+function bound(body: unknown, key: string, value: string): unknown {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
+  if (Object.hasOwn(body, key)) throw new ApiError('invalid_input', `${key} is bound by the path`);
+  return { ...body, [key]: value };
 }
 
 function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
@@ -707,9 +578,7 @@ export class ApiServer {
       if (req.method === 'POST') {
         const body = await readJson(req, this.maxBodyBytes);
         if (path === '/sessions/self/assignment') {
-          json(res, 200, {
-            execution: await provider.assignAgent(token, parseInput(agentAssignmentInput, body)),
-          });
+          json(res, 200, { execution: await provider.assignAgent(token, body) });
           return;
         }
         if (path === '/sessions/self/release') {
@@ -944,10 +813,7 @@ export class ApiServer {
             return;
           }
           if (req.method === 'POST') {
-            const input = parseInput(
-              agentRegistrationInput,
-              await readJson(req, this.maxBodyBytes),
-            );
+            const input = await readJson(req, this.maxBodyBytes);
             json(res, 200, {
               agent: await this.sessionProvider().registerAgent(sourceCaller, input),
             });
@@ -984,27 +850,26 @@ export class ApiServer {
           json(res, 200, await this.sessionProvider().projectStatus(sourceCaller));
           return;
         }
+        // Sessions parses each body and requires admin where it commits.
         if (path === '/sessions/dispatch' && req.method === 'PUT') {
-          await this.scope.require(sourceCaller, 'admin');
-          const input = parseInput(dispatchInput, await readJson(req, this.maxBodyBytes));
+          const input = await readJson(req, this.maxBodyBytes);
           json(res, 200, {
             dispatch: await this.sessionProvider().setDispatch(sourceCaller, input),
           });
           return;
         }
         if (path === '/sessions/halt' && req.method === 'POST') {
-          await this.scope.require(sourceCaller, 'admin');
           const input = parseInput(haltInput, await readJson(req, this.maxBodyBytes));
           json(res, 200, await this.sessionProvider().halt(sourceCaller, input));
           return;
         }
         if (path === '/sessions/lease' && req.method === 'POST') {
-          const input = parseInput(sessionLeaseInput, await readJson(req, this.maxBodyBytes));
+          const input = await readJson(req, this.maxBodyBytes);
           json(res, 200, await this.sessionProvider().lease(sourceCaller, input));
           return;
         }
         if (path === '/sessions/runners/heartbeat' && req.method === 'POST') {
-          const input = parseInput(runnerHeartbeatInput, await readJson(req, this.maxBodyBytes));
+          const input = await readJson(req, this.maxBodyBytes);
           json(res, 200, {
             runner: await this.sessionProvider().heartbeatRunner(sourceCaller, input),
           });
@@ -1012,13 +877,12 @@ export class ApiServer {
         }
         const settingsRoute = /^\/sessions\/runners\/([^/]+)\/settings$/.exec(path);
         if (settingsRoute && req.method === 'PUT') {
-          await this.scope.require(sourceCaller, 'admin');
-          const input = parseInput(runnerSettingsInput, await readJson(req, this.maxBodyBytes));
+          const body = await readJson(req, this.maxBodyBytes);
           json(res, 200, {
-            runner: await this.sessionProvider().setRunnerSettings(sourceCaller, {
-              runnerId: pathSegment(settingsRoute[1]!),
-              ...input,
-            }),
+            runner: await this.sessionProvider().setRunnerSettings(
+              sourceCaller,
+              bound(body, 'runnerId', pathSegment(settingsRoute[1]!)),
+            ),
           });
           return;
         }
@@ -1027,7 +891,7 @@ export class ApiServer {
           return;
         }
         if (path === '/sessions/offer' && req.method === 'POST') {
-          const input = parseInput(sessionOfferInput, await readJson(req, this.maxBodyBytes));
+          const input = await readJson(req, this.maxBodyBytes);
           json(res, 200, { session: await this.sessionProvider().offer(sourceCaller, input) });
           return;
         }
@@ -1042,7 +906,6 @@ export class ApiServer {
             return;
           }
           if (req.method === 'POST' && route[2] === 'halt') {
-            await this.scope.require(sourceCaller, 'admin');
             const input = parseInput(haltInput, await readJson(req, this.maxBodyBytes));
             json(
               res,
@@ -1052,28 +915,16 @@ export class ApiServer {
             return;
           }
           if (req.method === 'POST' && route[2]) {
-            const body = await readJson(req, this.maxBodyBytes);
+            const input = bound(await readJson(req, this.maxBodyBytes), 'sessionId', sessionId);
             const provider = this.sessionProvider();
             const session =
               route[2] === 'attach'
-                ? await provider.attach(sourceCaller, {
-                    sessionId,
-                    ...parseInput(sessionAttachInput, body),
-                  })
+                ? await provider.attach(sourceCaller, input)
                 : route[2] === 'workspace-result'
-                  ? await provider.workspaceResult(sourceCaller, {
-                      sessionId,
-                      ...parseInput(sessionWorkspaceResultInput, body),
-                    })
+                  ? await provider.workspaceResult(sourceCaller, input)
                   : route[2] === 'heartbeat'
-                    ? await provider.heartbeat(sourceCaller, {
-                        sessionId,
-                        ...parseInput(sessionHeartbeatInput, body),
-                      })
-                    : await provider.release(sourceCaller, {
-                        sessionId,
-                        ...parseInput(sessionReleaseInput, body),
-                      });
+                    ? await provider.heartbeat(sourceCaller, input)
+                    : await provider.release(sourceCaller, input);
             json(res, 200, { session });
             return;
           }

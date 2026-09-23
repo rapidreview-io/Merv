@@ -2,7 +2,7 @@ import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import { check, effectiveWorkspace, MervError } from '@merv/contracts';
+import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 
 const text = z
@@ -467,7 +467,7 @@ export function buildLaunch(
 ): LaunchSpec {
   check(profile.enabled, 'runner_profile_disabled', 'Runner profile is disabled');
   check(
-    /^ms_[A-Za-z0-9_-]{43}$/.test(request.secret),
+    sessionSecretPattern.test(request.secret),
     'invalid_runner_launch',
     'A session credential is required',
   );
