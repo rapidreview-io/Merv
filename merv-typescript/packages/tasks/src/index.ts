@@ -495,16 +495,10 @@ export class TaskService implements Tasks {
     context: WorkflowCheckContext & { source: Caller; leaseId: string },
   ): Promise<Data> {
     const { caller, source, snapshot, tx, leaseId } = context;
-    const role = await this.leaseRole({ ...context, caller: source });
-    check(
-      caller.session?.id === leaseId && caller.projectId === source.projectId,
-      'invalid_lease',
-      'Worker does not match the offered lease',
-      403,
-    );
-    await this.scope.require(caller, role === 'reviewer' ? 'review' : 'write', tx);
+    // workflows.offerLease ran lease.role(source) in this transaction just before this hook,
+    // matched the worker's role to it and checked worker.session.id === leaseId.
     const row = await this.row(tx, caller, snapshot.id);
-    const purpose = role === 'reviewer' ? 'review' : 'work';
+    const purpose = snapshot.state === 'in_review' ? 'review' : 'work';
     // The base is fixed with the lease it serves: Workflows reads references() right after
     // this hook in the same transaction, and a refused offer takes the pin back with it.
     if (purpose === 'work' && derivedBase(snapshot.version)) {

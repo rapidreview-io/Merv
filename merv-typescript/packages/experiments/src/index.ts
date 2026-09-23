@@ -1054,7 +1054,7 @@ export class ExperimentService implements Experiments {
       check(submission, 'stale_review', 'Review is not an experiment submission', 409);
       const action = this.route(submission.stage, input);
       return await this.command(caller, 'submit_review', input, tx, async () => {
-        await this.checkReview(caller, experiment, input, tx);
+        // The transition's guard runs checkReview before anything below is written.
         let conclusion: string | null = null;
         if (action === 'accept_results') {
           const report = this.one(submission.evidence, 'report');
@@ -1135,7 +1135,7 @@ export class ExperimentService implements Experiments {
           );
           // Every version records its success, so later work can take its base from it. The
           // reference is the one the submission stored: the review capture is read only while
-          // the experiment is under review, and checkReview has just verified it there.
+          // the experiment is under review, and the guard's checkReview has just verified it there.
           if (this.code)
             await this.code.acceptUnit(
               caller,

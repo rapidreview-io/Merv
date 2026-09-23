@@ -713,10 +713,11 @@ export class ReflectionService implements Reflections {
             'Each lens requires a different agent identity',
             403,
           );
+        // Reviews refuses a worker who wrote a lens or the synthesis (review_independence), and
+        // Workflows admits the worker through admit() right after this hook.
         const review =
           context.snapshot.state === 'in_review' && wave.review_id
-            ? (await this.independent(context.caller, wave, context.tx),
-              await this.reviews.start(context.caller, wave.review_id, context.tx))
+            ? await this.reviews.start(context.caller, wave.review_id, context.tx)
             : null;
         const inputs = await this.inputs({ ...context, caller: context.source });
         if (review) inputs.assessment = { text: JSON.stringify(review) };
@@ -751,7 +752,7 @@ export class ReflectionService implements Reflections {
         const lease = await this.lease(context);
         checkReceipt(lease, receipt, 'Reflection lease receipt changed');
         if (lease.review_id) {
-          await this.independent(context.caller, (await this.current(context)).wave, context.tx);
+          // checkSubmit refuses a reviewer who is not independent of the reviewed work.
           const review = await this.reviews.checkSubmit(
             context.caller,
             lease.review_id,
@@ -1243,8 +1244,8 @@ export class ReflectionService implements Reflections {
         `Expected revision ${input.expectedRevision}, found ${snapshot.revision}`,
         409,
       );
+      // admit() also checks the reviewer's independence.
       await this.admit({ caller, snapshot, tx });
-      await this.independent(caller, wave, tx);
       const route = input.verdict === 'pass' ? 'approved' : (input.returnTo ?? 'synthesizing');
       check(
         input.verdict === 'pass'
