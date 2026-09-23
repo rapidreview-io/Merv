@@ -4,7 +4,9 @@ The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
 Neither Fleet nor chat depends on the research workflow. Hosted execution is
-disabled; no release milestone or provider acceptance gate has passed.
+disabled. Local managed Codex acceptance and the first Cloudflare platform
+canary have passed; full protected Cloudflare launch and three-VM acceptance
+remain pending.
 
 ## Implemented locally
 
@@ -91,6 +93,32 @@ startup, root-owned protected workspace parents, and UID 12001 Git handoff.
 A read-only live Cloudflare API check verified the application response and the
 terminal pagination shape; it did not verify a running protected instance.
 
+The complete amd64 hosted Codex image was subsequently built and pushed to a
+dedicated Cloudflare application, leaving the existing bridge unchanged. Its
+registry manifest identifies the exact locally built image. The application is
+pinned to digest
+`sha256:5e95a293042768d070bb59684179f95703bd06e6e951cd8331dd84c4c04a30d5`.
+
+On 2026-09-23, Merv Sandboxes created `sbx_ngnfd4ak` in the independent
+`fleet-cloudflare-canary` account with a one-VM limit, a ten-minute lease and a
+$0.10 monthly compute budget. The VM became ready and ran the bounded platform
+probe successfully. Root could mount the required private tmpfs with
+`nosuid,nodev,noexec`; the ordinary sandbox user had UID 1000 and no effective
+capabilities. The native Cloudflare verifier independently matched that exact
+running instance, application version and image digest. Merv then confirmed
+`stopped`, the provider confirmed `absent`, a separate native inventory was
+empty, and the temporary API grant was revoked. No model or Merv runtime
+credential was delivered to this VM. Evidence is in
+`output/fleet-cloudflare-canary/successful-result.json`,
+`native-verification.json` and `native-cleanup.json` beside it.
+
+This ordinary-mode probe establishes platform capability and image provenance.
+It does not establish protected startup, assignment UID 12001 isolation, managed
+enrollment or real work execution on Cloudflare. Those remain acceptance gates.
+The image now fails protected startup if its trusted bootstrap fails or private
+tmpfs cannot be established; five local entrypoint tests and the ordinary image
+smoke passed, alongside 27 focused provider/launch tests.
+
 ## Fleet v1 implementation in progress
 
 - `@merv/fleet` now owns one PostgreSQL allocation table, stable requests, capacity
@@ -128,6 +156,14 @@ double in that run. The workflow adapter currently relies on actual claim/demand
 changes and bounded empty-worker retirement; it does not predict external
 runners' spare capacity.
 
+The same integration now covers three concurrent managed workers, distinct
+claims, one lost launch reply recovered without another create or launch,
+provider-confirmed cleanup, and a coexisting external runner. All five workflow
+tests passed, as did TypeScript typecheck. The provider remains a test double in
+this integration; this is not the three-VM Cloudflare acceptance. Deployment
+supports `MERV_FLEET_WORKFLOW_MAX_AGENTS`, defaulting to one, so the pilot can
+raise concurrency explicitly after the single-worker gate passes.
+
 Ten Fleet PostgreSQL tests passed, including global/project capacity contention,
 lost-reply recovery, source revocation, cancellation during bootstrap, drain and
 provider-confirmed release. Stable observations, including revision-only tunnel
@@ -144,15 +180,20 @@ passed 53 tests. These runs overlap and are not an aggregate suite count.
 2. Pilot Pi only after Fleet acceptance, within the separate read-only and
    conversational-write gates in the proposal.
 
-The attempted credential-free Cloudflare capability canary stopped before
-provisioning: automatic approval review rejected creating a sandbox API bearer
-token in the dedicated test namespace. The deployed CLI has no signed-in
-session. No token file, VM, deployment or service change resulted. Explicit
-approval for that test credential is needed before this route can proceed;
-the provided OpenAI key is not the blocker. The canary will check actual tmpfs
-and OS isolation, retain non-secret evidence, destroy its VM, confirm native
-termination, and revoke the test credential. See
-`output/fleet-cloudflare-canary/report.md` for the current evidence.
+The user approved the test credential after the initial automatic approval
+rejection, and the platform canary above completed. A separate attempt against
+the existing `dev` account was rejected by its spending suspension; that account
+and its safeguards were left unchanged. The dedicated Fleet account uses its
+own newly created bridge credential and spending controls.
+
+The next deployment needs an operator-owned `cloudflare-fleet` provider and a
+dedicated Cloudflare native API credential. The local Wrangler OAuth login can
+verify instances but receives HTTP 403 from account-token management endpoints;
+the available browser is signed out. Dashboard sign-in has been requested while
+deployment and protected acceptance scripts are prepared. No further approval
+is pending. The developer OAuth credential will not be installed on the server.
+The provided OpenAI key is not the blocker. See
+`output/fleet-cloudflare-canary/report.md` for the retained evidence.
 
 Enrollment is deliberately short-lived (15 minutes, bounded by the allocation
 deadline). A prolonged uncertain launch can exhaust that window; it must retire
@@ -161,7 +202,8 @@ currently bounds that recovery by the allocation deadline.
 
 Sandbox work is in `output/fleet-sandboxes` on `codex/fleet-runtime-bootstrap`,
 cloned from sandbox commit `c7b9582`, now merged with deployed sandbox commit
-`0d64e2f8`. The latest checkpoint is `4369915`, following `07b25e0` and merge
+`0d64e2f8`. The latest checkpoint is `e17907f`, following `4369915`, `07b25e0` and merge
 `e14b89d`; the incremental backup is
 `output/fleet-runtime-bootstrap.bundle`. The sibling sandbox checkout was left
-untouched, and nothing was pushed or deployed.
+untouched. The dedicated Cloudflare image and bridge were deployed; the shared
+sandbox control services and production Merv deployment have not been changed.
