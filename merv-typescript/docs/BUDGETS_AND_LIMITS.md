@@ -16,11 +16,11 @@ limits: [{ name: 'review_rounds', from: 'in_review', actions: ['revise'], max: 3
 `max` is the number of times the named edges leaving `from` may be traversed by one
 instance, summed over the actions. An edge belongs to at most one limit. A limit may not
 cover a self-edge, an edge out of a terminal state, or an action name the engine writes
-into history itself (such as `upgrade`).
+into history itself (`start`, `add_dependencies`, `replan_dependencies`).
 
 The cap is **policy, not definition**. The graph JSON is fingerprinted and pinned per
-version, so a cap written there would force a new version and an upgrade of every live
-instance for a number operators need to tune. A limit on the policy governs every live
+version, so a cap written there would force a new version, which no live instance ever
+moves to, for a number operators need to tune. A limit on the policy governs every live
 instance of every registered version at once, and the engine counts from the `wf_history`
 rows it already writes, so there is no counter to keep in step. The consequence is
 deliberate and worth knowing before a deploy: **lowering a cap escalates live instances

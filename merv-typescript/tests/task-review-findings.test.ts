@@ -283,71 +283,46 @@ test('task review preflight and commit reject inconsistent findings without chan
 test('reissue and revoked-review recovery preserve the pinned verdict format and fence old claims', async () => {
   const f = await fixture();
   try {
-    for (const version of [1, 2] as const) {
-      const request = f.app.ctx.reviews.request.bind(f.app.ctx.reviews);
-      // Simulate the previous Task release's generic request contract, without rewriting stored rows.
-      f.app.ctx.reviews.request = async (caller, input, tx) =>
-        await request(caller, { ...input, formatVersion: version }, tx);
-      const { task, review } = await f.pending();
-      f.app.ctx.reviews.request = request;
-      const input = await f.claim(review.id, task.workflow.revision);
-      const next = await f.app.ctx.tasks.reissueReview(f.producer.caller, {
-        taskId: task.id,
-        expectedRevision: task.workflow.revision,
-        reason: 'Replacement reviewer needed.',
-        requestId: `reissue-${version}`,
-      });
-      const replacement = await f.app.ctx.reviews.get(f.operator, next.reviewId!);
-      assert.equal(replacement.formatVersion, version);
-      assert.deepEqual(replacement.artifactIds, review.artifactIds);
-      await assert.rejects(
-        async () => await f.app.ctx.tasks.submitReview(f.reviewer.caller, input),
-        {
-          code: 'stale_review',
-        },
-      );
-      const nextInput = await f.claim(replacement.id, next.workflow.revision);
-      if (version === 1) {
-        delete nextInput.synopsis;
-        delete nextInput.findings;
-        delete nextInput.evidence;
-        const guidance = await f.app.ctx.workflows.evaluate(f.reviewer.caller, task.id);
-        assert.deepEqual(
-          guidance.actions.find((action) => action.action === 'submit_review')?.requiredInput,
-          ['verdict', 'notes'],
-        );
-        assert.equal(
-          (await f.app.ctx.tasks.submitReview(f.reviewer.caller, nextInput)).workflow.data.outcome,
-          nextInput.notes,
-        );
-      } else {
-        await f.app.ctx.scope.revokeActor(f.operator, f.reviewer.caller.actorId);
-        await f.app.ctx.domainEvents.drain();
-        const recovered = await f.app.ctx.reviews.get(f.operator, replacement.id);
-        assert.equal(recovered.formatVersion, 2);
-        assert.equal(recovered.status, 'requested');
-        assert.equal(recovered.snapshotHash, replacement.snapshotHash);
-        const newClaim = await f.app.ctx.reviews.start(f.reviewer2.caller, replacement.id);
-        assert.notEqual(newClaim.claimId, nextInput.claimId);
-        const withNewClaim = {
-          ...nextInput,
-          claimId: newClaim.claimId!,
-          requestId: 'recovered-verdict',
-        };
-        await assert.rejects(
-          async () =>
-            await f.app.ctx.tasks.submitReview(f.reviewer2.caller, {
-              ...withNewClaim,
-              claimId: nextInput.claimId,
-            }),
-          { code: 'stale_claim' },
-        );
-        assert.equal(
-          (await f.app.ctx.tasks.submitReview(f.reviewer2.caller, withNewClaim)).workflow.state,
-          'done',
-        );
-      }
-    }
+    const { task, review } = await f.pending();
+    const input = await f.claim(review.id, task.workflow.revision);
+    const next = await f.app.ctx.tasks.reissueReview(f.producer.caller, {
+      taskId: task.id,
+      expectedRevision: task.workflow.revision,
+      reason: 'Replacement reviewer needed.',
+      requestId: 'reissue',
+    });
+    const replacement = await f.app.ctx.reviews.get(f.operator, next.reviewId!);
+    assert.equal(replacement.formatVersion, 2);
+    assert.deepEqual(replacement.artifactIds, review.artifactIds);
+    await assert.rejects(async () => await f.app.ctx.tasks.submitReview(f.reviewer.caller, input), {
+      code: 'stale_review',
+    });
+    const nextInput = await f.claim(replacement.id, next.workflow.revision);
+    await f.app.ctx.scope.revokeActor(f.operator, f.reviewer.caller.actorId);
+    await f.app.ctx.domainEvents.drain();
+    const recovered = await f.app.ctx.reviews.get(f.operator, replacement.id);
+    assert.equal(recovered.formatVersion, 2);
+    assert.equal(recovered.status, 'requested');
+    assert.equal(recovered.snapshotHash, replacement.snapshotHash);
+    const newClaim = await f.app.ctx.reviews.start(f.reviewer2.caller, replacement.id);
+    assert.notEqual(newClaim.claimId, nextInput.claimId);
+    const withNewClaim = {
+      ...nextInput,
+      claimId: newClaim.claimId!,
+      requestId: 'recovered-verdict',
+    };
+    await assert.rejects(
+      async () =>
+        await f.app.ctx.tasks.submitReview(f.reviewer2.caller, {
+          ...withNewClaim,
+          claimId: nextInput.claimId,
+        }),
+      { code: 'stale_claim' },
+    );
+    assert.equal(
+      (await f.app.ctx.tasks.submitReview(f.reviewer2.caller, withNewClaim)).workflow.state,
+      'done',
+    );
   } finally {
     await f.close();
   }

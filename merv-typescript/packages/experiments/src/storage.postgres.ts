@@ -1,3 +1,10 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
+const retired = '(SELECT id FROM wf_retired_instances)';
+/** Deletes one table's rows of retired experiments past its no-delete guard. */
+const purge = (table: string, trigger: string, where = `experiment_id IN ${retired}`) =>
+  withoutTriggers(table, [trigger], `DELETE FROM ${table} WHERE ${where};`);
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -138,5 +145,26 @@ END;
 $merv$;
 CREATE TRIGGER experiment_workspace_immutable BEFORE UPDATE OF workspace ON experiments
 FOR EACH ROW EXECUTE FUNCTION experiment_workspace_immutable_guard();
+`,
+  // Retires experiment@1-4: their records go, the graph evidence role with them. The pinned
+  // definitions and policies stay in Workflows, and the events log keeps their history.
+  4: `
+${retiredInstancesSql}
+DELETE FROM experiment_slots WHERE experiment_id IN ${retired};
+${purge('experiment_evidence', 'experiment_evidence_no_delete')}
+${purge('experiment_submissions', 'experiment_submission_no_delete')}
+${purge('experiment_attempts', 'experiment_attempt_no_delete')}
+${purge(
+  'experiment_commands',
+  'experiment_command_no_delete',
+  `(result::jsonb->>'id') IN ${retired} OR (result::jsonb->>'experimentId') IN ${retired}`,
+)}
+${purge('experiments', 'experiments_no_delete', `id IN ${retired}`)}
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM experiment_evidence WHERE role='graph') THEN
+    RAISE EXCEPTION USING MESSAGE = 'Graph evidence outlived experiment@1-4', ERRCODE = '23514';
+  END IF;
+END $check$;
 `,
 };

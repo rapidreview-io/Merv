@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -141,4 +143,20 @@ FOR EACH ROW EXECUTE FUNCTION reviews_required_immutable_guard();
   END; $$;
   CREATE TRIGGER reviews_certificate_immutable BEFORE UPDATE OF provenance_json ON reviews
     FOR EACH ROW EXECUTE FUNCTION reviews_certificate_immutable_guard();`,
+  // Deletes the reviews of retired workflow instances. Format 1 was reached only by omission and
+  // is retired with them, so none may remain.
+  10: `${retiredInstancesSql}
+DELETE FROM review_commands WHERE result::jsonb->>'id' IN
+  (SELECT id FROM reviews WHERE subject_id IN (SELECT id FROM wf_retired_instances));
+${withoutTriggers(
+  'reviews',
+  ['reviews_no_delete'],
+  `DELETE FROM reviews WHERE subject_id IN (SELECT id FROM wf_retired_instances);`,
+)}
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM reviews WHERE format_version=1) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Format 1 reviews remain', ERRCODE = '23514';
+  END IF;
+END $check$;`,
 };

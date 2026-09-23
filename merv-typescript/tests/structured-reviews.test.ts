@@ -50,17 +50,16 @@ async function fixture(schemaVersion = Infinity) {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   state.migrate = migrate;
   let sequence = 0;
-  const input = (formatVersion: 1 | 2 = 2): ReviewInput => ({
+  const input = (): ReviewInput => ({
     subjectId: `subject-${++sequence}`,
     subjectRevision: 2,
     producerId: producer.actorId,
     criteria: ['Adds positive inputs.', 'Handles negative inputs.'],
     artifactIds: [proof.id],
-    formatVersion,
+    formatVersion: 2,
     requestId: `request-${sequence}`,
   });
-  const request = async (formatVersion: 1 | 2 = 2) =>
-    await reviews.request(producer, input(formatVersion));
+  const request = async () => await reviews.request(producer, input());
   const submit = (review: ReviewRequest): ReviewSubmit => ({
     reviewId: review.id,
     claimId: review.claimId!,
@@ -454,18 +453,13 @@ test('revoking a reviewer preserves the v2 snapshot while replacement claims fen
   }
 });
 
-test('legacy review requests keep their snapshot hashes and optional assessment fields, while v2 is explicit and immutable', async () => {
+test('a request that omits formatVersion is format 2, pinned in its snapshot, and no other format is accepted', async () => {
   const f = await fixture();
   try {
-    const input = f.input(1);
+    const input = f.input();
     delete input.formatVersion;
-    const legacy = await f.reviews.request(f.producer, input);
+    const omitted = await f.reviews.request(f.producer, input);
     const explicit = await f.reviews.request(f.producer, {
-      ...input,
-      formatVersion: 1,
-      requestId: 'explicit-1',
-    });
-    const structured = await f.reviews.request(f.producer, {
       ...input,
       formatVersion: 2,
       requestId: 'explicit-2',
@@ -477,20 +471,18 @@ test('legacy review requests keep their snapshot hashes and optional assessment 
       criteria: input.criteria,
       manifest: [f.proof],
     };
-    assert.equal(legacy.snapshotHash, digest(snapshot));
-    assert.equal(explicit.snapshotHash, legacy.snapshotHash);
-    assert.equal(structured.snapshotHash, digest({ ...snapshot, formatVersion: 2 }));
-    assert.notEqual(structured.snapshotHash, legacy.snapshotHash);
+    assert.equal(omitted.formatVersion, 2);
+    assert.equal(omitted.snapshotHash, digest({ ...snapshot, formatVersion: 2 }));
+    assert.equal(explicit.snapshotHash, omitted.snapshotHash);
     await assert.rejects(
       async () =>
         await f.state.transaction(
-          async (tx) =>
-            await tx.run('UPDATE reviews SET format_version=1 WHERE id=?', structured.id),
+          async (tx) => await tx.run('UPDATE reviews SET format_version=1 WHERE id=?', omitted.id),
         ),
       { code: 'state_constraint' },
     );
     const before = await f.durable();
-    for (const formatVersion of [null, 0, 3, '2']) {
+    for (const formatVersion of [null, 0, 1, 3, '2']) {
       await assert.rejects(
         async () =>
           await f.reviews.request(f.producer, {
@@ -502,189 +494,62 @@ test('legacy review requests keep their snapshot hashes and optional assessment 
       );
       assert.deepEqual(await f.durable(), before);
     }
-    const claim = await f.reviews.start(f.reviewer, legacy.id);
-    const result = await f.reviews.submit(f.reviewer, {
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: 'pass',
-      notes: 'Legacy assessment.',
-      requestId: 'legacy-submit',
-    });
-    assert.equal(result.formatVersion, 1);
-    assert.equal(result.synopsis, null);
-    assert.deepEqual(result.findings, []);
-    assert.deepEqual(result.evidence, {});
-    const optionalClaim = await f.reviews.start(f.reviewer, explicit.id),
-      optionalInput = f.submit(optionalClaim);
-    await assert.rejects(
-      async () => await f.reviews.submit(f.reviewer, { ...optionalInput, findings: [] }),
-      {
-        code: 'invalid_findings',
-      },
-    );
-    await assert.rejects(
-      async () => await f.reviews.submit(f.reviewer, { ...optionalInput, synopsis: 'Short.' }),
-      {
-        code: 'invalid_synopsis',
-      },
-    );
-    assert.equal((await f.reviews.submit(f.reviewer, optionalInput)).findings.length, 2);
+    // Omission never meant an optional assessment: the synopsis and findings are required.
+    const claim = await f.reviews.start(f.reviewer, omitted.id),
+      complete = f.submit(claim);
+    for (const [incomplete, code] of [
+      [{ ...complete, findings: undefined }, 'invalid_findings'],
+      [{ ...complete, synopsis: undefined }, 'invalid_synopsis'],
+    ] as const)
+      await assert.rejects(async () => await f.reviews.submit(f.reviewer, incomplete), { code });
+    assert.equal((await f.reviews.submit(f.reviewer, complete)).findings.length, 2);
   } finally {
     await f.close();
   }
 });
 
-test('a real pre-v4 database gains format defaults without rewriting immutable submitted records or legacy receipts', async () => {
-  const f = await fixture(3);
-  try {
-    const input = f.input(1);
-    delete input.formatVersion;
-    const snapshotHash = digest({
-      subjectId: input.subjectId,
-      subjectRevision: input.subjectRevision,
-      producerId: input.producerId,
-      criteria: input.criteria,
-      manifest: [f.proof],
-    });
-    const createdAt = '2026-01-01T00:00:00.000Z';
-    const ids = ['legacy-requested', 'legacy-started', 'legacy-submitted'];
-    const oldResults = ids.map((id, index) => ({
-      id,
-      projectId: f.producer.projectId,
-      subjectId: input.subjectId,
-      subjectRevision: input.subjectRevision,
-      producerId: f.producer.actorId,
-      artifactIds: input.artifactIds,
-      criteria: input.criteria,
-      snapshotHash,
-      status: ['requested', 'started', 'submitted'][index],
-      reviewerId: index > 0 ? f.reviewer.actorId : null,
-      claimId: index > 0 ? `claim-${id}` : null,
-      claimGeneration: index > 0 ? 1 : 0,
-      recovery: null,
-      verdict: index === 2 ? 'pass' : null,
-      notes: index === 2 ? 'Historical review.' : null,
-      createdAt,
-    }));
-    await f.state.transaction(async (tx) => {
-      for (const row of oldResults) {
+test('retiring format 1 deletes a format 1 review on a retired subject and refuses to start past any other', async () => {
+  for (const retired of [true, false]) {
+    const f = await fixture(9);
+    try {
+      // No current request can write format 1: it was the default when the field was omitted.
+      await f.state.transaction(async (tx) => {
         await tx.run(
-          `INSERT INTO reviews(id,project_id,subject_id,subject_revision,producer_id,artifact_ids,criteria,manifest,snapshot_hash,status,reviewer_id,claim_id,claim_generation,verdict,notes,created_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          row.id,
-          row.projectId,
-          row.subjectId,
-          row.subjectRevision,
-          row.producerId,
-          JSON.stringify(row.artifactIds),
-          JSON.stringify(row.criteria),
+          `INSERT INTO reviews(id,project_id,subject_id,subject_revision,producer_id,artifact_ids,criteria,manifest,snapshot_hash,status,created_at,format_version)
+           VALUES('format-1',?,'retired-subject',2,?,?,?,?,'hash','requested','2026-01-01T00:00:00.000Z',1)`,
+          f.producer.projectId,
+          f.producer.actorId,
+          JSON.stringify([f.proof.id]),
+          JSON.stringify(['Correct.']),
           JSON.stringify([f.proof]),
-          row.snapshotHash,
-          row.status,
-          row.reviewerId,
-          row.claimId,
-          row.claimGeneration,
-          row.verdict,
-          row.notes,
-          row.createdAt,
         );
-      }
-      await tx.run(
-        'INSERT INTO review_commands VALUES(?,?,?,?,?,?)',
-        f.producer.projectId,
-        f.producer.actorId,
-        input.requestId,
-        'request',
-        digest(input),
-        JSON.stringify(oldResults[0]),
-      );
-    });
-    const oldRows = await f.state.read(
-      async (sql) => await sql.all('SELECT * FROM reviews ORDER BY id'),
-    );
-    const oldCommands = await f.state.read(
-      async (sql) => await sql.all('SELECT * FROM review_commands'),
-    );
-    const reviews = await createService(new ReviewService(f.state, f.scope, f.artifacts));
-    const records = await reviews.list(f.reader);
-    assert.equal(records.length, 3);
-    for (const record of records) {
-      assert.equal(record.formatVersion, 1);
-      assert.equal(record.synopsis, null);
-      assert.deepEqual(record.findings, []);
-      assert.deepEqual(record.evidence, {});
-      assert.equal(record.administrativeActorId, f.producer.actorId);
-      assert.deepEqual(record.pinnedInputIds, []);
-      assert.equal(record.snapshotHash, snapshotHash);
-    }
-    const after = await f.state.read(
-      async (sql) => await sql.all('SELECT * FROM reviews ORDER BY id'),
-    );
-    assert.deepEqual(
-      after.map(
-        ({
-          format_version: _format,
-          synopsis: _synopsis,
-          findings_json: _findings,
-          evidence_json: _evidence,
-          administrative_actor_id: administrator,
-          pinned_input_ids: inputs,
-          return_to: returnTo,
-          excluded_actor_ids: exclusions,
-          required_criteria: required,
-          provenance_json: provenance,
-          ...row
-        }) => {
-          assert.equal(administrator, null);
-          assert.equal(inputs, '[]');
-          assert.equal(returnTo, null);
-          assert.equal(exclusions, null);
-          assert.equal(required, null);
-          assert.equal(provenance, null);
-          return row;
-        },
-      ),
-      oldRows.map((row) => ({ ...row })),
-    );
-    assert.deepEqual(
-      await f.state.read(async (sql) => await sql.all('SELECT * FROM review_commands')),
-      oldCommands,
-    );
-    assert.deepEqual(await reviews.request(f.producer, input), {
-      ...oldResults[0],
-      formatVersion: 1,
-      synopsis: null,
-      findings: [],
-      evidence: {},
-      administrativeActorId: f.producer.actorId,
-      pinnedInputIds: [],
-    });
-    await assert.rejects(
-      async () =>
-        await f.state.transaction(
-          async (tx) =>
-            await tx.run(
-              'UPDATE reviews SET synopsis=? WHERE id=?',
-              'Changed.',
-              'legacy-submitted',
-            ),
-        ),
-      { code: 'state_constraint' },
-    );
-    for (const id of ['legacy-requested', 'legacy-started']) {
-      const claim = await reviews.start(f.reviewer, id);
-      const result = await reviews.submit(f.reviewer, {
-        reviewId: id,
-        claimId: claim.claimId!,
-        verdict: 'pass',
-        notes: 'Completing the existing legacy contract.',
-        requestId: `submit-${id}`,
+        if (retired) {
+          await tx.run(
+            `CREATE TABLE wf_retired_instances (
+              id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workflow TEXT NOT NULL,
+              version BIGINT NOT NULL, reason TEXT NOT NULL)`,
+          );
+          await tx.run(
+            "INSERT INTO wf_retired_instances VALUES('retired-subject',?,'task',1,'retired_version')",
+            f.producer.projectId,
+          );
+        }
       });
-      assert.equal(result.formatVersion, 1);
-      assert.equal(result.status, 'submitted');
+      const formatOne = async () =>
+        await f.state.read(
+          async (sql) => await sql.all("SELECT id FROM reviews WHERE id='format-1'"),
+        );
+      const opening = createService(new ReviewService(f.state, f.scope, f.artifacts));
+      if (retired) {
+        (await opening).close();
+        assert.deepEqual(await formatOne(), []);
+      } else {
+        await assert.rejects(opening, { code: 'state_constraint' });
+        assert.equal((await formatOne()).length, 1);
+      }
+    } finally {
+      await f.close();
     }
-  } finally {
-    await f.close();
   }
 });
 
@@ -844,7 +709,7 @@ test('required criteria are immutable sorted provenance in the snapshot, returne
   }
 });
 
-test('required criteria must be distinct numbers of a format 2 review, supplied as ordinary data', async () => {
+test('required criteria must be distinct numbers of the review criteria, supplied as ordinary data', async () => {
   const f = await fixture();
   try {
     const before = await f.durable();
@@ -858,7 +723,6 @@ test('required criteria must be distinct numbers of a format 2 review, supplied 
       { ...f.input(), requiredCriteria: [1.5] },
       { ...f.input(), requiredCriteria: ['1'] as unknown as number[] },
       { ...f.input(), requiredCriteria: 1 as unknown as number[] },
-      { ...f.input(1), requiredCriteria: [1] },
       accessor,
     ])
       await assert.rejects(f.reviews.request(f.producer, input), {

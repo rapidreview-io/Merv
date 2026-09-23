@@ -9,12 +9,13 @@ No plugin or public tool is added.
 ## Review format and submission
 
 Each review request pins `formatVersion` with the producer, subject revision,
-criteria and artifact manifest. New reviews requested for task evidence version 2
-use review format 2. Existing reviews migrate to format 1 without changing their
-original snapshot hashes; reissuing a review preserves that review's format.
-A subsequent new task delivery can request a new format 2 review.
+criteria and artifact manifest. Format 2 is the only format, and a request that
+omits the field gets it. Format 1, which a verdict could satisfy without findings
+and which a request reached only by omitting the field, was retired on 2026-09-22:
+reviews migration 10 deleted the reviews of retired work items and fails closed if
+a format 1 review remains.
 
-Format 2 submission requires the existing verdict and notes plus:
+Submission requires the existing verdict and notes plus:
 
 - `synopsis`: a plain single paragraph of 40–420 characters explaining the overall
   verdict. No headings, backticks or internal entity IDs; use human names.
@@ -61,7 +62,7 @@ that the reviewer performed the checks or that its judgment is true.
 
 Some criteria are too important to the requesting domain to be waived. The
 domain service that requests the review may name them in `requiredCriteria`, a
-sorted list of criterion numbers on a format 2 review. A `pass` then needs each
+sorted list of criterion numbers. A `pass` then needs each
 of them `met`, which already needs retained evidence; `waived` is refused with
 `criterion_not_waivable`, and the way out is `needs_changes`. Other criteria on
 the same review stay waivable, and `needs_changes` and `fail` are unaffected.
@@ -100,8 +101,8 @@ command replay. Other domains may require a destination even for `fail`; the
 generic verdict does not imply a terminal state. Reviews records the route,
 while the domain validates and applies it through Workflows.
 
-`workflow.status_and_next` computes the required review input fields from the
-pinned review format. Preflight and actual submission check the same reviewer,
+`workflow.status_and_next` lists the required review input fields: verdict,
+notes, synopsis and findings. Preflight and actual submission check the same reviewer,
 claim, subject and supplied task revision as well as the assessment. The verdict,
 workflow transition/history, events and request receipts commit together. A failure
 in the final task event rolls the entire operation back.

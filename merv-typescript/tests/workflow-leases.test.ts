@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createService } from '@merv/contracts';
 import type {
   Caller,
   Data,
@@ -11,9 +12,14 @@ import type {
   TaskCheckpointInput,
   TaskContext,
   TaskDelivery,
+  WorkflowDefinition,
+  WorkflowPolicy,
 } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
 import type { Session } from '@merv/sessions/types';
+import { WorkflowsService } from '@merv/workflows';
 import { createApp } from './fixtures/app.js';
+import { openState } from './fixtures/state.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext) {
@@ -502,4 +508,187 @@ test('a non-Task program can reserve, activate and release through generic hooks
     ))!.released,
     1,
   );
+});
+
+/** The engine alone, with one program whose lease hooks the test controls. */
+async function engineFixture(t: TestContext) {
+  const state = await openState(':memory:');
+  const controls = { outputs: () => {} };
+  const scope = await createService(new ProjectScope(state));
+  const workflows = await createService(new WorkflowsService(state, scope));
+  t.after(async () => {
+    workflows.close();
+    await state.close();
+  });
+  const boot = await scope.bootstrap({ projectName: 'Lease inputs', actorName: 'Owner' });
+  const caller: Caller = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
+  const definition: WorkflowDefinition = {
+    name: 'lease-input-test',
+    version: 1,
+    initial: 'working',
+    states: ['working', 'done'],
+    terminal: ['done'],
+    edges: [{ from: 'working', action: 'finish', to: 'done' }],
+  };
+  const policy: WorkflowPolicy = {
+    actions: [
+      {
+        name: 'finish',
+        states: ['working'],
+        transitions: ['finish'],
+        tool: 'test.finish',
+        instruction: 'Finish.',
+        check: async () => {},
+      },
+    ],
+    assignments: [
+      {
+        state: 'working',
+        check: async ({ caller, tx }) => {
+          await scope.require(caller, 'write', tx);
+        },
+        build: async () => ({
+          role: 'producer',
+          label: 'Read evidence',
+          brief: 'Inspect available evidence.',
+          references: [],
+          handoff: { instruction: 'Finish.', tools: [] },
+          execution: { readOnly: false, tools: [] },
+          context: null,
+        }),
+        references: () => ({ artifacts: ['own-artifact'] }),
+        execution: {
+          readOnly: false,
+          tools: [
+            {
+              name: 'artifact.read',
+              alternatives: [{ artifactId: { kind: 'oneOf', name: 'artifacts' } }],
+            },
+          ],
+        },
+        lease: {
+          role: async (): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => 'producer',
+          acquire: async ({ leaseId }) => ({ leaseId }),
+          check: async (context, receipt) => {
+            assert.equal(receipt.leaseId, context.caller.session!.id);
+          },
+          release: async () => {},
+          outputs: () => {
+            controls.outputs();
+            return {};
+          },
+        },
+      },
+    ],
+  };
+  const handle = await workflows.register(definition, policy);
+  const instance = await handle.start(caller, { workflow: definition.name, requestId: 'start' });
+  const target = { instanceId: instance.id, expectedRevision: instance.revision };
+  // The execution is read for the target as it was called with, whatever the caller changes
+  // while the read is still running.
+  const requestedTarget = { ...target };
+  const pendingExecution = workflows.execution(caller, requestedTarget);
+  requestedTarget.expectedRevision = 99;
+  const execution = await pendingExecution;
+  return { state, scope, workflows, caller, instance, target, execution, controls };
+}
+
+test('dispatch authorization acts on a snapshot of its request', async (t) => {
+  const f = await engineFixture(t);
+  const request = {
+    ...f.target,
+    registrationId: f.execution.registrationId,
+    policyHash: f.execution.policyHash,
+    tool: 'artifact.read',
+    input: { artifactId: 'own-artifact' },
+    read: false,
+  };
+  const dispatching = f.workflows.authorizeDispatch(f.caller, request);
+  request.tool = 'undeclared.write';
+  request.read = true;
+  request.input.artifactId = 'changed';
+  assert.deepEqual(await dispatching, {
+    tool: 'artifact.read',
+    input: { artifactId: 'own-artifact' },
+  });
+});
+
+test('lease lifecycle calls act on a snapshot of their inputs and admit only declared reads', async (t) => {
+  const f = await engineFixture(t);
+  assert.ok(await f.workflows.assignment(f.caller, f.instance.id));
+  assert.equal((await f.workflows.dispatchCandidates(f.caller))[0]!.instanceId, f.instance.id);
+  const roleTarget = { ...f.target };
+  const selectingRole = f.workflows.leaseRole(f.caller, roleTarget);
+  roleTarget.expectedRevision = 99;
+  assert.equal(await selectingRole, 'producer');
+  const source = await f.scope.delegationSource(f.caller);
+  f.scope.registerSessionAuthority({ require: async () => source });
+  const actor = await f.state.transaction(
+    async (tx) =>
+      await f.scope.createSessionActor(
+        source,
+        {
+          sessionId: 'lease-test',
+          role: 'producer',
+          name: 'Worker',
+        },
+        tx,
+      ),
+  );
+  const worker: Caller = {
+    projectId: actor.projectId,
+    actorId: actor.id,
+    session: { id: 'lease-test' },
+  };
+  const offerTarget = { ...f.target, leaseId: 'lease-test' };
+  const offering = f.workflows.offerLease(f.caller, worker, offerTarget);
+  offerTarget.leaseId = 'changed';
+  offerTarget.instanceId = 'changed';
+  const offered = await offering;
+  const checkedLease = structuredClone(offered.lease);
+  const checking = f.workflows.checkLease(worker, checkedLease);
+  checkedLease.actorId = 'changed';
+  checkedLease.receipt.leaseId = 'changed';
+  assert.ok(await checking);
+  const activatedLease = structuredClone(offered.lease);
+  const activating = f.workflows.activateLease(worker, activatedLease);
+  activatedLease.instanceId = 'changed';
+  assert.ok(await activating);
+  assert.equal(
+    (
+      await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
+        tool: 'artifact.read',
+        input: { artifactId: 'own-artifact' },
+      })
+    ).input.artifactId,
+    'own-artifact',
+  );
+  await assert.rejects(
+    async () =>
+      await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
+        tool: 'artifact.read',
+        input: { artifactId: 'live-artifact' },
+      }),
+    { code: 'execution_arguments_forbidden' },
+  );
+  for (const change of ['policy', 'read classification']) {
+    const frozen = structuredClone(offered.execution);
+    const request = { tool: 'undeclared.write', input: {}, read: false };
+    f.controls.outputs = () => {
+      if (change === 'policy') frozen.policy.tools.push({ name: request.tool, alternatives: [{}] });
+      else request.read = true;
+    };
+    await assert.rejects(
+      () => f.workflows.authorizeLeaseDispatch(worker, offered.lease, frozen, request),
+      { code: 'execution_tool_forbidden' },
+    );
+  }
+  const release = { reason: 'Completed' };
+  const releasing = f.workflows.releaseLease(offered.lease, release);
+  release.reason = '';
+  await releasing;
 });

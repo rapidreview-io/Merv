@@ -2,13 +2,13 @@
 
 Experiments owns research questions, attempts, evidence selections and the two
 independent review gates. It registers four program versions with Workflows —
-scratch `experiment@3` and explicit Git `experiment@4` for new experiments, plus
-frozen `experiment@1` and `experiment@2` for instances pinned to them — and four
-context recipes with Context Builder. A published execution policy is immutable,
-so versions 1 and 2 stay byte-identical (retired grants included) and any policy
-change publishes a new version instead of editing an old one. Creating an
-experiment starts planning; it does not launch a process or decide whether a
-scientific claim is true.
+scratch `experiment@5`, Git `experiment@6`, Git on an accepted task's commit
+`experiment@7` and Git on a Code-derived base `experiment@8` — and four context
+recipes with Context Builder. A published execution policy is immutable, so any
+policy change publishes a new version instead of editing an old one. Versions
+1-4 could no longer start; they were retired on 2026-09-22 and their records
+deleted. Creating an experiment starts planning; it does not launch a process or
+decide whether a scientific claim is true.
 
 | Entrypoint                | Requires                                                                  | Provides                                                        |
 | ------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
@@ -45,7 +45,7 @@ required even for replay. Records, events and receipts compose in one State
 transaction, including the owned review transition.
 
 Evidence is retained through Artifacts before attachment. Planning accepts
-`plan`; execution accepts `result` and `report`. Each input file is
+`plan` and `feasibility`; execution accepts `result` and `report`. Each input file is
 nonempty UTF-8, at most 16,000 bytes. Draft document sections may be unfinished,
 but included figures must already resolve to scoped retained image artifacts.
 Results explicitly distinguish finite JSON from qualitative text. Submission
@@ -88,10 +88,11 @@ terminal corpus capture. Reflection waves and code consolidation remain separate
 implementation work.
 This program does not publish code.
 
-Omitting create `workspace`, or choosing `"none"`, retains the original scratch
-`experiment@1` program and legacy command hashes. Explicit `workspace: "git"`
-selects version 2: scratch planning/design review, persistent private execution,
-and read-only ephemeral attempt review. Result submission pins its actual
+Omitting create `workspace`, or choosing `"none"`, selects the scratch program,
+`experiment@5`; omitted input stays absent in command hashes. Explicit
+`workspace: "git"` selects version 6, or 8 in a project Code hosts: scratch
+planning/design review, persistent private execution, and read-only ephemeral
+attempt review. Result submission pins its actual
 worker's future final capture. Review dispatch waits for that exact observation,
 then freezes its head OID as `reference:code`; missing code never falls back to
 central. With `baseTaskId`, a Git task among `dependsOn`, the persistent checkout

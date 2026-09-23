@@ -110,9 +110,10 @@ function rejectReviewReturn(input: object): void {
   );
 }
 
-export const TASK_WORKFLOW_V1: WorkflowDefinition = {
+/** The published scratch-task graph. Edge order is part of its fingerprint; never reorder it. */
+export const TASK_WORKFLOW: WorkflowDefinition = {
   name: 'task',
-  version: 1,
+  version: 2,
   managed: true,
   initial: 'in_progress',
   states: ['in_progress', 'in_review', 'done', 'failed'],
@@ -123,14 +124,6 @@ export const TASK_WORKFLOW_V1: WorkflowDefinition = {
     { from: 'in_review', action: 'accept', to: 'done' },
     { from: 'in_review', action: 'revise', to: 'in_progress' },
     { from: 'in_review', action: 'fail_review', to: 'failed' },
-  ],
-};
-/** Keep the persisted v1 graph unchanged; new tasks use v2. */
-export const TASK_WORKFLOW: WorkflowDefinition = {
-  ...TASK_WORKFLOW_V1,
-  version: 2,
-  edges: [
-    ...TASK_WORKFLOW_V1.edges,
     { from: 'in_progress', action: 'mark_failed', to: 'failed' },
     { from: 'in_review', action: 'mark_failed', to: 'failed' },
   ],
@@ -145,7 +138,6 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
  * Live tasks keep their version: nothing is ever upgraded into Git.
  */
 const workspaces: Record<number, TaskWorkspace> = {
-  1: 'none',
   2: 'none',
   3: 'central',
   4: 'reference',
@@ -209,7 +201,7 @@ interface TaskRow {
   type_name: string;
   type_version: number;
   context_inputs: string;
-  evidence_version: 1 | 2;
+  evidence_version: 2;
 }
 interface TaskLeaseRow {
   id: string;
@@ -307,10 +299,13 @@ export class TaskService implements Tasks {
           version: 7,
           sql: postgresMigrations[7],
         },
+        {
+          version: 8,
+          sql: postgresMigrations[8],
+        },
       ]);
       try {
         for (const definition of [
-          TASK_WORKFLOW_V1,
           TASK_WORKFLOW,
           TASK_WORKFLOW_GIT,
           TASK_WORKFLOW_GIT_BASED,
@@ -428,7 +423,7 @@ export class TaskService implements Tasks {
     const row = await this.row(tx, caller, snapshot.id);
     if (snapshot.state === 'in_progress') {
       await this.scope.require(caller, 'write', tx);
-      // Version 7 is created only by the service binding; its runner remains a producer.
+      // Version 6 is created only by the service binding; its runner remains a producer.
       if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
         await this.scope.require(caller, 'admin', tx);
       await this.workflows.checkDependencies(caller, snapshot.id, tx);
@@ -795,15 +790,13 @@ export class TaskService implements Tasks {
           requiresDependencies: true,
           tool: 'task.submit_delivery',
           instruction:
-            'Read the task context and inspect any completed prerequisites through their referenced records. Complete the pinned brief and retain evidence for every check. When returning for changes, read the previous review with review.get and address its findings. For evidenceVersion 2, submit confirmations with each checkNumber, met/not_met status, evidenceIds from the submitted artifacts, and notes explaining your verification or what remains unmet. Submit for independent review, then stop producer work while the review is pending.',
+            'Read the task context and inspect any completed prerequisites through their referenced records. Complete the pinned brief and retain evidence for every check. When returning for changes, read the previous review with review.get and address its findings. Submit confirmations with each checkNumber, met/not_met status, evidenceIds from the submitted artifacts, and notes explaining your verification or what remains unmet. Submit for independent review, then stop producer work while the review is pending.',
           // A Git task also needs the commandId of this worker's own successful code.commit,
           // and only a leased worker can obtain one; guidance says so before the refusal does.
-          requiredInput: async ({ caller, snapshot, tx }) =>
-            (await this.row(tx, caller, snapshot.id)).evidence_version === 2
-              ? taskWorkspace(snapshot.version) === 'none'
-                ? ['artifactIds', 'confirmations']
-                : ['artifactIds', 'commandId', 'confirmations']
-              : ['artifactIds'],
+          requiredInput: ({ snapshot }) =>
+            taskWorkspace(snapshot.version) === 'none'
+              ? ['artifactIds', 'confirmations']
+              : ['artifactIds', 'commandId', 'confirmations'],
           arguments: taskArguments,
           check: async (context) => {
             await this.checkDelivery(context);
@@ -820,11 +813,8 @@ export class TaskService implements Tasks {
           ],
           tool: 'review.submit',
           instruction:
-            'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. For formatVersion 2, include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
-          requiredInput: async (context) =>
-            (await this.currentReview(context)).formatVersion === 2
-              ? ['verdict', 'notes', 'synopsis', 'findings']
-              : ['verdict', 'notes'],
+            'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. Include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
+          requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
           arguments: async (context) => {
             const review = await this.currentReview(context);
             return {
@@ -875,9 +865,7 @@ export class TaskService implements Tasks {
         {
           name: 'mark_failed',
           states: ['in_progress', 'in_review'],
-          // The v1 command upgrades and closes atomically; it is an auxiliary action
-          // there so guidance can expose it without rewriting the pinned graph.
-          ...(version >= 2 ? { transitions: ['mark_failed'] } : {}),
+          transitions: ['mark_failed'],
           tool: 'task.mark_failed',
           suggested: false,
           requiredInput: ['reason'],
@@ -1076,6 +1064,13 @@ export class TaskService implements Tasks {
       caller.projectId,
     );
     check(row, 'not_found', 'Task not found in this project', 404);
+    // Version 1 evidence was retired with its records (tasks migration 8); none can remain.
+    check(
+      row.evidence_version === 2,
+      'task_unavailable',
+      'Task evidence version 1 is retired',
+      500,
+    );
     return row;
   }
   private async projectRecord(caller: Caller, row: TaskRow, tx?: Transaction): Promise<TaskRecord> {
@@ -1224,15 +1219,7 @@ export class TaskService implements Tasks {
           'An active work task type/version is required',
           409,
         );
-        // An older version stays registered so its tasks still build context, but a new task
-        // may not choose it to escape the check its type has since made required.
-        const required = TYPE_REQUIRED_CHECKS[typeName];
-        check(
-          !required || typeVersion >= required.since,
-          'task_type_unavailable',
-          `New ${typeName} tasks start on version ${required?.since} or later`,
-          409,
-        );
+        const required = TYPE_REQUIRED_CHECKS[typeName] ?? [];
         check(
           input.workspace === undefined || input.workspace === 'none' || input.workspace === 'git',
           'invalid_workspace',
@@ -1310,7 +1297,7 @@ export class TaskService implements Tasks {
         // caller already wrote is kept where they put it.
         const checks = [
           ...input.checks,
-          ...(required?.checks ?? []).filter(
+          ...required.filter(
             (item) => !input.checks.some((own) => normalized(own) === normalized(item)),
           ),
         ];
@@ -1558,9 +1545,7 @@ export class TaskService implements Tasks {
         assessment: { text: JSON.stringify(review) },
         evidence: {
           artifactIds: review.artifactIds,
-          ...(task.evidenceVersion === 2
-            ? { mode: await this.contextBuilder.mode(caller, review.artifactIds, 48_000, tx) }
-            : {}),
+          mode: await this.contextBuilder.mode(caller, review.artifactIds, 48_000, tx),
         },
         taskBackground: Object.values(task.contextInputs).flat().length
           ? { artifactIds: [...new Set(Object.values(task.contextInputs).flat())] }
@@ -1648,11 +1633,7 @@ export class TaskService implements Tasks {
     if (checkpoints.length) {
       inputs.checkpoints = { text: JSON.stringify(checkpoints) };
       const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
-      if (artifactIds.length)
-        inputs.checkpointEvidence = {
-          artifactIds,
-          ...(task.evidenceVersion === 2 ? { mode: 'auto' as const } : {}),
-        };
+      if (artifactIds.length) inputs.checkpointEvidence = { artifactIds, mode: 'auto' };
     }
     inputs = Object.fromEntries(
       Object.entries(inputs).filter(([key]) =>
@@ -2087,35 +2068,7 @@ export class TaskService implements Tasks {
       'invalid_delivery',
       'Delivery artifacts must be nonempty and belong to the producer',
     );
-    if (row.evidence_version === 2) {
-      validateConfirmations(input.confirmations, JSON.parse(row.checks), input.artifactIds, git);
-      return;
-    }
-    const briefHash = (await this.artifacts.get(caller, row.brief_id, tx)).hash;
-    const documents = artifacts.filter(
-      (item) => item.mediaType.startsWith('text/') && item.hash !== briefHash,
-    );
-    check(
-      documents.length > 0,
-      'invalid_delivery',
-      'Delivery requires a text assessment document distinct from the brief',
-    );
-    const contents = await mapAsync(
-      documents,
-      async (item) => await this.artifacts.read(caller, item.id),
-    );
-    check(
-      contents.every((item) => item.encoding === 'utf8'),
-      'invalid_delivery',
-      'Text delivery documents must contain valid UTF-8 text',
-    );
-    const text = normalized(contents.map((item) => item.content).join('\n'));
-    const checks: string[] = JSON.parse(row.checks);
-    check(
-      checks.every((item) => text.includes(normalized(item))),
-      'invalid_delivery',
-      'Delivery documents must address every Done-when check using its exact wording',
-    );
+    validateConfirmations(input.confirmations, JSON.parse(row.checks), input.artifactIds, git);
   }
 
   /**
@@ -2276,23 +2229,9 @@ export class TaskService implements Tasks {
           'Expected revision must be a nonnegative integer',
         );
         const row = await this.row(tx, caller, input.taskId);
-        let current = await this.workflows.get(caller, row.id, tx);
+        const current = await this.workflows.get(caller, row.id, tx);
         await this.checkFailure({ caller, snapshot: current, tx, input: { ...input } });
         const reviewId = current.state === 'in_review' ? row.review_id : null;
-        if (current.version === 1) {
-          current = await (
-            await this.registration(TASK_WORKFLOW.version)
-          ).upgrade(
-            caller,
-            {
-              instanceId: row.id,
-              fromVersion: 1,
-              expectedRevision: input.expectedRevision,
-              requestId: `${caller.actorId}:task:failure-upgrade:${input.requestId}`,
-            },
-            tx,
-          );
-        }
         const failure: TaskFailure = {
           reason: input.reason,
           actorId: caller.actorId,
@@ -2359,30 +2298,28 @@ export class TaskService implements Tasks {
             )
           : null;
         // A met claim that cites no file is backed by the delivered commit, which is always there.
-        const confirmations =
-          row.evidence_version === 2
-            ? validateConfirmations(input.confirmations, checks, input.artifactIds, git).map(
-                (item) =>
-                  codeArtifact && item.status === 'met' && !item.evidenceIds.length
-                    ? { ...item, evidenceIds: [codeArtifact.id] }
-                    : item,
-              )
-            : [];
-        const assessment =
-          row.evidence_version === 2
-            ? await this.artifacts.create(
-                caller,
-                {
-                  title: clip(`Delivery confirmations: ${row.title}`, 300),
-                  content: renderAssessment(checks, confirmations),
-                },
-                tx,
-              )
-            : null;
+        const confirmations = validateConfirmations(
+          input.confirmations,
+          checks,
+          input.artifactIds,
+          git,
+        ).map((item) =>
+          codeArtifact && item.status === 'met' && !item.evidenceIds.length
+            ? { ...item, evidenceIds: [codeArtifact.id] }
+            : item,
+        );
+        const assessment = await this.artifacts.create(
+          caller,
+          {
+            title: clip(`Delivery confirmations: ${row.title}`, 300),
+            content: renderAssessment(checks, confirmations),
+          },
+          tx,
+        );
         const deliveryIds = [
           ...input.artifactIds,
           ...(codeArtifact ? [codeArtifact.id] : []),
-          ...(assessment ? [assessment.id] : []),
+          assessment.id,
         ];
         const deliveryCode: TaskDeliveryCode | null = commit
           ? {
@@ -2405,12 +2342,8 @@ export class TaskService implements Tasks {
             requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
             data: {
               deliveryIds,
-              ...(assessment
-                ? {
-                    deliveryConfirmations: confirmations.map((item) => ({ ...item })),
-                    deliveryAssessmentId: assessment.id,
-                  }
-                : {}),
+              deliveryConfirmations: confirmations.map((item) => ({ ...item })),
+              deliveryAssessmentId: assessment.id,
               ...(deliveryCode && codeArtifact
                 ? { deliveryCode: { ...deliveryCode }, deliveryCodeArtifactId: codeArtifact.id }
                 : {}),
@@ -2420,13 +2353,9 @@ export class TaskService implements Tasks {
         );
         // The checks a task type requires are the ones its review may not waive. They are found
         // by their text, because the caller may have written one of them anywhere in the list.
-        const required = TYPE_REQUIRED_CHECKS[row.type_name];
-        const requiredCriteria =
-          required && row.type_version >= required.since && row.evidence_version === 2
-            ? required.checks
-                .map((item) => checks.findIndex((own) => normalized(own) === normalized(item)) + 1)
-                .filter((number) => number > 0)
-            : [];
+        const requiredCriteria = (TYPE_REQUIRED_CHECKS[row.type_name] ?? [])
+          .map((item) => checks.findIndex((own) => normalized(own) === normalized(item)) + 1)
+          .filter((number) => number > 0);
         const review = await this.reviews.request(
           caller,
           {
@@ -2460,7 +2389,7 @@ export class TaskService implements Tasks {
               : {}),
             artifactIds: [row.brief_id, ...deliveryIds],
             criteria: checks,
-            ...(row.evidence_version === 2 ? { formatVersion: 2 as const } : {}),
+            formatVersion: 2,
             ...(requiredCriteria.length ? { requiredCriteria } : {}),
             requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
           },

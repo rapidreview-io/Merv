@@ -285,7 +285,7 @@ test('async handlers are supported, changed subscriptions require a new ID, and 
   }
 });
 
-test('existing review databases acquire resumable claim IDs without rewriting completed verdicts', async () => {
+test('pre-claim reviews acquire claim IDs without rewritten verdicts, and retire with their subjects', async () => {
   const { ProjectScope } = await import('@merv/scope');
   const { ReviewService } = await import('@merv/reviews');
   const { DiskBlobs } = await import('@merv/blobs');
@@ -357,30 +357,48 @@ test('existing review databases acquire resumable claim IDs without rewriting co
         done.id,
       );
     });
-    state.migrate = migrate;
+    // Up to the last migration before format 1 was retired: rows written before claim IDs
+    // existed acquire stable ones, and neither snapshot nor verdict is rewritten.
+    state.migrate = async (component, migrations) =>
+      await migrate(
+        component,
+        component === 'reviews' ? migrations.filter((m) => m.version <= 9) : migrations,
+      );
     const current = await createService(new ReviewService(state, scope, artifacts));
     const claim = await current.get(reviewer, open.id);
-    assert.equal(claim.formatVersion, 1);
-    assert.equal(claim.synopsis, null);
-    assert.deepEqual(claim.findings, []);
-    assert.deepEqual(claim.evidence, {});
     assert.equal(claim.claimId, `legacy:${open.id}`);
     assert.equal(claim.snapshotHash, open.snapshotHash);
     assert.equal((await current.get(producer, done.id)).notes, 'Original verdict.');
     assert.equal((await current.get(producer, done.id)).snapshotHash, done.snapshotHash);
-    assert.equal(
-      (
-        await current.submit(reviewer, {
-          ...reviewedFindings(claim),
-          reviewId: open.id,
-          claimId: claim.claimId!,
-          verdict: 'pass',
-          notes: 'Resumed using the migrated claim.',
-          requestId: 'resume',
-        })
-      ).status,
-      'submitted',
-    );
+    current.close();
+    // Such rows are format 1, which retired with the work it reviewed. While their subjects are
+    // live the retirement refuses to start and changes nothing.
+    state.migrate = migrate;
+    await assert.rejects(createService(new ReviewService(state, scope, artifacts)), {
+      code: 'state_constraint',
+    });
+    const remaining = async () =>
+      await state.read(
+        async (sql) =>
+          await sql.all<{ id: string }>(
+            "SELECT id FROM reviews WHERE id IN ('open','done') ORDER BY id",
+          ),
+      );
+    assert.deepEqual(await remaining(), [{ id: 'done' }, { id: 'open' }]);
+    // Once the ledger retires their subjects, the reviews go with them.
+    await state.transaction(async (tx) => {
+      await tx.run(
+        'CREATE TABLE wf_retired_instances (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workflow TEXT NOT NULL, version BIGINT NOT NULL, reason TEXT NOT NULL)',
+      );
+      for (const id of [open.id, done.id])
+        await tx.run(
+          "INSERT INTO wf_retired_instances VALUES (?, ?, 'task', 1, 'retired_version')",
+          id,
+          producer.projectId,
+        );
+    });
+    (await createService(new ReviewService(state, scope, artifacts))).close();
+    assert.deepEqual(await remaining(), []);
   } finally {
     await state.close();
     rmSync(directory, { recursive: true, force: true });

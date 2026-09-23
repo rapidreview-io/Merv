@@ -62,7 +62,7 @@ export function processGraph(source: {
       if (edge.from === walk[index] && !walk.includes(edge.to)) walk.push(edge.to);
   const reachable = [...walk, ...definition.states.filter((state) => !walk.includes(state))];
   // Arrivals are counted across edges only: the initial state begins with none, so any
-  // entry it has is a return, and a start, an upgrade or a dependency row is not an arrival.
+  // entry it has is a return, and a start or a dependency row is not an arrival.
   const nodes: ProcessNode[] = [
     ...reachable.filter((state) => !definition.terminal.includes(state)),
     ...reachable.filter((state) => definition.terminal.includes(state)),

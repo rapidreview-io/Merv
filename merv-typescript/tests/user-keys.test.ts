@@ -15,6 +15,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, Principal, Role, UserKey } from '@merv/contracts';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
@@ -633,6 +634,7 @@ test('key rotation and revocation are not actor death; owner permission-loss eve
         claimId: claim.claimId!,
         verdict: 'pass',
         notes: 'Verified.',
+        ...assessment(claim),
         requestId: 'verdict',
       })
     ).status,

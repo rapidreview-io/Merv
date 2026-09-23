@@ -45,7 +45,6 @@ export type MapReflection = {
   id: string;
   title: string;
   ownerId: string;
-  experimentIds: string[];
   workflow: Flow;
 };
 export type MapPaper = {
@@ -146,8 +145,7 @@ export const tally = <T>(items: T[], of: (item: T) => string | null): [string, n
 /**
  * Build the object graph. Columns read left to right — what is believed, what is
  * being done, what it became — and every edge names the field it
- * came from: task.dependencies,
- * reflection.experimentIds and the paper publication's own source.
+ * came from: task.dependencies and the paper publication's own source.
  */
 export function graphOf(
   rows: Row[],
@@ -263,7 +261,6 @@ export function graphOf(
         ],
         workflow,
       );
-      for (const on of item.experimentIds) edges.push({ from: id, to: on, verb: 'reflects on' });
     }
   const paper = pathOf('paper');
   for (const [kind, document] of Object.entries((paper && d.paper?.documents) || {})) {

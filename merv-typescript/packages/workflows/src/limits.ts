@@ -14,7 +14,7 @@ const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
  * The engine writes these into wf_history beside the state it found, and a limit is counted
  * by state and action, so a limit over one of them would count the engine's own bookkeeping.
  */
-const engineActions = ['start', 'upgrade', 'add_dependencies', 'replan_dependencies'];
+const engineActions = ['start', 'add_dependencies', 'replan_dependencies'];
 
 /**
  * A limit caps an edge that returns work to an earlier state. An edge that stays where it is

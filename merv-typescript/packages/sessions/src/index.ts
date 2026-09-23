@@ -341,6 +341,10 @@ export class LeasedSessions implements Sessions {
           version: 5,
           sql: postgresMigrations[5],
         },
+        {
+          version: 6,
+          sql: postgresMigrations[6],
+        },
       ]);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
@@ -395,7 +399,14 @@ export class LeasedSessions implements Sessions {
             ],
             handle: async (event, tx) => {
               if (event.type === 'session.closed') {
-                const row = await this.row(tx, event.subjectId);
+                // Sessions are never deleted, except those of retired workflow instances
+                // (sessions@6), whose leases went with them. A close that was logged but not
+                // yet consumed has nothing left to release, and must not stall this consumer.
+                const row = await tx.get<Row>(
+                  'SELECT * FROM worker_sessions WHERE id=?',
+                  event.subjectId,
+                );
+                if (!row) return;
                 const session = await this.decode(row, tx);
                 await this.workflows.releaseLease(
                   session.lease,

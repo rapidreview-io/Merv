@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
   "migrations": [
     {
       "component": "agents",
@@ -125,6 +125,12 @@
       "published": true
     },
     {
+      "component": "context_builder",
+      "version": 2,
+      "hash": "bd5a06d843c4efc0a2885f5cb359623945f62a5b78d156690dc70d86bda3a00e",
+      "published": false
+    },
+    {
       "component": "domain_events",
       "version": 1,
       "hash": "7f511bc838bda2d9390eba767fa499e505dc18d0f09a741c1f32819ccd121a14",
@@ -141,6 +147,12 @@
       "version": 2,
       "hash": "5dd87701e573659a30db8a85a7db008acd0aa687af0dcbffb3496b9e46ad70a4",
       "published": true
+    },
+    {
+      "component": "experiment_program",
+      "version": 3,
+      "hash": "72e340de36e7d4c15b605c94596af2f03fd2b58a594d3bc50c35987a41677f5b",
+      "published": false
     },
     {
       "component": "experiments",
@@ -161,6 +173,12 @@
       "published": true
     },
     {
+      "component": "experiments",
+      "version": 4,
+      "hash": "fdab536844d7e9136d57ec81a83a1c749e5057e63245dd5f5ac5438c189f1c35",
+      "published": false
+    },
+    {
       "component": "feed",
       "version": 1,
       "hash": "be756f5f55b0b6d38548d42c37cb5c1fa3a82aa08f743448a57edac434d95a23",
@@ -171,6 +189,12 @@
       "version": 1,
       "hash": "23a21a42602d027c5f9c1330b96640380420fc21d799e70d3100f3ff3895108a",
       "published": true
+    },
+    {
+      "component": "knowledge",
+      "version": 2,
+      "hash": "dcff6adb55fc99d9318c4040a4167199b7b9333b2ba4b91891d6ef7c355ed9cc",
+      "published": false
     },
     {
       "component": "legacy-foundation-import",
@@ -201,6 +225,12 @@
       "version": 1,
       "hash": "e35e7c0acea05319e28d6ce8e3d14149af70137214a7fc9a16cbc54b502f234b",
       "published": true
+    },
+    {
+      "component": "reflections",
+      "version": 2,
+      "hash": "5e85f60bb5a9c70822759895ea670b728ebf416a3a91d704285a388fecedddc1",
+      "published": false
     },
     {
       "component": "research",
@@ -236,6 +266,12 @@
       "component": "research",
       "version": 6,
       "hash": "81b882e8c30088c1dcb6b829b79687a8425a3f94578f87fffe303bd7c41a4963",
+      "published": false
+    },
+    {
+      "component": "research",
+      "version": 7,
+      "hash": "76eda355c2b843ec54e617f5365e11dc5a7708335c7b6368dc9f35267f2b1cb4",
       "published": false
     },
     {
@@ -291,6 +327,12 @@
       "version": 9,
       "hash": "6569e391ee8d120bc5c982f0648d1b9f7c9a0d63b37a484666ce33db97142f03",
       "published": true
+    },
+    {
+      "component": "reviews",
+      "version": 10,
+      "hash": "83a53ea689d2aabad1218247d4516dc061510d235af43f1481fb20aa93627bdc",
+      "published": false
     },
     {
       "component": "scope",
@@ -407,6 +449,12 @@
       "published": true
     },
     {
+      "component": "sessions",
+      "version": 6,
+      "hash": "cd7b8be72f4cdc604499e407242173324b86313e7c95f5575ae498d1fe42e2b5",
+      "published": false
+    },
+    {
       "component": "tasks",
       "version": 1,
       "hash": "96ebbc88283b7983f739012caeda49eb6182f7afe38c174eaaff80a76d55c7cc",
@@ -449,6 +497,12 @@
       "published": true
     },
     {
+      "component": "tasks",
+      "version": 8,
+      "hash": "63370f6ef1940d7633224f771aa2150631ecbdc1f967d939a744a7d8cf3a700d",
+      "published": false
+    },
+    {
       "component": "workflows",
       "version": 1,
       "hash": "311f69399d6b45e0d5b94117ce0d26f7d788d0c319390a7d0911dfd1d75fe97d",
@@ -483,6 +537,12 @@
       "version": 6,
       "hash": "1a286c53c1c63c5525c68d3cb606ed479d13afe3a431ea0a956a2b203a554582",
       "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 7,
+      "hash": "8e783a7cb50674333b98cb786fe80207d92582600e1da92ca5e16714b90c4da0",
+      "published": false
     }
   ]
 }

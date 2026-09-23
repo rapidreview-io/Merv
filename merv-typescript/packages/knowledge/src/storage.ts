@@ -7,5 +7,9 @@ export async function migrateKnowledge(state: State): Promise<void> {
       version: 1,
       sql: postgresMigrations[1],
     },
+    {
+      version: 2,
+      sql: postgresMigrations[2],
+    },
   ]);
 }

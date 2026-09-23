@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -148,4 +150,38 @@ CREATE TRIGGER wf_dependencies_identity BEFORE UPDATE ON wf_dependencies FOR EAC
 CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
 CREATE FUNCTION wf_system_requests_guard() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'System requests are immutable and retained'; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER wf_system_requests_guard BEFORE UPDATE OR DELETE ON wf_system_requests FOR EACH ROW EXECUTE FUNCTION wf_system_requests_guard();`,
+  // Retires the workflow versions no current flow can start: the ledger names their instances,
+  // and every workflow row keyed by one is deleted. Definitions and policies stay as history.
+  7: `${retiredInstancesSql}
+DELETE FROM wf_dependencies WHERE source_id IN (SELECT id FROM wf_retired_instances)
+  OR target_id IN (SELECT id FROM wf_retired_instances);
+DELETE FROM wf_blockers WHERE instance_id IN (SELECT id FROM wf_retired_instances);
+DELETE FROM wf_requests WHERE response_json::jsonb->>'id' IN (SELECT id FROM wf_retired_instances);
+${withoutTriggers(
+  'wf_system_requests',
+  ['wf_system_requests_guard'],
+  `DELETE FROM wf_system_requests WHERE fingerprint::jsonb->>'instanceId' IN (SELECT id FROM wf_retired_instances);`,
+)}
+${withoutTriggers(
+  'wf_work_starts',
+  ['wf_work_starts_no_delete'],
+  `DELETE FROM wf_work_starts WHERE instance_id IN (SELECT id FROM wf_retired_instances);`,
+)}
+${withoutTriggers(
+  'wf_limit_grants',
+  ['wf_limit_grants_no_delete'],
+  `DELETE FROM wf_limit_grants WHERE instance_id IN (SELECT id FROM wf_retired_instances);`,
+)}
+DELETE FROM wf_history WHERE instance_id IN (SELECT id FROM wf_retired_instances);
+DELETE FROM wf_instances WHERE id IN (SELECT id FROM wf_retired_instances);
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM wf_instances
+    WHERE (workflow='task' AND version=1) OR (workflow='experiment' AND version BETWEEN 1 AND 4)
+       OR (workflow='reflection' AND version IN (1,2)) OR (workflow='reflection.lens' AND version=1)
+       OR (workflow='research' AND version BETWEEN 2 AND 5) OR workflow='consolidation')
+    OR EXISTS (SELECT 1 FROM wf_history WHERE action='upgrade') THEN
+    RAISE EXCEPTION USING MESSAGE = 'Retired workflow instances remain', ERRCODE = '23514';
+  END IF;
+END $check$;`,
 };

@@ -161,10 +161,10 @@ still separate work.
 
 Tasks also registers `mark_failed` for active tasks. It is an explicit alternative,
 never the normal suggested next step. The producer/operator supplies a reason;
-preflight and the command use the same permission and state checks. New tasks use
-`task@2`. Existing `task@1` instances advertise the command as an auxiliary action,
-and the command upgrades and closes them atomically. Saved contexts remain
-historical; fresh task reads show the terminal decision and recorded failure.
+preflight and the command use the same permission and state checks. Every task
+version has the `mark_failed` edge in its published graph (`task@1`, which did not,
+was retired with its records on 2026-09-22). Saved contexts remain historical; fresh
+task reads show the terminal decision and recorded failure.
 See [task closure](TASK_CLOSURE.md).
 
 ## Work prerequisites
@@ -178,11 +178,11 @@ failure action. Explicit preflight stays on the requested action. See
 
 ## Structured delivery inputs
 
-New tasks require artifact IDs plus one numbered confirmation per acceptance check. Tasks owns the validation; the existing Workflows evaluator reports the same missing input or invalid confirmation as the command. Required input fields may be computed from a frozen evaluation context so legacy task evidence contracts retain their original requirements. See [structured evidence](STRUCTURED_TASK_EVIDENCE.md).
+New tasks require artifact IDs plus one numbered confirmation per acceptance check. Tasks owns the validation; the existing Workflows evaluator reports the same missing input or invalid confirmation as the command. Required input fields may be computed from a frozen evaluation context; a Git task also requires its commit's commandId. See [structured evidence](STRUCTURED_TASK_EVIDENCE.md).
 
 ## Review assessments
 
-The pinned review format determines whether synopsis and findings are required. Review preflight validates a supplied expectedRevision against the same task revision as the command. Typed findings include explicit waivers with reasons; a passing verdict cannot contain an unmet or unverified criterion. [Assessment contract](REVIEW_ASSESSMENTS.md).
+Every review requires a synopsis and one finding per criterion (format 2, the only format since format 1 was retired on 2026-09-22). Review preflight validates a supplied expectedRevision against the same task revision as the command. Typed findings include explicit waivers with reasons; a passing verdict cannot contain an unmet or unverified criterion. [Assessment contract](REVIEW_ASSESSMENTS.md).
 
 ## Beginning a step
 

@@ -67,14 +67,10 @@ export interface ResearchRecord {
   name: string;
   createdAt: string;
   researchDependencies: string[];
-  /** Legacy only: cycles before version 6 chose a consolidation workflow at creation. */
-  consolidationWorkspace?: 'none' | 'git';
-  consolidationDependencies?: string[];
   workflow: WorkflowSnapshot;
   /** Exact definition accepted on leaving the defining stage. */
   problem: PaperRevision | null;
   reflectionId: string | null;
-  consolidationId: string | null;
   /** The consolidation tasks this cycle injected, oldest first; a stale publication appends a successor. */
   integrations: string[];
   /** Null for a cycle somebody created by hand. */
@@ -153,7 +149,6 @@ export interface ResearchLineageEntry {
   createdAt: string;
   previousCycleId: string | null;
   reflectionId: string | null;
-  consolidationId: string | null;
   digest: Artifact | null;
 }
 export interface ResearchLineage {

@@ -1,9 +1,9 @@
 # Research inputs and exact code captures
 
-Scope supplies current project intent. Knowledge assembles project records and
-can freeze a corpus from the existing domain services. Code resolves exact
-machine observations. These are working prerequisites for Reflection; a corpus
-snapshot does not create a reflection wave or a published research baseline.
+Scope supplies current project intent. Knowledge assembles project records from
+the existing domain services. Code resolves exact machine observations. These are
+working prerequisites for Reflection; they do not create a reflection wave or a
+published research baseline.
 
 ## Current intent and frozen agent context
 
@@ -60,47 +60,14 @@ The optional Knowledge UI is the **Research records** page. Its data comes from
 these live reads. Introduction editing remains a Scope operation, separate from
 research publication.
 
-Research claims are retired: each existing claim was converted into a Markdown text artifact titled `Claim: …`, which resolves like any other artifact. A `claim:` reference is now an unknown kind and resolves as `unsupported`. Corpus selections do not include claims; existing snapshots are unchanged.
+Research claims are retired: each existing claim was converted into a Markdown text artifact titled `Claim: …`, which resolves like any other artifact. A `claim:` reference is now an unknown kind and resolves as `unsupported`.
 
-## What a corpus captures
+## Retired corpus snapshots
 
-`Knowledge.capture(caller, {requestId}, tx?)` is a service integration method for
-an owning program. It has no agent capture tool. It requires current Scope
-write permission and can join the owner's transaction. `Knowledge.get` reads a
-saved snapshot by exact ID under current project read authority.
-
-| Selection   | Current implementation                                                                                            |
-| ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| Project     | Exact name, Introduction and context revision at capture time                                                     |
-| Tasks       | All `done` or `failed` task records                                                                               |
-| Experiments | All `complete`, `abandoned` or `failed` records, including attempts, evidence associations and sealed submissions |
-| Assessments | Reviews referenced by selected records, including Experiment approval/feedback/submission reviews                 |
-| Artifacts   | Deduplicated metadata for selected evidence, figures, task inputs/deliveries and assessment evidence              |
-| Code        | Exact capture references declared by selected Experiment submissions, with their observed status and provenance   |
-| Publication | Explicit `status: "none"`, null reflection, and no lenses                                                         |
-
-Task review coverage is explicitly `current-record-references`; this is not a
-claim to recover every earlier task review round. Corpus selection does not
-collect every unrelated project upload, Code command or machine workspace.
-Retained metadata includes artifact hashes and association identity. It does
-not copy blob bytes or certify that every blob is currently readable; artifact
-body reads remain a separate authorized operation. Missing referenced records
-are recorded explicitly. Provider outages or inconsistent provenance fail the
-capture instead of silently producing a smaller successful corpus.
-
-A snapshot stores the format version, selection, creating actor/time, source
-event head and manifest hash. Format 1 hashes the canonical JSON of
-`{formatVersion, selection}` using SHA-256 and locale-independent object-key
-ordering; identity and creation time are outside that content hash. Snapshot,
-audit event and request receipt commit together. SQL guards refuse snapshot or
-receipt updates/deletes. Current authority is checked around composition and
-replay. The same request returns its original snapshot even after the live
-project changes; a new request can capture a later selection.
-
-A pending code observation stays pending inside the saved snapshot. A later
-`project.references` read can report that exact capture as ready, but it never
-rewrites the snapshot. Reflection will need to choose its source set and
-readiness rule deliberately.
+`Knowledge.capture` and `Knowledge.get` froze a corpus for the retired
+`reflection@1` and are removed. Reflection waves read live research instead. The
+`knowledge@2` migration deleted every saved snapshot and its request receipt;
+nothing read them.
 
 ## Exact Code observation identities
 
@@ -142,6 +109,10 @@ global repository authority. Object transport, access on another machine,
 approval and permission to advance central are separate concerns.
 
 ## Git Experiments without rewriting version 1
+
+This section records how Git experiments were introduced. Experiment@1–4 were
+retired on 2026-09-22 together with their records; new experiments start on
+experiment@5–8 as [Experiments](EXPERIMENTS.md) describes.
 
 Omitting `workspace`, or explicitly selecting `"none"`, creates the original
 `experiment@1` scratch program. An omitted field stays omitted in normalized
@@ -212,6 +183,5 @@ The earlier four-agent scratch acceptance remains historical evidence for
 at this documentation checkpoint; no successful native Git result is claimed
 here. It is designed to check real producer files, stopped-worker capture,
 independent pinned-checkout reexecution, unchanged source/central refs and
-cleanup. Its terminal `Knowledge.capture` is a separate owner-side integration
-check, not a native Reflection action. Final results belong in the verification
+cleanup. Final results belong in the verification
 record after independent inspection.

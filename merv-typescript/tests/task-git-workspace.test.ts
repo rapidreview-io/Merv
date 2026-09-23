@@ -328,9 +328,8 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
   const declared = Object.fromEntries(
     policies.map((row) => [`${row.version}/${row.state}`, JSON.parse(row.manifest_json) as Data]),
   );
-  for (const version of [1, 2])
-    for (const state of ['in_progress', 'in_review'])
-      assert.equal(Object.hasOwn(declared[`${version}/${state}`]!, 'workspace'), false);
+  for (const state of ['in_progress', 'in_review'])
+    assert.equal(Object.hasOwn(declared[`2/${state}`]!, 'workspace'), false);
   assert.equal((declared['4/in_progress']!.workspace as Data).base, 'reference:base');
   for (const version of [3, 4]) {
     const review = declared[`${version}/in_review`]!;

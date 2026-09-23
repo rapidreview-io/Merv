@@ -1,5 +1,4 @@
 import { reviewedFindings } from './fixtures/task-evidence.js';
-import { legacyTaskPolicy } from './fixtures/legacy-task-policy.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -7,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Caller, Task, TaskCreate, TaskDelivery, WorkflowDefinition } from '@merv/contracts';
+import type { Caller, Task, TaskCreate, TaskDelivery } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
@@ -397,113 +396,6 @@ test('generated assessment, review snapshot and transition roll back after a lat
       await f.app.ctx.state.read(async (sql) => (await sql.all('SELECT id FROM artifacts')).length),
       before.artifacts.length + 1,
     );
-    assert.deepEqual(await f.app.ctx.tasks.submitDelivery(f.producer.caller, input), pending);
-  } finally {
-    await f.close();
-  }
-});
-
-test('persisted pre-migration tasks retain legacy delivery rules and no structured confirmation requirement across reload', async () => {
-  const f = await fixture();
-  try {
-    const brief = await f.app.ctx.artifacts.create(f.producer.caller, {
-      title: 'Legacy brief',
-      content: 'Build an adder. Adds two numbers. Handles negative inputs.',
-    });
-    const legacyGraph: WorkflowDefinition = {
-      name: 'task',
-      version: 1,
-      managed: true,
-      initial: 'in_progress',
-      states: ['in_progress', 'in_review', 'done', 'failed'],
-      terminal: ['done', 'failed'],
-      edges: [
-        { from: 'in_progress', action: 'submit_delivery', to: 'in_review' },
-        { from: 'in_review', action: 'reissue_review', to: 'in_review' },
-        { from: 'in_review', action: 'accept', to: 'done' },
-        { from: 'in_review', action: 'revise', to: 'in_progress' },
-        { from: 'in_review', action: 'fail_review', to: 'failed' },
-      ],
-    };
-    await f.app.setEnabled('tasks', false);
-    const registration = await f.app.ctx.workflows.register(
-      legacyGraph,
-      await legacyTaskPolicy(f.app.ctx.state, legacyGraph),
-    );
-    let id: string;
-    try {
-      const workflow = await registration.start(f.producer.caller, {
-        workflow: 'task',
-        version: 1,
-        requestId: 'old-start',
-        data: {
-          title: 'Legacy',
-          goal: 'Build an adder.',
-          checks: f.checks,
-          producerId: f.producer.caller.actorId,
-          briefId: brief.id,
-        },
-      });
-      id = workflow.id;
-      await f.app.ctx.state.transaction(
-        async (tx) =>
-          await tx.run(
-            'INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
-            id,
-            f.operator.projectId,
-            'Legacy',
-            'Build an adder.',
-            JSON.stringify(f.checks),
-            f.producer.caller.actorId,
-            brief.id,
-            workflow.createdAt,
-          ),
-      );
-    } finally {
-      registration.dispose();
-      await f.app.setEnabled('tasks', true);
-    }
-    const legacy = await f.app.ctx.tasks.get(f.producer.caller, id);
-    assert.equal(legacy.evidenceVersion, 1);
-    assert.equal(legacy.workflow.version, 1);
-    assert.deepEqual(legacy.deliveryConfirmations, []);
-    assert.equal(legacy.deliveryAssessmentId, null);
-    assert.deepEqual(
-      legacy.guidance.actions.find((action) => action.action === 'submit_delivery')?.requiredInput,
-      ['artifactIds'],
-    );
-    const incomplete = await f.app.ctx.artifacts.create(f.producer.caller, {
-      title: 'Incomplete old delivery',
-      content: 'Adds two numbers.',
-    });
-    await assert.rejects(
-      async () =>
-        await f.app.ctx.tasks.submitDelivery(f.producer.caller, {
-          taskId: id,
-          artifactIds: [incomplete.id],
-          expectedRevision: 0,
-          requestId: 'old-delivery',
-        }),
-      { code: 'invalid_delivery' },
-    );
-    const proof = await f.app.ctx.artifacts.create(f.producer.caller, {
-      title: 'Old delivery',
-      content: 'Adds two numbers. Handles negative inputs. Observed both outputs.',
-    });
-    const input: TaskDelivery = {
-      taskId: id,
-      artifactIds: [proof.id],
-      expectedRevision: 0,
-      requestId: 'old-delivery',
-    };
-    const pending = await f.app.ctx.tasks.submitDelivery(f.producer.caller, input);
-    assert.equal(pending.evidenceVersion, 1);
-    assert.deepEqual(pending.deliveryIds, [proof.id]);
-    assert.deepEqual(pending.deliveryConfirmations, []);
-    assert.equal(pending.deliveryAssessmentId, null);
-    await f.app.setEnabled('tasks', false);
-    await f.app.setEnabled('tasks', true);
-    assert.deepEqual(await f.app.ctx.tasks.get(f.producer.caller, id), pending);
     assert.deepEqual(await f.app.ctx.tasks.submitDelivery(f.producer.caller, input), pending);
   } finally {
     await f.close();

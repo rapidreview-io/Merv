@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -28,5 +30,14 @@ FOR EACH ROW EXECUTE FUNCTION experiment_lease_no_delete_guard();
 `,
   2: `
 ALTER TABLE experiment_leases DROP CONSTRAINT experiment_leases_actor_id_key;
+`,
+  // Retires the leases of experiment@1-4 with the experiments themselves (experiments@4).
+  3: `
+${retiredInstancesSql}
+${withoutTriggers(
+  'experiment_leases',
+  ['experiment_lease_no_delete'],
+  'DELETE FROM experiment_leases WHERE experiment_id IN (SELECT id FROM wf_retired_instances);',
+)}
 `,
 };

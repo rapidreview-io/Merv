@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { Caller, ReviewApplication, ReviewSubmitOwner, Transaction } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { assessment } from './fixtures/review-verdict.js';
 
 async function fixture(t: TestContext, api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-routing-'));
@@ -73,6 +74,7 @@ async function fixture(t: TestContext, api = false) {
     expectedRevision: review.subjectRevision,
     verdict: 'pass',
     notes: 'Independently verified the retained result.',
+    ...assessment(review),
     requestId: `submit-${++sequence}`,
   });
   const durable = async () =>

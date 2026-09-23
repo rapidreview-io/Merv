@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -65,5 +67,39 @@ ALTER TABLE research_cycles ADD COLUMN integrations TEXT;
 `,
   6: `
 ALTER TABLE research_cycles ADD COLUMN code_required INTEGER CHECK(code_required IN (0,1));
+`,
+  // Research@2-5 can no longer start, so their cycles go. A surviving cycle that followed one
+  // forgets its predecessor, and an automatic run rooted in one is re-rooted at its earliest
+  // surviving cycle. The tables, guards and receipts of the retired Consolidation plugin go too.
+  7: `
+${retiredInstancesSql}
+${withoutTriggers(
+  'research_automation',
+  ['research_automation_identity', 'research_automation_retained'],
+  `UPDATE research_automation a SET root_id=(SELECT b.research_id FROM research_automation b WHERE b.root_id=a.root_id AND b.research_id NOT IN (SELECT id FROM wf_retired_instances) ORDER BY b.cycle_index,b.research_id LIMIT 1)
+WHERE a.root_id IN (SELECT id FROM wf_retired_instances) AND a.research_id NOT IN (SELECT id FROM wf_retired_instances);
+DELETE FROM research_automation WHERE research_id IN (SELECT id FROM wf_retired_instances);`,
+)}
+DELETE FROM research_commands WHERE result::jsonb->>'id' IN (SELECT id FROM wf_retired_instances);
+${withoutTriggers(
+  'research_cycles',
+  ['research_predecessor', 'research_retained'],
+  `UPDATE research_cycles SET predecessor_id=NULL WHERE predecessor_id IN (SELECT id FROM wf_retired_instances) AND id NOT IN (SELECT id FROM wf_retired_instances);
+DELETE FROM research_cycles WHERE id IN (SELECT id FROM wf_retired_instances);`,
+)}
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM research_cycles WHERE reflection_id IN (SELECT id FROM wf_retired_instances)) THEN
+    RAISE EXCEPTION USING MESSAGE = 'A surviving research cycle names a retired reflection', ERRCODE = '23514';
+  END IF;
+END $check$;
+DROP TABLE IF EXISTS consolidation_leases, consolidation_commands, consolidation_submissions, consolidations;
+DROP FUNCTION IF EXISTS consolidation_decisions_guard(), consolidation_identity_guard(), consolidation_completion_guard(), consolidation_retained_guard(), consolidation_submission_immutable_guard(), consolidation_submission_retained_guard(), consolidation_lease_immutable_guard(), consolidation_lease_retained_guard();
+DO $consolidation$
+BEGIN
+  IF to_regclass('component_migrations') IS NOT NULL THEN
+    DELETE FROM component_migrations WHERE component='consolidation';
+  END IF;
+END $consolidation$;
 `,
 };

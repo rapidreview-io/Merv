@@ -9,7 +9,7 @@ import test, { type TestContext } from 'node:test';
 import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from './fixtures/app.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
-import { hostedCode, legacyCycle, type Main } from './fixtures/research.js';
+import { hostedCode, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const stop: ChangeSpec = {
@@ -260,20 +260,6 @@ async function fixture(t: TestContext, plugin = false) {
     await release?.();
     release = undefined;
   };
-  /** An automatic cycle on retained version 5 that chose Git consolidation. */
-  const git = async (dependsOn: string[], maxCycles: number) => {
-    await disable();
-    research.close();
-    const cycleId = await legacyCycle(app.ctx, owner, id(), {
-      version: 5,
-      consolidationWorkspace: 'git',
-      dependsOn,
-      automatic: { maxCycles },
-    });
-    research = await service();
-    await enable();
-    return await research.get(owner, cycleId);
-  };
   t.after(async () => {
     await disable();
     if (!plugin) research.close();
@@ -297,7 +283,6 @@ async function fixture(t: TestContext, plugin = false) {
     failTask,
     failExperiment,
     create,
-    git,
     pump,
     artifact,
     review,

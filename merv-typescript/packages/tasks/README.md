@@ -9,12 +9,12 @@ context recipe, and the task UI displays it. Delivery/reissue/verdict commands
 enforce those registered checks inside their transaction. See
 [workflow guidance](../../docs/WORKFLOW_GUIDANCE.md).
 
-`task@2` is the managed workflow for new tasks. Existing `task@1` instances remain pinned and supported. The program retains its private registration handle; generic workflow tools cannot start instances or bypass the task's evidence/review gates.
+`task@2` is the managed workflow for scratch tasks. Git tasks use `task@3`–`task@5`, which share its graph; service tasks use `task@6`, which suspends where the others fail (only `done` is terminal) and adds `revise_suspended` and `resume`. `task@1` was retired with its records on 2026-09-22. The program retains its private registration handle; generic workflow tools cannot start instances or bypass the task's evidence/review gates.
 
 - **Create:** render and pin the goal and numbered checks as an immutable brief, or validate a compatible producer-supplied text brief. The current actor owns the task. Brief and goal fields are immutable.
-- **Submit delivery:** the producer supplies immutable artifacts and the current task revision. New tasks require a structured confirmation for every numbered check, with evidence references and verification notes. Merv pins a generated assessment alongside the evidence. Existing evidenceVersion 1 tasks retain their original text-coverage gate. The task enters `in_review` and a review request pins the brief plus delivery manifest in the same transaction.
+- **Submit delivery:** the producer supplies immutable artifacts and the current task revision. Every task requires a structured confirmation for every numbered check, with evidence references and verification notes. Merv pins a generated assessment alongside the evidence. The task enters `in_review` and a review request pins the brief plus delivery manifest in the same transaction.
 - **Reissue review:** the producer or project operator can replace an unavailable or revoked reviewer’s open claim with a reason and expected revision. This supersedes the old request, advances the task revision, and pins the same evidence in a new request atomically. Prior reviewers cannot submit against the replacement.
-- **Submit review:** the actor who independently claimed the current review supplies a verdict and the pinned task revision. Format 2 additionally requires a synopsis and per-criterion findings. Passing outcomes prefer structured evidence.outcome, then synopsis, then legacy notes. `pass` routes to `done`, `needs_changes` returns to `in_progress`, and `fail` routes to `failed`. Verdict, workflow transition/history, task events, and request deduplication commit or roll back together.
+- **Submit review:** the actor who independently claimed the current review supplies a verdict and the pinned task revision, with a synopsis and per-criterion findings. Passing outcomes prefer structured evidence.outcome, then synopsis, then legacy notes. `pass` routes to `done`, `needs_changes` returns to `in_progress`, and `fail` routes to `failed`. Verdict, workflow transition/history, task events, and request deduplication commit or roll back together.
 
 Confirmation coverage and evidence references are structural gates; the independent reviewer evaluates whether the submitted evidence actually meets the checks. Review notes become the workflow's outcome or revision context. A revised delivery receives a new review request; prior evidence and verdicts remain readable.
 
@@ -28,7 +28,7 @@ Task types and context references are pinned at creation. Tasks registers its ve
 
 Creation and type registration copy their inputs before asynchronous work. A type registration cannot publish after Tasks is disposed; a recipe acquired during disposal is released so a replacement owner can register it.
 
-`task.mark_failed` gives the producer/operator an explicit terminal exit with a reason. It closes any unfinished review in the same transaction, preserves evidence and prior verdicts, and records `task.failed`. Guidance lists this action without recommending it as ordinary progress. Older tasks upgrade only when this command is used. See [task closure and version compatibility](../../docs/TASK_CLOSURE.md).
+`task.mark_failed` gives the producer/operator an explicit terminal exit with a reason. It closes any unfinished review in the same transaction, preserves evidence and prior verdicts, and records `task.failed`. Guidance lists this action without recommending it as ordinary progress. See [task closure and task versions](../../docs/TASK_CLOSURE.md).
 
 ## Work prerequisites
 

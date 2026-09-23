@@ -166,10 +166,11 @@ existing request ID. Unloaded recipes cannot build or replay assignment requests
 
 ## Compatibility and remaining work
 
-A migration marks previously saved tasks `evidenceVersion: 1`; their delivery
-contract remains the former text-coverage gate. New task creation explicitly writes
-version 2. The evidence contract is immutable and separate from the task graph
-version: neither old workflow definitions nor completed review snapshots are rewritten.
+Every task carries `evidenceVersion: 2`. Version 1, the former text-coverage gate that a
+migration assigned to tasks saved before structured evidence, was retired on 2026-09-22:
+tasks migration 8 deleted its tasks (none were expected) and fails closed if one remains.
+The evidence contract is immutable and separate from the task graph version: neither
+workflow definitions nor completed review snapshots are rewritten.
 
 Python likewise rendered briefs and required one numbered delivery confirmation
 per deliverable. Its check was structural and allowed unmet items. TypeScript's

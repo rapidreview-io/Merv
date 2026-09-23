@@ -759,38 +759,3 @@ test(
     assert.equal((await f.workflows.get(f.caller, f.instance.id)).revision, 0);
   },
 );
-
-test('managed upgrades advance revision and retain starts under their original version', async (t) => {
-  const f = await setup();
-  t.after(async () => await f.state.close());
-  const managed = { ...graph, name: 'managed_assignment', managed: true };
-  const v1 = await f.workflows.register(managed, f.policy);
-  const v2 = await f.workflows.register({ ...managed, version: 2 }, f.policy);
-  const instance = await v1.start(f.caller, {
-    workflow: managed.name,
-    requestId: 'managed-create',
-  });
-  const first = await f.workflows.begin(f.caller, { instanceId: instance.id, expectedRevision: 0 });
-  const upgraded = await v2.upgrade(f.caller, {
-    instanceId: instance.id,
-    fromVersion: 1,
-    expectedRevision: 0,
-    requestId: 'managed-upgrade',
-  });
-  assert.equal(upgraded.version, 2);
-  assert.equal(upgraded.revision, 1);
-  assert.equal((await f.workflows.assignment(f.caller, instance.id)).workStart, null);
-  await assert.rejects(
-    async () => await f.workflows.begin(f.caller, { instanceId: instance.id, expectedRevision: 0 }),
-    { code: 'revision_conflict' },
-  );
-  const next = await f.workflows.begin(f.caller, { instanceId: instance.id, expectedRevision: 1 });
-  assert.equal(first.workStart?.version, 1);
-  assert.equal(first.workStart?.revision, 0);
-  assert.equal(next.workStart?.version, 2);
-  assert.equal(next.workStart?.revision, 1);
-  assert.deepEqual(await f.workflows.workStarts(f.caller, instance.id), [
-    first.workStart,
-    next.workStart,
-  ]);
-});

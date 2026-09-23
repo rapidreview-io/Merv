@@ -1,5 +1,4 @@
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
-import { legacyTaskPolicy } from './fixtures/legacy-task-policy.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -505,59 +504,13 @@ test('dependency-bearing review assignments keep normal independent context, che
   }
 });
 
-test('dependency facts survive provider unload and restart; legacy v1 rows default to empty relations', async () => {
+test('dependency facts survive provider unload and restart', async () => {
   const f = await fixture();
   let restarted: App | undefined;
   try {
     const a = await f.create(),
       b = await f.create(a.id);
-    const graph: WorkflowDefinition = {
-      name: 'task',
-      version: 1,
-      managed: true,
-      initial: 'in_progress',
-      states: ['in_progress', 'in_review', 'done', 'failed'],
-      terminal: ['done', 'failed'],
-      edges: [
-        { from: 'in_progress', action: 'submit_delivery', to: 'in_review' },
-        { from: 'in_review', action: 'reissue_review', to: 'in_review' },
-        { from: 'in_review', action: 'accept', to: 'done' },
-        { from: 'in_review', action: 'revise', to: 'in_progress' },
-        { from: 'in_review', action: 'fail_review', to: 'failed' },
-      ],
-    };
     await f.app.setEnabled('tasks', false);
-    const registration = await f.app.ctx.workflows.register(
-      graph,
-      await legacyTaskPolicy(f.app.ctx.state, graph),
-    );
-    const legacy = await registration.start(f.producer.caller, {
-      workflow: 'task',
-      version: 1,
-      requestId: 'legacy-start',
-      data: {
-        title: 'Legacy task',
-        goal: 'Goal.',
-        checks: ['Check.'],
-        producerId: f.producer.caller.actorId,
-        briefId: f.brief.id,
-      },
-    });
-    await f.app.ctx.state.transaction(
-      async (tx) =>
-        await tx.run(
-          'INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
-          legacy.id,
-          f.operator.projectId,
-          'Legacy task',
-          'Goal.',
-          '["Check."]',
-          f.producer.caller.actorId,
-          f.brief.id,
-          legacy.createdAt,
-        ),
-    );
-    registration.dispose();
     const persisted = await f.app.ctx.workflows.dependencies(f.producer.caller, b.id);
     assert.deepEqual(
       persisted.dependencies.map((item) => item.id),
@@ -568,11 +521,6 @@ test('dependency facts survive provider unload and restart; legacy v1 rows defau
     assert.deepEqual(unavailable.dependencies, persisted.dependencies);
     await f.app.setEnabled('tasks', true);
     await assertWaiting(f, b);
-    const old = await f.app.ctx.tasks.get(f.producer.caller, legacy.id);
-    assert.equal(old.workflow.version, 1);
-    assert.deepEqual(old.dependencies, []);
-    assert.deepEqual(old.dependents, []);
-    assert.deepEqual(old.guidance.dependencies, []);
     await f.verdict(await f.deliver(a), 'pass');
     const ready = await f.get(b);
     await f.app.stop();
@@ -582,7 +530,6 @@ test('dependency facts survive provider unload and restart; legacy v1 rows defau
       (await restarted.ctx.workflows.dependencies(f.producer.caller, b.id)).dependencies,
       ready.dependencies,
     );
-    assert.equal((await restarted.ctx.tasks.get(f.producer.caller, legacy.id)).workflow.version, 1);
     await restarted.setEnabled('workflows', false);
     await restarted.setEnabled('workflows', true);
     assert.deepEqual(await restarted.ctx.tasks.get(f.producer.caller, b.id), ready);

@@ -1,3 +1,5 @@
+import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -78,5 +80,26 @@ END;
 $merv$;
 CREATE TRIGGER reflection_lease_no_delete BEFORE DELETE ON reflection_leases
 FOR EACH ROW EXECUTE FUNCTION reflection_lease_no_delete_guard();
+`,
+  // Reflection@1-2 and lens@1 can no longer start, so their waves and lenses go, with the
+  // reflection@3 waves a retired research cycle opened as its reflecting stage.
+  2: `
+${retiredInstancesSql}
+${withoutTriggers(
+  'reflection_leases',
+  ['reflection_lease_no_delete'],
+  'DELETE FROM reflection_leases WHERE instance_id IN (SELECT id FROM wf_retired_instances);',
+)}
+DELETE FROM reflection_commands WHERE result::jsonb->>'id' IN (SELECT id FROM wf_retired_instances);
+${withoutTriggers(
+  'reflection_lenses',
+  ['reflection_lens_no_delete'],
+  'DELETE FROM reflection_lenses WHERE reflection_id IN (SELECT id FROM wf_retired_instances) OR id IN (SELECT id FROM wf_retired_instances);',
+)}
+${withoutTriggers(
+  'reflections',
+  ['reflection_no_delete'],
+  'DELETE FROM reflections WHERE id IN (SELECT id FROM wf_retired_instances);',
+)}
 `,
 };

@@ -324,39 +324,3 @@ test('a design review cannot waive feasibility, and its finding cites the statem
     /FEASIBILITY_BASIS_7731/,
   );
 });
-
-test('an experiment already on version 3 finishes its design under the rules it started with', async (t) => {
-  const f = await fixture(t);
-  const experiments = f.app.ctx.experiments;
-  // Version 3 no longer starts experiments, so start one the way a live row was started.
-  const program = (experiments as unknown as { program: { handleFor(version: number): unknown } })
-    .program;
-  const handleFor = program.handleFor.bind(program);
-  program.handleFor = (version) => handleFor(version === 5 ? 3 : version);
-  const e = await experiments.create(f.owner, {
-    name: 'Legacy',
-    intent: 'Compare two methods.',
-    requestId: f.id(),
-  });
-  program.handleFor = handleFor;
-  assert.equal(e.workflow.version, 3);
-  const planning = await f.app.ctx.workflows.assignment(f.owner, e.id);
-  assert.doesNotMatch(planning.brief, /role feasibility/);
-  assert.doesNotMatch(planning.context!.prompt, /"feasibilityFormat":/);
-  await assert.rejects(
-    f.attach(e, 'feasibility', feasibilityStatement()),
-    code('invalid_experiment_role'),
-  );
-  await f.attach(e, 'plan', plan);
-  const pending = await f.submit(e);
-  const review = await f.app.ctx.reviews.start(f.reviewer, pending.reviewId!);
-  assert.equal(review.criteria.length, 3);
-  assert.equal('requiredCriteria' in review, false);
-  assert.doesNotMatch(
-    (await f.app.ctx.workflows.assignment(f.reviewer, e.id)).brief,
-    /Criterion 4 is required/,
-  );
-  const input = f.verdict(pending, review, { status: 'met', evidenceIds: [] });
-  input.findings![2] = { ...input.findings![2], status: 'waived', evidenceIds: [] };
-  assert.equal((await experiments.submitReview(f.reviewer, input)).workflow.state, 'running');
-});

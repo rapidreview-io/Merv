@@ -169,7 +169,7 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       replacement = await actor('reviewer');
     const doc = async (title: string, content: string) =>
       await app.ctx.artifacts.create(producer, { title, content });
-    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']!.checks[0]!;
+    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']![0]!;
     const bare = await doc('Bare brief', 'Design a test. Define the controls.'),
       brief = await doc('Brief', `Design a test. Define the controls. ${feasible}`),
       research = await doc('Research', 'Prior controlled comparisons.'),

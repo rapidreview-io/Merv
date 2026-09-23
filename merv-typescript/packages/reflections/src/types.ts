@@ -6,19 +6,7 @@ import type {
   WorkflowSnapshot,
 } from '@merv/contracts';
 import type {} from 'cordis';
-import type { PaperWorkspace, PaperProposal } from '@merv/paper/types';
 
-/** Minimal reader for retained version-1 snapshots; no live Knowledge dependency. */
-export interface HistoricalReflectionCorpus {
-  [field: string]: unknown;
-  selection: {
-    [field: string]: unknown;
-    artifacts: (
-      { id: string; status: 'retained'; artifact: Artifact } | { id: string; status: 'missing' }
-    )[];
-    experiments: { id: string }[];
-  };
-}
 export interface ChangeSpecTask {
   key: string;
   kind: 'task';
@@ -55,16 +43,10 @@ interface ChangeSpecBody {
   carriedOver: { workflowId: string; reason: string }[];
   rejected: { title: string; reason: string }[];
 }
-export type ChangeSpec = ChangeSpecBody &
-  (
-    | { version: 1; items: (WorkItem & { workspace?: never })[] }
-    | {
-        version: 2;
-        items: (WorkItem & {
-          workspace: { provider: 'none' } | { provider: 'code'; version: 1 };
-        })[];
-      }
-  );
+export type ChangeSpec = ChangeSpecBody & {
+  version: 2;
+  items: (WorkItem & { workspace: { provider: 'none' } | { provider: 'code'; version: 1 } })[];
+};
 export interface ReflectionLens {
   id: string;
   reflectionId: string;
@@ -76,16 +58,12 @@ export interface ReflectionLens {
   workflow: WorkflowSnapshot;
 }
 export interface Reflection {
-  paperProposal: PaperProposal | null;
   id: string;
   projectId: string;
   title: string;
   ownerId: string;
   createdAt: string;
   attempt: number;
-  corpus: HistoricalReflectionCorpus | null;
-  experimentIds: string[];
-  paper: Pick<PaperWorkspace, 'documents' | 'citations'> | null;
   lenses: ReflectionLens[];
   workflow: WorkflowSnapshot;
   review: ReviewRequest | null;
@@ -96,16 +74,10 @@ export interface Reflection {
 }
 /** Exact reviewed bytes and provenance; terminally immutable and safe for downstream programs. */
 export interface ApprovedReflection {
-  paperProposal?: PaperProposal;
   id: string;
   projectId: string;
   revision: number;
-  corpus: HistoricalReflectionCorpus | null;
-  experimentIds: string[];
-  paper: Pick<PaperWorkspace, 'documents' | 'citations'> | null;
   report: Artifact;
-  /** Legacy only: waves approved before the 2026-09-16 ruling pinned an authored project graph. Never written going forward. */
-  graph?: Artifact;
   changeSpec: Artifact;
   /**
    * Present only when the change specification was submitted as application/json. A text

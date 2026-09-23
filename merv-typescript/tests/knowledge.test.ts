@@ -432,33 +432,30 @@ test('Knowledge keeps one caller throughout its inventory and evidence reads', a
     credentialId: boot.credential.id,
   };
   const project = f.scope.project.bind(f.scope);
-  for (const method of ['records', 'researchReferences'] as const) {
-    const expected = await f.knowledge[method](f.reader);
-    await t.test(method, async () => {
-      const caller = { ...f.reader };
-      f.scope.project = async (...args) => {
-        const result = await project(...args);
-        Object.assign(caller, other);
-        return result;
-      };
-      try {
-        assert.deepEqual(await f.knowledge[method](caller), expected);
-      } finally {
-        f.scope.project = project;
-      }
-    });
+  const expected = await f.knowledge.records(f.reader);
+  const caller = { ...f.reader };
+  f.scope.project = async (...args) => {
+    const result = await project(...args);
+    Object.assign(caller, other);
+    return result;
+  };
+  try {
+    assert.deepEqual(await f.knowledge.records(caller), expected);
+  } finally {
+    f.scope.project = project;
   }
-  const lookup = f.artifacts.get.bind(f.artifacts);
-  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof lookup>) => {
-    const result = await lookup(...args);
-    await args[2]!.run(
+  // Read authority is asked again once the records are read, so a revocation meanwhile refuses.
+  const list = f.experiments.list.bind(f.experiments);
+  t.mock.method(f.experiments, 'list', async (...args: Parameters<typeof list>) => {
+    const result = await list(...args);
+    await args[1]!.run(
       'UPDATE actor_credentials SET revoked_at=? WHERE id=?',
       new Date().toISOString(),
       f.reader.credentialId!,
     );
     return result;
   });
-  await assert.rejects(f.knowledge.researchReferences(f.reader), { code: 'forbidden' });
+  await assert.rejects(f.knowledge.records(f.reader), { code: 'forbidden' });
 });
 
 test('Historical session capture reference resolves for current readers without reauthorizing the former source', async (t) => {

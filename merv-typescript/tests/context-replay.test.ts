@@ -239,9 +239,10 @@ test('historical task context replays unchanged after deployment and restart, wi
         },
         tx,
       );
-      // The existing table default represents tasks stored before evidence v2.
+      // A row an earlier release wrote: later columns take their defaults, except the evidence
+      // contract, which is 2 for every task that remains (tasks migration 8 retired version 1).
       await tx.run(
-        'INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        'INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at,evidence_version) VALUES(?,?,?,?,?,?,?,?,2)',
         instance.id,
         producer.projectId,
         'Addition',
@@ -256,7 +257,7 @@ test('historical task context replays unchanged after deployment and restart, wi
     workflow.dispose();
     await app.setEnabled('tasks', true);
     const task = await app.ctx.tasks.get(producer, snapshot.id);
-    assert.equal(task.evidenceVersion, 1);
+    assert.equal(task.evidenceVersion, 2);
     const {
       dependents: _dependents,
       evidenceVersion: _evidenceVersion,
@@ -297,7 +298,7 @@ test('historical task context replays unchanged after deployment and restart, wi
       ...input,
       requestId: 'refresh-assignment',
     });
-    assert.match(refreshed.prompt, /"evidenceVersion":1/);
+    assert.match(refreshed.prompt, /"evidenceVersion":2/);
     assert.match(refreshed.prompt, /A new checkpoint after the frozen package/);
     assert.notEqual(refreshed.id, historical.id);
     await assert.rejects(

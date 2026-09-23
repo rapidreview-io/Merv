@@ -3,14 +3,10 @@ import assert from 'node:assert/strict';
 import { MervError } from '@merv/contracts';
 import { ordered } from '@merv/contracts';
 import { parseChangeSpec } from '../packages/reflections/src/change-spec.js';
-import type {
-  ChangeSpec,
-  ChangeSpecExperiment,
-  ChangeSpecTask,
-  WorkItem,
-} from '../packages/reflections/src/types.js';
+import type { ChangeSpec } from '../packages/reflections/src/types.js';
 
-const task = (key: string, dependsOn: string[] = []): ChangeSpecTask => ({
+type Item = ChangeSpec['items'][number];
+const task = (key: string, dependsOn: string[] = []): Extract<Item, { kind: 'task' }> => ({
   key,
   kind: 'task',
   title: `Task ${key}`,
@@ -18,8 +14,12 @@ const task = (key: string, dependsOn: string[] = []): ChangeSpecTask => ({
   checks: ['The measurement is recorded'],
   dependsOn,
   rationale: 'The methods lens found the measurement missing.',
+  workspace: { provider: 'none' },
 });
-const experiment = (key: string, dependsOn: string[] = []): ChangeSpecExperiment => ({
+const experiment = (
+  key: string,
+  dependsOn: string[] = [],
+): Extract<Item, { kind: 'experiment' }> => ({
   key,
   kind: 'experiment',
   name: `exp-${key}`,
@@ -28,11 +28,10 @@ const experiment = (key: string, dependsOn: string[] = []): ChangeSpecExperiment
 
   dependsOn,
   rationale: 'The evidence lens found the control missing.',
+  workspace: { provider: 'none' },
 });
-const plan = (
-  patch: Partial<Extract<ChangeSpec, { version: 1 }>> = {},
-): Extract<ChangeSpec, { version: 1 }> => ({
-  version: 1,
+const plan = (patch: Partial<ChangeSpec> = {}): ChangeSpec => ({
+  version: 2,
   changes: 'Narrow the scope to the controlled setting.',
   next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
   items: [task('measure'), experiment('control', ['measure']), task('report', ['control'])],
@@ -66,7 +65,7 @@ test('a valid change specification parses to the plan it states', () => {
 });
 
 test('every field may reach its limit, and the whole stays small enough to review', () => {
-  const widest: WorkItem[] = [
+  const widest: Item[] = [
     {
       ...task('wide'),
       title: 't'.repeat(200),
@@ -96,7 +95,9 @@ test('a malformed, extended or wrongly versioned change specification is refused
   refused('{not json', /valid JSON/);
   refused({ ...plan(), extra: true }, /extra|input/i);
   refused({ ...plan(), version: 3 }, /version/);
-  refused(plan({ items: [{ ...task('a'), type: 'task.work' } as ChangeSpecTask] }), /items\.0/);
+  // The first plan format, which declared no workspaces, is no longer accepted anywhere.
+  refused({ ...plan(), version: 1 }, /version/);
+  refused(plan({ items: [{ ...task('a'), type: 'task.work' } as Item] }), /items\.0/);
   refused(plan({ items: [{ ...task('A') }] }), /items\.0\.key/);
   refused(plan({ items: [{ ...task('a'), title: 'two\nlines' }] }), /items\.0\.title/);
   refused(plan({ items: [{ ...experiment('a'), name: 'no spaces' }] }), /items\.0\.name/);
@@ -154,10 +155,9 @@ test('items are ordered prerequisites first, otherwise as listed', () => {
   assert.equal(ordered([task('a', ['b']), task('b', ['a'])]), undefined);
 });
 
-test('version 2 requires explicit workspaces and refuses every way to smuggle a base', () => {
+test('every item declares its workspace, and no item can smuggle a base', () => {
   const spec = {
     ...plan(),
-    version: 2,
     items: [
       { ...task('notes'), workspace: { provider: 'none' } },
       { ...task('harness'), workspace: { provider: 'code', version: 1 } },
@@ -196,5 +196,4 @@ test('version 2 requires explicit workspaces and refuses every way to smuggle a 
         /items/,
       );
   }
-  refused({ ...plan(), items: [{ ...task('one'), workspace: { provider: 'none' } }] }, /items/);
 });

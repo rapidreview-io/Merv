@@ -66,30 +66,24 @@ export function evidenceFrom(input: { evidence?: unknown }): Data {
 
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */
 export function validateAssessment(
-  review: Pick<ReviewRequest, 'formatVersion' | 'criteria' | 'artifactIds' | 'requiredCriteria'>,
+  review: Pick<ReviewRequest, 'criteria' | 'artifactIds' | 'requiredCriteria'>,
   input: Pick<ReviewSubmit, 'verdict' | 'synopsis' | 'findings' | 'evidence'>,
-): { synopsis: string | null; findings: ReviewFinding[]; evidence: Data } {
+): { synopsis: string; findings: ReviewFinding[]; evidence: Data } {
   const evidence = evidenceFrom(input);
-  let synopsis: string | null = null;
-  if (review.formatVersion === 2 || input.synopsis !== undefined) {
-    check(
-      typeof input.synopsis === 'string' &&
-        visible(input.synopsis) &&
-        input.synopsis.trim().length >= 40 &&
-        input.synopsis.trim().length <= 420 &&
-        !/[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(input.synopsis) &&
-        !/^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(input.synopsis) &&
-        !/\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
-          input.synopsis,
-        ),
-      'invalid_synopsis',
-      'Supply a plain single-paragraph synopsis of 40–420 characters, without entity IDs or Markdown, explaining the overall verdict',
-    );
-    synopsis = input.synopsis.trim();
-  }
-  if (review.formatVersion === 1 && input.findings === undefined)
-    return { synopsis, findings: [], evidence };
-
+  check(
+    typeof input.synopsis === 'string' &&
+      visible(input.synopsis) &&
+      input.synopsis.trim().length >= 40 &&
+      input.synopsis.trim().length <= 420 &&
+      !/[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(input.synopsis) &&
+      !/^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(input.synopsis) &&
+      !/\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
+        input.synopsis,
+      ),
+    'invalid_synopsis',
+    'Supply a plain single-paragraph synopsis of 40–420 characters, without entity IDs or Markdown, explaining the overall verdict',
+  );
+  const synopsis = input.synopsis.trim();
   const value: unknown = input.findings;
   check(
     Array.isArray(value),

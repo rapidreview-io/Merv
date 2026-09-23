@@ -21,6 +21,7 @@ import type { CodeUnitService } from '../packages/code-research/src/units.js';
 import { gitSource, git } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { assessment as reviewAssessment } from './fixtures/review-verdict.js';
 import { boundProject } from './fixtures/code-binding.js';
 
 async function fixture(t: TestContext, human = false) {
@@ -344,6 +345,7 @@ async function fixture(t: TestContext, human = false) {
       claimId: claim.claimId!,
       verdict: 'pass',
       notes: 'Verified.',
+      ...reviewAssessment(claim),
       requestId: `pass-${taskId}`,
     });
     await accept(await f.workflows.get(f.admin, taskId), commit, request.id);
@@ -402,6 +404,7 @@ test('Code refuses acceptance when another unit accepts a member commit after th
     claimId: claim.claimId!,
     verdict: 'pass',
     notes: 'Checked',
+    ...reviewAssessment(claim),
     requestId: 'wrong-pass',
   });
   assert.deepEqual((await f.reviews.get(f.admin, request.id)).provenance, request.provenance);
@@ -465,6 +468,7 @@ test('frozen-plan provenance excludes indirect authors, authorities and every ea
     claimId: claim.claimId!,
     verdict: 'pass' as const,
     notes: 'Checked.',
+    ...reviewAssessment(claim),
     requestId: 'pass',
   };
   assert.equal((await f.reviews.submit(f.admin, verdict)).verdict, 'pass');
@@ -509,6 +513,7 @@ test('every reviewer excluded is visible on the resolution task and pinned revie
         claimId: certifiedClaim.claimId!,
         verdict: 'pass',
         notes: 'Checked',
+        ...reviewAssessment(certifiedClaim),
         requestId: 'certified-pass',
       })
     ).verdict,

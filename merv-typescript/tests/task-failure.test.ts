@@ -1,6 +1,4 @@
-import { mapAsync } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
-import { legacyTaskPolicy } from './fixtures/legacy-task-policy.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -8,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Caller, Data, Task, TaskMarkFailed, WorkflowDefinition } from '@merv/contracts';
+import type { Caller, Data, Task, TaskMarkFailed } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
@@ -83,68 +81,6 @@ const failureInput = (task: Task, requestId = 'withdraw'): TaskMarkFailed => ({
   reason: 'Required source data cannot be recovered.',
   requestId,
 });
-
-// Original persisted task@1 graph, copied independently of the new program export.
-const legacyGraph: WorkflowDefinition = {
-  name: 'task',
-  version: 1,
-  managed: true,
-  initial: 'in_progress',
-  states: ['in_progress', 'in_review', 'done', 'failed'],
-  terminal: ['done', 'failed'],
-  edges: [
-    { from: 'in_progress', action: 'submit_delivery', to: 'in_review' },
-    { from: 'in_review', action: 'reissue_review', to: 'in_review' },
-    { from: 'in_review', action: 'accept', to: 'done' },
-    { from: 'in_review', action: 'revise', to: 'in_progress' },
-    { from: 'in_review', action: 'fail_review', to: 'failed' },
-  ],
-};
-
-async function legacyTasks(f: Awaited<ReturnType<typeof fixture>>, count: number) {
-  await f.app.setEnabled('tasks', false);
-  const registration = await f.app.ctx.workflows.register(
-    legacyGraph,
-    await legacyTaskPolicy(f.app.ctx.state, legacyGraph),
-  );
-  const ids: string[] = [];
-  try {
-    for (let i = 0; i < count; i++) {
-      const workflow = await registration.start(f.producer.caller, {
-        workflow: 'task',
-        version: 1,
-        requestId: `legacy-start-${i}`,
-        data: {
-          title: 'Legacy work',
-          goal: 'Goal.',
-          checks: ['Check.'],
-          producerId: f.producer.caller.actorId,
-          briefId: f.brief.id,
-        },
-      });
-      // Only original task columns; later columns receive their migration defaults.
-      await f.app.ctx.state.transaction(
-        async (tx) =>
-          await tx.run(
-            'INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
-            workflow.id,
-            f.operator.projectId,
-            'Legacy work',
-            'Goal.',
-            '["Check."]',
-            f.producer.caller.actorId,
-            f.brief.id,
-            workflow.createdAt,
-          ),
-      );
-      ids.push(workflow.id);
-    }
-  } finally {
-    registration.dispose();
-    await f.app.setEnabled('tasks', true);
-  }
-  return await mapAsync(ids, async (id) => await f.app.ctx.tasks.get(f.producer.caller, id));
-}
 
 async function durableState(app: App, caller: Caller, taskId: string) {
   return await app.ctx.state.read(async (sql) => ({
@@ -456,11 +392,10 @@ test('withdrawal after needs_changes preserves the submitted assessment and its 
   }
 });
 
-test('review closure and final event faults roll back withdrawal, version upgrade and dedup together', async () => {
+test('review closure and final event faults roll back withdrawal and dedup together', async () => {
   const f = await fixture();
   try {
-    const [legacy] = await legacyTasks(f, 1);
-    const pending = await f.deliver(legacy);
+    const pending = await f.deliver(await f.create());
     await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
     await f.app.ctx.domainEvents.drain();
     const input = failureInput(pending),
@@ -496,7 +431,8 @@ test('review closure and final event faults roll back withdrawal, version upgrad
     assert.deepEqual(await durableState(f.app, f.operator, pending.id), before);
     const failed = await f.app.ctx.tasks.markFailed(f.producer.caller, input);
     assert.equal(failed.workflow.version, 2);
-    assert.equal(failed.workflow.revision, pending.workflow.revision + 2);
+    assert.equal(failed.workflow.state, 'failed');
+    assert.equal(failed.workflow.revision, pending.workflow.revision + 1);
     assert.equal((await f.app.ctx.reviews.get(f.operator, pending.reviewId!)).status, 'superseded');
     assert.equal(
       (await f.app.ctx.state.events(f.operator.projectId)).filter(
@@ -509,54 +445,23 @@ test('review closure and final event faults roll back withdrawal, version upgrad
   }
 });
 
-test('legacy tasks keep v1 pins and normal review behavior; explicit withdrawal upgrades atomically and survives restart', async () => {
+test('an explicit withdrawal survives restart and replays exactly without touching other tasks', async () => {
   const f = await fixture();
   let restarted: App | undefined;
   try {
-    const [normal, withdrawn, untouched] = await legacyTasks(f, 3);
-    const definitionBefore = await f.app.ctx.state.read(
-      async (sql) =>
-        await sql.get('SELECT * FROM wf_definitions WHERE name=? AND version=?', 'task', 1),
-    );
-    assert.ok([normal, withdrawn, untouched].every((task) => task.workflow.version === 1));
+    const withdrawn = await f.create(),
+      untouched = await f.create();
     assert.ok(withdrawn.guidance.actions.some((action) => action.action === 'mark_failed'));
-    const pending = await f.deliver(normal),
-      claim = await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
-    const done = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: 'pass',
-      notes: 'All evidence verified.',
-      expectedRevision: 1,
-      requestId: 'legacy-pass',
-    });
-    assert.equal(done.workflow.version, 1);
-    assert.equal(done.workflow.state, 'done');
-    assert.equal(done.workflow.revision, 2);
     const input = failureInput(withdrawn),
       failed = await f.app.ctx.tasks.markFailed(f.producer.caller, input);
-    assert.equal(failed.workflow.version, 2);
-    assert.equal(failed.workflow.revision, 2);
-    assert.equal((await f.app.ctx.tasks.get(f.producer.caller, untouched.id)).workflow.version, 1);
-    assert.deepEqual(
-      await f.app.ctx.state.read(
-        async (sql) =>
-          await sql.get('SELECT * FROM wf_definitions WHERE name=? AND version=?', 'task', 1),
-      ),
-      definitionBefore,
-    );
+    assert.equal(failed.workflow.state, 'failed');
+    assert.equal(failed.workflow.revision, 1);
     const head = await f.app.ctx.state.eventHead();
     await f.app.stop();
     restarted = await createApp({ directory: f.directory });
     assert.deepEqual(await restarted.ctx.tasks.get(f.producer.caller, withdrawn.id), failed);
     assert.deepEqual(await restarted.ctx.tasks.markFailed(f.producer.caller, input), failed);
     assert.equal(await restarted.ctx.state.eventHead(), head);
-    assert.equal((await restarted.ctx.tasks.get(f.producer.caller, normal.id)).workflow.version, 1);
-    assert.equal(
-      (await restarted.ctx.tasks.get(f.producer.caller, untouched.id)).workflow.version,
-      1,
-    );
     assert.equal(
       (await restarted.ctx.tasks.get(f.producer.caller, untouched.id)).guidance.nextAction?.action,
       'begin',

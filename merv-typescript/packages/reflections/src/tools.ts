@@ -21,7 +21,7 @@ export const reflectionToolsPlugin = {
       {
         name: 'reflection.get',
         description:
-          'Read a reflection wave, current lens submissions and exact synthesis review. New waves use live research through project.records; only legacy waves contain a frozen corpus.',
+          'Read a reflection wave, current lens submissions and exact synthesis review. A wave uses live research through project.records.',
         inputSchema: z.object({ reflectionId: id }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { reflectionId: string }) =>
