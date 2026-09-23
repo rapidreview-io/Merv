@@ -20,14 +20,12 @@ release (the VM keeps no automatic backup, so take one before any release that m
 forward on the new image. Never delete rows from `component_migrations` to quiet the refusal: the
 schema they name is still there, and the older code reads it on terms that no longer hold.
 
-**The release that retires research claims** is the one exception: at startup Artifacts converts
-every claim into a `Claim: …` Markdown artifact, then drops `claims` and `claim_commands` (on
-PostgreSQL also their guard functions) and deletes the `claims` rows from `component_migrations`,
-all in one transaction. Claim events stay in the event log. Rolling back to the previous image
-therefore raises no `migration_ahead`: its Claims plugin re-runs claims v1 and starts with empty
-claims tables, while the converted artifacts remain. The next start of the new image converts
-anything written there meanwhile and drops those tables again. Only the database backup taken
-before the release brings the claims back as rows.
+**The claims retirement** (release `20260923T021647Z-1ce9f9cc-72daa99ac859`) is the one
+exception: at startup it converted every claim into a `Claim: …` Markdown artifact, then dropped
+the claims tables and deleted the `claims` rows from `component_migrations` in one transaction.
+The conversion step has since been removed from the code. Rolling back to an image older than that
+release recreates empty claims tables; only the backup brings the claims back as rows. See
+[CLAIMS_RETIREMENT.md](../docs/CLAIMS_RETIREMENT.md).
 
 **Before the release that carries the shared Code repository and automatic bases (Git model S1–S3 together).** The server
 must be deployed before any machine built from it: a runner that advertises `capabilities` is
@@ -152,3 +150,4 @@ repository is linked and write automation is turned on.
 | 2026-09-22T13:29Z | `20260922T132737Z-46800cce-74fc7d7d36f2` | `20349d50cbf9` | 53/53                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-BF4hAIho.js 200; /ui/assets/index-DZBFiweU.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260922T111103Z-a5a5a6dd-74f159b72165`         |
 | 2026-09-22T14:47Z | `20260922T144623Z-94860148-01a971624785` | `d79e0a5d76a3` | 53/53                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-Cu-pJu-i.js 200; /ui/assets/index-DZBFiweU.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260922T132737Z-46800cce-74fc7d7d36f2`         |
 | 2026-09-22T21:12Z | `20260922T211125Z-43e7cc3c-771e92e60ae8` | `623e37b15598` | 51/51                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-BCtnbjEA.js 200; /ui/assets/index-DZBFiweU.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260922T144623Z-94860148-01a971624785`         |
+| 2026-09-23T02:18Z | `20260923T021647Z-1ce9f9cc-72daa99ac859` | `64c8ca84e895` | 50/50                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-DInaBOKC.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260922T211125Z-43e7cc3c-771e92e60ae8`         |
