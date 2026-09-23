@@ -9,7 +9,8 @@ active; none of the release milestones is complete yet.
 
 Sandbox source checkout: `output/fleet-sandboxes`, branch
 `codex/fleet-runtime-bootstrap`, based on sandbox commit `c7b9582`.
-Implementation commit: `2eaab0e`.
+Implementation commits: `2eaab0e` (foundations), `4bb4771` (protected access and
+local transport/sudo acceptance).
 An incremental backup bundle is at `output/fleet-runtime-bootstrap.bundle`.
 The original sibling sandbox checkout has unrelated edits and was not modified.
 This isolated clone's origin points to that sibling; nothing was pushed/deployed.
@@ -23,6 +24,11 @@ Implemented:
   UID/GID/group/capability reduction, no privilege gain, cleared environment/FDs.
 - Cloudflare entrypoint writes private bootstrap files and removes bootstrap
   variables before spawning child commands/services.
+- Immutable protected-runtime creation mode denies generic SSH certificates,
+  namespace-certificate connections, jobs, workflow attachment/provisioning,
+  snapshots/restores and terminals. The infrastructure reverse tunnel remains
+  available; this is not a public runtime-launch bypass.
+- Container initializes the encrypted store and sweeps expired ciphertext.
 
 Verification:
 
@@ -30,12 +36,25 @@ Verification:
 - Combined store, entrypoint, existing vault and bootstrap run: 27 passed.
 - Five real Linux launcher tests passed independently in local Docker.
 - Ruff and whitespace checks passed.
+- Latest protected-boundary/access/jobs/store run: 68 passed. Registry/snapshot/
+  workflow regression run: 59 passed. Following independent review, fixes for
+  legacy workflow replay, immutable mode and terminal denial passed a 41-test
+  focused run; protected reverse-tunnel registration passed separately.
+  These suites overlap; their counts are not a distinct-test total.
+- Real gateway certificate/SFTP test: exact synthetic payload delivered, no
+  canary in raw/decoded asciicast recordings or gateway/sshd logs, positive
+  shell-recording control. Five e2e subtests passed with networking disabled.
+- Actual sudo-capable Cloudflare-image fixture: seven Linux tests passed.
+  Positive controls proved unrestricted sudo, setuid and file-capability
+  escalation works, then proved the launcher blocks those same attacks.
 
 PostgreSQL tests used an isolated local container, `merv-fleet-bootstrap-postgres`,
 at `127.0.0.1:51529`; no production database was accessed. Docker Desktop was
 started for tests. These tests do not prove the real Cloudflare provider gate.
-The Linux Python test image lacks sudo; the actual sudo-capable image must still
-pass acceptance. No cloud resources or model credentials were used for this work.
+The later sudo fixture uses cached Cloudflare image
+`sha256:5b9fde5b4a58be30712cf747dabe23baed5749ae6df4a44cb4ee69a9f9121939`.
+Live provider acceptance and final-image ACL/cgroup guarantees remain open.
+No cloud resources or model credentials were used for this work.
 
 The local sibling Python environment crashes importing readline through pytest's
 capture plugin. Tests ran with `-p no:capture`; this is a local test-tool issue.
@@ -43,12 +62,13 @@ capture plugin. Tests ran with `-p no:capture`; this is a local test-tool issue.
 ## Next implementation work, in order
 
 1. Protected transport and fixed-release launch coordinator. Do not reuse ordinary
-   job scripts or their retained command/env fields. Prove gateway recordings,
-   snapshots and diagnostics exclude the secret. Generic privileged jobs must
-   not defeat the protected-runtime boundary.
+   job scripts or their retained command/env fields. SFTP recording exclusion
+   and generic privileged-surface denial now have local evidence. Implement
+   actual private-file delivery with receipt/retry behavior and no diagnostic
+   secret leakage, preserving the protected-runtime boundary.
 2. API authorization, immutable release allowlist, durable launch receipts,
-   enrollment retry/revocation fencing and scheduled envelope expiry cleanup.
-   The new store/launcher are intentionally not public routes or job resolvers.
+   enrollment retry/revocation fencing. Envelope expiry cleanup is now wired.
+   The store/launcher are intentionally not public routes or job resolvers.
 3. Dedicated image and Runner assignment adapter, including scoped environment
    and output channels. Prove actual UID/GID/sudo/process protections, provider
    termination and both milestone-0 go/no-go gates on the configured provider.
