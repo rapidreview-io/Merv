@@ -13,7 +13,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { FleetService } from '@merv/fleet';
-import type { SandboxRuntimes } from '@merv/sandboxes';
+import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
 import type { Fleet, FleetAllocation, FleetOwner } from '@merv/fleet/types';
 import type {
   Sessions,
@@ -278,7 +278,7 @@ test('owner waits for closed-session capture and gives an empty launched runner 
   assert.equal(await f.owner().observe(allocation), 'finished');
 });
 
-test('real Fleet and Sessions run one managed assignment through provider stop', async (t) => {
+async function managedFleetScenario(t: TestContext, workerCount: number) {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
@@ -364,31 +364,43 @@ test('real Fleet and Sessions run one managed assignment through provider stop',
       sweepIntervalMs: 60_000,
     }),
   );
-  let providerStopped = false;
-  let bootstrapBytes: string | null = null;
-  const runtimeHandle = {
-    sandboxId: 'sbx_workflow',
-    state: 'ready' as const,
-    ready: true,
-    deleted: false,
-    leaseExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    revision: 1,
-    launch: null as any,
-  };
+  let now = Date.now();
+  let lostReply = false;
+  const stopped = new Set<string>();
+  const bootstraps = new Map<string, string>();
+  const runtimeHandles = new Map<string, SandboxRuntimeHandle>();
+  const creates = new Map<string, SandboxRuntimeHandle>();
+  const launches = new Map<string, number>();
   const runtimes: SandboxRuntimes = {
     profileId: 'real-fixed-profile',
-    async provision() {
-      return structuredClone(runtimeHandle);
+    async provision(_projectId, operationKey) {
+      let handle = creates.get(operationKey);
+      if (!handle) {
+        handle = {
+          sandboxId: `sbx_workflow_${creates.size + 1}`,
+          state: 'ready',
+          ready: true,
+          deleted: false,
+          leaseExpiresAt: new Date(now + 3_600_000).toISOString(),
+          revision: 1,
+          launch: null,
+        };
+        creates.set(operationKey, handle);
+        runtimeHandles.set(handle.sandboxId, handle);
+      }
+      return structuredClone(handle);
     },
-    async inspect() {
-      return structuredClone(runtimeHandle);
+    async inspect(_projectId, handle) {
+      return structuredClone(runtimeHandles.get(handle.sandboxId)!);
     },
-    async launch(_projectId, _handle, _key, bootstrap) {
-      bootstrapBytes = bootstrap;
+    async launch(_projectId, handle, operationKey, bootstrap) {
+      const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
+      bootstraps.set(handle.sandboxId, bootstrap);
+      launches.set(handle.sandboxId, (launches.get(handle.sandboxId) ?? 0) + 1);
       runtimeHandle.launch = {
         sandboxId: runtimeHandle.sandboxId,
-        launchId: 'launch_workflow',
-        operationKey: 'launch-key',
+        launchId: `launch_${handle.sandboxId}`,
+        operationKey,
         releaseId: 'release_workflow',
         jobId: 'job_workflow',
         state: 'pending',
@@ -396,10 +408,15 @@ test('real Fleet and Sessions run one managed assignment through provider stop',
         expiresAt: new Date(Date.now() + 600_000).toISOString(),
       };
       runtimeHandle.revision++;
+      if (workerCount === 3 && !lostReply) {
+        lostReply = true;
+        throw new Error('injected lost provider launch response');
+      }
       return structuredClone(runtimeHandle);
     },
-    async stop() {
-      providerStopped = true;
+    async stop(_projectId, handle) {
+      const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
+      stopped.add(handle.sandboxId);
       Object.assign(runtimeHandle, {
         state: 'stopped',
         ready: false,
@@ -408,12 +425,23 @@ test('real Fleet and Sessions run one managed assignment through provider stop',
       });
       return structuredClone(runtimeHandle);
     },
-    async renew() {
-      return structuredClone(runtimeHandle);
+    async renew(_projectId, handle) {
+      return structuredClone(runtimeHandles.get(handle.sandboxId)!);
     },
   };
   const fleet = await createService(
-    new FleetService(state, scope, runtimes, { enabled: true, pollIntervalMs: 60_000 }),
+    new FleetService(
+      state,
+      scope,
+      runtimes,
+      {
+        enabled: true,
+        globalLimit: workerCount,
+        projectLimit: workerCount,
+        pollIntervalMs: 60_000,
+      },
+      () => now,
+    ),
   );
   const adapter = new FleetWorkflowAdapter(fleet, sessions, scope, {
     enabled: true,
@@ -422,6 +450,7 @@ test('real Fleet and Sessions run one managed assignment through provider stop',
     modelApiKeyEnv: modelEnv,
     baseUrl: 'https://merv.example.test',
     pollIntervalMs: 60_000,
+    maxAgents: workerCount,
   });
   t.after(async () => {
     await adapter.close();
@@ -435,55 +464,103 @@ test('real Fleet and Sessions run one managed assignment through provider stop',
     delete process.env[modelEnv];
   });
   await sessions.setDispatch(caller, { enabled: true });
-  const target = await workflow.start(caller, {
-    workflow: 'hosted-bridge',
-    requestId: 'hosted-target',
-  });
-  await adapter.start();
-  const allocations = await fleet.list(caller);
-  assert.equal(allocations.length, 1);
-  const allocation = allocations[0]!;
-  assert.deepEqual(allocation.owner, { kind: 'workflow', id: `${target.id}:0` });
-  await fleet.tick(); // Reserve and provision.
-  await fleet.tick(); // Inspect the ready runtime and launch with stable enrollment.
-  const launchedBootstrap = String(bootstrapBytes);
-  assert.notEqual(launchedBootstrap, 'null');
-  const bootstrap = JSON.parse(launchedBootstrap);
-  assert.match(bootstrap.enrollmentToken, /^me_[0-9a-f]{64}$/);
-  assert.equal(bootstrap.modelApiKey, 'test-model-key');
-  assert.equal(launchedBootstrap.includes(boot.token), false);
-  assert.deepEqual(await sessions.inspectManaged(allocation.id, allocation.epoch), {
-    runnerId: null,
-    session: null,
-  });
-  const enrolled = await sessions.enrollManaged(bootstrap.enrollmentToken, {});
-  const managed = await sessions.authenticateManaged(enrolled.controlToken);
-  const runnerId = `managed-${allocation.id}`;
-  await sessions.heartbeatRunner(managed, {
+  const targets = await Promise.all(
+    Array.from({ length: workerCount + 1 }, (_, i) =>
+      workflow.start(caller, { workflow: 'hosted-bridge', requestId: `hosted-target-${i}` }),
+    ),
+  );
+  const heartbeat = (runnerId: string) => ({
     runnerId,
-    machine: { hostname: 'hosted', system: 'Linux', architecture: 'x64' },
+    machine: { hostname: runnerId, system: 'Linux', architecture: 'x64' },
     platforms: [hostedCodexPlatform],
     capabilities: [...hostedCodexCapabilities],
     capacity: 1,
   });
-  const leased = await sessions.lease(managed, {
+  const claim = (runnerId: string) => ({
     runnerId,
-    requestId: 'claim-hosted',
+    requestId: `claim-${runnerId}`,
     secret: `ms_${randomBytes(32).toString('base64url')}`,
     platform: {
       name: hostedCodexPlatform.name,
-      harness: 'codex',
+      harness: 'codex' as const,
       model: hostedCodexPlatform.model,
     },
   });
-  assert.ok(leased.session, leased.reason);
-  assert.equal(leased.session.instanceId, target.id);
-  await sessions.release(managed, { sessionId: leased.session.id, runnerId });
-  assert.equal(
-    (await sessions.inspectManaged(allocation.id, 1))?.session?.releaseAcknowledged,
-    true,
+  // An ordinary runner claims through the existing path before Fleet reads demand.
+  await sessions.heartbeatRunner(caller, heartbeat('external'));
+  const externalClaim = claim('external');
+  const external = await sessions.lease(caller, externalClaim);
+  assert.ok(external.session, external.reason);
+  await sessions.authenticate(externalClaim.secret);
+  await adapter.start();
+  const allocations = await fleet.list(caller);
+  assert.equal(allocations.length, workerCount);
+  const remaining = targets.filter((target) => target.id !== external.session!.instanceId);
+  assert.deepEqual(
+    new Set(allocations.map((a) => a.owner.id)),
+    new Set(remaining.map((target) => `${target.id}:0`)),
+  );
+  await fleet.tick(); // Reserve and provision.
+  await fleet.tick(); // Inspect the ready runtime and launch with stable enrollment.
+  if (workerCount === 3) {
+    assert.equal(lostReply, true);
+    assert.equal((await fleet.list(caller)).filter((a) => a.phase === 'uncertain').length, 1);
+    now += 3000;
+    await fleet.tick(); // Recover the same launched runtime after the response loss.
+  }
+  assert.equal(creates.size, workerCount);
+  assert.equal(bootstraps.size, workerCount);
+  assert.deepEqual([...launches.values()], Array(workerCount).fill(1));
+  const workers = await Promise.all(
+    allocations.map(async (allocation) => {
+      const current = await fleet.inspect(caller, allocation.id);
+      const bytes = bootstraps.get(current.runtime!.sandboxId)!;
+      const bootstrap = JSON.parse(bytes);
+      assert.match(bootstrap.enrollmentToken, /^me_[0-9a-f]{64}$/);
+      assert.equal(bootstrap.modelApiKey, 'test-model-key');
+      assert.equal(bytes.includes(boot.token), false);
+      assert.deepEqual(await sessions.inspectManaged(allocation.id, allocation.epoch), {
+        runnerId: null,
+        session: null,
+      });
+      const enrolled = await sessions.enrollManaged(bootstrap.enrollmentToken, {});
+      const managed = await sessions.authenticateManaged(enrolled.controlToken);
+      const runnerId = `managed-${allocation.id}`;
+      await sessions.heartbeatRunner(managed, heartbeat(runnerId));
+      const managedClaim = claim(runnerId);
+      const leased = await sessions.lease(managed, managedClaim);
+      assert.ok(leased.session, leased.reason);
+      await sessions.authenticate(managedClaim.secret);
+      return { allocation, managed, runnerId, session: leased.session };
+    }),
+  );
+  assert.deepEqual(
+    new Set(workers.map((worker) => worker.session.instanceId)),
+    new Set(remaining.map((target) => target.id)),
+  );
+  await adapter.reconcile();
+  assert.equal((await fleet.list(caller)).length, workerCount);
+  await Promise.all(
+    workers.map(async ({ allocation, managed, runnerId, session }) => {
+      await sessions.release(managed, { sessionId: session.id, runnerId });
+      assert.equal(
+        (await sessions.inspectManaged(allocation.id, 1))?.session?.releaseAcknowledged,
+        true,
+      );
+    }),
   );
   await fleet.tick(); // Observe the completed owner and stop its runtime.
-  assert.equal(providerStopped, true);
-  assert.equal((await fleet.inspect(caller, allocation.id)).phase, 'released');
-});
+  assert.equal(stopped.size, workerCount);
+  assert.ok((await fleet.list(caller)).every((a) => a.phase === 'released'));
+  const stillExternal = await sessions.heartbeat(caller, {
+    sessionId: external.session.id,
+    runnerId: 'external',
+  });
+  assert.equal(stillExternal.id, external.session.id);
+  await sessions.release(caller, { sessionId: external.session.id, runnerId: 'external' });
+}
+
+for (const workerCount of [1, 3]) {
+  test(`real Fleet runs ${workerCount} managed assignments alongside an external runner`, (t) =>
+    managedFleetScenario(t, workerCount));
+}

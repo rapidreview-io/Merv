@@ -147,9 +147,13 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       sourceCredentialEnv: 'WORKFLOW_SOURCE',
       modelApiKeyEnv: 'MODEL_KEY',
       baseUrl: 'https://merv.example',
+      maxAgents: 1,
     });
     assert.ok(!readFileSync(output, 'utf8').includes(workflow.WORKFLOW_SOURCE));
     assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
+    assert.equal(run({ ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '2' }).status, 0);
+    config = JSON.parse(readFileSync(output));
+    assert.equal(config.plugins.find((p) => p.id === 'fleet-workflow').config.maxAgents, 2);
     for (const broken of [
       { MERV_FLEET_ENABLED: 'true' },
       { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },
@@ -160,6 +164,8 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       { ...fleet, MERV_FLEET_WORKFLOW_ENABLED: 'true' },
       { ...workflow, MERV_FLEET_WORKFLOW_PROJECT_ID: 'other_project' },
       { ...workflow, MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV: 'missing_secret' },
+      { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '0' },
+      { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '33' },
     ]) {
       assert.notEqual(run(broken).status, 0);
     }

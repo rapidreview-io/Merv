@@ -189,6 +189,7 @@ if (fleetEnabled) {
         sourceCredentialEnv,
         modelApiKeyEnv,
         baseUrl: httpsOrigin('MERV_FLEET_WORKFLOW_BASE_URL'),
+        maxAgents: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS', 1, 1, 32),
       },
     });
   }
