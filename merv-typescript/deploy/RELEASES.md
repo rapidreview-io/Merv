@@ -4,9 +4,82 @@ Each row is one immutable image built on the VM by `node deploy/release.mjs` fro
 
 Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.shell` (401), approved-origin `/auth/config` (200), unapproved-origin tool call (403); then public HTTPS `/health` and `/ui/`; then each served asset.
 
+## Preserving the attach fix across a concurrent release, 2026-09-23
+
+A concurrent release `20260923T091229Z-193d9376-4aeea6a3c2c9` arrived during the
+fault-test reviewer and omitted the attach fix. Its Sessions file was byte-for-byte
+the tested pre-fix baseline. The same seven-line patch was reapplied to a complete
+copy of that newer release, preserving all its other changes. Build/typecheck and
+compiled CLI validation passed. The resulting image is
+`sha256:dcc3b748b18ce56c8cb59dfa19e958721022c15f5177e957048d18cfaa8e1c0f`,
+with source, patch, hashes and logs under
+`/opt/merv-typescript/releases/20260923-fleet-managed-attach-preserved/`.
+The prior image for rollback is `sha256:8b41c45dcd4c7d1be5338202ad39ccace83c4794fb51b61e55e1211131f3f8da`.
+The full live acceptance runs above tested the earlier attach-fix image; the final
+overlay preserves that exact fix and is validated by build and service health,
+without claiming another live acceptance run. Subsequent releases must include
+`d41729cb` to retain this correction.
+
+## Cloudflare native status fix, 2026-09-23
+
+Sandboxes control and pipelines now use
+`sha256:c6edb8ccf5bd59e99a6b3fefd0c7b1bd8ee46c642567dba1d0e152365765cec4`.
+This is a single-module layer over
+`sha256:2d1c085e1a230c38eff3454580397038c901e30a8fda8229ec6b12d8df5728bc`,
+from isolated Sandboxes commit `4e2b34e256645577e4d0e82ad977f77a0e0fc935`.
+The guard requires native placement health `running`, Durable Object `connected`,
+and a known container state (`running` or observed stale `stopped`), in addition
+to the unchanged exact image digest, version, unique identity, pagination, and
+post-read application recheck. A regression fails on the previous guard; all 19
+focused native-runtime checks and Ruff passed. Evidence includes the actual
+contradictory status records and their native event sequences.
+
+Build/deployment evidence is retained in
+`/var/lib/merv-fleet-pilot/provider-status-fix/`; the new Compose file is
+`/home/azureuser/research-suite-vm/pilot-a740864090ba/fleet-native-status-fix-compose.json`.
+Only control and pipelines restarted, healthy. The Cloudflare worker, application
+version 4, runtime image `ebb7c789…`, release catalog, namespaces, credentials,
+and $0.10 budget cap were preserved. Rollback uses the previous
+`33109ff-fleet-release-ack-compose.json`. Merv remains on the attach-fix image.
+
+## Managed Git attach fix, 2026-09-23
+
+Acceptance Merv image:
+`sha256:05a3bb0b321c6ec16a54e5fb28fbdada112dd4b2be373b9013197709cbb21da8`.
+Build directory: `/opt/merv-typescript/releases/20260923-fleet-managed-attach-fix`.
+This preserves all source from deployed release
+`20260923T082914Z-2e1b7d45-20df33170035` and applies only the Sessions attach
+change in commit `d41729cb`. Patch, complete source hashes, build log, and compiled
+CLI check are retained there. The prior image is
+`sha256:9e270311d366077c059bccd6ea017d5db3259006d1e3afc427f34ee62cd6b4ee`.
+
+The managed Git attach regression reproduces `managed_runner_forbidden` on the
+original code and passes after resolving the validated binding's source caller
+for the existing capability check. Focused managed/capability/API tests and
+typecheck passed. Only Merv's app was recreated; health passed. Fleet's global,
+project, and workflow limits were reduced to one. The private environment backup
+is `/var/lib/merv-fleet-pilot/merv-env-stage/typescript.env.before-single`.
+Single-task Git acceptance passed: producer, saved commit, independent review,
+exact-byte verification, managed release acknowledgements, and native VM cleanup.
+Two distinct pinned VMs were observed and zero deployments remained at 08:51:03Z.
+Subsequent parallel acceptance exposed a separate Cloudflare status interpretation
+bug; that incomplete run was stopped and retained. The provider-only correction
+above subsequently passed a fresh three-task run:
+three overlapping producers, distinct commits and exact-byte checks, independent
+reviews, six acknowledged releases, and native cleanup to zero at 09:08:45Z.
+A separate pre-enrollment VM-stop test passed automatic replacement after the
+60-second retry delay, delivery, review, exact bytes, and managed cleanup.
+Project dispatch and the workflow adapter are off, with limits returned to one.
+Native fault-test cleanup confirmed zero instances at 09:16:13Z.
+
+The earlier three-task test failed before activation and all six allocations
+(including startup retries) were stopped. Native inventory confirmed no active
+VMs. The dedicated Cloudflare application is now version 4 (capacity three),
+with the same immutable runner image and release pin recorded below.
+
 ## Fleet pilot image and release pin, 2026-09-23
 
-Current Merv control runs `20260923T080026Z-da77907a-5a96a7bf1b4e`, image
+The earlier setup release was `20260923T080026Z-da77907a-5a96a7bf1b4e`, image
 `sha256:89cb4998714b4e8810dad1e4d73819e9f5eaaf8d8a99e03b9346bf9d83c9df4e`.
 This adds the operator-only Fleet credential form and configurable allocation
 deadline, without database or authentication changes. Five focused UI tests,

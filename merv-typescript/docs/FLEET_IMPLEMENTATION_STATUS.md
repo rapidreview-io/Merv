@@ -4,29 +4,96 @@ The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
 Neither Fleet nor chat depends on the research workflow. Fleet is deployed for
-one disposable project. Local managed Codex acceptance, the Cloudflare platform
-canary, and protected single-worker execution with automatic cleanup passed.
-The final `gpt-6-luna` producer delivered a verified isolation probe, acknowledged
-local release, and Fleet stopped its VM without intervention. Independent native
-inventory confirmed zero VMs. Dispatch is off. Three-VM Git acceptance remains
-pending; the completed task intentionally had no Git workspace. Pi has not started.
+one disposable project. Pi has not started.
 
-Merv now runs setup release `20260923T080026Z-da77907a-5a96a7bf1b4e`.
-The completed pilot's workflow adapter is disabled and its source credential is
-revoked, so later expiry cannot break startup. Fleet and its optional sidebar
-remain available. The signed-in operator Keys page can issue a finite project
-credential using the existing `actor.create` API; five UI tests and UI typecheck
-passed, including a late response after a project switch. The deployment also
-exposes the existing allocation deadline, configured to 1800 seconds. All limits
-remain one. Public/container health and served assets passed after deployment;
-public health passed again after putting the pilot into this idle state.
+The user approved read-only access to `rapidreview-io/merv-github-smoke` and a
+four-hour project operator credential. Both were configured in the human-created
+`Fleet Git acceptance 2026-09-23` project. Repository preparation passed at
+`fa7cb0fab084e6c44a6ae0ec1b027a4c6270d89c`.
 
-GitHub is connected to the human-created `Fleet Git acceptance 2026-09-23`
-project and its isolated `rapidreview-io/merv-github-smoke` repository. Agent
-repository access is still off, and no Fleet credential has been issued there.
-Read-only repository access and a four-hour test-project operator credential
-are awaiting explicit approval. Repository preparation and multi-VM execution
-have not started.
+The first three-VM Git test failed before agent activation. All three managed
+runners claimed sessions and prepared checkouts, but the attach capability check
+passed a managed principal into ordinary credential delegation, which correctly
+rejected it with `managed_runner_forbidden`. The sessions expired and Fleet
+released the machines. Native inventory confirmed zero deployments, and the
+failed test is retained as incomplete. An intervening Merv deployment also
+interrupted the original monitor; it is not the cause of the reproduced attach
+bug.
+
+Fix `d41729cb` resolves the source caller through the validated managed binding
+before the existing capability check. The new regression fails on the original
+code and passes with the fix. Six managed-runner tests, four capability/API tests,
+typechecking, and formatting passed. The fix was applied alone on top of deployed
+release `20260923T082914Z-2e1b7d45-20df33170035`, preserving its other changes.
+The acceptance image was
+`sha256:05a3bb0b321c6ec16a54e5fb28fbdada112dd4b2be373b9013197709cbb21da8`.
+
+Single-task acceptance passed for `wf_12cba8323c814d3aba3aa2da567bc1c5`:
+producer and independent reviewer completed, Code retained and accepted commit
+`35cf7f8e6d9e07c296ca701a66daf050ae106a12`, and an independent `git show`
+matched all 23 expected bytes. Both managed runners acknowledged release. Native
+Cloudflare checks confirmed two distinct pinned VMs, peak concurrency one, and
+zero deployments after completion at 08:51:03Z. The collector passed all ten
+checks and disabled dispatch automatically.
+
+The next parallel run completed one task through review, but two VMs were held
+before bootstrap delivery by a Cloudflare status interpretation bug. Native
+placement health was `running` and the Durable Object `connected`, while a stale
+`container_status=stopped` masked both. Fresh sandbox-agent heartbeats independently
+confirmed connection. No image guard was bypassed. Dispatch was paused, the two
+unlaunched allocations halted, and all four allocations stopped; native inventory
+confirmed zero deployments at 08:58:20Z. The incomplete run is retained separately.
+The provider-only fix is committed as `4e2b34e256645577e4d0e82ad977f77a0e0fc935`
+in the isolated Sandboxes checkout and retained in `output/fleet-runtime-bootstrap.bundle`.
+It requires running native placement health and a connected Durable Object while
+preserving exact image/version/identity guards. All 19 focused checks and Ruff
+passed, with the regression failing against the old guard. Control and pipelines
+were deployed on image `c6edb8cc…`; Cloudflare handling stays entirely in Sandboxes.
+
+The fresh three-task run passed all 13 acceptance checks. Producers overlapped
+from 09:03:08Z through 09:05:07Z alongside an ordinary runner. All three tasks
+saved distinct commits, passed independent review, matched their expected 25-byte
+files, and released all six managed runners. Native inventory verified six pinned
+VMs, peak concurrency three, and zero deployments at 09:08:45Z. The third reviewer
+waited for budget admission without raising the $0.10 cap. Reports and exact-byte
+proof are retained under `output/fleet-cloudflare-canary/git-provider-*`.
+
+Fault recovery also passed for `wf_72f657607f30428b9b3b563fe97402cd`. The first
+VM was stopped before enrollment; final binding checks confirm it never obtained
+a runner or session. Fleet created exactly one replacement for the same revision
+60.196 seconds after releasing the failed allocation. The replacement completed
+commit `d62f6777981bad04cb27378cb1d8e4ff024c1b72`; an independent reviewer accepted
+it, and `git show` matched all 22 expected bytes. Both runners acknowledged release
+and all three allocations reached released. The collector passed all ten checks
+and disabled project dispatch. Evidence is retained in `git-retry-result.json`,
+`git-retry-proof.json`, and `git-retry-injection.json` under the same output directory.
+
+Fleet's workflow adapter is disabled, project dispatch is off, and all Merv capacity
+limits are one. The Cloudflare application retains capacity three; this does not keep three
+VMs running. Native verification confirmed zero instances and all three fault-test deployment
+IDs cleared at 09:16:13Z. The provider account cap remains $0.10: accrued
+$0.07290789560832, reserved $0, available $0.02709210439168, with no accounting
+gaps. Pi has not started.
+
+The earlier protected workspace-free producer completed its isolation probe and
+released automatically. Fleet's credential setup UI and configurable allocation
+deadline are deployed. The allocation deadline is 1800 seconds; current Fleet
+limits are one. The dedicated Cloudflare application is version 4 with capacity
+three, still on the same immutable `ebb7c789…` runner image.
+
+A concurrent release `20260923T091229Z-193d9376-4aeea6a3c2c9` arrived during the
+fault-test reviewer and omitted the attach fix. Its Sessions file was byte-for-byte
+the tested pre-fix baseline. The same seven-line patch was reapplied to a complete
+copy of that newer release, preserving all its other changes. Build/typecheck and
+compiled CLI validation passed. The resulting image is
+`sha256:dcc3b748b18ce56c8cb59dfa19e958721022c15f5177e957048d18cfaa8e1c0f`,
+with source, patch, hashes and logs under
+`/opt/merv-typescript/releases/20260923-fleet-managed-attach-preserved/`.
+The prior image for rollback is `sha256:8b41c45dcd4c7d1be5338202ad39ccace83c4794fb51b61e55e1211131f3f8da`.
+The full live acceptance runs above tested the earlier attach-fix image; the final
+overlay preserves that exact fix and is validated by build and service health,
+without claiming another live acceptance run. Subsequent releases must include
+`d41729cb` to retain this correction.
 
 ## Implemented locally
 
@@ -61,7 +128,10 @@ have not started.
   outgoing bundles are copied to a private, no-follow staging file before the
   supervisor imports them.
 
-## Evidence and limits
+## Earlier implementation evidence and limits
+
+The following records describe earlier milestones; the deployment and acceptance
+results at the top of this document are the current status.
 
 An integrated sandbox bootstrap store, launch service, receiver, transport,
 release and protected-boundary run passed 74 tests with one macOS skip for a
@@ -127,7 +197,7 @@ one-instance cap, and a healthy rollout. Its release is
 `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`.
 The old catalog entry and image pin were retained for rollback. Build and
 publication evidence is in `output/fleet-image-20260923-rundir-fix/`.
-The current version 3 adds Runner acknowledgement fix `f103ecd0`, pinned to
+The earlier version 3 added Runner acknowledgement fix `f103ecd0`, pinned to
 `sha256:ebb7c789a29d72d925312ae4bdbb904cd299a9c12af39b858b50431763bcc48d`.
 Its fixed release is
 `rt1_6027fb1375124384291717b6376198a2e8bc674ae5203aad4de19ffc23c20ab6`.
@@ -157,7 +227,7 @@ The image now fails protected startup if its trusted bootstrap fails or private
 tmpfs cannot be established; five local entrypoint tests and the ordinary image
 smoke passed, alongside 27 focused provider/launch tests.
 
-## Fleet v1 implementation in progress
+## Fleet v1 implementation milestones
 
 - `@merv/fleet` now owns one PostgreSQL allocation table, stable requests, capacity
   reservation, reconciliation and retirement intent. It is disabled by default.
@@ -294,7 +364,7 @@ workflow/Lean changes were excluded. The deployment record and rollback image
 are retained in `deploy/RELEASES.md` and the remote release directory.
 The same immutable Merv image was recreated with only its private Fleet release
 ID changed first to `rt1_b61fdc64f5f21c5c98ab268d1700aab21e340fca347c701044fbfa33a27f2d16`
-and then to current release
+and then to the earlier release
 `rt1_6027fb1375124384291717b6376198a2e8bc674ae5203aad4de19ffc23c20ab6`.
 The candidate rendered with the expected provider, offer, 600-second lease,
 one-worker limits and disposable project; the app and public health checks passed.
