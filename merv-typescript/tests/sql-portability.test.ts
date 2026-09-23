@@ -101,7 +101,7 @@ test('every native migration file is listed here', () => {
 
 test('domain migrations are PostgreSQL without SQLite constructs', () => {
   const all = migrations();
-  assert.equal(all.length, 76);
+  assert.equal(all.length, 77);
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

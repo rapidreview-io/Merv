@@ -392,6 +392,9 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
         .join(' OR ')}`,
     );
     await client.query('DROP TABLE wf_retired_instances');
+    // sessions@7 (managed runners) came after the retirement; rewinding sessions@6 undoes it too.
+    await client.query("DELETE FROM component_migrations WHERE component='sessions' AND version=7");
+    await client.query('DROP TABLE session_managed_runners');
     for (const version of [1, 2] as const) {
       await client.query(consolidationMigrations[version]);
       await insert(client, 'component_migrations', {
