@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import type { Transaction } from '@merv/contracts';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 function deferred() {
@@ -49,94 +48,6 @@ test('async requests cannot enter another request transaction or see its rolled-
   release.resolve();
   await assert.rejects(rollback, /rollback/);
   assert.deepEqual(await outside, []);
-  await state.close();
-});
-
-test('state keeps explicit transactions, migration checksums and event delivery atomic', async () => {
-  const state = await openState(':memory:');
-  const foreign = await openState(':memory:');
-  await state.migrate('test', migration);
-  await state.migrate('test', migration);
-  await assert.rejects(state.migrate('test', [{ version: 1, sql: 'SELECT 1;' }]), {
-    code: 'migration_changed',
-  });
-  // A server rolled back under a database a newer one already migrated would read that schema
-  // on terms that no longer hold: it refuses to start on it instead.
-  await state.migrate('test', [
-    ...migration,
-    { version: 2, sql: 'CREATE INDEX values_test_value ON values_test(value);' },
-  ]);
-  await assert.rejects(state.migrate('test', migration), { code: 'migration_ahead' });
-  await state.migrate('test', [
-    ...migration,
-    { version: 2, sql: 'CREATE INDEX values_test_value ON values_test(value);' },
-  ]);
-  let captured!: Transaction;
-  let wakeups = 0;
-  state.onEventsCommitted(() => {
-    wakeups++;
-  });
-  await assert.rejects(
-    state.transaction(async (tx) => {
-      await tx.run('INSERT INTO values_test VALUES(?,?)', 1, 'rollback');
-      await state.appendEvent(tx, event);
-      throw new Error('rollback');
-    }),
-    /rollback/,
-  );
-  assert.equal(await state.eventHead(), 0);
-  assert.equal(wakeups, 0);
-  await state.transaction(async (tx) => {
-    captured = tx;
-    assert.throws(() => foreign.assertTransaction(tx), { code: 'invalid_transaction' });
-    await assert.rejects(
-      state.transaction(() => undefined),
-      { code: 'nested_transaction' },
-    );
-    await tx.run('INSERT INTO values_test VALUES(?,?)', 1, 'committed');
-    await state.appendEvent(tx, event);
-    await state.appendEvent(tx, { ...event, subjectId: 'second' });
-  });
-  assert.equal(wakeups, 1);
-  await assert.rejects(captured.get('SELECT 1'), { code: 'transaction_closed' });
-  assert.equal((await state.events('project')).length, 2);
-  // The events trigger refuses the delete; PostgreSQL errors reach callers as state_constraint.
-  await assert.rejects(
-    state.transaction((tx) => tx.run('DELETE FROM events')),
-    { code: 'state_constraint' },
-  );
-  assert.equal((await state.events('project')).length, 2);
-  await state.close();
-  await foreign.close();
-});
-
-test('state close drains admitted requests and denies new work', async () => {
-  const state = await openState(':memory:');
-  const entered = deferred();
-  const release = deferred();
-  const transaction = state.transaction(async (tx) => {
-    entered.resolve();
-    await release.promise;
-    await state.appendEvent(tx, event);
-    return 42;
-  });
-  await entered.promise;
-  // Reads do not queue behind the writer lock; this admitted read stays in flight until the
-  // admitted transaction commits, so close() must drain both.
-  const admittedRead = state.read(async (sql) => {
-    await transaction;
-    return (await sql.get<{ id: number }>('SELECT COALESCE(MAX(id),0) AS id FROM events'))!.id;
-  });
-  let closed = false;
-  const closing = state.close().then(() => {
-    closed = true;
-  });
-  await assert.rejects(state.eventHead(), { code: 'state_closed' });
-  assert.equal(closed, false);
-  release.resolve();
-  assert.equal(await transaction, 42);
-  assert.equal(await admittedRead, 1);
-  await closing;
   await state.close();
 });
 

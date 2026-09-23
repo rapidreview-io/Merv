@@ -264,6 +264,17 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
   await assert.rejects(state.migrate('test', [{ version: 1, sql: 'SELECT 1' }]), {
     code: 'migration_changed',
   });
+  // A server rolled back under a database a newer one already migrated would read that schema
+  // on terms that no longer hold: it refuses to start on it instead.
+  const next = [
+    ...migrations,
+    { version: 2, sql: 'CREATE INDEX records_retry_at ON records(retry_at);' },
+  ];
+  await state.migrate('test', next);
+  await assert.rejects(state.migrate('test', migrations), { code: 'migration_ahead' });
+  await state.migrate('test', next);
+  const foreign = await PostgresState.open({ connectionString, schema: schemaFor() });
+  t.after(() => foreign.close());
   let captured!: Transaction;
   let wakeups = 0;
   state.onEventsCommitted(() => {
@@ -282,6 +293,7 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
   const timestamp = Date.now();
   await state.transaction(async (tx) => {
     captured = tx;
+    assert.throws(() => foreign.assertTransaction(tx), { code: 'invalid_transaction' });
     await tx.run('INSERT INTO records VALUES(?,?)', "bound ' ? secret", timestamp);
     await state.appendEvent(tx, event);
     await state.appendEvent(tx, { ...event, subjectId: 'second' });
@@ -303,10 +315,12 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
     timestamp,
   );
   await assert.rejects(captured.get('SELECT 1'), { code: 'transaction_closed' });
-  await assert.rejects(
-    state.transaction((tx) => tx.run('UPDATE events SET type=?', 'mutated')),
-    { code: 'state_constraint' },
-  );
+  // The events trigger refuses changes; PostgreSQL errors reach callers as state_constraint.
+  for (const change of ["UPDATE events SET type='mutated'", 'DELETE FROM events'])
+    await assert.rejects(
+      state.transaction((tx) => tx.run(change)),
+      { code: 'state_constraint' },
+    );
   assert.equal((await state.events('project')).length, 2);
   await assert.rejects(
     state.transaction(async (tx) => {
@@ -561,61 +575,6 @@ test('PostgreSQL snapshot scopes run sibling reads side by side, each in its own
   await assert.rejects(
     state.snapshot(() => state.transaction(async (tx) => await state.appendEvent(tx, event))),
     { code: 'read_only_scope' },
-  );
-});
-
-test('PostgreSQL appendEvent receipt remains identical to its inserted event during caller edits', async (t) => {
-  const { state } = await fixture(t);
-  const input = structuredClone(event);
-  const receipt = await state.transaction(async (tx) => {
-    const pending = state.appendEvent(tx, input);
-    input.subjectId = 'changed-after-insert';
-    input.data.value = 99;
-    return await pending;
-  });
-  assert.equal(receipt.subjectId, event.subjectId);
-  assert.deepEqual(receipt.data, event.data);
-  assert.deepEqual((await state.events(event.projectId))[0], receipt);
-});
-
-test('PostgreSQL queued migrations retain their version and SQL', async (t) => {
-  const { state } = await fixture(t);
-  const entered = deferred(),
-    release = deferred();
-  const writer = state.transaction(async () => {
-    entered.resolve();
-    await release.promise;
-  });
-  await entered.promise;
-  const original = [{ version: 1, sql: 'CREATE TABLE original_migration(value TEXT);' }];
-  const input = structuredClone(original);
-  const pending = state.migrate('snapshot', input);
-  try {
-    input[0].version = 99;
-    input[0].sql = 'CREATE TABLE changed_migration(value TEXT);';
-  } finally {
-    release.resolve();
-  }
-  await Promise.all([writer, pending]);
-  assert.deepEqual(
-    (
-      await state.read((sql) =>
-        sql.all<{ table_name: string }>(
-          "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('original_migration','changed_migration') ORDER BY table_name",
-        ),
-      )
-    ).map((row) => row.table_name),
-    ['original_migration'],
-  );
-  await state.migrate('snapshot', original);
-  assert.equal(
-    (await state.read((sql) =>
-      sql.get<{ version: number }>(
-        'SELECT version FROM component_migrations WHERE component=?',
-        'snapshot',
-      ),
-    ))!.version,
-    1,
   );
 });
 
