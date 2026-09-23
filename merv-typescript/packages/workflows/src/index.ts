@@ -39,6 +39,7 @@ import type {
   WorkflowLease,
   WorkflowLeaseOffer,
   WorkflowCheckContext,
+  WorkflowAssignmentRule,
   WorkflowHistoryEntry,
   WorkflowExtendLimit,
   WorkflowLimitStatus,
@@ -56,6 +57,7 @@ import {
   decision,
   enforceAction,
   readContext,
+  type EngineContext,
   validatePolicy,
 } from './evaluation.js';
 import { buildAssignment, readWorkStarts } from './assignments.js';
@@ -131,6 +133,13 @@ interface Registration {
   policy?: WorkflowPolicy;
   token: symbol;
   registrationId: string;
+}
+/** One step as load() read it: the frozen context every callback of the call is given. */
+interface Loaded {
+  snapshot: WorkflowSnapshot;
+  registration: Registration;
+  rule: WorkflowAssignmentRule;
+  context: EngineContext;
 }
 export type { WorkflowHistoryEntry } from '@merv/contracts';
 
@@ -432,20 +441,14 @@ export class WorkflowsService implements Workflows {
         if ((await limitStatuses(tx, registration.policy, snapshot)).some((item) => item.exhausted))
           continue;
         try {
-          const role = await this.leaseRole(
+          // The role and label callbacks share one read; the recheck below closes both.
+          const { role, context } = await this.role(
             source,
             { instanceId: snapshot.id, expectedRevision: snapshot.revision },
             tx,
           );
           const label = rule.lease.label
-            ? await rule.lease.label(
-                readContext({
-                  caller: source,
-                  snapshot,
-                  tx,
-                  dependencies: (await relations(tx, source.projectId, snapshot.id)).dependencies,
-                }),
-              )
+            ? await rule.lease.label(context)
             : `${snapshot.workflow}: ${snapshot.state}`;
           check(
             typeof label === 'string' && visible(label),
@@ -484,8 +487,9 @@ export class WorkflowsService implements Workflows {
           if (!(error instanceof MervError) || ![403, 404, 409, 503].includes(error.status))
             throw error;
         }
-        await this.scope.require(source, 'read', tx);
       }
+      // Every row's callbacks have run: a source they revoked is refused here, and the scan
+      // rolls back.
       await this.scope.require(source, 'read', tx);
       // Stable sorting preserves the creation/id order within each execution class.
       this.assertOpen();
@@ -506,46 +510,33 @@ export class WorkflowsService implements Workflows {
   ): Promise<Role> {
     source = structuredClone(source);
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(source, 'read', tx);
-      const snapshot = await this.readSnapshot(tx, source.projectId, target.instanceId);
-      check(
-        snapshot.revision === target.expectedRevision,
-        'revision_conflict',
-        'Workflow changed before lease admission',
-        409,
-      );
-      const registration = this.definition(snapshot.workflow, snapshot.version);
-      check(
-        !registration.definition.terminal.includes(snapshot.state),
-        'workflow_ended',
-        `This work has ended as ${snapshot.state}; it takes no lease`,
-        409,
-      );
-      const rule = registration.policy?.assignments?.find((rule) => rule.state === snapshot.state);
-      check(
-        rule?.lease && rule.execution,
-        'lease_unavailable',
-        'This assignment does not support leases',
-        409,
-      );
-      const dependencies = (await relations(tx, source.projectId, snapshot.id)).dependencies;
-      if (rule.requiresDependencies) requireDependencies(dependencies);
-      const role = await rule.lease.role(
-        readContext({ caller: source, snapshot, tx, dependencies }),
-      );
-      check(
-        ['reader', 'producer', 'reviewer', 'operator'].includes(role),
-        'invalid_workflow_policy',
-        'Lease role must be declared',
-        500,
-      );
+      const { role, context, registration } = await this.role(source, target, tx);
       await this.checkContext(
-        { caller: source, snapshot, tx },
+        context,
         'Lease role callbacks must not change the workflow instance',
       );
       this.requireActive(registration);
       return role;
     });
+  }
+
+  /** The source's lease role, left for the caller's closing recheck. */
+  private async role(
+    source: Caller,
+    target: WorkflowExecutionTarget,
+    tx: Transaction,
+  ): Promise<Loaded & { role: Role }> {
+    const loaded = await this.load(source, target, 'lease', tx);
+    if (loaded.rule.requiresDependencies) requireDependencies(loaded.context.dependencies);
+    const role = await loaded.rule.lease!.role(loaded.context);
+    check(
+      ['reader', 'producer', 'reviewer', 'operator'].includes(role),
+      'invalid_workflow_policy',
+      'Lease role must be declared',
+      500,
+    );
+    this.requireActive(loaded.registration);
+    return { ...loaded, role };
   }
 
   async offerLease(
@@ -556,9 +547,13 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowLeaseOffer> {
     ({ source, worker } = structuredClone({ source, worker }));
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(source, 'read', tx);
-      await this.scope.require(worker, 'read', tx);
-      const role = await this.leaseRole(source, target, tx);
+      const {
+        role,
+        snapshot,
+        registration,
+        rule,
+        context: sourced,
+      } = await this.role(source, target, tx);
       check(
         (await this.scope.require(worker, 'read', tx)).role === role,
         'invalid_lease',
@@ -571,29 +566,17 @@ export class WorkflowsService implements Workflows {
         'Lease must name its authenticated worker and source project',
         403,
       );
-      const snapshot = await this.readSnapshot(tx, worker.projectId, target.instanceId);
-      check(
-        snapshot.revision === target.expectedRevision,
-        'revision_conflict',
-        'Workflow changed before lease offer',
-        409,
-      );
-      const registration = this.definition(snapshot.workflow, snapshot.version);
-      const rule = registration.policy?.assignments?.find((rule) => rule.state === snapshot.state);
-      check(
-        rule?.lease && rule.execution,
-        'lease_unavailable',
-        'This assignment does not support leases',
-        409,
-      );
+      // The worker sees the step the source was just admitted to; the closing recheck
+      // refuses it if any callback below moved it.
       const context = readContext({
         caller: worker,
         snapshot,
         tx,
-        dependencies: (await relations(tx, worker.projectId, snapshot.id)).dependencies,
+        dependencies: sourced.dependencies,
       });
+      const step: Loaded = { snapshot, registration, rule, context };
       const receipt = executionMetadata(
-        await rule.lease.acquire(
+        await rule.lease!.acquire(
           Object.freeze({ ...context, source: structuredClone(source), leaseId: target.leaseId }),
         ),
       );
@@ -604,7 +587,10 @@ export class WorkflowsService implements Workflows {
         500,
       );
       this.requireActive(registration);
-      const execution = await this.execution(worker, target, tx);
+      // Only now: the execution's references read what acquire wrote (pinned artifacts, the
+      // review claim, the Git base).
+      await checkAssignment(rule, context);
+      const execution = await this.executionOf(step);
       const lease: WorkflowLease = {
         leaseId: target.leaseId,
         instanceId: snapshot.id,
@@ -618,8 +604,10 @@ export class WorkflowsService implements Workflows {
         registrationId: execution.registrationId,
         receipt,
       };
-      await rule.lease.check(context, structuredClone(receipt));
-      const assignment = await this.assignment(worker, snapshot.id, tx);
+      await rule.lease!.check(context, structuredClone(receipt));
+      this.requireActive(registration);
+      const assignment = await this.assignmentOf(worker, step, false, tx, execution);
+      // Both callers are rechecked once, after every callback.
       await this.scope.require(source, 'read', tx);
       await this.checkContext(context, 'Lease acquisition must not transition the workflow');
       this.requireActive(registration);
@@ -635,44 +623,49 @@ export class WorkflowsService implements Workflows {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await inTransaction(this.state, transaction, async (tx) => {
-      check(
-        worker.actorId === lease.actorId &&
-          worker.projectId === lease.projectId &&
-          worker.session?.id === lease.leaseId,
-        'invalid_lease',
-        'Lease belongs to a different worker',
-        403,
-      );
-      const target = {
+      const { execution, context, registration } = await this.leaseStep(worker, lease, tx);
+      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
+      this.requireActive(registration);
+      return execution;
+    });
+  }
+
+  /** The lease's current execution and its program's lease check, left for the caller's closing recheck. */
+  private async leaseStep(
+    worker: Caller,
+    lease: WorkflowLease,
+    tx: Transaction,
+  ): Promise<Loaded & { execution: WorkflowExecution }> {
+    check(
+      worker.actorId === lease.actorId &&
+        worker.projectId === lease.projectId &&
+        worker.session?.id === lease.leaseId,
+      'invalid_lease',
+      'Lease belongs to a different worker',
+      403,
+    );
+    const step = await this.executionStep(
+      worker,
+      {
         instanceId: lease.instanceId,
         expectedRevision: lease.expectedRevision,
         policyHash: lease.policyHash,
-      };
-      const execution = await this.executionInternal(worker, target, tx);
-      check(
-        execution.workflow === lease.workflow &&
-          execution.version === lease.version &&
-          execution.state === lease.state,
-        'lease_changed',
-        'Lease no longer names this workflow state',
-        409,
-      );
-      const registration = this.definition(lease.workflow, lease.version);
-      const rule = registration.policy?.assignments?.find((rule) => rule.state === lease.state);
-      check(rule?.lease, 'lease_unavailable', 'This assignment no longer supports leases', 409);
-      await rule.lease.check(
-        readContext({
-          caller: worker,
-          snapshot: await this.readSnapshot(tx, worker.projectId, lease.instanceId),
-          tx,
-          dependencies: (await relations(tx, worker.projectId, lease.instanceId)).dependencies,
-        }),
-        executionMetadata(lease.receipt),
-      );
-      const checked = await this.executionInternal(worker, target, tx);
-      this.requireActive(registration);
-      return checked;
-    });
+      },
+      tx,
+    );
+    const { execution, rule, registration, context } = step;
+    check(
+      execution.workflow === lease.workflow &&
+        execution.version === lease.version &&
+        execution.state === lease.state,
+      'lease_changed',
+      'Lease no longer names this workflow state',
+      409,
+    );
+    check(rule.lease, 'lease_unavailable', 'This assignment no longer supports leases', 409);
+    await rule.lease.check(context, executionMetadata(lease.receipt));
+    this.requireActive(registration);
+    return step;
   }
 
   async activateLease(
@@ -683,19 +676,9 @@ export class WorkflowsService implements Workflows {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const execution = await this.checkLease(worker, lease, tx);
-      const registration = this.definition(lease.workflow, lease.version);
-      check(
-        registration.registrationId === execution.registrationId,
-        'execution_changed',
-        'The workflow registration changed before activation',
-        409,
-      );
-      const started = await this.markStarted(
-        worker,
-        await this.readSnapshot(tx, worker.projectId, lease.instanceId),
-        tx,
-      );
+      const { snapshot, context, registration } = await this.leaseStep(worker, lease, tx);
+      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
+      const started = await this.markStarted(worker, snapshot, tx);
       this.requireActive(registration);
       return started;
     });
@@ -713,7 +696,12 @@ export class WorkflowsService implements Workflows {
     frozen = workflowJson(frozen, 'invalid_execution_target', 400);
     input.input = dispatchInput(input.input);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const current = await this.checkLease(worker, lease, tx);
+      const {
+        execution: current,
+        rule,
+        registration,
+        context,
+      } = await this.leaseStep(worker, lease, tx);
       check(
         frozen.instanceId === lease.instanceId &&
           frozen.projectId === lease.projectId &&
@@ -729,21 +717,10 @@ export class WorkflowsService implements Workflows {
         'Frozen dispatch authority does not match this active lease invocation',
         409,
       );
-      const registration = this.definition(lease.workflow, lease.version);
-      const rule = registration.policy!.assignments!.find((rule) => rule.state === lease.state)!;
-      const snapshot = await this.readSnapshot(tx, worker.projectId, lease.instanceId);
       const references = executionMetadata(frozen.references);
       if (rule.lease!.outputs) {
         const extra = executionMetadata(
-          await rule.lease!.outputs(
-            readContext({
-              caller: worker,
-              snapshot: await this.readSnapshot(tx, worker.projectId, lease.instanceId),
-              tx,
-              dependencies: (await relations(tx, worker.projectId, lease.instanceId)).dependencies,
-            }),
-            executionMetadata(lease.receipt),
-          ),
+          await rule.lease!.outputs(context, executionMetadata(lease.receipt)),
         );
         for (const [key, ids] of Object.entries(extra)) {
           check(
@@ -758,10 +735,7 @@ export class WorkflowsService implements Workflows {
           references[key] = [...new Set([...(references[key] as string[]), ...ids])].sort();
         }
       }
-      await this.checkContext(
-        { caller: worker, snapshot, tx },
-        'Lease output callbacks must not change the workflow instance',
-      );
+      await this.checkContext(context, 'Lease callbacks must not change the workflow instance');
       this.requireActive(registration);
       return await this.admitRead(
         worker,
@@ -850,16 +824,88 @@ export class WorkflowsService implements Workflows {
     checkInstance(target.instanceId);
     checkRevision(target.expectedRevision);
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const snapshot = await this.readSnapshot(tx, caller.projectId, target.instanceId);
-      if (snapshot.revision !== target.expectedRevision) {
-        // The record moved by this caller's own hand: its handoff landed, and a second copy of
-        // the same call has nothing left to do.
+      const { execution, context, registration } = await this.executionStep(caller, target, tx);
+      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
+      this.requireActive(registration);
+      return execution;
+    });
+  }
+
+  /** An admitted execution, left for the caller's closing recheck. */
+  private async executionStep(
+    caller: Caller,
+    target: WorkflowExecutionTarget &
+      Partial<Pick<WorkflowExecutionDispatch, 'registrationId' | 'policyHash'>>,
+    tx: Transaction,
+  ): Promise<Loaded & { execution: WorkflowExecution }> {
+    const step = await this.load(caller, target, 'execution', tx);
+    check(
+      target.registrationId === undefined ||
+        target.registrationId === step.registration.registrationId,
+      'execution_changed',
+      'The captured workflow registration has been withdrawn',
+      409,
+    );
+    check(
+      target.policyHash === undefined ||
+        target.policyHash === executionFingerprint(step.rule.execution!),
+      'execution_changed',
+      'The captured execution policy does not match this workflow state',
+      409,
+    );
+    await checkAssignment(step.rule, step.context);
+    return { ...step, execution: await this.executionOf(step) };
+  }
+
+  /** The execution an admitted step grants: its fixed policy and the references it names now. */
+  private async executionOf({
+    snapshot,
+    registration,
+    rule,
+    context,
+  }: Loaded): Promise<WorkflowExecution> {
+    const references = await executionReferences(rule, context);
+    this.requireActive(registration);
+    return {
+      instanceId: snapshot.id,
+      projectId: context.caller.projectId,
+      actorId: context.caller.actorId,
+      workflow: snapshot.workflow,
+      version: snapshot.version,
+      state: snapshot.state,
+      revision: snapshot.revision,
+      policyHash: executionFingerprint(rule.execution!),
+      registrationId: registration.registrationId,
+      policy: structuredClone(rule.execution!),
+      references,
+    };
+  }
+
+  /**
+   * The one entry read of a lease, execution or assignment: tenancy, the named revision, the
+   * installed definition, the step's rule and its dependencies. Each purpose keeps its own
+   * refusals.
+   */
+  private async load(
+    caller: Caller,
+    target: { instanceId: string; expectedRevision?: number },
+    purpose: 'lease' | 'execution' | 'assignment',
+    tx: Transaction,
+  ): Promise<Loaded> {
+    this.assertOpen();
+    // Domain policy owns write/review admission; the engine always fences tenancy.
+    await this.scope.require(caller, 'read', tx);
+    const snapshot = await this.readSnapshot(tx, caller.projectId, target.instanceId);
+    const expected = target.expectedRevision;
+    if (expected !== undefined && snapshot.revision !== expected) {
+      if (purpose === 'execution') {
+        // The record moved by this caller's own hand: its handoff landed, and a second copy
+        // of the same call has nothing left to do.
         const moved = caller.session
           ? await tx.get<{ actor_id: string }>(
               'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
               target.instanceId,
-              target.expectedRevision + 1,
+              expected + 1,
             )
           : undefined;
         check(
@@ -868,65 +914,57 @@ export class WorkflowsService implements Workflows {
           'Your handoff already moved this record; this session has ended',
           409,
         );
-        check(
-          false,
-          'revision_conflict',
-          'Workflow changed; refresh execution metadata before dispatch',
-          409,
-        );
       }
-      const registration = this.definition(snapshot.workflow, snapshot.version);
       check(
-        !registration.definition.terminal.includes(snapshot.state),
-        'workflow_ended',
-        'This workflow has ended; it has no execution authority',
+        false,
+        'revision_conflict',
+        {
+          lease: 'Workflow changed before lease admission',
+          execution: 'Workflow changed; refresh execution metadata before dispatch',
+          assignment: `Expected revision ${expected}, found ${snapshot.revision}`,
+        }[purpose],
         409,
       );
-      const rule = registration.policy?.assignments?.find((rule) => rule.state === snapshot.state);
+    }
+    const registration = this.definition(snapshot.workflow, snapshot.version);
+    check(
+      !registration.definition.terminal.includes(snapshot.state),
+      'workflow_ended',
+      {
+        lease: `This work has ended as ${snapshot.state}; it takes no lease`,
+        execution: 'This workflow has ended; it has no execution authority',
+        assignment: 'This workflow has ended; it has no active assignment',
+      }[purpose],
+      409,
+    );
+    const rule = registration.policy?.assignments?.find((rule) => rule.state === snapshot.state);
+    if (purpose === 'lease')
+      check(
+        rule?.lease && rule.execution,
+        'lease_unavailable',
+        'This assignment does not support leases',
+        409,
+      );
+    else if (purpose === 'execution')
       check(
         rule?.execution,
         'execution_unavailable',
         'No fixed execution policy is registered for this workflow state',
         409,
       );
-      const policyHash = executionFingerprint(rule.execution);
-      check(
-        target.registrationId === undefined ||
-          target.registrationId === registration.registrationId,
-        'execution_changed',
-        'The captured workflow registration has been withdrawn',
-        409,
-      );
-      check(
-        target.policyHash === undefined || target.policyHash === policyHash,
-        'execution_changed',
-        'The captured execution policy does not match this workflow state',
-        409,
-      );
-      const context = readContext({
-        caller,
-        snapshot,
-        tx,
-        dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
-      });
-      await checkAssignment(rule, context);
-      const references = await executionReferences(rule, context);
-      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
-      this.requireActive(registration);
-      return {
-        instanceId: snapshot.id,
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        workflow: snapshot.workflow,
-        version: snapshot.version,
-        state: snapshot.state,
-        revision: snapshot.revision,
-        policyHash,
-        registrationId: registration.registrationId,
-        policy: structuredClone(rule.execution),
-        references,
-      };
+    check(
+      rule,
+      'assignment_unavailable',
+      'The owning program has no assignment registered for this workflow step',
+      409,
+    );
+    const context = readContext({
+      caller,
+      snapshot,
+      tx,
+      dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
     });
+    return { snapshot, registration, rule, context };
   }
 
   async begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment> {
@@ -1000,72 +1038,48 @@ export class WorkflowsService implements Workflows {
     caller = structuredClone(caller);
     checkInstance(instanceId);
     return await inTransaction(this.state, transaction, async (tx) => {
-      // Domain policy owns write/review admission; the engine always fences tenancy.
-      await this.scope.require(caller, 'read', tx);
-      const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
-      if (expectedRevision !== undefined)
-        check(
-          snapshot.revision === expectedRevision,
-          'revision_conflict',
-          `Expected revision ${expectedRevision}, found ${snapshot.revision}`,
-          409,
-        );
-      const registration = this.definition(snapshot.workflow, snapshot.version);
-      check(
-        !registration.definition.terminal.includes(snapshot.state),
-        'workflow_ended',
-        'This workflow has ended; it has no active assignment',
-        409,
-      );
-      const rule = registration.policy?.assignments?.find((item) => item.state === snapshot.state);
-      check(
-        rule,
-        'assignment_unavailable',
-        'The owning program has no assignment registered for this workflow step',
-        409,
-      );
-      const context = readContext({
-        caller,
-        snapshot,
-        tx,
-        dependencies: (await relations(tx, caller.projectId, instanceId)).dependencies,
-      });
-      await checkAssignment(rule, context);
-      const workStart =
-        expectedRevision !== undefined
-          ? await this.markStarted(caller, snapshot, tx)
-          : ((await readWorkStarts(tx, caller.projectId, instanceId, snapshot.revision))[0] ??
-            null);
-      // A context provider may read guidance. It must see the marker this call is committing.
-      const content = await buildAssignment(rule, context);
-      if (rule.execution)
-        content.execution = executionDisplay(
-          await this.execution(
-            caller,
-            {
-              instanceId,
-              expectedRevision: snapshot.revision,
-            },
-            tx,
-          ),
-        );
+      const step = await this.load(caller, { instanceId, expectedRevision }, 'assignment', tx);
+      await checkAssignment(step.rule, step.context);
+      const assignment = await this.assignmentOf(caller, step, expectedRevision !== undefined, tx);
       await this.checkContext(
-        context,
+        step.context,
         'Assignment callbacks must not change the workflow instance',
       );
-      this.requireActive(registration);
-      return {
-        ...content,
-        instanceId,
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        workflow: snapshot.workflow,
-        version: snapshot.version,
-        state: snapshot.state,
-        revision: snapshot.revision,
-        workStart,
-      };
+      this.requireActive(step.registration);
+      return assignment;
     });
+  }
+
+  /**
+   * The packet for an admitted step, marking its start when `begin`. An execution the caller
+   * already computed for this step is shown as it is.
+   */
+  private async assignmentOf(
+    caller: Caller,
+    step: Loaded,
+    begin: boolean,
+    tx: Transaction,
+    execution?: WorkflowExecution,
+  ): Promise<WorkflowAssignment> {
+    const { snapshot, rule, context } = step;
+    const workStart = begin
+      ? await this.markStarted(caller, snapshot, tx)
+      : ((await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null);
+    // A context provider may read guidance. It must see the marker this call is committing.
+    const content = await buildAssignment(rule, context);
+    if (rule.execution)
+      content.execution = executionDisplay(execution ?? (await this.executionOf(step)));
+    return {
+      ...content,
+      instanceId: snapshot.id,
+      projectId: caller.projectId,
+      actorId: caller.actorId,
+      workflow: snapshot.workflow,
+      version: snapshot.version,
+      state: snapshot.state,
+      revision: snapshot.revision,
+      workStart,
+    };
   }
 
   async overview(caller: Caller): Promise<WorkflowOverview> {
