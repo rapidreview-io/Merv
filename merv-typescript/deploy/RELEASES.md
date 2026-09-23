@@ -6,6 +6,32 @@ Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.
 
 ## Fleet pilot image and release pin, 2026-09-23
 
+The current dedicated Cloudflare application is version 3, pinned to
+`sha256:ebb7c789a29d72d925312ae4bdbb904cd299a9c12af39b858b50431763bcc48d`,
+release `rt1_6027fb1375124384291717b6376198a2e8bc674ae5203aad4de19ffc23c20ab6`.
+It adds Runner fix `f103ecd0` to the fresh-`/run` image below. Thirteen Runner
+integration tests, typecheck and the complete-image protected bootstrap smoke
+passed. Sandboxes control/pipelines loaded the additive release catalog; Merv
+control was recreated with only its private release pin changed. All service
+health checks passed, and the temporary registry credential was removed.
+The previous environment is retained as `typescript.env.before-release-ack`
+under `/var/lib/merv-fleet-pilot/merv-env-stage/`. The pre-Fleet baseline remains
+unchanged. Source/build/publication evidence is in
+`output/fleet-image-20260923-release-ack/`.
+
+Protected producer `wf_c7e253751027433bac7923ac71ddc631` completed on this image
+after one provider-capacity failure and the existing bounded retry. Its managed
+release acknowledgement is recorded at 07:49:23.401Z. Fleet removed its VM
+automatically; independent Cloudflare inventory confirmed zero VMs at 07:49:39Z
+and again at 07:53:51Z. The literal isolation probe passed. Dispatch is off and
+all concurrency caps remain one. This test intentionally had no Git workspace;
+three-VM Git acceptance is still pending. Evidence is in
+`output/fleet-cloudflare-canary/protected-third-result.json` and the independent
+native producer audit beside it.
+
+The preceding version 2 rollout and cleanup regression are retained below as
+historical evidence.
+
 The running Merv image remains release
 `20260923T064442Z-2c867f97-714a965267ff` (`sha256:540a7f890eb3b150a290dec05a747f861db410220f12596abf0461c9b8ecc5d0`).
 Its root-private Fleet environment changed only the fixed runtime release ID
@@ -39,7 +65,7 @@ This task intentionally had no Git workspace. An operator `fleet.halt` stopped
 the VM, and native inventory confirmed deletion at 07:18:36Z. Protected task
 execution passed, but automatic cleanup failed. A focused Runner acknowledgement
 fix is committed as `f103ecd0` with 13 passing Runner integration tests; its
-replacement runtime overlay and repeat acceptance are pending. Secret-free
+replacement runtime overlay and repeat acceptance passed as recorded above. Secret-free
 build/publication evidence is in
 `output/fleet-image-20260923-rundir-fix/`.
 
