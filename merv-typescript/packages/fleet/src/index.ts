@@ -82,6 +82,9 @@ export class FleetService implements Fleet {
     );
     this.timer.unref();
   }
+  connected(projectId: string): boolean {
+    return this.config.enabled && !!this.runtimes?.connected(projectId);
+  }
   registerOwner(kind: string, owner: FleetOwner): () => void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
     check(
@@ -166,7 +169,7 @@ export class FleetService implements Fleet {
     check(owner, 'fleet_owner_unavailable', 'Fleet owner is unavailable', 503);
     // Without a connection no create can ever succeed, and an admitted request would hold a slot.
     check(
-      this.runtimes!.connected(caller.projectId),
+      this.connected(caller.projectId),
       'sandbox_not_connected',
       'Hosted agents are not set up for this project yet',
       403,

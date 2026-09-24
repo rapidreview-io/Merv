@@ -38,6 +38,7 @@ import type {
   PiCompletion,
   PiConversation,
   PiConversationRecord,
+  PiInterruption,
   PiSnapshot,
   PiWork,
 } from './types.js';
@@ -322,7 +323,7 @@ export class PiService implements Pi, FleetOwner {
       ).map((row) => publicCommand(decode(row))),
     }));
     await this.scope.require(caller, 'read');
-    return { ...value, ...transient };
+    return { available: this.fleet.connected(caller.projectId), ...value, ...transient };
   }
   async authorizeStream(caller: Caller, id: string): Promise<void> {
     this.ready();
@@ -871,7 +872,7 @@ export class PiService implements Pi, FleetOwner {
     tx: Transaction,
     conversation: PiConversationRecord,
     command: PiCommandRecord,
-    reason: string,
+    reason: PiInterruption,
   ): Promise<void> {
     if (!active.has(command.status)) return;
     command.status = 'interrupted';

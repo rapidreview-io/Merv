@@ -30,8 +30,11 @@ export interface FleetAllocation {
   updatedAt: string;
   retryAt: string | null;
   failures: number;
-  error: string | null;
+  error: FleetError | null;
 }
+/** runtime_unavailable: an ambiguous failure being retried with the same keys.
+ * runtime_refused: the service refused before any machine could exist, so the slot was freed. */
+export type FleetError = 'runtime_unavailable' | 'runtime_refused';
 export interface FleetRequest {
   requestId: string;
   owner: { kind: string; id: string };
@@ -57,6 +60,8 @@ export interface FleetOwner {
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
 }
 export interface Fleet {
+  /** Whether this project can rent machines at all; false means every request is refused. */
+  connected(projectId: string): boolean;
   registerOwner(kind: string, owner: FleetOwner): () => void;
   inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;

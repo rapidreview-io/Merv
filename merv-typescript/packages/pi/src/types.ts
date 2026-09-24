@@ -1,6 +1,17 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
 
 export type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
+/** Why a command was interrupted; the UI turns each into a sentence. */
+export type PiInterruption =
+  | 'worker_interrupted'
+  | 'runtime_lost'
+  | 'runtime_refused'
+  | 'runtime_stopped'
+  | 'turn_expired'
+  | 'service_unavailable'
+  | 'ambiguous_prompt'
+  | 'checkpoint_unavailable'
+  | 'cancelled';
 export interface PiMessage {
   role: 'user' | 'assistant';
   text: string;
@@ -44,7 +55,7 @@ export interface PiCommand {
   status: PiStatus;
   messages: PiMessage[];
   outcomes: PiToolOutcome[];
-  error: string | null;
+  error: PiInterruption | null;
   createdAt: string;
   expiresAt: string;
   completedAt: string | null;
@@ -61,6 +72,8 @@ export interface PiEvent {
   text: string;
 }
 export interface PiSnapshot {
+  /** False when this project cannot run the agent at all (no sandbox connection). */
+  available: boolean;
   conversation: PiConversation;
   commands: PiCommand[];
   streamId: string;
