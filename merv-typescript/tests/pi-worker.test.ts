@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { decodeCheckpoint, encodeCheckpoint } from '../packages/pi/src/checkpoint.js';
 import { readBootstrap } from '../packages/pi/src/worker-main.js';
-import { runPiWorker } from '../packages/pi/src/worker.js';
+import { cause, runPiWorker } from '../packages/pi/src/worker.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
 import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
@@ -37,7 +37,7 @@ const call = {
   name: 'project_get',
   arguments: '{}',
 };
-function sse(items: object[], text?: string): string {
+function sse(items: object[], text?: string, cutOff = false): string {
   const output = items
     .map((item, index) =>
       item === items.at(-1) && text !== undefined
@@ -50,8 +50,19 @@ function sse(items: object[], text?: string): string {
   return (
     `data: ${JSON.stringify({ type: 'response.created', response: { id: 'resp_1' } })}\n\n` +
     output +
-    `data: ${JSON.stringify({ type: 'response.completed', response: { id: 'resp_1', status: 'completed', output: items, usage: { input_tokens: 12, output_tokens: 8 } } })}\n\n`
+    `data: ${JSON.stringify({ type: cutOff ? 'response.incomplete' : 'response.completed', response: { id: 'resp_1', status: cutOff ? 'incomplete' : 'completed', incomplete_details: cutOff ? { reason: 'max_output_tokens' } : null, output: items, usage: { input_tokens: 12, output_tokens: 8 } } })}\n\n`
   );
+}
+async function stderrOf(run: () => Promise<unknown>): Promise<string> {
+  const write = process.stderr.write;
+  let text = '';
+  process.stderr.write = ((chunk: string) => ((text += chunk), true)) as typeof write;
+  try {
+    await run();
+  } finally {
+    process.stderr.write = write;
+  }
+  return text;
 }
 
 async function fixture(
@@ -65,9 +76,14 @@ async function fixture(
     modelError?: boolean;
     slowTool?: boolean;
     startupFailures?: Array<number | 'network'>;
-    nextAfterGrantStatus?: number;
+    nextAfterGrant?: number[];
     slowProgress?: boolean;
     globalFetch?: typeof fetch;
+    cutOff?: boolean;
+    model?: string;
+    toolFailures?: number[];
+    toolResult?: unknown;
+    progressFailures?: number[];
   } = {},
 ) {
   const controller = new AbortController();
@@ -79,7 +95,15 @@ async function fixture(
   let issued = 0;
   let saves = 0;
   let nextRequests = 0;
+  let toolRequests = 0;
   const startupFailures = [...(options.startupFailures ?? [])];
+  const [nextAfterGrant, toolFailures, progressFailures] = [
+    options.nextAfterGrant,
+    options.toolFailures,
+    options.progressFailures,
+  ].map((failures) => [...(failures ?? [])]);
+  const unavailable = (status: number) =>
+    json({ error: { code: 'not_found', message: 'Artifact not found in this project' } }, status);
   const baseUrl = 'https://pi-worker.test';
   const fakeFetch: typeof fetch = async (input, init) => {
     if (new URL(new Request(input, init).url).pathname === '/pi-worker/next') {
@@ -124,21 +148,21 @@ async function fixture(
                   `data: ${JSON.stringify({ type: 'response.created', response: { id: 'slow_1' } })}\n\n`,
                 ),
               );
-              incoming.signal.addEventListener('abort', () => controller.close(), { once: true });
+              init!.signal!.addEventListener('abort', () => controller.close(), { once: true });
             },
           });
           return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
         }
         const first = options.toolCall && modelRequests.length === 1;
         const items = first ? [call] : [message('Finished')];
-        return new Response(sse(items, first ? undefined : 'Finished'), {
+        return new Response(sse(items, first ? undefined : 'Finished', options.cutOff), {
           headers: { 'content-type': 'text/event-stream' },
         });
       }
       assert.equal(auth, `Bearer ${token}`);
       if (path === '/pi-worker/next') {
-        if (issued && completions.length >= issued && options.nextAfterGrantStatus)
-          return json({ error: 'Authority unavailable' }, options.nextAfterGrantStatus);
+        if (issued && completions.length >= issued && nextAfterGrant.length)
+          return json({ error: 'Authority unavailable' }, nextAfterGrant.shift());
         if (issued >= (options.turns ?? 1) || (issued && completions.length < issued))
           return json({ work: null });
         issued++;
@@ -160,7 +184,7 @@ async function fixture(
           checkpoint: completions.length
             ? { content: completions.at(-1)!.checkpoint, hash: completions.at(-1)!.checkpointHash }
             : (options.checkpoint ?? null),
-          model: 'fake-model',
+          model: options.model ?? 'gpt-6-luna',
           modelBaseUrl: `${baseUrl}/pi-model`,
           modelToken: relayToken,
           tools: [tool],
@@ -176,20 +200,23 @@ async function fixture(
       if (path === '/pi-worker/tool') {
         assert.equal(body.name, 'project.get');
         assert.deepEqual(body.input, {});
+        toolRequests++;
+        if (toolFailures.length) return unavailable(toolFailures.shift()!);
         if (options.slowTool) {
           return new Promise<Response>((_resolve, reject) => {
-            incoming.signal.addEventListener('abort', () => reject(new Error('cancelled')), {
+            init!.signal!.addEventListener('abort', () => reject(new Error('cancelled')), {
               once: true,
             });
           });
         }
-        return json({ result: { title: 'Project' } });
+        return json({ result: options.toolResult ?? { title: 'Project' } });
       }
       if (path === '/pi-worker/progress') {
         progress.push(body.events);
+        if (progressFailures.length) return unavailable(progressFailures.shift()!);
         if (options.slowProgress)
           return new Promise<Response>((_resolve, reject) => {
-            incoming.signal.addEventListener('abort', () => reject(new Error('cancelled')), {
+            init!.signal!.addEventListener('abort', () => reject(new Error('cancelled')), {
               once: true,
             });
           });
@@ -235,6 +262,9 @@ async function fixture(
     },
     get nextRequests() {
       return nextRequests;
+    },
+    get toolRequests() {
+      return toolRequests;
     },
     async run() {
       const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -330,19 +360,125 @@ test('startup enrollment wait stops at bootstrap expiry', async () => {
   app.bootstrap.expiresAt = new Date(Date.now() + 450).toISOString();
   const started = Date.now();
   await app.run().catch((error: unknown) => {
-    assert.match(String(error), /Worker authority unavailable/);
+    assert.match(String(error), /Worker request failed with HTTP 503/);
   });
   assert.ok(Date.now() - started < 2_000);
   assert.equal(app.begins, 0);
   assert.equal(app.modelRequests.length, 0);
 });
 
-test('authority failure after an accepted grant exits instead of re-enrolling', async () => {
-  const app = await fixture({ turns: 2, nextAfterGrantStatus: 503 });
-  await assert.rejects(app.run(), /Worker authority unavailable/);
-  assert.equal(app.nextRequests, 2);
-  assert.equal(app.begins, 1);
-  assert.equal(app.modelRequests.length, 1);
+test('authority failure after an accepted grant exits; an outage is waited out', async () => {
+  const revoked = await fixture({ turns: 2, nextAfterGrant: [401] });
+  await assert.rejects(revoked.run(), /Worker request failed with HTTP 401/);
+  assert.equal(revoked.nextRequests, 2);
+  assert.equal(revoked.begins, 1);
+  assert.equal(revoked.modelRequests.length, 1);
+  const outage = await fixture({ turns: 2, nextAfterGrant: [503, 502] });
+  await outage.run();
+  assert.equal(outage.nextRequests, 4);
+  assert.equal(outage.begins, 2);
+  assert.equal(outage.completions.length, 3);
+});
+
+test('transient progress and tool failures are retried within the turn', async () => {
+  const app = await fixture({ toolCall: true, toolFailures: [503], progressFailures: [502] });
+  await app.run();
+  assert.equal(app.toolRequests, 2);
+  assert.deepEqual(app.failures, []);
+  assert.equal(app.completions[0].outcomes.length, 1);
+});
+
+test('a recoverable tool error reaches the model as a tool result', async () => {
+  const app = await fixture({ toolCall: true, toolFailures: [404] });
+  await app.run();
+  assert.equal(app.toolRequests, 1);
+  assert.deepEqual(app.failures, []);
+  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
+  assert.deepEqual(app.completions[0].outcomes, []);
+  assert.match(JSON.stringify(app.modelRequests[1].input), /Artifact not found in this project/);
+});
+
+test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
+  const app = await fixture({ toolCall: true, toolResult: { content: 'x'.repeat(150_000) } });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const { output } = app.completions[0].outcomes[0];
+  assert.equal(output.truncated, true);
+  assert.equal(String(output.text).length, 96_000);
+  assert.match(JSON.stringify(app.modelRequests[1].input), /bytes omitted: tool output limit/);
+});
+
+test('an answer cut off at the output limit is delivered with a note', async () => {
+  const app = await fixture({ cutOff: true });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  assert.deepEqual(app.completions[0].messages, [
+    { role: 'assistant', text: 'Finished\n\n[Answer cut off at the response length limit.]' },
+  ]);
+  assert.equal(app.modelRequests[0].max_output_tokens, 4096);
+});
+
+test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
+  const at = new Date().toISOString();
+  const entries = [1, 2, 3, 4].flatMap((turn) => [
+    {
+      type: 'message',
+      id: `user_${turn}`,
+      parentId: turn > 1 ? `answer_${turn - 1}` : null,
+      timestamp: at,
+      message: { role: 'user', content: `Earlier ${turn} ${'y'.repeat(60_000)}`, timestamp: 1 },
+    },
+    {
+      type: 'message',
+      id: `answer_${turn}`,
+      parentId: `user_${turn}`,
+      timestamp: at,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: `Answer ${turn}` }],
+        api: 'openai-responses',
+        provider: 'openai',
+        model: 'gpt-6-luna',
+        usage: {
+          input: 30_000,
+          output: 100,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 30_100,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'stop',
+        timestamp: 2,
+      },
+    },
+  ]);
+  const content = JSON.stringify({
+    version: 1,
+    header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
+    entries,
+    leafId: 'answer_4',
+  });
+  const app = await fixture({ checkpoint: { content, hash: digest(content) } });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const sent = JSON.stringify(app.modelRequests[0].input);
+  assert.equal(app.modelRequests[0].max_output_tokens, 4096);
+  assert.ok(
+    sent.includes('Earlier 4') && sent.includes('Earlier 3') && !sent.includes('Earlier 2'),
+  );
+  const saved = decodeCheckpoint({
+    content: app.completions[0].checkpoint,
+    hash: app.completions[0].checkpointHash,
+  });
+  assert.deepEqual(saved.entries[0], { ...entries[4], parentId: null });
+});
+
+test('an assignment the worker refuses is failed at once instead of left to expire', async () => {
+  const app = await fixture({ model: 'gpt-6.1-x' });
+  await app.run();
+  assert.deepEqual(app.failures, ['cmd_1']);
+  assert.equal(app.begins, 0);
+  assert.equal(app.modelRequests.length, 0);
 });
 
 test('requested shutdown during an in-flight next poll exits normally before or after enrollment', async (t) => {
@@ -441,14 +577,16 @@ test('lost begin reply never replays prompt; duplicate assignment never invokes 
   assert.equal(ambiguous.modelRequests.length, 0);
   assert.deepEqual(ambiguous.failures, ['cmd_1']);
   const duplicate = await fixture({ duplicate: true, turns: 2 });
-  await assert.rejects(duplicate.run(), /Duplicate worker assignment/);
+  await duplicate.run();
   assert.equal(duplicate.begins, 1);
   assert.equal(duplicate.modelRequests.length, 1);
+  assert.deepEqual(duplicate.failures, ['cmd_1']);
 });
 
-test('provider error fails closed without automatic retry', async () => {
+test('provider error fails closed without automatic retry and logs its cause', async () => {
   const app = await fixture({ modelError: true });
-  await app.run();
+  const logged = await stderrOf(() => app.run());
+  assert.match(logged, /^Pi worker turn failed: Model response failed \(error\)$/m);
   assert.equal(app.modelRequests.length, 1);
   assert.deepEqual(app.failures, ['cmd_1']);
   assert.equal(app.completions.length, 0);
@@ -566,4 +704,6 @@ test('bootstrap is bounded and strict; checkpoints verify digest and tree integr
     () => encodeCheckpoint({ getHeader: () => null, getEntries: () => [], getLeafId: () => null }),
     /Invalid session/,
   );
+  assert.equal(cause(new Error(`Rejected ${token}`)), 'Unexpected error');
+  assert.equal(cause(new Error('fetch https://pi.test failed')), 'Unexpected error');
 });
