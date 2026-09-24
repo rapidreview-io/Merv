@@ -1,5 +1,50 @@
 # Read-only Pi pilot — 2026-09-24
 
+## Worker burst candidate — 2026-09-24 16:51 UTC
+
+The receipt-bound Stop continuation did not reach Stop: its third worker
+interrupted before a live stream was available. The actual relay returned HTTP200
+and recorded a client disconnect; this does not establish the worker exception.
+Both failed receipts remain intact. The temporary source credential is revoked,
+all runtimes are drained, and accrued infrastructure spend is0.13292461545792
+with zero reservations under the unchanged USD100 all-time cap.
+
+An offline pinned-SDK regression now proves a separate concrete defect:160 rapid
+text deltas overflow the old64-event queue before its heartbeat flush. The narrow
+fix coalesces queued text into the existing8192-character chunks while preserving
+the64-event queue,32-event batch, cancellation and authority limits. Eight
+relay/protocol cases,17 worker cases and typecheck pass. The fix is not yet
+deployed, and the offline reproduction is not proof of the live interruption's
+cause. A new hosted digest requires actual candidate Linux checks, guarded native
+rollout and fresh image-bound security evidence before renewed Pi/UI acceptance;
+the old Gate A/B verdicts cannot simply be copied. Main4b7ec0 and hosted8438
+remain live; their source33d1e88ca CI is green. Normal human project onboarding
+also remains outstanding.
+
+## Current published release — 2026-09-24 16:42 UTC
+
+Main33d1e88ca is on main and deployed as image4b7ec0cdef96, release
+`20260924T163159Z-33d1e88c-d4431900f461`. Its full CI verification36027712527
+passes, as do60/60 plugins, health, UI/assets and authentication/origin checks.
+It adds only privacy-safe relay failure metadata to the previously published
+runtime code. Hosted8438/application12 and Sandboxes32025 are unchanged.
+
+Fresh production UI checks pass real project reads, visible streaming, forced
+reconnect without duplication, idle release and replacement-runtime checkpoint
+restore. The harness then correctly refused its third send because the second
+runtime had not yet released its budget reservation. That failed full-run receipt
+is retained; a separate, receipt-bound Stop-only continuation is being prepared
+after drain, without repeating the two passing turns or relaxing the budget gate.
+The earlier first-release worker interruption is not reproduced or explained by
+these successful turns; it is not relabeled fixed.
+
+The superseded expired consumer is revoked and removed from both allowlists.
+The replacement expires2026-10-24T16:14:06Z; renew by2026-10-17T16:14:06Z.
+Provider operator credentials have a separate September30 expiry. The USD100
+all-time cap, accrued accounting, concurrency1/1/1 and native maximum3 are
+unchanged; diagnostic SSH stays disabled. The pilot project has no human
+membership, and human project selection/onboarding remains outstanding.
+
 ## Published production release — 2026-09-24 16:26 UTC
 
 Main14656e830 is pushed and deployed as image8ef2027551fd, release

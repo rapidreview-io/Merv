@@ -340,14 +340,25 @@ async function executeTurn(
     sending = pending;
   };
   const enqueue = (type: ProgressEvent['type'], text: string) => {
-    for (let index = 0; index < text.length; index += 8192) {
-      if (events.length >= 64) {
-        failure = new Error('Progress buffer full');
-        session.abort().catch(() => {});
-        return;
+    if (failure || signal.aborted) return;
+    for (let index = 0; index < text.length;) {
+      const last = events.at(-1);
+      if (last?.type === type && last.text.length < 8192) {
+        const length = Math.min(8192 - last.text.length, text.length - index);
+        last.text += text.slice(index, index + length);
+        index += length;
+      } else {
+        if (events.length >= 64) {
+          failure = new Error('Progress buffer full');
+          session.abort().catch(() => {});
+          return;
+        }
+        const length = Math.min(8192, text.length - index);
+        events.push({ type, text: text.slice(index, index + length) });
+        index += length;
       }
-      events.push({ type, text: text.slice(index, index + 8192) });
     }
+    if (events.at(-1)?.text.length === 8192 || events.length >= 32) flush();
   };
   const tools: ToolDefinition[] = work.tools.map((tool) => ({
     name: piModelToolName(tool.name),

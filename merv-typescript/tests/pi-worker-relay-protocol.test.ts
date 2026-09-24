@@ -11,7 +11,7 @@ const workerToken = `piw_flt_fixture.${'a'.repeat(43)}`;
 const modelToken = `pir_${'b'.repeat(43)}`;
 const expiresAt = () => new Date(Date.now() + 20_000).toISOString();
 
-function mockResponse(text: string): Response {
+function mockResponse(text: string, deltas = [text]): Response {
   const item = {
     id: 'msg_fixture',
     type: 'message',
@@ -23,7 +23,11 @@ function mockResponse(text: string): Response {
   const body =
     frame({ type: 'response.created', response: { id: 'resp_fixture' } }) +
     frame({ type: 'response.output_item.added', output_index: 0, item }) +
-    frame({ type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: text }) +
+    deltas
+      .map((delta) =>
+        frame({ type: 'response.output_text.delta', output_index: 0, content_index: 0, delta }),
+      )
+      .join('') +
     frame({ type: 'response.output_item.done', output_index: 0, item }) +
     frame({
       type: 'response.completed',
@@ -105,12 +109,25 @@ function mockReasoningToolResponse(): Response {
   );
 }
 
-for (const upstreamStatus of [200, 400, 'tool', 'reasoning'] as const)
+for (const upstreamStatus of [
+  200,
+  400,
+  'tool',
+  'reasoning',
+  'burst',
+  'revoked',
+  'cancelled',
+  'oversize',
+] as const)
   test(`pinned SDK worker and local Pi relay handle mock upstream ${upstreamStatus}`, async (context) => {
     const controller = new AbortController();
     const forwarded: Array<Record<string, unknown>> = [];
     const failures: string[] = [];
     const completions: PiCompletion[] = [];
+    const progress: Array<{ type: string; text: string }> = [];
+    const burstDeltas = Array.from({ length: 160 }, (_, index) => `[${index}]`);
+    const burstText = burstDeltas.join('');
+    const oversizeDeltas = Array.from({ length: 80 }, () => 'x'.repeat(8192));
     const grantExpiresAt = expiresAt();
     let toolInvocations = 0;
     const relay = new PiModelRelay({
@@ -148,8 +165,12 @@ for (const upstreamStatus of [200, 400, 'tool', 'reasoning'] as const)
           return forwarded.length === 1
             ? mockToolResponse()
             : mockResponse('Offline fixture complete');
-        return upstreamStatus === 200
-          ? mockResponse('Offline fixture complete')
+        return upstreamStatus !== 400
+          ? upstreamStatus === 'burst'
+            ? mockResponse(burstText, burstDeltas)
+            : upstreamStatus === 'oversize'
+              ? mockResponse(oversizeDeltas.join(''), oversizeDeltas)
+              : mockResponse('Offline fixture complete')
           : new Response(JSON.stringify({ error: { code: 'synthetic-rejection' } }), {
               status: upstreamStatus,
               headers: { 'content-type': 'application/json' },
@@ -224,7 +245,12 @@ for (const upstreamStatus of [200, 400, 'tool', 'reasoning'] as const)
         return json({ work: ++nextCount === 1 ? work : null });
       if (url.pathname === '/pi-worker/begin')
         return json({ apply: body.commandId === 'cmd_fixture' });
-      if (url.pathname === '/pi-worker/progress') return json({ accepted: true });
+      if (url.pathname === '/pi-worker/progress') {
+        assert.ok((body.events as typeof progress).length <= 32);
+        progress.push(...(body.events as typeof progress));
+        if (upstreamStatus === 'cancelled') controller.abort();
+        return json({ accepted: upstreamStatus !== 'revoked' });
+      }
       if (url.pathname === '/pi-worker/tool') {
         assert.equal(body.name, 'project.get');
         assert.deepEqual(body.input, {});
@@ -244,16 +270,51 @@ for (const upstreamStatus of [200, 400, 'tool', 'reasoning'] as const)
       throw Error('Unexpected outbound request');
     };
     await runPiWorker(bootstrap, { signal: controller.signal, fetchImpl, pollIntervalMs: 250 });
-    assert.deepEqual(failures, upstreamStatus === 400 ? ['cmd_fixture'] : []);
+    assert.deepEqual(
+      failures,
+      upstreamStatus === 400 ||
+        upstreamStatus === 'revoked' ||
+        upstreamStatus === 'oversize' ||
+        upstreamStatus === 'cancelled'
+        ? ['cmd_fixture']
+        : [],
+    );
     assert.equal(
       forwarded.length,
       upstreamStatus === 'reasoning' ? 3 : upstreamStatus === 'tool' ? 2 : 1,
     );
     assert.equal(forwarded[0]?.model, 'gpt-6-luna');
     assert.deepEqual(forwarded[0]?.reasoning, { effort: 'none' });
-    assert.equal(completions.length, upstreamStatus === 400 ? 0 : 1);
-    if (upstreamStatus !== 400)
-      assert.equal(completions[0]?.messages[0]?.text, 'Offline fixture complete');
+    assert.equal(
+      completions.length,
+      upstreamStatus === 400 ||
+        upstreamStatus === 'revoked' ||
+        upstreamStatus === 'oversize' ||
+        upstreamStatus === 'cancelled'
+        ? 0
+        : 1,
+    );
+    if (
+      upstreamStatus !== 400 &&
+      upstreamStatus !== 'revoked' &&
+      upstreamStatus !== 'oversize' &&
+      upstreamStatus !== 'cancelled'
+    )
+      assert.equal(
+        completions[0]?.messages[0]?.text,
+        upstreamStatus === 'burst' ? burstText : 'Offline fixture complete',
+      );
+    if (upstreamStatus === 'burst')
+      assert.equal(
+        progress
+          .filter((event) => event.type === 'text')
+          .map((event) => event.text)
+          .join(''),
+        burstText,
+      );
+    if (upstreamStatus === 'revoked' || upstreamStatus === 'cancelled')
+      assert.ok(progress.length > 0);
+    assert.ok(progress.every((event) => event.text.length <= 8192));
     assert.equal(
       toolInvocations,
       upstreamStatus === 'reasoning' ? 2 : upstreamStatus === 'tool' ? 1 : 0,
