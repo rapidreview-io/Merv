@@ -335,7 +335,16 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
           <section className="stack" aria-label="Dispatch">
             <div className="dispatch">
               <h2 className="section-title">Dispatch</h2>
-              <StatusPill value={status.dispatch.enabled ? 'running' : 'paused'} />
+              {/* Switched on with no live runner to hand work to, nothing runs: it waits. */}
+              <StatusPill
+                value={
+                  !status.dispatch.enabled
+                    ? 'paused'
+                    : status.runners.some((runner) => runner.live)
+                      ? 'running'
+                      : 'waiting'
+                }
+              />
               {status.dispatch.updatedAt && (
                 <span className="faint agent-help">
                   {status.dispatch.updatedBy === me && 'you · '}

@@ -14,7 +14,6 @@ import {
   ApiError,
   accountRequest,
   hasToken,
-  identityVersion,
   onAccessLost,
   resolveAccountSession,
   setProject,
@@ -65,14 +64,12 @@ function SignIn({
   client,
   configuration,
   onAttempt,
-  onSignedIn,
   initialError,
 }: {
   client?: SupabaseClient;
   configuration?: AuthConfiguration;
   /** The person has handed something over: only from here on can a refusal be theirs. */
   onAttempt(): void;
-  onSignedIn(): void;
   initialError?: string;
 }) {
   const [value, setValue] = useState('');
@@ -136,7 +133,6 @@ function SignIn({
     // Storing the credential is the sign-in: the app checks it and reports the outcome.
     setToken(token);
     setValue('');
-    onSignedIn();
   };
   // A secret on one line: nothing corrects it, completes it or shows it, and a pasted
   // credential file still lands whole, because a paste into one line only loses its newlines.
@@ -343,16 +339,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // A credential this tab was still holding from an earlier visit is not something the
   // person just offered: when it is refused the sign-in page opens and accuses nobody.
   const attempted = useRef(false);
-  const accountVersion = useRef(identityVersion());
+  // Consecutive checks the server could not answer, which space the next one out.
+  const failures = useRef(0);
+  const checking = useRef(false);
   const reload = () => setAttempt((n) => n + 1);
   useEffect(() => {
     let disposed = false;
     let active: Awaited<ReturnType<typeof browserAuth>> | undefined;
+    // The address stays what it was: a restored or renewed sign-in keeps the page it is on.
     browserAuth(() => {
-      if (disposed) return;
-      if (accountVersion.current !== identityVersion()) navigate('/', { replace: true });
-      accountVersion.current = identityVersion();
-      setAttempt((n) => n + 1);
+      if (!disposed) reload();
     }).then(
       (result) => {
         if (disposed) result.dispose();
@@ -383,10 +379,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           if (phase.current === 'anonymous' || phase.current === 'checking') return;
           setAuthMode('local');
           setState({ phase: 'anonymous', error: 'Your session ended. Sign in again.' });
-        } else {
-          setProject(null);
-          setAttempt((n) => n + 1);
+          return;
         }
+        // The account is read again and says whether the project is still one of its own;
+        // a check already in flight answers for itself, so this can never loop.
+        if (phase.current === 'ready' && !checking.current) reload();
       }),
     [],
   );
@@ -397,18 +394,29 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
-    setState({ phase: 'checking' });
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    // A page that is open stays open while the same scope is checked again.
+    setState((old) => (old.phase === 'ready' && old.epoch === epoch ? old : { phase: 'checking' }));
+    checking.current = true;
     resolveAccountSession()
       .then((result) => {
+        failures.current = 0;
         if (!cancelled) setState(result);
       })
       .catch((error: unknown) => {
+        if (cancelled || (error instanceof ApiError && error.code === 'scope_changed')) return;
+        // A server that is down or restarting, or a membership still settling, is asked again
+        // later each time, and the credential is kept: a 30-second outage once made thousands
+        // of requests and signed the person out.
         if (
-          cancelled ||
-          (error instanceof ApiError &&
-            ['scope_changed', 'membership_required'].includes(error.code))
-        )
+          error instanceof ApiError &&
+          (error.status === 0 ||
+            error.status >= 500 ||
+            ['invalid_response', 'membership_required'].includes(error.code))
+        ) {
+          retry = setTimeout(reload, Math.min(30_000, 1000 * 2 ** failures.current++));
           return;
+        }
         // The message first: dropping the credential changes the scope, and the run that
         // change starts keeps an anonymous state as it finds it.
         const refused = error instanceof ApiError && error.status === 401;
@@ -421,9 +429,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               : undefined,
         });
         setToken(null);
+      })
+      .finally(() => {
+        // A check waiting to be asked again is still in flight.
+        if (!cancelled && !retry) checking.current = false;
       });
     return () => {
       cancelled = true;
+      clearTimeout(retry);
     };
   }, [attempt, epoch, authReady]);
   const signOut = () => {
@@ -443,13 +456,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         onAttempt={() => {
           attempted.current = true;
         }}
-        // Storing a credential changes the scope, and that alone starts the check.
-        onSignedIn={() => navigate('/', { replace: true })}
       />
     );
+  // The page that was asked for opens in the chosen project.
   const choose = (id: string) => {
     setProject(id);
-    navigate('/', { replace: true });
     reload();
   };
   if (state.phase === 'projects')

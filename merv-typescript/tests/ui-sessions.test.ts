@@ -186,6 +186,26 @@ test('running dispatch offers a pause that is not dressed as the primary', async
   assert.ok(!text().includes('Start dispatch'));
 });
 
+test('dispatch switched on with no live runner reads as waiting, never as running', async (t) => {
+  t.after(unmount);
+  const queue = [
+    {
+      instanceId: 'wf_2',
+      expectedRevision: 0,
+      label: 'Work: Check training configuration',
+      role: 'producer',
+      state: 'in_progress',
+    },
+  ];
+  serve('/tools/ui.read', () =>
+    read({ runners: [{ ...status().runners[0], live: false }], queue, queueTotal: 1 }),
+  );
+  await mount(page());
+  const pill = document.querySelector('.dispatch .status')!;
+  assert.equal(pill.textContent, 'waiting');
+  assert.ok(pill.classList.contains('status--warn'));
+});
+
 test('a clock that jumps cannot lapse a lease the read never saw', async (t) => {
   t.after(unmount);
   serve('/tools/ui.read', (call) => (call === 1 ? read() : { network: true }));

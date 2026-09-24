@@ -172,7 +172,11 @@ function CollectionList({ row }: ViewProps) {
 
   const labels = (item: Item) =>
     [spec.title, ...(spec.search ?? [])].map((field) => str(at(item.data, field)));
-  const reason = (item: Item) => str(at(item.data, spec.attention?.field));
+  // A row that has ended needs nobody, whatever its last error said.
+  const reason = (item: Item) =>
+    spec.states && !spec.states.open.includes(str(at(item.data, spec.states.field)))
+      ? ''
+      : str(at(item.data, spec.attention?.field));
   const filter = useListFilter(items, {
     stateOf: spec.states && ((item) => str(at(item.data, spec.states!.field))),
     isOpen: spec.states && ((state) => spec.states!.open.includes(state)),

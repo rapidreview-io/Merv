@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  ApiError,
   call,
   currentToken,
   identityVersion,
@@ -8,6 +9,7 @@ import {
   scopeVersion,
   useScopeVersion,
 } from '../api';
+import { Markdown } from '../markdown';
 import {
   PiStreamError,
   readPiEvents,
@@ -34,6 +36,39 @@ const accumulateResponse = (before: TransientResponse | null, event: PiEvent) =>
 const identifier = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+/** A machine is found, then prepared, then the model answers and its memory is written. */
+const STATUS: Record<string, string> = {
+  ready: 'Ready',
+  waiting: 'Waiting for a free machine',
+  starting: 'Preparing a machine',
+  working: 'Answering',
+  saving: 'Saving',
+  interrupted: 'Stopped',
+};
+/** Why a turn ended early, with the step after it. Stopping it yourself needs no sentence. */
+const STOPPED: Record<string, string> = {
+  worker_interrupted: 'The agent stopped unexpectedly. Ask again.',
+  runtime_lost: 'The agent’s machine went away. Ask again.',
+  runtime_refused: 'No machine could be started for the agent. Ask again later.',
+  runtime_stopped: 'The agent’s machine was stopped. Ask again.',
+  turn_expired: 'The answer took too long. Ask again.',
+  service_unavailable: 'The agent service is unavailable. Ask again later.',
+  ambiguous_prompt: 'The question may not have reached the agent. Ask again.',
+  checkpoint_unavailable: 'The answer could not be saved. Ask again.',
+};
+const NOT_SET_UP = 'Agent isn’t set up for this project yet.';
+const RECONNECTING = 'Reconnecting…';
+/** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
+const said = (cause: unknown, fallback: string): string => {
+  if (!(cause instanceof ApiError)) return fallback;
+  if (cause.code === 'pi_runtime_releasing')
+    return 'The previous agent is still finishing. Send again in a moment.';
+  if (cause.status === 0) return 'Merv didn’t answer. Try again.';
+  if (cause.status >= 500 || cause.code.startsWith('http_') || cause.code === 'invalid_response')
+    return 'Something went wrong on the server. Try again.';
+  return cause.message;
+};
+
 function PiConversationPage() {
   const [conversations, setConversations] = useState<PiConversation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -41,17 +76,21 @@ function PiConversationPage() {
   const [response, setResponse] = useState<TransientResponse | null>(null);
   const [draft, setDraft] = useState('');
   const [newTitle, setNewTitle] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [refused, setRefused] = useState(false);
   const [error, setError] = useState('');
   const [streamError, setStreamError] = useState('');
   const [unavailable, setUnavailable] = useState(false);
   const [reload, setReload] = useState(0);
   const [snapshotRetry, setSnapshotRetry] = useState(0);
   const pending = useRef<{ id: string; text: string } | null>(null);
-  const conversationSelect = useRef<HTMLSelectElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const transcript = useRef<HTMLDivElement>(null);
+  // The transcript follows new text until the reader scrolls away from its end.
+  const following = useRef(true);
   const createId = useRef(identifier());
-  const nextCreateId = useRef(identifier());
   const canonical = useRef<PiSnapshot | null>(null);
   const selection = useRef<string | null>(null);
   const scope = useRef({
@@ -101,37 +140,28 @@ function PiConversationPage() {
     );
     setStreamError('');
   };
+  const choose = (id: string) => {
+    selection.current = id;
+    following.current = true;
+    setSelected(id);
+  };
 
+  // Opening the page reads the conversations there are; the first message creates one.
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        let items = await call<PiConversation[]>('pi.list');
+    setError('');
+    call<PiConversation[]>('pi.list').then(
+      (items) => {
         if (cancelled || !valid()) return;
-        if (!items.length) {
-          const created = await call<PiConversation>('pi.create', {
-            requestId: createId.current,
-            title: 'New conversation',
-          });
-          if (cancelled || !valid()) return;
-          items = [created];
-        }
         setConversations(items);
-        setSelected((current) => {
-          const next = current && items.some((item) => item.id === current) ? current : items[0].id;
-          selection.current = next;
-          return next;
-        });
-      } catch (cause) {
-        if (!cancelled && valid())
-          setError(cause instanceof Error ? cause.message : 'Could not open Agent');
-      } finally {
-        if (!cancelled && valid()) setLoading(false);
-      }
-    };
-    void load();
+        const kept = items.find((item) => item.id === selection.current) ?? items[0];
+        if (kept) choose(kept.id);
+        setListed(true);
+      },
+      (cause) => {
+        if (!cancelled && valid()) setError(said(cause, 'Could not open Agent.'));
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -140,8 +170,9 @@ function PiConversationPage() {
   useEffect(() => {
     if (!selected) return;
     let stopped = false;
-    let terminal = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Consecutive failures space the next attempt out, up to half a minute.
+    let failures = 0;
     const controller = new AbortController();
     const alive = () =>
       !stopped && !controller.signal.aborted && valid() && selection.current === selected;
@@ -155,60 +186,57 @@ function PiConversationPage() {
       if (alive()) replace(next);
     };
     const connect = async () => {
+      let busyStream = false;
       try {
-        await readPiEvents(
+        const since = Date.now();
+        const rotated = await readPiEvents(
           selected,
           controller.signal,
           (next) => {
+            failures = 0;
             if (alive()) replace(next);
           },
           (delta: PiDelta) => {
             if (!alive()) return;
             const current = canonical.current;
-            if (!current || current.streamId !== delta.streamId) {
-              void refresh().catch(() => {
-                if (alive()) setStreamError('Could not refresh Agent conversation');
-              });
-              return;
-            }
+            if (!current || current.streamId !== delta.streamId)
+              return void refresh().catch(() => {});
             if (delta.sequence <= current.sequence) return;
             canonical.current = { ...current, sequence: delta.sequence };
-            if (delta.type === 'changed') {
-              void refresh().catch(() => {
-                if (alive()) setStreamError('Could not refresh Agent conversation');
-              });
-            } else {
-              setResponse((before) => accumulateResponse(before, delta));
-            }
+            if (delta.type === 'changed') void refresh().catch(() => {});
+            else setResponse((before) => accumulateResponse(before, delta));
           },
         );
-        if (alive()) setStreamError('Agent stream disconnected; reconnecting…');
-      } catch (cause) {
-        if (alive()) {
-          setStreamError(cause instanceof Error ? cause.message : 'Agent stream disconnected');
-          terminal = cause instanceof PiStreamError && [401, 403, 404, 410].includes(cause.status);
-          if (terminal) setUnavailable(true);
-        }
-      }
-      if (!alive() || terminal) return;
-      timer = setTimeout(async () => {
         if (!alive()) return;
-        try {
-          await refresh();
-        } catch (cause) {
-          if (alive())
-            setStreamError(cause instanceof Error ? cause.message : 'Could not refresh Agent');
+        // The server closes every stream after a while and says so first: that is no news, and
+        // a stream that lived is reopened at once.
+        if (!rotated) setStreamError(RECONNECTING);
+        else if (Date.now() - since > 5000) return void connect();
+      } catch (cause) {
+        if (!alive()) return;
+        if (cause instanceof PiStreamError && [401, 403, 404, 410].includes(cause.status)) {
+          setStreamError('This conversation isn’t available right now.');
+          setUnavailable(true);
+          return;
         }
-        if (alive()) void connect();
-      }, 2000);
+        // Too many pages hold this conversation open: this one waits its turn quietly.
+        busyStream = cause instanceof PiStreamError && cause.status === 429;
+        if (!busyStream) setStreamError(RECONNECTING);
+      }
+      if (!alive()) return;
+      timer = setTimeout(
+        async () => {
+          if (!alive()) return;
+          await refresh().catch(() => {});
+          if (alive()) void connect();
+        },
+        Math.min(30_000, (busyStream ? 5000 : 2000) * 2 ** failures++),
+      );
     };
     void refresh()
+      .catch(() => {})
       .then(() => {
         if (alive()) void connect();
-      })
-      .catch((cause) => {
-        if (alive())
-          setError(cause instanceof Error ? cause.message : 'Could not load conversation');
       });
     return () => {
       stopped = true;
@@ -217,59 +245,98 @@ function PiConversationPage() {
     };
   }, [selected, snapshotRetry]);
 
-  const choose = (id: string) => {
-    if (id === selected) return;
-    selection.current = id;
-    pending.current = null;
-    setDraft('');
-    setError('');
-    setSelected(id);
+  const command = snapshot?.commands.find(
+    (item) => item.id === snapshot.conversation.activeCommandId,
+  );
+  const latest = snapshot?.commands.at(-1);
+  const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
+  const active = inFlight(status);
+  const blocked = refused || snapshot?.available === false;
+  const alert =
+    error ||
+    (latest?.error && latest.error !== 'cancelled'
+      ? (STOPPED[latest.error] ?? 'The agent stopped. Ask again.')
+      : '');
+  const visible =
+    response &&
+    active &&
+    response.commandId === command?.id &&
+    !command.messages.some((message) => message.role === 'assistant')
+      ? response
+      : null;
+  useLayoutEffect(() => {
+    const list = transcript.current;
+    if (list && following.current) list.scrollTop = list.scrollHeight;
+  });
+
+  const open = async () => {
+    const item = await call<PiConversation>('pi.create', {
+      requestId: createId.current,
+      title: newTitle.trim() || 'New conversation',
+    });
+    if (!valid()) return null;
+    createId.current = identifier();
+    setNewTitle('');
+    setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
+    choose(item.id);
+    return item.id;
   };
   const create = async () => {
-    if (busy || unavailable) return;
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
-      const item = await call<PiConversation>('pi.create', {
-        requestId: nextCreateId.current,
-        title: newTitle.trim() || 'New conversation',
-      });
-      if (!valid()) return;
-      nextCreateId.current = identifier();
-      setNewTitle('');
-      setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
-      choose(item.id);
-      conversationSelect.current?.focus();
+      if (!(await open())) return;
+      pending.current = null;
+      setDraft('');
+      composer.current?.focus();
     } catch (cause) {
-      if (valid())
-        setError(cause instanceof Error ? cause.message : 'Could not create conversation');
+      if (valid()) setError(said(cause, 'Could not create a conversation.'));
     } finally {
       if (valid()) setBusy(false);
     }
   };
   const send = async () => {
-    if (!selected || busy || unavailable || active || !draft.trim() || !snapshot) return;
     const text = draft.trim();
+    if (busy || blocked || unavailable || active || !text) return;
     if (pending.current?.text !== text) pending.current = { id: identifier(), text };
     const commandId = pending.current.id;
+    let id = selection.current;
     setBusy(true);
     setError('');
     try {
-      await call('pi.send', { id: selected, commandId, text });
-      if (!valid() || selection.current !== selected) return;
+      id ??= await open();
+      if (!id) return;
+      // The previous agent refuses for a moment while it is released; the same command asks again.
+      const until = Date.now() + 60_000;
+      for (;;) {
+        try {
+          await call('pi.send', { id, commandId, text });
+          break;
+        } catch (cause) {
+          const releasing = cause instanceof ApiError && cause.code === 'pi_runtime_releasing';
+          if (!releasing || Date.now() > until) throw cause;
+          setFinishing(true);
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          if (!valid() || selection.current !== id) return;
+        }
+      }
+      if (!valid() || selection.current !== id) return;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
-      try {
-        replace(await call<PiSnapshot>('pi.snapshot', { id: selected }));
-      } catch (cause) {
-        if (valid())
-          setStreamError(cause instanceof Error ? cause.message : 'Could not refresh Agent');
-      }
+      following.current = true;
+      const next = await call<PiSnapshot>('pi.snapshot', { id }).catch(() => null);
+      if (next) replace(next);
     } catch (cause) {
-      if (valid() && selection.current === selected)
-        setError(cause instanceof Error ? cause.message : 'Could not send message');
+      if (!valid() || selection.current !== id) return;
+      if (cause instanceof ApiError && cause.code === 'sandbox_not_connected') setRefused(true);
+      else setError(said(cause, 'Could not send the message.'));
     } finally {
-      if (valid()) setBusy(false);
+      if (valid()) {
+        setBusy(false);
+        setFinishing(false);
+        composer.current?.focus();
+      }
     }
   };
   const stop = async () => {
@@ -280,206 +347,189 @@ function PiConversationPage() {
       replace(await call<PiSnapshot>('pi.stop', { id: selected }));
     } catch (cause) {
       if (valid() && selection.current === selected)
-        setError(cause instanceof Error ? cause.message : 'Could not stop Agent');
+        setError(said(cause, 'Could not stop the agent.'));
     } finally {
       if (valid()) setBusy(false);
     }
   };
-  const command = snapshot?.commands.find(
-    (item) => item.id === snapshot.conversation.activeCommandId,
-  );
-  const latest = snapshot?.commands.at(-1);
-  const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
-  const active = inFlight(status);
-  const visible =
-    response &&
-    active &&
-    response.commandId === command?.id &&
-    !command.messages.some((message) => message.role === 'assistant')
-      ? response
-      : null;
 
   return (
     <div className="page-stage pi-page">
-      <p className="page-summary">
-        Read-only native-query pilot. Agent conversations do not create tasks or change records.
-      </p>
-      {loading && <p role="status">Opening conversations…</p>}
-      {error && (
+      {!listed && !error && <p role="status">Opening conversations…</p>}
+      {listed && (
+        <div className="pi-toolbar">
+          {conversations.length > 0 && (
+            <>
+              <label htmlFor="pi-conversation">Conversation</label>
+              <select
+                id="pi-conversation"
+                className="pi-select"
+                value={selected ?? ''}
+                disabled={busy}
+                onChange={(event) => {
+                  pending.current = null;
+                  setDraft('');
+                  setError('');
+                  choose(event.target.value);
+                }}
+              >
+                {conversations.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          <input
+            className="pi-title"
+            aria-label="New conversation title"
+            placeholder="New conversation title"
+            maxLength={200}
+            value={newTitle}
+            disabled={busy}
+            onChange={(event) => setNewTitle(event.target.value)}
+          />
+          <button className="btn" type="button" disabled={busy} onClick={() => void create()}>
+            New conversation
+          </button>
+        </div>
+      )}
+      {blocked ? (
+        <p className="muted" role="status">
+          {NOT_SET_UP}
+        </p>
+      ) : (
+        (snapshot || finishing) && (
+          <div className="pi-state" role="status">
+            <span className={`pi-state-dot${active ? ' pi-state-dot--active' : ''}`} />
+            <span>
+              {unavailable
+                ? 'Unavailable'
+                : finishing
+                  ? 'Finishing the previous agent…'
+                  : (STATUS[status] ?? 'Ready')}
+            </span>
+            {snapshot?.conversation.runtimeId && (
+              <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
+                Fleet details
+              </Link>
+            )}
+          </div>
+        )
+      )}
+      {listed && (
+        <div
+          className="pi-messages"
+          ref={transcript}
+          aria-label="Conversation messages"
+          aria-live="polite"
+          onScroll={(event) => {
+            const list = event.currentTarget;
+            following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+          }}
+        >
+          {snapshot?.commands.flatMap((item) =>
+            item.messages.map((message, index) => (
+              <article
+                className={`pi-message pi-message--${message.role}`}
+                key={`${item.id}-${index}`}
+              >
+                <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
+                {message.role === 'user' ? (
+                  <div className="pi-message-text">{message.text}</div>
+                ) : (
+                  <Markdown source={message.text} />
+                )}
+              </article>
+            )),
+          )}
+          {visible && (visible.text || visible.progress) && (
+            <article className="pi-message pi-message--assistant pi-message--transient">
+              <span className="pi-speaker">Agent · live</span>
+              {visible.text && <Markdown source={visible.text} />}
+              {visible.progress && <p className="muted">{visible.progress}</p>}
+            </article>
+          )}
+          {selected && !snapshot ? (
+            <p className="muted">Loading conversation…</p>
+          ) : (
+            !blocked &&
+            !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>
+          )}
+        </div>
+      )}
+      {alert && (
         <p className="pi-error" role="alert">
-          {error}
+          {alert}
         </p>
       )}
-      {!loading && !selected && (
+      {streamError && (
+        <p className="muted" role="status">
+          {streamError}
+        </p>
+      )}
+      {unavailable && (
+        <button
+          className="btn"
+          type="button"
+          onClick={() => setSnapshotRetry((value) => value + 1)}
+        >
+          Retry connection
+        </button>
+      )}
+      {!listed && error && (
         <button className="btn" type="button" onClick={() => setReload((value) => value + 1)}>
           Retry opening Agent
         </button>
       )}
-      {selected && (
-        <>
-          <div className="pi-toolbar">
-            <label htmlFor="pi-conversation">Conversation</label>
-            <select
-              id="pi-conversation"
-              ref={conversationSelect}
-              className="pi-select"
-              value={selected}
-              disabled={busy || unavailable}
-              onChange={(event) => choose(event.target.value)}
-            >
-              {conversations.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.title}
-                </option>
-              ))}
-            </select>
-            <input
-              className="pi-title"
-              aria-label="New conversation title"
-              placeholder="New conversation title"
-              maxLength={200}
-              value={newTitle}
-              disabled={busy || unavailable}
-              onChange={(event) => setNewTitle(event.target.value)}
-            />
+      {listed && (
+        <form
+          className="pi-compose"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void send();
+          }}
+        >
+          <label htmlFor="pi-draft">Message Agent</label>
+          <textarea
+            id="pi-draft"
+            ref={composer}
+            className="textarea"
+            rows={3}
+            maxLength={32_000}
+            value={draft}
+            // Read-only rather than disabled while sending, so the cursor stays where it was.
+            readOnly={busy}
+            disabled={blocked}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <div className="pi-compose-actions">
+            {active && (
+              <button
+                className="btn"
+                type="button"
+                disabled={busy || unavailable}
+                onClick={() => void stop()}
+              >
+                Stop
+              </button>
+            )}
             <button
-              className="btn"
-              type="button"
-              disabled={busy || unavailable}
-              onClick={() => void create()}
+              className="btn btn--primary"
+              type="submit"
+              disabled={busy || blocked || unavailable || active || !draft.trim()}
             >
-              New conversation
+              {busy ? 'Sending…' : pending.current?.text === draft.trim() ? 'Retry send' : 'Send'}
             </button>
           </div>
-          {!snapshot ? (
-            <>
-              <p role="status">{error ? 'Conversation unavailable.' : 'Loading conversation…'}</p>
-              {error && (
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() => {
-                    setError('');
-                    setSnapshotRetry((value) => value + 1);
-                  }}
-                >
-                  Retry loading conversation
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="pi-state" role="status">
-                <span className={`pi-state-dot${active ? ' pi-state-dot--active' : ''}`} />
-                <span>
-                  {unavailable
-                    ? 'Unavailable'
-                    : status === 'ready'
-                      ? 'Ready'
-                      : status.charAt(0).toUpperCase() + status.slice(1)}
-                </span>
-                {snapshot.conversation.runtimeId && (
-                  <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
-                    Fleet details
-                  </Link>
-                )}
-              </div>
-              <div className="pi-messages" aria-label="Conversation messages" aria-live="polite">
-                {snapshot.commands.flatMap((item) =>
-                  item.messages.map((message, index) => (
-                    <article
-                      className={`pi-message pi-message--${message.role}`}
-                      key={`${item.id}-${index}`}
-                    >
-                      <span className="pi-speaker">
-                        {message.role === 'user' ? 'You' : 'Agent'}
-                      </span>
-                      <div className="pi-message-text">{message.text}</div>
-                    </article>
-                  )),
-                )}
-                {visible && (visible.text || visible.progress) && (
-                  <article className="pi-message pi-message--assistant pi-message--transient">
-                    <span className="pi-speaker">Agent · live</span>
-                    {visible.text && <div className="pi-message-text">{visible.text}</div>}
-                    {visible.progress && <p className="muted">{visible.progress}</p>}
-                  </article>
-                )}
-                {!snapshot.commands.length && (
-                  <p className="muted">Ask Agent a question to begin. No task is created.</p>
-                )}
-              </div>
-              {latest?.error && (
-                <p className="pi-error" role="alert">
-                  {latest.error}
-                </p>
-              )}
-              {streamError && (
-                <p className="muted" role="status">
-                  {streamError}
-                </p>
-              )}
-              {unavailable && (
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() => setSnapshotRetry((value) => value + 1)}
-                >
-                  Retry connection
-                </button>
-              )}
-              <form
-                className="pi-compose"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void send();
-                }}
-              >
-                <label htmlFor="pi-draft">Message Agent</label>
-                <textarea
-                  id="pi-draft"
-                  className="textarea"
-                  rows={3}
-                  maxLength={32_000}
-                  value={draft}
-                  disabled={busy || unavailable || active}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                      event.preventDefault();
-                      void send();
-                    }
-                  }}
-                  placeholder="Ask a read-only question…"
-                />
-                <div className="pi-compose-actions">
-                  <span className="muted">⌘/Ctrl + Enter to send</span>
-                  {active && (
-                    <button
-                      className="btn"
-                      type="button"
-                      disabled={busy || unavailable}
-                      onClick={() => void stop()}
-                    >
-                      Stop
-                    </button>
-                  )}
-                  <button
-                    className="btn btn--primary"
-                    type="submit"
-                    disabled={busy || unavailable || active || !draft.trim()}
-                  >
-                    {busy
-                      ? 'Working…'
-                      : pending.current?.text === draft.trim()
-                        ? 'Retry send'
-                        : 'Send'}
-                  </button>
-                </div>
-              </form>
-            </>
-          )}
-        </>
+        </form>
       )}
     </div>
   );

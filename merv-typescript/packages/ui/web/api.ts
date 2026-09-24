@@ -29,9 +29,19 @@ export const writeToken = (token: string | null) => {
 };
 
 const PROJECT_KEY = 'merv:project';
+/** The project an account last opened in this browser, so a new tab or a reload opens it again. */
+const LAST_KEY = 'merv:last-project';
 const storedProject = (): string | null => {
   try {
     return sessionStorage.getItem(PROJECT_KEY);
+  } catch {
+    return null;
+  }
+};
+const lastProject = (who: string): string | null => {
+  try {
+    const last = JSON.parse(localStorage.getItem(LAST_KEY) ?? 'null');
+    return last?.who === who && typeof last.project === 'string' ? last.project : null;
   } catch {
     return null;
   }
@@ -66,7 +76,11 @@ export const setProject = (projectId: string | null) => {
   selectedProject = projectId;
   try {
     if (projectId) sessionStorage.setItem(PROJECT_KEY, projectId);
-    else sessionStorage.removeItem(PROJECT_KEY);
+    else {
+      // Choosing another project, or losing this one, forgets it for the browser too.
+      sessionStorage.removeItem(PROJECT_KEY);
+      localStorage.removeItem(LAST_KEY);
+    }
   } catch {
     /* memory-only selection */
   }
@@ -247,17 +261,23 @@ export async function resolveAccountSession(): Promise<AccountSession> {
   const epoch = scopeEpoch;
   const account = await accountRequest<Account>('/account');
   requireScope(epoch);
+  const who = account.kind === 'user' ? `${account.user.issuer} ${account.user.subject}` : '';
   const selected =
     account.kind === 'actor'
       ? account.actor.projectId
       : account.kind === 'key' && account.key.grantScope === 'project'
         ? account.key.projectId
-        : projectSelection();
+        : (projectSelection() ?? (who && lastProject(who)));
   if (!selected || !account.projects.some((project) => project.id === selected)) {
     setProject(null);
     return { phase: 'projects', account, epoch: scopeEpoch };
   }
   setProject(selected);
+  try {
+    if (who) localStorage.setItem(LAST_KEY, JSON.stringify({ who, project: selected }));
+  } catch {
+    /* this tab alone remembers it */
+  }
   const selectedEpoch = scopeEpoch;
   // The shell answers who and where with the rows the page needs anyway; a
   // composition without it still answers those two questions on their own tools.
