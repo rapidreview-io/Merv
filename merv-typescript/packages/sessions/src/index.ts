@@ -1965,11 +1965,15 @@ export class LeasedSessions implements Sessions {
   private async sweepTransaction(tx: Transaction): Promise<void> {
     await this.serviceWork.expire(tx);
     const idle = this.idlePass(tx);
+    const stranded = await this.managed.stranded(tx);
     for (const row of await tx.all<Row>(
       "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid",
     )) {
       const session = await this.decode(row, tx);
-      if (!(await this.reconcile(session, tx)) && idle.due(session))
+      if (await this.reconcile(session, tx)) continue;
+      if (stranded.has(session.id))
+        await this.closeSession(session, 'managed_revoked', tx, 'expired', 'host_failed');
+      else if (idle.due(session))
         await this.progress(session, (await idle.activity()).get(session.id), tx);
     }
     for (const row of await tx.all<{ id: string }>("SELECT id FROM agents WHERE status='active'")) {

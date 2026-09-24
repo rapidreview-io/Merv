@@ -305,16 +305,11 @@ export class ManagedRunnerBindings {
   }
   async heartbeat(caller: Caller, input: RunnerHeartbeat, tx: Transaction): Promise<Caller> {
     const { row, sourceCaller: source } = await this.require(caller, tx);
+    // A runner whose lease reply was lost still offers its slot; its retry replays the binding.
     check(
-      !row.bound_session_id || input.capacity === 0,
+      input.capacity === 1 || (row.bound_session_id && input.capacity === 0),
       'managed_capacity',
-      'Bound managed runner capacity must be zero',
-      409,
-    );
-    check(
-      row.bound_session_id || input.capacity === 1,
-      'managed_capacity',
-      'Unbound managed runner capacity must be one',
+      'Managed runner capacity must be one, or zero once bound',
       409,
     );
     check(
@@ -411,6 +406,18 @@ export class ManagedRunnerBindings {
       caller.managed!.allocationId,
     );
   }
+  /** Live sessions whose allocation is no longer current: Fleet stopped or is stopping the
+   *  machine, so no runner is left to release them. An unanswerable check keeps the session. */
+  async stranded(tx: Transaction): Promise<Set<string>> {
+    const ids = new Set<string>();
+    if (!this.validator) return ids;
+    for (const row of await tx.all<ManagedBindingRow>(
+      "SELECT m.* FROM session_managed_runners m JOIN worker_sessions s ON s.id=m.bound_session_id WHERE s.status IN ('offered','active')",
+    ))
+      if (!(await this.validator.current(this.identity(row), tx).catch(() => true)))
+        ids.add(row.bound_session_id!);
+    return ids;
+  }
   async inspect(allocationId: string, epoch: number): Promise<ManagedRunnerInspection | null> {
     check(
       typeof allocationId === 'string' &&
@@ -427,7 +434,8 @@ export class ManagedRunnerBindings {
           allocationId,
         );
         if (!row || Number(row.epoch) !== epoch) return null;
-        if (!row.bound_session_id) return { runnerId: row.runner_id, session: null };
+        const runner = { runnerId: row.runner_id, enrollmentExpiresAt: row.enrollment_expires_at };
+        if (!row.bound_session_id) return { ...runner, session: null };
         const bound = await tx.get<{ session_json: string }>(
           'SELECT session_json FROM worker_sessions WHERE id=?',
           row.bound_session_id,
@@ -439,7 +447,7 @@ export class ManagedRunnerBindings {
           row.bound_session_id,
         );
         return {
-          runnerId: row.runner_id,
+          ...runner,
           session: {
             id: session.id,
             instanceId: session.instanceId,

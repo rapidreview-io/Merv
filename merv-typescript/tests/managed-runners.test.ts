@@ -240,6 +240,7 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
   assert.equal(JSON.stringify(row).includes(f.enrollment.enrollmentToken), false);
   assert.deepEqual(await f.sessions.inspectManaged(f.input.allocationId, 1), {
     runnerId: null,
+    enrollmentExpiresAt: row.enrollment_expires_at,
     session: null,
   });
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
@@ -404,7 +405,9 @@ test('managed lease binds once, replays after admission closes, and rejects anot
   );
   assert.equal((await f.sessions.get(f.caller, bound.id)).id, bound.id);
   await assert.rejects(f.sessions.get(f.caller, 'session_wrong'), { code: 'session_forbidden' });
-  await assert.rejects(f.sessions.heartbeatRunner(f.caller, f.heartbeat(1)), {
+  // A runner whose lease reply was lost still offers its slot, then replays the lease below.
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await assert.rejects(f.sessions.heartbeatRunner(f.caller, f.heartbeat(2)), {
     code: 'managed_capacity',
   });
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(0));
@@ -426,6 +429,23 @@ test('managed lease binds once, replays after admission closes, and rejects anot
     code: 'managed_revoked',
   });
   await assert.rejects(f.sessions.lease(f.caller, first), { code: 'managed_revoked' });
+});
+
+test('the sweep ends a bound session once its machine is no longer current', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const request = f.lease();
+  assert.ok((await f.sessions.lease(f.caller, request)).session);
+  await f.sessions.authenticate(request.secret);
+  const bound = async () => (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session;
+  await f.sessions.sweep();
+  assert.equal((await bound())?.status, 'active');
+  f.current(false);
+  await f.sessions.sweep();
+  assert.equal((await bound())?.status, 'expired');
+  assert.equal((await bound())?.outcome, 'host_failed');
 });
 
 test('managed Code v2 runner attaches its bound checkout using its verified source capability', async (t) => {
