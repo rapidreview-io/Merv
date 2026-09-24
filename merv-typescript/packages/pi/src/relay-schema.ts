@@ -1,8 +1,6 @@
 import { z } from 'zod';
 
-/** Longest string, including one tool output, a relayed request may carry. */
-export const maxTextChars = 100_000;
-const text = z.string().max(maxTextChars);
+const text = z.string().max(100_000);
 const identifier = z.string().min(1).max(128);
 const toolName = z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/);
 

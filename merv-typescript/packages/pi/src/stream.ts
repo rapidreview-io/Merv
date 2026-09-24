@@ -20,15 +20,17 @@ export class PiStreams {
     private readonly maxConversations = 128,
   ) {}
 
-  private get(id: string): Tail {
+  /** With every tail read, only a new reader is refused; writers get a detached tail. */
+  private get(id: string, reader = false): Tail {
     let tail = this.tails.get(id);
     if (!tail) {
+      tail = { id: randomUUID(), sequence: 0, bytes: 0, events: [], listeners: new Set() };
       if (this.tails.size >= this.maxConversations) {
         const available = [...this.tails].find(([, item]) => item.listeners.size === 0);
-        check(available, 'pi_stream_busy', busy, 429);
+        check(available || !reader, 'pi_stream_busy', busy, 429);
+        if (!available) return tail;
         this.tails.delete(available[0]);
       }
-      tail = { id: randomUUID(), sequence: 0, bytes: 0, events: [], listeners: new Set() };
       this.tails.set(id, tail);
     }
     return tail;
@@ -60,7 +62,7 @@ export class PiStreams {
   }
 
   subscribe(id: string, listener: () => void): () => void {
-    const tail = this.get(id);
+    const tail = this.get(id, true);
     check(tail.listeners.size < 8, 'pi_stream_busy', busy, 429);
     tail.listeners.add(listener);
     return () => {

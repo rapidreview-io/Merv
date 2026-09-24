@@ -29,7 +29,6 @@ import {
 } from './schema.js';
 import { PiStreams } from './stream.js';
 import { decodeCheckpoint } from './checkpoint.js';
-import { maxTextChars } from './relay-schema.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -57,6 +56,9 @@ const constraints: Record<string, z.ZodTypeAny> = {
   'artifact.read': z.object({ artifactId: z.string().min(1).max(200) }).strict(),
 };
 export const piReadTools = Object.freeze(Object.keys(constraints));
+/** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
+ * UTF-8 bytes track tokens better than characters and stay inside the relay's string limit. */
+const resultBytes = 24_000;
 const decode = <T>(row: { data_json: string }): T => JSON.parse(row.data_json) as T;
 const publicConversation = (record: PiConversationRecord): PiConversation => {
   const {
@@ -335,7 +337,8 @@ export class PiService implements Pi, FleetOwner {
   async send(caller: Caller, id: string, input: unknown): Promise<PiCommand> {
     this.ready();
     const value = parse(sendInput, input);
-    const result = await this.state.transaction(async (tx): Promise<PiCommand | null> => {
+    // A string result is the reason a previous runtime is releasing: commit that, then refuse.
+    const result = await this.state.transaction(async (tx): Promise<PiCommand | string> => {
       const conversation = await this.owned(caller, id, tx);
       const existing = await tx.get<{ data_json: string }>(
         'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
@@ -368,6 +371,7 @@ export class PiService implements Pi, FleetOwner {
         'Open a new conversation to continue',
         409,
       );
+      let allocation: FleetAllocation | null;
       if (!conversation.runtimeId) {
         // One runtime per person across projects. An idle one is released for this send's retry.
         const row = await tx.get<{ data_json: string }>(
@@ -384,13 +388,13 @@ export class PiService implements Pi, FleetOwner {
             409,
           );
           await this.release(other.runtimeId!, tx);
-          return null;
+          return `Your agent in “${other.title}” in ${where} project is being released; retry shortly`;
         }
         conversation.source = await this.scope.delegationSource(caller, tx);
         conversation.epoch++;
         conversation.activeCommandId = value.commandId;
         await this.saveConversation(tx, conversation);
-        const allocation = await this.fleet.request(
+        allocation = await this.fleet.request(
           caller,
           {
             requestId: `${id}:${conversation.epoch}`,
@@ -402,7 +406,7 @@ export class PiService implements Pi, FleetOwner {
         conversation.runtimeEpoch = allocation.epoch;
         conversation.runtimeExpiresAt = allocation.deadlineAt;
       } else {
-        const allocation = await this.allocation(conversation.runtimeId, tx);
+        allocation = await this.allocation(conversation.runtimeId, tx);
         // Reuse only a runtime Fleet keeps (not idle past its release) that holds the caller's
         // current authority: a role change issues a new membership, so rebind on a new runtime.
         if (
@@ -413,19 +417,20 @@ export class PiService implements Pi, FleetOwner {
           digest(await this.scope.delegationSource(caller, tx)) !== digest(conversation.source)
         ) {
           await this.release(conversation.runtimeId, tx);
-          return null;
+          return 'The previous agent is still releasing; retry shortly';
         }
       }
       conversation.activeCommandId = value.commandId;
       conversation.idleSince = null;
-      const expiry = this.turnEnd(conversation);
+      const queued = allocation.phase === 'queued';
+      const expiry = this.turnEnd(conversation, queued);
       check(expiry > this.clock(), 'pi_expired', 'Conversation source has expired', 403);
       const command: PiCommandRecord = {
         id: value.commandId,
         conversationId: id,
         epoch: conversation.epoch,
         runtimeId: conversation.runtimeId!,
-        status: 'waiting',
+        status: queued ? 'waiting' : 'starting',
         messages: [{ role: 'user', text: value.text }],
         outcomes: [],
         error: null,
@@ -448,19 +453,14 @@ export class PiService implements Pi, FleetOwner {
       await this.saveConversation(tx, conversation);
       return publicCommand(command);
     });
-    check(
-      result,
-      'pi_runtime_releasing',
-      'The previous agent is still releasing; retry shortly',
-      409,
-    );
+    if (typeof result === 'string') throw new MervError('pi_runtime_releasing', result, 409);
     this.streams.changed(id, result.id);
     return result;
   }
-  /** The earliest of a full turn from now, the runtime deadline and the source's expiry. */
-  private turnEnd(conversation: PiConversationRecord): number {
+  /** The earliest of the runtime deadline, the source's expiry and, unless queued, a full turn. */
+  private turnEnd(conversation: PiConversationRecord, queued = false): number {
     return Math.min(
-      this.clock() + this.config.turnTimeoutSeconds * 1000,
+      queued ? Infinity : this.clock() + this.config.turnTimeoutSeconds * 1000,
       Date.parse(conversation.runtimeExpiresAt!),
       conversation.source.kind === 'human' || !conversation.source.expiresAt
         ? Infinity
@@ -751,17 +751,32 @@ export class PiService implements Pi, FleetOwner {
           return { error: { code: error.code, message: error.message } };
         throw error;
       });
-    // The model receives this JSON as one relayed string, which has a length limit.
-    const excess = JSON.stringify(result ?? null).length - (maxTextChars - 200);
-    if (excess <= 0) return result;
-    if (value.name !== 'artifact.read')
-      return { error: { code: 'tool_result_too_large', message: 'The result is too large' } };
-    const { content } = result as { content: string };
-    const shown = Math.max(0, content.length - excess);
+    const size = (part: unknown) => Buffer.byteLength(JSON.stringify(part ?? null));
+    let bytes = size(result);
+    if (bytes <= resultBytes) return result;
+    // Text and lists keep their start; anything else is only an error the model can explain.
+    const read =
+      value.name === 'artifact.read' && (result as { encoding?: unknown }).encoding === 'utf8';
+    const whole = read
+      ? (result as { content: string }).content
+      : Array.isArray(result)
+        ? result
+        : null;
+    if (!whole)
+      return {
+        error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
+      };
+    const part = (shown: number) =>
+      read
+        ? { ...(result as object), content: whole.slice(0, shown) }
+        : { items: whole.slice(0, shown) };
+    let shown = whole.length;
+    for (const budget = resultBytes - 200; bytes > budget && shown > 0; bytes = size(part(shown)))
+      shown = Math.floor((shown * budget) / bytes);
+    const unit = read ? 'characters' : 'items';
     return {
-      ...(result as object),
-      content: content.slice(0, shown),
-      truncated: `Only the first ${shown} of ${content.length} characters are shown`,
+      ...part(shown),
+      truncated: `Only the first ${shown} of ${whole.length} ${unit} are shown`,
     };
   }
 
@@ -1072,10 +1087,14 @@ export class PiService implements Pi, FleetOwner {
         let changed = false;
         if (conversation.activeCommandId) {
           const command = await this.command(tx, conversation.id, conversation.activeCommandId);
+          // Fleet also stops a failed machine, but no one chose that. (A revoked launch or a
+          // deleting machine is what an operator's stop leaves too, so those stay 'stopped'.)
           const reason: PiInterruption | null =
             allocation?.error === 'runtime_refused'
               ? 'runtime_refused'
-              : !allocation || (allocation.intent === 'run' && allocation.phase === 'released')
+              : !allocation ||
+                  (allocation.intent === 'run' && allocation.phase === 'released') ||
+                  allocation.runtime?.state === 'failed'
                 ? 'runtime_lost'
                 : allocation.intent !== 'run'
                   ? 'runtime_stopped'
@@ -1088,9 +1107,13 @@ export class PiService implements Pi, FleetOwner {
             if (allocation && allocation.runtime?.launch?.deliveryState !== 'launched')
               allocation = await this.fleet.cancelOwned(this, allocation.id, tx);
             changed = true;
-          } else if (command.status === 'waiting' && allocation?.phase !== 'queued') {
+          } else if (allocation && command.status === 'waiting' && allocation.phase !== 'queued') {
+            // Out of the queue: cold start gets a turn's time, within the deadline Fleet now keeps.
+            conversation.runtimeExpiresAt = allocation.deadlineAt;
             command.status = 'starting';
+            command.expiresAt = new Date(this.turnEnd(conversation)).toISOString();
             await this.saveCommand(tx, command);
+            await this.saveConversation(tx, conversation);
             changed = true;
           }
         }

@@ -27,6 +27,11 @@ test('evicted transient tails get a new generation so reconnect can replace old 
   assert.notEqual(after.streamId, before.streamId);
   assert.equal(after.sequence, 0);
   assert.deepEqual(after.tail, []);
+  // With every tail read, only another reader is refused; writers never fail on the stream.
+  streams.subscribe('first', () => {});
+  streams.changed('second');
+  streams.publish('second', { commandId: 'command', type: 'text', text: 'unread' });
+  assert.throws(() => streams.subscribe('second', () => {}), { code: 'pi_stream_busy' });
 });
 
 function deferred<T>() {

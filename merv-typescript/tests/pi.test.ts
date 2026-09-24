@@ -16,7 +16,6 @@ import { FleetService } from '../packages/fleet/src/index.js';
 import { PiService } from '../packages/pi/src/index.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
-import { maxTextChars } from '../packages/pi/src/relay-schema.js';
 import type { PiBootstrap, PiCompletion, PiConversation } from '../packages/pi/src/types.js';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -410,7 +409,12 @@ test('one runtime per person: a working one is named, an idle one is released fo
     bound.token,
     f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
   );
-  await assert.rejects(f.pi.send(f.operator, second.id, retry), code('pi_runtime_releasing'));
+  await assert.rejects(
+    f.pi.send(f.operator, second.id, retry),
+    (error: MervError) =>
+      error.code === 'pi_runtime_releasing' &&
+      error.message === 'Your agent in “Chat” in this project is being released; retry shortly',
+  );
   assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
   await f.fleet.tick();
   f.runtimes.release('sbx_1');
@@ -588,7 +592,7 @@ test('a reader can chat but cannot request workflow capacity; worker claims and 
   );
 });
 
-test('recoverable tool failures and oversized reads come back to the model as results', async (t) => {
+test('recoverable tool failures and oversized results come back to the model as results', async (t) => {
   const f = await fixture(t);
   const content = 'line "quoted"\n'.repeat(12_000);
   t.after(
@@ -598,9 +602,24 @@ test('recoverable tool failures and oversized reads come back to the model as re
       readOnly: true,
       inputSchema: z.object({ artifactId: z.string().min(1) }).strict(),
       handler: async (_caller, input: { artifactId: string }) => {
-        check(input.artifactId === 'art_big', 'not_found', 'Artifact not found', 404);
-        return { artifact: { id: 'art_big' }, content, encoding: 'utf8' };
+        check(input.artifactId.startsWith('art_b'), 'not_found', 'Artifact not found', 404);
+        return input.artifactId === 'art_big'
+          ? { artifact: { id: 'art_big' }, content, encoding: 'utf8' }
+          : { artifact: { id: 'art_bin' }, content: 'AAAA'.repeat(10_000), encoding: 'base64' };
       },
+    }),
+  );
+  t.after(
+    f.tools.register({
+      name: 'artifact.list',
+      description: 'List artifacts',
+      readOnly: true,
+      inputSchema: z.object({}).strict(),
+      handler: async () =>
+        Array.from({ length: 1000 }, (_, index) => ({
+          id: `art_${index}`,
+          title: 'Meeting notes',
+        })),
     }),
   );
   const conversation = await f.create();
@@ -614,13 +633,25 @@ test('recoverable tool failures and oversized reads come back to the model as re
   assert.deepEqual(await read('art_missing'), {
     error: { code: 'not_found', message: 'Artifact not found' },
   });
+  // A result stays a small part of the worker model's 32,000-token context.
+  const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
   const result = (await read('art_big')) as { content: string; truncated: string };
-  assert.ok(JSON.stringify(result).length <= maxTextChars);
-  assert.ok(result.content.length > 50_000 && content.startsWith(result.content));
+  assert.ok(bytes(result) <= 24_000);
+  assert.ok(result.content.length > 15_000 && content.startsWith(result.content));
   assert.equal(
     result.truncated,
     `Only the first ${result.content.length} of ${content.length} characters are shown`,
   );
+  assert.deepEqual(await read('art_bin'), {
+    error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
+  });
+  const list = (await f.pi.tool(token, { ...input, name: 'artifact.list', input: {} })) as {
+    items: { id: string }[];
+    truncated: string;
+  };
+  assert.ok(bytes(list) <= 24_000 && list.items.length > 500);
+  assert.equal(list.items.at(-1)!.id, `art_${list.items.length - 1}`);
+  assert.equal(list.truncated, `Only the first ${list.items.length} of 1000 items are shown`);
 });
 
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {
@@ -924,6 +955,18 @@ test('Fleet outcomes end a turn at once with their own reason; a missing row cou
   await f.state.transaction((tx) => tx.run('DELETE FROM fleet_allocations WHERE id=?', deleted));
   await f.pi.tick();
   assert.deepEqual(await latest(), { error: 'runtime_lost', runtimeId: null });
+  // Fleet stops a failed machine itself; that is a lost runtime, not an operator's stop.
+  const failed = await f.fleet.inspect(f.operator, (await f.send(conversation)).runtimeId);
+  const machine = { sandboxId: 'sbx_failed', state: 'failed', ready: false, launch: null };
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE fleet_allocations SET phase='released',data_json=? WHERE id=?",
+      JSON.stringify({ ...failed, phase: 'released', intent: 'stop', runtime: machine }),
+      failed.id,
+    ),
+  );
+  await f.pi.tick();
+  assert.deepEqual(await latest(), { error: 'runtime_lost', runtimeId: null });
   await f.send(conversation);
   const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
   await f.pi.begin(bound.token, bound.input);
@@ -938,7 +981,7 @@ test('a turn that expires before its machine launches releases the allocation un
   const f = await fixture(t);
   const conversation = await f.create();
   const command = await f.send(conversation);
-  f.advance(300_001);
+  f.advance(3_600_001);
   await f.pi.tick();
   const snapshot = await f.pi.snapshot(f.operator, conversation.id);
   assert.equal(snapshot.commands[0].error, 'turn_expired');
@@ -969,17 +1012,38 @@ test('a turn that expires before its machine launches releases the allocation un
   assert.equal(f.runtimes.handles.size, 0);
 });
 
-test('a machine being prepared reads as starting, and the turn clock starts at the claim', async (t) => {
+test('a queued turn waits for capacity; its clock restarts out of the queue and at the claim', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  f.advance(200_000);
+  const { runtimeId } = await f.send(conversation);
+  f.advance(3_500_000);
+  await f.pi.tick();
+  const [queued] = (await f.pi.snapshot(f.operator, conversation.id)).commands;
+  assert.deepEqual([queued.status, queued.error], ['waiting', null]);
   await f.fleet.tick();
+  // Fleet may restart the machine's deadline as it leaves the queue.
+  const allocation = await f.fleet.inspect(f.operator, runtimeId);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE fleet_allocations SET data_json=? WHERE id=?',
+      JSON.stringify({ ...allocation, deadlineAt: '2026-09-23T01:58:20.000Z' }),
+      runtimeId,
+    ),
+  );
   await f.pi.tick();
   const snapshot = await f.pi.snapshot(f.operator, conversation.id);
   assert.equal(snapshot.commands[0].status, 'starting');
-  const { work } = await f.claimed(snapshot.conversation);
-  assert.equal(work.command.expiresAt, new Date(Date.parse('2026-09-23T00:08:20Z')).toISOString());
+  assert.equal(snapshot.commands[0].expiresAt, '2026-09-23T01:03:20.000Z');
+  f.advance(100_000);
+  const bound = await f.claimed(snapshot.conversation);
+  assert.equal(bound.work.command.expiresAt, '2026-09-23T01:05:00.000Z');
+  await f.pi.begin(bound.token, bound.input);
+  await f.pi.complete(
+    bound.token,
+    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
+  );
+  // A warm machine needs no queue.
+  assert.equal((await f.send(conversation)).status, 'starting');
 });
 
 test('idle timeout releases only after successful retention, never while a checkpoint is saving', async (t) => {
