@@ -65,6 +65,8 @@ export interface FleetOwner {
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
 }
 export interface Fleet {
+  /** Reconcile soon instead of at the next tick; safe to call at any time, even inside a transaction. */
+  kick(): void;
   /** Whether this project can rent machines at all; false means every request is refused. */
   connected(projectId: string): boolean;
   registerOwner(kind: string, owner: FleetOwner): () => void;
