@@ -1211,6 +1211,51 @@ test('a warm machine shows its stages and, unused, is released after the idle ti
   assert.equal((await f.fleet.inspect(f.operator, allocation.id)).intent, 'stop');
 });
 
+test('Pi’s own pass tells open pages each move of a warm-up, and a turn each tool it uses', async (t) => {
+  const f = await fixture(t);
+  const { conversation } = await f.pi.warm(f.operator, { requestId: 'warm' });
+  const { id } = conversation;
+  const sequence = () => f.pi.streams.snapshot(id).sequence;
+  // The stage a pass published, read back without publishing again; null when it published none.
+  const pass = async () => {
+    const before = sequence();
+    await f.pi.tick();
+    if (sequence() === before) return null;
+    const { stage } = await f.pi.snapshot(f.operator, id);
+    assert.equal(sequence(), before + 1);
+    return stage.name;
+  };
+  assert.equal(await pass(), null);
+  await f.fleet.tick();
+  assert.equal(await pass(), null);
+  await f.fleet.tick();
+  assert.equal(await pass(), 'agent');
+  const allocation = await f.fleet.inspect(f.operator, conversation.runtimeId!);
+  const token = (JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap).workerToken;
+  assert.equal(await f.pi.next(token, { workerId: 'worker_1' }), null);
+  assert.equal(await pass(), 'ready');
+  assert.equal(await pass(), null);
+  const commandId = (await f.send(conversation)).id;
+  await f.pi.next(token, { workerId: 'worker_1' });
+  await f.pi.begin(token, { commandId, workerId: 'worker_1' });
+  // Each tool's phrase is published as it starts, and the return to thinking as it ends.
+  const call = f.tools.call.bind(f.tools);
+  const shown: (string | undefined)[] = [];
+  f.tools.call = async (...args) => (
+    shown.push((await f.pi.snapshot(f.operator, id)).stage.detail),
+    call(...args)
+  );
+  for (const name of ['project.get', 'task.list']) {
+    const before = sequence();
+    await f.pi.tool(token, { commandId, workerId: 'worker_1', name, input: {} });
+    assert.equal(sequence(), before + 2);
+  }
+  assert.deepEqual(shown, ['Reading the project', 'Listing tasks']);
+  // Released, the conversation's stage is forgotten.
+  await f.pi.stop(f.operator, id);
+  assert.equal(f.pi['live'].has(id), false);
+});
+
 test('warming and releasing a runtime leave a conversation where it was in the list', async (t) => {
   const f = await fixture(t);
   const older = await f.create();
