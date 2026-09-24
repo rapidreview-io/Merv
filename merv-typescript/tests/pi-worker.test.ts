@@ -474,11 +474,15 @@ test('a long conversation keeps full-size answers and forgets only its oldest ex
 });
 
 test('an assignment the worker refuses is failed at once instead of left to expire', async () => {
-  const app = await fixture({ model: 'gpt-6.1-x' });
+  const app = await fixture({ model: 'gpt-6/luna' });
   await app.run();
   assert.deepEqual(app.failures, ['cmd_1']);
   assert.equal(app.begins, 0);
   assert.equal(app.modelRequests.length, 0);
+  const dotted = await fixture({ model: 'gpt-5.6-luna' });
+  await dotted.run();
+  assert.deepEqual(dotted.failures, []);
+  assert.equal(dotted.modelRequests[0].model, 'gpt-5.6-luna');
 });
 
 test('requested shutdown during an in-flight next poll exits normally before or after enrollment', async (t) => {

@@ -94,7 +94,7 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     work.command.messages.at(-1)?.role !== 'user' ||
     !work.command.expiresAt ||
     !Number.isFinite(Date.parse(work.command.expiresAt)) ||
-    !/^[A-Za-z0-9_-]{1,128}$/.test(work.model) ||
+    !/^[A-Za-z0-9_.-]{1,128}$/.test(work.model) ||
     work.modelBaseUrl !== `${new URL(bootstrap.baseUrl).origin}/pi-model` ||
     !/^pir_[A-Za-z0-9_-]{43}$/.test(work.modelToken) ||
     work.tools.length > 5 ||
