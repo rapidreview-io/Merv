@@ -16,6 +16,7 @@ import { assessment } from './fixtures/review-verdict.js';
 
 class LocalRuntimes implements SandboxRuntimes {
   profileId = 'latency-fixture';
+  connected = () => true;
   private handle?: SandboxRuntimeHandle;
 
   async provision(): Promise<SandboxRuntimeHandle> {

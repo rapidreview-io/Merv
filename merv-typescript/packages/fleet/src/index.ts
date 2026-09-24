@@ -164,6 +164,13 @@ export class FleetService implements Fleet {
     check(!caller.session, 'fleet_forbidden', 'Assignment agents cannot allocate machines', 403);
     const owner = this.owners.get(input.owner.kind);
     check(owner, 'fleet_owner_unavailable', 'Fleet owner is unavailable', 503);
+    // Without a connection no create can ever succeed, and an admitted request would hold a slot.
+    check(
+      this.runtimes!.connected(caller.projectId),
+      'sandbox_not_connected',
+      'Hosted agents are not set up for this project yet',
+      403,
+    );
     return inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, owner.sourcePermission ?? 'write', tx);
       const source = await this.scope.delegationSource(caller, tx);
@@ -542,7 +549,8 @@ export class FleetService implements Fleet {
           if (
             current.intent !== 'run' ||
             !this.owners.has(current.owner.kind) ||
-            current.profileId !== runtime.profileId
+            current.profileId !== runtime.profileId ||
+            !runtime.connected(current.projectId)
           ) {
             current.intent = 'stop';
             current.phase = 'released';

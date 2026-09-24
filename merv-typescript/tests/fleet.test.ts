@@ -16,6 +16,10 @@ function deferred<T>() {
 
 class FakeRuntimes implements SandboxRuntimes {
   profileId = 'fixed-profile';
+  readonly disconnected = new Set<string>();
+  connected(projectId: string) {
+    return !this.disconnected.has(projectId);
+  }
   readonly byKey = new Map<string, SandboxRuntimeHandle>();
   readonly createKeys: string[] = [];
   readonly launchKeys: string[] = [];
@@ -252,6 +256,33 @@ test('concurrent controllers enforce the global cap across projects', async (t) 
   assert.deepEqual(phases.sort(), ['provisioning', 'queued']);
   assert.equal(new Set(f.runtimes.createKeys).size, 1);
   await second.close();
+});
+
+test('a project without a sandbox connection never holds the only slot', async (t) => {
+  const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
+  f.runtimes.disconnected.add(f.caller.projectId);
+  await assert.rejects(f.fleet.request(f.caller, input('refused')), {
+    code: 'sandbox_not_connected',
+    status: 403,
+  });
+  assert.deepEqual(await f.fleet.list(f.caller), []);
+  // A connection removed after admission (a restart with new configuration) rents nothing.
+  f.runtimes.disconnected.clear();
+  const stranded = await f.fleet.request(f.caller, input('stranded'));
+  f.runtimes.disconnected.add(f.caller.projectId);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, stranded.id)).phase, 'released');
+  assert.deepEqual(f.runtimes.createKeys, []);
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const otherCaller: Caller = {
+    projectId: other.project.id,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  const next = await f.fleet.request(otherCaller, input('next'));
+  await f.fleet.tick();
+  assert.notEqual((await f.fleet.inspect(otherCaller, next.id)).phase, 'queued');
+  assert.equal(f.runtimes.createKeys.length, 1);
 });
 
 test('lost create and launch replies retry stable keys and consumed bootstrap remains live', async (t) => {

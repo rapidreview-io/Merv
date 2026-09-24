@@ -135,7 +135,7 @@ function handle(
 }
 
 /** Bounded server-side consumer of the protected runtime admission routes. */
-export class SandboxRuntimeRunner implements SandboxRuntimes {
+export class SandboxRuntimeRunner implements Omit<SandboxRuntimes, 'connected'> {
   readonly profileId: string;
   readonly #profile: SandboxRuntimeProfile & { ttlSeconds: number };
 

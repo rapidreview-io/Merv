@@ -66,6 +66,8 @@ export interface SandboxRuntimeHandle {
 /** Server-owned capability, deliberately absent from agent tools and the UI manifest. */
 export interface SandboxRuntimes {
   readonly profileId: string;
+  /** False proves no call for this project can reach the service, so none ever rented a machine. */
+  connected(projectId: string): boolean;
   provision(projectId: string, operationKey: string): Promise<SandboxRuntimeHandle>;
   inspect(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
   launch(
