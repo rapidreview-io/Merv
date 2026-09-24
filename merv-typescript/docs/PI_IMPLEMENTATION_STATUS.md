@@ -32,9 +32,9 @@ the column and `data_json` were both set to `released` with intent `stop`, and
 
 The 33 newly connected projects have separate namespaces and finite 30-day
 consumer grants. The one earlier human connection still shares the pilot's
-namespace and grant. Normal sign-in and project permissions remain required, and
-new projects need the same connection onboarding. Grants must be renewed by
-October 17. The founder must replace the Cloudflare native verification
+namespace, and probably its grant. Normal sign-in and project permissions remain
+required, and new projects need the same connection onboarding. Grants must be
+renewed by October 17. The founder must replace the Cloudflare native verification
 credential before it expires on September 30. See
 [Pi operations](../deploy/PI_OPERATIONS.md). The USD 100 all-time cap, accrued
 accounting, concurrency 1/1/1 and native maximum 3 are unchanged. Workflow

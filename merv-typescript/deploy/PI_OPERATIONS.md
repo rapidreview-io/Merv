@@ -18,9 +18,9 @@ enablement does not certify unfinished security or full UI acceptance; see
 - **By 2026-09-30, the founder:** replace the dedicated Cloudflare native
   verification credential (Workers Containers Read, restricted to the control
   host's egress IP) used by the `cloudflare-fleet` provider. It expires on
-  2026-09-30. After that Sandboxes refuses every runtime delivery: every turn
-  ends as `turn_expired` without an answer, and each allocation holds a Fleet
-  slot and a billed machine until its 1800 s deadline.
+  2026-09-30. After that Sandboxes refuses every launch after the billed
+  machine was already created, so every turn ends as `turn_expired` without an
+  answer. The machine and its Fleet slot are held for up to the 1800 s deadline.
 - **By 2026-10-17:** renew every consumer grant. They all expire on 2026-10-24:
   the canary grant at 16:14:06Z, then the 33 grants from the enablement, then
   the QA grant `tok_yd17ci1amwyjo2lv`. Nothing renews them automatically. After
@@ -60,8 +60,9 @@ python3 pi-connect-project.py sandboxes <projectId>   # then, once it prints its
 python3 pi-connect-project.py main <projectId>
 ```
 
-The script reads the container names, images, Sandboxes catalog and Main release
-directory from the live containers. It refuses to run unless Main (Fleet
+The container names are fixed; the script reads the images, the Sandboxes
+catalog path and Main's release directory from the live containers. Never run it
+with `python3 -O`, which strips its guards. It refuses to run unless Main (Fleet
 allocations, active Pi commands) and Sandboxes (sandboxes, jobs, workflows,
 outbox, snapshots) are drained and the project exists. It backs up the env and
 catalog to `/var/lib/merv-fleet-pilot/pi-connect/<projectId>/` before every
@@ -78,13 +79,14 @@ restores the previous file and recreates the services on it.
 
 - A failed `main` phase can be rerun as is. A `sandboxes` failure after the grant
   was issued leaves the namespace and the grant, recorded in `issue.private.json`.
-  Revoke that grant and move the directory aside before you rerun.
+  Revoke that grant and move the directory aside before you rerun; the rerun
+  reuses the namespace.
 - Record a receipt section in `RELEASES.md` (see below) from the two
   `*.receipt.json` files, then shred the directory. Its backups hold grants and
   secrets.
 - To retire a connection, remove its entry and its `MERV_PI_PROJECT_*` line,
   remove its grant ID from both allowlists, recreate both services, and revoke
-  the grant. The namespace stays.
+  the grant. The namespace stays, and reconnecting the project reuses it.
 
 ### Provider scope
 
@@ -95,7 +97,9 @@ the list until the QA onboarding added them at 19:33Z, so no send from those
 projects could have started a machine before then. The script re-adds every
 missing `merv-pi-*` namespace on each run. Replacing the list with
 `namespace_prefixes: ["merv-pi-", "fleet-cloudflare-canary"]` would remove this
-step, but it widens the scope. That is an owner decision.
+step, but it widens the scope. That is an owner decision, and the script's scope
+step would then need removing: it stops before issuing anything when the list is
+gone.
 
 ### Shared canary namespace
 
@@ -124,7 +128,8 @@ keeps the canary grant.
   release/catalog and isolation gates, not just a main-server rollout.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
-  concurrency. A refused create otherwise holds the slot.
+  concurrency. Otherwise Sandboxes refuses the extra creates, and those turns
+  fail.
 - Keep the **USD 100 all-time cap**, accrued spend and accounting, Fleet limits
   **1/1/1** and the native maximum of **3** unless the owner changes them.
 
@@ -177,8 +182,10 @@ the only global slot held.
 
 - Find it with the query below. Use `->>`, because `->` never matches a JSON
   `null`.
+- A `provisioning` row may still have its create in flight; it is not a wedge.
 - Unless the failure provably happened before any network call, first confirm
-  that Sandboxes holds no sandbox for the create key `<allocation id>:create`.
+  that Sandboxes holds no sandbox for the allocation, with the second query in
+  the Sandboxes database.
 - Use one transaction that first takes
   `pg_advisory_xact_lock(hashtextextended('merv-state:<schema>', 0))`. In it, set
   both the `phase` column and `data_json` to `phase: released`, `intent: stop`,
@@ -187,6 +194,10 @@ the only global slot held.
   only the column, because Pi's runtime lock would then stay.
 
 ```sql
-SELECT id FROM <schema>.fleet_allocations
-WHERE phase <> 'released' AND data_json::json->>'runtime' IS NULL;
+SELECT id, project_id FROM <schema>.fleet_allocations
+WHERE phase IN ('uncertain', 'releasing') AND data_json::json->>'runtime' IS NULL
+  AND data_json::json->>'createAttempted' = 'true';
+-- Sandboxes: the create key is a hash of the project and '<id>:create'.
+SELECT id, state FROM sandboxes WHERE idempotency_key = 'runtime:' ||
+  encode(sha256(convert_to('["<project_id>","<id>:create"]', 'UTF8')), 'hex');
 ```

@@ -22,6 +22,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+if not __debug__:
+    sys.exit('every guard here is an assert: run without -O')
 _, PHASE, PROJECT, *FLAGS = sys.argv + [''] * (3 - len(sys.argv))
 REHOME = FLAGS == ['--rehome']
 assert PHASE in ('sandboxes', 'main') and FLAGS in ([], ['--rehome']), __doc__
@@ -59,7 +61,8 @@ async def main():
     v=json.load(sys.stdin)
     c=Container(Settings.load())
     try:
-        await c.accounts.add_namespace(v['account'],v['namespace'],v['member'])
+        if v['create']:
+            await c.accounts.add_namespace(v['account'],v['namespace'],v['member'])
         issued=await c.tokens.create(namespace=v['namespace'],label='Merv Pi '+v['projectId'],ttl_seconds=30*86400,role='consumer',account_id=v['account'],member_id=v['member'],application_id='merv-pi',namespaces=[v['namespace']],members=[v['member']])
         principal=await c.tokens.authenticate(issued.secret,namespace=v['namespace'])
         assert principal.token_id==issued.token_id and principal.namespace==v['namespace']
@@ -198,7 +201,8 @@ def sandboxes():
     for name in (CONTROL, PIPELINE):
         state = inspect(name)
         assert state['Image'] == image and state['State']['Running'], ('sandbox_image_drift', name)
-    names = sorted(set(drains() + [NAMESPACE]))
+    existing = drains()
+    names = sorted(set(existing + [NAMESPACE]))
     others(env_values(env_raw))
     # Shape the catalog before issuing, so a surprise here leaves no orphan grant behind.
     catalog = json.loads(catalog_raw)
@@ -213,8 +217,9 @@ def sandboxes():
         fleet['namespaces'] = fleet['namespaces'] + [n for n in names if n not in fleet['namespaces']]
         settings['SANDBOXES_PROVIDERS'] = json.dumps(providers)
     record('issue.intent.json', {'projectId': PROJECT, 'namespace': NAMESPACE, 'tokenEnv': TOKEN_ENV, 'at': now()})
-    issued_raw = run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_ISSUE],
-                     json.dumps({'account': ACCOUNT, 'member': MEMBER, 'namespace': NAMESPACE, 'projectId': PROJECT}).encode())
+    # A rerun or a reconnect reuses the namespace; tokens.create refuses one another account owns.
+    issue = {'account': ACCOUNT, 'member': MEMBER, 'namespace': NAMESPACE, 'projectId': PROJECT, 'create': NAMESPACE not in existing}
+    issued_raw = run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_ISSUE], json.dumps(issue).encode())
     save('issue.private.json', issued_raw)
     issued = json.loads(issued_raw)
     assert NAMESPACE in json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_DRAIN]))['namespaces']
@@ -238,7 +243,7 @@ def sandboxes():
         check = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_RESOLVE], json.dumps(names + [CANARY]).encode()))
         assert all(v == 'host' for v in check['resolved'].values()), ('resolve_failed', check['resolved'])
         assert issued['tokenId'] in check['grantAllowed'], 'grant_not_allowlisted'
-    except Exception:
+    except BaseException:
         atomic(catalog_path, catalog_raw, mode)
         run(up, timeout=180)
         raise
@@ -265,6 +270,7 @@ def main_phase():
     if not candidate.endswith('\n'):
         candidate += '\n'
     candidate += TOKEN_ENV + '=' + issued['token'] + '\n'
+    save('before-main-env.private', env_raw, exclusive=False)
     save('candidate-env.private', candidate.encode(), exclusive=False)
     compose_env = dict(os.environ, MERV_TS_IMAGE=image)
     up = ['docker', 'compose', '-f', 'compose.yml', 'up', '-d', '--force-recreate']
@@ -282,7 +288,7 @@ def main_phase():
         probe = json.loads(run(['docker', 'exec', '-e', 'MERV_CONNECT_TOKEN_ENV=' + TOKEN_ENV, '-e', 'MERV_CONNECT_NAMESPACE=' + NAMESPACE,
                                 MAIN, 'node', '--input-type=module', '-e', MAIN_PROBE]))
         assert probe == {'me': 200, 'role': 'consumer', 'namespace': NAMESPACE, 'launch': 404}, ('grant_probe_failed', probe)
-    except Exception:
+    except BaseException:
         atomic(ENV, env_raw)
         run(up, env=compose_env, cwd=directory, timeout=180)
         raise
