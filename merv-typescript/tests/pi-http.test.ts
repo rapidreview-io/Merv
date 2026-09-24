@@ -27,6 +27,11 @@ test('evicted transient tails get a new generation so reconnect can replace old 
   assert.notEqual(after.streamId, before.streamId);
   assert.equal(after.sequence, 0);
   assert.deepEqual(after.tail, []);
+  // With every tail read, only another reader is refused; writers never fail on the stream.
+  streams.subscribe('first', () => {});
+  streams.changed('second');
+  streams.publish('second', { commandId: 'command', type: 'text', text: 'unread' });
+  assert.throws(() => streams.subscribe('second', () => {}), { code: 'pi_stream_busy' });
 });
 
 function deferred<T>() {
@@ -51,7 +56,7 @@ async function within<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-function fixture(t: TestContext) {
+function fixture(t: TestContext, rotateMs?: number) {
   const streams = new PiStreams();
   const subscribe = streams.subscribe.bind(streams);
   let subscriptions = 0;
@@ -126,7 +131,7 @@ function fixture(t: TestContext) {
       ]),
     ),
   } as unknown as PiService;
-  const http = new PiHttp(pi);
+  const http = new PiHttp(pi, rotateMs);
   const api = new ApiServer(scope, {} as Tools);
   const unmountWorker = api.mount('/pi-worker', http.worker);
   const unregister = api.registerPi(http);
@@ -316,6 +321,19 @@ test('SSE sends canonical snapshots and deltas, reconnects, and releases disconn
   await waitForRelease();
 });
 
+test('SSE announces its deliberate rotation before closing', async (t) => {
+  const f = fixture(t, 50);
+  const base = await f.api.start();
+  const response = await fetch(`${base}/pi/${conversationId}/events`, {
+    headers: { authorization: 'Bearer actor-http-token' },
+  });
+  const reader = response.body!.getReader();
+  const buffer = { text: '' };
+  assert.equal((await readEvent(reader, buffer)).event, 'snapshot');
+  assert.deepEqual(await readEvent(reader, buffer), { event: 'rotate', data: {} });
+  assert.equal((await within(reader.read())).done, true);
+});
+
 test('SSE subscriber capacity refuses new HTTP connections instead of returning empty success', async (t) => {
   const f = fixture(t);
   const base = await f.api.start();
@@ -332,8 +350,8 @@ test('SSE subscriber capacity refuses new HTTP connections instead of returning 
     }
     assert.equal(f.subscriptions(), 8);
     const overflow = await fetch(url, { headers });
-    assert.ok(overflow.status >= 400, 'an unadmitted SSE reader must not get HTTP 200');
-    await overflow.body?.cancel();
+    assert.equal(overflow.status, 429, 'an unadmitted SSE reader backs off quietly');
+    assert.equal(((await json(overflow)).error as { code: string }).code, 'pi_stream_busy');
   } finally {
     await Promise.allSettled(readers.map((reader) => reader.cancel()));
   }
@@ -441,9 +459,12 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
   assert.equal(first.event, 'response.output_text.delta');
   assert.deepEqual(first.data, { delta: 'first' });
   revoked = true;
-  upstream.enqueue(
-    new TextEncoder().encode('event: response.output_text.delta\ndata: {"delta":"secret"}\n\n'),
-  );
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  try {
+    upstream.enqueue(
+      new TextEncoder().encode('event: response.output_text.delta\ndata: {"delta":"secret"}\n\n'),
+    );
+  } catch {} // the fence may already have cancelled the upstream
   let remainder = '';
   while (true) {
     const chunk = await within(reader.read());

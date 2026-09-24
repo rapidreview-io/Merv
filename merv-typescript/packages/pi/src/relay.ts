@@ -164,7 +164,7 @@ export class PiModelRelay {
       totalTimeoutMs: limit(config.totalTimeoutMs, 120_000),
       idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
       maxConcurrent: limit(config.maxConcurrent, 8),
-      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 8),
+      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 32),
       maxGrantEntries: limit(config.maxGrantEntries, 4096),
     };
   }
@@ -225,10 +225,14 @@ export class PiModelRelay {
         if (signal.aborted) throw signal.reason;
         return this.error(res, 401, 'unauthorized');
       }
-      const validate = async () => {
+      let validatedAt = 0;
+      // Streamed frames reuse an authority read up to a second old; the fence refreshes it.
+      const validate = async (recent = false) => {
         if (signal.aborted) throw signal.reason;
         if (Date.parse(grant.expiresAt) <= Date.now() || grant.model !== this.config.model)
           reject(403, 'grant_forbidden');
+        if (recent && Date.now() - validatedAt < 1000) return;
+        const started = Date.now();
         try {
           await interruptible(authority.validate(grant), signal);
         } catch (error) {
@@ -236,6 +240,7 @@ export class PiModelRelay {
           return reject(403, 'grant_forbidden');
         }
         if (Date.parse(grant.expiresAt) <= Date.now()) reject(403, 'grant_forbidden');
+        validatedAt = started;
       };
       await validate();
       if (this.users.has(grant.userId)) reject(429, 'relay_busy');
@@ -322,7 +327,6 @@ export class PiModelRelay {
       let pending = Buffer.alloc(0);
       while (true) {
         const next = await interruptible(reader.read(), signal);
-        await validate();
         if (next.done) break;
         bytes += next.value.byteLength;
         if (bytes > this.options.maxResponseBytes) reject(502, 'response_too_large');
@@ -345,7 +349,7 @@ export class PiModelRelay {
               /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
             )
               reject(502, 'upstream_failed');
-            await validate();
+            await validate(true);
             startStream();
             await writeChunk(res, frame, signal);
             resetIdle();

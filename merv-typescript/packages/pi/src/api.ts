@@ -57,7 +57,10 @@ export class PiHttp implements PiApiProvider {
   private readonly responses = new Set<ServerResponse>();
   private closed = false;
 
-  constructor(private readonly pi: PiRuntime) {}
+  constructor(
+    private readonly pi: PiRuntime,
+    private readonly rotateMs = 20_000,
+  ) {}
 
   readonly worker: MountHandler = async (req, res) => {
     try {
@@ -187,7 +190,8 @@ export class PiHttp implements PiApiProvider {
       });
       res.flushHeaders();
       refresh = setInterval(pump, 2000);
-      deadline = setTimeout(stop, 20_000);
+      // Say the close is deliberate so the reader reconnects at once, without a notice.
+      deadline = setTimeout(() => void send('rotate', {}).then(stop, stop), this.rotateMs);
       pump();
       await done;
       await running;

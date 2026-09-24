@@ -40,6 +40,7 @@ import type {
   PiConversationRecord,
   PiInterruption,
   PiSnapshot,
+  PiToolOutcome,
   PiWork,
 } from './types.js';
 
@@ -55,6 +56,9 @@ const constraints: Record<string, z.ZodTypeAny> = {
   'artifact.read': z.object({ artifactId: z.string().min(1).max(200) }).strict(),
 };
 export const piReadTools = Object.freeze(Object.keys(constraints));
+/** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
+ * UTF-8 bytes track tokens better than characters and stay inside the relay's string limit. */
+const resultBytes = 24_000;
 const decode = <T>(row: { data_json: string }): T => JSON.parse(row.data_json) as T;
 const publicConversation = (record: PiConversationRecord): PiConversation => {
   const {
@@ -301,7 +305,7 @@ export class PiService implements Pi, FleetOwner {
       const userId = await this.user(caller, tx);
       return (
         await tx.all<{ data_json: string }>(
-          'SELECT data_json FROM pi_conversations WHERE project_id=? AND user_id=? ORDER BY id DESC LIMIT 100',
+          "SELECT data_json FROM pi_conversations WHERE project_id=? AND user_id=? ORDER BY data_json::jsonb->>'updatedAt' DESC,id DESC LIMIT 100",
           caller.projectId,
           userId,
         )
@@ -333,7 +337,8 @@ export class PiService implements Pi, FleetOwner {
   async send(caller: Caller, id: string, input: unknown): Promise<PiCommand> {
     this.ready();
     const value = parse(sendInput, input);
-    const result = await this.state.transaction(async (tx) => {
+    // A string result is the reason a previous runtime is releasing: commit that, then refuse.
+    const result = await this.state.transaction(async (tx): Promise<PiCommand | string> => {
       const conversation = await this.owned(caller, id, tx);
       const existing = await tx.get<{ data_json: string }>(
         'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
@@ -366,22 +371,30 @@ export class PiService implements Pi, FleetOwner {
         'Open a new conversation to continue',
         409,
       );
+      let allocation: FleetAllocation | null;
       if (!conversation.runtimeId) {
-        const occupied = await tx.get(
-          'SELECT id FROM pi_conversations WHERE user_id=? AND runtime_id IS NOT NULL',
+        // One runtime per person across projects. An idle one is released for this send's retry.
+        const row = await tx.get<{ data_json: string }>(
+          'SELECT data_json FROM pi_conversations WHERE user_id=? AND runtime_id IS NOT NULL',
           conversation.userId,
         );
-        check(
-          !occupied,
-          'pi_runtime_busy',
-          'Your other conversation is still releasing its agent',
-          409,
-        );
+        if (row) {
+          const other = decode<PiConversationRecord>(row);
+          const where = other.projectId === conversation.projectId ? 'this' : 'another';
+          check(
+            !other.activeCommandId,
+            'pi_runtime_busy',
+            `Your conversation “${other.title}” in ${where} project is still working; wait for it or stop it`,
+            409,
+          );
+          await this.release(other.runtimeId!, tx);
+          return `Your agent in “${other.title}” in ${where} project is being released; retry shortly`;
+        }
         conversation.source = await this.scope.delegationSource(caller, tx);
         conversation.epoch++;
         conversation.activeCommandId = value.commandId;
         await this.saveConversation(tx, conversation);
-        const allocation = await this.fleet.request(
+        allocation = await this.fleet.request(
           caller,
           {
             requestId: `${id}:${conversation.epoch}`,
@@ -393,33 +406,31 @@ export class PiService implements Pi, FleetOwner {
         conversation.runtimeEpoch = allocation.epoch;
         conversation.runtimeExpiresAt = allocation.deadlineAt;
       } else {
-        const allocation = await this.fleet.inspectOwned(this, conversation.runtimeId, tx);
-        check(
-          allocation.intent === 'run' &&
-            !['releasing', 'released'].includes(allocation.phase) &&
-            allocation.deadlineAt > this.time(),
-          'pi_runtime_releasing',
-          'The previous agent is still releasing; retry shortly',
-          409,
-        );
-        await this.scope.requireDelegation(conversation.source, 'read', tx);
+        allocation = await this.allocation(conversation.runtimeId, tx);
+        // Reuse only a runtime Fleet keeps (not idle past its release) that holds the caller's
+        // current authority: a role change issues a new membership, so rebind on a new runtime.
+        if (
+          allocation?.intent !== 'run' ||
+          ['releasing', 'released'].includes(allocation.phase) ||
+          allocation.deadlineAt <= this.time() ||
+          this.idle(conversation) ||
+          digest(await this.scope.delegationSource(caller, tx)) !== digest(conversation.source)
+        ) {
+          await this.release(conversation.runtimeId, tx);
+          return 'The previous agent is still releasing; retry shortly';
+        }
       }
       conversation.activeCommandId = value.commandId;
       conversation.idleSince = null;
-      const expiry = Math.min(
-        this.clock() + this.config.turnTimeoutSeconds * 1000,
-        Date.parse(conversation.runtimeExpiresAt!),
-        conversation.source.kind === 'human' || !conversation.source.expiresAt
-          ? Infinity
-          : Date.parse(conversation.source.expiresAt),
-      );
+      const queued = allocation.phase === 'queued';
+      const expiry = this.turnEnd(conversation, queued);
       check(expiry > this.clock(), 'pi_expired', 'Conversation source has expired', 403);
       const command: PiCommandRecord = {
         id: value.commandId,
         conversationId: id,
         epoch: conversation.epoch,
         runtimeId: conversation.runtimeId!,
-        status: 'waiting',
+        status: queued ? 'waiting' : 'starting',
         messages: [{ role: 'user', text: value.text }],
         outcomes: [],
         error: null,
@@ -442,8 +453,35 @@ export class PiService implements Pi, FleetOwner {
       await this.saveConversation(tx, conversation);
       return publicCommand(command);
     });
+    if (typeof result === 'string') throw new MervError('pi_runtime_releasing', result, 409);
     this.streams.changed(id, result.id);
     return result;
+  }
+  /** The earliest of the runtime deadline, the source's expiry and, unless queued, a full turn. */
+  private turnEnd(conversation: PiConversationRecord, queued = false): number {
+    return Math.min(
+      queued ? Infinity : this.clock() + this.config.turnTimeoutSeconds * 1000,
+      Date.parse(conversation.runtimeExpiresAt!),
+      conversation.source.kind === 'human' || !conversation.source.expiresAt
+        ? Infinity
+        : Date.parse(conversation.source.expiresAt),
+    );
+  }
+  private idle(conversation: PiConversationRecord): boolean {
+    return (
+      !!conversation.idleSince &&
+      Date.parse(conversation.idleSince) + this.config.idleTimeoutSeconds * 1000 <= this.clock()
+    );
+  }
+  /** An operator may delete a stuck allocation row; Pi then treats the runtime as lost. */
+  private allocation(id: string, tx?: Transaction): Promise<FleetAllocation | null> {
+    return this.fleet.inspectOwned(this, id, tx).catch((error: unknown) => {
+      if (error instanceof MervError && error.code === 'fleet_not_found') return null;
+      throw error;
+    });
+  }
+  private async release(id: string, tx: Transaction): Promise<void> {
+    if (await this.allocation(id, tx)) await this.fleet.cancelOwned(this, id, tx);
   }
 
   async valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean> {
@@ -454,7 +492,10 @@ export class PiService implements Pi, FleetOwner {
       conversation.epoch === Number(epoch) &&
       (!conversation.runtimeId || conversation.runtimeId === allocation.id) &&
       digest(conversation.source) === digest(allocation.source) &&
-      (conversation.activeCommandId !== null || conversation.idleSince !== null)
+      // Idle, only a launched runtime stays warm; renting one for no turn is waste.
+      (conversation.activeCommandId !== null ||
+        (conversation.idleSince !== null &&
+          allocation.runtime?.launch?.deliveryState === 'launched'))
     );
   }
 
@@ -495,12 +536,10 @@ export class PiService implements Pi, FleetOwner {
         return 'finished';
       if (conversation.activeCommandId) {
         const command = await this.command(tx, conversation.id, conversation.activeCommandId);
-        return command.status === 'waiting' ? 'starting' : 'running';
+        return command.workerId ? 'running' : 'starting';
       }
-      return conversation.idleSince &&
-        Date.parse(conversation.idleSince) + this.config.idleTimeoutSeconds * 1000 <= this.clock()
-        ? 'finished'
-        : 'running';
+      // A drained runtime has finished its turn; release it without waiting out the idle time.
+      return allocation.intent !== 'run' || this.idle(conversation) ? 'finished' : 'running';
     });
   }
 
@@ -575,12 +614,14 @@ export class PiService implements Pi, FleetOwner {
       return { conversation, command };
     };
     let record = await this.read(lookup);
-    if (record?.command.status === 'waiting') {
+    if (record && !record.command.workerId) {
       record = await this.state.transaction(async (tx) => {
         const current = await lookup(tx);
-        if (current?.command.status === 'waiting') {
+        if (current && !current.command.workerId) {
           current.command.status = 'starting';
           current.command.workerId = value.workerId;
+          // Queueing and cold start spent the send-time budget; the model gets a full turn.
+          current.command.expiresAt = new Date(this.turnEnd(current.conversation)).toISOString();
           await this.saveCommand(tx, current.command);
         }
         return current;
@@ -616,7 +657,7 @@ export class PiService implements Pi, FleetOwner {
       };
       const description =
         tool.name === 'artifact.read'
-          ? 'Read immutable artifact content in this project. Only inline reads are available; no download URLs.'
+          ? 'Read immutable artifact content in this project. Only inline reads are available; no download URLs. Long content is truncated.'
           : (tool.description ?? tool.name);
       return { name: tool.name, description, inputSchema };
     });
@@ -702,7 +743,41 @@ export class PiService implements Pi, FleetOwner {
       'Conversation turn is not working',
       409,
     );
-    return this.tools.call(value.name, this.conversationCaller(conversation, command), value.input);
+    const result = await this.tools
+      .call(value.name, this.conversationCaller(conversation, command), value.input)
+      .catch((error: unknown) => {
+        // A wrong ID or input is the model's to correct; authority failures still end the call.
+        if (error instanceof MervError && [400, 404].includes(error.status))
+          return { error: { code: error.code, message: error.message } };
+        throw error;
+      });
+    const size = (part: unknown) => Buffer.byteLength(JSON.stringify(part ?? null));
+    let bytes = size(result);
+    if (bytes <= resultBytes) return result;
+    // Text and lists keep their start; anything else is only an error the model can explain.
+    const read =
+      value.name === 'artifact.read' && (result as { encoding?: unknown }).encoding === 'utf8';
+    const whole = read
+      ? (result as { content: string }).content
+      : Array.isArray(result)
+        ? result
+        : null;
+    if (!whole)
+      return {
+        error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
+      };
+    const part = (shown: number) =>
+      read
+        ? { ...(result as object), content: whole.slice(0, shown) }
+        : { items: whole.slice(0, shown) };
+    let shown = whole.length;
+    for (const budget = resultBytes - 200; bytes > budget && shown > 0; bytes = size(part(shown)))
+      shown = Math.floor((shown * budget) / bytes);
+    const unit = read ? 'characters' : 'items';
+    return {
+      ...part(shown),
+      truncated: `Only the first ${shown} of ${whole.length} ${unit} are shown`,
+    };
   }
 
   async progress(token: string, input: unknown): Promise<{ accepted: true }> {
@@ -751,9 +826,14 @@ export class PiService implements Pi, FleetOwner {
       outcomes: value.outcomes,
       checkpointHash: value.checkpointHash,
     });
+    // Tool outputs are also in the checkpoint; keeping them must not fail a finished turn.
+    const fits = (outcomes: PiToolOutcome[]) =>
+      Buffer.byteLength(JSON.stringify({ messages: value.messages, outcomes })) <= 256_000;
+    const outcomes = fits(value.outcomes)
+      ? value.outcomes
+      : value.outcomes.map((outcome) => ({ ...outcome, output: { omitted: true } }));
     check(
-      Buffer.byteLength(JSON.stringify({ messages: value.messages, outcomes: value.outcomes })) <=
-        256_000,
+      fits(outcomes),
       'pi_result_too_large',
       'Canonical conversation result exceeds its limit',
       413,
@@ -799,7 +879,7 @@ export class PiService implements Pi, FleetOwner {
       );
       if (!command.resultHash) {
         command.messages.push(...value.messages);
-        command.outcomes = value.outcomes;
+        command.outcomes = outcomes;
         command.resultHash = resultHash;
         command.status = 'saving';
         await this.saveCommand(tx, command);
@@ -906,9 +986,7 @@ export class PiService implements Pi, FleetOwner {
           await this.command(tx, id, conversation.activeCommandId),
           'cancelled',
         );
-      if (conversation.runtimeId) {
-        await this.fleet.cancelOwned(this, conversation.runtimeId, tx);
-      }
+      if (conversation.runtimeId) await this.release(conversation.runtimeId, tx);
     });
     this.streams.changed(id);
     return this.snapshot(caller, id);
@@ -990,37 +1068,56 @@ export class PiService implements Pi, FleetOwner {
     );
     for (const record of records) {
       const previous = decode<PiConversationRecord>(record);
-      const allocation = await this.fleet.inspectOwned(this, previous.runtimeId!);
+      let allocation = await this.allocation(previous.runtimeId!);
       const previousCommand = previous.activeCommandId
         ? await this.state.read((sql) => this.command(sql, previous.id, previous.activeCommandId!))
         : null;
       if (
+        allocation &&
         allocation.phase !== 'released' &&
         (!previousCommand ||
-          (allocation.intent === 'run' && previousCommand.expiresAt > this.time()))
+          (allocation.intent === 'run' &&
+            previousCommand.expiresAt > this.time() &&
+            (previousCommand.status !== 'waiting' || allocation.phase === 'queued')))
       )
         continue;
       const changed = await this.state.transaction(async (tx) => {
         const conversation = await this.conversation(tx, previous.id);
-        if (conversation.runtimeId !== allocation.id) return false;
+        if (conversation.runtimeId !== previous.runtimeId) return false;
         let changed = false;
         if (conversation.activeCommandId) {
           const command = await this.command(tx, conversation.id, conversation.activeCommandId);
-          if (
-            allocation.phase === 'released' ||
-            allocation.intent !== 'run' ||
-            command.expiresAt <= this.time()
-          ) {
-            await this.interrupt(
-              tx,
-              conversation,
-              command,
-              allocation.phase === 'released' ? 'runtime_lost' : 'turn_expired',
-            );
+          // Fleet also stops a failed machine, but no one chose that. (A revoked launch or a
+          // deleting machine is what an operator's stop leaves too, so those stay 'stopped'.)
+          const reason: PiInterruption | null =
+            allocation?.error === 'runtime_refused'
+              ? 'runtime_refused'
+              : !allocation ||
+                  (allocation.intent === 'run' && allocation.phase === 'released') ||
+                  allocation.runtime?.state === 'failed'
+                ? 'runtime_lost'
+                : allocation.intent !== 'run'
+                  ? 'runtime_stopped'
+                  : command.expiresAt <= this.time()
+                    ? 'turn_expired'
+                    : null;
+          if (reason) {
+            await this.interrupt(tx, conversation, command, reason);
+            // A turn that ends before its machine launched must not rent one for nothing.
+            if (allocation && allocation.runtime?.launch?.deliveryState !== 'launched')
+              allocation = await this.fleet.cancelOwned(this, allocation.id, tx);
+            changed = true;
+          } else if (allocation && command.status === 'waiting' && allocation.phase !== 'queued') {
+            // Out of the queue: cold start gets a turn's time, within the deadline Fleet now keeps.
+            conversation.runtimeExpiresAt = allocation.deadlineAt;
+            command.status = 'starting';
+            command.expiresAt = new Date(this.turnEnd(conversation)).toISOString();
+            await this.saveCommand(tx, command);
+            await this.saveConversation(tx, conversation);
             changed = true;
           }
         }
-        if (allocation.phase === 'released') {
+        if (!allocation || allocation.phase === 'released') {
           conversation.runtimeId = null;
           conversation.runtimeEpoch = null;
           conversation.runtimeExpiresAt = null;
@@ -1053,7 +1150,7 @@ export class PiService implements Pi, FleetOwner {
               await this.command(tx, conversation.id, conversation.activeCommandId),
               'service_unavailable',
             );
-          await this.fleet.cancelOwned(this, conversation.runtimeId!, tx);
+          await this.release(conversation.runtimeId!, tx);
         }
       });
     }

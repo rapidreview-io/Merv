@@ -45,25 +45,25 @@ const message = z.union([
       content: z.array(output).min(1).max(64),
     })
     .strict(),
-  z
-    .object({
-      type: z.literal('reasoning'),
-      id: identifier.optional(),
-      encrypted_content: text.optional(),
-      content: z.array(z.never()).max(0).optional(),
-      summary: z
-        .array(z.object({ type: z.literal('summary_text'), text }).strict())
-        .max(64)
-        .optional(),
-      status: z.literal('completed').optional(),
-    })
-    .strict(),
+  // Replayed verbatim from checkpoints: unknown fields are dropped rather than failing every turn.
+  z.object({
+    type: z.literal('reasoning'),
+    id: identifier.optional(),
+    encrypted_content: text.nullable().optional(),
+    content: z.array(z.never()).max(0).optional(),
+    summary: z
+      .array(z.object({ type: z.literal('summary_text'), text }))
+      .max(64)
+      .optional(),
+    status: z.enum(['in_progress', 'completed', 'incomplete']).optional(),
+  }),
+  // A model's call to an undeclared tool is only history: the agent answered it with an error.
   z
     .object({
       type: z.literal('function_call'),
       id: identifier.optional(),
       call_id: identifier,
-      name: toolName,
+      name: identifier,
       arguments: text,
     })
     .strict(),
@@ -133,15 +133,11 @@ export function validPiPayload(
     payload.tools?.some((tool) => tool.parameters.type !== 'object' || !safeSchema(tool.parameters))
   )
     return false;
-  for (const item of payload.input) {
-    if ('type' in item && item.type === 'function_call' && !allowed.has(item.name)) return false;
-    if (
+  return !payload.input.some(
+    (item) =>
       'type' in item &&
       item.type === 'reasoning' &&
       !item.encrypted_content &&
-      !item.summary?.length
-    )
-      return false;
-  }
-  return true;
+      !item.summary?.length,
+  );
 }
