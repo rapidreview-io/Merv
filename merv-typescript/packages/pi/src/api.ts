@@ -60,6 +60,8 @@ export class PiHttp implements PiApiProvider {
   constructor(
     private readonly pi: PiRuntime,
     private readonly rotateMs = 20_000,
+    // Held /next answers stay well inside the 10 s request timeout of workers already running.
+    private readonly holdMs = 5_000,
   ) {}
 
   readonly worker: MountHandler = async (req, res) => {
@@ -85,7 +87,8 @@ export class PiHttp implements PiApiProvider {
       const input = await body(req);
       check(!this.closed && !res.destroyed, 'pi_unavailable', 'Worker connection closed', 503);
       const action = match[1];
-      if (action === 'next') json(res, 200, { work: await this.pi.next(token, input) });
+      if (action === 'next')
+        json(res, 200, { work: await this.pi.next(token, input, this.holdMs) });
       else if (action === 'tool') json(res, 200, { result: await this.pi.tool(token, input) });
       else if (action === 'begin') json(res, 200, await this.pi.begin(token, input));
       else if (action === 'progress') json(res, 200, await this.pi.progress(token, input));

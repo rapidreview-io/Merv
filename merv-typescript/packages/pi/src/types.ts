@@ -57,6 +57,9 @@ export interface PiCommand {
   outcomes: PiToolOutcome[];
   error: PiInterruption | null;
   createdAt: string;
+  /** When the worker began the turn, and when its first text streamed; absent until then. */
+  startedAt?: string;
+  firstTextAt?: string;
   expiresAt: string;
   completedAt: string | null;
 }
@@ -82,7 +85,7 @@ export interface PiStage {
   detail?: string;
 }
 export interface PiSnapshot {
-  stage?: PiStage;
+  stage: PiStage;
   /** False when this project cannot run the agent at all (no sandbox connection). */
   available: boolean;
   conversation: PiConversation;
@@ -134,6 +137,8 @@ export interface Pi {
   list(caller: Caller): Promise<PiConversation[]>;
   snapshot(caller: Caller, id: string): Promise<PiSnapshot>;
   send(caller: Caller, id: string, input: unknown): Promise<PiCommand>;
+  /** Start a machine for a conversation before its first message; see pi.warm. */
+  warm(caller: Caller, input: unknown): Promise<PiSnapshot>;
   stop(caller: Caller, id: string): Promise<PiSnapshot>;
 }
 /** Server-facing contract: transport and UI do not need the service implementation. */
@@ -150,7 +155,8 @@ export interface PiRuntime extends Pi {
   };
   authorizeStream(caller: Caller, id: string): Promise<void>;
   authenticateWorker(token: string): Promise<void>;
-  next(token: string, input: unknown): Promise<PiWork | null>;
+  /** Holds up to `holdMs` for work before answering null. */
+  next(token: string, input: unknown, holdMs?: number): Promise<PiWork | null>;
   tool(token: string, input: unknown): Promise<unknown>;
   begin(token: string, input: unknown): Promise<{ apply: boolean }>;
   progress(token: string, input: unknown): Promise<{ accepted: true }>;
