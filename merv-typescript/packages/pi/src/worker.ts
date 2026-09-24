@@ -32,13 +32,13 @@ const MAX_RESPONSE_BYTES = 2_100_000;
 const DELAY = 250;
 const STARTUP_WAIT_MS = 60_000;
 // A relay request carries at most 512 KiB in 512 items of 100k characters and asks for at most 4096
-// tokens. Beside a turn's prompt, answers and tool output, restored history keeps to what still fits.
+// tokens. History and tool output leave room for a turn's prompt, its answers and JSON re-escaping.
 const MAX_OUTPUT_TOKENS = 4096;
-const TOOL_OUTPUT_BYTES = 96_000;
-const HISTORY_BYTES = 160_000;
+const TOOL_OUTPUT_BYTES = 64_000;
+const HISTORY_BYTES = 128_000;
 const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
-type Request = <T>(path: string, body: unknown, signal?: AbortSignal, tries?: number) => Promise<T>;
+type Post = <T>(path: string, body: unknown, signal?: AbortSignal, tries?: number) => Promise<T>;
 
 class WorkerHttpError extends Error {
   constructor(
@@ -184,7 +184,7 @@ export async function runPiWorker(
     if (!response.ok) throw new WorkerHttpError(response.status, (value as { error?: {} })?.error);
     return value as T;
   };
-  const request: Request = async (path, body, signal, tries = 1) => {
+  const request: Post = async (path, body, signal, tries = 1) => {
     for (let attempt = 1; ; attempt++) {
       try {
         return await send(path, body, signal);
@@ -299,7 +299,7 @@ export async function runPiWorker(
 async function executeTurn(
   work: PiWork,
   workerId: string,
-  request: Request,
+  request: Post,
   fetchImpl: typeof fetch,
   signal: AbortSignal,
   pollIntervalMs: number,
@@ -352,7 +352,7 @@ async function executeTurn(
   });
   const events: ProgressEvent[] = [];
   const outcomes: PiToolOutcome[] = [];
-  let toolBytes = TOOL_OUTPUT_BYTES;
+  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, contextWindow);
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
   const flush = (heartbeat = false) => {
@@ -369,8 +369,8 @@ async function executeTurn(
         );
         if (receipt.accepted !== true) throw new Error('Conversation revoked');
       })
-      .catch(() => {
-        failure = new Error('Conversation revoked');
+      .catch((error: unknown) => {
+        failure = error instanceof Error ? error : new Error('Conversation revoked');
         session.abort().catch(() => {});
       })
       .finally(() => {
@@ -414,12 +414,6 @@ async function executeTurn(
     }),
     async execute(callId, input, toolSignal) {
       if (signal.aborted || failure) throw new Error('Turn cancelled');
-      const canonicalCallId = callId.split('|')[0];
-      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId) || outcomes.length >= 64) {
-        failure = new Error('Invalid tool result');
-        session.abort().catch(() => {});
-        throw failure;
-      }
       if (
         !input ||
         typeof input !== 'object' ||
@@ -447,6 +441,12 @@ async function executeTurn(
         throw new Error(typeof detail === 'string' ? detail : cause(error));
       }
       if (signal.aborted || failure) throw new Error('Turn cancelled');
+      const canonicalCallId = callId.split('|')[0];
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId) || outcomes.length >= 64) {
+        failure = new Error('Invalid tool result');
+        session.abort().catch(() => {});
+        throw failure;
+      }
       const text = JSON.stringify(output.result) ?? 'null';
       const size = Buffer.byteLength(text);
       const kept = Buffer.from(text).subarray(0, toolBytes).toString();
@@ -548,7 +548,10 @@ async function executeTurn(
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join(''),
-        message.stopReason === 'length' ? '[Answer cut off at the response length limit.]' : '',
+        // A cut-off tool call is failed back to the model, which then answers.
+        message.stopReason === 'length' && !message.content.some((part) => part.type === 'toolCall')
+          ? '[Answer cut off at the response length limit.]'
+          : '',
       ]
         .filter(Boolean)
         .join('\n\n');

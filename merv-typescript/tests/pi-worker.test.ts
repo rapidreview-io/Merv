@@ -68,6 +68,7 @@ async function stderrOf(run: () => Promise<unknown>): Promise<string> {
 async function fixture(
   options: {
     toolCall?: boolean;
+    calls?: number;
     cancel?: boolean;
     checkpoint?: PiWork['checkpoint'];
     turns?: number;
@@ -154,7 +155,11 @@ async function fixture(
           return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
         }
         const first = options.toolCall && modelRequests.length === 1;
-        const items = first ? [call] : [message('Finished')];
+        const items = first
+          ? Array.from({ length: options.calls ?? 1 }, (_, index) =>
+              index ? { ...call, id: `fc_${index + 1}`, call_id: `call_${index + 1}` } : call,
+            )
+          : [message('Finished')];
         return new Response(sse(items, first ? undefined : 'Finished', options.cutOff), {
           headers: { 'content-type': 'text/event-stream' },
         });
@@ -386,6 +391,10 @@ test('transient progress and tool failures are retried within the turn', async (
   assert.equal(app.toolRequests, 2);
   assert.deepEqual(app.failures, []);
   assert.equal(app.completions[0].outcomes.length, 1);
+  const outage = await fixture({ progressFailures: [502, 502, 502] });
+  const logged = await stderrOf(() => outage.run());
+  assert.match(logged, /^Pi worker turn failed: Worker request failed with HTTP 502$/m);
+  assert.deepEqual(outage.failures, ['cmd_1']);
 });
 
 test('a recoverable tool error reaches the model as a tool result', async () => {
@@ -396,16 +405,33 @@ test('a recoverable tool error reaches the model as a tool result', async () => 
   assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
   assert.deepEqual(app.completions[0].outcomes, []);
   assert.match(JSON.stringify(app.modelRequests[1].input), /Artifact not found in this project/);
+  const lost = await fixture({ toolCall: true, toolFailures: [409] });
+  await lost.run();
+  assert.deepEqual(lost.failures, ['cmd_1']);
+  assert.equal(lost.modelRequests.length, 1);
+});
+
+test('a response with more tool calls than a turn allows ends before another model request', async () => {
+  const app = await fixture({ toolCall: true, calls: 65 });
+  await app.run();
+  assert.deepEqual(app.failures, ['cmd_1']);
+  assert.equal(app.modelRequests.length, 1);
 });
 
 test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
-  const app = await fixture({ toolCall: true, toolResult: { content: 'x'.repeat(150_000) } });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  const { output } = app.completions[0].outcomes[0];
-  assert.equal(output.truncated, true);
-  assert.equal(String(output.text).length, 96_000);
-  assert.match(JSON.stringify(app.modelRequests[1].input), /bytes omitted: tool output limit/);
+  for (const [model, budget] of [
+    ['gpt-6-luna', 64_000],
+    ['unknown-model', 32_000],
+  ] as const) {
+    const toolResult = { content: 'x'.repeat(150_000) };
+    const app = await fixture({ toolCall: true, toolResult, model });
+    await app.run();
+    assert.deepEqual(app.failures, []);
+    const { output } = app.completions[0].outcomes[0];
+    assert.equal(output.truncated, true);
+    assert.equal(String(output.text).length, budget);
+    assert.match(JSON.stringify(app.modelRequests[1].input), /bytes omitted: tool output limit/);
+  }
 });
 
 test('an answer cut off at the output limit is delivered with a note', async () => {
@@ -416,61 +442,71 @@ test('an answer cut off at the output limit is delivered with a note', async () 
     { role: 'assistant', text: 'Finished\n\n[Answer cut off at the response length limit.]' },
   ]);
   assert.equal(app.modelRequests[0].max_output_tokens, 4096);
+  const toolCut = await fixture({ cutOff: true, toolCall: true });
+  await toolCut.run();
+  assert.deepEqual(toolCut.completions[0].messages, [
+    { role: 'assistant', text: 'Finished\n\n[Answer cut off at the response length limit.]' },
+  ]);
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
-  const at = new Date().toISOString();
-  const entries = [1, 2, 3, 4].flatMap((turn) => [
-    {
-      type: 'message',
-      id: `user_${turn}`,
-      parentId: turn > 1 ? `answer_${turn - 1}` : null,
-      timestamp: at,
-      message: { role: 'user', content: `Earlier ${turn} ${'y'.repeat(60_000)}`, timestamp: 1 },
-    },
-    {
-      type: 'message',
-      id: `answer_${turn}`,
-      parentId: `user_${turn}`,
-      timestamp: at,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: `Answer ${turn}` }],
-        api: 'openai-responses',
-        provider: 'openai',
-        model: 'gpt-6-luna',
-        usage: {
-          input: 30_000,
-          output: 100,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 30_100,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: 'stop',
-        timestamp: 2,
+  // Bytes bind the first conversation; relay items bind the second.
+  for (const [turns, filler, kept] of [
+    [4, 60_000, 2],
+    [200, 0, 150],
+  ]) {
+    const at = new Date().toISOString();
+    const entries = Array.from({ length: turns }, (_, index) => index + 1).flatMap((turn) => [
+      {
+        type: 'message',
+        id: `user_${turn}`,
+        parentId: turn > 1 ? `answer_${turn - 1}` : null,
+        timestamp: at,
+        message: { role: 'user', content: `Earlier ${turn} ${'y'.repeat(filler)}`, timestamp: 1 },
       },
-    },
-  ]);
-  const content = JSON.stringify({
-    version: 1,
-    header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
-    entries,
-    leafId: 'answer_4',
-  });
-  const app = await fixture({ checkpoint: { content, hash: digest(content) } });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  const sent = JSON.stringify(app.modelRequests[0].input);
-  assert.equal(app.modelRequests[0].max_output_tokens, 4096);
-  assert.ok(
-    sent.includes('Earlier 4') && sent.includes('Earlier 3') && !sent.includes('Earlier 2'),
-  );
-  const saved = decodeCheckpoint({
-    content: app.completions[0].checkpoint,
-    hash: app.completions[0].checkpointHash,
-  });
-  assert.deepEqual(saved.entries[0], { ...entries[4], parentId: null });
+      {
+        type: 'message',
+        id: `answer_${turn}`,
+        parentId: `user_${turn}`,
+        timestamp: at,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: `Answer ${turn}` }],
+          api: 'openai-responses',
+          provider: 'openai',
+          model: 'gpt-6-luna',
+          usage: {
+            input: 30_000,
+            output: 100,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 30_100,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'stop',
+          timestamp: 2,
+        },
+      },
+    ]);
+    const content = JSON.stringify({
+      version: 1,
+      header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
+      entries,
+      leafId: `answer_${turns}`,
+    });
+    const app = await fixture({ checkpoint: { content, hash: digest(content) } });
+    await app.run();
+    assert.deepEqual(app.failures, []);
+    const sent = JSON.stringify(app.modelRequests[0].input);
+    assert.equal(app.modelRequests[0].max_output_tokens, 4096);
+    const oldest = turns - kept + 1;
+    assert.ok(sent.includes(`Earlier ${oldest} `) && !sent.includes(`Earlier ${oldest - 1} `));
+    const saved = decodeCheckpoint({
+      content: app.completions[0].checkpoint,
+      hash: app.completions[0].checkpointHash,
+    });
+    assert.deepEqual(saved.entries[0], { ...entries[2 * (oldest - 1)], parentId: null });
+  }
 });
 
 test('an assignment the worker refuses is failed at once instead of left to expire', async () => {
