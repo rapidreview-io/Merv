@@ -1211,6 +1211,27 @@ test('a warm machine shows its stages and, unused, is released after the idle ti
   assert.equal((await f.fleet.inspect(f.operator, allocation.id)).intent, 'stop');
 });
 
+test('warming and releasing a runtime leave a conversation where it was in the list', async (t) => {
+  const f = await fixture(t);
+  const older = await f.create();
+  f.advance(1000);
+  const newer = await f.create();
+  const listed = async () =>
+    (await f.pi.list(f.operator)).map(({ id, updatedAt }) => ({ id, updatedAt }));
+  const before = await listed();
+  assert.equal(before[0].id, newer.id);
+  f.advance(1000);
+  const warmed = await f.pi.warm(f.operator, { requestId: 'warm', conversationId: older.id });
+  assert.ok(warmed.conversation.runtimeId);
+  await f.pi.stop(f.operator, older.id);
+  await f.pi.tick();
+  assert.equal((await f.pi.snapshot(f.operator, older.id)).conversation.runtimeId, null);
+  assert.deepEqual(await listed(), before);
+  // A question is the conversation's own move.
+  await f.send(older);
+  assert.equal((await listed())[0].id, older.id);
+});
+
 test('a cold turn shows what it waits on, from the queue to the answer; a held worker gets the next at once', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();

@@ -208,12 +208,14 @@ export class PiService implements Pi, FleetOwner {
     check(row, 'pi_command_not_found', 'Conversation command not found', 404);
     return decode(row);
   }
+  /** A runtime-only change keeps updatedAt, so a warm-up never lifts a conversation up the list. */
   private async saveConversation(
     tx: Transaction,
     conversation: PiConversationRecord,
+    moved = true,
   ): Promise<void> {
     conversation.revision++;
-    conversation.updatedAt = this.time();
+    if (moved) conversation.updatedAt = this.time();
     await tx.run(
       'UPDATE pi_conversations SET runtime_id=?,data_json=? WHERE id=?',
       conversation.runtimeId,
@@ -526,7 +528,7 @@ export class PiService implements Pi, FleetOwner {
         if (fresh) conversation.idleSince = this.time();
         const allocation = await this.runtime(caller, conversation, tx);
         if (typeof allocation === 'string') return allocation;
-        if (fresh) await this.saveConversation(tx, conversation);
+        if (fresh) await this.saveConversation(tx, conversation, false);
         return fresh;
       })
       .catch((error: unknown) => {
@@ -578,7 +580,7 @@ export class PiService implements Pi, FleetOwner {
     }
     conversation.source = await this.scope.delegationSource(caller, tx);
     conversation.epoch++;
-    await this.saveConversation(tx, conversation);
+    await this.saveConversation(tx, conversation, false);
     const owner = `${conversation.id}:${conversation.epoch}`;
     const allocation = await this.fleet.request(
       caller,
@@ -1293,7 +1295,7 @@ export class PiService implements Pi, FleetOwner {
             command.status = 'starting';
             command.expiresAt = new Date(this.turnEnd(conversation)).toISOString();
             await this.saveCommand(tx, command);
-            await this.saveConversation(tx, conversation);
+            await this.saveConversation(tx, conversation, false);
             changed = true;
           }
         }
@@ -1302,7 +1304,7 @@ export class PiService implements Pi, FleetOwner {
           conversation.runtimeEpoch = null;
           conversation.runtimeExpiresAt = null;
           conversation.idleSince = null;
-          await this.saveConversation(tx, conversation);
+          await this.saveConversation(tx, conversation, false);
           changed = true;
         }
         return changed;
