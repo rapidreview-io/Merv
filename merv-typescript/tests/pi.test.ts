@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
 import { DiskBlobs } from '@merv/blobs';
-import { createService, type Blobs, type Caller, type MervError } from '@merv/contracts';
+import { check, createService, type Blobs, type Caller, type MervError } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
 import { ToolRegistry } from '../packages/api/src/registry.js';
@@ -16,6 +16,7 @@ import { FleetService } from '../packages/fleet/src/index.js';
 import { PiService } from '../packages/pi/src/index.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
+import { maxTextChars } from '../packages/pi/src/relay-schema.js';
 import type { PiBootstrap, PiCompletion, PiConversation } from '../packages/pi/src/types.js';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -246,12 +247,12 @@ async function fixture(
     pi.create(caller, { requestId: `open_${++sequence}`, title: 'Chat' });
   const send = (conversation: PiConversation, text = 'hello', caller = operator) =>
     pi.send(caller, conversation.id, { commandId: `turn_${++sequence}`, text });
-  async function claimed(conversation: PiConversation, workerId = 'worker_1') {
-    const allocation = await fleet.inspect(operator, conversation.runtimeId!);
+  async function claimed(conversation: PiConversation, workerId = 'worker_1', caller = operator) {
+    const allocation = await fleet.inspect(caller, conversation.runtimeId!);
     const token = (JSON.parse(await pi.bootstrap(allocation)) as PiBootstrap).workerToken;
     await fleet.tick();
     await fleet.tick();
-    assert.equal((await fleet.inspect(operator, conversation.runtimeId!)).phase, 'starting');
+    assert.equal((await fleet.inspect(caller, conversation.runtimeId!)).phase, 'starting');
     const work = await pi.next(token, { workerId });
     assert.ok(work);
     return { token, work, input: { commandId: work.command.id, workerId } };
@@ -390,6 +391,109 @@ test('send commits a command and Fleet request atomically, deduplicates, and ser
   assert.equal((await f.pi.snapshot(f.operator, second.id)).commands.length, 0);
 });
 
+test('one runtime per person: a working one is named, an idle one is released for the retry', async (t) => {
+  const f = await fixture(t);
+  const first = await f.create();
+  const second = await f.create();
+  await f.send(first);
+  const bound = await f.claimed((await f.pi.snapshot(f.operator, first.id)).conversation);
+  const retry = { commandId: 'second_turn', text: 'hello' };
+  await assert.rejects(
+    f.pi.send(f.operator, second.id, retry),
+    (error: MervError) =>
+      error.code === 'pi_runtime_busy' &&
+      error.message ===
+        'Your conversation “Chat” in this project is still working; wait for it or stop it',
+  );
+  await f.pi.begin(bound.token, bound.input);
+  await f.pi.complete(
+    bound.token,
+    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
+  );
+  await assert.rejects(f.pi.send(f.operator, second.id, retry), code('pi_runtime_releasing'));
+  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+  await f.fleet.tick();
+  f.runtimes.release('sbx_1');
+  await f.fleet.tick();
+  await f.pi.tick();
+  assert.equal((await f.pi.send(f.operator, second.id, retry)).status, 'waiting');
+});
+
+test('a send after the idle timeout releases the runtime instead of racing its release', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  await f.send(conversation);
+  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  await f.pi.begin(bound.token, bound.input);
+  await f.pi.complete(
+    bound.token,
+    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
+  );
+  f.advance(5_000);
+  await assert.rejects(f.send(conversation), code('pi_runtime_releasing'));
+  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+});
+
+test('a role change rebinds the conversation on a fresh runtime; a removed member is refused', async (t) => {
+  const f = await fixture(t);
+  const login = (subject: string) =>
+    f.scope.acceptVerifiedIdentity({
+      issuer: 'https://identity.example/auth/v1',
+      subject,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+  const alice = await login('alice');
+  const bob = await login('bob');
+  const project = await f.scope.createProject(alice, { name: 'Humans', requestId: 'humans' });
+  const owner = await f.scope.caller(alice, project.id);
+  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
+  const producer = await f.scope.caller(bob, project.id);
+  const conversation = await f.create(producer);
+  await f.send(conversation, 'hello', producer);
+  const snapshot = await f.pi.snapshot(producer, conversation.id);
+  const bound = await f.claimed(snapshot.conversation, 'worker_1', owner);
+  await f.pi.begin(bound.token, bound.input);
+  await f.pi.complete(
+    bound.token,
+    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
+  );
+  await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
+  const reader = await f.scope.caller(bob, project.id);
+  const retry = { commandId: 'after_role_change', text: 'still here' };
+  await assert.rejects(f.pi.send(reader, conversation.id, retry), code('pi_runtime_releasing'));
+  await f.fleet.tick();
+  f.runtimes.release('sbx_1');
+  await f.fleet.tick();
+  await f.pi.tick();
+  const command = await f.pi.send(reader, conversation.id, retry);
+  assert.deepEqual(
+    (await f.fleet.inspect(owner, command.runtimeId)).source,
+    await f.scope.delegationSource(reader),
+  );
+  await f.scope.removeMember(alice, project.id, 'bob');
+  await assert.rejects(
+    f.pi.send(reader, conversation.id, { commandId: 'removed', text: 'hello' }),
+    code('membership_required'),
+  );
+});
+
+test('conversations list most recently updated first', async (t) => {
+  const f = await fixture(t);
+  const opened = [];
+  for (let index = 0; index < 4; index++) {
+    f.advance(1000);
+    opened.push(await f.create());
+  }
+  const ids = async () => (await f.pi.list(f.operator)).map((conversation) => conversation.id);
+  assert.deepEqual(await ids(), opened.map((conversation) => conversation.id).reverse());
+  f.advance(1000);
+  await f.send(opened[0]);
+  assert.deepEqual(
+    await ids(),
+    [opened[0], ...opened.slice(1).reverse()].map(({ id }) => id),
+  );
+});
+
 test('concurrent sends to separate conversations bind at most one runtime per user', async (t) => {
   const f = await fixture(t);
   const left = await f.create();
@@ -455,9 +559,15 @@ test('a reader can chat but cannot request workflow capacity; worker claims and 
     f.pi.tool(token, { ...input, name: '_remote.read', input: {} }),
     code('tool_forbidden'),
   );
-  await assert.rejects(
-    f.pi.tool(token, { ...input, name: 'project.get', input: { projectId: reader.projectId } }),
-    code('invalid_input'),
+  assert.equal(
+    (
+      (await f.pi.tool(token, {
+        ...input,
+        name: 'project.get',
+        input: { projectId: reader.projectId },
+      })) as { error: { code: string } }
+    ).error.code,
+    'invalid_input',
   );
   assert.equal(f.mutations, 0);
   assert.equal((await f.pi.snapshot(reader, conversation.id)).commands[0].status, 'working');
@@ -475,6 +585,64 @@ test('a reader can chat but cannot request workflow capacity; worker claims and 
   assert.deepEqual(
     (await f.pi.snapshot(reader, conversation.id)).commands[0].outcomes,
     result.outcomes,
+  );
+});
+
+test('recoverable tool failures and oversized reads come back to the model as results', async (t) => {
+  const f = await fixture(t);
+  const content = 'line "quoted"\n'.repeat(12_000);
+  t.after(
+    f.tools.register({
+      name: 'artifact.read',
+      description: 'Read artifact',
+      readOnly: true,
+      inputSchema: z.object({ artifactId: z.string().min(1) }).strict(),
+      handler: async (_caller, input: { artifactId: string }) => {
+        check(input.artifactId === 'art_big', 'not_found', 'Artifact not found', 404);
+        return { artifact: { id: 'art_big' }, content, encoding: 'utf8' };
+      },
+    }),
+  );
+  const conversation = await f.create();
+  await f.send(conversation);
+  const { token, input } = await f.claimed(
+    (await f.pi.snapshot(f.operator, conversation.id)).conversation,
+  );
+  await f.pi.begin(token, input);
+  const read = (artifactId: string) =>
+    f.pi.tool(token, { ...input, name: 'artifact.read', input: { artifactId } });
+  assert.deepEqual(await read('art_missing'), {
+    error: { code: 'not_found', message: 'Artifact not found' },
+  });
+  const result = (await read('art_big')) as { content: string; truncated: string };
+  assert.ok(JSON.stringify(result).length <= maxTextChars);
+  assert.ok(result.content.length > 50_000 && content.startsWith(result.content));
+  assert.equal(
+    result.truncated,
+    `Only the first ${result.content.length} of ${content.length} characters are shown`,
+  );
+});
+
+test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  await f.send(conversation);
+  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  await f.pi.begin(bound.token, bound.input);
+  const result = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  result.outcomes = [1, 2, 3].map((index) => ({
+    callId: `read_${index}`,
+    name: 'project.get',
+    input: {},
+    output: { text: '字'.repeat(40_000) },
+  }));
+  assert.deepEqual(await f.pi.complete(bound.token, result), { saved: true });
+  const [command] = (await f.pi.snapshot(f.operator, conversation.id)).commands;
+  assert.equal(command.status, 'completed');
+  assert.deepEqual(command.messages.slice(1), result.messages);
+  assert.deepEqual(
+    command.outcomes.map((outcome) => outcome.output),
+    [1, 2, 3].map(() => ({ omitted: true })),
   );
 });
 
@@ -733,6 +901,64 @@ test('idle release waits for retained checkpoint; restarted service restores ful
   assert.equal(second.work.checkpoint?.content, fullTree);
   assert.equal(second.work.checkpoint?.hash, sha(fullTree));
   await assert.rejects(f.pi.next(first.token, { workerId: 'old_worker' }), code('pi_unauthorized'));
+});
+
+test('Fleet outcomes end a turn at once with their own reason; a missing row counts as lost', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const latest = async () => {
+    const snapshot = await f.pi.snapshot(f.operator, conversation.id);
+    return { error: snapshot.commands.at(-1)!.error, runtimeId: snapshot.conversation.runtimeId };
+  };
+  const refused = await f.fleet.inspect(f.operator, (await f.send(conversation)).runtimeId);
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE fleet_allocations SET phase='released',data_json=? WHERE id=?",
+      JSON.stringify({ ...refused, phase: 'released', intent: 'stop', error: 'runtime_refused' }),
+      refused.id,
+    ),
+  );
+  await f.pi.tick();
+  assert.deepEqual(await latest(), { error: 'runtime_refused', runtimeId: null });
+  const deleted = (await f.send(conversation)).runtimeId;
+  await f.state.transaction((tx) => tx.run('DELETE FROM fleet_allocations WHERE id=?', deleted));
+  await f.pi.tick();
+  assert.deepEqual(await latest(), { error: 'runtime_lost', runtimeId: null });
+  await f.send(conversation);
+  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  await f.pi.begin(bound.token, bound.input);
+  await f.fleet.drain(f.operator, bound.work.command.runtimeId);
+  await f.pi.tick();
+  assert.equal((await latest()).error, 'runtime_stopped');
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+});
+
+test('a turn that expires before its machine launches releases the allocation unrented', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const command = await f.send(conversation);
+  f.advance(300_001);
+  await f.pi.tick();
+  const snapshot = await f.pi.snapshot(f.operator, conversation.id);
+  assert.equal(snapshot.commands[0].error, 'turn_expired');
+  assert.equal(snapshot.conversation.runtimeId, null);
+  assert.equal((await f.fleet.inspect(f.operator, command.runtimeId)).phase, 'released');
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.launched, []);
+});
+
+test('a machine being prepared reads as starting, and the turn clock starts at the claim', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  await f.send(conversation);
+  f.advance(200_000);
+  await f.fleet.tick();
+  await f.pi.tick();
+  const snapshot = await f.pi.snapshot(f.operator, conversation.id);
+  assert.equal(snapshot.commands[0].status, 'starting');
+  const { work } = await f.claimed(snapshot.conversation);
+  assert.equal(work.command.expiresAt, new Date(Date.parse('2026-09-23T00:08:20Z')).toISOString());
 });
 
 test('idle timeout releases only after successful retention, never while a checkpoint is saving', async (t) => {
