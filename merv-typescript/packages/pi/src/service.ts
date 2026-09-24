@@ -21,6 +21,7 @@ import {
   commandInput,
   completionInput,
   createInput,
+  defaultTitle,
   migration,
   piConfig,
   sendInput,
@@ -29,6 +30,7 @@ import {
 } from './schema.js';
 import { PiStreams } from './stream.js';
 import { decodeCheckpoint } from './checkpoint.js';
+import { piTitle } from './relay.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -39,6 +41,7 @@ import type {
   PiConversation,
   PiConversationRecord,
   PiInterruption,
+  PiMessage,
   PiSnapshot,
   PiToolOutcome,
   PiWork,
@@ -913,7 +916,7 @@ export class PiService implements Pi, FleetOwner {
       this.streams.changed(retained.conversation.id, value.commandId);
       return { saved: false };
     }
-    await this.state.transaction(async (tx) => {
+    const first = await this.state.transaction(async (tx) => {
       const current = await this.worker(token, tx);
       const existing = await this.command(tx, current.id, value.commandId);
       if (existing.status === 'completed') {
@@ -923,7 +926,7 @@ export class PiService implements Pi, FleetOwner {
           'Turn result changed on replay',
           409,
         );
-        return;
+        return false;
       }
       const { conversation, command } = await this.bound(token, value, tx);
       check(
@@ -934,6 +937,7 @@ export class PiService implements Pi, FleetOwner {
         'Conversation changed while saving its checkpoint',
         409,
       );
+      const first = !conversation.checkpoint && conversation.title === defaultTitle;
       conversation.previousCheckpoint = conversation.checkpoint;
       conversation.checkpoint = { ...stored, commandId: command.id };
       conversation.activeCommandId = null;
@@ -943,9 +947,29 @@ export class PiService implements Pi, FleetOwner {
       command.completedAt = this.time();
       await this.saveCommand(tx, command);
       await this.saveConversation(tx, conversation);
+      return first;
     });
     this.streams.changed(retained.conversation.id, value.commandId);
+    if (first) void this.name(retained.conversation.id, retained.command.messages).catch(() => {});
     return { saved: true };
+  }
+
+  /** Once, after the first answer: the model names a conversation still called the default. */
+  private async name(id: string, [asked, ...answer]: PiMessage[]): Promise<void> {
+    const key = process.env[this.config.modelApiKeyEnv];
+    if (!key) return;
+    const reply = answer.map((message) => message.text).join('\n\n');
+    const title = await piTitle(this.config.model, key, asked.text, reply);
+    if (!title) return;
+    const named = await this.state.transaction(async (tx) => {
+      const conversation = await this.conversation(tx, id);
+      if (conversation.title !== defaultTitle) return false;
+      conversation.title = title;
+      await this.saveConversation(tx, conversation);
+      return true;
+    });
+    // A turn may be streaming by now: say the conversation changed without dropping its text.
+    if (named) this.streams.publish(id, { commandId: '', type: 'changed', text: '' });
   }
 
   private async interrupt(

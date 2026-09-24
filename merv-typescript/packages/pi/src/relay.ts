@@ -6,6 +6,7 @@ import { piRelayGrantSchema, piResponsesSchema, validPiPayload } from './relay-s
 
 export type { PiRelayGrant } from './types.js';
 
+const responsesUrl = 'https://api.openai.com/v1/responses';
 const failureCodes = [
   'disconnected',
   'grant_forbidden',
@@ -287,7 +288,7 @@ export class PiModelRelay {
         max_output_tokens: request.max_output_tokens ?? this.options.maxOutputTokens,
       };
       const upstream = await interruptible(
-        (this.config.fetchImpl ?? fetch)('https://api.openai.com/v1/responses', {
+        (this.config.fetchImpl ?? fetch)(responsesUrl, {
           method: 'POST',
           redirect: 'error',
           signal,
@@ -406,5 +407,44 @@ export class PiModelRelay {
     if (res.destroyed || res.headersSent) return;
     res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify({ error: code }));
+  }
+}
+
+/**
+ * One small call to the relay's own upstream that names a conversation from its first exchange.
+ * Anything short of a usable title is '', so the conversation keeps the name it has.
+ */
+export async function piTitle(model: string, key: string, user: string, reply: string) {
+  try {
+    const response = await fetch(responsesUrl, {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        store: false,
+        max_output_tokens: 24,
+        reasoning: { effort: 'none' },
+        instructions: 'Title this conversation in 2 to 6 words. Reply with the title only.',
+        input: `User: ${user.slice(0, 2000)}\n\nAgent: ${reply.slice(0, 2000)}`,
+      }),
+    });
+    if (!response.ok) return '';
+    const { output } = (await response.json()) as {
+      output: { content?: { type: string; text: string }[] }[];
+    };
+    return output
+      .flatMap((item) => item.content ?? [])
+      .filter((part) => part.type === 'output_text')
+      .map((part) => part.text)
+      .join('')
+      .replace(/[*_`"“”«»]/g, '')
+      .replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ')
+      .replace(/^[\s#>'‘’-]*(?:title:)?[\s'‘’]*|[\s'‘’.]+$/gi, '')
+      .slice(0, 80)
+      .trim();
+  } catch {
+    return '';
   }
 }

@@ -499,6 +499,94 @@ test('conversations list most recently updated first', async (t) => {
   );
 });
 
+/** The provider behind the relay as Pi's naming call meets it: every request it was sent. */
+function provider(t: TestContext, reply: () => Promise<Response>) {
+  const asked: Record<string, unknown>[] = [];
+  const { fetch: original } = globalThis;
+  const key = process.env.MERV_PI_MODEL_API_KEY;
+  process.env.MERV_PI_MODEL_API_KEY = 'title-test-key';
+  globalThis.fetch = (async (url, init) => {
+    assert.equal(url, 'https://api.openai.com/v1/responses');
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer title-test-key');
+    asked.push(JSON.parse(String(init?.body)));
+    return reply();
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+    if (key === undefined) delete process.env.MERV_PI_MODEL_API_KEY;
+    else process.env.MERV_PI_MODEL_API_KEY = key;
+  });
+  return asked;
+}
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('Pi names a new conversation from its first exchange, once, without holding up the turn', async (t) => {
+  const f = await fixture(t);
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => (answer = resolve));
+  const asked = provider(t, async () => {
+    await answered;
+    return Response.json({
+      output: [
+        { type: 'reasoning', summary: [] },
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: '"**Protein folding** basics."\n' }],
+        },
+      ],
+    });
+  });
+  const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
+  assert.equal(conversation.title, 'New conversation');
+  await f.send(conversation, `How do proteins fold? ${'x'.repeat(3000)}`);
+  const first = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  await f.pi.begin(first.token, first.input);
+  const saved = f.completion(first.input.commandId, first.input.workerId, checkpointTree());
+  // The turn is saved while the naming call is still out.
+  assert.deepEqual(await f.pi.complete(first.token, saved), { saved: true });
+  const title = async () => (await f.pi.snapshot(f.operator, conversation.id)).conversation.title;
+  assert.equal(await title(), 'New conversation');
+  answer();
+  for (let wait = 0; wait < 100 && (await title()) === 'New conversation'; wait++) await pause(10);
+  assert.equal(await title(), 'Protein folding basics');
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].model, 'gpt-6-luna');
+  assert.equal(asked[0].max_output_tokens, 24);
+  assert.equal(asked[0].tools, undefined);
+  assert.match(String(asked[0].input), /^User: How do proteins fold\?/);
+  assert.ok(String(asked[0].input).length < 2100);
+  await f.send(conversation, 'And misfolding?');
+  const next = await f.pi.next(first.token, { workerId: 'worker_2' });
+  const input = { commandId: next!.command.id, workerId: 'worker_2' };
+  await f.pi.begin(first.token, input);
+  const again = f.completion(input.commandId, input.workerId, checkpointTree('second'));
+  assert.deepEqual(await f.pi.complete(first.token, again), { saved: true });
+  await pause(20);
+  assert.equal(asked.length, 1);
+  assert.equal(await title(), 'Protein folding basics');
+});
+
+test('a naming call that fails keeps the default title, and the turn is saved regardless', async (t) => {
+  const f = await fixture(t);
+  const asked = provider(t, async () =>
+    Response.json(
+      { output: [{ type: 'message', content: [{ type: 'output_text', text: 'Unused' }] }] },
+      { status: 503 },
+    ),
+  );
+  const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
+  await f.send(conversation);
+  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  await f.pi.begin(bound.token, bound.input);
+  const saved = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  assert.deepEqual(await f.pi.complete(bound.token, saved), { saved: true });
+  await pause(20);
+  const snapshot = await f.pi.snapshot(f.operator, conversation.id);
+  assert.equal(asked.length, 1);
+  assert.equal(snapshot.conversation.title, 'New conversation');
+  assert.equal(snapshot.commands[0].status, 'completed');
+});
+
 test('concurrent sends to separate conversations bind at most one runtime per user', async (t) => {
   const f = await fixture(t);
   const left = await f.create();

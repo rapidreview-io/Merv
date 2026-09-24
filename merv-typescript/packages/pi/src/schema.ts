@@ -5,8 +5,10 @@ export const id = z
   .min(1)
   .max(200)
   .regex(/^[A-Za-z0-9_-]+$/);
+/** What a conversation is called until Pi names it after its first answer. */
+export const defaultTitle = 'New conversation';
 export const createInput = z
-  .object({ requestId: id, title: z.string().trim().min(1).max(200) })
+  .object({ requestId: id, title: z.string().trim().min(1).max(200).default(defaultTitle) })
   .strict();
 export const sendInput = z
   .object({ commandId: id, text: z.string().trim().min(1).max(32_000) })
