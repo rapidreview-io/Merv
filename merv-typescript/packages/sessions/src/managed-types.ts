@@ -20,6 +20,8 @@ export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabil
 };
 export interface ManagedRunnerInspection {
   runnerId: string | null;
+  /** After this no runner can enroll on the allocation. */
+  enrollmentExpiresAt: string;
   session: {
     id: string;
     instanceId: string;

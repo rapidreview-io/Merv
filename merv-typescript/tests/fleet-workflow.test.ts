@@ -27,6 +27,8 @@ import {
 } from '../packages/fleet/src/workflow.js';
 import { openState } from './fixtures/state.js';
 
+const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
+
 async function fixture(t: TestContext) {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
@@ -82,7 +84,7 @@ async function fixture(t: TestContext) {
       allocations.push(a);
       return a;
     },
-    async inspect(_caller: Caller, id: string) {
+    async inspectOwned(_owner: FleetOwner, id: string) {
       const a = allocations.find((item) => item.id === id);
       assert.ok(a);
       return a;
@@ -90,7 +92,7 @@ async function fixture(t: TestContext) {
     async list() {
       return allocations;
     },
-    async cancel(_caller: Caller, id: string) {
+    async cancelOwned(_owner: FleetOwner, id: string) {
       const a = allocations.find((item) => item.id === id)!;
       a.intent = 'stop';
       a.phase = 'released';
@@ -149,7 +151,9 @@ async function fixture(t: TestContext) {
   });
   return {
     state,
+    scope,
     source,
+    sourceEnv,
     caller,
     get adapter() {
       return adapter;
@@ -190,6 +194,7 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   f.allocations[0]!.createAttempted = true;
   f.inspections.set(f.allocations[0]!.id, {
     runnerId: 'managed-machine',
+    enrollmentExpiresAt,
     session: {
       id: 'session_a',
       instanceId: 'task_a',
@@ -205,6 +210,9 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   assert.equal(f.allocations.length, 2);
   assert.equal(f.allocations[1]?.owner.id, 'task_a:2');
   assert.notEqual(f.allocations[0]?.requestId, f.allocations[1]?.requestId);
+  // A create whose reply was lost has launched nothing, so an unwanted one is cancelled too.
+  f.allocations[1]!.phase = 'uncertain';
+  f.allocations[1]!.createAttempted = true;
   f.demand([{ instanceId: 'task_b', expectedRevision: 0 }]);
   await f.adapter.reconcile();
   assert.equal(f.allocations[1]?.intent, 'stop');
@@ -307,16 +315,21 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
   assert.equal(await f.state.transaction((tx) => f.validator().admits(allocation.id, 1, tx)), true);
 });
 
-test('owner waits for closed-session capture and gives an empty launched runner bounded grace', async (t) => {
+test('owner waits for closed-session capture and retires a runner that never claims', async (t) => {
   const f = await fixture(t);
   f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
   await f.adapter.reconcile();
   const allocation = f.allocations[0]!;
   assert.equal(await f.owner().observe(allocation), 'starting');
-  f.inspections.set(allocation.id, { runnerId: 'managed-machine', session: null });
+  f.inspections.set(allocation.id, {
+    runnerId: 'managed-machine',
+    enrollmentExpiresAt,
+    session: null,
+  });
   assert.equal(await f.owner().observe(allocation), 'running');
   f.inspections.set(allocation.id, {
     runnerId: 'managed-machine',
+    enrollmentExpiresAt,
     session: {
       id: 'session_a',
       instanceId: 'task_a',
@@ -333,10 +346,56 @@ test('owner waits for closed-session capture and gives an empty launched runner 
   assert.equal(await f.owner().observe(allocation), 'running');
   f.inspections.get(allocation.id)!.session!.releaseAcknowledged = true;
   assert.equal(await f.owner().observe(allocation), 'finished');
-  f.inspections.set(allocation.id, { runnerId: 'managed-machine', session: null });
+  f.inspections.set(allocation.id, {
+    runnerId: 'managed-machine',
+    enrollmentExpiresAt,
+    session: null,
+  });
   f.demand([]);
   f.advance(30_001);
   assert.equal(await f.owner().observe(allocation), 'finished');
+  // Demand returns, but a one-assignment runner that has not claimed by now never will.
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  assert.equal(await f.owner().observe(allocation), 'running');
+  f.advance(900_000 - 30_001);
+  assert.equal(await f.owner().observe(allocation), 'finished');
+});
+
+test('an unusable source key degrades the adapter instead of failing its start', async (t) => {
+  const f = await fixture(t);
+  delete process.env[f.sourceEnv];
+  await f.restart();
+  assert.equal(f.adapter.unavailable, 'fleet_workflow_secret');
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await assert.rejects(f.adapter.reconcile(), { code: 'fleet_workflow_secret' });
+  assert.equal(f.allocations.length, 0);
+  process.env[f.sourceEnv] = f.sourceToken;
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 1);
+  assert.equal(f.adapter.unavailable, null);
+});
+
+test('a replaced source key lets in-flight work finish under its own source', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  allocation.phase = 'running';
+  const binding = {
+    allocationId: allocation.id,
+    epoch: 1,
+    source: f.source,
+    runtimeProfileId: 'image-profile',
+    platform: hostedCodexPlatform,
+    capabilities: ['code.v2'],
+    expiresAt: allocation.deadlineAt,
+  };
+  const replacement = await f.scope.issueActorCredential(f.caller, { actorId: f.caller.actorId });
+  process.env[f.sourceEnv] = replacement.token;
+  await f.restart();
+  assert.equal(await f.state.transaction((tx) => f.owner().valid(allocation, tx)), true);
+  assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), true);
+  assert.equal(f.allocations.length, 1, 'the in-flight allocation still covers its target');
 });
 
 async function managedFleetScenario(t: TestContext, workerCount: number) {
@@ -588,10 +647,9 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       assert.match(bootstrap.enrollmentToken, /^me_[0-9a-f]{64}$/);
       assert.equal(bootstrap.modelApiKey, 'test-model-key');
       assert.equal(bytes.includes(boot.token), false);
-      assert.deepEqual(await sessions.inspectManaged(allocation.id, allocation.epoch), {
-        runnerId: null,
-        session: null,
-      });
+      const unclaimed = await sessions.inspectManaged(allocation.id, allocation.epoch);
+      assert.equal(unclaimed?.runnerId, null);
+      assert.equal(unclaimed?.session, null);
       const enrolled = await sessions.enrollManaged(bootstrap.enrollmentToken, {
         workerNonce: randomBytes(32).toString('hex'),
       });

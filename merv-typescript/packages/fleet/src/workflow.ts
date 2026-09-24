@@ -4,8 +4,8 @@ import {
   canonical,
   check,
   digest,
+  MervError,
   type Caller,
-  type DelegationSource,
   type Scope,
   type Transaction,
 } from '@merv/contracts';
@@ -49,13 +49,16 @@ export const hostedCodexCapabilities = Object.freeze(['code.v2']);
 const targetId = (candidate: { instanceId: string; expectedRevision: number }) =>
   `${candidate.instanceId}:${candidate.expectedRevision}`;
 const occupied = (allocation: FleetAllocation) => allocation.phase !== 'released';
+/** Before Fleet observes the launch no runner can have enrolled, so nothing claimed is at stake. */
+const launched = (a: FleetAllocation) => a.runtime?.launch?.deliveryState === 'launched';
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
   private readonly config: z.infer<typeof workflowConfig>;
   private caller?: Caller;
-  private source?: DelegationSource;
   private modelApiKey?: string;
+  /** Why the last reconcile could not serve hosted demand; null once one succeeds. */
+  unavailable: string | null = null;
   private disposers: (() => void)[] = [];
   private timer?: ReturnType<typeof setInterval>;
   private pending?: Promise<void>;
@@ -88,11 +91,33 @@ export class FleetWorkflowAdapter implements FleetOwner {
   async start(): Promise<void> {
     if (!this.config.enabled) return;
     check(
-      !this.closed && !this.caller,
+      !this.closed && !this.timer,
       'fleet_workflow_started',
       'Fleet workflow is already started',
       409,
     );
+    try {
+      this.disposers.push(this.fleet.registerOwner(ownerKind, this));
+      this.disposers.push(
+        this.sessions.registerManagedValidator({
+          current: async (binding, tx) => await this.current(binding, tx),
+          admits: async (allocationId, epoch, tx) =>
+            await this.fleet.admits(allocationId, epoch, tx),
+        }),
+      );
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
+    this.timer = setInterval(() => {
+      void this.reconcile().catch(() => undefined);
+    }, this.config.pollIntervalMs);
+    this.timer.unref();
+    // A missing secret or revoked key leaves demand unserved with its reason, never the server down.
+    await this.reconcile().catch(() => undefined);
+  }
+  private async connect(): Promise<Caller> {
+    if (this.caller) return this.caller;
     const token = process.env[this.config.sourceCredentialEnv!];
     const modelApiKey = process.env[this.config.modelApiKeyEnv!];
     check(
@@ -108,57 +133,35 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet workflow source is outside its configured project',
       403,
     );
-    const caller: Caller = {
+    this.modelApiKey = modelApiKey;
+    return (this.caller = {
       actorId: actor.id,
       projectId: actor.projectId,
       credentialId: actor.credential.id,
-    };
-    const source = await this.scope.delegationSource(caller);
-    this.caller = caller;
-    this.source = source;
-    this.modelApiKey = modelApiKey;
-    try {
-      this.disposers.push(this.fleet.registerOwner(ownerKind, this));
-      this.disposers.push(
-        this.sessions.registerManagedValidator({
-          current: async (binding, tx) => await this.current(binding, tx),
-          admits: async (allocationId, epoch, tx) =>
-            await this.fleet.admits(allocationId, epoch, tx),
-        }),
-      );
-      this.timer = setInterval(() => {
-        void this.reconcile().catch(() => undefined);
-      }, this.config.pollIntervalMs);
-      this.timer.unref();
-      await this.reconcile();
-    } catch (error) {
-      await this.close();
-      throw error;
-    }
+    });
   }
+  /** Revocation is fenced by each allocation's own source; a replaced key lets work finish. */
   private accepted(a: FleetAllocation): boolean {
-    return (
-      a.owner.kind === ownerKind &&
-      a.projectId === this.config.projectId &&
-      !!this.source &&
-      digest(a.source) === digest(this.source)
-    );
+    return a.owner.kind === ownerKind && a.projectId === this.config.projectId;
   }
   async valid(a: FleetAllocation, _tx: Transaction): Promise<boolean> {
-    return !this.closed && this.accepted(a) && a.deadlineAt > new Date(this.clock()).toISOString();
+    // Until its own source authenticates the adapter launches nothing; launched work runs on.
+    return (
+      !this.closed &&
+      this.accepted(a) &&
+      (!!this.caller || launched(a)) &&
+      a.deadlineAt > new Date(this.clock()).toISOString()
+    );
   }
   private async current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean> {
     if (
       this.closed ||
-      !this.source ||
-      !this.caller ||
-      digest(binding.source) !== digest(this.source) ||
       canonical(binding.platform) !== canonical(hostedCodexPlatform) ||
       canonical(binding.capabilities) !== canonical([...hostedCodexCapabilities])
     )
       return false;
     try {
-      const a = await this.fleet.inspect(this.caller, binding.allocationId, tx);
+      const a = await this.fleet.inspectOwned(this, binding.allocationId, tx);
       return (
         this.accepted(a) &&
         a.phase !== 'released' &&
@@ -166,16 +169,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
         a.epoch === binding.epoch &&
         a.profileId === binding.runtimeProfileId &&
         a.deadlineAt === binding.expiresAt &&
-        a.projectId === binding.source.projectId
+        digest(a.source) === digest(binding.source)
       );
     } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'status' in error &&
-        (error.status === 401 || error.status === 403 || error.status === 404)
-      )
-        return false;
+      if (error instanceof MervError && [403, 404].includes(error.status)) return false;
       throw error;
     }
   }
@@ -218,7 +215,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
         ? 'finished'
         : 'running';
     }
-    const demand = await this.sessions.dispatchDemand(this.caller!, {
+    // A one-assignment supervisor that has not claimed work when its enrollment lapses never will.
+    if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
+    const demand = await this.sessions.dispatchDemand(await this.connect(), {
       platform: hostedCodexPlatform,
       capabilities: [...hostedCodexCapabilities],
     });
@@ -230,12 +229,20 @@ export class FleetWorkflowAdapter implements FleetOwner {
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {
     if (!this.config.enabled || this.closed) return Promise.resolve();
-    return (this.pending ??= this.reconcileOnce().finally(() => {
-      this.pending = undefined;
-    }));
+    return (this.pending ??= this.reconcileOnce()
+      .then(
+        () => void (this.unavailable = null),
+        (error: unknown) => {
+          this.unavailable = error instanceof MervError ? error.code : 'fleet_workflow_unavailable';
+          throw error;
+        },
+      )
+      .finally(() => {
+        this.pending = undefined;
+      }));
   }
   private async reconcileOnce(): Promise<void> {
-    const caller = this.caller!;
+    const caller = await this.connect();
     const demand = await this.sessions.dispatchDemand(caller, {
       platform: hostedCodexPlatform,
       capabilities: [...hostedCodexCapabilities],
@@ -244,14 +251,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const active = allocations.filter(occupied);
     const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
     const wanted = new Set(demand.candidates.map(targetId));
-    for (const a of active) {
-      if (
-        !wanted.has(a.owner.id) &&
-        a.intent === 'run' &&
-        ['queued', 'provisioning', 'launching'].includes(a.phase)
-      )
-        await this.fleet.cancel(caller, a.id);
-    }
+    for (const a of active)
+      if (!wanted.has(a.owner.id) && a.intent === 'run' && !launched(a))
+        await this.fleet.cancelOwned(this, a.id);
     let slots = Math.max(0, this.config.maxAgents - active.length);
     for (const candidate of demand.candidates) {
       const id = targetId(candidate);
