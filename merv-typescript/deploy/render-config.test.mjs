@@ -177,8 +177,8 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     });
     assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
       enabled: true,
-      globalLimit: 3,
-      projectLimit: 1,
+      globalLimit: 50,
+      projectLimit: 5,
       allocationTimeoutSeconds: 3600,
     });
     assert.deepEqual(config.plugins.find((p) => p.id === 'sessions').config, {
