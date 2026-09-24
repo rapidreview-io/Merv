@@ -4406,6 +4406,16 @@ del.cut {
 .pi-bar {
   justify-content: space-between;
 }
+/* On a phone the turn's state keeps a line of its own, so neither the conversation's name nor
+   the bar's height moves with its words. */
+@media (max-width: 720px) {
+  .pi-bar {
+    flex-wrap: wrap;
+  }
+  .pi-bar > .pi-state {
+    flex-basis: 100%;
+  }
+}
 .pi-switch {
   position: relative;
   display: flex;
@@ -4471,13 +4481,23 @@ del.cut {
   white-space: nowrap;
 }
 .pi-state-dot {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--ghost);
 }
+/* Green and still once the agent is ready; the amber of work in flight breathes while it waits. */
+.pi-state-dot--ready {
+  background: var(--supports);
+}
 .pi-state-dot--active {
   background: var(--qualifies);
+  animation: map-breathe 1.8s ease-in-out infinite;
+}
+/* One dot breathes: under the question while a turn runs, in the bar otherwise. */
+.pi-page:has(.pi-messages > .pi-state) .pi-bar .pi-state-dot {
+  animation: none;
 }
 .pi-messages {
   flex: 1;

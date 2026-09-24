@@ -9,7 +9,7 @@ import {
   scopeVersion,
   useScopeVersion,
 } from '../api';
-import { Ago } from '../components';
+import { Ago, useNow } from '../components';
 import { ChevronsIcon } from '../icons';
 import { Markdown } from '../markdown';
 import {
@@ -23,7 +23,8 @@ import {
 import { stepped } from '../record-picker';
 import type { ViewProps } from './index';
 
-type TransientResponse = { commandId: string; text: string; progress: string };
+/** The answer as it streams; `written` is the sequence of its latest words. */
+type TransientResponse = { commandId: string; text: string; progress: string; written: number };
 
 const inFlight = (status: string) =>
   status === 'waiting' || status === 'starting' || status === 'working' || status === 'saving';
@@ -31,9 +32,9 @@ const accumulateResponse = (before: TransientResponse | null, event: PiEvent) =>
   const previous =
     before?.commandId === event.commandId
       ? before
-      : { commandId: event.commandId, text: '', progress: '' };
+      : { commandId: event.commandId, text: '', progress: '', written: 0 };
   return event.type === 'text'
-    ? { ...previous, text: (previous.text + event.text).slice(-16_384) }
+    ? { ...previous, text: (previous.text + event.text).slice(-16_384), written: event.sequence }
     : { ...previous, progress: event.text.slice(-300) };
 };
 const identifier = () =>
@@ -48,6 +49,19 @@ const STATUS: Record<string, string> = {
   saving: 'Saving',
   interrupted: 'Stopped',
 };
+/** What the person waits on, in a cold turn's order; the waits count their seconds. */
+const STAGE: Record<string, string> = {
+  idle: 'Idle',
+  queued: 'Waiting for a free machine',
+  machine: 'Starting a machine',
+  agent: 'Loading the agent',
+  ready: 'Agent ready',
+  thinking: 'Thinking',
+  tool: 'Using a tool',
+  writing: 'Writing…',
+  saving: 'Saving…',
+};
+const WAITS = ['queued', 'machine', 'agent', 'thinking'];
 /** Why a turn ended early, with the step after it. Stopping it yourself needs no sentence. */
 const STOPPED: Record<string, string> = {
   worker_interrupted: 'The agent stopped unexpectedly. Ask again.',
@@ -74,6 +88,39 @@ const said = (cause: unknown, fallback: string): string => {
     return 'Something went wrong on the server. Try again.';
   return cause.message;
 };
+/** The previous agent refuses for a moment while it is released; the same request asks again. */
+async function whileReleasing<T>(
+  request: () => Promise<T>,
+  alive: () => boolean,
+  waiting = () => {},
+) {
+  const until = Date.now() + 60_000;
+  for (;;) {
+    try {
+      return await request();
+    } catch (cause) {
+      const releasing = cause instanceof ApiError && cause.code === 'pi_runtime_releasing';
+      if (!releasing || Date.now() > until) throw cause;
+      waiting();
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (!alive()) return null;
+    }
+  }
+}
+/** Starts the agent's machine before anything is sent, quietly: it never holds up a question. */
+const warm = (id: string | null, alive: () => boolean) => {
+  const input = { requestId: identifier(), ...(id ? { conversationId: id } : {}) };
+  return whileReleasing(() => call<PiSnapshot>('pi.warm', input), alive).catch(() => null);
+};
+/** How long the current wait has lasted; a screen reader hears only what is waited on. */
+function Seconds({ since }: { since: string }) {
+  const now = useNow(1000);
+  return (
+    <span className="tabular" aria-hidden="true">
+      {` · ${Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) || 0} s`}
+    </span>
+  );
+}
 
 function PiConversationPage() {
   const [conversations, setConversations] = useState<PiConversation[]>([]);
@@ -100,6 +147,9 @@ function PiConversationPage() {
   const createId = useRef(identifier());
   const canonical = useRef<PiSnapshot | null>(null);
   const selection = useRef<string | null>(null);
+  // The page's first conversation warms at once; another only once a question is begun in it.
+  const eager = useRef(true);
+  const warming = useRef<string | null>(null);
   const scope = useRef({
     epoch: scopeVersion(),
     identity: identityVersion(),
@@ -133,7 +183,7 @@ function PiConversationPage() {
         ? tail.reduce<TransientResponse>(
             (transient, event) =>
               event.commandId !== commandId ? transient : accumulateResponse(transient, event),
-            { commandId, text: '', progress: '' },
+            { commandId, text: '', progress: '', written: 0 },
           )
         : null,
     );
@@ -152,17 +202,44 @@ function PiConversationPage() {
     following.current = true;
     setSelected(id);
   };
+  const adopt = (item: PiConversation) => {
+    setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
+    choose(item.id);
+  };
+  /** Starts a machine for the open conversation if it has none; merely looking at one leaves the
+   * person's warm machine where it is. */
+  const warmUp = () => {
+    const id = selection.current;
+    const current = canonical.current;
+    const item = current?.conversation;
+    if (!id || warming.current === id || item?.id !== id || !current?.available) return;
+    if (item.runtimeId || item.activeCommandId) return;
+    warming.current = id;
+    void warm(id, () => valid() && selection.current === id).then((next) => {
+      if (warming.current === id) warming.current = null;
+      if (next) replace(next);
+    });
+  };
 
-  // Opening the page reads the conversations there are; the first message creates one.
+  // Opening the page reads the conversations there are and opens the one whose machine is warm,
+  // else the newest; with none, warming the agent opens one.
   useEffect(() => {
     let cancelled = false;
+    const fresh = () => !cancelled && valid() && !selection.current;
     setError('');
     call<PiConversation[]>('pi.list').then(
       (items) => {
         if (cancelled || !valid()) return;
         setConversations(items);
-        const kept = items.find((item) => item.id === selection.current) ?? items[0];
+        const kept =
+          items.find((item) => item.id === selection.current) ??
+          items.find((item) => item.runtimeId) ??
+          items[0];
         if (kept) choose(kept.id);
+        else
+          void warm(null, fresh).then((next) => {
+            if (next && fresh()) adopt(next.conversation);
+          });
         setListed(true);
       },
       (cause) => {
@@ -243,7 +320,11 @@ function PiConversationPage() {
     void refresh()
       .catch(() => {})
       .then(() => {
-        if (alive()) void connect();
+        if (!alive()) return;
+        void connect();
+        // New conversation hands the composer the cursor, which begins a question there too.
+        if (eager.current || document.activeElement === composer.current) warmUp();
+        eager.current = false;
       });
     return () => {
       stopped = true;
@@ -271,6 +352,33 @@ function PiConversationPage() {
     !command.messages.some((message) => message.role === 'assistant')
       ? response
       : null;
+  const stage = snapshot?.stage;
+  // Words streamed after the stage was read say the answer is being written before it does.
+  const step =
+    stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
+      ? 'writing'
+      : (stage?.name ?? '');
+  const phrase = (step === 'tool' && stage?.detail) || STAGE[step];
+  // The words, their dot, and when the wait they name began: a wait counts its seconds, but not
+  // while the stream that would end it is away.
+  const [words, tone, since]: [string, string, string?] = unavailable
+    ? ['Unavailable', '']
+    : finishing
+      ? ['Finishing the previous agent…', 'active']
+      : !phrase
+        ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
+        : WAITS.includes(step)
+          ? [phrase, 'active', streamError ? undefined : stage?.since]
+          : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
+  const state = (
+    <>
+      <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
+      <span>
+        {words}
+        {since && <Seconds since={since} />}
+      </span>
+    </>
+  );
   useLayoutEffect(() => {
     const list = transcript.current;
     if (list && following.current) list.scrollTop = list.scrollHeight;
@@ -314,8 +422,7 @@ function PiConversationPage() {
     const item = await call<PiConversation>('pi.create', { requestId: createId.current });
     if (!valid()) return null;
     createId.current = identifier();
-    setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
-    choose(item.id);
+    adopt(item);
     return item.id;
   };
   const create = async () => {
@@ -344,20 +451,11 @@ function PiConversationPage() {
     try {
       id ??= await open();
       if (!id) return;
-      // The previous agent refuses for a moment while it is released; the same command asks again.
-      const until = Date.now() + 60_000;
-      for (;;) {
-        try {
-          await call('pi.send', { id, commandId, text });
-          break;
-        } catch (cause) {
-          const releasing = cause instanceof ApiError && cause.code === 'pi_runtime_releasing';
-          if (!releasing || Date.now() > until) throw cause;
-          setFinishing(true);
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          if (!valid() || selection.current !== id) return;
-        }
-      }
+      await whileReleasing(
+        () => call('pi.send', { id, commandId, text }),
+        () => valid() && selection.current === id,
+        () => setFinishing(true),
+      );
       if (!valid() || selection.current !== id) return;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
@@ -451,14 +549,7 @@ function PiConversationPage() {
           </div>
           {!blocked && (snapshot || finishing) && (
             <div className="pi-state" role="status">
-              <span className={`pi-state-dot${active ? ' pi-state-dot--active' : ''}`} />
-              <span>
-                {unavailable
-                  ? 'Unavailable'
-                  : finishing
-                    ? 'Finishing the previous agent…'
-                    : (STATUS[status] ?? 'Ready')}
-              </span>
+              {state}
               {snapshot?.conversation.runtimeId && (
                 <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
                   Fleet details
@@ -500,6 +591,12 @@ function PiConversationPage() {
               {visible.text && <Markdown source={visible.text} />}
               {visible.progress && <p className="muted">{visible.progress}</p>}
             </article>
+          )}
+          {active && !unavailable && (
+            // Where the eye waits; the bar above already says it aloud.
+            <p className="pi-state" aria-hidden="true">
+              {state}
+            </p>
           )}
           {selected && !snapshot ? (
             <p className="muted">Loading conversation…</p>
@@ -557,6 +654,7 @@ function PiConversationPage() {
             // Read-only rather than disabled while sending, so the cursor stays where it was.
             readOnly={busy}
             disabled={blocked}
+            onFocus={warmUp}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {

@@ -77,6 +77,11 @@ const snapshot = (
   sequence,
   tail,
 });
+/** A snapshot standing at one stage, begun `ago` milliseconds before now. */
+const staged = (value: ReturnType<typeof snapshot>, name: string, ago = 0, detail?: string) => ({
+  ...value,
+  stage: { name, since: new Date(Date.now() - ago).toISOString(), detail },
+});
 const frame = (event: string, data: unknown) =>
   `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const originalFetch = globalThis.fetch;
@@ -159,11 +164,17 @@ const cleanup = async () => {
   setProject(null);
 };
 
-test('opening an empty Agent creates nothing; the first message creates its conversation', async (t) => {
+test('opening an empty Agent warms one conversation, and the first message goes to it', async (t) => {
   t.after(cleanup);
   setProject('p1');
   let state = snapshot(conversation());
   const stream = boot(() => state);
+  const warmed: Record<string, unknown>[] = [];
+  serve('/tools/pi.warm', (_count, input) => {
+    warmed.push(input);
+    state = staged(snapshot({ ...conversation(), runtimeId: 'runtime_1' }), 'machine');
+    return { body: { result: state } };
+  });
   const sent: Record<string, unknown>[] = [];
   serve('/tools/pi.send', (_count, input) => {
     sent.push(input);
@@ -174,17 +185,23 @@ test('opening an empty Agent creates nothing; the first message creates its conv
   });
   await open();
   await settle(10);
+  // The machine starts as the page opens, in the conversation warming found or made.
+  assert.deepEqual(
+    warmed.map((input) => Object.keys(input)),
+    [['requestId']],
+  );
   assert.equal(
     requests.some((request) => /pi.create|pi.send|task.create|fleet.request/.test(request)),
     false,
   );
   // One terse hint, and none of the copy that explained the system.
   assert.match(text(), /Ask a question to begin/);
+  assert.match(text(), /Starting a machine · 0 s/);
   for (const gone of ['pilot', 'No task is created', 'Ctrl + Enter', 'Ready'])
     assert.ok(!text().includes(gone), `“${gone}” is on the page: ${text()}`);
   await write('What is known?');
   await click('Send');
-  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 1);
+  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 0);
   assert.equal(sent[0].id, 'conversation_1');
   assert.match(text(), /Waiting for a free machine/);
   assert.equal(stream.headers[0].get('authorization'), 'Bearer fixture-token');
@@ -402,7 +419,7 @@ test('terminal SSE errors disable commands without reconnecting in the backgroun
   t.after(cleanup);
   setProject('p1');
   boot(
-    () => snapshot(conversation()),
+    () => staged(snapshot(conversation()), 'machine', 5000),
     () => [conversation()],
   );
   const withStream = globalThis.fetch;
@@ -412,7 +429,8 @@ test('terminal SSE errors disable commands without reconnecting in the backgroun
       : withStream(input, init)) as typeof fetch;
   await open();
   assert.match(text(), /Unavailable/);
-  assert.doesNotMatch(text(), /404/);
+  assert.doesNotMatch(text(), /404|·/);
+  assert.ok(!document.querySelector('.pi-state-dot--active'));
   const sendButton = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Send');
   assert.equal(sendButton?.disabled, true);
   const before = requests.length;
@@ -533,8 +551,13 @@ test('a project that cannot run the agent says so calmly and never reads Ready',
   assert.match(text(), /Agent isn’t set up for this project yet/);
   assert.doesNotMatch(text(), /Ready/);
   assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
+  // Nothing is warmed where no machine can start.
+  assert.equal(
+    requests.some((request) => request.includes('/tools/pi.warm')),
+    false,
+  );
   await unmount();
-  // A project with no conversation learns it from the first refusal, in the same words.
+  // A project with no conversation, whose warming failed, learns it from the first refusal.
   setProject('p1');
   boot(() => snapshot(conversation()));
   serve('/tools/pi.send', {
@@ -589,7 +612,10 @@ test('a rotated stream reconnects at once and silently; a busy one waits quietly
 test('a send refused while the previous agent finishes is asked again with the same command', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  let state = snapshot({ ...conversation(), runtimeId: 'runtime_1' });
+  let state: ReturnType<typeof snapshot> = staged(
+    snapshot({ ...conversation(), runtimeId: 'runtime_1' }),
+    'agent',
+  );
   boot(
     () => state,
     () => [conversation()],
@@ -613,10 +639,221 @@ test('a send refused while the previous agent finishes is asked again with the s
   await write('Again');
   await click('Send');
   assert.match(text(), /Finishing the previous agent…/);
-  assert.doesNotMatch(text(), /pi_runtime_releasing/);
+  assert.doesNotMatch(text(), /pi_runtime_releasing|·/);
+  assert.ok(document.querySelector('.pi-bar .pi-state-dot--active'));
   await settle(3100);
   assert.deepEqual(sent, [sent[0], sent[0]]);
   assert.match(text(), /Preparing a machine/);
+});
+
+test('a machine warms as the page opens and in a new conversation, but a switch waits for a question', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const second = { ...conversation('conversation_2'), updatedAt: '2026-09-21T00:00:00Z' };
+  const known = (id: string) => (id === second.id ? second : conversation(id));
+  let current = 'conversation_1';
+  boot(
+    () => snapshot(known(current)),
+    () => [conversation(), second],
+  );
+  serve('/tools/pi.create', { body: { result: conversation('conversation_3') } });
+  const warmed: Record<string, unknown>[] = [];
+  serve('/tools/pi.warm', (attempt, input) => {
+    warmed.push(input);
+    if (attempt === 1 || attempt === 3)
+      return {
+        status: 409,
+        body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
+      };
+    const item = { ...known(input.conversationId as string), runtimeId: 'runtime_1' };
+    return { body: { result: staged(snapshot(item), 'machine') } };
+  });
+  const ids = () => warmed.map((input) => input.conversationId);
+  const area = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!;
+  const focus = () =>
+    act(async () => {
+      area().blur();
+      area().focus();
+    });
+  const choose = async (index: number) => {
+    await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+    await act(async () =>
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[index].click(),
+    );
+    await settle(10);
+  };
+  await open();
+  await settle(10);
+  // The agent released elsewhere is waited for without a word, and nothing is held up.
+  assert.deepEqual(ids(), ['conversation_1']);
+  assert.doesNotMatch(text(), /Finishing|still finishing|releasing/);
+  assert.ok(!document.querySelector('[role="alert"]'));
+  assert.equal(area().readOnly, false);
+  await focus();
+  assert.equal(warmed.length, 1);
+  await settle(3100);
+  assert.equal(warmed[1].requestId, warmed[0].requestId);
+  assert.match(text(), /Starting a machine/);
+  // Looking at another conversation and coming back leaves the warm machine where it is.
+  current = 'conversation_2';
+  await choose(1);
+  current = 'conversation_1';
+  await choose(2);
+  assert.deepEqual(ids(), ['conversation_1', 'conversation_1']);
+  // A question begun there warms it, and a conversation the person has left is not retried.
+  current = 'conversation_2';
+  await choose(1);
+  await focus();
+  current = 'conversation_1';
+  await choose(2);
+  await settle(3100);
+  assert.deepEqual(ids(), ['conversation_1', 'conversation_1', 'conversation_2']);
+  current = 'conversation_2';
+  await choose(1);
+  await focus();
+  await focus();
+  current = 'conversation_3';
+  await choose(0);
+  assert.deepEqual(ids(), [
+    'conversation_1',
+    'conversation_1',
+    'conversation_2',
+    'conversation_2',
+    'conversation_3',
+  ]);
+  assert.deepEqual(
+    requests
+      .filter((request) => request.endsWith('/events'))
+      .map((request) => request.slice(8, 22)),
+    ['1', '2', '1', '2', '1', '2', '3'].map((n) => `conversation_${n}`),
+  );
+});
+
+test('opening Agent goes to the conversation whose machine is warm, and warms nothing', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const warm = { ...conversation('conversation_2'), runtimeId: 'runtime_1' };
+  boot(
+    () => snapshot(warm),
+    () => [conversation(), warm],
+  );
+  await open();
+  assert.deepEqual(
+    requests.filter((request) => /events|pi.warm/.test(request)),
+    ['GET /pi/conversation_2/events'],
+  );
+});
+
+test('a warm-up that answers late leaves the page where the person went', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  serve('/tools/pi.warm', { body: { result: snapshot(conversation('conversation_9')) } });
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  const withStream = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/tools/pi.warm')) await held;
+    return withStream(input, init);
+  }) as typeof fetch;
+  await open();
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+  await settle(10);
+  answer();
+  await settle(10);
+  assert.equal(
+    requests.some((request) => request.includes('conversation_9')),
+    false,
+  );
+  assert.equal(
+    requests.filter((request) => request.endsWith('/events')).at(-1),
+    'GET /pi/conversation_1/events',
+  );
+});
+
+test('the bar and the transcript say what the turn waits on, counting the seconds of each wait', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const active = { ...conversation(), activeCommandId: 'command_1', runtimeId: 'runtime_1' };
+  const asked = [{ role: 'user', text: 'Hello' }];
+  let sequence = 0;
+  const stream = boot(
+    () => staged(snapshot(active, [command('command_1', 'starting', asked)]), 'machine', 6000),
+    () => [active],
+  );
+  const bar = () => document.querySelector('.pi-bar [role="status"]')?.textContent ?? '';
+  const row = () => document.querySelector('.pi-messages .pi-state');
+  const push = (name: string, status = 'working', detail?: string, tail: PiEvent[] = []) =>
+    act(async () =>
+      stream.push(
+        'snapshot',
+        staged(
+          snapshot(active, [command('command_1', status, asked)], ++sequence, tail),
+          name,
+          0,
+          detail,
+        ),
+      ),
+    );
+  await open();
+  assert.match(bar(), /^Starting a machine · 6 s/);
+  // The same words under the question, for the eye alone: the bar already says them aloud.
+  assert.match(row()?.textContent ?? '', /^Starting a machine · 6 s$/);
+  assert.equal(row()?.getAttribute('aria-hidden'), 'true');
+  assert.equal(
+    document.querySelector('[role="status"] [aria-hidden="true"]')?.textContent,
+    ' · 6 s',
+  );
+  assert.ok(document.querySelector('.pi-bar .pi-state-dot--active'));
+  await jump(60_000);
+  assert.match(bar(), /^Starting a machine · 6\d s/);
+  // Nothing is counted while the stream that would end the wait is away.
+  stream.drop();
+  await settle(10);
+  assert.match(text(), /Reconnecting…/);
+  assert.doesNotMatch(bar(), /·/);
+  await settle(2100);
+  assert.match(bar(), /^Starting a machine · 6 s/);
+  await push('agent', 'starting');
+  assert.match(bar(), /^Loading the agent · 0 s/);
+  await push('tool', 'working', 'Reading a file');
+  assert.match(bar(), /^Reading a file(Fleet details)?$/);
+  await push('thinking');
+  assert.match(bar(), /^Thinking · 0 s/);
+  const partial: PiEvent = {
+    sequence: ++sequence,
+    commandId: 'command_1',
+    type: 'text',
+    text: 'Partial',
+  };
+  await act(async () => stream.push('delta', { streamId: 'stream_1', ...partial }));
+  await settle(10);
+  assert.match(bar(), /^Writing…/);
+  // Words the stage already counted are no news: after a tool the model thinks again.
+  await push('thinking', 'working', undefined, [partial]);
+  assert.match(bar(), /^Thinking · 0 s/);
+  assert.match(text(), /Partial/);
+  await push('saving', 'saving');
+  assert.match(row()?.textContent ?? '', /^Saving…$/);
+  await act(async () =>
+    stream.push(
+      'snapshot',
+      staged(
+        snapshot(
+          { ...active, activeCommandId: null },
+          [command('command_1', 'completed')],
+          ++sequence,
+        ),
+        'ready',
+      ),
+    ),
+  );
+  assert.match(bar(), /^Agent ready/);
+  assert.doesNotMatch(bar(), /·/);
+  assert.ok(!row());
+  assert.ok(document.querySelector('.pi-state-dot--ready'));
+  assert.ok(!document.querySelector('.pi-state-dot--active'));
 });
 
 test('the transcript follows new text until the reader scrolls up, and reads answers as Markdown', async (t) => {
