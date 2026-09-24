@@ -495,7 +495,6 @@ export class PiService implements Pi, FleetOwner {
       await this.saveConversation(tx, conversation);
       return publicCommand(command);
     });
-    this.fleet.kick();
     if (typeof result === 'string') throw new MervError('pi_runtime_releasing', result, 409);
     this.streams.changed(id, result.id);
     return result;
@@ -534,7 +533,6 @@ export class PiService implements Pi, FleetOwner {
         if (error instanceof MervError && error.code === 'pi_runtime_busy') return false;
         throw error;
       });
-    if (result !== false) this.fleet.kick();
     if (typeof result === 'string') throw new MervError('pi_runtime_releasing', result, 409);
     if (result) this.streams.changed(id);
     return this.snapshot(caller, id);
