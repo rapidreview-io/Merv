@@ -91,6 +91,11 @@ export function PeopleView() {
   const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
   const generation = useRef(0);
   const heading = useId();
+  const nameOf = useActorNames();
+  // A member is named from the directory, never by the account ID they signed in with.
+  const label = (member: Membership) =>
+    nameOf(member.actorId) ??
+    (member.subject === subject && member.issuer === issuer ? 'You' : 'Member');
   const currentMember = members?.find(
     (member) => member.subject === subject && member.issuer === issuer,
   );
@@ -99,7 +104,7 @@ export function PeopleView() {
   const path = `/projects/${encodeURIComponent(project.id)}/members`;
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
-    labels: (member) => [member.subject],
+    labels: (member) => [nameOf(member.actorId), member.subject],
     ids: (member) => [member.id, member.actorId],
   });
 
@@ -242,18 +247,13 @@ export function PeopleView() {
         ),
       }}
       line={(member) => ({
-        name: (
-          <strong>
-            <code>{member.subject}</code>
-            {member.subject === subject && member.issuer === issuer ? ' (you)' : ''}
-          </strong>
-        ),
+        name: <strong>{label(member)}</strong>,
         standing:
           canManage && member.issuer === issuer ? (
             <div className="states">
               <select
                 className="input"
-                aria-label={`Role for ${member.subject}`}
+                aria-label={`Role for ${label(member)}`}
                 value={draftRoles[member.id] ?? member.role}
                 disabled={busy}
                 onChange={(event) =>
