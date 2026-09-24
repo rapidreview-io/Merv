@@ -17,7 +17,17 @@ COPY pi/worker-main.mjs pi/package.json /opt/merv/pi/
 COPY start-runtime.py /opt/merv/runtime/start-runtime.py
 COPY assignment-probed.py isolation_probe.py /opt/merv/runtime/
 COPY start /opt/merv/runtime/start-runner
+COPY boot /opt/merv/runtime/boot
 RUN apt-get update && apt-get install -y --no-install-recommends socat git && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /opt/merv/bin \
  && printf '#!/bin/sh\nexec /usr/local/bin/node /opt/codex/node_modules/@openai/codex/bin/codex.js "$@"\n' > /opt/merv/bin/codex \
- && chmod 0755 /opt/merv/bin/codex /opt/merv/runtime/start-runner /opt/merv/runtime/start-runtime.py /opt/merv/runtime/assignment-probed.py
+ && chmod 0755 /opt/merv/bin/codex /opt/merv/runtime/start-runner /opt/merv/runtime/start-runtime.py /opt/merv/runtime/assignment-probed.py /opt/merv/runtime/boot
+# Node keys its compile cache by UID, so the worker's identity fills it once and root then seals it.
+RUN install -d -o 12001 -g 12001 -m 0700 /opt/merv/pi/compile-cache
+USER 12001:12001
+RUN cd /home/assignment && NODE_COMPILE_CACHE=/opt/merv/pi/compile-cache \
+      /usr/local/bin/node /opt/merv/pi/worker-main.mjs </dev/null 2>/dev/null; \
+    test -n "$(ls -A /opt/merv/pi/compile-cache/*-12001)"
+USER root
+RUN chown -R 0:0 /opt/merv/pi/compile-cache && chmod -R u=rwX,go=rX /opt/merv/pi/compile-cache
+ENTRYPOINT ["/opt/merv/runtime/boot"]

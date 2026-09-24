@@ -78,7 +78,13 @@ runtime gates before enabling Fleet.
 The candidate now includes a fixed dispatcher for the workflow supervisor and
 the isolated Pi SDK worker. Pi receives allocation-bound authority on private
 stdin, not a provider key. Its pinned dependencies and lockfile come from
-`packages/pi/worker-runtime`.
+`packages/pi/worker-runtime`. The image entrypoint `boot` starts one worker at
+container boot through the same identity drop; it loads Pi and waits on its
+private stdin. A root-only socket hands its pipes to the first Pi supervisor,
+which writes the bootstrap as before, and a workflow launch kills it. Without
+that worker the supervisor starts one itself. The worker's module compile cache
+is filled at image build under its UID and sealed root-owned; V8 ignores it
+where the CPU features differ from the build host's.
 
 Run these probes on a Linux Docker host against the built combined image:
 
@@ -97,8 +103,9 @@ docker run --rm --network none \
 probe must have zero effective, permitted, inheritable, bounding and ambient
 capabilities. The Pi probe checks identity, bootstrap removal, private parent
 files/descriptors, ptrace, signal permission, sudo and a synthetic root-only
-control socket. The workflow probe uses synthetic credentials and a loopback
-enrollment endpoint to verify the real Codex login and fixed supervisor path.
+control socket, for a fresh worker and for one loaded at boot (and its holder).
+The workflow probe uses synthetic credentials and a loopback enrollment
+endpoint to verify the real Codex login and fixed supervisor path.
 Neither probe calls a model or contacts Merv production. Neither replaces the
 actual Cloudflare security, task execution, retention or cleanup gates. Current
 candidate and deployment evidence is in `docs/PI_IMPLEMENTATION_STATUS.md`.

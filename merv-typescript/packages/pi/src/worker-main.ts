@@ -1,4 +1,4 @@
-import { cause, runPiWorker } from './worker.js';
+import { cause, mark, runPiWorker } from './worker.js';
 import type { PiBootstrap } from './types.js';
 import { pathToFileURL } from 'node:url';
 
@@ -41,8 +41,13 @@ export async function readBootstrap(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Pi is loaded before the bootstrap is read, so a worker started early waits here ready to enroll.
+  mark('ready');
   readBootstrap()
-    .then((bootstrap) => runPiWorker(bootstrap))
+    .then((bootstrap) => {
+      mark('bootstrap');
+      return runPiWorker(bootstrap);
+    })
     .catch((error: unknown) => {
       process.stderr.write(`Pi worker unavailable: ${cause(error)}\n`);
       process.exitCode = 1;
