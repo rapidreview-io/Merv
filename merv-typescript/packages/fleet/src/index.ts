@@ -96,6 +96,9 @@ export class FleetService implements Fleet {
   connected(projectId: string): boolean {
     return this.config.enabled && !!this.runtimes?.connected(projectId);
   }
+  kick(): void {
+    if (!this.closed) setTimeout(() => void this.tick().catch(() => undefined), 0).unref();
+  }
   registerOwner(kind: string, owner: FleetOwner): () => void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
     check(

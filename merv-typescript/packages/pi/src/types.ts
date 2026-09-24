@@ -71,7 +71,18 @@ export interface PiEvent {
   type: 'text' | 'progress' | 'changed';
   text: string;
 }
+/** What the person is waiting on right now, in the order a cold turn passes through. */
+export type PiStageName =
+  'idle' | 'queued' | 'machine' | 'agent' | 'ready' | 'thinking' | 'tool' | 'writing' | 'saving';
+export interface PiStage {
+  name: PiStageName;
+  /** When this stage began, so the UI can count seconds. */
+  since: string;
+  /** A short human phrase, e.g. the tool being used. */
+  detail?: string;
+}
 export interface PiSnapshot {
+  stage?: PiStage;
   /** False when this project cannot run the agent at all (no sandbox connection). */
   available: boolean;
   conversation: PiConversation;
