@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -22,6 +22,7 @@ const { createElement } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { App } = await import('../packages/ui/web/app.js');
+const { setToken } = await import('../packages/ui/web/api.js');
 
 const project = {
   id: 'project_1',
@@ -293,4 +294,58 @@ test('the archive narrows by the app’s own tabs, turns pages only where there 
   assert.ok(close.getAttribute('title'));
   await act(async () => close.click());
   assert.equal(document.querySelector('#history-detail'), null);
+});
+
+test('a server that cannot answer is asked again later each time, never in a loop, and the sign-in is kept', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setToken('fixture-token');
+  });
+  boot('Operator');
+  const actor = { id: 'actor_1', projectId: project.id, name: 'Operator', role: 'operator' };
+  // A membership still settling, then an outage, then the server again.
+  serve('/account', (call) =>
+    call === 1
+      ? { status: 403, body: { error: { code: 'membership_required', message: 'Settling' } } }
+      : call === 2
+        ? { network: true }
+        : { body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] } },
+  );
+  await open('/');
+  const asked = () => requests.filter((request) => request === 'GET /account').length;
+  assert.equal(asked(), 1);
+  assert.ok(text().includes('Connecting'));
+  await settle(1100);
+  assert.equal(asked(), 2);
+  await settle(2100);
+  assert.equal(asked(), 3);
+  assert.ok(document.querySelector('.sidebar'), text().slice(0, 300));
+  assert.equal(sessionStorage.getItem('merv:token'), 'fixture-token');
+});
+
+test('a new tab opens the project this account chose last, and choosing one keeps the page asked for', async (t) => {
+  t.after(async () => {
+    await unmount();
+    localStorage.clear();
+    setToken('fixture-token');
+  });
+  const user = { issuer: 'https://login.example/auth/v1', subject: 'user-1', createdAt: '' };
+  const second = { ...project, id: 'project_2', name: 'Second project' };
+  const account = () => {
+    boot('Operator');
+    serve('/account', { body: { kind: 'user', user, projects: [project, second] } });
+    // A tab of its own: signing in leaves nothing chosen in it.
+    setToken('fixture-token');
+  };
+  account();
+  await open('/settings/session');
+  assert.ok(text().includes('Choose a project'));
+  await click('Grokking replication');
+  await settle(20);
+  assert.equal(document.querySelector('h1')!.textContent, 'Settings');
+  await unmount();
+  account();
+  await open('/settings/session');
+  assert.equal(document.querySelector('h1')!.textContent, 'Settings');
+  assert.ok(!text().includes('Choose a project'));
 });
